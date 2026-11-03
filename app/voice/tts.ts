@@ -36,6 +36,15 @@ const CHUNK_MAX = 240;
 /** A chunk this short ("Done.", "OK.") goes with the next, unless it's the first (it then plays at once). */
 const CHUNK_MIN = 12;
 
+/**
+ * The most of one answer Ember says aloud, in characters of speech: about 45 seconds (the Piper voice says about 15
+ * characters a second). Past it, the rest is left to the bubble, which shows all of it, as voice assistants summarise
+ * rather than read a page out. Ember's persona keeps replies short, so this is for the long ones that slip through.
+ */
+export const SPOKEN_MAX = 700;
+/** What Ember says where it stops reading a long answer out. */
+export const REST_IN_BUBBLE = "The rest is in the bubble.";
+
 /** Abbreviations whose full stop doesn't end a sentence. */
 const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig)\.$/i;
 
@@ -103,6 +112,12 @@ export class SpeechStream {
   private raw = "";
   /** How much of `raw` has been spoken. */
   private said = 0;
+  /** How many characters of speech were given out, and whether the rest was left to the bubble (SPOKEN_MAX). */
+  private spokenChars = 0;
+  private capped = false;
+
+  /** `maxChars`: the most of an answer said aloud (SPOKEN_MAX); the rest is left to the bubble, which shows it all. */
+  constructor(private maxChars = SPOKEN_MAX) {}
 
   /** More of the answer: the sentences it completed, as spoken text (none, often). */
   push(delta: string): string[] {
@@ -111,7 +126,22 @@ export class SpeechStream {
     if (cut <= this.said) return [];
     const spoken = spokenText(this.raw.slice(this.said, cut));
     this.said = cut;
-    return spoken.trim() ? [spoken] : [];
+    return spoken.trim() ? this.budget(spoken) : [];
+  }
+
+  /**
+   * `spoken`, as much of it as fits what is left of the answer's spoken length: past it, up to the last sentence that
+   * fits, then "The rest is in the bubble." once, and nothing after (a long answer isn't read out whole).
+   */
+  private budget(spoken: string): string[] {
+    if (this.capped) return [];
+    const room = this.maxChars - this.spokenChars;
+    if (spoken.length <= room) { this.spokenChars += spoken.length; return [spoken]; }
+    this.capped = true;
+    const ends = sentenceEnds(`${spoken} `).filter(e => e <= room);
+    // Nothing said yet and not one sentence fits: the words that do, then the note.
+    const head = ends.length ? spoken.slice(0, ends[ends.length - 1]).trim() : this.spokenChars ? "" : `${spoken.slice(0, room).replace(/\s+\S*$/, "")}…`;
+    return [head ? `${head} ${REST_IN_BUBBLE}` : REST_IN_BUBBLE];
   }
 
   /**
@@ -124,9 +154,10 @@ export class SpeechStream {
     if (!this.said) rest = text;
     else if (text.startsWith(this.raw.slice(0, this.said))) rest = text.slice(this.said);
     else rest = full === undefined ? this.raw.slice(this.said) : "";
-    this.reset();
     const spoken = spokenText(rest);
-    return spoken.trim() ? [spoken] : [];
+    const out = spoken.trim() ? this.budget(spoken) : [];
+    this.reset();
+    return out;
   }
 
   /** Whether any of the answer has been spoken. */
@@ -137,6 +168,8 @@ export class SpeechStream {
   reset(): void {
     this.raw = "";
     this.said = 0;
+    this.spokenChars = 0;
+    this.capped = false;
   }
 
   /**
