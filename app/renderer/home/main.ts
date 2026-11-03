@@ -8,7 +8,7 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, naturalVoiceView, setupBadge, setupView } from "./copy";
 import { AUTONOMY_CONSENT_TEXT, autonomyHint, MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
@@ -1276,6 +1276,7 @@ function renderVoice(v: VoiceStatus): void {
   // Off, the switch above says so: no lone "Off" row under it (UI audit #15). Screen readers still hear the change.
   $("voice-text").parentElement!.hidden = v.state === "off";
   renderStatus();
+  renderNatural();
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);
@@ -1359,6 +1360,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
   ($("speak-results") as HTMLInputElement).checked = s.speakResults;
   ($("natural") as HTMLInputElement).checked = s.voice.natural;
   if (voice) renderVoice(voice);
+  else renderNatural();
 }
 $("wake").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
@@ -1374,6 +1376,22 @@ $("consent-yes").addEventListener("click", () => {
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
+/** The natural voice's state as last said to screen readers (not every percent of its download). */
+let naturalSaid = "";
+/** Under the natural voice's switch: what became of turning it on (copy.ts naturalVoiceView), and Try again after a failed download. */
+function renderNatural(): void {
+  const on = ($("natural") as HTMLInputElement).checked;
+  const view = naturalVoiceView(on ? voice?.natural : undefined);
+  $("natural-text").textContent = view.text;
+  const retry = $("natural-retry") as HTMLButtonElement;
+  const had = document.activeElement === retry;
+  retry.hidden = !view.retry;
+  if (had && retry.hidden) ($("natural") as HTMLInputElement).focus();
+  const state = on ? voice?.natural?.state ?? "" : "";
+  if (state && state !== naturalSaid && state !== "downloading") voiceLive(view.text);
+  naturalSaid = state;
+}
+$("natural-retry").addEventListener("click", () => { void window.ember.retryNaturalVoice(); });
 $("natural").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false }), natural: on } });

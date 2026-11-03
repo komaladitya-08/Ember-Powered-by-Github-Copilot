@@ -457,7 +457,12 @@ runs natively on the Piper voice at no more than 0.143 of real time (Kokoro is a
 `NATURAL_COST` in `app/voice/tts.ts`; `voice.natural_fetching`, `voice.natural_ready`), and the speech process starts
 again with it once it has nothing to say. Each time it loads, Kokoro is timed on a sentence (on up to 4 threads, and
 against CoreML on macOS: the one model a GPU is tried for): at more than 0.5 of real time (`NATURAL_MAX_RTF`) the Piper
-voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). No package carries
+voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). Turning the switch on
+decides at once, not at some later reply: the Piper voice running then (or started for it) times the computer, the
+download starts, and once it is in the speech process starts again with Kokoro straight away. Every outcome shows under
+the switch (`VoiceService.naturalStatus`, `naturalVoiceView` in app/renderer/home/copy.ts): checking, the download's
+percentage, ready, on, too slow, wouldn't load, needs Ember's faster (native) speech, needs Ember's own voice first, or
+a failed download with **Try again** (`voice:natural-retry`). No package carries
 Kokoro. The int8 Kokoro builds aren't used: onnxruntime made them slower on x86 (below). `node scripts/voice/bench.mjs
 --kokoro` times listening, the Piper voice and Kokoro on the computer it runs on (both builds, every thread count and
 provider Ember would try), as a table and as JSON.

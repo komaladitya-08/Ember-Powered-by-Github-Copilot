@@ -1253,6 +1253,7 @@ function start(): void {
     speechMissing: speechHeard === false,
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
     match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling },
+    ...(voice ? { natural: voice.naturalStatus } : {}),
   });
   /**
    * Voice Match (app/voice/voiceprint.ts): the owner's voiceprint, kept apart from the settings (voiceprint-store.ts),
@@ -1605,6 +1606,7 @@ function start(): void {
     }
   }));
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
+  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => { voice?.retryNaturalVoice(); }));
   const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay });
   presenceChanged = () => broadcast(IPC.presenceChanged, presence());
   ipcMain.handle(IPC.presence, guard(presence));
@@ -2449,6 +2451,8 @@ function start(): void {
       neuralVoice: true,
       // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
       naturalVoice: settings.get().voice.natural,
+      // Whatever became of turning it on shows under its switch (never only in the log).
+      onNatural: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       voiceprint: ownerPrint,
       onEnrol: p => {
         if (p.state === "done") {
