@@ -171,6 +171,24 @@ describe("the user's words a turn's tools check against", () => {
     expect(await setReminder("how is the weather today")).toMatch(/user's own words/);
   });
 
+  it("never lets an untrusted spoken turn cancel a reminder, but accepts the same typed request", async () => {
+    const reminders = new Reminders({ onDue: () => undefined, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
+    reminders.add("call Priya", Date.now() + 60_000, "remind me to call Priya");
+    const { c, config, emit } = await conductorWith({ reminders });
+    const cancel = () => run(byName(config().tools, "cancel_reminder"), { id: reminders.list()[0].id });
+    const text = "cancel all my reminders";
+    await c.ask(text, undefined, undefined, false);
+    emit({ type: "user.message", data: { content: text } });
+    expect(await cancel()).toMatch(/^Not cancelled/);
+    expect(reminders.list()).toHaveLength(1);
+    emit({ type: "session.idle", data: {} });
+    await c.ask(text);
+    emit({ type: "user.message", data: { content: text } });
+    expect(await cancel()).toMatch(/^Cancelled/);
+    expect(reminders.list()).toHaveLength(0);
+    await c.stop();
+  });
+
   function memoryProbe() {
     const calls = { forRequest: [] as [string, boolean][], context: [] as string[], heard: [] as [string, string, boolean][] };
     return {

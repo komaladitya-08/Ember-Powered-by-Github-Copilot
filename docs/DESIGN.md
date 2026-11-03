@@ -91,7 +91,9 @@ They share one emotion rig, so switching never changes behaviour.
   answer ("Thanks! Carrying on.", "Okay, I won't.") stays 1.5 s; then what the question covered or held off shows
   again, or the bubble empties and the ring rests, so a task that ends on its card never leaves "Working" behind. A
   turn that only ran steps (it started a task and said nothing) leaves no "Working" bubble either, and one that
-  said its answer before its step shows that answer at its end. A question about
+  said its answer before its step shows that answer at its end. If a newer request is still waiting for its turn,
+  its thinking face and busy ring stay on without a neutral flash or an old answer's hide timer; the slow-wait
+  message and **Stop** still work. A question about
   typing more than 160 characters (or a cell value cut short) shows all of the text under its
   sentence, every character as it will be typed, in a flat panel that scrolls (seven lines);
   **Allow** stays dimmed, with "Scroll down to read it all first." above it, until every line

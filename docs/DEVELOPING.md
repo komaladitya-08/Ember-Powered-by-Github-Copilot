@@ -153,8 +153,13 @@ cache (test/temp-folder.ts).
     settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
 - Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
+- When a task closes its window with keys (Ctrl+W or Ctrl+Q, Command+W or Command+Q on macOS), the next read tells it
+  the window closed, as a click on Close does. Closing a tab leaves a live window alone; denied or failed keys never
+  claim a close. A task never carries on in an unrelated window in the closed window's place.
 - **Memory** (Settings › Memory › **Remember what I tell you**, off until you turn it on and agree to its note):
   Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
+  - Switching memory off stops remembering and recall during existing turns too. Pending recall is dropped on
+    Stop or Forget; unchecked speech never counts as your own words when a fact is saved.
   - It keeps this in `memory.json` in its data folder (mode 0600).
   - While it is in force, the names in what you told it (its `user` facts) also help Ember hear them right
     (app/main/personal/correct.ts); nothing more is kept for that.
@@ -467,7 +472,9 @@ as if you had just asked each one, and Ember still asks before anything risky, w
 step names (“delete the build folder”) always asks too, since the step isn't what you said just now. Only your own
 words make, run or delete a routine: making one needs its name and each of its steps in what you said, running one
 needs your request to be its name (alone, or “run my start my day routine”), and deleting one “delete my start my day
-routine”; a reminder is cancelled only by words such as “cancel the reminder to call Priya”. Text written as instructions to an AI
+routine”; a reminder is cancelled only by a direct request now, such as “cancel the reminder to call Priya”,
+not a question about cancelling or a saved routine step. A named reminder must match; “cancel the reminder” works
+only when one is waiting, and “cancel all my reminders” must name all without exceptions. Text written as instructions to an AI
 (“ignore your previous instructions”) in a window, in any open window's title, or in what Ember read on the screen
 before a task makes that task ask before every step. Home lists them with
 **Delete**, and signing out deletes them all, also while your organisation has routines turned off.
@@ -717,6 +724,9 @@ and window title, ignoring characters that show nothing, such as a soft hyphen, 
 managers and polkit are listed by default).
 
 ### Your own model provider ("bring your own key")
+
+Removing a key, signing out, or changing the provider settings invalidates keyring work already in progress.
+A late keyring answer cannot restore a removed key or reconnect an old endpoint.
 
 Home › Copilot › **Model provider** lets a user point Ember at a model service of their own instead of GitHub Copilot
 (`settings.provider`, off by default; app/main/provider.ts): **Provider** (OpenAI-compatible, Azure OpenAI or

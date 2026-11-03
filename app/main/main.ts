@@ -200,7 +200,8 @@ function startupFailed(err: unknown): void {
     sys.lifecycle.focusOwnApp();
     // A log that couldn't be written (its folder can't be) isn't pointed to.
     dialog.showErrorBox("Ember couldn't start", fs.existsSync(log.file) ? `${message}\n\nThe details are in ${log.file}.` : message);
-    app.exit(1);
+    // Leave Electron from its message loop, not from inside ready (electron/electron#55011).
+    setImmediate(() => app.exit(1));
   });
 }
 
@@ -1326,7 +1327,10 @@ function start(): void {
     onReady: () => memory.index(),
   });
   betterRecallRef = betterRecall;
-  settings.onChange(() => betterRecall.settingsChanged());
+  settings.onChange(() => {
+    if (!memoryOn()) learningRef?.stopNow();
+    betterRecall.settingsChanged();
+  });
   const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
   const words = wordsStore(userData);

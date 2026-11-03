@@ -21,6 +21,7 @@ import path from "node:path";
 import type { Logger } from "../logger";
 import { appEnv } from "../hands/system";
 import { DeskAgent } from "./agent";
+import { readProcessIdentity, signalProcess, type ProcessIdentity } from "../platform/linux/process-identity";
 
 export interface DeskInfo {
   display: string;
@@ -113,12 +114,7 @@ export function xAccepts(n: number, cookie: Buffer, timeoutMs = 1000): Promise<b
 
 /** When a process started (clock ticks since boot): with its id, it tells a process from a later one given the same id. */
 export function startTime(pid: number): number | null {
-  try {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
-  } catch {
-    return null;
-  }
+  return readProcessIdentity(pid)?.start ?? null;
 }
 
 /**
@@ -126,24 +122,33 @@ export function startTime(pid: number): number | null {
  * detached), and everyone in a recorded process group that one of them is in. Never Ember itself.
  */
 export function deskProcesses(id: string, groups: number[] = []): number[] {
+  return deskProcessIdentities(id, groups).map(p => p.pid);
+}
+
+/** Snapshot the identity before reading the mark, not afterwards: the mark must belong to that same process. */
+function deskProcessIdentities(id: string, groups: number[] = []): ProcessIdentity[] {
   const marker = Buffer.from(`EMBER_DESK_ID=${id}\0`);
-  const self = (() => { try { const s = fs.readFileSync("/proc/self/stat", "utf8"); return Number(s.slice(s.lastIndexOf(")") + 2).split(" ")[2]); } catch { return -1; } })();
-  const all: { pid: number; group: number; marked: boolean }[] = [];
+  const self = readProcessIdentity(process.pid)?.group ?? -1;
+  const all: (ProcessIdentity & { marked: boolean })[] = [];
   let names: string[];
   try { names = fs.readdirSync("/proc"); } catch { return []; }
   for (const name of names) {
     if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
-    let env: Buffer, stat: string;
-    try { env = fs.readFileSync(`/proc/${name}/environ`); stat = fs.readFileSync(`/proc/${name}/stat`, "utf8"); } catch { continue; } // gone, or another user's
+    const identity = readProcessIdentity(Number(name));
+    if (!identity) continue;
+    let env: Buffer;
+    try { env = fs.readFileSync(`/proc/${name}/environ`); } catch { continue; }
+    const current = readProcessIdentity(identity.pid);
+    if (!current || current.start !== identity.start || current.group !== identity.group) continue;
     const at = env.indexOf(marker);
-    all.push({ pid: Number(name), group: Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]), marked: at === 0 || (at > 0 && env[at - 1] === 0) });
+    all.push({ ...identity, marked: at === 0 || (at > 0 && env[at - 1] === 0) });
   }
   const ours = new Set(all.filter(p => p.marked && p.group !== self && groups.includes(p.group)).map(p => p.group));
-  return all.filter(p => p.marked || ours.has(p.group)).map(p => p.pid);
+  return all.filter(p => p.marked || ours.has(p.group));
 }
 
-function killAll(pids: number[], sig: NodeJS.Signals): void {
-  for (const pid of pids) try { process.kill(pid, sig); } catch { /* gone */ }
+function killAll(identities: ProcessIdentity[], sig: NodeJS.Signals): void {
+  for (const identity of identities) signalProcess(identity, sig);
 }
 
 /** Mount points (from /proc/self/mountinfo, unescaped). */
@@ -263,7 +268,7 @@ export function reapDesks(log?: Logger, tmp = os.tmpdir()): Promise<number> {
 const reaping = new Map<string, Promise<number>>();
 
 async function reapNow(log: Logger | undefined, tmp: string): Promise<number> {
-  const victims: number[] = [];
+  const victims: ProcessIdentity[] = [];
   let names: string[];
   try { names = fs.readdirSync(tmp).filter(n => n.startsWith("ember-desk-")); } catch { return 0; }
   for (const name of names) {
@@ -273,21 +278,27 @@ async function reapNow(log: Logger | undefined, tmp: string): Promise<number> {
       if (fs.lstatSync(dir).uid !== process.getuid?.()) continue; // another user's
       owner = JSON.parse(fs.readFileSync(path.join(dir, OWNER), "utf8")) as Owner;
     } catch { continue; } // not a desk folder
-    if (owner.id !== name || (running(owner.pid) && startTime(owner.pid) === owner.start)) continue;
-    const pids = deskProcesses(owner.id, owner.groups ?? []);
+    const currentStart = startTime(owner.pid);
+    if (owner.id !== name || (running(owner.pid) && (owner.start === null || currentStart === null || currentStart === owner.start))) continue;
+    const pids = deskProcessIdentities(owner.id, owner.groups ?? []);
     killAll(pids, "SIGKILL");
     victims.push(...pids);
     removeTree(dir);
     log?.info("desk.reaped", { desk: name, processes: pids.length });
   }
-  for (const t0 = Date.now(); victims.some(p => running(p)) && Date.now() - t0 < 3000;) await new Promise(r => setTimeout(r, 25));
+  for (const t0 = Date.now(); victims.some(p => readProcessIdentity(p.pid)?.start === p.start && running(p.pid)) && Date.now() - t0 < 3000;) await new Promise(r => setTimeout(r, 25));
   return victims.length;
 }
 
-/** Signals a desk process and everything it started (each runs in its own process group). */
+/** Identity recorded while Node still owns the child, never reconstructed from a stale pid during cleanup. */
+const childIdentities = new WeakMap<ChildProcess, ProcessIdentity>();
+
+/** Signals a desk process and its group only while that original process is still there. */
 function signal(p: ChildProcess, sig: NodeJS.Signals): void {
-  if (!p.pid) return;
-  try { process.kill(-p.pid, sig); } catch { try { p.kill(sig); } catch { /* gone */ } }
+  if (p.exitCode !== null || p.signalCode !== null) return;
+  const identity = childIdentities.get(p);
+  if (!identity) return;
+  if (!signalProcess(identity, sig, { group: true })) signalProcess(identity, sig);
 }
 
 export class DeskManager {
@@ -347,12 +358,12 @@ export class DeskManager {
     const desks = new Map(this.leaving);
     if (this.id && this.dir) {
       desks.set(this.id, this.dir);
-      killAll(deskProcesses(this.id, [...this.groups]), "SIGTERM");
+      killAll(deskProcessIdentities(this.id, [...this.groups]), "SIGTERM");
     }
     const left = (ms: number) => {
       const nap = new Int32Array(new SharedArrayBuffer(4));
       for (const t0 = Date.now(); ; Atomics.wait(nap, 0, 0, 10)) {
-        const pids = [...desks.keys()].flatMap(id => deskProcesses(id));
+        const pids = [...desks.keys()].flatMap(id => deskProcessIdentities(id));
         if (!pids.length || Date.now() - t0 >= ms) return pids;
       }
     };
@@ -577,7 +588,7 @@ export class DeskManager {
     setTimeout(() => {
       // Only processes not yet exited: their ids (and groups) can't have been reused yet.
       for (const p of procs) if (p.exitCode === null && p.signalCode === null) signal(p, "SIGKILL");
-      if (id) { killAll(deskProcesses(id, groups), "SIGKILL"); this.leaving.delete(id); }
+      if (id) { killAll(deskProcessIdentities(id, groups), "SIGKILL"); this.leaving.delete(id); }
       // Its LibreOffice is gone: anything it locked meanwhile goes too.
       if (id && info) clearDeskLocksNear(info.handOff, id);
       // Apps that save as they quit may have put files back.
@@ -588,7 +599,7 @@ export class DeskManager {
     // Apps first, then the window manager, bus and display (reverse start order), each with what it started;
     // then whatever left its group (setsid) but carries the desk's mark.
     for (const p of procs) signal(p, "SIGTERM");
-    if (id) killAll(deskProcesses(id, groups), "SIGTERM");
+    if (id) killAll(deskProcessIdentities(id, groups), "SIGTERM");
     // LibreOffice ends without removing its locks on the documents it had open, and the user's own would then open
     // them read-only, "locked by" themselves: they go now, as Ember may exit before the moment above.
     if (id && info) {
@@ -609,6 +620,8 @@ export class DeskManager {
 
   private track(p: ChildProcess, name: string): void {
     this.procs.push(p);
+    const identity = p.pid ? readProcessIdentity(p.pid) : null;
+    if (identity) childIdentities.set(p, identity);
     if (p.pid) { this.groups.add(p.pid); this.record(); }
     p.on("error", err => this.log.warn("desk.process_error", { name, err }));
     p.on("exit", () => { this.procs = this.procs.filter(x => x !== p); });

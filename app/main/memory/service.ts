@@ -136,9 +136,11 @@ export class MemoryService {
    * model is there (otherwise, or if they don't come in time, exactly the lexical recall). `history`: also what used to
    * be true (the recall tool's).
    */
-  async context(request: string, history = false): Promise<string> {
+  async context(request: string, history = false, allowed: () => boolean = () => true): Promise<string> {
+    if (!allowed()) return "";
     if (this.indexPending) { this.indexPending = false; this.o.semantic?.changed(this.g); }
     const semantic = await this.o.semantic?.seeds(request);
+    if (!allowed()) return "";
     return memoryBlock(this.recall(request, CONTEXT_FACTS, history, semantic));
   }
 

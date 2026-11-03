@@ -78,6 +78,7 @@ export interface LearningConductorMemory {
 
 export class MemoryLearning {
   private model: OneShot | null = null;
+  private recallRevision = 0;
   private readonly learner: Learner;
   private readonly refines = new CallBudget(REFINE_PER_DAY, REFINE_PER_DAY);
   private readonly gaps = new Gaps();
@@ -123,6 +124,7 @@ export class MemoryLearning {
 
   /** The kill switch: every model call under way is abandoned, nothing waiting is learned, the interview ends. */
   stopNow(): void {
+    ++this.recallRevision;
     this.learner.stop();
     this.refining?.abort();
     this.refining = null;
@@ -139,8 +141,15 @@ export class MemoryLearning {
   /** The conductor's memory: the service's tools, with the instruction check and gap counting, and `heard`. */
   conductorMemory(): LearningConductorMemory {
     const m = this.d.memory;
+    const context = async (query: string, history = false): Promise<string> => {
+      if (!this.d.inForce()) return "";
+      const revision = this.recallRevision;
+      const text = await m.context(query, history, () => this.d.inForce() && revision === this.recallRevision);
+      return this.d.inForce() && revision === this.recallRevision ? text : "";
+    };
     return {
       remember: (fact, about, said, replaces) => {
+        if (!this.d.inForce()) return "Not remembered: memory is off.";
         // Not the user's words and sounding like an order: never kept, whoever asked the model to keep it.
         if (!ownFact(fact, said) && soundsLikeInstruction(fact)) {
           this.d.log.info("memory.instruction_refused", { chars: fact.length });
@@ -153,9 +162,12 @@ export class MemoryLearning {
       },
       // The recall tool: its query is the model's, so it never counts gaps (the screen could choose the question).
       // With Better recall's matches by meaning, as for a request (MemoryService.context).
-      context: (query, history) => m.context(query, history === true),
+      context,
       forRequest: async (request, own) => {
-        const text = await m.context(request);
+        if (!this.d.inForce()) return "";
+        const revision = this.recallRevision;
+        const text = await context(request);
+        if (!this.d.inForce() || revision !== this.recallRevision) return "";
         // Nothing bears on what the user asked themselves: the names in it are gaps (known names aren't, and checking
         // doesn't count as a use). Never from words Ember couldn't tell were the user's.
         if (!text && own && this.d.inForce()) {
@@ -177,6 +189,7 @@ export class MemoryLearning {
   forget(id: string): boolean {
     // A refinement still reading this fact must never reintroduce it in a summary after Forget.
     this.refining?.abort();
+    ++this.recallRevision;
     const had = this.d.memory.forget(id);
     this.recent = this.recent.filter(r => r.id !== id);
     if (had) this.d.onForgot?.(id);
