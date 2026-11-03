@@ -388,17 +388,22 @@ arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Ma
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
 voice** deletes your voiceprint. With **Keep learning my voice** (on by default once Voice Match knows you), the
 voiceprint follows your voice slowly, from requests it is sure are yours: never from Ember's own voice, a request with
-two voices in it, or for two minutes after it turned another voice away or you stopped Ember; at most one request a
-minute, a small step at a time, and never far from what you taught it. **Reset to my enrolment** goes back to that.
-`voiceprint.json` (mode 0600) then also holds the enrolment's print and the prints of up to 24 of your requests:
-numbers, never audio. Ember corrects names it mishears against your installed apps and, with Memory on, the names you
+two voices in it, an answer to a question, or for two minutes after it turned another voice away or you stopped
+Ember; at most one request a minute (with 2 s of voice or more), a small step at a time, and never far from what you
+taught it. A spoken “allow” must still match what you taught at the original threshold. **Reset to my enrolment** goes
+back to that (shown while Voice Match is on). `voiceprint.json` (mode 0600) then also holds the enrolment's print and
+the prints of up to 24 of your requests: numbers, never audio. It is version 2: an older Ember reads it as no
+voiceprint at all (Voice Match off until you teach it again), so going back to an older Ember means teaching it again.
+**Forget my voice** deletes it and `words.json`. Ember corrects names it mishears against your installed apps and, with Memory on, the names you
 asked it to remember; when it still gets one wrong, **That's not what I said** under the request in Conversation
 lets you type what you said, and with **Learn my words** on it hears it right from then on (`words.json`, mode 0600,
-listed under **Words Ember learnt** with Forget). A correction never makes a request risky: one about sending,
-deleting or paying is left as heard. **Suggest what I might say next** shows two or three likely next requests under
-Ember's answers and in Ask Ember, made on this computer; choosing one is the same as typing it, and nothing risky is
-suggested unless you just asked about it. After Ember answers a “Hey Ember” request you have 8 seconds (12 when it
-asked you something, or a task finished with a likely next step) for
+listed under **Words Ember learnt** with Forget; never a swap of common words or of a verb such as open for close). A
+correction never makes a request risky: one about sending, deleting or paying, or one that addresses someone (message,
+call, tell, invite…), keeps every name as heard. **Suggest what I might say next** shows two or three likely next requests under
+Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
+as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
+you just asked. Both are in “Before Ember starts” (`CONSENT_VERSION` 2). After Ember answers a “Hey Ember” request you
+have 8 seconds (12 when it asked you something) for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
 record of its tasks (the step each one is on, one waiting for your answer or stopping, how many wait, how the last one

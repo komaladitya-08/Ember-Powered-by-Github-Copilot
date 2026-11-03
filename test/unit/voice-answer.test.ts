@@ -175,11 +175,15 @@ describe("Confirmer.answerVoice", () => {
     const { c, later } = confirmer();
     const answer = c.ask(q());
     later(600);
+    expect(c.voiceLocked).toBe(false);
     expect(c.lockVoice()).toBe(true);
+    // Said so while it is up: Voice Match learns nothing meanwhile (main's onSample, review of #145).
+    expect(c.voiceLocked).toBe(true);
     expect(c.answerVoice("allow", { verified: true })).toBe("locked");
     expect(c.answerVoice("deny", { verified: false })).toBe("answered");
     expect(await answer).toBe("deny");
     expect(c.lockVoice()).toBe(false);
+    expect(c.voiceLocked).toBe(false);
   });
 
   it("records a click as a click", async () => {

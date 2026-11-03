@@ -9,20 +9,20 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ADAPT, ADAPT_QUIET_MS, adapt, adaptGuard, adaptedThreshold, fromEnrolment, gateMatches, sane, towards, type SampleContext } from "../../app/voice/adapt";
-import { oneVoice } from "../../app/voice/adapt-sample";
+import { longEnough, oneVoice } from "../../app/voice/adapt-sample";
 import { VoiceGate, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, encodePrint, similarity, unit } from "../../app/voice/voiceprint";
 import type { VoiceEvent } from "../../app/voice/engine";
 import { voiceprintStore } from "../../app/main/voiceprint-store";
 import { editDistance, soundKey, soundsLike } from "../../app/main/personal/phonetic";
-import { COMMON, correctTranscript, learnFrom, memoryNames, type Lexicon } from "../../app/main/personal/correct";
+import { COMMON, correctTranscript, learnFrom, learnable, memoryNames, type Lexicon } from "../../app/main/personal/correct";
 import { followUpMs, predictNext, type PredictInput } from "../../app/main/personal/predict";
 import { PersonalVoice, type PersonalSettings } from "../../app/main/personal/service";
 import { wordsStore } from "../../app/main/personal/words-store";
 import { isRiskyLabel } from "../../app/main/policy/policy";
 import { suggestOf, suggestionsShown, suggestAction, IDLE_BUBBLE } from "../../app/shared/overlay";
 import { boxRows } from "../../app/renderer/ask/field";
-import { PERSONAL_TEXT, learntText, teachOutcomeText, wordRowText, forgetWordLabel } from "../../app/renderer/home/copy";
+import { PERSONAL_TEXT, learntText, personalView, teachOutcomeText, wordRowText, forgetWordLabel } from "../../app/renderer/home/copy";
 
 /** A seeded random unit voiceprint of 256 numbers. */
 function randomPrint(seed: number): Float32Array {
@@ -119,6 +119,28 @@ describe("Voice Match that keeps learning", () => {
     expect(sent.map(e => e.type)).toEqual(["rejected", "listening", "utterance"]);
   });
 
+  it("vouches for a request (verified) only when it matches the enrolment at its own threshold too: learning never lowers that bar (review of #145)", async () => {
+    const sent: VoiceEvent[] = [];
+    const away = randomPrint(42);
+    const learntPrint = towards(anchor, away, ADAPT.anchorMin);
+    // Close to the learnt print, and to the enrolment by the hearing floor (0.74) but under its own threshold (0.75).
+    const between = towards(anchor, away, (ADAPT.anchorFloor + VOICE_MATCH_THRESHOLD) / 2);
+    expect(similarity(between, learntPrint)).toBeGreaterThanOrEqual(adaptedThreshold(ADAPT.maxClips));
+    const prints = [anchor, between];
+    const printer: Printer = { print: async s => prints[Math.round(s[0])] ?? prints[0] };
+    const g = new VoiceGate(() => printer, e => sent.push(e), () => undefined);
+    g.setOwner(learntPrint, { anchor, threshold: adaptedThreshold(ADAPT.maxClips) });
+    // Voiced clips (the printer reads which print by the first sample, rounded).
+    const clip = (n: number) => new Float32Array(16_000 * 3).fill(n + 0.01);
+    g.event({ type: "utterance", text: "Between.", ms: 100, window: "follow-up" }, clip(1));
+    g.event({ type: "utterance", text: "Owner.", ms: 100, window: "follow-up" }, clip(0));
+    await new Promise(r => setTimeout(r, 0));
+    expect(sent).toEqual([
+      { type: "utterance", text: "Between.", ms: 100, window: "follow-up" },
+      { type: "utterance", text: "Owner.", ms: 100, window: "follow-up", verified: true },
+    ]);
+  });
+
   it("puts a print out of reach of the enrolment (a changed file) back within reach", () => {
     const far = { anchor, clips: [], print: randomPrint(9) };
     expect(similarity(sane(far).print, anchor)).toBeGreaterThanOrEqual(ADAPT.anchorMin - 1e-4);
@@ -147,11 +169,22 @@ describe("a sample's one voice (adapt-sample.ts)", () => {
   const clip = (seconds: number, [x, y]: number[]) => { const a = new Float32Array(Math.round(seconds * 16_000)); for (let i = 0; i + 1 < a.length; i += 2) { a[i] = x; a[i + 1] = y; } return a; };
   const joined = (a: Float32Array, b: Float32Array) => { const out = new Float32Array(a.length + b.length); out.set(a); out.set(b, a.length); return out; };
 
-  it("takes a short request as one voice, and checks a long one half by half", async () => {
-    expect(await oneVoice(printer, clip(2, [1, 0.1]), ownerPrint, VOICE_MATCH_THRESHOLD)).toBe(true);
-    expect(await oneVoice(printer, clip(4, [1, 0.1]), ownerPrint, VOICE_MATCH_THRESHOLD)).toBe(true);
+  const gate = (p: Float32Array) => similarity(p, ownerPrint) >= VOICE_MATCH_THRESHOLD;
+
+  it("takes a short request as one voice, and checks a long one half by half, as the gate would", async () => {
+    expect(await oneVoice(printer, clip(2, [1, 0.1]), gate)).toBe(true);
+    expect(await oneVoice(printer, clip(4, [1, 0.1]), gate)).toBe(true);
     // The owner, then someone else talking: not learnt from (a busy room).
-    expect(await oneVoice(printer, joined(clip(2, [1, 0.1]), clip(2, [0.1, 1])), ownerPrint, VOICE_MATCH_THRESHOLD)).toBe(false);
+    expect(await oneVoice(printer, joined(clip(2, [1, 0.1]), clip(2, [0.1, 1])), gate)).toBe(false);
+    // The gate's own test decides each half (a learnt threshold, the enrolment), not a fixed threshold.
+    expect(await oneVoice(printer, clip(4, [1, 0.1]), () => false)).toBe(false);
+  });
+
+  it("learns from nothing shorter than ADAPT.minVoicedSeconds of voice, whatever an answer may be (review of #145)", () => {
+    expect(longEnough(clip(ADAPT.minVoicedSeconds - 0.3, [1, 0.1]))).toBe(false);
+    expect(longEnough(clip(ADAPT.minVoicedSeconds + 0.3, [1, 0.1]))).toBe(true);
+    // Silence padding doesn't count: a short "allow" in a long clip is still short.
+    expect(longEnough(joined(clip(0.6, [1, 0.1]), new Float32Array(16_000 * 3)))).toBe(false);
   });
 
   it("is offered only a request the gate verified", async () => {
@@ -239,8 +272,17 @@ describe("the transcript corrected against the user's own words (correct.ts)", (
   it("corrects an app's or a remembered name's near-miss, and what the user taught", () => {
     expect(correctTranscript("Open Spotfy.", lex, risky)).toMatchObject({ text: "Open Spotify.", counts: { app: 1 } });
     expect(correctTranscript("Open fire fox please", lex, risky).text).toBe("Open Firefox please");
-    expect(correctTranscript("Call Pria about lunch.", lex, risky)).toMatchObject({ text: "Call Priya about lunch.", counts: { memory: 1 } });
+    expect(correctTranscript("Find the notes from Pria.", lex, risky)).toMatchObject({ text: "Find the notes from Priya.", counts: { memory: 1 } });
     expect(correctTranscript("Open jeera.", lex, risky)).toMatchObject({ text: "Open Jira.", counts: { learned: 1 } });
+  });
+
+  it("never changes who a request addresses: a name in a request to message, tell, call or invite someone stays as heard (review of #145)", () => {
+    const people: Lexicon = { entries: [{ text: "Priya", source: "memory" }, { text: "Sandra", source: "memory" }], learned: [{ heard: "pria", meant: "Priya" }] };
+    for (const said of ["Message Pria hello", "Tell Sandro I'm late", "Call Pria about lunch", "Text Pria the address", "Invite Sandro to the review", "Write to Pria about Friday", "DM Sandro the link", "Reply to Pria", "Email Sandro the notes"]) {
+      expect(correctTranscript(said, people, risky), said).toMatchObject({ text: said, counts: {} });
+    }
+    // Ember's own name is still heard right.
+    expect(correctTranscript("Amber, message Pria hello", people, risky)).toMatchObject({ text: "Ember, message Pria hello", counts: { name: 1 } });
   });
 
   it("never turns a common word into a name", () => {
@@ -259,8 +301,20 @@ describe("the transcript corrected against the user's own words (correct.ts)", (
   it("learns a few misheard words from what the user retyped, never a different request or a risky one", () => {
     expect(learnFrom("Open jeera board", "Open Jira board", risky)).toEqual({ heard: "jeera", meant: "Jira" });
     expect(learnFrom("Open the weather", "Close every window on the left", risky)).toBeNull();
-    expect(learnFrom("Open the shared folder", "Open the shred folder", risky)).toEqual({ heard: "shared", meant: "shred" });
+    expect(learnFrom("Open the sherd folder", "Open the shred folder", risky)).toEqual({ heard: "sherd", meant: "shred" });
     expect(learnFrom("Open my mail", "Delete my mail", risky)).toBeNull();
+  });
+
+  it("never learns a common word for another, or a change of verb (open for close, allow for deny: review of #145)", () => {
+    expect(learnFrom("Open the notes", "Close the notes", risky)).toBeNull();
+    expect(learnFrom("Allow it", "Deny it", risky)).toBeNull();
+    expect(learnFrom("Start the timer", "Stop the timer", risky)).toBeNull();
+    expect(learnable(["jeera"], ["Jira"])).toBe(true);
+    expect(learnable(["open"], ["close"])).toBe(false);
+    expect(learnable(["opun"], ["open"])).toBe(false);
+    // A correction kept before these rules (or written into words.json by hand) is held to them too.
+    const old: Lexicon = { entries: [], learned: [{ heard: "open", meant: "close" }, { heard: "allow", meant: "deny" }] };
+    expect(correctTranscript("Open the notes and allow it", old, risky)).toMatchObject({ text: "Open the notes and allow it", counts: {} });
   });
 
   it("takes names only from what the user said themselves (memory's user facts)", () => {
@@ -285,9 +339,17 @@ describe("what the user might say next (predict.ts)", () => {
     expect(predictNext({ ...base, lastRequest: "Send the report to Sam", people }, risky).map(s => s.text)).toContain("Send it to Priya");
   });
 
-  it("keeps the follow-up window open longer only when a follow-up is likely", () => {
-    expect(followUpMs({ lastReply: "Done.", task: null }, [])).toBe(8000);
-    expect(followUpMs({ lastReply: "Which one?", task: null }, [])).toBe(12_000);
+  it("keeps the follow-up window open longer only when Ember asked something, as the consent text says (review of #145)", () => {
+    expect(followUpMs({ lastReply: "Done." })).toBe(8000);
+    expect(followUpMs({ lastReply: "Which one?" })).toBe(12_000);
+  });
+
+  it("suggests nothing risky but what the user's own risky request built, and never repeats a risky request (review of #145)", () => {
+    // "delete the tmp folder" is risky; a suggestion that isn't built from it ("Remove old logs", said twice before) isn't offered.
+    const s = predictNext({ ...base, lastRequest: "delete the tmp folder", history: ["Remove old logs", "Remove old logs", "Open my notes", "Open my notes"] }, risky).map(x => x.text);
+    expect(s.some(t => risky(t))).toBe(false);
+    expect(s).toContain("Open my notes");
+    expect(predictNext({ ...base, lastRequest: "Open the report", history: ["Delete the drafts", "Delete the drafts"] }, risky).some(x => risky(x.text))).toBe(false);
   });
 });
 
@@ -307,6 +369,48 @@ describe("PersonalVoice", () => {
     return { p, dir, anchor, voiceprints, events, tick: (ms: number) => { now += ms; } };
   };
   const ok = { verified: true, cut: false, selfSpoke: false, locked: false };
+
+  it("learns nothing while a question Voice Match locked (a stranger was turned away during it) is up (review of #145)", () => {
+    const { p, dir, anchor } = make();
+    try {
+      const s = { print: encodePrint(near(anchor, 0.9, 24)), score: 0.9, oneVoice: true };
+      expect(p.sample(s, { ...ok, locked: true })).toBeNull();
+      expect(p.sample(s, ok)).not.toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("forgets the voiceprint, all it learnt and the words learnt with Forget my voice (review of #145)", () => {
+    const { p, dir, voiceprints } = make();
+    try {
+      const h = p.heard("Open jeera board");
+      expect(p.teach(h.id, "Open Jira board").outcome).toBe("learnt");
+      expect(fs.existsSync(path.join(dir, "words.json"))).toBe(true);
+      p.forgetVoice();
+      expect(voiceprints.read()).toBeNull();
+      expect(fs.existsSync(path.join(dir, "voiceprint.json"))).toBe(false);
+      expect(fs.existsSync(path.join(dir, "words.json"))).toBe(false);
+      expect(p.words()).toEqual([]);
+      expect(p.heardItems()).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a request heard, a typed one, apart: only the heard row (by its id) can be taught, and a chosen suggestion never comes back", () => {
+    const { p, dir } = make();
+    try {
+      const h = p.heard("Open jeera board");
+      expect(p.teach(h.id + 1, "Open Jira board")).toEqual({ outcome: "unknown" });
+      p.asked("Open my notes", { suggested: true });
+      p.asked("Open my notes", { unchecked: true });
+      p.asked("Open the calendar");
+      expect(p.answered("Opened.", { spoken: true }).suggestions.map(s => s.text)).not.toContain("Open my notes");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it("learns from a verified request, but not after another voice was turned away, nor twice a minute", () => {
     const { p, dir, anchor, tick } = make();
@@ -343,13 +447,13 @@ describe("PersonalVoice", () => {
       expect(c.text).toBe("Open Spotify.");
       expect(events.find(e => e.event === "voice.corrected")?.fields).toEqual({ app: 1 });
       expect(JSON.stringify(events)).not.toContain("Spotfy");
-      p.heard("Open jeera board");
-      expect(p.heardItems().map(h => h.shown)).toEqual(["Open Spotify.", "Open jeera board"]);
-      expect(p.teach("Open jeera board", "Open Jira board")).toEqual({ outcome: "learnt", word: { heard: "jeera", meant: "Jira" } });
+      const h = p.heard("Open jeera board");
+      expect(p.heardItems().map(x => x.shown)).toEqual(["Open Spotify.", "Open jeera board"]);
+      expect(p.teach(h.id, "Open Jira board")).toEqual({ outcome: "learnt", word: { heard: "jeera", meant: "Jira" } });
       expect(p.words()).toEqual([expect.objectContaining({ heard: "jeera", meant: "Jira" })]);
       expect(p.heard("Open jeera board").text).toBe("Open Jira board");
       if (process.platform !== "win32") expect(fs.statSync(path.join(dir, "words.json")).mode & 0o777).toBe(0o600);
-      expect(p.teach("Nothing heard", "x")).toEqual({ outcome: "unknown" });
+      expect(p.teach(999, "x")).toEqual({ outcome: "unknown" });
       p.forgetWords();
       expect(p.words()).toEqual([]);
     } finally {
@@ -405,7 +509,49 @@ describe("Settings › Voice's personalisation words", () => {
     expect(learntText(5)).toBe("Learnt from 5 of your requests since you taught it.");
     expect(wordRowText({ heard: "jeera", meant: "Jira" })).toBe("“jeera” → “Jira”");
     expect(forgetWordLabel({ meant: "Jira" })).toBe("Forget “Jira”");
-    expect(teachOutcomeText("learnt", " Open Jira ")).toBe("Got it: Ember will hear that as “Open Jira” from now on.");
+    expect(teachOutcomeText("learnt", " Jira ")).toBe("Got it: Ember will hear that as “Jira” from now on.");
     expect(teachOutcomeText("off", "x")).toBe("Learn my words is off (Settings › Voice), so Ember didn't keep that.");
+    expect(teachOutcomeText("same", "x")).toBe("That's what Ember heard, so there's nothing to learn.");
+    expect(teachOutcomeText("unlike", "x")).toBe("That's a different request, not a misheard word, so Ember didn't keep it. Ask again to have it done.");
+    expect(teachOutcomeText("unknown", "x")).toBe("Ember can't find that request any more.");
+  });
+
+  it("offers Reset to my enrolment only while Voice Match is on, its model is in, and it learnt something (review of #145)", () => {
+    const m = { enrolled: true, on: true, model: true, enrolling: null, learnt: 3 };
+    expect(personalView(m, false)).toEqual({ learnRow: true, reset: true, learnt: "Learnt from 3 of your requests since you taught it." });
+    expect(personalView({ ...m, on: false }, false).reset).toBe(false);
+    expect(personalView({ ...m, model: false }, false).reset).toBe(false);
+    expect(personalView({ ...m, learnt: 0 }, false)).toEqual({ learnRow: true, reset: false, learnt: "" });
+    expect(personalView(m, true)).toEqual({ learnRow: false, reset: false, learnt: "" });
+    expect(personalView(undefined, false)).toEqual({ learnRow: false, reset: false, learnt: "" });
+  });
+});
+
+describe("words.json", () => {
+  it("drops an entry that doesn't read and keeps the rest, instead of reading as empty and then being written over", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-words-"));
+    try {
+      fs.writeFileSync(path.join(dir, "words.json"), JSON.stringify({ version: 1, words: [{ heard: "jeera", meant: "Jira", at: "2026-11-03T09:00:00.000Z" }, { heard: 42 }, { heard: "shivan", meant: "Siobhan", at: "2026-11-03T09:10:00.000Z" }] }));
+      const store = wordsStore(dir);
+      expect(store.list().map(w => w.meant)).toEqual(["Jira", "Siobhan"]);
+      store.add({ heard: "sersha", meant: "Saoirse" });
+      expect(wordsStore(dir).list().map(w => w.meant)).toEqual(["Jira", "Siobhan", "Saoirse"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("main's wiring of voice personalisation (main.ts source)", () => {
+  const MAIN = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+  it("learns nothing from a spoken answer to a question: the heard request is cleared before it is answered (review of #145)", () => {
+    expect(MAIN).toContain('if (spokenReply.kind !== "none") { lastHeard = null; answerByVoice(spokenReply); break; }');
+  });
+  it("holds learning while a question Voice Match locked is up (review of #145)", () => {
+    expect(MAIN).toContain("locked: confirmer?.voiceLocked ?? false");
+  });
+  it("takes a suggestion's click only for a chip the bubble shows now, and sends it as Ember's words the user chose (review of #145)", () => {
+    expect(MAIN).toContain("const text = suggestionsShown(lastState)[suggested];");
+    expect(MAIN).toContain("void askEmber(text, { suggested: true });");
   });
 });

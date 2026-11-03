@@ -30,9 +30,13 @@ import { VOICE_MATCH_THRESHOLD, averagePrint, similarity, unit } from "./voicepr
  * - `raise`, `raiseClips`: the gate's threshold for a print that learnt from `raiseClips` samples or more is `raise`
  *   higher (in proportion before). Without it the learnt print let in 4.1 % of other voices against the enrolment's
  *   3.0 %; with it 1.8 %, and it turned the owner away 7.8 % of the time against 8.4 %.
- * - `anchorFloor`: a request must match the enrolment by this much too, whatever the print learnt. Against 200 crafted
- *   samples per pair that each passed every limit (an attacker who already sounds 0.86 like the owner), it held other
- *   voices to 4.0 % (6.3 % at 0.72; 98 % with no limits at all).
+ * - `anchorFloor`: a request must match the enrolment by this much too to be heard, whatever the print learnt. Against
+ *   200 crafted samples per pair that each passed every limit (an attacker who already sounds 0.86 like the owner), it
+ *   held other voices to 4.0 % (6.3 % at 0.72; 98 % with no limits at all).
+ * - `verifiedFloor`: to be `verified` (what may answer a question by voice or turn Work without asking on), the
+ *   enrolment's own threshold, as before Voice Match learnt: what it learnt can never lower that bar (review of #145).
+ * - `minVoicedSeconds`: a sample has at least this much voice (a short answer says too little to learn a voice from,
+ *   whatever APPROVAL_MIN_SECONDS asks of an answer).
  * - `minGapMs`: at most one sample in this long (a busy minute of talk teaches no more than one request).
  */
 export const ADAPT = {
@@ -45,6 +49,8 @@ export const ADAPT = {
   raise: 0.03,
   raiseClips: 8,
   anchorFloor: 0.74,
+  verifiedFloor: VOICE_MATCH_THRESHOLD,
+  minVoicedSeconds: 2,
   minGapMs: 60_000,
 } as const;
 
@@ -55,10 +61,12 @@ export function adaptedThreshold(clips: number, threshold: number = VOICE_MATCH_
 
 /**
  * Whether a request's voiceprint is the owner's: it matches the print in use by `threshold` (adaptedThreshold), and,
- * when the print learnt anything (`anchor` given), the enrolment by ADAPT.anchorFloor too.
+ * when the print learnt anything (`anchor` given), the enrolment by ADAPT.anchorFloor too, or by ADAPT.verifiedFloor
+ * when it is to be `verified` (`strict`).
  */
-export function gateMatches(print: ArrayLike<number>, owner: ArrayLike<number>, threshold: number, anchor?: ArrayLike<number> | null): boolean {
-  return similarity(print, owner) >= threshold && (!anchor || similarity(print, anchor) >= ADAPT.anchorFloor);
+export function gateMatches(print: ArrayLike<number>, owner: ArrayLike<number>, threshold: number, anchor?: ArrayLike<number> | null, strict = false): boolean {
+  const floor = strict ? Math.max(ADAPT.anchorFloor, ADAPT.verifiedFloor) : ADAPT.anchorFloor;
+  return similarity(print, owner) >= threshold && (!anchor || similarity(print, anchor) >= floor);
 }
 
 /** What is kept: the enrolment, the samples (oldest first) and the print in use now (all unit length). */

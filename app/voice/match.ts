@@ -107,9 +107,12 @@ export class VoiceGate {
     this.learntThreshold = print && learnt ? Math.max(this.threshold, learnt.threshold) : null;
   }
 
-  /** The owner's match for a request's voiceprint (adapt.ts gateMatches). */
-  private matches(print: Float32Array, owner: Float32Array): boolean {
-    return gateMatches(print, owner, this.learntThreshold ?? this.threshold, this.anchor);
+  /**
+   * The owner's match for a request's voiceprint (adapt.ts gateMatches); `strict`: to be `verified`, the enrolment at
+   * its own threshold too.
+   */
+  matches(print: Float32Array, owner: Float32Array, strict = false): boolean {
+    return gateMatches(print, owner, this.learntThreshold ?? this.threshold, this.anchor, strict);
   }
 
   get on(): boolean {
@@ -155,7 +158,7 @@ export class VoiceGate {
       // own: the threshold was tuned on 2.5 s requests, a bare "allow" is too short to tell voices apart, and a recording
       // of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
       if (this.matches(print, owner)) {
-        const heard = await this.vouched(e, audio, owner, withWake);
+        const heard = await this.vouched(e, audio, owner, withWake, this.matches(print, owner, true));
         this.send(heard);
         if (heard.type === "utterance" && heard.verified) this.onSample?.(print, score, audio);
         return;
@@ -168,14 +171,16 @@ export class VoiceGate {
   /**
    * The owner's request (it matched as a whole) as main gets it: `verified` when what follows the wake phrase holds at
    * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`. A check that fails says
-   * neither (heard, but it can't approve anything).
+   * neither (heard, but it can't approve anything), and so does one that matched only a learnt print, not the
+   * enrolment at its own threshold (`strict`, adapt.ts ADAPT.verifiedFloor).
    */
-  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean): Promise<VoiceEvent> {
+  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, strict: boolean): Promise<VoiceEvent> {
     const rest = afterWakePhrase(audio, withWake);
     if (voicedSeconds(rest) < APPROVAL_MIN_SECONDS) return { ...e, short: true };
+    if (!strict) return e;
     if (rest === audio) return { ...e, verified: true };
     try {
-      return this.matches(await this.printer().print(rest), owner) ? { ...e, verified: true } : { ...e, short: true };
+      return this.matches(await this.printer().print(rest), owner, true) ? { ...e, verified: true } : { ...e, short: true };
     } catch (err) {
       this.onError(err);
       return e;

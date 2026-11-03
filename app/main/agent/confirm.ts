@@ -252,6 +252,11 @@ export class Confirmer {
    * Another voice than the owner's was heard while this question was up (Voice Match turned it away): no spoken yes is
    * taken for it from then on, only a click or the keys (security review of #127). False when no question is up.
    */
+  /** The question up now is locked to clicks and keys: Voice Match turned another voice away during it (lockVoice). */
+  get voiceLocked(): boolean {
+    return !!this.current?.voiceLocked;
+  }
+
   lockVoice(): boolean {
     if (!this.current) return false;
     this.current.voiceLocked = true;

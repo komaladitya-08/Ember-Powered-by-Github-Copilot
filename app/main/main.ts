@@ -26,7 +26,7 @@ import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } fr
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
-import { OVERLAY, IDLE_BUBBLE, suggestOf, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -1116,11 +1116,15 @@ function start(): void {
     }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, time);
   };
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean } = {}) => {
+  /**
+   * `how.suggested`: one of Ember's suggestions the user chose (never their own words for commands: host.ts
+   * UserRequest.suggested); `how.heardId`: the request Ember heard, for "That's not what I said" (personal/service.ts).
+   */
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number } = {}) => {
     if (!consented()) { showHome(); return; }
     recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
-    personalRef?.asked(text);
+    personalRef?.asked(text, { unchecked: how.voiceUnchecked, suggested: how.suggested });
     askedAt = Date.now();
     if (lastState.suggest) showState({ suggest: null });
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
@@ -1141,7 +1145,7 @@ function start(): void {
     const sent = how.spoken ? () => { ackLater(text); ack = ackTimer; } : undefined;
     const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
     if (!agent) return;
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(sent ? { onSent: sent } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}), ...(sent ? { onSent: sent } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1461,13 +1465,15 @@ function start(): void {
         {
           const matchOn = !!ownerPrint() && (voice?.matchReady ?? false);
           const spokenReply = voiceAnswer({ text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, verified: e.verified === true, short: e.short === true, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true });
-          if (spokenReply.kind !== "none") { answerByVoice(spokenReply); break; }
+          // A spoken answer to a question is never learnt from (Voice Match learns from requests only).
+          if (spokenReply.kind !== "none") { lastHeard = null; answerByVoice(spokenReply); break; }
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
           // `verified`: Voice Match matched the owner's voice (what may turn "Work without asking" on).
           turnLatency.heard(e.ms);
           // Near-misses corrected against the user's own words (personal/correct.ts): never into a risky request.
-          void askEmber(personal.heard(e.text).text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) });
+          const heard = personal.heard(e.text);
+          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) });
         }
         break;
       }
@@ -1689,7 +1695,8 @@ function start(): void {
   ipcMain.handle(IPC.voiceMatchForget, guard(() => {
     voice?.cancelEnrol();
     enrolling = null;
-    voiceprints.forget();
+    // The voiceprint, all it learnt, and the words learnt from what the user said (personal/service.ts).
+    personal.forgetVoice();
     settings.update({ voice: { ...settings.get().voice, match: false } });
     voice?.setVoiceprint(null);
     log.info("voice.match_forgotten");
@@ -1701,10 +1708,10 @@ function start(): void {
     log.info("voice.match_reset");
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
   }));
-  ipcMain.handle(IPC.voiceHeard, guard(() => personal.heardItems().map(h => h.shown)));
-  ipcMain.handle(IPC.voiceTeach, guard((shown: unknown, meant: unknown) => {
-    if (typeof shown !== "string" || typeof meant !== "string" || !shown || !meant.trim() || shown.length > 2000 || meant.length > 2000) return { outcome: "unknown" };
-    const r = personal.teach(shown, meant);
+  ipcMain.handle(IPC.voiceHeard, guard(() => personal.heardItems().map(h => h.id)));
+  ipcMain.handle(IPC.voiceTeach, guard((id: unknown, meant: unknown) => {
+    if (typeof id !== "number" || !Number.isInteger(id) || id < 1 || typeof meant !== "string" || !meant.trim() || meant.length > 2000) return { outcome: "unknown" };
+    const r = personal.teach(id, meant);
     if (r.outcome === "learnt") broadcast(IPC.voiceWords, personal.words());
     return r;
   }));
@@ -1764,6 +1771,14 @@ function start(): void {
     void askEmber(t);
   });
   ipcMain.on(IPC.askClose, event => { if (askWindow.owns(event.sender)) askWindow.hide(); });
+  // One of Ember's suggestions chosen in the Ask box: only one it offers now, sent as Ember's words the user chose.
+  ipcMain.on(IPC.askSuggestion, (event, text: unknown) => {
+    if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;
+    askWindow.hide();
+    lastAskByVoice = false;
+    log.info("ask.suggestion");
+    void askEmber(text, { suggested: true });
+  });
 
   const isRect = (r: unknown): r is Rect => !!r && typeof r === "object" && ["x", "y", "width", "height"].every(k => Number.isFinite((r as Record<string, unknown>)[k]));
   ipcMain.on(OVERLAY.cards, (event, rect: unknown) => {
@@ -1802,11 +1817,13 @@ function start(): void {
       if (again !== null) { captureContext(); void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true }); }
       return;
     }
-    // One of Ember's suggestions (what the user might say next): sent as if the user typed it; the usual policy applies.
+    // One of Ember's suggestions (what the user might say next): sent as the user's click on Ember's words, so the usual
+    // policy applies and a command it names is never taken as the user's own words. Only one the bubble shows now
+    // (suggestionsShown: never while a question or buttons are up).
     const suggested = suggestOf(id);
     if (suggested !== null) {
-      const text = lastState.suggest?.items[suggested];
-      if (text && personal.isSuggestion(text)) { log.info("bubble.suggestion", { n: suggested }); lastAskByVoice = false; captureContext(); void askEmber(text); }
+      const text = suggestionsShown(lastState)[suggested];
+      if (text && personal.isSuggestion(text)) { log.info("bubble.suggestion", { n: suggested }); lastAskByVoice = false; captureContext(); void askEmber(text, { suggested: true }); }
       return;
     }
     if (id === "ui:settings") { openSettings(); return; }
@@ -2552,7 +2569,7 @@ function start(): void {
       onSample: s => {
         const r = lastHeard && Date.now() - lastHeard.at < 15_000 ? lastHeard : null;
         lastHeard = null;
-        const print = personal.sample(s, r ? { verified: r.verified, cut: r.cut, selfSpoke: r.selfSpoke, locked: false } : null);
+        const print = personal.sample(s, r ? { verified: r.verified, cut: r.cut, selfSpoke: r.selfSpoke, locked: confirmer?.voiceLocked ?? false } : null);
         if (print && settings.get().voice.match) { voice?.setVoiceprint(print); broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }
       },
       onEnrol: p => {
@@ -2695,7 +2712,7 @@ function start(): void {
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk({ source: "test" }),
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string, how?: { heardId?: number }) => { captureContext(); return askEmber(text, how?.heardId ? { heardId: how.heardId } : {}); }, showAsk: () => openAsk({ source: "test" }),
         showMenu, state: () => lastState, extensions: () => extensionsRef, stopEverything, personal: () => personalRef,
       };
     }

@@ -714,6 +714,16 @@ export function learntText(n: number): string {
   return n === 1 ? "Learnt from 1 of your requests since you taught it." : `Learnt from ${n} of your requests since you taught it.`;
 }
 
+/**
+ * Voice Match's personalisation rows for a status (`hidden`: the Voice Match group is): Keep learning once it knows the
+ * voice; Reset to my enrolment only while it is on and its model in, and it learnt something; the "Learnt from…" line.
+ */
+export function personalView(m: { enrolled: boolean; on: boolean; model?: boolean; enrolling: unknown; learnt?: number } | undefined, hidden: boolean): { learnRow: boolean; reset: boolean; learnt: string } {
+  const enrolled = !!m?.enrolled && !m.enrolling && !hidden;
+  const learnt = enrolled ? learntText(m?.learnt ?? 0) : "";
+  return { learnRow: enrolled, reset: enrolled && !!m?.on && m?.model !== false && (m?.learnt ?? 0) > 0, learnt };
+}
+
 /** A learnt correction as its row says it: what Ember heard, and what it hears now. */
 export function wordRowText(w: { heard: string; meant: string }): string {
   return `“${w.heard}” → “${w.meant}”`;

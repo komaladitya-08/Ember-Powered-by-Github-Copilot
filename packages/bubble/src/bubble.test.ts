@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, type BubbleView } from "./bubble";
+import fs from "node:fs";
+import path from "node:path";
+import { announcement, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -413,5 +415,28 @@ describe("the bubble on the screen's pixels and in motion (Liquid Glass workstre
   it("brings a question in by its opacity alone, and leaves faster than it comes", () => {
     expect(BUBBLE_CSS).toContain('.ember-bubble[data-mood="attention"], .ember-bubble[data-mood="attention"][data-hidden="true"] { translate: none; scale: none; }');
     expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-hidden="true"\] \{[^}]*transition-duration: 140ms, 0s, 140ms, 140ms; transition-timing-function: ease-in;/);
+  });
+});
+
+describe("Ember's suggestions under an answer (review of #145)", () => {
+  const SOURCE = fs.readFileSync(path.join(__dirname, "bubble.ts"), "utf8");
+  it("puts their row in the bubble's clickable area, or the overlay would never take a click on them", () => {
+    expect(SOURCE).toContain("if (!this.suggest.hidden) hot.push(rel(this.suggest));");
+    // bubble-motion-live.test.ts checks it in a real Chromium: interactiveRects() covers the row.
+  });
+
+  it("gives each chip a real edge in a contrast theme, and a quiet look otherwise (never the accent, 24 px)", () => {
+    const forced = BUBBLE_CSS.slice(BUBBLE_CSS.indexOf("@media (forced-colors: active)"));
+    expect(forced).toContain(".eb-suggest button { border: 1px solid ButtonText; }");
+    expect(forced).toContain(".eb-suggest button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }");
+    const chip = /\.eb-suggest button \{[^}]*\}/.exec(BUBBLE_CSS)![0];
+    expect(chip).toContain("min-height: calc(24px * var(--text-scale, 1));");
+    expect(chip).not.toContain("--accent");
+  });
+
+  it("names the group by its visible caption, once (aria-labelledby, not a second label)", () => {
+    expect(SUGGEST_CAPTION).toBe("Ember suggests");
+    expect(SOURCE).toContain('this.suggest.setAttribute("aria-labelledby", capId);');
+    expect(SOURCE).not.toContain('this.suggest.setAttribute("aria-label"');
   });
 });

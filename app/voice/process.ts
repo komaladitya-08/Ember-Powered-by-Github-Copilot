@@ -13,7 +13,7 @@ import { VoiceEngine, type VoiceBackend, type VoiceEvent } from "./engine";
 import { Enrolment, VoiceGate, type EnrolState, type Printer } from "./match";
 import { VOICE_MATCH_THRESHOLD, decodePrint, encodePrint } from "./voiceprint";
 import { ADAPT, adaptedThreshold } from "./adapt";
-import { oneVoice } from "./adapt-sample";
+import { longEnough, oneVoice } from "./adapt-sample";
 import type { VoiceprintWorkerMessage } from "./voiceprint-worker";
 import { ModelLoadError, sherpaBackend, type BackendInfo, type ModelPaths } from "./sherpa";
 import { SpeakerMonitor } from "./speakers";
@@ -126,9 +126,9 @@ function learntOf(m: { anchor?: string; clips?: number }): { anchor: Float32Arra
 let learning = false, sampledAt = Number.NEGATIVE_INFINITY;
 gate.onSample = (print, score, audio) => {
   const owner = gate.ownerPrint;
-  if (!learning || !owner || score < VOICE_MATCH_THRESHOLD + ADAPT.margin || Date.now() - sampledAt < ADAPT.minGapMs) return;
+  if (!learning || !owner || score < VOICE_MATCH_THRESHOLD + ADAPT.margin || !longEnough(audio) || Date.now() - sampledAt < ADAPT.minGapMs) return;
   sampledAt = Date.now();
-  void oneVoice(voiceprinter(), audio, owner, VOICE_MATCH_THRESHOLD).then(
+  void oneVoice(voiceprinter(), audio, p => gate.matches(p, owner)).then(
     whole => send({ type: "voice-sample", print: encodePrint(print), score: Math.round(score * 1000) / 1000, oneVoice: whole }),
     () => undefined, // the model failed: nothing to learn from this one (the gate reported failures already)
   );

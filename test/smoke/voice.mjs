@@ -123,7 +123,7 @@ function startEmber(name, wav, { debugPort = false } = {}) {
   // Set up, listening and speaking: wake word on, the microphone agreed to, replies spoken. Speaker rejection off, so
   // the run is the same with or without parec and a sound server (it changes how "Hey Ember" over Ember's voice is taken).
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-    version: 1, onboarded: true, consent: { version: 1, at: new Date().toISOString() },
+    version: 1, onboarded: true, consent: { version: 2, at: new Date().toISOString() },
     wakeWord: true, speak: true, voice: { consent: true, speakerRejection: false, muted: false, match: false },
   }));
   const env = {

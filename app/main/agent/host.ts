@@ -133,7 +133,8 @@ export interface AgentStatus {
 }
 
 /** One line of the conversation, kept in memory for this session only (the settings window shows them). */
-export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem"; text: string }
+/** `heardId`: a request Ember heard, as voice personalisation knows it (app/main/personal/service.ts heard()). */
+export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem"; text: string; heardId?: number }
 
 export interface HostOptions {
   userData: string;
@@ -598,6 +599,11 @@ interface UserRequest {
   targetId?: TargetId;
   /** Heard where Ember can't tell the user from its speakers: never the user's own words for commands (OWNER V1). */
   voiceUnchecked?: boolean;
+  /**
+   * One of Ember's suggestions the user chose (app/main/personal/predict.ts): their click, but Ember's words, so never
+   * the user's own words for commands either (no announce-with-Stop for a dangerous command it names); not voice.
+   */
+  suggested?: boolean;
 }
 /** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
 const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
@@ -719,6 +725,8 @@ export class AgentHost {
   private readonly transcript: TranscriptEntry[] = [];
   /** The user's lines in the transcript that were heard where Ember can't tell the user from its speakers (V1). */
   private readonly voiceUnchecked = new WeakSet<TranscriptEntry>();
+  /** The user's requests that were Ember's suggestions they chose (UserRequest.suggested). */
+  private readonly suggested = new WeakSet<TranscriptEntry>();
   /**
    * Lines of the user's words a task was refused for because they named the terminal, and the request whose turn
    * refused it: a later turn (the user answering how else) isn't held to them again.
@@ -1016,7 +1024,9 @@ export class AgentHost {
   private userWordsOf(r: UserRequest | null, o: { routine?: boolean } = {}): { words?: string; agreed?: Agreement[]; commandWords?: string; typedOnly?: boolean } {
     if (!r) return {};
     const said = [r.words];
-    const typed = r.voiceUnchecked ? [] : [r.words];
+    const typed = r.voiceUnchecked || r.suggested ? [] : [r.words];
+    // Left out for being heard where Ember can't tell (the card then says so), not only for being a suggestion.
+    let heardLeft = !!r.voiceUnchecked;
     const agreed: Agreement[] = [];
     const log = this.transcript;
     const apart = (a: TranscriptEntry, b: TranscriptEntry) => Date.parse(a.t) - Date.parse(b.t);
@@ -1033,10 +1043,12 @@ export class AgentHost {
       if (!before || before.who !== "you" || apart(log[at], before) > 10 * 60_000) break;
       if (isRiskyLabel(reply, this.sys.os) || !(asked || onlyAnswers(reply))) break;
       said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
-      if (!this.voiceUnchecked.has(before)) typed.unshift(said[0]);
+      if (!this.voiceUnchecked.has(before) && !this.suggested.has(before)) typed.unshift(said[0]);
+      else if (this.voiceUnchecked.has(before)) heardLeft = true;
       at = k;
     }
-    const voiced = typed.length < said.length;
+    const left = typed.length < said.length;
+    const voiced = left && heardLeft;
     // The steps of a routine this turn ran (run_routine): the user's own words when they saved it, so its tasks' risky
     // steps get the usual question rather than "you didn't ask for this". Never words for commands: a step saved as
     // "delete the build folder" must not make `rm -rf build` the user's own request now (it asks, as any dangerous
@@ -1046,13 +1058,13 @@ export class AgentHost {
     if (steps) said.push(steps);
     return {
       words: said.join("\n"), ...(agreed.length ? { agreed } : {}),
-      ...(voiced || steps ? { commandWords: typed.join("\n") } : {}),
-      ...(steps && !voiced ? { typedOnly: true } : {}),
+      ...(left || steps ? { commandWords: typed.join("\n") } : {}),
+      ...((steps || left) && !voiced ? { typedOnly: true } : {}),
     };
   }
 
-  private remember(who: TranscriptEntry["who"], text: string): TranscriptEntry {
-    const entry: TranscriptEntry = { t: new Date().toISOString(), who, text: text.slice(0, 4000) };
+  private remember(who: TranscriptEntry["who"], text: string, heardId?: number): TranscriptEntry {
+    const entry: TranscriptEntry = { t: new Date().toISOString(), who, text: text.slice(0, 4000), ...(heardId ? { heardId } : {}) };
     this.transcript.push(entry);
     if (this.transcript.length > 60) this.transcript.splice(0, this.transcript.length - 60);
     this.o.onTranscript?.(this.getTranscript());
@@ -2000,7 +2012,7 @@ export class AgentHost {
    * behind a turn under way), just before it is sent: main's acknowledgement waits for it, so "On it." never comes
    * while the request still waits, nor over another turn's answer.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; short?: boolean; onSent?: () => void; released?: boolean } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
     // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
@@ -2122,19 +2134,21 @@ export class AgentHost {
       this.presenter.notice({ title, text: why, actions, ...(signedOut ? { mood: "attention" as const } : {}) });
       this.unreachable = why;
       // The conversation section keeps what was asked, and why it went unanswered.
-      const asked = this.remember("you", text);
+      const asked = this.remember("you", text, how.heardId);
       if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
+      if (how.suggested) this.suggested.add(asked);
       this.remember("problem", `${title}: ${why}`);
       return false;
     }
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
     const gen = this.gen;
-    const asked = this.remember("you", text);
+    const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
+    if (how.suggested) this.suggested.add(asked);
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
-      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}),
+      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}),
     };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));

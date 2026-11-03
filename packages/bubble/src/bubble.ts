@@ -79,6 +79,8 @@ export const RISKY_TAG = "Risky step";
 export const AUTONOMOUS_TAG = "Without asking";
 /** The caption before Ember's suggestions of what the user might say next (setSuggestions): they're Ember's guesses. */
 export const SUGGEST_CAPTION = "Ember suggests";
+/** Bubbles made on this page so far (each caption's id is its own). */
+let suggestCaptions = 0;
 
 export interface BubbleView {
   visible: boolean;
@@ -736,6 +738,8 @@ export class ReasoningBubble {
       <div class="eb-step" hidden><span class="eb-step-arrow" aria-hidden="true">→</span><span class="eb-step-text"></span></div>
       <div class="eb-actions" hidden></div>
       <div class="eb-suggest" role="group" hidden><span class="eb-suggest-cap"></span></div>`;
+    // The group is named by its visible caption (one label, not two).
+    const capId = `eb-suggest-cap-${++suggestCaptions}`;
     this.head = this.root.querySelector(".eb-head")!;
     this.root.querySelector(".eb-risk")!.textContent = RISKY_TAG;
     this.root.querySelector(".eb-auto")!.textContent = AUTONOMOUS_TAG;
@@ -747,8 +751,10 @@ export class ReasoningBubble {
     this.stepText = this.root.querySelector(".eb-step-text")!;
     this.actions = this.root.querySelector(".eb-actions")!;
     this.suggest = this.root.querySelector(".eb-suggest")!;
-    this.suggest.setAttribute("aria-label", SUGGEST_CAPTION);
-    this.root.querySelector(".eb-suggest-cap")!.textContent = SUGGEST_CAPTION;
+    const cap = this.root.querySelector<HTMLElement>(".eb-suggest-cap")!;
+    cap.id = capId;
+    cap.textContent = SUGGEST_CAPTION;
+    this.suggest.setAttribute("aria-labelledby", capId);
     this.wholeBox = this.root.querySelector(".eb-whole")!;
     this.wholeHint = this.root.querySelector(".eb-whole-hint")!;
     // Scrolled (by the wheel, or a page on by the approve key): judged again.

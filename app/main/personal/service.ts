@@ -128,8 +128,11 @@ export class PersonalVoice {
     return { entries, learned: set.learnWords ? this.o.words.list() : [] };
   }
 
-  /** A request heard (the recogniser's words): corrected, kept for "That's not what I said", and the counts logged. */
-  heard(raw: string): Corrected {
+  /**
+   * A request heard (the recogniser's words): corrected, kept for "That's not what I said" under its `id` (the
+   * conversation's row carries it: TranscriptEntry.heardId), and the counts logged.
+   */
+  heard(raw: string): Corrected & { id: number } {
     let c: Corrected;
     try {
       c = correctTranscript(raw, this.lexicon(), this.o.risky);
@@ -139,8 +142,9 @@ export class PersonalVoice {
       c = { text: raw, raw, counts: {} };
     }
     if (Object.keys(c.counts).length || c.held === "newly-risky") this.o.log.info("voice.corrected", { ...c.counts, ...(c.held ? { held: c.held } : {}) });
-    this.heardList = [...this.heardList, { id: this.nextId++, shown: c.text, raw: c.raw, at: this.now() }].slice(-HEARD_KEPT);
-    return c;
+    const id = this.nextId++;
+    this.heardList = [...this.heardList, { id, shown: c.text, raw: c.raw, at: this.now() }].slice(-HEARD_KEPT);
+    return { ...c, id };
   }
 
   /** What was heard lately, newest last (Home marks those rows of the conversation). */
@@ -149,11 +153,11 @@ export class PersonalVoice {
   }
 
   /**
-   * The user retyped what they meant for a request Ember heard (`shown`: the words the conversation shows). Kept as a
-   * correction when Learn my words is on and the difference is a few words; the outcome says which, and what was learnt.
+   * The user retyped what they meant for the request Ember heard as `id` (its conversation row's). Kept as a correction
+   * when Learn my words is on and the difference is a few words; the outcome says which, and what was learnt.
    */
-  teach(shown: string, meant: string): { outcome: "learnt" | "off" | "unknown" | "unlike" | "same"; word?: LearnedCorrection } {
-    const h = [...this.heardList].reverse().find(x => x.shown === shown);
+  teach(id: number, meant: string): { outcome: "learnt" | "off" | "unknown" | "unlike" | "same"; word?: LearnedCorrection } {
+    const h = this.heardList.find(x => x.id === id);
     if (!h) return { outcome: "unknown" };
     if (h.raw.trim().toLowerCase() === meant.trim().toLowerCase()) return { outcome: "same" };
     if (!this.o.settings().learnWords) return { outcome: "off" };
@@ -177,11 +181,21 @@ export class PersonalVoice {
     this.heardList = [];
   }
 
+  /** Forget my voice: the voiceprint and all it learnt, and the words learnt from what the user said, go. */
+  forgetVoice(): void {
+    this.o.voiceprints.forget();
+    this.forgetWords();
+  }
+
   // ───── What comes next ─────
 
-  /** A request went to Ember (typed, heard or a chosen suggestion), in the user's own words. */
-  asked(text: string): void {
-    this.history = [...this.history, text].slice(-HISTORY_KEPT);
+  /**
+   * A request went to Ember (typed, heard or a chosen suggestion). One heard where Ember can't tell the user from its
+   * speakers (`unchecked`), or a chosen suggestion (`suggested`), isn't the user's own words: it never comes back as
+   * a suggestion.
+   */
+  asked(text: string, o: { unchecked?: boolean; suggested?: boolean } = {}): void {
+    if (!o.unchecked && !o.suggested) this.history = [...this.history, text].slice(-HISTORY_KEPT);
     this.last = { lastRequest: text, lastReply: "", spoken: false, task: null };
     this.suggestions = [];
   }
@@ -191,14 +205,15 @@ export class PersonalVoice {
    * Returns them, and how long a spoken reply's follow-up window stays open.
    */
   answered(reply: string, o: { spoken: boolean; task?: PredictInput["task"] }): { suggestions: Suggestion[]; followUpMs: number } {
-    if (!this.last) return { suggestions: [], followUpMs: 8000 };
+    const follow = followUpMs({ lastReply: reply });
+    if (!this.last) return { suggestions: [], followUpMs: follow };
     this.last = { ...this.last, lastReply: reply, spoken: o.spoken, task: o.task ?? this.last.task ?? null };
-    if (!this.o.settings().suggest) { this.suggestions = []; return { suggestions: [], followUpMs: 8000 }; }
+    if (!this.o.settings().suggest) { this.suggestions = []; return { suggestions: [], followUpMs: follow }; }
     const facts = this.o.memory();
     const people = facts ? memoryNames(facts, 20) : [];
     const input: PredictInput = { ...this.last, history: this.history, hour: new Date(this.now()).getHours(), people };
     this.suggestions = predictNext(input, this.o.risky);
-    return { suggestions: this.suggestions, followUpMs: followUpMs(input, this.suggestions) };
+    return { suggestions: this.suggestions, followUpMs: follow };
   }
 
   /** The predictions shown now (cleared by a new request or a stop). */

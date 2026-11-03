@@ -43,6 +43,8 @@ export const IPC = {
   voiceForgetWord: "voice:forget-word",
   voiceForgetWords: "voice:forget-words",
   askClose: "agent:ask-close",
+  /** One of Ember's suggestions chosen in the Ask box (sent as Ember's words the user chose, not typed). */
+  askSuggestion: "agent:ask-suggestion",
   activity: "ember:activity",
   /** "Check again": look for a sign-in once more and reconnect. */
   agentRetry: "agent:retry",
@@ -253,10 +255,10 @@ export interface EmberHomeApi {
   forgetVoice(): Promise<void>;
   /** Voice Match goes back to the enrolment alone (what it learnt since is dropped). */
   resetVoice(): Promise<void>;
-  /** The requests heard lately as the conversation shows them (for "That's not what I said"). */
-  voiceHeard(): Promise<string[]>;
-  /** The user retyped what they meant for a request heard as `shown`: what happened (VoiceTeachOutcome). */
-  teachWords(shown: string, meant: string): Promise<VoiceTeachOutcome>;
+  /** The ids of the requests heard lately (their conversation rows' `heardId`), for "That's not what I said". */
+  voiceHeard(): Promise<number[]>;
+  /** The user retyped what they meant for the request heard as `id`: what happened (VoiceTeachOutcome). */
+  teachWords(id: number, meant: string): Promise<VoiceTeachOutcome>;
   /** The corrections learnt, and forgetting one (by its place) or all. */
   voiceWords(): Promise<VoiceWord[]>;
   onVoiceWords(fn: (words: VoiceWord[]) => void): () => void;
@@ -343,6 +345,8 @@ export interface AskContext {
 
 export interface EmberAskApi {
   ask(text: string): void;
+  /** One of Ember's suggestions chosen (AskContext.suggestions): main sends it as the user's choice of Ember's words. */
+  askSuggestion?(text: string): void;
   close(): void;
   onContext(fn: (c: AskContext) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */

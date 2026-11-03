@@ -1551,6 +1551,20 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.stop();
   });
 
+  it("one of Ember's suggestions the user chose is never their own words for commands, and not voice either (review of #145)", async () => {
+    const { host, specs, tool } = await withTasks();
+    await host.ask("delete the build folder", mail, undefined, { suggested: true });
+    await tool("start_task")({ goal: "delete the build folder" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    // No command words of the user's (no announce-with-Stop for a dangerous command), and the card doesn't say "by voice".
+    expect(specs[0]).toMatchObject({ userWords: "delete the build folder", commandWords: "", typedOnly: true });
+    for (const t of host.tasks!.list()) host.tasks!.cancel(t.id);
+    // A request Ember heard carries its id into the conversation from the start ("That's not what I said" finds its row).
+    await host.ask("open the notes", mail, undefined, { heardId: 7 });
+    expect(host.getTranscript().filter(e => e.who === "you").at(-1)).toMatchObject({ text: "open the notes", heardId: 7 });
+    await host.stop();
+  });
+
   it("a task started by the user's answer to Ember's question carries the request it answers too; a request of its own doesn't (W10-2)", async () => {
     const { host, specs, session, tool } = await withTasks();
     const say = (text: string) => { session.emit("assistant.message_delta", { deltaContent: text }); session.emit("assistant.message", { content: text }); session.emit("session.idle", {}); };

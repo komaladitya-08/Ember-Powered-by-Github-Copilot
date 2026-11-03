@@ -6,7 +6,7 @@
 
 import type { VoiceStatus, VoiceWord } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
-import { PERSONAL_TEXT, forgetWordLabel, learntText, teachOutcomeText, wordRowText } from "./copy";
+import { PERSONAL_TEXT, forgetWordLabel, personalView, teachOutcomeText, wordRowText } from "./copy";
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -51,14 +51,16 @@ export function personalSettings(s: Settings): void {
   ($("suggest-on") as HTMLInputElement).checked = s.voice.suggest;
 }
 
-/** Voice Match's state: the learning row and Reset show once it knows the voice (Reset only once it learnt something). */
+/**
+ * Voice Match's state: the learning row shows once it knows the voice; Reset to my enrolment only while it is on and its
+ * model is in, and it learnt something (personalView).
+ */
 export function personalMatch(v: VoiceStatus | null, matchHidden: boolean): void {
-  const m = v?.match;
-  const enrolled = !!m?.enrolled && !m.enrolling && !matchHidden;
-  $("match-learn-row").hidden = !enrolled;
-  $("match-learnt").textContent = enrolled ? learntText(m?.learnt ?? 0) : "";
-  ($("match-learnt") as HTMLElement).hidden = !enrolled || !(m?.learnt ?? 0);
-  $("match-reset").hidden = !enrolled || !(m?.learnt ?? 0);
+  const view = personalView(v?.match, matchHidden);
+  $("match-learn-row").hidden = !view.learnRow;
+  $("match-learnt").textContent = view.learnt;
+  ($("match-learnt") as HTMLElement).hidden = !view.learnt;
+  $("match-reset").hidden = !view.reset;
 }
 
 /**
@@ -67,20 +69,21 @@ export function personalMatch(v: VoiceStatus | null, matchHidden: boolean): void
  */
 export function markHeard(rows: HTMLElement): void {
   void window.ember.voiceHeard().then(heard => {
-    const said = new Set(heard);
-    for (const li of rows.querySelectorAll<HTMLLIElement>("li.you")) {
-      const p = li.querySelector("p");
-      const text = p?.textContent ?? "";
-      if (!said.has(text) || li.querySelector(".not-said")) continue;
+    const ids = new Set(heard);
+    // By the row's own id (TranscriptEntry.heardId), never its words: the same words typed later aren't "heard".
+    for (const li of rows.querySelectorAll<HTMLLIElement>("li.you[data-heard-id]")) {
+      const id = Number(li.dataset.heardId);
+      if (!ids.has(id) || li.querySelector(".not-said")) continue;
+      const text = li.querySelector("p")?.textContent ?? "";
       const btn = Object.assign(document.createElement("button"), { type: "button", className: "link not-said", textContent: PERSONAL_TEXT.notSaid });
-      btn.addEventListener("click", () => teachForm(li, text, btn));
+      btn.addEventListener("click", () => teachForm(li, id, text, btn));
       li.append(btn);
     }
   }, () => { /* nothing heard to mark */ });
 }
 
 let formN = 0;
-function teachForm(li: HTMLLIElement, shown: string, opener: HTMLButtonElement): void {
+function teachForm(li: HTMLLIElement, heardId: number, shown: string, opener: HTMLButtonElement): void {
   if (li.querySelector("form.teach")) return;
   opener.hidden = true;
   const id = `teach-${++formN}`;
@@ -98,7 +101,7 @@ function teachForm(li: HTMLLIElement, shown: string, opener: HTMLButtonElement):
     e.preventDefault();
     const meant = input.value.trim();
     if (!meant) return;
-    void window.ember.teachWords(shown, meant).then(r => {
+    void window.ember.teachWords(heardId, meant).then(r => {
       form.replaceChildren(note);
       note.textContent = teachOutcomeText(r.outcome, r.word?.meant ?? meant);
       if (r.outcome === "learnt") opener.remove(); else opener.hidden = false;

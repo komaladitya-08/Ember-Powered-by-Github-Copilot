@@ -7,7 +7,8 @@
  *
  * It corrects only when it is sure: a near-miss that sounds and reads like one entry (phonetic.ts `soundsLike` at
  * FUZZY_MIN or more) clearly ahead of any other, never a common word on its own, never digits. A request that is about
- * something risky (sending, deleting, paying…: policy's own words) is left as heard but for Ember's name, and a
+ * something risky (sending, deleting, paying…: policy's own words) or that addresses someone (message, tell, call,
+ * invite…: ADDRESSES, where a corrected name would change who gets it) is left as heard but for Ember's name, and a
  * correction that would make a request risky is undone whole: policy and the conversation get the raw words then.
  * Pure: main passes the lexicon and the risk test, and logs what changed as counts only (never the words).
  */
@@ -35,8 +36,11 @@ export interface Corrected {
   raw: string;
   /** Corrections made, by source (counts only: what the log says). */
   counts: Partial<Record<LexiconSource, number>>;
-  /** Left as heard: the request is about something risky ("risky"), or a correction would have made it so ("newly-risky"). */
-  held?: "risky" | "newly-risky";
+  /**
+   * Left as heard: the request is about something risky ("risky"), addresses someone ("addressed"), or a correction
+   * would have made it risky ("newly-risky").
+   */
+  held?: "risky" | "addressed" | "newly-risky";
 }
 
 /**
@@ -67,6 +71,12 @@ time today tomorrow morning evening afternoon week month year minute minutes hou
 calendar meeting weather news home work office desk desktop computer phone app apps program programs browser web site link
 new old other another this that those one two three four five six seven eight nine ten
 fire fox code team teams chrome edge word excel outlook mail maps clock clocks photo calculator terminal`.split(/\s+/).filter(Boolean));
+
+/**
+ * Words that address someone or send something to them: a corrected name there would change who gets it ("Message Pria"
+ * is not "Message Priya" unless the user says so). Policy's risky words don't all cover these ("tell", "call", "text").
+ */
+export const ADDRESSES = /\b(e-?mail(?:ed|ing|s)?|mail(?:ed|ing|s)?|message(?:d|s)?|messaging|text(?:ed|ing|s)?|tell(?:s|ing)?|told|dm(?:s|ed)?|write\s+(?:to|back)|writ(?:e|ing)\s+an?\s+(?:email|message|note)|call(?:s|ed|ing)?|ring|phone|invite(?:d|s)?|inviting|repl(?:y|ies|ied|ying)|respond|answer|send(?:s|ing)?|sent|forward(?:ed|ing|s)?|share(?:d|s)?|sharing|ping(?:ed|s)?|cc|bcc|contact|notify|chat\s+with|meet(?:ing)?\s+with)\b/i;
 
 /** Ember's name as the recogniser writes it at the start of a request (engine.ts takes these for the wake already). */
 const NAME_START = /^(\W*(?:(?:hey|hi|ok|okay|oh)[\s,.!]+)?)(amber|emma|emmer|umber|anber|embre|ember)\b(?!['’]s\b)/i;
@@ -115,11 +125,14 @@ export function correctTranscript(raw: string, lex: Lexicon, risky: (words: stri
   const name = NAME_START.exec(raw);
   if (name && name[2] !== "Ember") { text = raw.slice(0, name[1].length) + "Ember" + raw.slice(name[0].length); count("name"); }
   if (risky(raw)) return { text, raw, counts, held: "risky" };
+  if (ADDRESSES.test(raw)) return { text, raw, counts, held: "addressed" };
 
   const { lead, list } = tokens(text);
   const out: Token[] = [];
   const entries = prepared(lex.entries);
-  const learned = lex.learned.map(l => ({ heard: key(l.heard.split(/\s+/).filter(Boolean)), meant: l.meant.trim(), n: l.heard.split(/\s+/).filter(Boolean).length })).filter(l => l.n > 0 && l.n <= 4 && l.meant);
+  // (A correction kept before the rules below, or written by hand, is held to them too.)
+  const learned = lex.learned.filter(l => learnable(l.heard.split(/\s+/), l.meant.split(/\s+/)))
+    .map(l => ({ heard: key(l.heard.split(/\s+/).filter(Boolean)), meant: l.meant.trim(), n: l.heard.split(/\s+/).filter(Boolean).length })).filter(l => l.n > 0 && l.n <= 4 && l.meant);
   let i = 0;
   while (i < list.length) {
     // A run may only cover words with nothing but spaces between them (no punctuation inside a name).
@@ -191,10 +204,30 @@ export function memoryNames(facts: readonly { text: string; source: string }[], 
 }
 
 /**
+ * Words a request turns on: changing one changes what is asked ("open" → "close", "allow" → "deny"), which no
+ * mishearing correction may do.
+ */
+export const REQUEST_VERBS = new Set(`open close show hide start stop quit exit launch run play pause resume allow deny accept decline approve reject
+turn switch enable disable add remove delete erase clear save send move copy paste cut undo redo read write call message
+email mail reply forward install uninstall update lock unlock mute unmute yes no not dont don't cancel keep go do make
+create set reset find search buy pay order book sign log share post submit print rename archive empty`.split(/\s+/).filter(Boolean));
+
+/**
+ * Whether a correction may be kept and used: the heard and meant words aren't all common ones (a mishearing is of a
+ * name or an unusual word, never "open" for "close"), and no verb a request turns on is among them.
+ */
+export function learnable(heard: readonly string[], meant: readonly string[]): boolean {
+  const h = heard.map(letters).filter(Boolean), m = meant.map(letters).filter(Boolean);
+  if (!h.length || !m.length) return false;
+  if ([...h, ...m].every(w => COMMON.has(w))) return false;
+  return ![...h, ...m].some(w => REQUEST_VERBS.has(w));
+}
+
+/**
  * What the user taught by retyping a request ("That's not what I said"): the words that differ between what Ember
  * heard and what they meant, as one correction (at most four words heard, six meant), or null when nothing does, too
- * much does (a different request, not a mishearing), or the meant words are risky where the heard ones weren't (a
- * correction must never teach Ember to hear a risky request).
+ * much does (a different request, not a mishearing), the meant words are risky where the heard ones weren't (a
+ * correction must never teach Ember to hear a risky request), or it isn't `learnable` (common words, a verb changed).
  */
 export function learnFrom(heard: string, meant: string, risky: (words: string) => boolean): LearnedCorrection | null {
   const a = tokens(heard).list.map(t => t.word), b = tokens(meant).list.map(t => t.word);
@@ -207,6 +240,6 @@ export function learnFrom(heard: string, meant: string, risky: (words: string) =
   // More than half the request changed: it's another request, not a word misheard.
   if (h.length > Math.max(2, a.length / 2)) return null;
   const hw = h.join(" "), mw = m.join(" ");
-  if (letters(hw).length < 2 || (risky(mw) && !risky(hw))) return null;
+  if (letters(hw).length < 2 || (risky(mw) && !risky(hw)) || !learnable(h, m)) return null;
   return { heard: hw.toLowerCase(), meant: mw };
 }

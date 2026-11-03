@@ -20,7 +20,10 @@ export interface PredictInput {
   spoken: boolean;
   /** A task the request started, when one did, and how it went. */
   task?: { status: "done" | "failed" | "stopped" | "running"; app?: string } | null;
-  /** This session's requests, oldest first (in memory only). */
+  /**
+   * This session's requests, oldest first (in memory only), without any heard where Ember can't tell the user from its
+   * speakers or chosen from a suggestion (PersonalVoice keeps those out).
+   */
   history: readonly string[];
   /** The hour now (0–23). */
   hour: number;
@@ -41,7 +44,13 @@ const said = (s: string) => s.toLowerCase().replace(/[’]/g, "'");
 /** The predictions for `p`, best first. `risky` says whether words are about something risky (policy's isRiskyLabel). */
 export function predictNext(p: PredictInput, risky: (words: string) => boolean): Suggestion[] {
   const out: string[] = [];
-  const add = (t: string) => { if (t && t.length <= MAX_CHARS && !out.some(o => o.toLowerCase() === t.toLowerCase())) out.push(t); };
+  /** The ones built from the last request itself (only those may be risky, when it was: "Send it to Priya"). */
+  const fromRequest = new Set<string>();
+  const add = (t: string, own = false) => {
+    if (!t || t.length > MAX_CHARS || out.some(o => o.toLowerCase() === t.toLowerCase())) return;
+    out.push(t);
+    if (own) fromRequest.add(t);
+  };
   const req = said(p.lastRequest), reply = said(p.lastReply);
   const asked = /\?\s*$/.test(p.lastReply.trim());
 
@@ -61,11 +70,13 @@ export function predictNext(p: PredictInput, risky: (words: string) => boolean):
   // Sending, only after the user's own words were about sending: to someone they told Ember about.
   if (/\b(send|email|mail|message|forward|share)\b/.test(req) && risky(p.lastRequest)) {
     const who = p.people.find(n => !req.includes(said(n)) && /^[\p{Lu}]/u.test(n));
-    if (who) add(`Send it to ${who}`);
+    if (who) add(`Send it to ${who}`, true);
   }
   // Said twice this session: likely again.
   const counts = new Map<string, { n: number; text: string }>();
   for (const h of p.history) {
+    // A risky request is never repeated on a guess, whatever was asked last.
+    if (risky(h)) continue;
     const k = said(h).trim().replace(/[.!?]+$/, "");
     if (k.length < 4 || k === req.trim().replace(/[.!?]+$/, "")) continue;
     const c = counts.get(k) ?? { n: 0, text: h.trim().replace(/[.!?]+$/, "") };
@@ -79,16 +90,15 @@ export function predictNext(p: PredictInput, risky: (words: string) => boolean):
     else if (p.hour >= 17 && p.hour < 23) add("Turn on night light");
     if (!reply.includes("remind")) add("Remind me in an hour");
   }
-  // Never a risky step the user didn't just ask about.
+  // Never a risky step, but one built from the user's own risky request just now.
   const userRisky = risky(p.lastRequest);
-  return out.filter(t => userRisky || !risky(t)).slice(0, MAX_SUGGESTIONS).map(text => ({ text }));
+  return out.filter(t => !risky(t) || (userRisky && fromRequest.has(t))).slice(0, MAX_SUGGESTIONS).map(text => ({ text }));
 }
 
 /**
- * How long the follow-up window stays open after a spoken reply (ms): VoiceService's usual 8 s, and 12 s when a
- * follow-up is likely (Ember asked something, or a task finished and there's a natural next step).
+ * How long the follow-up window stays open after a spoken reply (ms): VoiceService's usual 8 s, and 12 s when Ember
+ * asked something (it expects an answer, as the microphone's consent text says).
  */
-export function followUpMs(p: Pick<PredictInput, "lastReply" | "task">, suggestions: readonly Suggestion[]): number {
-  const asked = /\?\s*$/.test(p.lastReply.trim());
-  return asked || (p.task?.status === "done" && suggestions.length > 0) ? 12_000 : 8000;
+export function followUpMs(p: Pick<PredictInput, "lastReply">): number {
+  return /\?\s*$/.test(p.lastReply.trim()) ? 12_000 : 8000;
 }

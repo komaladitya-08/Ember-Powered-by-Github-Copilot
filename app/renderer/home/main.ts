@@ -782,6 +782,8 @@ function conversationRow(e: Entry): HTMLLIElement {
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
   const t = Object.assign(document.createElement("time"), { textContent: time(e.t), dateTime: e.t });
   const text = Object.assign(document.createElement("p"), { textContent: e.text });
+  // A request Ember heard: "That's not what I said" finds its row by this (personal.ts markHeard).
+  if (e.heardId) li.dataset.heardId = String(e.heardId);
   li.append(who, t, text);
   return li;
 }

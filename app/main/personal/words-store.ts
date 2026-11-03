@@ -1,7 +1,8 @@
 /**
  * The corrections the user taught Ember ("That's not what I said", Settings › Voice › Learn my words): words.json in
  * Ember's data folder, readable by the user alone, written whole. What Ember heard and what was meant, a few words each,
- * and when: never audio, never a whole request. Forget removes one, Forget all (and Forget my voice) the file.
+ * and when: never audio, never a whole request. Forget removes one; Forget all words and Forget my voice
+ * (PersonalVoice.forgetVoice) delete the file. An entry that doesn't read (changed by hand) is dropped, the rest kept.
  */
 
 import fs from "node:fs";
@@ -14,10 +15,8 @@ export const MAX_WORDS = 100;
 
 export interface LearnedWord extends LearnedCorrection { at: string }
 
-const FileSchema = z.object({
-  version: z.literal(1),
-  words: z.array(z.object({ heard: z.string().min(1).max(80), meant: z.string().min(1).max(120), at: z.string().max(40) })).max(MAX_WORDS),
-});
+const WordSchema = z.object({ heard: z.string().min(1).max(80), meant: z.string().min(1).max(120), at: z.string().max(40) });
+const FileSchema = z.object({ version: z.literal(1), words: z.array(z.unknown()) });
 
 export interface WordsStore {
   list(): LearnedWord[];
@@ -33,7 +32,9 @@ export function wordsStore(dir: string): WordsStore {
   const read = (): LearnedWord[] => {
     try {
       const v = FileSchema.safeParse(JSON.parse(fs.readFileSync(file, "utf8")));
-      return v.success ? v.data.words : [];
+      if (!v.success) return [];
+      // Each entry on its own: one that doesn't read is left out, and the others kept (and written back without it).
+      return v.data.words.flatMap(w => { const r = WordSchema.safeParse(w); return r.success ? [{ heard: r.data.heard, meant: r.data.meant, at: r.data.at }] : []; }).slice(-MAX_WORDS);
     } catch {
       return [];
     }

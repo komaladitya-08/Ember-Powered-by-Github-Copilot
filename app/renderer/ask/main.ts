@@ -101,7 +101,7 @@ function showSuggestions(list: string[]): void {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = text;
-    b.addEventListener("click", () => { window.emberAsk.ask(text); input.value = ""; fit(); });
+    b.addEventListener("click", () => { (window.emberAsk.askSuggestion ?? window.emberAsk.ask)(text); input.value = ""; fit(); });
     suggest.appendChild(b);
   }
   syncSuggestions();

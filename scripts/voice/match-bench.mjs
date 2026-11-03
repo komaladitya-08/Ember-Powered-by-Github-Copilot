@@ -98,26 +98,27 @@ if (cacheFile && !cached) fs.writeFileSync(cacheFile, JSON.stringify(data.map(d 
 const LEARN = 12;
 
 /** The gate as the voice process runs it (match.ts with adapt.ts): the learnt print's threshold, and the enrolment's floor. */
-const accepts = (st, p, limits) => (limits?.naive ? m.similarity(p, st.print) >= T : m.gateMatches(p, st.print, m.adaptedThreshold(st.clips.length), st.clips.length ? st.anchor : null));
+/** `strict`: the `verified` path (what may answer a question by voice, and what is learnt from): the enrolment at its own threshold too. */
+const accepts = (st, p, limits, strict = false) => (limits?.naive ? m.similarity(p, st.print) >= T : m.gateMatches(p, st.print, m.adaptedThreshold(st.clips.length), st.clips.length ? st.anchor : null, strict));
 /** The owner's state after their requests (`which`: clean or moved) went through the gate and adapt(). */
 function learnt(o, which, limits) {
   let st = m.fromEnrolment(o.anchor);
   let learntN = 0;
   for (const p of o[which].slice(0, LEARN)) {
-    if (!accepts(st, p, limits)) continue; // turned away: nothing is learnt
+    if (!accepts(st, p, limits, true)) continue; // not verified: nothing is learnt
     const r = m.adapt(st, p, m.similarity(p, st.print), limits);
     st = r.state;
     if (r.outcome === "learnt") learntN++;
   }
   return { st, learntN };
 }
-function rates(which, after, limits) {
+function rates(which, after, limits, strict = false) {
   let fr = 0, frN = 0, fa = 0, faN = 0, learntN = 0, steps = 0;
   for (const o of data) {
     const { st, learntN: k } = after ? learnt(o, which, limits) : { st: m.fromEnrolment(o.anchor), learntN: 0 };
     learntN += k; steps += LEARN;
-    for (const t of o[which].slice(LEARN)) { frN++; if (!accepts(st, t, limits)) fr++; }
-    for (const x of data) if (x !== o) for (const t of x[which].slice(LEARN)) { faN++; if (accepts(st, t, limits)) fa++; }
+    for (const t of o[which].slice(LEARN)) { frN++; if (!accepts(st, t, limits, strict)) fr++; }
+    for (const x of data) if (x !== o) for (const t of x[which].slice(LEARN)) { faN++; if (accepts(st, t, limits, strict)) fa++; }
   }
   return { frr: fr / frN, far: fa / faN, frN, faN, learnt: learntN / steps };
 }
@@ -126,8 +127,8 @@ const NAIVE = { naive: true, margin: 0, anchorMatch: -1, maxStep: 2, anchorMin: 
 const pct = x => `${(x * 100).toFixed(2)} %`;
 const results = {
   speakers: data.length,
-  clean: { before: rates("clean", false), after: rates("clean", true), naive: rates("clean", true, NAIVE) },
-  otherMic: { before: rates("moved", false), after: rates("moved", true), naive: rates("moved", true, NAIVE) },
+  clean: { before: rates("clean", false), after: rates("clean", true), verified: rates("clean", true, undefined, true), naive: rates("clean", true, NAIVE) },
+  otherMic: { before: rates("moved", false), after: rates("moved", true), verified: rates("moved", true, undefined, true), naive: rates("moved", true, NAIVE) },
 };
 
 // How often a sample is good enough to learn from: the owner's requests at the margin, and others' that pass the gate.
@@ -150,7 +151,7 @@ results.samples = { ownAtMargin: ownMargin / ownN, otherAccepted: otherPass / ot
  * step or anchor limit.
  */
 function attack(at, rounds, naive) {
-  let let_in = 0, tried = 0, moved = 0;
+  let let_in = 0, verifiedIn = 0, tried = 0, moved = 0;
   const limits = naive ? NAIVE : undefined;
   for (const o of data) {
     for (const a of data) {
@@ -160,14 +161,14 @@ function attack(at, rounds, naive) {
       for (let r = 0; r < rounds; r++) {
         // `at` above the gate's own threshold for the print now (which rises as it learns).
         const sample = m.towards(st.print, voice, Math.min(1, (naive ? T : m.adaptedThreshold(st.clips.length)) + at));
-        if (!accepts(st, sample, limits)) continue; // the gate turned it away
+        if (!accepts(st, sample, limits, true)) continue; // not verified: nothing is learnt
         st = m.adapt(st, sample, m.similarity(sample, st.print), limits).state;
       }
       moved += 1 - m.similarity(st.print, o.anchor);
-      for (const t of a.clean.slice(LEARN)) { tried++; if (accepts(st, t, limits)) let_in++; }
+      for (const t of a.clean.slice(LEARN)) { tried++; if (accepts(st, t, limits)) let_in++; if (accepts(st, t, limits, true)) verifiedIn++; }
     }
   }
-  return { far: let_in / tried, tried, drift: moved / (data.length * (data.length - 1)) };
+  return { far: let_in / tried, verifiedFar: verifiedIn / tried, tried, drift: moved / (data.length * (data.length - 1)) };
 }
 const ROUNDS = 200;
 results.drift = {
@@ -178,15 +179,15 @@ results.drift = {
   overMargin: { guarded: attack(m.ADAPT.margin + 0.005, ROUNDS, false), naive: attack(m.ADAPT.margin + 0.005, ROUNDS, true) },
 };
 
-console.log(`Voice Match on ${results.speakers} speakers (threshold ${T}, margin ${m.ADAPT.margin}, raise ${m.ADAPT.raise}, floor ${m.ADAPT.anchorFloor}, ${LEARN} requests learnt from, 8 tested each)`);
+console.log(`Voice Match on ${results.speakers} speakers (threshold ${T}, margin ${m.ADAPT.margin}, raise ${m.ADAPT.raise}, floor ${m.ADAPT.anchorFloor} heard / ${Math.max(m.ADAPT.anchorFloor, m.ADAPT.verifiedFloor)} verified, ${LEARN} requests learnt from, 8 tested each)`);
 for (const [k, label] of [["clean", "same room"], ["otherMic", "another microphone"]]) {
   const r = results[k];
-  console.log(`  ${label.padEnd(20)} before: FRR ${pct(r.before.frr)}  FAR ${pct(r.before.far)}   after: FRR ${pct(r.after.frr)}  FAR ${pct(r.after.far)}  (learnt from ${pct(r.after.learnt)} of requests)   no limits: FRR ${pct(r.naive.frr)}  FAR ${pct(r.naive.far)}`);
+  console.log(`  ${label.padEnd(20)} before: FRR ${pct(r.before.frr)}  FAR ${pct(r.before.far)}   after (heard): FRR ${pct(r.after.frr)}  FAR ${pct(r.after.far)}   after (verified): FRR ${pct(r.verified.frr)}  FAR ${pct(r.verified.far)}  (learnt from ${pct(r.after.learnt)} of requests)   no limits: FRR ${pct(r.naive.frr)}  FAR ${pct(r.naive.far)}`);
 }
 console.log(`  samples: own at the margin ${pct(results.samples.ownAtMargin)}, others let in ${pct(results.samples.otherAccepted)}, others at the margin ${pct(results.samples.otherAtMargin)} (${results.samples.otherAtMarginN} of ${results.samples.otherN})`);
 console.log(`  drift attack (${ROUNDS} crafted samples per pair, attacker's real requests then tried; baseline FAR ${pct(results.drift.baseline)}):`);
 for (const k of ["underThreshold", "atThreshold", "overMargin"]) {
   const d = results.drift[k];
-  console.log(`    ${k.padEnd(15)} guarded FAR ${pct(d.guarded.far)} (drift ${d.guarded.drift.toFixed(3)})   naive FAR ${pct(d.naive.far)} (drift ${d.naive.drift.toFixed(3)})`);
+  console.log(`    ${k.padEnd(15)} guarded: heard ${pct(d.guarded.far)}, verified ${pct(d.guarded.verifiedFar)} (drift ${d.guarded.drift.toFixed(3)})   naive FAR ${pct(d.naive.far)} (drift ${d.naive.drift.toFixed(3)})`);
 }
 console.log(JSON.stringify(results));
