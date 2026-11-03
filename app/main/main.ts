@@ -52,7 +52,7 @@ import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
-import { Confirmer, guardWhileAsking } from "./agent/confirm";
+import { Confirmer, afterAnswerPatch, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
@@ -2096,6 +2096,12 @@ function start(): void {
       panelReady: n => targets?.panelReady(n) ?? false,
       // And how to reach that window from the keyboard (the bubble's buttons are mouse-only).
       panelHint: p => targets?.panelHint(p),
+      // An answer nobody replaces (a task in the corner ends on its card) goes after its moment, or what the question
+      // covered shows again: never "Thanks! Carrying on." for good after the task is done.
+      afterAnswer: shown => {
+        const patch = afterAnswerPatch(lastState.bubble, shown, () => agent?.afterAnswer() ?? false);
+        if (patch) setState(patch);
+      },
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);

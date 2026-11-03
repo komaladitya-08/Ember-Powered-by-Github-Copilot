@@ -10,6 +10,7 @@ import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { WHOLE_KEY_HINT, WHOLE_KEY_SAY, WHOLE_UNREAD_SAID, plainMarkdown } from "@ember/bubble";
 import { ANNOUNCE_MS } from "../commands/flow";
+import { ANSWER_MS } from "./confirm";
 import { announcement, firstPerson, keyboardRoute } from "../../renderer/overlay/target-copy";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
@@ -184,7 +185,7 @@ export function forBubble(text: string): string {
 }
 
 /** How long a question's answer ("Okay, I won't.") stays before what waited behind the question shows. */
-const ACK_MS = 1500;
+const ACK_MS = ANSWER_MS;
 /** A task whose work is in the bubble keeps it while it writes; this long without a word, another task's work may show. */
 const QUIET_MS = 15_000;
 
@@ -223,6 +224,8 @@ export class BubbleOwner {
   private showing: Presenter[] = [];
   /** A question was answered just now: its answer stays a moment before anything replaces it. */
   private acking = false;
+  /** Ends `acking` (afterAnswer ends it at once). */
+  private ackTimer: ReturnType<typeof setTimeout> | null = null;
   private waitingForAnswer = false;
   /** The task whose work the bubble shows, and when it last wrote. */
   private stage: { p: Presenter; at: number } | null = null;
@@ -333,6 +336,19 @@ export class BubbleOwner {
     return [...(h ? [h] : []), ...latest.filter(p => p.kind !== "progress"), ...latest].some(p => p.reshow());
   }
 
+  /**
+   * A question's answer has had its moment and no question followed (the Confirmer's afterAnswer, through main): what
+   * the question held off or covered shows now. Returns whether the bubble is someone's (a question is up, or something
+   * showed again); false: nothing is left to show, and main empties the bubble, which no presenter would ever take
+   * down (afterAnswerPatch).
+   */
+  afterAnswer(): boolean {
+    if (this.question?.up()) return true;
+    if (this.ackTimer) { this.timers.clear(this.ackTimer); this.ackTimer = null; }
+    this.acking = false;
+    return this.free();
+  }
+
   /** A question is up, or was answered just now. What it holds off shows after it (free()). */
   private questionUp(): boolean {
     if (this.acking) return true;
@@ -342,7 +358,7 @@ export class BubbleOwner {
     void this.question.answered().then(() => {
       this.waitingForAnswer = false;
       this.acking = true;
-      this.timers.set(() => { this.acking = false; this.free(); }, ACK_MS);
+      this.ackTimer = this.timers.set(() => { this.ackTimer = null; this.acking = false; this.free(); }, ACK_MS);
     });
     return true;
   }
@@ -1325,7 +1341,9 @@ export class Presenter {
           try { scale = Number(this.textScale()); } catch { /* the usual size */ }
           const more = cutShort(full, scale);
           // A task this turn started works on: the answer says where its work shows (its card), so the two agree.
-          this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
+          // An answer that came whole (no deltas: a model service that doesn't stream) is an answer too, not the step
+          // before it: "Working · Thinking…" with the busy ring stayed over it until it went (the owner's report of 2026-11-03).
+          this.apply({ talking: false, bubble: { ...this.state.bubble, visible: true, mood: "idle", title: this.name(), thought: clip(full), streaming: false,
             step: more ? keyboardRoute(this.settingsKey, "Conversation") : this.startedTask ? TASK_IN_CORNER : null,
             actions: more ? [{ id: "ui:more", label: "Read all" }] : [] } });
         }
@@ -1358,6 +1376,17 @@ export class Presenter {
           // The turn ended (its request is offered above): a later problem never offers it again.
           this.turnOn = false;
           this.turnAsked = null;
+          break;
+        }
+        // The conversation's turn ran its steps and said nothing (start_task alone, a task's card says the rest): its
+        // "Working" bubble has nothing to read, so it goes now rather than keep the busy ring for its reading time.
+        // (Not while a newer request's "Thinking…" is up. Held off meanwhile, it never shows.)
+        const mood = this.state.bubble.mood;
+        if (!aborted && this.work === "reply" && this.asked === null && this.state.bubble.visible && (mood === "acting" || mood === "thinking")) {
+          this.answering = false;
+          this.turnOn = false;
+          this.turnAsked = null;
+          this.hide();
           break;
         }
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
