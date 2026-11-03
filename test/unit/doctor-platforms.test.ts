@@ -52,6 +52,24 @@ describe("ember doctor's Speech models row", () => {
   });
 });
 
+describe("ember doctor's Speech row (which build runs speech on Linux)", () => {
+  it("says speech runs natively on this computer", () => {
+    const checks = doctorChecks(base({ speechBackend: { backend: "native", why: "sherpa-onnx's C API" } }));
+    expect(byId(checks, "speech-engine")).toEqual({ id: "speech-engine", status: "ok", label: "Speech", detail: "On this computer (native)." });
+    expect(formatDoctor(checks)).toMatch(/^ok {4}Speech {2,}On this computer \(native\)\.$/m);
+  });
+
+  it("says it runs on WebAssembly, and why, without warning: it still works", () => {
+    expect(byId(doctorChecks(base({ speechBackend: { backend: "wasm", why: "this processor lacks avx2" } })), "speech-engine"))
+      .toEqual({ id: "speech-engine", status: "ok", label: "Speech", detail: "On this computer (WebAssembly: this processor lacks avx2)." });
+  });
+
+  it("is left out where the Node addon runs speech (Windows, macOS), so their report is unchanged", () => {
+    expect(byId(doctorChecks(windows({ speechBackend: null })), "speech-engine")).toBeUndefined();
+    expect(byId(doctorChecks(macos()), "speech-engine")).toBeUndefined();
+  });
+});
+
 describe("ember doctor on Linux", () => {
   it("is exactly today's report when the platform's Linux values are passed", () => {
     const today = doctorChecks(base());

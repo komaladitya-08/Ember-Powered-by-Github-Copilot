@@ -55,10 +55,17 @@ export interface Layout {
   signing: null | "adhoc";
   /** "beside": dist/package/voice-models (the RPM sub-package); "inside": resources/voice-models, with --with-models. */
   voiceModels: "beside" | "inside";
+  /**
+   * Linux: the folder under resourcesDir that holds sherpa-onnx's C API libraries for native speech (VOICE_NATIVE_DIR);
+   * null where speech runs on the Node addon (Windows, macOS).
+   */
+  voiceNative: string | null;
 }
 
 export declare const TARGETS: string[];
 export declare const PLATFORM_FAMILIES: string[];
+/** The folder under the Linux resources folder holding sherpa-onnx's C API libraries. */
+export declare const VOICE_NATIVE_DIR: string;
 export declare function layoutFor(platform: string, arch: string): Layout;
 export declare function artifactNames(layout: Layout, version: string): string[];
 export declare function packageNameOf(dir: string): string | null;

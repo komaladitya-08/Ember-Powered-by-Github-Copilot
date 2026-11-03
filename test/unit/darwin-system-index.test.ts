@@ -77,6 +77,9 @@ describe("darwinSystem", () => {
     expect(s.voice.speakerMonitor).toBe(false);
     expect(s.voice.bundledModelDirs("/Applications/Ember.app/Contents/Resources"))
       .toEqual(["/Applications/Ember.app/Contents/Resources/voice-models", "/Library/Application Support/Ember/voice-models"]);
+    // Speech runs on the Node addon here, as before: no C API folder; the natural voice may be turned on.
+    expect(s.voice.nativeSpeechDir("/Applications/Ember.app/Contents/Resources")).toBeNull();
+    expect(s.voice.naturalVoice).toBe(true);
   });
 
   it("states the macOS lifecycle facts", async () => {

@@ -56,6 +56,11 @@ the work in your real apps where you can watch, without taking over your mouse. 
   starts in about a third of a second (measured on CI: 252 ms on Windows, 525 ms on a Mac, against 1.3–1.9 s). Should
   the addon not load, speech runs on WebAssembly as before. Settings › **Voice** › **Use a more natural voice** (off by
   default) downloads Kokoro (350 MB) and speaks with it where the computer is fast enough for it.
+- **Faster speech on Linux too**: the RPM and the AppImage carry sherpa-onnx's own native libraries (sherpa-onnx and
+  ONNX Runtime, 32 MB installed, about 9 MB of each download) and run listening and Ember's voice on them: a spoken
+  reply starts about twice as fast (first audio 352 ms after the answer's first words, against 733 ms on WebAssembly;
+  p95 626 against 1,280 ms) and hearing a request takes about a third of the CPU. Nothing more is downloaded. Where
+  they can't run, speech runs on WebAssembly as before; `ember doctor` says which under **Speech**.
 - **Voice Match**: Settings › **Voice** › **Answer only my voice** teaches Ember your voice from four short phrases,
   and from then on it answers only you: a request in another voice (someone else in the room, a call, a video) is
   ignored. "Ember, stop" still works for anyone. Your voiceprint (256 numbers that describe how your voice sounds; it
@@ -538,7 +543,9 @@ allows them.
   AppImage: Ember starts without Chromium's sandbox where unprivileged user namespaces are off (Debian's
   `kernel.unprivileged_userns_clone=0` too), and the setup check warns instead of failing.
 - The packages carry the licence texts for the Copilot SDK, koffi's builds for each platform and sherpa-onnx, whose
-  WebAssembly includes eSpeak NG under GPL-3.0-or-later; the RPM's License tag names GPL-3.0-or-later.
+  WebAssembly includes eSpeak NG under GPL-3.0-or-later; the RPM's License tag names GPL-3.0-or-later. The Linux
+  packages' native speech libraries (`/opt/ember/resources/voice-native`) come with sherpa-onnx's Apache-2.0 licence,
+  ONNX Runtime's MIT licence and notices, and eSpeak NG's, in THIRD_PARTY_NOTICES; they add no RPM dependencies.
 
 #### For organisations
 

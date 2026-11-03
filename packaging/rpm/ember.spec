@@ -1,6 +1,8 @@
 # Built by scripts/package/rpm.sh from the folder scripts/package/stage.mjs makes.
 # Electron and its libraries are prebuilt: no debuginfo, no stripping, and no
-# automatic library dependencies (the list below is explicit and checked in CI).
+# automatic library dependencies (the list below is explicit and checked in CI). The libraries Ember loads
+# itself (koffi's, sharp's, sherpa-onnx's C API in resources/voice-native) neither require nor provide
+# anything: libonnxruntime.so is Ember's own copy, never one for other packages (CI checks rpm -qpR/--provides).
 %global debug_package %{nil}
 %global __os_install_post %{nil}
 %global _build_id_links none
@@ -22,8 +24,10 @@ Summary:        A cursor companion that works visibly in your apps, powered by G
 # BSD-3-Clause, Zlib), zlib-ng (Zlib), freetype (FTL), libpng (libpng-2.0), libtiff (libtiff), fontconfig
 # (HPND-sell-variant), and more under MIT and LGPL-3.0-or-later (its README.md, shipped as %%license).
 # The Inter typeface Ember's windows use is under the SIL Open Font License 1.1 (OFL-1.1).
-# This tag is the one list for every target: the Windows and macOS packages also carry sherpa-onnx's
-# native addon, with Eigen (MPL-2.0) in it (never in the RPM: it needs a newer glibc than RHEL 8's).
+# sherpa-onnx's prebuilt C API (resources/voice-native, native speech loaded with koffi) is Apache-2.0, with
+# Eigen (MPL-2.0), KISS FFT (BSD-3-Clause), piper-phonemize and nlohmann/json (MIT) and eSpeak NG in it, and
+# ONNX Runtime 1.28.2 (MIT) beside it. This tag is the one list for every target: the Windows and macOS
+# packages carry the same in sherpa-onnx's native addon (never in the RPM: it needs a newer glibc than RHEL 8's).
 # The texts are in /opt/ember: THIRD_PARTY_NOTICES, LICENSE, LICENSES.chromium.html. stage.mjs fails if
 # a bundled package's licence, or a library one declares it bundles, is missing here
 # (scripts/package/licences.mjs).
