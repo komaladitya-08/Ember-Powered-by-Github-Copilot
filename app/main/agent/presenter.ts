@@ -10,6 +10,7 @@ import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { WHOLE_KEY_HINT, WHOLE_KEY_SAY, WHOLE_UNREAD_SAID, plainMarkdown } from "@ember/bubble";
 import { ANNOUNCE_MS } from "../commands/flow";
+import { ANSWER_MS } from "./confirm";
 import { announcement, firstPerson, keyboardRoute } from "../../renderer/overlay/target-copy";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
@@ -184,7 +185,7 @@ export function forBubble(text: string): string {
 }
 
 /** How long a question's answer ("Okay, I won't.") stays before what waited behind the question shows. */
-const ACK_MS = 1500;
+const ACK_MS = ANSWER_MS;
 /** A task whose work is in the bubble keeps it while it writes; this long without a word, another task's work may show. */
 const QUIET_MS = 15_000;
 
@@ -223,6 +224,8 @@ export class BubbleOwner {
   private showing: Presenter[] = [];
   /** A question was answered just now: its answer stays a moment before anything replaces it. */
   private acking = false;
+  /** Ends `acking` (afterAnswer ends it at once). */
+  private ackTimer: ReturnType<typeof setTimeout> | null = null;
   private waitingForAnswer = false;
   /** The task whose work the bubble shows, and when it last wrote. */
   private stage: { p: Presenter; at: number } | null = null;
@@ -333,6 +336,19 @@ export class BubbleOwner {
     return [...(h ? [h] : []), ...latest.filter(p => p.kind !== "progress"), ...latest].some(p => p.reshow());
   }
 
+  /**
+   * A question's answer has had its moment and no question followed (the Confirmer's afterAnswer, through main): what
+   * the question held off or covered shows now. Returns whether the bubble is someone's (a question is up, or something
+   * showed again); false: nothing is left to show, and main empties the bubble, which no presenter would ever take
+   * down (afterAnswerPatch).
+   */
+  afterAnswer(): boolean {
+    if (this.question?.up()) return true;
+    if (this.ackTimer) { this.timers.clear(this.ackTimer); this.ackTimer = null; }
+    this.acking = false;
+    return this.free();
+  }
+
   /** A question is up, or was answered just now. What it holds off shows after it (free()). */
   private questionUp(): boolean {
     if (this.acking) return true;
@@ -342,7 +358,7 @@ export class BubbleOwner {
     void this.question.answered().then(() => {
       this.waitingForAnswer = false;
       this.acking = true;
-      this.timers.set(() => { this.acking = false; this.free(); }, ACK_MS);
+      this.ackTimer = this.timers.set(() => { this.ackTimer = null; this.acking = false; this.free(); }, ACK_MS);
     });
     return true;
   }
@@ -621,6 +637,8 @@ export class Presenter {
   private askedOverAnswer = false;
   /** The turn under way has shown words or run a step (one that has neither by its end says so). */
   private produced = false;
+  /** The answer this turn said (onFinalAnswer), before or after its tools: its end shows it, never hides it. */
+  private saidThisTurn = "";
   /** An announcement is up (announce): its Stop's id and the bubble it replaced, put back by endAnnouncement. */
   private beforeAnnounce: { stopId: string; bubble: BubbleState } | null = null;
   /** A notice (post) that stays until it is answered or cleared: it waits its turn again when something covers it. */
@@ -1244,6 +1262,7 @@ export class Presenter {
         this.answering = false;
         this.answer = "";
         this.produced = false;
+        this.saidThisTurn = "";
         this.toolRan = false;
         this.startedTask = false;
         break;
@@ -1314,6 +1333,7 @@ export class Presenter {
           // No words after all (only a tool call came, or a blank answer): nothing is shown or kept as an answer.
           if (!full.trim()) { this.answering = false; this.answer = ""; break; }
           this.produced = true;
+          this.saidThisTurn = full;
           this.onFinalAnswer?.(full);
           // A newer question is owed its turn (asked after this answer's words came, before this message): its
           // "Thinking…" stays, the earlier answer isn't put back under it (it is kept for "Read the last answer").
@@ -1325,7 +1345,9 @@ export class Presenter {
           try { scale = Number(this.textScale()); } catch { /* the usual size */ }
           const more = cutShort(full, scale);
           // A task this turn started works on: the answer says where its work shows (its card), so the two agree.
-          this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
+          // An answer that came whole (no deltas: a model service that doesn't stream) is an answer too, not the step
+          // before it: "Working · Thinking…" with the busy ring stayed over it until it went (the owner's report of 2026-11-03).
+          this.apply({ talking: false, bubble: { ...this.state.bubble, visible: true, mood: "idle", title: this.name(), thought: clip(full), streaming: false,
             step: more ? keyboardRoute(this.settingsKey, "Conversation") : this.startedTask ? TASK_IN_CORNER : null,
             actions: more ? [{ id: "ui:more", label: "Read all" }] : [] } });
         }
@@ -1360,11 +1382,26 @@ export class Presenter {
           this.turnAsked = null;
           break;
         }
+        // The conversation's turn ran its steps and said nothing (start_task alone, a task's card says the rest): its
+        // "Working" bubble has nothing to read, so it goes now rather than keep the busy ring for its reading time.
+        // A turn that said its answer before its tool ("Sure, I'll close Edge.", then start_task) shows that answer as
+        // an answer, not as "Working" (review of PR #139). (Not while a newer request's "Thinking…" is up. Held off
+        // meanwhile, it never shows.)
+        const mood = this.state.bubble.mood;
+        const working = !aborted && this.work === "reply" && this.asked === null && this.state.bubble.visible && (mood === "acting" || mood === "thinking");
+        if (working && !this.saidThisTurn) {
+          this.answering = false;
+          this.turnOn = false;
+          this.turnAsked = null;
+          this.hide();
+          break;
+        }
+        const said = working ? { mood: "idle" as const, title: this.name(), thought: clip(this.saidThisTurn), step: this.startedTask ? TASK_IN_CORNER : null } : {};
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
         const face = aborted ? "neutral" : this.answering ? "happy" : this.state.emotion === "thinking" || this.state.emotion === "focused" ? "neutral" : this.state.emotion;
-        this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...(aborted ? { title: "Stopped", mood: "idle" as const, step: null } : {}) } });
+        this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...said, ...(aborted ? { title: "Stopped", mood: "idle" as const, step: null } : {}) } });
         // Long answers stay up longer (they also have "Read all", and the settings window keeps them).
-        const chars = this.answer.length;
+        const chars = Math.max(this.answer.length, this.saidThisTurn.length);
         this.hideLater(Math.min(30000, 6000 + chars * 50));
         this.answering = false;
         // The request had its turn: a later problem (the runtime stopping meanwhile) doesn't offer to ask it again.

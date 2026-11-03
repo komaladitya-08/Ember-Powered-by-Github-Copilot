@@ -1249,3 +1249,58 @@ describe("an answer whose turn started a task says where its work shows (UI audi
     expect(last().bubble!.step).toBeNull();
   });
 });
+
+describe("the end of a conversation turn that said nothing (the owner's report of 2026-11-03)", () => {
+  const startedTask = (p: Presenter) => {
+    p.userPrompt("close Microsoft Edge");
+    p.event({ type: "user.message", data: { content: "close Microsoft Edge" } });
+    p.event({ type: "tool.execution_start", data: { toolName: "start_task" } });
+    p.event({ type: "tool.execution_complete", data: { success: true } });
+  };
+
+  it("clears a turn that only ran start_task at once, leaving no \"Working\" bubble", () => {
+    const { p, last } = setup();
+    startedTask(p);
+    expect(last().bubble?.visible ?? true).toBe(true);
+    p.event({ type: "session.idle", data: {} });
+    expect(last()).toMatchObject({ talking: false, bubble: { visible: false } });
+  });
+
+  it("keeps a newer request's \"Thinking…\" when the turn before it ends", () => {
+    const { p, last } = setup();
+    startedTask(p);
+    p.userPrompt("and open the calculator");
+    p.event({ type: "session.idle", data: {} });
+    expect(last().bubble).toMatchObject({ visible: true, mood: "thinking", title: "Thinking…" });
+  });
+
+  it("keeps a guide's bubble up when the turn ends", () => {
+    const { p, last } = setup();
+    startedTask(p);
+    p.guide("Click Close at the top right.", "Showing you");
+    p.event({ type: "session.idle", data: {} });
+    expect(last().bubble).toMatchObject({ visible: true, mood: "guiding", thought: "Click Close at the top right." });
+  });
+
+  it("keeps an answer said before the turn's tool call, as an answer rather than \"Working\" (review of PR #139)", () => {
+    const { p, last } = setup();
+    p.userPrompt("close Edge");
+    p.event({ type: "user.message", data: { content: "close Edge" } });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Sure, I'll close Edge in the corner." } });
+    p.event({ type: "assistant.message", data: { content: "Sure, I'll close Edge in the corner.", toolRequests: [{ name: "start_task" }] } });
+    p.event({ type: "tool.execution_start", data: { toolName: "start_task" } });
+    p.event({ type: "tool.execution_complete", data: { success: true } });
+    p.event({ type: "session.idle", data: {} });
+    expect(last().bubble).toMatchObject({ visible: true, mood: "idle", title: "Ember", thought: "Sure, I'll close Edge in the corner.", step: TASK_IN_CORNER });
+    vi.advanceTimersByTime(40_000);
+    expect(last().bubble?.visible).toBe(false);
+  });
+
+  it("keeps an answer the turn gave for its reading time", () => {
+    const { p, last } = setup();
+    startedTask(p);
+    p.event({ type: "assistant.message", data: { content: "I'll close Microsoft Edge." } });
+    p.event({ type: "session.idle", data: {} });
+    expect(last().bubble).toMatchObject({ visible: true, mood: "idle", thought: "I'll close Microsoft Edge." });
+  });
+});

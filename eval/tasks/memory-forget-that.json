@@ -1,0 +1,44 @@
+{
+  "id": "memory-forget-that",
+  "title": "Forgets what it just learned when told “forget that”",
+  "instruction": "I prefer short answers",
+  "app": {
+    "none": true
+  },
+  "memory": {
+    "steps": [
+      {
+        "turn": {
+          "said": "I prefer short answers",
+          "reply": "Got it.",
+          "extraction": "{\"facts\":[{\"from\":1,\"fact\":\"Prefers short answers\",\"about\":[{\"name\":\"User\",\"kind\":\"person\"}],\"confidence\":0.9,\"evidence\":\"I prefer short answers\"}]}"
+        }
+      },
+      {
+        "say": "Ember, forget that",
+        "reply": "^Forgotten: “Prefers short answers”\\.$"
+      },
+      {
+        "restart": true
+      }
+    ]
+  },
+  "expect": [
+    {
+      "memory": {
+        "matches": "short answers",
+        "absent": true
+      }
+    },
+    {
+      "recall": {
+        "query": "How long should my answers be?",
+        "matches": "short answers",
+        "absent": true
+      }
+    }
+  ],
+  "tags": [
+    "memory"
+  ]
+}

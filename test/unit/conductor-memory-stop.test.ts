@@ -51,6 +51,21 @@ describe("a Stop while the request waits for memory", () => {
     expect(returned).toEqual([["a task finished"]]);
   });
 
+  it("drops the request just the same when memory answers through forRequest, the path that learns gaps (merge of PR #142)", async () => {
+    let release!: (v: string) => void;
+    const memory: ConductorMemory = {
+      remember: () => "", forget: () => false, context: () => "",
+      forRequest: () => new Promise<string>(r => { release = r; }),
+    };
+    const { c, sent } = conductor(memory);
+    const asked = c.ask("open Mail and send the draft");
+    await Promise.resolve();
+    await c.abort();
+    release("<memory untrusted=\"true\">\n- [f1] Works at Initech\n</memory>");
+    await asked;
+    expect(sent).toEqual([]);
+  });
+
   it("sends nothing after the kill switch, whose memory part ends the wait at once", async () => {
     // The real memory path: the model's process never answers until the kill switch's memory part stops it.
     const embedder: Embedder & { stopped: (() => void)[] } = {

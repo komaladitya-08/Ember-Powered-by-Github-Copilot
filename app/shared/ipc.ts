@@ -4,6 +4,7 @@ import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
+import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 
 /** A routine as Home lists it. */
@@ -52,6 +53,8 @@ export const IPC = {
   memoryChanged: "memory:changed",
   memoryForget: "memory:forget",
   memoryForgetAll: "memory:forget-all",
+  /** "Tell Ember about you": the answers, checked whole in main (IntroSchema) and kept as the user's own facts. */
+  memoryIntroduce: "memory:introduce",
   /** Better recall's model (memory/better-recall.ts): its state and changes to it, Download and Remove. */
   memoryModel: "memory:model",
   memoryModelChanged: "memory:model-changed",
@@ -266,6 +269,8 @@ export interface EmberHomeApi {
   onMemory(fn: (items: MemoryItem[]) => void): () => void;
   forgetMemory(id: string): Promise<void>;
   forgetAllMemory(): Promise<void>;
+  /** Keeps "Tell Ember about you"'s answers; how many were kept, or null while memory is off. */
+  introduceMe(answers: Intro): Promise<number | null>;
   /** Better recall's model: whether it is here, and changes; the user's Download (the agreement to fetch it) and Remove. */
   memoryModel(): Promise<MemoryModelStatus>;
   onMemoryModel(fn: (s: MemoryModelStatus) => void): () => void;

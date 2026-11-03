@@ -225,7 +225,32 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   `memory.consent.version >= FEATURE_CONSENT_VERSION.memory`, and the admin's `features.memory` not false. The host
   gives the conductor memory only then (`memoryWanted()`), and only then does it have remember, recall and
   forget_memory. With memory off, the tools and the prompt are today's exactly.
-- **A saved fact is the user's only in their own words** (`ownWords`, service.ts). Anything else is `conversation`.
+- **A saved fact is the user's only in their own words, said the same way round** (`ownFact`, service.ts: `ownWords`
+  and `samePolarity`, so "Priya is not my manager" never makes "Priya is the manager" theirs). Anything else is
+  `conversation`.
+- **Learning on its own** (`MemoryLearning`, learning.ts; docs/MEMORY.md steps 3–5) runs only while memory is in force,
+  and the host and conductor reach it only through `HostOptions.memory` (`heard`, `forRequest`, `taskDone`,
+  `useModel`, `intent`):
+  - every model call is `copilotOneShot()` (agent/one-shot.ts): `hardenedSessionConfig` with `tools: []`,
+    `verifySessionTools(session, [])`, deleted after (also when creating it failed); its answer is capped
+    (`MAX_ANSWER_CHARS`), zod-checked (`ExtractionSchema`, `RefinementSchema`) and dropped whole if invalid;
+  - the source is decided in code, never by the model: `turnSource()` for turns (heard from the user, evidence word
+    for word in their words, stated as true now (`statesNow`), the fact's words in the evidence, the same polarity),
+    `task` for results, and never above the weakest fact read for a summary or reflection; no extracted fact that
+    `soundsLikeInstruction()` is ever kept (only the remember tool and the introduction keep such words, in the
+    user's own); refinement closes only a non-user fact about the same thing (predicate, or `SAME_THING` similarity);
+  - `own` (not `voiceUnchecked`) travels with every request: `Conductor.ask(…, own)` → `heard(said, reply, own)` and
+    `forRequest(request, own)`. Gaps are counted only in `forRequest`, from the user's own words, never from the
+    recall tool (`context`), whose query the model wrote and the screen may steer;
+  - keep within `LEARN_BUDGET` and `REFINE_PER_DAY`; register nothing long-running outside its `memory` StopPart;
+  - a fact the user gives (introduction, interview, an answer to Ember's question) is `user` only when they said it
+    (`own`); a request (`looksLikeRequest`) or "forget that" is never taken as an answer; Ember's question is built
+    from a name alone (`gapQuestion`), never one that reads like an order;
+  - forgetting an open fact reopens what it had replaced (`reopenSuperseded`), so Undo puts the old value back, and
+    goes through `MemoryLearning.forget()` so its "Ember learned" line and "forget that" let go of it too;
+  - every change to the graph tells Better recall (`semantic.changed()`: `remember`, `learn`, `refine`, a reopen), and
+    the recall tool goes through `MemoryService.context()` for its matches by meaning; `forRequest` awaits it.
+- **Changing memory's note** (`MEMORY_CONSENT_TEXT`) means bumping `FEATURE_CONSENT_VERSION.memory` (now 2).
 - **Sign-out and an account change call `forgetAll()`**, which erases the file too.
 - **Better recall's vectors are facts too** (embed.ts): only in `memory-vectors.json` (0600, through `vectorFile()`),
   dropped with a forgotten fact, erased by `forgetAll()` and Remove, never sent anywhere. The model runs only in the

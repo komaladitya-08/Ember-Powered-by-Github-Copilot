@@ -13,7 +13,7 @@ import { micBadge } from "../../shared/mic";
 import { presenceOf } from "../../shared/presence";
 import { HandleLive } from "./live";
 import { watchPixels } from "../shared/pixels";
-import { handleLine } from "./line";
+import { handleLine, pillLine } from "./line";
 
 declare global { interface Window { emberHandle: HandleApi } }
 
@@ -205,8 +205,7 @@ api.onState(s => {
   if (!fallback) {
     if (micNews) $("live").textContent = micNews;
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
-    const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
-    const line = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
+    const line = pillLine(s, name, idle);
     $("line").textContent = line;
     // Hovering the pill shows the whole line (it is cut off with an ellipsis when long).
     $("handle").title = line;

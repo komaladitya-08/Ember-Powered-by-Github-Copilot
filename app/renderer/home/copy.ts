@@ -9,6 +9,7 @@ import type { ActivityEntry, NaturalVoiceStatus, SpeechModelId, StatusPlatform }
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { onboardingRest } from "./computers-copy";
 import { needsUser, type SetupRow } from "../../shared/setup-attention";
@@ -231,9 +232,77 @@ export function providerTestText(r: { ok: true; host: string; models: number | n
 
 /**
  * Memory's note, shown before it is first turned on (Settings › Conversation, docs/MEMORY.md §3): what Ember keeps,
- * where, what goes to Copilot, and how to forget it. Changing it means bumping FEATURE_CONSENT_VERSION.memory.
+ * where, what goes to Copilot, and how to forget it. Changing it means bumping FEATURE_CONSENT_VERSION.memory (2: it
+ * learns on its own, docs/MEMORY.md steps 3–5).
  */
-export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It keeps this on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers. You can see and forget everything here, and signing out forgets it all.";
+export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It also learns as you go: after you talk and when a task finishes, it picks out what's worth keeping, tidies it while you're away, and now and then asks you a question. To do that, your words, its replies and its tasks' results go to Copilot in short requests of their own. It keeps what it learns on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers, and what it reads on your screen never counts as something you said. You can see where each fact came from and forget it here, and signing out forgets it all.";
+
+/**
+ * Memory was on under an earlier note (version 1, before Ember learned on its own) and waits for the user to agree to
+ * the new one: it remembers nothing more until then, and keeps what it has.
+ */
+export function memoryPaused(m: { on: boolean; consent: { version: number } }): boolean {
+  return m.on && m.consent.version > 0 && m.consent.version < FEATURE_CONSENT_VERSION.memory;
+}
+/** Said in Settings › Memory while memory is paused, above its new note. */
+export const MEMORY_PAUSED_TEXT = "Memory is paused. Ember now also learns as you go, so it needs you to agree to its new note before it remembers anything more. What it kept is still here.";
+
+/** Where a remembered fact came from, as Settings › Memory lists it beside the fact. */
+export function memorySourceLabel(source: string): string {
+  return ({ user: "You told me", conversation: "From our conversation", task: "From a task", observed: "Seen on screen", connector: "From a connected service" } as Record<string, string>)[source] ?? "Learned";
+}
+
+/** The conversation's line when Ember keeps something new on its own, and its Undo button's name for screen readers. */
+export const learnedLine = (text: string) => `Ember learned: ${text}`;
+export const undoLearnedLabel = (text: string) => `Undo: forget “${text}”`;
+/** The line's button once it has been pressed. */
+export const LEARNED_UNDONE = "Forgotten";
+
+/**
+ * "Tell Ember about you" (Settings › Memory and first run's optional step): every question can be left empty, and only
+ * what is answered is kept, as something the user told Ember.
+ */
+export const ABOUT_YOU = {
+  title: "Tell Ember about you",
+  lead: "A few short questions, each one optional. Ember keeps your answers as things you told it, and you can forget any of them here.",
+  name: "What should Ember call you?",
+  work: "Your role and what you work on",
+  apps: "The apps you use most",
+  length: "Answers",
+  lengthChoices: { "": "No preference", short: "Short", detailed: "Detailed" },
+  spoken: "Spoken replies",
+  spokenChoices: { "": "No preference", yes: "Spoken aloud", no: "Not spoken" },
+  hours: "Your timezone or working hours",
+  save: "Save",
+  memoryOff: "Ember needs memory turned on to keep your answers.",
+  managed: "Your organisation has turned memory off.",
+  voice: "You can also say “Ember, get to know me” for a short spoken version.",
+} as const;
+
+/** The form's fields as main takes them: trimmed, each one left out when it is empty or "No preference". */
+export function introFromForm(f: { name: string; work: string; apps: string; length: string; spoken: string; hours: string }): {
+  name?: string; work?: string; apps?: string; length?: "short" | "detailed"; spoken?: boolean; hours?: string;
+} {
+  const t = (s: string, n: number) => s.replace(/\s+/g, " ").trim().slice(0, n);
+  return {
+    ...(t(f.name, 80) ? { name: t(f.name, 80) } : {}),
+    ...(t(f.work, 240) ? { work: t(f.work, 240) } : {}),
+    ...(t(f.apps, 240) ? { apps: t(f.apps, 240) } : {}),
+    ...(f.length === "short" || f.length === "detailed" ? { length: f.length } : {}),
+    ...(f.spoken === "yes" || f.spoken === "no" ? { spoken: f.spoken === "yes" } : {}),
+    ...(t(f.hours, 120) ? { hours: t(f.hours, 120) } : {}),
+  };
+}
+
+/** After "Save" in "Tell Ember about you": how many answers were kept (none answered, or memory off, said so). */
+export function aboutYouSaved(kept: number | null): string {
+  if (kept === null) return "Not saved: memory is off.";
+  if (kept === 0) return "Nothing to save yet: answer any question you like.";
+  return kept === 1 ? "Saved 1 answer." : `Saved ${kept} answers.`;
+}
+
+/** Under the "Ask me questions" switch. */
+export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you're not using Ember, about names it keeps finding nothing on. Your answer is kept as something you told it.";
 
 /**
  * "Work without asking"'s card (Apps & privacy, FEATURE_CONSENT_VERSION.autonomy; app/main/policy/autonomy.ts): what runs
