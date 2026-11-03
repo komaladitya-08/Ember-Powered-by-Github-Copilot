@@ -1937,3 +1937,11 @@ Action-context reads use separate baselines for the quick accessibility tree and
 ### Voice request cancellation
 
 `VoiceService` owns the listening generation sent with init, cancel, enrolment and voiceprint changes. The voice process tags engine events and learning samples with that generation; main rejects old generations even when IPC or inference is delayed beyond a second. `VoiceGate.cancel()` separately revokes pending checks and held wakes, without making new requests wait for old inference. Stop always passes through. Explicit owner changes revoke work, while the adaptation-only refresh preserves the generation and each pending request uses one captured owner/anchor/threshold configuration. Run `npx vitest run test/unit/voice-cancellation.test.ts test/unit/voice-service.test.ts test/unit/voice-match.test.ts test/unit/voice-process.test.ts` for the deterministic regressions; these do not establish real-microphone accuracy.
+
+### npm launcher recovery
+
+The npm launcher serialises installs of a version with a cache-adjacent directory lock, keeps the previous install
+as a backup until publication succeeds, and restores it after a failed publication rename. If rollback fails too,
+both the backup and checked stage are retained and their paths reported. See `packages/npm/README.md` for manual
+recovery after an interrupted installer; locks are never automatically stolen. Tests in
+`test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.
