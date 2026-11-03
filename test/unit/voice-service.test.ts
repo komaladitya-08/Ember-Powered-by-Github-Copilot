@@ -41,6 +41,7 @@ const electron = vi.hoisted(() => {
 });
 vi.mock("electron", () => electron);
 
+import { VoiceGate } from "../../app/voice/match";
 import { VoiceService, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
@@ -63,7 +64,7 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log" | "onNatural">> & { onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
@@ -148,13 +149,63 @@ describe("VoiceService", () => {
     v.followUp(8000);
     v.cancelListening();
     expect(posted(proc, "cancel")).toHaveLength(1);
-    proc.emit("message", { type: "utterance", text: "Turn on night light.", ms: 120, window: "wake" });
+    proc.emit("message", { generation: 0, type: "utterance", text: "Turn on night light.", ms: 120, window: "wake" });
     speaking(mic, false);
     expect(posted(proc, "follow-up")).toEqual([]);
     expect(events).toEqual([]);
     vi.advanceTimersByTime(1100);
-    proc.emit("message", { type: "utterance", text: "Make the text bigger.", ms: 120, window: "wake" });
+    proc.emit("message", { generation: 0, type: "utterance", text: "Late cancelled request.", ms: 120, window: "wake", verified: true });
+    proc.emit("message", { generation: 0, type: "wake", keyword: "hey ember" });
+    expect(events).toEqual([]);
+    proc.emit("message", { generation: 1, type: "utterance", text: "Make the text bigger.", ms: 120, window: "wake" });
     expect(events).toEqual([{ type: "utterance", text: "Make the text bigger.", ms: 120, window: "wake" }]);
+  });
+
+  it("does not resurrect a stopped verified request when inference finishes after the old grace period (SR-1)", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const { v, events } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    let resolve!: (p: Float32Array) => void;
+    const gate = new VoiceGate(() => ({ print: () => new Promise(r => { resolve = r; }) }),
+      e => proc.emit("message", { ...e, generation: 0 }), () => undefined);
+    gate.setOwner(Float32Array.of(1, 0));
+    gate.event({ type: "utterance", text: "Open the calendar.", ms: 0, window: "wake" }, new Float32Array(16_000).fill(0.1));
+    gate.event({ type: "stop" }, null);
+    v.cancelListening();
+    vi.advanceTimersByTime(1100);
+    resolve(Float32Array.of(1, 0));
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(events).toEqual([{ type: "stop" }]);
+  });
+
+  it("revokes queued IPC and learning samples on identity changes but keeps adaptation in the same generation (SR-2)", async () => {
+    const onSample = vi.fn();
+    const { v, events } = service(true, { onSample });
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    v.setVoiceprint(null);
+    proc.emit("message", { generation: 0, type: "utterance", text: "Old owner.", ms: 0, window: "wake", verified: true });
+    proc.emit("message", { generation: 0, type: "voice-sample", utterance: 1 });
+    expect(events).toEqual([]);
+    expect(onSample).not.toHaveBeenCalled();
+    v.setVoiceprint(null, true);
+    expect(posted(proc, "voiceprint").map(m => (m as { type: string; generation: number }).generation)).toEqual([1, 1]);
+    proc.emit("message", { generation: 1, type: "utterance", text: "New request.", ms: 0, window: "wake" });
+    expect(events).toHaveLength(1);
+  });
+
+  it("keeps duplicate enrolment idempotent so cancelling it still permits a fresh request", async () => {
+    const { v, events } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 10 });
+    expect(v.enrol()).toBe(true);
+    expect(v.enrol()).toBe(true);
+    expect(posted(proc, "enrol")).toEqual([{ type: "enrol", generation: 1 }]);
+    v.cancelEnrol();
+    proc.emit("message", { type: "utterance", text: "Fresh request.", ms: 0, window: "wake", generation: 1 });
+    expect(events).toEqual([{ type: "utterance", text: "Fresh request.", ms: 0, window: "wake" }]);
   });
 
   it("kills a voice process stopped before it had started, once it starts (Electron's kill() does nothing until then) (review #256)", async () => {
@@ -806,13 +857,13 @@ describe("speech models", () => {
       expect(v.enrol()).toBe(false); // not ready yet
       proc.emit("message", { type: "ready", loadMs: 900 });
       expect(v.enrol()).toBe(true);
-      expect(posted(proc, "enrol")).toEqual([{ type: "enrol" }]);
+      expect(posted(proc, "enrol")).toEqual([{ type: "enrol", generation: 1 }]);
       proc.emit("message", { type: "enrol", state: "heard", got: 1, of: 4 });
       expect(progress).toEqual([{ type: "enrol", state: "heard", got: 1, of: 4 }]);
       v.cancelEnrol();
       expect(posted(proc, "enrol-cancel")).toHaveLength(1);
       v.setVoiceprint(null);
-      expect(posted(proc, "voiceprint")).toEqual([{ type: "voiceprint", print: null }]);
+      expect(posted(proc, "voiceprint")).toMatchObject([{ type: "voiceprint", print: null, refresh: false, generation: expect.any(Number) }]);
     });
   });
 
@@ -1111,7 +1162,7 @@ describe("VoiceService with only some of the models", () => {
     proc.emit("message", { type: "ready", loadMs: 900 });
     expect(v.enrol()).toBe(false); // nothing to make a voiceprint with
     v.setVoiceprint("PRINT");
-    expect(posted(proc, "voiceprint")).toEqual([{ type: "voiceprint", print: null }]);
+    expect(posted(proc, "voiceprint")).toMatchObject([{ type: "voiceprint", print: null, refresh: false, generation: expect.any(Number) }]);
   });
 
   it("fetches Voice Match's model alone into the user's folder, from a bundled folder without it, while listening carries on", async () => {
@@ -1144,7 +1195,7 @@ describe("VoiceService with only some of the models", () => {
       expect(modelReady(userRoot, "speaker")).toBe(true);
       expect(markers(bundled)).toHaveLength(4); // nothing written into what came with Ember
       expect(v.matchReady).toBe(true);
-      expect(posted(proc, "voiceprint")).toEqual([{ type: "voiceprint", print: "PRINT" }]); // Voice Match is back on
+      expect(posted(proc, "voiceprint")).toMatchObject([{ type: "voiceprint", print: "PRINT", refresh: false, generation: expect.any(Number) }]); // Voice Match is back on
       expect(v.enrol()).toBe(true);
     } finally {
       speaker.sha256 = real;

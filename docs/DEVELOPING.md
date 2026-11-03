@@ -1900,3 +1900,7 @@ test/fixtures       GTK3 test bench and hostile windows, the Windows bench (win_
                     (mac_bench.js), plist samples, voice clips;  test/demo  recorded tours
 eval/               task suite (eval/tasks), runner, checkers, release gates, report
 ```
+
+### Voice request cancellation
+
+`VoiceService` owns the listening generation sent with init, cancel, enrolment and voiceprint changes. The voice process tags engine events and learning samples with that generation; main rejects old generations even when IPC or inference is delayed beyond a second. `VoiceGate.cancel()` separately revokes pending checks and held wakes, without making new requests wait for old inference. Stop always passes through. Explicit owner changes revoke work, while the adaptation-only refresh preserves the generation and each pending request uses one captured owner/anchor/threshold configuration. Run `npx vitest run test/unit/voice-cancellation.test.ts test/unit/voice-service.test.ts test/unit/voice-match.test.ts test/unit/voice-process.test.ts` for the deterministic regressions; these do not establish real-microphone accuracy.

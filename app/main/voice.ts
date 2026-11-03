@@ -47,8 +47,6 @@ const SPEAKING_MAX_MS = 60_000;
  * a few hundred ms, under Ember's voice starting up (VOICE_START_MS).
  */
 const SPEAKER_IDLE_MS = 60_000;
-/** A request heard this soon after a cancel (the kill switch) was already on its way: it's dropped (ms). */
-const CANCEL_GRACE_MS = 1000;
 /** Listening that broke starts again after 1 s, 5 s, then every 30 s (ms). */
 const RESTART_MS = [1000, 5000, 30_000];
 /**
@@ -196,7 +194,7 @@ export class VoiceService {
   private followUpMs = 0;
   private followUpAsked = false;
   private followUpTimer: NodeJS.Timeout | null = null;
-  private cancelledAt = Number.NEGATIVE_INFINITY;
+  private listeningGeneration = 0;
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
   private micLost = false;
   /** The microphone sends only digital silence (the voice line says so until sound comes back). */
@@ -479,9 +477,10 @@ export class VoiceService {
    * listening (enrolment needs the microphone) or its voiceprint model isn't there.
    */
   enrol(): boolean {
+    if (this.enrolling) return true;
     if (!this.proc || !this.readyAt || !this.matchReady) return false;
     this.enrolling = true;
-    this.proc.postMessage({ type: "enrol" });
+    this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
     return true;
   }
 
@@ -493,11 +492,12 @@ export class VoiceService {
 
   /**
    * Voice Match turned on (the owner's voiceprint) or off (null): the voice process checks requests from now on, or
-   * doesn't. Without its model, it stays off.
+   * doesn't. Without its model, it stays off. Only an adaptation sample uses `refresh`, preserving pending requests.
    */
-  setVoiceprint(print: string | null): void {
+  setVoiceprint(print: string | null, refresh = false): void {
     const p = this.matchReady ? print : null;
-    this.proc?.postMessage({ type: "voiceprint", print: p, ...(p ? this.o.matchLearnt?.() ?? {} : {}) });
+    if (!refresh) this.listeningGeneration++;
+    this.proc?.postMessage({ type: "voiceprint", generation: this.listeningGeneration, refresh, print: p, ...(p ? this.o.matchLearnt?.() ?? {} : {}) });
   }
 
   /** Voice Match keeps learning (Settings › Voice), or stops: the voice process offers samples (onSample), or doesn't. */
@@ -507,9 +507,9 @@ export class VoiceService {
 
   /** Stops listening for a request at once (the kill switch): a wake being checked, a waiting follow-up and a request already on its way are dropped. */
   cancelListening(): void {
-    this.cancelledAt = Date.now();
+    this.listeningGeneration++;
     this.dropFollowUp();
-    this.proc?.postMessage({ type: "cancel" });
+    this.proc?.postMessage({ type: "cancel", generation: this.listeningGeneration });
   }
 
   /**
@@ -868,7 +868,7 @@ export class VoiceService {
       if (m.type === "enrol") { this.enrolling = m.state !== "done" && m.state !== "cancelled"; this.o.onEnrol?.(m); return; }
       if (m.type === "voice-match-error") { this.o.log.warn("voice.match_error", { message: m.message }); return; }
       // A request Voice Match may learn from (app/voice/adapt.ts): main decides (numbers only, never audio).
-      if (m.type === "voice-sample") { this.o.onSample?.(m); return; }
+      if (m.type === "voice-sample") { if (m.generation === this.listeningGeneration) this.o.onSample?.(m); return; }
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
       // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
       if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }
@@ -891,16 +891,17 @@ export class VoiceService {
       }
       // Every utterance the voice process sends is counted, dropped or not: a voice-sample names its request by this number.
       if (m.type === "utterance") this.utterances++;
-      if (m.type === "utterance" && Date.now() - this.cancelledAt < CANCEL_GRACE_MS) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
+      if (m.type !== "stop" && m.generation !== this.listeningGeneration) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
       if (m.type === "wake") { this.o.log.info("voice.wake", { keyword: m.keyword }); this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
       if (m.type === "stop") this.o.log.info("voice.stop");
       if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });
-      this.o.onEvent(m, m.type === "utterance" ? { utterance: this.utterances } : undefined);
+      const { generation: _generation, ...event } = m;
+      this.o.onEvent(event, m.type === "utterance" ? { utterance: this.utterances } : undefined);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
+    proc.postMessage({ type: "init", generation: this.listeningGeneration, models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
     if (this.o.learning?.()) proc.postMessage({ type: "learning", on: true });
 
     this.mic = hiddenWindow("Ember microphone");
