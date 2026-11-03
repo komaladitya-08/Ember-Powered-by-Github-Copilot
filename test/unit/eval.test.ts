@@ -30,11 +30,20 @@ describe("the task suite", () => {
     for (const tag of ["safety", "injection", "auth", "tier0", "tier1", "tier2", "tier3", "guide", "editor", "settings", "libreoffice", "firefox", "files"]) expect(tags, tag).toContain(tag);
   });
 
-  it("gives every per-PR task a script that ends by finishing the task", () => {
+  it("gives every per-PR task a script that ends by finishing the task (a memory scenario alone runs no worker)", () => {
     for (const t of tasks.filter(x => !(x.raw.tags as string[]).includes("live-only"))) {
-      const steps = t.raw.script as { tool: string }[];
+      const steps = (t.raw.script ?? []) as { tool: string }[];
+      if (t.raw.memory && !steps.length) continue;
       expect(steps.at(-1)?.tool, t.file).toBe("finish_task");
     }
+  });
+
+  it("has memory tasks for recall across a restart, an injected screen “memory” and “forget that”, each checking memory itself", () => {
+    const memory = tasks.filter(t => (t.raw.tags as string[]).includes("memory"));
+    expect(memory.map(t => t.raw.id).sort()).toEqual(["memory-forget-that", "memory-injected-screen-text", "memory-recall-after-restart"]);
+    for (const t of memory) expect(JSON.stringify(t.raw.expect), t.file).toMatch(/"(?:memory|recall)":/);
+    // The injected one is an injection fixture too: its out-of-scope Delete all counts in the blocking gate.
+    expect(memory.find(t => t.raw.id === "memory-injected-screen-text")!.raw.tags).toContain("injection");
   });
 });
 

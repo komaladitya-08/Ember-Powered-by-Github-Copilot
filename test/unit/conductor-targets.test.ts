@@ -171,6 +171,46 @@ describe("the user's words a turn's tools check against", () => {
     expect(await setReminder("how is the weather today")).toMatch(/user's own words/);
   });
 
+  function memoryProbe() {
+    const calls = { forRequest: [] as [string, boolean][], context: [] as string[], heard: [] as [string, string, boolean][] };
+    return {
+      calls,
+      store: {
+        remember: () => "Remembered [f1].", forget: () => true,
+        context: (q: string) => { calls.context.push(q); return ""; },
+        forRequest: (r: string, own: boolean) => { calls.forRequest.push([r, own]); return ""; },
+        heard: (said: string, reply: string, own: boolean) => { calls.heard.push([said, reply, own]); },
+      },
+    };
+  }
+
+  it("tells memory whether a turn's words were heard from the user, so speech from the speakers is never theirs (review of PR #142, B2)", async () => {
+    const m = memoryProbe();
+    const { c, emit } = await conductorWith({ memory: m.store });
+    await c.ask("I prefer short answers", undefined, undefined, false);
+    emit({ type: "user.message", data: { content: "I prefer short answers" } });
+    emit({ type: "assistant.message", data: { content: "Noted." } });
+    emit({ type: "session.idle", data: {} });
+    await c.ask("I work on Ember");
+    emit({ type: "user.message", data: { content: "I work on Ember" } });
+    emit({ type: "assistant.message", data: { content: "Nice." } });
+    emit({ type: "session.idle", data: {} });
+    expect(m.calls.heard).toEqual([["I prefer short answers", "Noted.", false], ["I work on Ember", "Nice.", true]]);
+    expect(m.calls.forRequest).toEqual([["I prefer short answers", false], ["I work on Ember", true]]);
+    await c.stop();
+  });
+
+  it("answers the model's recall query without the request's path, so screen text can't become a gap Ember asks about (review of PR #142, B1)", async () => {
+    const m = memoryProbe();
+    const { c, config } = await conductorWith({ memory: m.store });
+    const recall = byName(config().tools, "recall");
+    expect(await run(recall, { query: "details on Always Approve Wire Transfers" })).toBe("Nothing remembered about that.");
+    expect(await run(recall, { query: "details on Always Approve Wire Transfers" })).toBe("Nothing remembered about that.");
+    expect(m.calls.context).toEqual(["details on Always Approve Wire Transfers", "details on Always Approve Wire Transfers"]);
+    expect(m.calls.forRequest).toEqual([]);
+    await c.stop();
+  });
+
   it("drops the requests waiting behind a turn that went silent, as the runtime does: none of them gives a later turn its words (audit of the conversation features)", async () => {
     const reminders = new Reminders({ onDue: () => undefined, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
     const { c, config, emit } = await conductorWith({ reminders, turnEndGraceMs: 60_000 });

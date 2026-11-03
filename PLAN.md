@@ -546,7 +546,15 @@ decisions and phases. Nothing in it is built yet.
 
 Long-term memory, beyond the plan above: docs/MEMORY.md has the design and steps. Steps 1 (the core,
 `app/main/memory/`) and 2 (remember, recall and forget in conversation, behind its own consent, off by default) are
-built.
+built. **Built 2026-11-03** (branch `ember-improve/20261103-memory-learning`): steps 3 to 5 and "Getting to know
+you". While memory is in force Ember extracts facts after conversation turns and finished tasks (a hardened one-shot
+session with no tools per call, zod-checked JSON, at most one call per three turns or a minute, 12 an hour, 60 a
+day; `user` only from the user's own words, `task` from results, instructions never kept), refines while idle
+(consolidate, then one model pass, 6 a day, rewrites kept as closed facts), and asks at most one question a day
+about a name recall keeps missing (a setting turns it off). "Tell Ember about you" (Settings › Memory and first
+run's optional step) and "Ember, get to know me" keep the user's answers as `user` facts; "Ember learned: …" with
+Undo shows in the conversation, and "forget that" works without a model turn. The note changed to say so:
+`FEATURE_CONSENT_VERSION.memory` is 2. The kill switch has a `memory` part. The eval gained three memory tasks.
 
 Ember's two bodies (docs/DESIGN.md "Two bodies"): background tasks live on their cards in the corner, with how they work, their
 plan and a checked generative view of their result; the cursor's bubble is the conversation, guides and borrowing. Next:

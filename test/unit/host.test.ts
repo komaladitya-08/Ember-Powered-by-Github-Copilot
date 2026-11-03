@@ -2821,3 +2821,33 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     sim.createGate = null;
   });
 });
+
+describe("memory hears whose words a request was (review of PR #142, B2)", () => {
+  function remembering() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-mem-"));
+    fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ version: 1, memory: { on: true, consent: { version: 2, at: "2026-11-03T00:00:00Z" } } }));
+    const calls = { intent: [] as boolean[], forRequest: [] as boolean[], heard: [] as boolean[] };
+    const memory = {
+      remember: () => "Remembered [f1].", context: () => "", forget: () => true, forgetAll: () => undefined,
+      forRequest: (_r: string, own: boolean) => { calls.forRequest.push(own); return ""; },
+      heard: (_s: string, _r: string, own: boolean) => { calls.heard.push(own); },
+      intent: (_t: string, how: { own: boolean }) => { calls.intent.push(how.own); return null; },
+    };
+    return { ...makeHost({ userData: dir, memory }), calls };
+  }
+
+  it("passes a spoken request Ember couldn't tell from its speakers as not the user's own, and a typed one as theirs", async () => {
+    const { host, calls } = remembering();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    await host.ask("I prefer short answers", null, undefined, { voiceUnchecked: true });
+    conductorSession().emit("assistant.message", { content: "Noted." });
+    conductorSession().emit("session.idle", {});
+    await host.ask("I work on Ember");
+    conductorSession().emit("assistant.message", { content: "Nice." });
+    conductorSession().emit("session.idle", {});
+    expect(calls.intent).toEqual([false, true]);
+    expect(calls.forRequest).toEqual([false, true]);
+    expect(calls.heard).toEqual([false, true]);
+    await host.stop();
+  });
+});
