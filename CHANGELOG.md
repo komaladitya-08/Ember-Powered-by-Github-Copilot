@@ -314,7 +314,8 @@ allows them.
   all of it has been shown. The audit log says the answer was spoken. Half a second of your voice after “Ember” is
   enough to recognise you, and a shorter yes counts for the questions of a task you asked for in your recognised voice,
   within 10 minutes (never a command card, a consent card or another task's question; the audit says
-  `trust: "task-voice"`). A yes asked as a question, or a bare “okay”, isn't one.
+  `trust: "task-voice"`; not a yes too quiet or clipped to tell, either). A yes asked as a question, or a bare
+  “okay”, isn't one.
 - For administrators: `features.autonomy: false` turns Work without asking off (managed); so do `allowGrants: false`,
   `confirmEveryAction` and a lockdown. An older Ember reads a policy with this key as broken and locks down, so update
   Ember before adding it.

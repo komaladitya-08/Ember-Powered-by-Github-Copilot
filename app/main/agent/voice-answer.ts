@@ -20,8 +20,10 @@
  * task's trust. Measured on LibriSpeech dev-clean (33 speakers, pieces of 0.5 s of voice): 1.1 % of the owner's own
  * score under it, and 52 % of other voices' (at 0.6: 6.8 % and 82 %; 0.5 keeps the owner's short yes working). With
  * the whole pipeline (40 speakers, a 0.3–0.6 s "allow"): the owner's short yes is taken 97.5–100 %, another person's
- * whole "Hey Ember, allow" 2.2–2.5 %, another's "allow" after the owner's recorded "Hey Ember" 41–43 % (at 0.6:
- * about 20 %, but a quarter of the owner's 0.3 s yeses refused). PLAN.md §2 "Approvals" records the owner's choice.
+ * whole "Hey Ember, allow" 2.2–2.5 %, another's "allow" after the owner's recorded "Hey Ember" 35–40 % (at 0.6:
+ * 12–19 %, but a quarter of the owner's 0.3 s yeses refused). With no score (under 0.25 s of voiced frames) a yes is
+ * refused: the recorded wake and a 0.15 s yes 8.8 % (78 % when it was taken), a quiet one 0.3 % (8.3 %), the owner's
+ * own 0.15 s yes 17.5 % (95 %). PLAN.md §2 "Approvals" records the owner's choice.
  */
 export const SHORT_YES_FLOOR = 0.5;
 /**
