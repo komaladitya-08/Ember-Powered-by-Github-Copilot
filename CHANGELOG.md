@@ -45,7 +45,9 @@ the work in your real apps where you can watch, without taking over your mouse. 
   recognition on this computer (Moonshine v2 tiny, punctuated; the models download once, 142 MB, or come with the
   `ember-voice-models` RPM); only the text of a request goes to Copilot. The name heard inside another word
   ("remember", "September", "the embers") shows nothing: a wake by the bare name shows once the recogniser has heard
-  the name start what was said. Ember speaks its replies, questions and results in its own natural neural voice (Piper
+  the name start what was said. After Ember answers you can go on without the wake word, up to three requests in a
+  row; “Hey Ember” said then works too. While Ember speaks, “Hey Ember” makes it stop and listen, on Windows and macOS
+  too (there “Ember” alone doesn't, and nothing said over Ember's voice is sent). Ember speaks its replies, questions and results in its own natural neural voice (Piper
   "Kristin", made on this computer), sentence by sentence while Copilot is still writing, so it starts talking within
   about a second; until its voice is downloaded, or should it fail, the system's most natural voice speaks (a Natural
   voice on Windows 11, a Premium or Enhanced one on a Mac). It speaks always (the default), when a screen reader runs,
