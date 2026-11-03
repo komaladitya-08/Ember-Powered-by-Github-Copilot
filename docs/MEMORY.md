@@ -166,14 +166,16 @@ download, so English-only MiniLM is the trade-off for now.
    - The answer is JSON checked by zod (`ExtractionSchema`: `from`, `fact`, `about`, `predicate`, `single`,
      `confidence`, `evidence`); anything else is dropped whole.
    - The source is decided in code: from a turn, `user` only when the request was heard from the user (typed, or a
-     voice Ember can tell from its own speakers: `Conductor.ask`'s `own`), `evidence` is their words word for word,
+     voice Ember can tell from its own speakers: `Conductor.ask`'s `own`), `evidence` is their words word for word
+     in a sentence that states it as true now (`statesNow`: no question, no "used to", "if", "would", "left"…),
      every content word of the fact is in that evidence (grammar such as "called" and a negation's auxiliaries aside:
      no verb the user didn't say, so "I quit Globex" never gives "Works at Globex"), and it says it the same way
      round (`samePolarity`: "I hate Teams" is never "Likes Teams"; clauses that tie and disagree count as not the
      same); otherwise `conversation`. A fact whose subject is someone else ("Bob prefers tea") is about them, never
      the user. From a task, always `task`. No extracted fact that reads like an instruction
      (`soundsLikeInstruction`: deleting, sending, forwarding, emailing, uploading, moving, paying, installing,
-     "always", "without asking"…, after folding look-alike letters with `viewNorm`) is ever kept, whoever said it: a
+     "always", "without asking", being asked, confirmations, dialogs, trust, cc, sync, export, attach, paste…, after
+     folding look-alike letters with `viewNorm`) is ever kept, whoever said it: a
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
      goes through `MemoryGraph.add()` and the guard.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
@@ -185,7 +187,8 @@ download, so English-only MiniLM is the trade-off for now.
    - a one-sentence summary of each entity, kept as a `summary` fact that closes the one before (kept, closed), as
      trusted as the weakest fact it was written from (a summary of task facts is `task`, never `user`);
    - contradictions closed (`MemoryGraph.closeFact`, never deleted), only by an equal or stronger source, and never
-     a `user` fact: only the user changes what they said (review of PR #142);
+     a `user` fact: only the user changes what they said (review of PR #142); and only for a fact about the same thing
+     (the same predicate, or `similarity` of at least `SAME_THING`, 0.5);
    - reflections from two or more facts, at confidence 0.4, never `user`.
 
    The model only proposes: ids must be among the facts it was shown, and every new fact goes through `add()`. At

@@ -126,17 +126,34 @@ function covered(fact: string, evidence: string): boolean {
 
 const squash = (s: string) => fold(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
+/** A question's first word ("do I use Linux"). */
+const AUXILIARY = /^(?:do|does|did|is|are|was|were|can|could|will|would|should|have|has)\b/;
+/** Words that make a statement past, hypothetical or about leaving ("I used to use Teams", "if I used Linux"). */
+const NOT_NOW = /\b(?:if|used\s+to|would|could|might|left|quit|former(?:ly)?)\b/;
+
+/**
+ * Whether the user's sentence holding the evidence states something as true now: not a question ("…?", or starting
+ * "do", "is", "can"…), nothing past or hypothetical ("used to", "if", "would", "left", "former"…). Review of PR #142:
+ * "I used to use Teams" is never "Uses Teams".
+ */
+function statesNow(evidence: string, said: string): boolean {
+  const quote = squash(evidence);
+  const sentence = (said.match(/[^.!?\n]+[.!?]*/g) ?? [said]).find(s => ` ${squash(s)} `.includes(` ${quote} `)) ?? evidence;
+  if (/\?\s*$/.test(sentence) || /\?\s*$/.test(evidence)) return false;
+  return ![squash(sentence), quote].some(s => AUXILIARY.test(s) || NOT_NOW.test(s));
+}
+
 /**
  * Whose a fact from a conversation turn is: the user's only when the user was heard to say it (`heard`: typed, or a
- * voice Ember could tell from its own speakers), its evidence is their own words word for word, the fact's content
- * words are in that evidence, and it says it the same way round ("I hate Teams" is never "Likes Teams"). Ember's reply
- * never counts (it may quote the screen).
+ * voice Ember could tell from its own speakers), its evidence is their own words word for word, said as true now
+ * (`statesNow`: no question, nothing past or hypothetical), the fact's content words are in that evidence, and it says
+ * it the same way round ("I hate Teams" is never "Likes Teams"). Ember's reply never counts (it may quote the screen).
  */
 export function turnSource(c: Pick<Candidate, "fact" | "evidence">, said: string, heard = true): Extract<Source, "user" | "conversation"> {
   if (!heard) return "conversation";
   const quote = squash(c.evidence);
   const own = quote.split(" ").length >= 2 && ` ${squash(said)} `.includes(` ${quote} `);
-  return own && covered(c.fact, c.evidence) && samePolarity(c.fact, c.evidence) ? "user" : "conversation";
+  return own && statesNow(c.evidence, said) && covered(c.fact, c.evidence) && samePolarity(c.fact, c.evidence) ? "user" : "conversation";
 }
 
 /**
@@ -159,6 +176,11 @@ const INSTRUCTION = new RegExp("\\b(?:" + [
   "pay(?:s|ing|ment)?", "transfer\\w*", "purchas\\w*", "buy\\w*", "wir(?:e|es|ed|ing)\\s+(?:money|funds|payments?|to|it|them|the|\\$|\\d)",
   // Access and Ember's own safety.
   "sign(?:s|ing)?\\s+out", "log(?:s|ging)?\\s+out", "password\\w*", "ignor\\w*", "overrid\\w*", "bypass\\w*", "allow\\w*", "approv\\w*", "grant\\w*",
+  // Data leaving by other routes ("Attaches ~/.ssh/id_rsa to every email").
+  "b?cc(?:s|ed|ing|'d)?", "sync\\w*", "export\\w*", "attach\\w*", "past(?:e|es|ed|ing)",
+  // Shaping Ember's approvals ("Doesn't need to be asked before Ember acts", "Is fine with Ember clicking OK on every
+  // dialog", "Trusts every page Ember reads"): never learned as a preference (review of PR #142).
+  "(?:need(?:s|ed|ing)?|without)\\b[^.!?\\n]{0,30}\\bask(?:s|ed|ing)?", "confirm\\w*", "skip\\w*", "dialogs?", "trust(?:s|ed|ing)?",
   // The shape of an order.
   "always", "never\\s+ask", "without\\s+asking", "instruct\\w*", "must", "remember\\s+that", "from\\s+now\\s+on",
 ].join("|") + ")\\b", "iu");

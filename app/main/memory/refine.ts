@@ -16,6 +16,10 @@ import { z } from "zod";
 import { memoryBlock } from "./format";
 import { MAX_FACT_CHARS, SOURCES, type Fact, type MemoryGraph, type Source } from "./graph";
 import { jsonOf, soundsLikeInstruction } from "./learn";
+import { similarity } from "./text";
+
+/** How alike two facts' words must be for one to close the other without a shared predicate (Jaccard, ./text.ts). */
+export const SAME_THING = 0.5;
 
 /** The most facts one pass reads. */
 export const REFINE_FACTS = 40;
@@ -110,6 +114,9 @@ export function applyRefinement(g: MemoryGraph, r: Refinement, shown: Fact[]): R
     // What the user said is never closed by refinement (only by the user: a newer fact of theirs for the same
     // predicate, `forget`, or Undo); a weaker source never overrules a stronger one.
     if (old.source === "user" || rank(now.source) > rank(old.source)) continue;
+    // And it must be about the same thing: the same predicate, or mostly the same words ("Atlas is due in March" and
+    // "…in April"), never "Likes tea" closing "Manager is Priya" (review of PR #142).
+    if (!(old.predicate && old.predicate === now.predicate) && similarity(old.text, now.text) < SAME_THING) continue;
     if (g.closeFact(old.id, now.id)) report.closed++;
   }
 

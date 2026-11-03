@@ -235,9 +235,10 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     `verifySessionTools(session, [])`, deleted after (also when creating it failed); its answer is capped
     (`MAX_ANSWER_CHARS`), zod-checked (`ExtractionSchema`, `RefinementSchema`) and dropped whole if invalid;
   - the source is decided in code, never by the model: `turnSource()` for turns (heard from the user, evidence word
-    for word in their words, the fact's words in the evidence, the same polarity), `task` for results, and never
-    above the weakest fact read for a summary or reflection; no extracted fact that `soundsLikeInstruction()` is ever
-    kept (only the remember tool and the introduction keep such words, in the user's own);
+    for word in their words, stated as true now (`statesNow`), the fact's words in the evidence, the same polarity),
+    `task` for results, and never above the weakest fact read for a summary or reflection; no extracted fact that
+    `soundsLikeInstruction()` is ever kept (only the remember tool and the introduction keep such words, in the
+    user's own); refinement closes only a non-user fact about the same thing (predicate, or `SAME_THING` similarity);
   - `own` (not `voiceUnchecked`) travels with every request: `Conductor.ask(…, own)` → `heard(said, reply, own)` and
     `forRequest(request, own)`. Gaps are counted only in `forRequest`, from the user's own words, never from the
     recall tool (`context`), whose query the model wrote and the screen may steer;
