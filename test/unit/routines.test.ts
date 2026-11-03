@@ -316,6 +316,7 @@ describe("cancel_reminder and the user's own words (audit of the conversation fe
     expect(asksToCancel("never mind the reminder", r, 2)).toBe(false);
     expect(asksToCancel("cancel all my reminders", r, 2)).toBe(true);
     expect(asksToCancel("cancel both reminders", r, 2)).toBe(true);
+    expect(asksToCancel("cancel both reminders", r, 1)).toBe(true); // the first may already have been cancelled
     expect(asksToCancel("cancel both reminders", r, 3)).toBe(false);
   });
 

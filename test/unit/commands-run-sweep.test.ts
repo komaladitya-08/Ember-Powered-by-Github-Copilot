@@ -13,9 +13,9 @@ const env = (...entries: string[]) => Buffer.from(`${entries.join("\0")}\0`);
 describe("the sweep script fed to a distro's or a remote's shell", () => {
   it.skipIf(process.platform === "win32")("checks start time again before signalling, leaving recycled ids alone", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-sweep-"));
-    const proc = path.join(root, "123");
+    const proc = path.join(root, "42424242");
     fs.mkdirSync(proc);
-    fs.writeFileSync(path.join(proc, "stat"), stat(123) + "\n");
+    fs.writeFileSync(path.join(proc, "stat"), stat(42424242) + "\n");
     fs.writeFileSync(path.join(proc, "environ"), env(`EMBER_RUN_ID=${RUN}`));
     fs.writeFileSync(path.join(proc, "comm"), "sleep\n");
     const script = sweepScript.replaceAll("/proc/", `${root}/`);
@@ -25,9 +25,9 @@ describe("the sweep script fed to a distro's or a remote's shell", () => {
     try {
       const unchanged = run("");
       expect(unchanged.status).toBe(0);
-      expect(unchanged.stdout).toContain("SIGNALLED 123");
+      expect(unchanged.stdout).toContain("SIGNALLED 42424242");
       // Between reading the marker and signalling, the process exits and the kernel reuses its pid.
-      const recycled = run(`cat() { printf '%s\\n' '${stat(123, 789)}' > '${proc}/stat'; printf 'other\\n'; }`);
+      const recycled = run(`cat() { printf '%s\\n' '${stat(42424242, 789)}' > '${proc}/stat'; printf 'other\\n'; }`);
       expect(recycled.status).toBe(0);
       expect(recycled.stdout).not.toContain("SIGNALLED");
     } finally { fs.rmSync(root, { recursive: true, force: true }); }

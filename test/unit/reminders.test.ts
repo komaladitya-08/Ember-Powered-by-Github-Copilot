@@ -157,6 +157,18 @@ describe("the conductor's reminder tools", () => {
     expect(await handler(tools, "list_reminders")({})).toBe("No reminders are waiting.");
   });
 
+  it("cancels both reminders one at a time without treating a third as part of the request", async () => {
+    const store = new Reminders({ onDue: () => undefined, now: () => NOW, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
+    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, { store, said: () => "cancel both reminders" });
+    for (const text of ["call Priya", "stand up", "drink water"]) store.add(text, NOW + 60_000, `remind me to ${text}`);
+    const [first, second, third] = store.list();
+    expect(await handler(tools, "cancel_reminder")({ id: first.id })).toMatch(/^Not cancelled/);
+    store.cancel(third.id);
+    expect(await handler(tools, "cancel_reminder")({ id: first.id })).toMatch(/^Cancelled/);
+    expect(await handler(tools, "cancel_reminder")({ id: second.id })).toMatch(/^Cancelled/);
+    expect(store.list()).toEqual([]);
+  });
+
   it("does not let a saved routine's steps cancel a reminder without the user's current request", async () => {
     const store = new Reminders({ onDue: () => undefined, now: () => NOW, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
     const reminder = store.add("call Priya", NOW + 60_000, "remind me to call Priya") as Reminder;

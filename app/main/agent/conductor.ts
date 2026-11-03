@@ -348,7 +348,7 @@ export function asksToCancel(said: string, r: Pick<Reminder, "text">, waiting: n
       if (key(target.replace(/^(?:to|about)\s+/i, "")) === key(r.text)) return true;
       continue;
     }
-    if (ALL_REMINDERS.test(target) && (!/^both\b/i.test(target) || waiting === 2)) return true;
+    if (ALL_REMINDERS.test(target) && (!/^both\b/i.test(target) || waiting <= 2)) return true;
     // Specifying another reminder never falls back to “the only one”.
     if (/^(?:(?:my|the|that|this)\s+)?reminder$/i.test(target)) {
       if (waiting === 1) return true;
