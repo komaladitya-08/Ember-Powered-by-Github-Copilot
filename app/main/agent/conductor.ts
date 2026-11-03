@@ -12,7 +12,6 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { reminderTime, whenWords, type Reminder, type Reminders } from "./reminders";
 import { MAX_STEPS, routineKey, routineSteps, type Routine, type RoutineBook } from "./routines";
-import { ownWords } from "../memory/service";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
@@ -174,7 +173,7 @@ const TARGET_ARG = z.string().min(1).max(80);
  * offer_connect are offered (§2.6); without it the tools are today's exactly.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; now?: () => number }, routines?: RoutineTools): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; own?: () => string; now?: () => number }, routines?: RoutineTools): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
@@ -328,41 +327,35 @@ function routineTools(r: RoutineTools): Tool<any>[] {
   ];
 }
 
-/** Words that ask for a reminder to go ("cancel", "never mind", "don't remind me"). */
-const CANCEL_WORDS = /\b(?:cancel|delete|remove|clear|forget|drop|scrap|skip|stop|turn off|never mind|nevermind|don't remind me|do not remind me|no longer need)\b/gi;
-/**
- * A request to set one ("remind me…", "could you remind me…", "I want you to set a reminder…"): never a cancel, whatever
- * its words. "Don't remind me" is a cancel, not this.
- */
-const SETS_REMINDER = /(?<!\b(?:don't|do not|never|not|stop|no need to)\s+)\bremind me\b|\b(?:set|add|make|create)\s+(?:me\s+)?(?:a|another|up a|one more)\s+reminder\b/i;
-/** A negation just before a cancel word: "don't cancel…", "do not remove…", "don't stop until…". */
-const NEGATED = /\b(?:don't|do not|dont|never|not|no need to|won't|shouldn't)\s+(?:\S+\s+)?$/i;
-/** "All my reminders", "every reminder", "both reminders". */
-const ALL_REMINDERS = /\b(?:all\s+(?:of\s+)?(?:my\s+|the\s+)?reminders|every\s+reminder|both\s+(?:of\s+)?(?:my\s+|the\s+)?reminders)\b/i;
-/** How many words after a cancel word it governs ("cancel the reminder to call Priya"). */
-const CANCEL_REACH = 6;
+/** A whole cancellation request, not a mention, a question about cancelling, a negation or quoted instructions. */
+const CANCEL_REQUEST = /^(?:(?:please|also)\s+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(cancel|delete|remove|clear|forget|drop|scrap|skip|stop|turn off|never mind|nevermind|don't remind me|do not remind me|no longer need)\s+(.+?)$/i;
+/** All is explicit and whole: “all reminders except…” must never cancel the exception. */
+const ALL_REMINDERS = /^(?:all\s+(?:of\s+)?(?:my\s+|the\s+)?reminders|every\s+reminder|both\s+(?:of\s+)?(?:my\s+|the\s+)?reminders)$/i;
 
 /**
- * Whether what the user said this turn asks to cancel `r`: a cancel word governing it, within a few words in the same
- * clause, that names the reminder's own words, all the reminders, or "the reminder" when it is the only one waiting. A
- * request to set one never cancels one ("set a reminder to stop at the bank"), nor does a cancel word about something
- * else ("…and remove the old screenshots"). Text on the screen or in a task result never cancels one.
+ * Only a direct request may cancel a reminder. Match the whole target, never overlapping words, and accept an
+ * unnamed reminder only when there is exactly one. Saved routine steps and model-selected ids grant no permission.
+ * Ambiguous requests are left alone so the conductor can ask which reminder the user means.
  */
 export function asksToCancel(said: string, r: Pick<Reminder, "text">, waiting: number): boolean {
-  // Sentence by sentence ("remind me to buy milk; also cancel the reminder to call Priya" is a set, then a cancel).
+  const key = (text: string) => text.trim().toLowerCase().replace(/\s+/g, " ").replace(/^the /, "");
   for (const sentence of said.replace(/[\u2018\u2019]/g, "'").split(/[\n.?!;]/)) {
-    // A request to set one never cancels one, and a cancel is always about a reminder ("remind", "reminder").
-    if (SETS_REMINDER.test(sentence) || !/\bremind(?:er|ers)?\b/i.test(sentence)) continue;
-    for (const clause of sentence.split(",")) {
-      for (const m of clause.matchAll(CANCEL_WORDS)) {
-        // "Don't cancel…" keeps it.
-        if (NEGATED.test(clause.slice(0, m.index ?? 0))) continue;
-        const after = clause.slice((m.index ?? 0) + m[0].length).trim().split(/\s+/).filter(Boolean).slice(0, CANCEL_REACH).join(" ");
-        if (!after) continue;
-        if (ALL_REMINDERS.test(after) || ownWords(r.text, after)) return true;
-        if (waiting === 1 && /\breminders?\b/i.test(after)) return true;
-      }
+    const request = sentence.replace(WAKE, "").trim().match(CANCEL_REQUEST);
+    if (!request) continue;
+    const target = request[2].replace(/,\s*keep (?:all )?(?:the )?(?:others|rest)$/i, "")
+      .replace(/(?:,?\s+please|\s+for me)$/i, "").trim();
+    if (/^(?:don't|do not) remind me$/i.test(request[1])) {
+      if (key(target.replace(/^(?:to|about)\s+/i, "")) === key(r.text)) return true;
+      continue;
     }
+    if (ALL_REMINDERS.test(target) && (!/^both\b/i.test(target) || waiting <= 2)) return true;
+    // Specifying another reminder never falls back to “the only one”.
+    if (/^(?:(?:my|the|that|this)\s+)?reminder$/i.test(target)) {
+      if (waiting === 1) return true;
+      continue;
+    }
+    const named = /^(?:(?:my|the|that|this)\s+)?reminder\s+(?:to|about|for|called|named)\s+(.+)$/i.exec(target);
+    if (named && key(named[1]) === key(r.text)) return true;
   }
   return false;
 }
@@ -404,7 +397,7 @@ export function asksToDelete(said: string, name: string): boolean {
  * while routines are on (`lasting`).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-function reminderTools(r: { store: Reminders; said: () => string; now?: () => number }, lasting = false): Tool<any>[] {
+function reminderTools(r: { store: Reminders; said: () => string; own?: () => string; now?: () => number }, lasting = false): Tool<any>[] {
   const now = r.now ?? Date.now;
   return [
     checkedTool("set_reminder", `Remind the user of something later, when they ask ("remind me in 20 minutes to call Priya", "at 3 pm tell me to stand up"). Ember shows and says it when it's due; it never acts on it. Use the user's own words for what to remind them of. Give minutes from now, or a clock time. ${lasting ? "Reminders are kept when Ember restarts, at most a week ahead." : "Reminders last while Ember runs: if they ask for one days ahead, say so."}`,
@@ -433,7 +426,7 @@ function reminderTools(r: { store: Reminders; said: () => string; now?: () => nu
         const list = r.store.list();
         const found = list.find(x => x.id === key);
         if (!found) return `No reminder has the id ${id}. Use list_reminders to find it.`;
-        if (!asksToCancel(r.said(), found, list.length)) return "Not cancelled: the user didn't ask in this request to cancel that reminder. Cancel one only when they ask.";
+        if (!asksToCancel((r.own ?? r.said)(), found, list.length)) return "Not cancelled: the user didn't ask in this request to cancel that reminder. Cancel one only when they ask.";
         return r.store.cancel(key) ? `Cancelled ${id}.` : `No reminder has the id ${id}. Use list_reminders to find it.`;
       }),
   ];
@@ -748,9 +741,9 @@ export class Conductor {
   }
 
   /** The reminder tools, when the deps give reminders. */
-  private get reminderTools(): { store: Reminders; said: () => string } | undefined {
+  private get reminderTools(): { store: Reminders; said: () => string; own: () => string } | undefined {
     const store = this.deps.reminders;
-    return store ? { store, said: () => this.turnSaid } : undefined;
+    return store ? { store, said: () => this.turnSaid, own: () => this.saidOwn ? this.said : "" } : undefined;
   }
 
   /** The tools that come with other computers, as the deps give them. */

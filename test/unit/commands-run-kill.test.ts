@@ -93,6 +93,36 @@ describe("the kill ladder", () => {
     await expect(ladder.stragglers).resolves.toEqual([]);
   });
 
+  it("re-reads the live shell's session for every step, rather than reusing a cached session id", async () => {
+    const s = setup(linux);
+    await s.runner.facts();
+    const run = s.runner.start(spec());
+    run.stop("user");
+    await s.timers.advance(1000);
+    expect(s.record.filter(x => x.includes("pgrep"))).toEqual(["300 pgrep -P 5000", "1000 pgrep -P 5000"]);
+    expect(s.children[0].killed).toBe(1);
+    expect(s.record).not.toContain("1000 kill 5000 SIGKILL");
+    s.children[0].exit(null, "SIGKILL");
+    await run.done;
+  });
+
+  it("drops a pending session signal when its original parent exits before the lookup returns", async () => {
+    let found!: (r: { code: number; stdout: string }) => void;
+    const s = setup(linux, { sessionQuery: () => new Promise(resolve => { found = resolve; }) });
+    await s.runner.facts();
+    const run = s.runner.start(spec());
+    run.stop("user");
+    await s.timers.advance(300);
+    s.children[0].exit(0);
+    await run.done;
+    found({ code: 0, stdout: "5001\n" });
+    await flush();
+    expect(s.record.some(x => x.includes("pkill"))).toBe(false);
+    await s.timers.advance(1200);
+    expect(s.record.filter(x => x.includes("kill -5000"))).toEqual(["300 kill -5000 SIGTERM"]);
+    expect(s.children[0].killed).toBe(0);
+  });
+
   it("terminates a Windows run's job host at once, with no polite phase and nothing left", async () => {
     const timers = new FakeTimers();
     const r = recorder(timers);
@@ -214,7 +244,7 @@ function child(pid: number) {
   return c;
 }
 
-function setup(facts: RunnerFacts, o: { ownTracker?: boolean } = {}) {
+function setup(facts: RunnerFacts, o: { ownTracker?: boolean; sessionQuery?: () => Promise<{ code: number; stdout: string }> } = {}) {
   const timers = new FakeTimers();
   const record: string[] = [];
   const children: ReturnType<typeof child>[] = [];
@@ -230,7 +260,7 @@ function setup(facts: RunnerFacts, o: { ownTracker?: boolean } = {}) {
     kill: (pid, signal) => record.push(`${timers.now} kill ${pid} ${signal}`),
     exec: async (file, args) => {
       record.push(`${timers.now} ${file} ${args.join(" ")}`);
-      return { code: 0, stdout: file === "pgrep" ? "5001\n" : "" };
+      return file === "pgrep" && o.sessionQuery ? o.sessionQuery() : { code: 0, stdout: file === "pgrep" ? "5001\n" : "" };
     },
     sweep: async (runId, signal) => {
       record.push(`${timers.now} sweep ${runId} ${signal}`);
@@ -272,16 +302,16 @@ describe("stopping a local run", () => {
     run.stop("user");
     expect(c.written).toEqual(["\x03"]);
     await flush();
-    expect(s.record).toEqual(["0 pgrep -P 5000"]);
+    expect(s.record).toEqual([]);
     await s.timers.advance(300);
-    expect(s.record.slice(1)).toEqual(["300 kill -5000 SIGTERM", `300 sweep ${RUN_ID} SIGTERM`, "300 pkill -TERM -s 5001"]);
+    expect(s.record).toEqual(["300 kill -5000 SIGTERM", "300 pgrep -P 5000", `300 sweep ${RUN_ID} SIGTERM`, "300 pkill -TERM -s 5001"]);
     c.exit(130);
     await expect(run.done).resolves.toMatchObject({ ended: "stopped-user", code: 130 });
     await s.timers.advance(700);
-    // script exited (and was reaped) at 300 ms: its pid may be another program's now, so only its group and session.
-    expect(s.record.slice(4)).toEqual(["1000 kill -5000 SIGKILL", `1000 sweep ${RUN_ID} SIGKILL`, "1000 pkill -KILL -s 5001"]);
+    // After script was reaped, its pid, group and session can all be unrelated: only the verified run sweep remains.
+    expect(s.record.slice(4)).toEqual([`1000 sweep ${RUN_ID} SIGKILL`]);
     await s.timers.advance(500);
-    expect(s.record.slice(7)).toEqual([`1500 sweep ${RUN_ID} SIGKILL`]);
+    expect(s.record.slice(5)).toEqual([`1500 sweep ${RUN_ID} SIGKILL`]);
     if (!isKeptRun(run)) throw new Error("not kept");
     await expect(run.stragglers).resolves.toEqual(["sleep"]);
     expect(s.warned).toEqual([["commands.straggler", { runId: RUN_ID, count: 1 }]]);
@@ -337,7 +367,8 @@ describe("stopping a local run", () => {
     await q.timers.advance(1);
     expect(quit).toBe(true);
     // Still running at 1000 ms: script itself gets SIGKILL too (its exit hangs up the PTY).
-    expect(q.record).toContain("1000 kill 5000 SIGKILL");
+    expect(q.children[0].killed).toBe(1);
+    expect(q.record).not.toContain("1000 kill 5000 SIGKILL");
     q.children[0].exit(null, "SIGKILL");
     await expect(c.done).resolves.toMatchObject({ ended: "stopped-task" });
   });

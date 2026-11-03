@@ -1,17 +1,36 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { environHasRun, LINE_MAX, linesKept, programName, psEnvironmentPids, sweepArgs, sweepLocal, sweepScript, sweptNames, SWEEP_PARALLEL, type SweepDeps } from "../../app/main/commands/run/sweep";
 
 const RUN = "0123456789abcdef";
 const OTHER = "fedcba9876543210";
+const stat = (pid: number, start = 456) => `${pid} (sleep) S 1 ${pid} ${Array(16).fill("0").join(" ")} ${start} 0`;
 const env = (...entries: string[]) => Buffer.from(`${entries.join("\0")}\0`);
 
 describe("the sweep script fed to a distro's or a remote's shell", () => {
-  it("is §3.13's fixed text, run as sh -s -- <SIGNAL> <runId> with nothing on its argv", () => {
-    // The design's one-liner, plus a line naming each process it found (the status line's stragglers in WSL).
-    expect(sweepScript).toBe(
-      'for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null || continue; kill -$1 "${p#/proc/}" 2>/dev/null; ' +
-      'printf \'%s %s\\n\' "${p#/proc/}" "$(cat "$p/comm" 2>/dev/null)"; done\n',
-    );
+  it.skipIf(process.platform === "win32")("checks start time again before signalling, leaving recycled ids alone", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-sweep-"));
+    const proc = path.join(root, "42424242");
+    fs.mkdirSync(proc);
+    fs.writeFileSync(path.join(proc, "stat"), stat(42424242) + "\n");
+    fs.writeFileSync(path.join(proc, "environ"), env(`EMBER_RUN_ID=${RUN}`));
+    fs.writeFileSync(path.join(proc, "comm"), "sleep\n");
+    const script = sweepScript.replaceAll("/proc/", `${root}/`);
+    const run = (prefix: string) => spawnSync("/bin/sh", ["-s", "--", "TERM", RUN], {
+      input: `kill() { printf 'SIGNALLED %s\\n' "$2"; }\n${prefix}\n${script}`, encoding: "utf8",
+    });
+    try {
+      const unchanged = run("");
+      expect(unchanged.status).toBe(0);
+      expect(unchanged.stdout).toContain("SIGNALLED 42424242");
+      // Between reading the marker and signalling, the process exits and the kernel reuses its pid.
+      const recycled = run(`cat() { printf '%s\\n' '${stat(42424242, 789)}' > '${proc}/stat'; printf 'other\\n'; }`);
+      expect(recycled.status).toBe(0);
+      expect(recycled.stdout).not.toContain("SIGNALLED");
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
     expect(sweepScript).not.toContain(RUN);
   });
 
@@ -77,6 +96,7 @@ function fakeDeps(over: Partial<SweepDeps> = {}) {
     "/proc/104/environ": env(`EMBER_RUN_ID=${RUN}`), // Ember itself (never, though it can't carry it)
     "/proc/105/environ": env(`EMBER_RUN_ID=${RUN}`), // gone before its name was read
   };
+  for (const pid of [1, 100, 101, 102, 103, 104, 105]) proc[`/proc/${pid}/stat`] = Buffer.from(stat(pid));
   const deps: SweepDeps = {
     os: "linux",
     uid: 1000,
@@ -87,6 +107,11 @@ function fakeDeps(over: Partial<SweepDeps> = {}) {
       if (!v) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       if (v instanceof Error) throw v;
       return v;
+    },
+    readProc: file => {
+      const value = proc[file];
+      if (!value || value instanceof Error) throw new Error("gone");
+      return Buffer.from(value).toString("utf8");
     },
     run: async (file, args) => {
       runs.push([file, args]);
@@ -131,7 +156,7 @@ describe("programName", () => {
     expect(psEnvironmentPids(`  700 /tmp/Click\u202eAllow EMBER_RUN_ID=${RUN}\n`, RUN)).toEqual([{ pid: 700, name: "ClickAllow" }]);
     const f = fakeDeps({
       readdir: async () => ["300"],
-      readFile: async file => (file.endsWith("/comm") ? Buffer.from("\u202e\x07\n") : env(`EMBER_RUN_ID=${RUN}`)),
+      readFile: async file => (file.endsWith("/stat") ? Buffer.from(stat(300)) : file.endsWith("/comm") ? Buffer.from("\u202e\x07\n") : env(`EMBER_RUN_ID=${RUN}`)),
     });
     await expect(sweepLocal(RUN, null, f.deps)).resolves.toEqual([{ pid: 300, name: "300" }]);
   });
@@ -165,6 +190,7 @@ describe("sweepLocal", () => {
         await new Promise(resolve => setImmediate(resolve));
         open--;
         if (file.endsWith("/comm")) return Buffer.from("sleep\n");
+        if (file.endsWith("/stat")) return Buffer.from(stat(Number(file.split("/")[2])));
         return file === "/proc/2999/environ" || file === "/proc/1000/environ" ? env(`EMBER_RUN_ID=${RUN}`) : env("A=1");
       },
     });
@@ -183,8 +209,21 @@ describe("sweepLocal", () => {
       },
     });
     await expect(sweepLocal(RUN, "SIGTERM", f.deps)).resolves.toEqual([{ pid: 700, name: "sleep" }]);
-    expect(f.runs).toEqual([["/bin/ps", ["-E", "-ww", "-U", "501", "-o", "pid=,command="]]]);
+    expect(f.runs).toEqual([["/bin/ps", ["-E", "-ww", "-U", "501", "-o", "pid=,command="]], ["/bin/ps", ["-E", "-ww", "-p", "700", "-o", "pid=,command="]]]);
     expect(f.killed).toEqual([[700, "SIGTERM"]]);
+  });
+
+  it("does not signal a Linux pid reused after the process scan or one whose identity cannot be read", async () => {
+    const f = fakeDeps({ readProc: file => file === "/proc/100/stat" ? stat(100, 789) : "" });
+    await sweepLocal(RUN, "SIGKILL", f.deps);
+    expect(f.killed).toEqual([]);
+  });
+
+  it("does not signal a macOS pid whose current process no longer has the run marker", async () => {
+    const f = fakeDeps({ os: "darwin", run: async (_file, args) => ({ code: 0, stdout: args.includes("-p")
+      ? `700 sleep EMBER_RUN_ID=${OTHER}\n` : `700 sleep EMBER_RUN_ID=${RUN}\n` }) });
+    await sweepLocal(RUN, "SIGTERM", f.deps);
+    expect(f.killed).toEqual([]);
   });
 
   it("finds nothing on Windows (the job object holds the tree), for a malformed run id, or when /proc can't be listed", async () => {

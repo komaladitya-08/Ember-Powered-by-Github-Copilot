@@ -4,7 +4,7 @@
  * hangs, can't start or is stopped. Ember itself must always carry on.
  */
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -126,6 +126,17 @@ describe("desk helper", () => {
     if (process.platform === "linux") expect(await until(() => startTime(a.pid) !== born)).toBe(true);
     await new Promise(r => setTimeout(r, 100));
     expect(why).toEqual([]);
+  });
+
+  it("stops through the relay's live child handle, never the main thread's cached pid", async () => {
+    const a = await start();
+    const pid = a.pid;
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      a.stop();
+      expect(kill).not.toHaveBeenCalled();
+    } finally { kill.mockRestore(); }
+    expect(await until(() => !running(pid))).toBe(true);
   });
 
   it("fails to start with the helper's reason, or when there is no helper", async () => {

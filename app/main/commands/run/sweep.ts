@@ -7,6 +7,7 @@
  * every OS.
  */
 
+import { processIdentity, signalProcess, type ProcessIdentity, type ReadProcess } from "../../platform/linux/process-identity";
 import type { OS } from "../../../shared/shortcuts";
 
 /**
@@ -16,9 +17,24 @@ import type { OS } from "../../../shared/shortcuts";
  * can say what is still running (the design's one-liner, plus that line). The shell running it must not carry that
  * variable itself.
  */
-export const sweepScript =
-  'for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null || continue; kill -$1 "${p#/proc/}" 2>/dev/null; ' +
-  'printf \'%s %s\\n\' "${p#/proc/}" "$(cat "$p/comm" 2>/dev/null)"; done\n';
+export const sweepScript = [
+  'identity() {',
+  '  IFS= read -r stat < "$1/stat" 2>/dev/null || return 1',
+  '  fields=${stat##*) }; [ "$fields" != "$stat" ] || return 1',
+  '  set -f; set -- $fields; [ "$#" -ge 20 ] || return 1; shift 19',
+  '  case "$1" in ""|*[!0-9]*) return 1 ;; esac',
+  '  printf \'%s\\n\' "$1"',
+  '}',
+  'for p in /proc/[0-9]*; do',
+  '  pid=${p#/proc/}; [ "$pid" -gt 1 ] && [ "$pid" != "$$" ] || continue',
+  '  born=$(identity "$p") || continue',
+  '  grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null || continue',
+  '  comm=$(cat "$p/comm" 2>/dev/null)',
+  '  current=$(identity "$p") || continue; [ "$born" = "$current" ] || continue',
+  '  kill -$1 "$pid" 2>/dev/null',
+  '  printf \'%s %s\\n\' "$pid" "$comm"',
+  'done',
+].join("\n") + "\n";
 
 /** A run id as RunSpec makes them: 16 lower-case hex digits. */
 export const RUN_ID = /^[0-9a-f]{16}$/;
@@ -133,6 +149,8 @@ export interface SweepDeps {
   readdir(dir: string): Promise<string[]>;
   /** Linux: a /proc file's bytes. */
   readFile(file: string): Promise<Uint8Array>;
+  /** Linux: the final identity check is synchronous, immediately before signalling. */
+  readProc: ReadProcess;
   /** macOS: runs `ps` to its end. */
   run(file: string, args: string[]): Promise<{ code: number | null; stdout: string }>;
   /** Sends a signal to one process (throws when it is gone or not ours). */
@@ -146,7 +164,7 @@ export interface SweepDeps {
  */
 export async function sweepLocal(runId: string, signal: NodeJS.Signals | null, deps: SweepDeps): Promise<Swept[]> {
   if (!RUN_ID.test(runId)) return [];
-  let found: Swept[] = [];
+  let found: (Swept & { identity?: ProcessIdentity })[] = [];
   try {
     if (deps.os === "linux") found = await sweepProc(runId, deps);
     else if (deps.os === "darwin") {
@@ -160,13 +178,19 @@ export async function sweepLocal(runId: string, signal: NodeJS.Signals | null, d
   if (signal) {
     for (const p of found) {
       try {
-        deps.kill(p.pid, signal);
+        if (deps.os === "linux") {
+          if (p.identity) signalProcess(p.identity, signal, { read: deps.readProc, kill: deps.kill });
+        } else if (deps.os === "darwin") {
+          // A whole ps listing may be old by now. Re-read this pid and its run marker just before signalling it.
+          const current = await deps.run("/bin/ps", ["-E", "-ww", "-p", String(p.pid), "-o", "pid=,command="]);
+          if (current.code === 0 && psEnvironmentPids(current.stdout, runId).some(q => q.pid === p.pid && q.name === p.name)) deps.kill(p.pid, signal);
+        }
       } catch {
         // already gone, or not ours to signal
       }
     }
   }
-  return found;
+  return found.map(({ pid, name }) => ({ pid, name }));
 }
 
 /**
@@ -176,12 +200,15 @@ export async function sweepLocal(runId: string, signal: NodeJS.Signals | null, d
 export const SWEEP_PARALLEL = 32;
 
 /** Linux: every readable /proc/<pid>/environ holding the marker (another user's isn't readable). */
-async function sweepProc(runId: string, deps: SweepDeps): Promise<Swept[]> {
+async function sweepProc(runId: string, deps: SweepDeps): Promise<(Swept & { identity: ProcessIdentity })[]> {
   const pids = (await deps.readdir("/proc")).filter(n => /^\d+$/.test(n));
-  const out: Swept[] = [];
+  const out: (Swept & { identity: ProcessIdentity })[] = [];
   const one = async (name: string): Promise<void> => {
     let environ: Uint8Array;
+    let identity: ProcessIdentity | null;
     try {
+      identity = processIdentity(Buffer.from(await deps.readFile(`/proc/${name}/stat`)).toString("utf8"));
+      if (!identity || identity.pid !== Number(name)) return;
       environ = await deps.readFile(`/proc/${name}/environ`);
     } catch {
       return; // gone, or another user's
@@ -193,7 +220,7 @@ async function sweepProc(runId: string, deps: SweepDeps): Promise<Swept[]> {
     } catch {
       // gone since: named by its pid
     }
-    out.push({ pid: Number(name), name: programName(comm) || name });
+    out.push({ pid: Number(name), name: programName(comm) || name, identity });
   };
   let next = 0;
   const worker = async (): Promise<void> => {

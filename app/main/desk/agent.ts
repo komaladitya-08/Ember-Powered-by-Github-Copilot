@@ -55,7 +55,7 @@ if (child) {
     else if (m.async) parentPort.postMessage(m);
     else { port.postMessage(m); wake(); }
   });
-  port.on("message", m => { if (m.stop) { child.kill("SIGKILL"); return; } try { child.send(m); } catch { /* exiting */ } });
+  port.on("message", m => { if (m.stop) { if (!over && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); return; } try { child.send(m); } catch { /* exiting */ } });
 }
 `;
 
@@ -205,7 +205,7 @@ export class DeskAgent {
   private kill(): void {
     if (Atomics.load(this.sig, 1)) return;
     try { this.port.postMessage({ stop: true }); } catch { /* closed */ }
-    if (this.pid) try { process.kill(this.pid, "SIGKILL"); } catch { /* gone */ }
+    // The relay owns the live ChildProcess handle. A pid cached by this thread may already have been reused.
   }
 
   private settle(m: Reply): void {
