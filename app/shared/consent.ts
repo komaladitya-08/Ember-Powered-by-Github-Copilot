@@ -1,7 +1,10 @@
 import type { TargetId } from "./targets";
 
-/** Bumped when what Ember does with the screen or data changes: everyone is asked again. */
-export const CONSENT_VERSION = 1;
+/**
+ * Bumped when what Ember does with the screen or data changes: everyone is asked again. 2 (2026-11-03): Voice Match keeps
+ * refining the voiceprint from the owner's requests, and the words the user corrects are kept (docs/ASSISTANT.md §7).
+ */
+export const CONSENT_VERSION = 2;
 
 /**
  * The versions of the first-use consent cards for WSL, SSH (per host) and commands (per target), recorded apart from

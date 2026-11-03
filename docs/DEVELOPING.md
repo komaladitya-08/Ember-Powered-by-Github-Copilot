@@ -101,6 +101,8 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
 | `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--tts-voice` also fetches a test-only TTS voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesizes new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
+| `node scripts/voice/match-bench.mjs <speakers> [--cache <file>]` | Voice Match that keeps learning (docs/ASSISTANT.md §7): false rejects and accepts before and after learning, in the enrolment's room and on another microphone, and the drift attack, on a folder of speakers' 16 kHz clips (LibriSpeech dev-clean through ffmpeg, as its header says). `--cache` keeps the voiceprints (numbers only) for trying other limits. Needs the speech models |
+| `node scripts/voice/words-bench.mjs [--show]` | Personal vocabulary for recognition (docs/ASSISTANT.md §7): word error rate of the voice clips and of synthesised requests with app and people's names, raw, corrected against a lexicon, and with corrections taught from a first take. Needs `node scripts/voice/prepare.mjs --tts-voice --voice ryan` |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4b-tour.mjs out/` | Cursor-borrow tour: Ember borrows the mouse with permission, and lets go when the user moves it |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4-tour.mjs out/` | Task tour: Ember fills in a form in another window, asks once, refuses the password, turns on Do Not Disturb |
@@ -154,6 +156,8 @@ cache (test/temp-folder.ts).
 - **Memory** (Settings › Memory › **Remember what I tell you**, off until you turn it on and agree to its note):
   Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
   - It keeps this in `memory.json` in its data folder (mode 0600).
+  - While it is in force, the names in what you told it (its `user` facts) also help Ember hear them right
+    (app/main/personal/correct.ts); nothing more is kept for that.
   - With each request, the few facts that bear on it go to Copilot as an untrusted `<memory>` block.
   - A fact counts as yours only when it is mostly your own words. Otherwise it is the model's inference, and context
     only.
@@ -423,7 +427,25 @@ Ember, …”) with your request. You can say it in one breath, or pause after t
 neural voice (it comes with the speech models; until then, the system's voice), sentence by sentence as the answer
 arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Match)** under it and say the four
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
-voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
+voice** deletes your voiceprint. With **Keep learning my voice** (on by default once Voice Match knows you), the
+voiceprint follows your voice slowly, from requests it is sure are yours: never from Ember's own voice, a request with
+two voices in it, an answer to a question, or for two minutes after it turned another voice away or you stopped
+Ember; at most one request a minute (with 2 s of voice or more), a small step at a time, and never far from what you
+taught it. A spoken “allow” must still match what you taught at the original threshold. **Reset to my enrolment** goes
+back to that (shown while Voice Match is on). `voiceprint.json` (mode 0600) then also holds the enrolment's print and
+the prints of up to 24 of your requests: numbers, never audio. It is version 2: an older Ember reads it as no
+voiceprint at all (Voice Match off until you teach it again), so going back to an older Ember means teaching it again.
+**Forget my voice** deletes it and `words.json`. Ember corrects names it mishears against your installed apps and, with Memory on, the names you
+asked it to remember; when it still gets one wrong, **That's not what I said** under the request in Conversation
+lets you type what you said, and with **Learn my words** on it hears it right from then on (`words.json`, mode 0600,
+listed under **Words Ember learnt** with Forget; never a swap of common words or of a verb such as open for close). A
+correction never makes a request risky: one about sending, deleting or paying, or one that addresses someone (message,
+call, tell, invite…), keeps every name as heard, and a person's name from Memory is only used in a request that looks
+something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
+Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
+as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
+you just asked. Both are in “Before Ember starts” (`CONSENT_VERSION` 2). After Ember answers a “Hey Ember” request you
+have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows, macOS and Linux without
 `parec`, where Ember can't hear its own speakers, “Ember” alone doesn't (Ember's own words have it), and what you said before it went quiet isn't
@@ -1829,6 +1851,8 @@ app/main/           Electron main process (settings, logging, environment checks
                     sleep-time consolidation, the secret guard, memory.json and MemoryService (main's); learning on
                     its own: learn.ts (extraction), refine.ts, questions.ts, intro.ts and MemoryLearning (learning.ts);
                     Better recall: the WordPiece tokenizer, the embedding model and its process, the vector index
+  personal/         voice personalisation (docs/ASSISTANT.md §7): the transcript corrected against the user's words
+                    (phonetic.ts, correct.ts, words.json), what they might say next (predict.ts), PersonalVoice
   targets/          the targets runtime: which computers exist, naming and binding, consent cards, noticing ssh (§14)
   commands/         run_command's flow, the classifier, output shaping, the command window's controller; run/: runners
   wsl/              WSL discovery, the WSL runner, the WSLg router and matcher

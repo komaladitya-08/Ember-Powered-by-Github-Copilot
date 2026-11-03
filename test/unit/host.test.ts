@@ -1271,6 +1271,22 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
     await stop(host);
   });
 
+  it("a request answered on the spot keeps its provenance: heard unchecked, a chosen suggestion, the row it was heard as (review of #145)", async () => {
+    const { host } = await resultUp();
+    const entry = () => host.getTranscript().filter(e => e.who === "you").at(-1)!;
+    const sets = host as unknown as { voiceUnchecked: WeakSet<object>; suggested: WeakSet<object> };
+    await host.ask("status?", undefined, undefined, { suggested: true });
+    expect(sets.suggested.has(entry())).toBe(true);
+    expect(sets.voiceUnchecked.has(entry())).toBe(false);
+    await host.ask("what did I miss?", undefined, undefined, { voiceUnchecked: true, heardId: 5 });
+    expect(sets.voiceUnchecked.has(entry())).toBe(true);
+    expect(sets.suggested.has(entry())).toBe(false);
+    expect(entry().heardId).toBe(5);
+    await host.ask("status?");
+    expect(sets.voiceUnchecked.has(entry()) || sets.suggested.has(entry())).toBe(false);
+    await stop(host);
+  });
+
   it("signed in as another account from the error state: the first account's conversation is deleted, not resumed", async () => {
     const transcripts: unknown[][] = [];
     // (Main clears the ask box's history then, as at sign-out.)
@@ -1548,6 +1564,20 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await vi.waitFor(() => expect(specs).toHaveLength(3));
     expect((specs[2] as { commandWords?: string }).commandWords).toBeUndefined();
     expect(steered).toEqual([]);
+    await host.stop();
+  });
+
+  it("one of Ember's suggestions the user chose is never their own words for commands, and not voice either (review of #145)", async () => {
+    const { host, specs, tool } = await withTasks();
+    await host.ask("delete the build folder", mail, undefined, { suggested: true });
+    await tool("start_task")({ goal: "delete the build folder" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    // No command words of the user's (no announce-with-Stop for a dangerous command), and the card doesn't say "by voice".
+    expect(specs[0]).toMatchObject({ userWords: "delete the build folder", commandWords: "", typedOnly: true });
+    for (const t of host.tasks!.list()) host.tasks!.cancel(t.id);
+    // A request Ember heard carries its id into the conversation from the start ("That's not what I said" finds its row).
+    await host.ask("open the notes", mail, undefined, { heardId: 7 });
+    expect(host.getTranscript().filter(e => e.who === "you").at(-1)).toMatchObject({ text: "open the notes", heardId: 7 });
     await host.stop();
   });
 

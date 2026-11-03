@@ -363,6 +363,32 @@ allows them.
   turns the user's off (managed); `models.allowed` still holds. An older Ember reads a policy with this key as broken
   and locks down, so update Ember before adding it.
 
+### Voice that learns you
+
+- **Keep learning my voice** (Settings › **Voice**, on once Voice Match knows you): Voice Match follows your voice
+  slowly, from requests it is sure are yours, so a new microphone or a cold doesn't wear it down. It never learns from
+  its own voice, a request with another voice in it, or for two minutes after it turned someone away or you stopped
+  it, and never from an answer to a question; it takes at most one request a minute, moves a small step at a time
+  and stays close to what you taught it, and it asks a little more of a request as it learns, so other voices get in
+  less often, not more (measured on 40 LibriSpeech speakers: docs/ASSISTANT.md §7). A spoken “allow” still has to match
+  the voice you taught it as closely as before. **Reset to my enrolment** goes back; **Forget my voice** deletes it all,
+  the words it learnt too. It keeps numbers, never audio. “Ember, stop” still works for anyone.
+- **Ember hears names better**: what it hears is checked against your installed apps and, with Memory on, the names
+  you asked it to remember (“Open Spotfy” → “Open Spotify”; “Amber, …” at the start → “Ember, …”). When it still gets
+  one wrong, **That's not what I said** under the request in Conversation lets you type what you said, and with
+  **Learn my words** on it hears it right from then on (listed in Settings › Voice with Forget). A request about
+  sending, deleting or paying, or one to message, call, tell or invite someone, is never changed but for Ember's name,
+  and a person's name from Memory is only used in a request that looks something up (“find Sandra”, “who is Sandra”),
+  never in “ask Sandra…”, “add Sandra…” or “book lunch with Sandra”. It never learns a swap of numbers.
+- **Suggest what I might say next**: two or three likely next requests (“Close it”, “Read it out”, “Do the same for
+  the next one”) under Ember's answers and in Ask Ember, marked as Ember's suggestions and made on this computer.
+  Choosing one asks Ember as typing it would, but a command it names always asks first; nothing risky is suggested
+  unless built from what you just asked. After a spoken answer that asked you something, the follow-up window stays
+  open 12 seconds instead of 8.
+- **Ember asks for your agreement again** at its next start: “Before Ember starts” and the microphone's note now say
+  what it keeps when you teach it your voice and correct its words. An older Ember reads the new voiceprint file as
+  none (teach it your voice again if you go back).
+
 ### Better recall
 
 - **Ember finds what you told it when you ask in other words** (Settings › **Memory** › **Better recall**, shown while

@@ -6,6 +6,7 @@
 
 import { BARE_NAME, type VoiceEvent } from "./engine";
 import { ENROL_MIN_SECONDS, ENROL_PHRASES, VOICE_MATCH_THRESHOLD, WAKE_MATCH_THRESHOLD, averagePrint, consistentPrints, similarity } from "./voiceprint";
+import { gateMatches } from "./adapt";
 
 /** Makes a voiceprint (unit length) of 16 kHz audio. */
 export interface Printer {
@@ -77,12 +78,24 @@ export function afterWakePhrase(audio: Float32Array, withWake: boolean): Float32
 
 export class VoiceGate {
   private owner: Float32Array | null = null;
+  /**
+   * What Voice Match learnt (adapt.ts): the enrolment's own print, which a request must match by ADAPT.anchorFloor too,
+   * and the threshold for the print in use (adaptedThreshold). Null and the constructor's threshold: nothing learnt.
+   */
+  private anchor: Float32Array | null = null;
+  private learntThreshold: number | null = null;
   /** Requests waiting for their check finish in order (a later one never overtakes an earlier). */
   private queue: Promise<void> = Promise.resolve();
   /** A wake being looked at (WAKE_MATCH_THRESHOLD): it and what followed it wait, but for a stop. */
   private held: { e: VoiceEvent; audio: Float32Array | null; withWake: boolean }[] | null = null;
   /** A turned-away wake's window is being cancelled: what it emits meanwhile goes nowhere. */
   private dropping = false;
+  /**
+   * Told of each request that matched the owner and was `verified` (sent first), with its voiceprint, its score and the
+   * audio that follows its wake phrase (the part that vouched for it): what Voice Match may learn from (adapt-sample.ts,
+   * adapt.ts). Null: nothing is.
+   */
+  onSample: ((print: Float32Array, score: number, rest: Float32Array) => void) | null = null;
 
   /** `cancelWindow`: ends the engine's listening window (a wake turned away at its first look); it emits synchronously. */
   constructor(
@@ -94,13 +107,31 @@ export class VoiceGate {
     private wakeThreshold = WAKE_MATCH_THRESHOLD,
   ) {}
 
-  /** The owner's voiceprint (null: Voice Match off, every voice is heard). */
-  setOwner(print: Float32Array | null): void {
+  /**
+   * The owner's voiceprint (null: Voice Match off, every voice is heard). `learnt`: it learnt from the owner's requests
+   * since enrolment (adapt.ts), so the enrolment is checked too and the threshold is the learnt print's.
+   */
+  setOwner(print: Float32Array | null, learnt?: { anchor: Float32Array; threshold: number } | null): void {
     this.owner = print;
+    this.anchor = print && learnt ? learnt.anchor : null;
+    this.learntThreshold = print && learnt ? Math.max(this.threshold, learnt.threshold) : null;
+  }
+
+  /**
+   * The owner's match for a request's voiceprint (adapt.ts gateMatches); `strict`: to be `verified`, the enrolment at
+   * its own threshold too.
+   */
+  matches(print: Float32Array, owner: Float32Array, strict = false): boolean {
+    return gateMatches(print, owner, this.learntThreshold ?? this.threshold, this.anchor, strict);
   }
 
   get on(): boolean {
     return !!this.owner;
+  }
+
+  /** The owner's voiceprint in use (null: Voice Match off). */
+  get ownerPrint(): Float32Array | null {
+    return this.owner;
   }
 
   /**
@@ -121,9 +152,10 @@ export class VoiceGate {
     // which ends the voice process. The await below still sees it.
     check.catch(() => undefined);
     this.queue = this.queue.then(async () => {
-      let score: number;
+      let score: number, print: Float32Array;
       try {
-        score = similarity(await check, owner);
+        print = await check;
+        score = similarity(print, owner);
       } catch (err) {
         // The model failed: the request is heard (Voice Match failing must not leave Ember deaf), and main is told.
         this.onError(err);
@@ -134,7 +166,12 @@ export class VoiceGate {
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
       // own: a recording of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
-      if (score >= this.threshold) { this.send(await this.vouched(e, audio, owner, withWake, score)); return; }
+      if (this.matches(print, owner)) {
+        const heard = await this.vouched(e, audio, owner, withWake, print);
+        this.send(heard);
+        if (heard.type === "utterance" && heard.verified) this.onSample?.(print, score, afterWakePhrase(audio, withWake));
+        return;
+      }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
       this.send({ type: "listening", on: false, reason: "rejected", window: e.window });
     });
@@ -143,26 +180,33 @@ export class VoiceGate {
   /**
    * The owner's request (it matched as a whole) as main gets it: `verified` when what follows the wake phrase holds at
    * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`, with that part's own score
-   * (`restScore`) when it held SCORE_MIN_SECONDS of voice or more (`whole`: the score of all of it, which is that part's
-   * when there was no wake phrase). A check that fails says neither (heard, but it can't approve anything).
-   * `restScore` is the cosine to `owner`, the enrolled voiceprint (the same one VOICE_MATCH_THRESHOLD is measured
-   * against), and goes out unrounded: main's floor (voice-answer.ts SHORT_YES_FLOOR) is compared with exactly this
-   * number, never one rounded up to it. A change to how `owner` is made (averaging, adapting it as it is used) moves
-   * the scale the floor was measured on: measure it again.
+   * (`restScore`) when it held SCORE_MIN_SECONDS of voice or more (`print`: the whole request's voiceprint, which is that
+   * part's when there was no wake phrase). A check that fails says neither (heard, but it can't approve anything).
+   *
+   * `verified` needs `matches(…, strict)` (adapt.ts): the learnt print at its raised threshold AND the enrolment at its own
+   * threshold, so what Voice Match learnt never lowers the bar for a spoken yes. `restScore` goes out unrounded and is
+   * the cosine to the ENROLLED voiceprint (the one VOICE_MATCH_THRESHOLD and main's SHORT_YES_FLOOR are measured against),
+   * or, once the print learnt, the lower of that and the cosine to the print in use: what was learnt never makes a short
+   * yes score higher (voice-answer.ts SHORT_YES_FLOOR is compared with exactly this number).
    */
-  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, whole: number): Promise<VoiceEvent> {
+  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, print: Float32Array): Promise<VoiceEvent> {
+    const enrolled = this.anchor ?? owner;
+    const scored = (p: Float32Array) => Math.min(similarity(p, owner), similarity(p, enrolled));
     const rest = afterWakePhrase(audio, withWake);
     const voiced = voicedSeconds(rest);
-    if (rest === audio) return voiced >= APPROVAL_MIN_SECONDS ? { ...e, verified: true } : { ...e, short: true, ...(voiced >= SCORE_MIN_SECONDS ? { restScore: whole } : {}) };
+    if (rest === audio) {
+      if (voiced < APPROVAL_MIN_SECONDS) return { ...e, short: true, ...(voiced >= SCORE_MIN_SECONDS ? { restScore: scored(print) } : {}) };
+      return this.matches(print, owner, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(print) };
+    }
     if (voiced < SCORE_MIN_SECONDS) return { ...e, short: true };
-    let score: number;
+    let restPrint: Float32Array;
     try {
-      score = similarity(await this.printer().print(rest), owner);
+      restPrint = await this.printer().print(rest);
     } catch (err) {
       this.onError(err);
       return e;
     }
-    return voiced >= APPROVAL_MIN_SECONDS && score >= this.threshold ? { ...e, verified: true } : { ...e, short: true, restScore: score };
+    return voiced >= APPROVAL_MIN_SECONDS && this.matches(restPrint, owner, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(restPrint) };
   }
 
   private lookAtWake(e: Extract<VoiceEvent, { type: "wake" }>, audio: Float32Array, owner: Float32Array): void {

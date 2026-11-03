@@ -25,7 +25,7 @@ import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } fr
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
-import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -50,7 +50,7 @@ import { capiChoice, type BackendChoice } from "../voice/runtime";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
 import { AuditLog } from "./policy/audit";
 import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
-import { PolicyEngine } from "./policy/policy";
+import { PolicyEngine, isRiskyLabel } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
 import { Confirmer, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
@@ -68,8 +68,10 @@ import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDevic
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { SpeechStream } from "../voice/tts";
-import { ENROL_PHRASES } from "../voice/voiceprint";
+import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
+import { PersonalVoice } from "./personal/service";
+import { wordsStore } from "./personal/words-store";
 import { speaksAloud } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
@@ -1102,7 +1104,15 @@ function start(): void {
    * The latest requests asked, and how, for a problem's Try again (presenter TRY_AGAIN): the request the problem offers
    * (AgentHost.takeRetry, its own turn's, not a newer one) goes again in the same words, with the same caution.
    */
-  let recentAsks: { text: string; voiceUnchecked?: boolean }[] = [];
+  let recentAsks: { text: string; voiceUnchecked?: boolean; suggested?: boolean }[] = [];
+  /**
+   * Voice personalisation (app/main/personal/service.ts): Voice Match learning, the transcript corrected against the
+   * user's own words, and what they might say next. Made once the stores it reads are (below).
+   */
+  let personalRef: PersonalVoice | null = null;
+  /** When the latest request went (for the task it may have started), and the latest reply's words. */
+  let askedAt = 0;
+  let lastReply = "";
   const showNotice = (n: { title: string; thought: string }, ms: number) => {
     const time = ms * readTime();
     return holdNotice<EmberState["bubble"]>({
@@ -1111,9 +1121,17 @@ function start(): void {
     }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, time);
   };
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean } = {}) => {
+  /**
+   * `how.suggested`: one of Ember's suggestions the user chose (never their own words for commands: host.ts
+   * UserRequest.suggested); `how.heardId`: the request Ember heard, for "That's not what I said" (personal/service.ts).
+   */
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number } = {}) => {
     if (!consented()) { showHome(); return; }
-    recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) }].slice(-4);
+    recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
+    // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
+    personalRef?.asked(text, { unchecked: how.voiceUnchecked, suggested: how.suggested });
+    askedAt = Date.now();
+    if (lastState.suggest) showState({ suggest: null });
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
@@ -1132,7 +1150,7 @@ function start(): void {
     const sent = how.spoken ? () => { ackLater(text); ack = ackTimer; } : undefined;
     const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
     if (!agent) return;
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(sent ? { onSent: sent } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}), ...(sent ? { onSent: sent } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1170,6 +1188,7 @@ function start(): void {
       // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
       show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {
         sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened),
+        ...(personalRef?.current().length ? { suggestions: personalRef.current().map(s => s.text) } : {}),
       }, source),
     });
     // ms: from the call (the shortcut's press, as Ember heard it) to the box shown.
@@ -1209,6 +1228,8 @@ function start(): void {
     // An acknowledgement still waiting isn't said after a stop.
     cancelAck();
     const pulled = killSwitch.pull(source);
+    // Voice Match learns nothing for a while after a stop, and the suggestions go.
+    personalRef?.stopped();
     // First run's stop rehearsal hears it (only the settings window, and only that it happened and how).
     sendToHome(IPC.homeStopped, source);
     // A failure card stays about a minute (longer than others, so it can be read; the settings window's Conversation
@@ -1217,7 +1238,7 @@ function start(): void {
     for (const t of agent?.tasks?.list() ?? []) if (t.status === "failed") agent?.tasks?.dismiss(t.id);
     const bubble = { visible: true, mood: "idle" as const, title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] };
     statusBy.listen = statusBy.mic = null;
-    setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble });
+    setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble, suggest: null });
     hideIfStill(bubble, 3000);
     // Parts still winding down after the kill switch's wait (a command's kill ladder, a slow remote link) are named.
     void pulled.then(({ late }) => {
@@ -1280,7 +1301,7 @@ function start(): void {
     ...(voice?.isDownloading ? { downloading: true } : {}),
     speechMissing: speechHeard === false,
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
-    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling },
+    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips },
     ...(voice ? { natural: voice.naturalStatus } : {}),
   });
   /**
@@ -1308,6 +1329,21 @@ function start(): void {
   settings.onChange(() => betterRecall.settingsChanged());
   const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
+  const words = wordsStore(userData);
+  const personal = new PersonalVoice({
+    log: log.child("personal"), voiceprints, words,
+    settings: () => {
+      const v = settings.get().voice;
+      return { learnVoice: v.learn, matchOn: !!ownerPrint() && (voice?.matchReady ?? false), learnWords: v.words, suggest: v.suggest };
+    },
+    apps: () => sys.apps.list().map(a => a.name),
+    // Memory in force (on, agreed to, allowed): only then do its `user` facts' names help correct what Ember heard.
+    memory: () => (memoryOn() ? memory.list() : null),
+    risky: w => isRiskyLabel(w, platform.os),
+  });
+  personalRef = personal;
+  /** The request a Voice Match sample belongs to: the voice process names it (a sample's `utterance` is the request's number). */
+  let lastHeard: { utterance: number; verified: boolean; cut: boolean; selfSpoke: boolean } | null = null;
   if (memoryOn() && betterRecall.ready) memory.index();
   // Memory that learns on its own (app/main/memory/learning.ts): only while memory is in force (memoryOn: on, its own
   // consent, the organisation's features.memory; LOCKDOWN turns that off). Its "Ember learned" lines join the
@@ -1456,7 +1492,7 @@ function start(): void {
   /** The status line while a follow-up window listens. */
   const FOLLOW_UP_STATUS = "Listening for a follow-up…";
   /** What Ember does with what it hears. */
-  const onVoice = (e: VoiceEvent) => {
+  const onVoice = (e: VoiceEvent, heard?: { utterance: number }) => {
     switch (e.type) {
       case "wake":
         heardFrom = Date.now();
@@ -1504,6 +1540,7 @@ function start(): void {
         // A spoken request's answer opens a follow-up window; the engine refuses one after MAX_FOLLOW_UPS in a row.
         lastAskByVoice = true;
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
+        lastHeard = { utterance: heard?.utterance ?? -1, verified: e.verified === true, cut: !!e.cut, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true };
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
         if (e.cut) {
           const note = CUT_NOTES[e.window];
@@ -1519,16 +1556,20 @@ function start(): void {
           // A short yes may be taken on the asking task's trust: that task was asked for in the owner's verified voice,
           // within TASK_VOICE_MS, and no voice has been turned away since (owner decision of 2026-11-03).
           const taskTrust = voiceTrust.holds(confirmer?.currentTask);
+          // (voiceAnswer reads the raw words, e.text, never personal.heard()'s corrected ones.)
           const spokenReply = voiceAnswer({
             text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchUnready, verified: e.verified === true, short: e.short === true,
             ...(e.restScore !== undefined ? { restScore: e.restScore } : {}), taskTrust, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true,
           });
-          if (spokenReply.kind !== "none") { answerByVoice(spokenReply); break; }
+          // A spoken answer to a question is never learnt from (Voice Match learns from requests only).
+          if (spokenReply.kind !== "none") { lastHeard = null; answerByVoice(spokenReply); break; }
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
           // `verified`: Voice Match matched the owner's voice (what may turn "Work without asking" on).
           turnLatency.heard(e.ms);
-          void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) });
+          // Near-misses corrected against the user's own words (personal/correct.ts): never into a risky request.
+          const heard = personal.heard(e.text);
+          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) });
         }
         break;
       }
@@ -1537,6 +1578,8 @@ function start(): void {
         stopEverything("voice");
         break;
       case "rejected":
+        // Another voice about: Voice Match learns nothing for a while (app/voice/adapt.ts).
+        if (e.reason === "voice") personal.strangerTurnedAway();
         // Voice Match turned another voice away: no task's short yes is trusted any more, and while a question was up, no
         // spoken yes for that question at all.
         if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");
@@ -1761,7 +1804,8 @@ function start(): void {
   ipcMain.handle(IPC.voiceMatchForget, guard(() => {
     voice?.cancelEnrol();
     enrolling = null;
-    voiceprints.forget();
+    // The voiceprint, all it learnt, and the words learnt from what the user said (personal/service.ts).
+    personal.forgetVoice();
     // A task's voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).
     voiceTrust.endAll("voice-changed");
     settings.update({ voice: { ...settings.get().voice, match: false } });
@@ -1769,6 +1813,25 @@ function start(): void {
     log.info("voice.match_forgotten");
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
   }));
+  ipcMain.handle(IPC.voiceMatchReset, guard(() => {
+    if (!voiceprints.reset()) return;
+    voice?.setVoiceprint(ownerPrint());
+    log.info("voice.match_reset");
+    broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+  }));
+  ipcMain.handle(IPC.voiceHeard, guard(() => personal.heardItems().map(h => h.id)));
+  ipcMain.handle(IPC.voiceTeach, guard((id: unknown, meant: unknown) => {
+    if (typeof id !== "number" || !Number.isInteger(id) || id < 1 || typeof meant !== "string" || !meant.trim() || meant.length > 2000) return { outcome: "unknown" };
+    const r = personal.teach(id, meant);
+    if (r.outcome === "learnt") broadcast(IPC.voiceWords, personal.words());
+    return r;
+  }));
+  ipcMain.handle(IPC.voiceWords, guard(() => personal.words()));
+  ipcMain.handle(IPC.voiceForgetWord, guard((index: unknown) => {
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 1000) return personal.words();
+    return personal.forgetWord(index);
+  }));
+  ipcMain.handle(IPC.voiceForgetWords, guard(() => { personal.forgetWords(); log.info("voice.words_forgotten"); }));
   ipcMain.handle(IPC.memoryList, guard(() => (memoryAllowed() ? memory.list() : [])));
   ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
     if (typeof id !== "string" || !id || id.length > 40) return;
@@ -1827,6 +1890,14 @@ function start(): void {
     void askEmber(t);
   });
   ipcMain.on(IPC.askClose, event => { if (askWindow.owns(event.sender)) askWindow.hide(); });
+  // One of Ember's suggestions chosen in the Ask box: only one it offers now, sent as Ember's words the user chose.
+  ipcMain.on(IPC.askSuggestion, (event, text: unknown) => {
+    if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;
+    askWindow.hide();
+    lastAskByVoice = false;
+    log.info("ask.suggestion");
+    void askEmber(text, { suggested: true });
+  });
 
   const isRect = (r: unknown): r is Rect => !!r && typeof r === "object" && ["x", "y", "width", "height"].every(k => Number.isFinite((r as Record<string, unknown>)[k]));
   ipcMain.on(OVERLAY.cards, (event, rect: unknown) => {
@@ -1860,9 +1931,19 @@ function start(): void {
     if (id === "ui:retry") {
       // Taken on the first press: a second one, while this request waits for the screen's context, asks nothing.
       const again = agent?.takeRetry() ?? null;
-      // Its caution as it was asked; one no longer remembered here is treated as heard unchecked (never the user's words for commands).
+      // Its caution as it was asked (heard unchecked, or one of Ember's suggestions: never the user's own words for
+      // commands, however often it is retried); one no longer remembered here is treated as heard unchecked.
       const how = again === null ? undefined : [...recentAsks].reverse().find(a => a.text === again);
-      if (again !== null) { captureContext(); void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true }); }
+      if (again !== null) { captureContext(); void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true, ...(how?.suggested ? { suggested: true } : {}) }); }
+      return;
+    }
+    // One of Ember's suggestions (what the user might say next): sent as the user's click on Ember's words, so the usual
+    // policy applies and a command it names is never taken as the user's own words. Only one the bubble shows now
+    // (suggestionsShown: never while a question or buttons are up).
+    const suggested = suggestOf(id);
+    if (suggested !== null) {
+      const text = suggestionsShown(lastState)[suggested];
+      if (text && personal.isSuggestion(text)) { log.info("bubble.suggestion", { n: suggested }); lastAskByVoice = false; captureContext(); void askEmber(text, { suggested: true }); }
       return;
     }
     if (id === "ui:settings") { openSettings(); return; }
@@ -2442,17 +2523,23 @@ function start(): void {
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
       onAnswerDelta: delta => { cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
-      onAnswerEnd: text => { cancelAck(); sayStreamed(answerSpeech.finish(text)); },
-      onAnswer: text => { cancelAck(); turnAnswer = text; sayStreamed(answerSpeech.finish(text)); },
+      onAnswerEnd: text => { cancelAck(); lastReply = text; sayStreamed(answerSpeech.finish(text)); },
+      onAnswer: text => { cancelAck(); turnAnswer = text; lastReply = text; sayStreamed(answerSpeech.finish(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
         cancelAck();
         // Nothing will be heard of a turn that was stopped, or not spoken: it is logged as it stands.
         if (aborted || !answerSpoken) turnLatency.end();
+        // What the user might say next (personal/predict.ts): chips under this answer, and a longer follow-up window
+        // after a spoken reply when a follow-up is likely.
+        const task = aborted ? null : agent?.tasks?.list().filter(t => t.started >= askedAt).at(-1);
+        const next = aborted ? null : personal.answered(lastReply || turnAnswer, { spoken: answerSpoken, task: task ? { status: task.status === "cancelled" ? "stopped" : task.status === "queued" ? "running" : task.status } : null });
+        if (next?.suggestions.length && lastState.bubble.visible) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
+        lastReply = "";
         answerSpeech.reset();
         answerSpoken = false;
         ackSaid = null;
-        if (lastAskByVoice && !aborted) voice?.followUp(8000, { afterQuestion: endsWithQuestion(turnAnswer) });
+        if (lastAskByVoice && !aborted) voice?.followUp(next?.followUpMs ?? 8000, { afterQuestion: endsWithQuestion(turnAnswer) });
         lastAskByVoice = false;
         turnAnswer = "";
       },
@@ -2603,6 +2690,21 @@ function start(): void {
       // Whatever became of turning it on shows under its switch (never only in the log).
       onNatural: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       voiceprint: ownerPrint,
+      // Voice Match keeps learning (app/voice/adapt.ts): only while it is on, and the setting allows. What it learnt
+      // goes with the voiceprint: the gate then checks the enrolment too, at the learnt print's threshold.
+      learning: () => settings.get().voice.learn && !!ownerPrint(),
+      matchLearnt: () => {
+        const st = voiceprints.state();
+        return st && st.clips.length ? { anchor: encodePrint(st.anchor), clips: st.clips.length } : null;
+      },
+      onSample: s => {
+        // Paired by the utterance's number, never "the latest one heard": a later request, a dropped one or a spoken answer
+        // (lastHeard cleared) leaves it unpaired, and an unpaired sample teaches nothing.
+        const r = lastHeard && lastHeard.utterance === s.utterance ? lastHeard : null;
+        lastHeard = null;
+        const print = personal.sample(s, r ? { verified: r.verified, cut: r.cut, selfSpoke: r.selfSpoke, locked: confirmer?.voiceLocked ?? false } : null);
+        if (print && settings.get().voice.match) { voice?.setVoiceprint(print); broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }
+      },
       onEnrol: p => {
         if (p.state === "done") {
           try {
@@ -2658,6 +2760,14 @@ function start(): void {
       voiceTrust.endAll("voice-changed");
       voice?.setVoiceprint(ownerPrint());
       broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+    });
+    // Keep learning my voice turned on or off (or Voice Match with it): the voice process offers samples, or stops.
+    let learning = settings.get().voice.learn && !!ownerPrint();
+    settings.onChange(next => {
+      const on = next.voice.learn && next.voice.match && voiceprints.read() !== null;
+      if (on === learning) return;
+      learning = on;
+      voice?.setLearning(on);
     });
     settings.onChange(next => voice?.setNaturalVoice(sys.voice.naturalVoice && next.voice.natural));
     settings.onChange(next => {
@@ -2739,8 +2849,8 @@ function start(): void {
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk({ source: "test" }),
-        showMenu, state: () => lastState, extensions: () => extensionsRef, stopEverything,
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string, how?: { heardId?: number }) => { captureContext(); return askEmber(text, how?.heardId ? { heardId: how.heardId } : {}); }, showAsk: () => openAsk({ source: "test" }),
+        showMenu, state: () => lastState, extensions: () => extensionsRef, stopEverything, personal: () => personalRef,
       };
     }
   };

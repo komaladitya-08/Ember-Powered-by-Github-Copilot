@@ -799,6 +799,64 @@ export const GLASS_CHOICES: readonly { value: "clear" | "regular" | "solid"; lab
 export const GLASS_LABEL = "How much shows through";
 export const GLASS_HINT = "How much of your screen shows through Ember's bubble, task cards, handle and ask box. Clear is an even, lighter tint, with Ember's words kept easy to read; Solid shows nothing through. Calm mode, and your desktop's settings to reduce transparency or increase contrast, make it solid.";
 
+// ───── Voice personalisation (Settings › Voice, and the conversation's “That's not what I said”) ─────
+
+/** The rows' words (docs/ASSISTANT.md "Personalisation"; app/main/personal/). */
+export const PERSONAL_TEXT = {
+  learn: "Keep learning my voice",
+  learnHint: "Ember follows your voice as it changes (a new microphone, a cold), learning only from requests it is sure are yours: never from its own voice, or while another voice is about. It keeps numbers, never audio, with your voiceprint on this computer.",
+  reset: "Reset to my enrolment",
+  resetDone: "Ember went back to the voice it learnt when you taught it.",
+  words: "Learn my words",
+  wordsHint: "When Ember mishears a name, choose “That's not what I said” under your request in Conversation and type what you said: Ember hears it right from then on. It also listens for your apps' names and, with Memory on, the names you asked it to remember. Kept on this computer.",
+  wordsHeading: "Words Ember learnt",
+  wordsEmpty: "No words learnt yet.",
+  forgetAllWords: "Forget all words",
+  suggest: "Suggest what I might say next",
+  suggestHint: "A few likely next requests under Ember's answers and in Ask Ember, worked out on this computer. Nothing runs until you choose one, and Ember never suggests sending, deleting or paying unless you just asked about it.",
+  notSaid: "That's not what I said",
+  teachLabel: "What you said",
+  teachSave: "Save",
+  teachCancel: "Cancel",
+} as const;
+
+/** How much Voice Match learnt since enrolment, under its row ("" before it learnt anything). */
+export function learntText(n: number): string {
+  if (n <= 0) return "";
+  return n === 1 ? "Learnt from 1 of your requests since you taught it." : `Learnt from ${n} of your requests since you taught it.`;
+}
+
+/**
+ * Voice Match's personalisation rows for a status (`hidden`: the Voice Match group is): Keep learning once it knows the
+ * voice; Reset to my enrolment only while it is on and its model in, and it learnt something; the "Learnt from…" line.
+ */
+export function personalView(m: { enrolled: boolean; on: boolean; model?: boolean; enrolling: unknown; learnt?: number } | undefined, hidden: boolean): { learnRow: boolean; reset: boolean; learnt: string } {
+  const enrolled = !!m?.enrolled && !m.enrolling && !hidden;
+  const learnt = enrolled ? learntText(m?.learnt ?? 0) : "";
+  return { learnRow: enrolled, reset: enrolled && !!m?.on && m?.model !== false && (m?.learnt ?? 0) > 0, learnt };
+}
+
+/** A learnt correction as its row says it: what Ember heard, and what it hears now. */
+export function wordRowText(w: { heard: string; meant: string }): string {
+  return `“${w.heard}” → “${w.meant}”`;
+}
+
+/** Its Forget button's spoken name. */
+export function forgetWordLabel(w: { meant: string }): string {
+  return `Forget “${w.meant}”`;
+}
+
+/** What the conversation says after the user retyped what they said (PersonalVoice.teach's outcome). */
+export function teachOutcomeText(outcome: "learnt" | "off" | "unknown" | "unlike" | "same", meant: string): string {
+  switch (outcome) {
+    case "learnt": return `Got it: Ember will hear that as “${meant.trim()}” from now on.`;
+    case "off": return "Learn my words is off (Settings › Voice), so Ember didn't keep that.";
+    case "same": return "That's what Ember heard, so there's nothing to learn.";
+    case "unlike": return "That's a different request, not a misheard word, so Ember didn't keep it. Ask again to have it done.";
+    default: return "Ember can't find that request any more.";
+  }
+}
+
 /** What the natural voice's row says before it is turned on (and while it is off). */
 export const NATURAL_HINT = "Kokoro: downloads 350 MB once, and speaks only where this computer is fast enough for it (otherwise Ember's usual voice does).";
 

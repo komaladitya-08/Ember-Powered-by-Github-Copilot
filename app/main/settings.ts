@@ -117,7 +117,16 @@ export const SettingsSchema = z.object({
      * runs natively, and only where this computer makes it fast enough (VoiceService, tts-process.ts).
      */
     natural: z.boolean().default(false),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false }),
+    /**
+     * Voice Match keeps learning: the voiceprint follows the owner's voice slowly, from their own requests it is sure of
+     * (app/voice/adapt.ts; kept in voiceprint.json). In force only while Voice Match is on.
+     */
+    learn: z.boolean().default(true),
+    /** Learn my words: the corrections the user teaches ("That's not what I said") are kept and used (words.json). */
+    words: z.boolean().default(true),
+    /** Suggest what I might say next: chips under the bubble and in the Ask box (app/main/personal/predict.ts). */
+    suggest: z.boolean().default(true),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, learn: true, words: true, suggest: true }),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),

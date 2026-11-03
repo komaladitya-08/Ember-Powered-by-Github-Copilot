@@ -177,11 +177,15 @@ describe("Confirmer.answerVoice", () => {
     const { c, later } = confirmer();
     const answer = c.ask(q());
     later(600);
+    expect(c.voiceLocked).toBe(false);
     expect(c.lockVoice()).toBe(true);
+    // Said so while it is up: Voice Match learns nothing meanwhile (main's onSample, review of #145).
+    expect(c.voiceLocked).toBe(true);
     expect(c.answerVoice("allow", { verified: true })).toBe("locked");
     expect(c.answerVoice("deny", { verified: false })).toBe("answered");
     expect(await answer).toBe("deny");
     expect(c.lockVoice()).toBe(false);
+    expect(c.voiceLocked).toBe(false);
   });
 
   it("records a click as a click", async () => {
@@ -427,9 +431,9 @@ describe("a short yes on the task's voice trust (owner decision of 2026-11-03, â
       const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
       expect(main).toMatch(/if \(refusalEndsTrust\(result, o\.answer\)\) voiceTrust\.endAll\("other-voice"\);/);
       expect(main).toMatch(/if \(rejectionEndsTrust\(e\.reason\)\) voiceTrust\.endAll\("other-voice"\);/);
-      // Forget my voice, a finished enrolment and the switch each end it (and only these three do, so a new place is a decision).
+      // Forget my voice (which deletes the voiceprint and the learnt words: PersonalVoice.forgetVoice), a finished enrolment and the switch each end it (and only these three do, so a new place is a decision).
       expect(main.match(/voiceTrust\.endAll\("voice-changed"\)/g)).toHaveLength(3);
-      expect(main).toMatch(/voiceprints\.forget\(\);\s*\/\/[^\n]*\n\s*voiceTrust\.endAll\("voice-changed"\);/);
+      expect(main).toMatch(/personal\.forgetVoice\(\);\s*\/\/[^\n]*\n\s*voiceTrust\.endAll\("voice-changed"\);/);
       expect(main).toMatch(/voiceprints\.write\(p\.print\);\s*\/\/[^\n]*\n\s*voiceTrust\.endAll\("voice-changed"\);/);
       expect(main).toMatch(/matchOn = next\.voice\.match;\s*\/\/[^\n]*\n\s*voiceTrust\.endAll\("voice-changed"\);/);
       // It decides before the Confirmer sees the yes, from the trust of the task whose question is up.

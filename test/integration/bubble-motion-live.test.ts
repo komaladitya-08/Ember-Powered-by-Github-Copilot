@@ -84,6 +84,26 @@ async function answer(): Promise<Sample[]> {
   host.remove();
   return s;
 }
+/** Ember's suggestions under an answer: where the chips are, and whether the overlay takes clicks there (interactiveRects). */
+function chips(): { row: { x: number; y: number; w: number; h: number } | null; covered: boolean; buttons: number; labelledBy: string } {
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;inset:0";
+  document.body.append(host);
+  const b = new ReasoningBubble(host);
+  b.setThought("Opened your notes in Text Editor.");
+  b.setSuggestions([{ label: "Close it", onClick: () => undefined }, { label: "Read it out", onClick: () => undefined }]);
+  b.place({ x: 200, y: 120 }, { width: 900, height: 600 }, 60);
+  look(b);
+  const row = b.root.querySelector<HTMLElement>(".eb-suggest")!;
+  const r = row.getBoundingClientRect();
+  const hot = b.interactiveRects(0);
+  const covered = hot.some(h => h.x <= r.x + 1 && h.y <= r.y + 1 && h.x + h.width >= r.right - 1 && h.y + h.height >= r.bottom - 1);
+  const out = { row: row.hidden ? null : { x: r.x, y: r.y, w: r.width, h: r.height }, covered, buttons: row.querySelectorAll("button").length, labelledBy: row.getAttribute("aria-labelledby") ?? "" };
+  b.setSuggestions(null);
+  const gone = row.hidden;
+  host.remove();
+  return gone ? out : { ...out, row: null };
+}
 (window as unknown as { start: () => Promise<void> }).start = async () => {
   // A first run, thrown away: the page's fonts, layout and the bubble's style sheet in place before anything counts.
   await question("thinking", true);
@@ -93,6 +113,7 @@ async function answer(): Promise<Sample[]> {
     actingSame: await question("acting", true),
     idleNext: await question("idle", false),
     answer: await answer(),
+    chips: chips(),
   };
   (window as unknown as { done: unknown }).done = result;
 };
@@ -116,7 +137,9 @@ app.whenReady().then(async () => {
 `;
 
 type Sample = { scale: string; translate: string; opacity: number };
-type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]>;
+type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]> & {
+  chips: { row: { x: number; y: number; w: number; h: number } | null; covered: boolean; buttons: number; labelledBy: string };
+};
 
 /** How far a sample is from at rest: its scale's distance from 1, its translate in px. */
 const scaleOff = (s: Sample) => (s.scale === "none" ? 0 : Math.abs(Number(s.scale.split(" ")[0]) - 1));
@@ -180,5 +203,14 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
 
   it("still grows an ordinary answer out of Ember", () => {
     expect(Math.max(...result.answer.map(scaleOff))).toBeGreaterThan(0.005);
+  });
+
+  it("takes clicks on Ember's suggestions under an answer (interactiveRects covers their row), named by their caption (review of #145)", () => {
+    const c = result.chips;
+    expect(c.row).not.toBeNull();
+    expect(c.row!.h).toBeGreaterThanOrEqual(24);
+    expect(c.buttons).toBe(2);
+    expect(c.covered).toBe(true);
+    expect(c.labelledBy).toMatch(/^eb-suggest-cap-\d+$/);
   });
 });

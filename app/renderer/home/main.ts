@@ -37,6 +37,7 @@ import { revealAsking, startTasks } from "./tasks";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
+import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import type { TaskEntry } from "../../shared/activity";
 
 declare global {
@@ -775,6 +776,8 @@ startTargets();
 startExtensions();
 // The user's own model provider (Copilot › Model provider): its key goes to main once and never comes back.
 startProvider(save);
+// Voice personalisation (Settings › Voice; the conversation's “That's not what I said”).
+startPersonal(save);
 // Task activity (in memory only): each task this session, and the status panel's count of those at work.
 startTasks(t => { tasksNow = t; renderStatus(); });
 
@@ -806,6 +809,8 @@ function conversationRow(e: Entry): HTMLLIElement {
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
   const t = Object.assign(document.createElement("time"), { textContent: time(e.t), dateTime: e.t });
   const text = Object.assign(document.createElement("p"), { textContent: e.text });
+  // A request Ember heard: "That's not what I said" finds its row by this (personal.ts markHeard).
+  if (e.heardId) li.dataset.heardId = String(e.heardId);
   li.append(who, t, text);
   return li;
 }
@@ -827,6 +832,8 @@ function renderConversation(entries: Entry[]): void {
   for (let i = 0; i < drop; i++) list.firstElementChild?.remove();
   list.append(...add.map(conversationRow));
   shownConversation = shown;
+  // Requests Ember heard (not typed) offer “That's not what I said”.
+  markHeard(list);
   const earlier = $("conversation-earlier") as HTMLButtonElement;
   const label = earlierLabel(entries.length - shown.length);
   earlier.hidden = !label;
@@ -1413,6 +1420,8 @@ function renderMatch(): string | null {
   $("match-teach").textContent = view.teach.label;
   $("match-cancel").hidden = view.cancelHidden;
   $("match-forget").hidden = view.forgetHidden;
+  // Keep learning my voice and Reset to my enrolment, once Voice Match knows the voice.
+  personalMatch(voice, view.hidden);
   if (had && (isHidden(had) || (had as HTMLInputElement).disabled)) focusFirst(view.focus);
   const said = matchAnnouncement(shownMatch, m, matchCancelled);
   if (!m?.enrolling) matchCancelled = false;
@@ -1428,7 +1437,7 @@ $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
   if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
-  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false }), match: on } });
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, learn: true, words: true, suggest: true }), match: on } });
 });
 $("match-teach").addEventListener("click", startEnrol);
 // Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
@@ -1440,6 +1449,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
   ($("speak") as HTMLSelectElement).value = speakChoice(s);
   ($("speak-results") as HTMLInputElement).checked = s.speakResults;
   ($("natural") as HTMLInputElement).checked = s.voice.natural;
+  personalSettings(s);
   if (voice) renderVoice(voice);
   else renderNatural();
 }
@@ -1451,7 +1461,7 @@ $("wake").addEventListener("change", e => {
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, learn: true, words: true, suggest: true, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();
@@ -1475,7 +1485,7 @@ function renderNatural(): void {
 $("natural-retry").addEventListener("click", () => { void window.ember.retryNaturalVoice(); });
 $("natural").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
-  void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false }), natural: on } });
+  void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false, learn: true, words: true, suggest: true }), natural: on } });
 });
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });

@@ -22,10 +22,10 @@ const SIZE = { width: 560, height: 92 };
 const GROWS = 46 + 17;
 /**
  * The field grows a line at a time (its line height, at the text size), up to MAX_LINES, as the user types or pastes
- * several lines; the note that a paste was cut and the tip to wait for the box take one more row of the same height
- * each (MAX_ROWS).
+ * several lines; the note that a paste was cut, the tip to wait for the box and Ember's suggestions of what to ask next
+ * take one more row of the same height each (MAX_ROWS).
  */
-const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 2;
+const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 3;
 /** The openings that say to wait for the box before typing, where Ember can't hold the letters typed meanwhile (review #78). */
 export const WAIT_TIP_OPENINGS = 5;
 
@@ -334,8 +334,9 @@ export class AskWindow {
     const scale = this.scale();
     let bounds = askBounds(near, display.workArea, this.keepOff(), scale);
     this.up = !near || bounds.y + bounds.height <= near.y;
-    // Saying to wait for it: a row taller from the start, so it doesn't grow once shown.
-    if (this.context.tip) bounds = grownBounds(bounds, 2, display.workArea, this.up, this.keepOff(), scale);
+    // Saying to wait for it, or with suggestions: a row taller each from the start, so it doesn't grow once shown.
+    const rows = 1 + (this.context.tip ? 1 : 0) + (this.context.suggestions?.length ? 1 : 0);
+    if (rows > 1) bounds = grownBounds(bounds, rows, display.workArea, this.up, this.keepOff(), scale);
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }

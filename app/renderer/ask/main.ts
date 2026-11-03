@@ -26,6 +26,7 @@ const sees = document.getElementById("sees")!;
 const where = document.getElementById("where")!;
 const cut = document.getElementById("cut")!;
 const tip = document.getElementById("tip")!;
+const suggest = document.getElementById("suggest")!;
 const seesLive = document.getElementById("sees-live")!;
 const seesText = document.getElementById("sees-text")!;
 const seesExtra = document.getElementById("sees-extra")!;
@@ -85,8 +86,28 @@ function fit(): void {
   input.classList.toggle("scrolls", input.scrollHeight > fieldHeight(lines, s) + 1);
   const full = atLimit(input.value);
   if (cut.hidden === full) { cut.hidden = !full; cut.textContent = full ? CUT_NOTE : ""; }
-  const rows = boxRows(lines, full, !tip.hidden);
+  const rows = boxRows(lines, full, !tip.hidden, !suggest.hidden);
   if (rows !== shownRows) { shownRows = rows; window.emberAsk.fit?.(rows); }
+}
+/**
+ * Ember's suggestions of what to ask next (each opening brings them, or none): chips that send their words as if typed.
+ * They show only while the field is empty, so they never sit beside a request being written.
+ */
+let suggested: string[] = [];
+function showSuggestions(list: string[]): void {
+  suggested = list.slice(0, 3);
+  for (const b of [...suggest.querySelectorAll("button")]) b.remove();
+  for (const text of suggested) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.addEventListener("click", () => { (window.emberAsk.askSuggestion ?? window.emberAsk.ask)(text); input.value = ""; fit(); });
+    suggest.appendChild(b);
+  }
+  syncSuggestions();
+}
+function syncSuggestions(): void {
+  suggest.hidden = !suggested.length || input.value.trim() !== "";
 }
 /** Earlier questions (↑/↓), and what was being typed meanwhile. */
 const history = new AskHistory();
@@ -112,7 +133,7 @@ input.addEventListener("keydown", e => {
   input.setSelectionRange(input.value.length, input.value.length);
   fit();
 });
-input.addEventListener("input", fit);
+input.addEventListener("input", () => { syncSuggestions(); fit(); });
 // The text size changed (main sets it on the page, the box hidden meanwhile): the field is measured again at it.
 new MutationObserver(fit).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
 window.addEventListener("keydown", e => { if (e.key === "Escape") window.emberAsk.close(); });
@@ -158,7 +179,8 @@ window.emberAsk.onContext(c => {
     setTimeout(grown, 250);
     tip.hidden = c.tip !== true;
     tip.textContent = tip.title = c.tip === true ? WAIT_TIP : "";
-    shownRows = c.tip === true ? 2 : 1;
+    shownRows = (c.tip === true ? 2 : 1) + (c.suggestions?.length ? 1 : 0);
+    showSuggestions(c.suggestions ?? []);
   }
   fit();
 });

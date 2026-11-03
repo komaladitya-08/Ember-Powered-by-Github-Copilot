@@ -160,6 +160,29 @@ export interface EmberState {
   setup?: string | null;
   /** The picker's target, for the handle's badge (absent or "local": no badge). */
   target?: TargetSummary;
+  /**
+   * What the user might say next (app/main/personal/predict.ts), shown under the answer whose words are `thought` and
+   * only while that answer shows (suggestionsShown). A chip's click comes back as suggestAction(i).
+   */
+  suggest?: { thought: string; items: string[] } | null;
+}
+
+/** The bubble action a suggestion chip sends (its place in EmberState.suggest's items). */
+export const suggestAction = (i: number): string => `ui:suggest:${i}`;
+/** The suggestion a bubble action chose (suggestAction), or null for any other action. */
+export function suggestOf(id: string): number | null {
+  const m = /^ui:suggest:([0-2])$/.exec(id);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * The suggestions the bubble shows for state `s`: only under the answer they were made for, while it shows as a
+ * finished answer (no question, buttons, whole text or streaming), else none.
+ */
+export function suggestionsShown(s: Pick<EmberState, "bubble" | "suggest">): string[] {
+  const b = s.bubble, g = s.suggest;
+  if (!g || !g.items.length || !b.visible || b.mood !== "idle" || b.streaming || b.actions.length || b.whole) return [];
+  return g.thought === b.thought ? g.items.slice(0, 3) : [];
 }
 
 export const IDLE_BUBBLE: BubbleState = {
