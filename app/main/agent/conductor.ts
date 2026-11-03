@@ -686,7 +686,7 @@ export class Conductor {
    */
   private said = "";
   /** The turn under way's request was heard from the user (ask()'s `own`), for memory to learn from. */
-  private saidOwn = true;
+  private saidOwn = false;
   /**
    * The steps of the routines run_routine ran this turn: the user's own words when they saved them, so a reminder or a
    * fact one sets counts as theirs, and a task one starts checks its risky steps against them (AgentHost.userWordsOf).
@@ -700,7 +700,9 @@ export class Conductor {
    * The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. `own`: heard
    * from the user (ask()'s `own`), carried with each request so two of the same words can't swap it.
    */
-  private unstarted: { text: string; own: boolean }[] = [];
+  private unstarted: { text: string; own: boolean; prompt?: string }[] = [];
+  /** Recall can finish out of order; dispatch still follows the user's request order. */
+  private dispatch: Promise<void> = Promise.resolve();
 
   /** What the user said this turn, with the steps of the routines it ran. */
   private get turnSaid(): string {
@@ -713,19 +715,17 @@ export class Conductor {
   }
 
   /**
-   * A turn began with `content` (the prompt ask() sent, which ends with the user's words): the oldest request it
-   * matches gives the turn its words, and those before it never ran. A message that is none of them (nothing the user
-   * asked) gives the turn none.
+   * Match the whole prompt actually sent, not a suffix of another request. Identical prompts take the oldest
+   * dispatched request; an unmatched runtime message carries no user authority and consumes no waiting request.
    */
   private turnBegan(content: string): void {
-    const said = content.trimEnd();
-    const i = this.unstarted.findIndex(t => said.endsWith(t.text.trim()));
+    const i = this.unstarted.findIndex(t => t.prompt === content);
     this.said = i < 0 ? "" : this.unstarted[i].text;
-    this.saidOwn = i < 0 || this.unstarted[i].own;
+    this.saidOwn = i >= 0 && this.unstarted[i].own;
     this.routineWords = [];
     this.routinesRan.clear();
     this.answered = "";
-    this.unstarted.splice(0, i + 1);
+    if (i >= 0) this.unstarted.splice(i, 1);
     // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
     // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
     this.deps.extensions?.newTurn?.();
@@ -878,26 +878,38 @@ export class Conductor {
    * about where Ember works and what commands can do now (§2.6), before the context; absent or "": none. `own`: heard
    * from the user (false for speech Ember can't tell from its own speakers): memory never makes such words theirs.
    */
-  async ask(text: string, context?: string, line?: string, own = true): Promise<void> {
+  async ask(text: string, context?: string, line?: string, own = true, prepared?: (prompt: string) => void): Promise<void> {
+    const previous = this.dispatch;
+    let release!: () => void;
+    this.dispatch = new Promise<void>(resolve => { release = resolve; });
+    const stops = this.stops;
+    const session = this.session;
+    try {
+      await this.dispatchRequest(text, context, line, own, prepared, previous, stops, session);
+    } finally { release(); }
+  }
+
+  private async dispatchRequest(text: string, context: string | undefined, line: string | undefined, own: boolean,
+    prepared: ((prompt: string) => void) | undefined, previous: Promise<void>, stops: number, session: CopilotSession | null): Promise<void> {
     // A turn that went silent is being ended: a request sent now would run (and show) only after it.
     if (this.endingTurn) await this.endingTurn;
-    const session = this.session;
-    if (!session) throw new Error("Ember isn't connected to Copilot yet.");
+    if (this.stops !== stops) return;
+    if (!session || this.session !== session) throw new ConnectionLost("the connection was replaced before dispatch");
     // A new request: an earlier Stop doesn't refuse what the user asks for now.
     this.stopping = false;
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
-    const entry = { text, own };
+    const entry: { text: string; own: boolean; prompt?: string } = { text, own };
     this.unstarted.push(entry);
     // What Ember remembers that bears on the request (while memory is on): before it, as information. Better recall
     // may take up to its wait for this (memory/embed.ts), so a Stop meanwhile drops the request, through either path.
-    const stops = this.stops;
     let remembered = "";
     try {
       const m = this.deps.memory;
       remembered = (await (m?.forRequest ? m.forRequest(text, own) : m?.context(text))) ?? "";
     } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    await previous;
     if (this.stops !== stops || this.session !== session) {
       // Stopped (or the connection was replaced) while memory was read: nothing is sent, and no turn is owed for it.
       this.unstarted = this.unstarted.filter(t => t !== entry);
@@ -920,6 +932,8 @@ export class Conductor {
       text,
     ];
     const prompt = parts.join("\n\n");
+    entry.prompt = prompt;
+    prepared?.(prompt);
     this.busy = true;
     const watch = this.watch;
     watch?.sending();
@@ -969,6 +983,8 @@ export class Conductor {
   /** Stops the turn in flight. With nothing running there is no turn to end, so nothing is refused afterwards. */
   async abort(): Promise<void> {
     this.stops++;
+    // New requests after Stop must not wait on an old recall or send that never settles.
+    this.dispatch = Promise.resolve();
     if (this.session && this.busy) this.stopping = true;
     // The runtime drops the requests waiting behind the turn: no turn is owed for them.
     this.watch?.clear();
@@ -990,6 +1006,8 @@ export class Conductor {
     this.deps.onTurnEnd?.(true);
     if (why === "silent") {
       // Ending it drops the requests waiting behind it (as the host's queue does): no turn will begin for them.
+      this.stops++;
+      this.dispatch = Promise.resolve();
       this.unstarted = [];
       this.deps.presenter.fail(NO_ANSWER);
       this.deps.onSilentTurn?.();

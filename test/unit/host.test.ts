@@ -1347,6 +1347,48 @@ describe("review round 6: a request sent while the conversation is busy waits fo
   const mail = { target: { pid: 1, title: "Mail" }, text: "<screen>Mail: Inbox (3)</screen>" };
   const terminal = { target: { pid: 2, title: "Terminal" }, text: "<screen>Terminal</screen>" };
 
+  it.each([
+    ["first request", "second request"],
+    ["request", "a longer request"],
+    ["same request", "same request"],
+  ])("keeps request order and provenance when recall finishes backwards: %s / %s (ORCH-2)", async (a, b) => {
+    const { host, specs, session, tool } = await withTasks();
+    const conductor = (host as any).conductor;
+    const releases: ((text: string) => void)[] = [];
+    conductor.deps.memory = { forRequest: () => new Promise<string>(resolve => releases.push(resolve)) };
+    sim.holdTurns = true;
+    const firstContext = { ...mail, targetId: "ssh:first" as const };
+    const secondContext = { ...terminal, targetId: "ssh:second" as const };
+    const first = host.ask(a, firstContext, undefined, { voiceUnchecked: true });
+    const second = host.ask(b, secondContext);
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    releases[1]("");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(session.sent).toHaveLength(0);
+    releases[0]("");
+    await Promise.all([first, second]);
+    expect(session.sent).toHaveLength(2);
+    expect(session.sent[0]).toContain(mail.text);
+    expect(session.sent[1]).toContain(terminal.text);
+    session.nextTurn();
+    expect((host as any).turn).toMatchObject({ words: a, targetId: "ssh:first", target: mail.target, voiceUnchecked: true });
+    expect(conductor.said).toBe(a);
+    expect(conductor.saidOwn).toBe(false);
+    await tool("start_task")({ goal: "model goal A" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0]).toMatchObject({ userWords: a, commandWords: "", screen: mail.text });
+    session.nextTurn();
+    expect((host as any).turn).toMatchObject({ words: b, targetId: "ssh:second", target: terminal.target });
+    expect(conductor.said).toBe(b);
+    expect(conductor.saidOwn).toBe(true);
+    await tool("start_task")({ goal: "model goal B" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1]).toMatchObject({ userWords: b, screen: terminal.text });
+    expect((host as any).queued).toHaveLength(0);
+    await host.stop();
+  });
+
   it("the first turn's task carries its own request's window, words and screen text, not those of a request asked meanwhile", async () => {
     let shown = "<screen>Mail: Write: Weekly report</screen>";
     const { host, specs, steered, session, tool } = await withTasks({ describeScreen: async () => shown });
@@ -1522,16 +1564,16 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     // A request waits; a turn starts that none of the user's requests began (nothing Ember sent): it carries none of their words.
     await host.ask("rename it to Old", mail);
     session.emit("user.message", { content: "<system_notification>Background work finished.</system_notification>" });
-    await tool("start_task")({ goal: "empty the trash" });
-    await vi.waitFor(() => expect(specs).toHaveLength(2));
-    expect(specs[1].userWords).toBeUndefined();
-    expect(specs[1].target).toEqual({});
-    // The waiting request still gets its own turn's context. (The two tasks so far stop: two run at a time.)
+    expect(await tool("start_task")({ goal: "empty the trash" })).toMatch(/No user request/);
+    expect(await tool("show_me")({ goal: "empty the trash" })).toMatch(/No user request/);
+    await tool("steer_task")({ id: host.tasks!.list()[0].id, instruction: "empty the trash" });
+    expect(specs).toHaveLength(1);
+    // The waiting request still gets its own turn's context, despite the unmatched message.
     for (const t of host.tasks!.list()) host.tasks!.cancel(t.id);
     session.nextTurn();
     await tool("start_task")({ goal: "rename the Downloads folder to Old" });
-    await vi.waitFor(() => expect(specs).toHaveLength(3));
-    expect(specs[2]).toMatchObject({ userWords: "rename it to Old", target: { title: "Mail" } });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1]).toMatchObject({ userWords: "rename it to Old", target: { title: "Mail" } });
     // However many wait, only so many are kept; a restart drops them all, and the turn that ran.
     for (let i = 0; i < 30; i++) await host.ask(`question ${i}`);
     expect((host as any).queued.length).toBeLessThanOrEqual(20);

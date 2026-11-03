@@ -585,6 +585,10 @@ organisation has them off. "Status?" says a task waits for the user's answer or 
 
 ## 10. Progress
 
+Task orchestration review (2026-11-03, M2/M4.1): retries retain accepted steering and restrictions with the original
+target binding; concurrent memory recall cannot reorder dispatched requests. Turns correlate against the exact sent
+prompt, retaining their user/command words and voice provenance; unmatched messages cannot start or steer tasks.
+
 | Milestone | Status | Notes |
 |---|---|---|
 | M0 Foundations | **Done 2026-10-15** | Electron **44.5.0** and npm **11.6.2** pinned (npm 10 crashes on the test tools). App starts and hands over to a running instance on Oracle Linux 8.4 as a normal user with the Chromium sandbox on. The EL8 native-rebuild path (M0.4) is exercised in CI; it could not complete in the development sandbox because `www.electronjs.org` (Electron headers) is blocked there. |

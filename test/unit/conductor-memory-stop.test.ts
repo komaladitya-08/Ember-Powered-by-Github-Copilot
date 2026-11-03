@@ -108,6 +108,51 @@ describe("a Stop while the request waits for memory", () => {
     expect(failed).toEqual([NO_ANSWER]);
   });
 
+  it("drops both queued recalls on Stop and lets a fresh request pass the old wait (ORCH-2)", async () => {
+    const releases: ((text: string) => void)[] = [];
+    const { c, sent } = conductor({ remember: () => "", forget: () => false,
+      context: () => new Promise<string>(resolve => releases.push(resolve)),
+    });
+    const a = c.ask("old first");
+    const b = c.ask("old second");
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    releases[1]("");
+    await c.abort();
+    const fresh = c.ask("new request");
+    await vi.waitFor(() => expect(releases).toHaveLength(3));
+    releases[2]("");
+    await fresh;
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/new request$/);
+    releases[0]("");
+    await Promise.all([a, b]);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("does not consume waiting authority or claim ownership for an unmatched message (ORCH-2)", async () => {
+    const { c, sent } = conductor({ remember: () => "", forget: () => false, context: () => "" });
+    await c.ask("request", undefined, undefined, false);
+    const internal = c as unknown as { turnBegan(content: string): void; said: string; saidOwn: boolean };
+    internal.turnBegan("a different request");
+    expect(internal.said).toBe("");
+    expect(internal.saidOwn).toBe(false);
+    internal.turnBegan(sent[0]);
+    expect(internal.said).toBe("request");
+    expect(internal.saidOwn).toBe(false);
+  });
+
+  it("keeps ownership in FIFO order for identical prompts (ORCH-2)", async () => {
+    const { c, sent } = conductor({ remember: () => "", forget: () => false, context: () => "" });
+    await c.ask("same request", undefined, undefined, false);
+    await c.ask("same request", undefined, undefined, true);
+    expect(sent[0]).toBe(sent[1]);
+    const internal = c as unknown as { turnBegan(content: string): void; saidOwn: boolean };
+    internal.turnBegan(sent[0]);
+    expect(internal.saidOwn).toBe(false);
+    internal.turnBegan(sent[1]);
+    expect(internal.saidOwn).toBe(true);
+  });
+
   it("still sends a request nobody stopped", async () => {
     const { c, sent } = conductor({ remember: () => "", forget: () => false, context: async () => "" });
     await c.ask("what's the weather");

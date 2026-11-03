@@ -184,11 +184,15 @@ export class TaskManager {
    */
   start(goal: string, opts: StartOptions = {}): Task {
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
-    this.specs.set(id, { goal, opts });
     const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null,
       ...(opts.targetId ? { targetId: opts.targetId } : {}), ...(opts.where ? { where: opts.where } : {}) };
     this.tasks.set(id, task);
-    const target = opts.target ?? this.d.currentWindow() ?? {};
+    const target = { ...(opts.target ?? this.d.currentWindow() ?? {}) };
+    // Legacy callers supply the user's request as the goal. Materialise that fallback once: later goals contain
+    // model-authored steering and must never become authority on a retry. Commands never used that fallback.
+    this.specs.set(id, { goal, opts: { ...opts, target, userWords: opts.userWords ?? goal,
+      ...(opts.userWords === undefined && opts.commandWords === undefined ? { commandWords: "", typedOnly: true } : {}),
+      ...(opts.agreed ? { agreed: [...opts.agreed] } : {}) } });
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
       ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}) } });
@@ -286,17 +290,35 @@ export class TaskManager {
 
   /** The user's new instruction for a task: a running one is told now, a waiting one starts with it. `userWords`, `screen`, `agreed`, `commandWords`: as for start(). */
   async steer(id: string, text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
+    if (!this.specs.has(id)) return false;
     const r = this.running.get(id);
-    if (r) return commandWords === undefined ? r.worker.steer(text, userWords, screen, agreed) : r.worker.steer(text, userWords, screen, agreed, commandWords);
     const q = this.queue.find(x => x.task.id === id);
-    if (!q) return false;
-    const words = q.spec.userWords !== undefined ? { userWords: userWords ? `${q.spec.userWords}\n${userWords}` : q.spec.userWords } : {};
-    const seen = screen ? { screen: q.spec.screen ? `${q.spec.screen}\n${screen}` : screen } : {};
-    const yes = agreed?.length ? { agreed: [...(q.spec.agreed ?? []), ...agreed] } : {};
-    // Words left out for commands (V1) stay left out: the spec keeps its own command words once either side has them.
-    const heard = commandWords !== undefined || q.spec.commandWords !== undefined
-      ? { commandWords: [q.spec.commandWords ?? q.spec.userWords ?? "", commandWords ?? userWords ?? ""].filter(w => w.trim()).join("\n") } : {};
-    q.spec = { ...q.spec, goal: `${q.spec.goal}\n(The user then added: ${text.replace(/</g, "‹")})`, ...words, ...seen, ...yes, ...heard };
+    if (!r && !q) return false;
+    if (r) {
+      const accepted = await r.worker.steer(text, userWords, screen, agreed, commandWords);
+      if (!accepted) return false;
+    }
+    // Only accepted instructions become retryable. Read the latest recipe after the await so concurrent accepted
+    // updates do not overwrite each other. Never use a conductor's rewritten goal as the user's own words.
+    const current = this.specs.get(id);
+    if (!current) return true; // The card was removed while its worker accepted the update.
+    const opts = current.opts;
+    const words = { userWords: userWords ? `${opts.userWords}\n${userWords}` : opts.userWords };
+    const seen = screen ? { screen: opts.screen ? `${opts.screen}\n${screen}` : screen } : {};
+    const yes = agreed?.length ? { agreed: [...(opts.agreed ?? []), ...agreed] } : {};
+    // Commands never inherit model-authored steering, or a legacy goal without separately supplied user words.
+    const heard = commandWords !== undefined || opts.commandWords !== undefined
+      ? { commandWords: [opts.commandWords ?? opts.userWords ?? "", commandWords ?? userWords ?? ""].filter(w => w.trim()).join("\n") } : {};
+    const provenance = commandWords !== undefined ? { typedOnly: false }
+      : heard.commandWords !== undefined && opts.commandWords === undefined ? { typedOnly: true } : {};
+    const next = {
+      goal: `${current.goal}\n(The user then added: ${text.replace(/</g, "‹")})`,
+      opts: { ...opts, ...words, ...seen, ...yes, ...heard,
+        ...provenance },
+    };
+    this.specs.set(id, next);
+    if (q) q.spec = { ...q.spec, goal: next.goal, ...words, ...seen, ...yes, ...heard,
+      ...provenance };
     return true;
   }
 

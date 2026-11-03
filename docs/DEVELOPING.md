@@ -262,7 +262,11 @@ shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always 
 for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks), how long it has worked and which step of its plan it is on, and shows what it did
 under **Details**; a failed card goes on its own after about a minute (the settings window's Conversation section keeps
-what went wrong), and its **Try again** starts the same request again, asking every question again. If an app can't be operated through accessibility, Ember asks to **borrow
+what went wrong), and its **Try again** starts the latest accepted request again, retaining any changed instructions,
+restrictions and the original computer and window, and asking every question again. A change the worker could not accept
+does not replace that retry request. Conversation requests are dispatched in order even when memory recall finishes out
+of order; each turn keeps its own words, screen context and voice provenance. An unmatched runtime message cannot start
+or steer a task. If an app can't be operated through accessibility, Ember asks to **borrow
 your mouse**: it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse, turn
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
