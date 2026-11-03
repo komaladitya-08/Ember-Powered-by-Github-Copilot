@@ -317,19 +317,23 @@ const scenarios = {
     try {
       const on = await waitFor(inst, e => e.msg === "voice.self_speaking" && e.on, 40_000, "Ember to start speaking");
       const stopAt = await waitFor(inst, e => e.msg === "voice.stop", 30_000, "\"Hey Ember, stop\" to stop Ember (voice.stop)", on);
+      // "Hey Ember" cuts in while Ember speaks (with parec, and since PR #144 without it too), so main may hush Ember at
+      // the wake, before "stop" is heard: the hush is timed from whichever came first.
+      const cutIn = index(inst, "voice.wake", () => true, on);
+      const hushAt = cutIn >= 0 && cutIn < stopAt ? cutIn : stopAt, by = hushAt === stopAt ? "the stop" : "\"Hey Ember\"";
       const offIdx = index(inst, "voice.self_speaking", e => !e.on, on);
-      expect(offIdx < 0 || offIdx > stopAt, `Ember had already finished speaking (#${offIdx}) before "Hey Ember, stop" (#${stopAt}): the reply was too short for the test`);
-      const off = await waitFor(inst, e => e.msg === "voice.self_speaking" && !e.on, 3_000, "Ember to go quiet after the stop", stopAt);
-      const quietMs = ms(inst, stopAt, off);
-      expect(quietMs < 1500, `Ember took ${quietMs} ms to go quiet after the stop`);
+      expect(offIdx < 0 || offIdx > hushAt, `Ember had already finished speaking (#${offIdx}) before "Hey Ember, stop" (#${hushAt}): the reply was too short for the test`);
+      const off = await waitFor(inst, e => e.msg === "voice.self_speaking" && !e.on, 3_000, `Ember to go quiet after ${by}`, hushAt);
+      const quietMs = ms(inst, hushAt, off);
+      expect(quietMs < 1500, `Ember took ${quietMs} ms to go quiet after ${by}`);
       const played = all(inst, "voice.audio_played").reduce((n, e) => n + e.seconds, 0);
       // Nothing more is said, and no follow-up window opens, for a hushed reply.
       await sleep(4000);
       const resumed = inst.log.slice(off + 1).find(e => e.msg === "voice.self_speaking" && e.on);
       expect(!resumed, "Ember started speaking again after it was stopped");
       expect(index(inst, "voice.follow_up") < 0, "a follow-up window opened after Ember was stopped");
-      expect(index(inst, "voice.utterance", () => true, stopAt) < 0, "\"Hey Ember, stop\" was taken as a request");
-      console.log(`ok   stop: "Hey Ember, stop" during the reply hushed it (${quietMs} ms after the stop, ${played.toFixed(1)} s of audio had been queued); no follow-up opened`);
+      expect(index(inst, "voice.utterance", () => true, hushAt) < 0, "\"Hey Ember, stop\" was taken as a request");
+      console.log(`ok   stop: "Hey Ember, stop" during the reply hushed it (${quietMs} ms after ${by}, ${played.toFixed(1)} s of audio had been queued); no follow-up opened`);
     } finally { await finish(inst); }
   },
 

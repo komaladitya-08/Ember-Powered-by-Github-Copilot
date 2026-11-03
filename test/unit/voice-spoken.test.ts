@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { cancelWords, endsWithQuestion, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
+import { heardCutInWake } from "../../app/voice/engine";
 
 describe("spokenText", () => {
   it.each([
@@ -56,4 +57,40 @@ describe("endsWithQuestion", () => {
     "Shall I send it to “Sarah”?”",
   ])("%j asks something", t => expect(endsWithQuestion(t)).toBe(true));
   it.each(["Done. Night Light is on.", "What? No, that's already done.", "Here it is:\n\n```\nls -la\n```", ""])("%j doesn't", t => expect(endsWithQuestion(t)).toBe(false));
+});
+
+describe("withoutOwnPhrases and the cut-in (Windows, macOS: Ember can't tell its own voice from the user's)", () => {
+  // Ember's own words never make it cut in on itself (review of PR #144: S1).
+  it.each([
+    "Hi Emma, the meeting moved.",
+    "Okay, Emma's report is ready.",
+    "Okay. Ember can't open that.",
+    "Okay, PMB is the box",
+    "Say “Hey Ember” and then what you want.",
+    "Hey, Ember here. Okay, Ember is listening.",
+    "You'll pay. Ember can't buy it.",
+    "hey ember, stop",
+    "OK Emmer, I'll do it.",
+    "Hi! Ember's settings are open.",
+    "They remember. Hey Ember!",
+    "Okay! Ember is on it.",
+    "Hi... Ember here.",
+    "OK, ember.",
+  ])("Ember saying %j can't sound like a cut-in", t => expect(heardCutInWake(withoutOwnPhrases(t))).toBe(false));
+
+  it("names the wake phrase only where the greeting and the name sit together, and drops no word where a sentence ends between them", () => {
+    expect(withoutOwnPhrases("Say “Hey Ember” and then what you want.")).toBe("Say the wake phrase and then what you want.");
+    expect(withoutOwnPhrases("OK, Ember.")).toBe("the wake phrase.");
+    expect(withoutOwnPhrases("Okay. Ember can't open that.")).toBe("Okay. So Ember can't open that.");
+    expect(withoutOwnPhrases("You'll pay. Ember can't buy it.")).toBe("You'll pay. So Ember can't buy it.");
+    expect(withoutOwnPhrases("Okay! Ember is on it.")).toBe("Okay! So Ember is on it.");
+  });
+
+  it.each(["Hey Ember, what's the weather?", "…in the evening. Hey, Ember", "Okay Ember", "Pay Ember open Notepad", "Hey Emmer"])("takes %j, said by the user, as one", t => {
+    expect(heardCutInWake(t)).toBe(true);
+  });
+
+  it.each(["Hi Emma, the meeting moved.", "They remember the box.", "Hey Amber, dinner.", "Okay, Ember's report is ready.", "A. M. B."])("doesn't take %j as one", t => {
+    expect(heardCutInWake(t)).toBe(false);
+  });
 });

@@ -1435,6 +1435,8 @@ function start(): void {
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
+  /** The status line while a follow-up window listens. */
+  const FOLLOW_UP_STATUS = "Listening for a follow-up…";
   /** What Ember does with what it hears. */
   const onVoice = (e: VoiceEvent) => {
     switch (e.type) {
@@ -1450,7 +1452,9 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); speechStarts(); setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
+        if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); speechStarts(); setState({ emotion: "listening" }); setStatus("listen", FOLLOW_UP_STATUS); }
+        // "Hey Ember" said in a follow-up window made it a wake's window (engine.ts wakeOverFollowUp).
+        if (e.on && e.reason === "wake" && statusBy.listen === FOLLOW_UP_STATUS) setStatus("listen", null);
         // (Not the note that a request was cut: it comes with the "listening off" of that request, and stays.)
         if (!e.on && !isCutNote(statusBy.listen)) setStatus("listen", null);
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
@@ -1479,8 +1483,8 @@ function start(): void {
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
       case "utterance": {
-        // One follow-up per wake: the answer to a follow-up opens no window of its own (the engine refuses it too).
-        lastAskByVoice = e.window === "wake";
+        // A spoken request's answer opens a follow-up window; the engine refuses one after MAX_FOLLOW_UPS in a row.
+        lastAskByVoice = true;
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
         if (e.cut) {
