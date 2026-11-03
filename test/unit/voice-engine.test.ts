@@ -1149,6 +1149,25 @@ describe("cutting in on Ember (VO9-2)", () => {
       { type: "utterance", text: "What time is it?", ms: 0, window: "wake" }, { type: "listening", on: false, reason: "done", window: "wake" }]);
   });
 
+  it("holds what it heard over Ember's voice once, then sends the next request, with the speakers' stream (Linux: as on main)", () => {
+    // Ember's speakers go on sounding (the hush hasn't taken yet): the first request after cutting in is held, the next is sent.
+    const b = fake(["Literally. Hey Ember, what", "Hey Ember, what time is it", "What time is it?"]);
+    b.spotMonitor = () => [];
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+    const step = (f: Float32Array) => { c.t += 32; e.feedMonitor(new Float32Array(512).fill(0.05)); e.feed(f); };
+    e.selfSpeaking(true);
+    for (let i = 0; i < 30; i++) step(frame(0));
+    step(frame(1, true));
+    for (let i = 0; i < 10; i++) step(frame(0, true));
+    for (let i = 0; i < 80; i++) step(frame(0));
+    expect(events.filter(ev => ev.type === "utterance")).toEqual([]);
+    for (let i = 0; i < 20; i++) step(frame(0, true));
+    for (let i = 0; i < 80; i++) step(frame(0));
+    expect(events.filter(ev => ev.type === "utterance")).toMatchObject([{ text: "What time is it?", window: "wake" }]);
+  });
+
   it("still stops on a stop said over Ember's voice", () => {
     for (const heard of ["Hey Ember, stop.", "Stop.", "Be quiet.", "Ever be quiet."]) {
       expect(plain(cutIn(["Literally. Hey Ember.", heard]).events).filter(ev => ev.type !== "listening"), heard).toEqual([{ type: "wake", keyword: "hey_ember" }, { type: "stop" }]);
@@ -1214,6 +1233,53 @@ describe("cutting in on Ember (VO9-2)", () => {
     it("never sends what it heard while waiting for Ember to stop speaking, however long the page takes to say so (review of PR #144: B1)", () => {
       // The page never says Ember stopped: Ember's next sentence was sent as the request ("'s own next sentence.").
       expect(cutInPlain(["…in the evening. Hey Ember", "Hey Ember, what's the", "Ember's own next sentence."], { hushAfter: 100000, again: true }).filter(ev => ev.type === "utterance")).toEqual([]);
+    });
+
+    /** Ember speaks, the page says it stopped; "Hey Ember" `after` frames into the tail, a request, and the request again. */
+    function cutInTail(after: number) {
+      const b = fake(["…in the evening. Hey Ember", "Hey Ember, what's the weather tomorrow?", "What's the weather tomorrow?"]);
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+      const step = (f: Float32Array) => { c.t += 32; e.feed(f); };
+      e.selfSpeaking(true);
+      for (let i = 0; i < 30; i++) step(frame(0));
+      e.selfSpeaking(false);
+      for (let i = 0; i < after; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      for (let i = 0; i < 80; i++) step(frame(0));
+      for (let i = 0; i < 20; i++) step(frame(0, true));
+      for (let i = 0; i < 80; i++) step(frame(0));
+      return { events, e, step };
+    }
+
+    it.each([1, 5, 11])("sends a request after a cut-in %i frames into the tail, once the page has said Ember stopped (no word comes after it: every request was held)", after => {
+      const { events } = cutInTail(after);
+      expect(events.filter(ev => ev.type === "wake")).toHaveLength(1);
+      expect(events.filter(ev => ev.type === "utterance")).toMatchObject([{ text: "What's the weather tomorrow?", window: "wake" }]);
+    });
+
+    it("doesn't carry a cut-in's wait for the page into the next window", () => {
+      // The page said Ember speaks and never that it stopped: the cut-in's window holds what it hears, and runs out.
+      const b = fake(["…in the evening. Hey Ember", "Hey Ember, what's the", "Hey Ember", "Hey Ember, what time is it?"]);
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+      const step = (f: Float32Array) => { c.t += 32; e.feed(f); };
+      e.selfSpeaking(true);
+      for (let i = 0; i < 30; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      for (let i = 0; i < 400; i++) step(frame(0));
+      expect(e.listening).toBe(false);
+      expect(events.filter(ev => ev.type === "utterance")).toEqual([]);
+      // The next "Hey Ember, what time is it?" is an ordinary wake, and its request is sent.
+      for (let i = 0; i < 30; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      for (let i = 0; i < 80; i++) step(frame(0));
+      expect(events.filter(ev => ev.type === "utterance")).toMatchObject([{ text: "What time is it?", window: "wake" }]);
     });
 
     it("gives a later wake its pre-roll when the page never says Ember stopped after a cut-in (Voice Match's first look)", () => {

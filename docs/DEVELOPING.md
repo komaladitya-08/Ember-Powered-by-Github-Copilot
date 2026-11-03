@@ -395,8 +395,8 @@ arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Ma
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
 voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
-“OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows and macOS, where Ember can't
-hear its own speakers, “Ember” alone doesn't (Ember's own words have it), and what you said before it went quiet isn't
+“OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows, macOS and Linux without
+`parec`, where Ember can't hear its own speakers, “Ember” alone doesn't (Ember's own words have it), and what you said before it went quiet isn't
 sent: say the request once it has stopped. “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
 record of its tasks (the step each one is on, one waiting for your answer or stopping, how many wait, how the last one
 went), with no Copilot request, so it works offline too. A spoken request's short acknowledgement (“On it.”) comes only
@@ -420,9 +420,10 @@ routine”; a reminder is cancelled only by words such as “cancel the reminder
 before a task makes that task ask before every step. Home lists them with
 **Delete**, and signing out deletes them all, also while your organisation has routines turned off.
 “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
-Ember is speaking, “Hey Ember” alone makes it stop talking and listen (on Linux this needs `parec`; on Windows and
-macOS it works without, though “Ember” alone doesn't interrupt there); a short request said all over its voice isn't
-sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
+Ember is speaking, “Hey Ember” alone makes it stop talking and listen. With `parec` on Linux Ember tells its own voice
+apart; on Windows, macOS and Linux without `parec` it interrupts too, but “Ember” alone doesn't there, and nothing said
+before Ember has gone quiet is sent. A short request said all over its voice isn't sent, so say it again once Ember
+is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no
 audio leaves it, and only the text of your request is sent to Copilot. Ember ignores “Hey Ember” and
 “Ember, stop” when they come out of your speakers (needs `parec`, in `pulseaudio-utils`); it follows the default sound

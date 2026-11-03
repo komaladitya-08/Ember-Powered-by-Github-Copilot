@@ -53,11 +53,14 @@ export function cancelWords(o: { killPhrase: boolean; stopKey: string | null }):
 
 /** "Ember, stop" in any of its forms, with its quotes (and a full stop inside them, which is kept). */
 const KILL_PHRASE = /["“‘']?\b(?:(?:hey|hi|ok|okay)[\s,]+)?embers?[\s,.!…-]*(?:please[\s,]+)?stop\b(?:([.!]?)["”’'])?/gi;
+/** "Hey Ember" (or "OK Ember"), with its quotes: the greeting and the name together. */
+const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay|hay|pay|pey)[\s,]*(?:ember|emmer)\b(?!['’]?s\b)(?:([,.!]?)["”’'])?/gi;
 /**
- * "Hey Ember" (or "OK Ember", "Okay. Ember"), with its quotes: everything engine.ts's CUT_IN_WAKE takes for a cut-in
- * where Ember can't tell its own voice from the user's (voice-spoken.test.ts checks it on a corpus).
+ * The greeting ending one sentence and the name starting the next ("Okay. Ember can't open that."): the recognizer
+ * writes it as engine.ts's CUT_IN_WAKE takes for a cut-in, so a word goes between them ("Okay. So Ember can't…"), and
+ * none is dropped. voice-spoken.test.ts checks on a corpus that CUT_IN_WAKE never matches what Ember says.
  */
-const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay|hay|pay|pey)[\s,.!]*(?:ember|emmer)\b(?!['’]?s\b)(?:([,.!]?)["”’'])?/gi;
+const WAKE_APART = /\b(hey|hi|ok|okay|hay|pay|pey)([\s,]*[.!][\s,.!]*)(ember|emmer)\b(?!['’]?s\b)/gi;
 
 /**
  * What Ember says, without the stop and wake phrases, where it can't tell its own voice from the user's: its
@@ -65,5 +68,8 @@ const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay|hay|pay|pey)[\s,.!]*(?:ember
  * (review #251). They are named instead ("the stop phrase"); the bubble still shows them.
  */
 export function withoutOwnPhrases(text: string): string {
-  return text.replace(KILL_PHRASE, (_m, p?: string) => `the stop phrase${p ?? ""}`).replace(WAKE_PHRASE, (_m, p?: string) => `the wake phrase${p ?? ""}`);
+  return text
+    .replace(KILL_PHRASE, (_m, p?: string) => `the stop phrase${p ?? ""}`)
+    .replace(WAKE_PHRASE, (_m, p?: string) => `the wake phrase${p ?? ""}`)
+    .replace(WAKE_APART, (_m, greeting: string, between: string, name: string) => `${greeting}${between}So ${name}`);
 }

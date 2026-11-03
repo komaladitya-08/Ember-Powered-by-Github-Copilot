@@ -73,7 +73,18 @@ describe("withoutOwnPhrases and the cut-in (Windows, macOS: Ember can't tell its
     "OK Emmer, I'll do it.",
     "Hi! Ember's settings are open.",
     "They remember. Hey Ember!",
+    "Okay! Ember is on it.",
+    "Hi... Ember here.",
+    "OK, ember.",
   ])("Ember saying %j can't sound like a cut-in", t => expect(heardCutInWake(withoutOwnPhrases(t))).toBe(false));
+
+  it("names the wake phrase only where the greeting and the name sit together, and drops no word where a sentence ends between them", () => {
+    expect(withoutOwnPhrases("Say “Hey Ember” and then what you want.")).toBe("Say the wake phrase and then what you want.");
+    expect(withoutOwnPhrases("OK, Ember.")).toBe("the wake phrase.");
+    expect(withoutOwnPhrases("Okay. Ember can't open that.")).toBe("Okay. So Ember can't open that.");
+    expect(withoutOwnPhrases("You'll pay. Ember can't buy it.")).toBe("You'll pay. So Ember can't buy it.");
+    expect(withoutOwnPhrases("Okay! Ember is on it.")).toBe("Okay! So Ember is on it.");
+  });
 
   it.each(["Hey Ember, what's the weather?", "…in the evening. Hey, Ember", "Okay Ember", "Pay Ember open Notepad", "Hey Emmer"])("takes %j, said by the user, as one", t => {
     expect(heardCutInWake(t)).toBe(true);

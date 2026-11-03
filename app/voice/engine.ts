@@ -526,8 +526,13 @@ export class VoiceEngine {
    * counts frames since that voice, and keepLast keeps at most what the ring holds.
    */
   private ringOwn = 0;
-  /** A cut-in without the speakers' stream waits for the page to say Ember stopped speaking (bargeIn). */
+  /**
+   * A cut-in without the speakers' stream waits for the page to say Ember stopped speaking (bargeIn), only if the page
+   * last said it was speaking: in the tail after it said it stopped, main's hush changes nothing and no word comes.
+   */
   private hushAwaited = false;
+  /** What the page last said: Ember speaking (selfSpeaking). */
+  private pageSpeaking = false;
   /** The wake phrase's loudness, when the request after it is measured on its own (a follow-up must still come near it). */
   private wakePeak = 0;
   private recent = new Ring(RECENT_SECONDS);
@@ -629,6 +634,7 @@ export class VoiceEngine {
   selfSpeaking(on: boolean, tailMs = 400): void {
     const now = this.now();
     this.hushAwaited = false;
+    this.pageSpeaking = on;
     if (!on) {
       if (this.selfSpeakingUntil > now) { this.tailFrom = now; this.micLag = this.measureLag() ?? this.micLag; }
       this.selfSpeakingUntil = Math.min(this.selfSpeakingUntil, now + tailMs);
@@ -987,15 +993,16 @@ export class VoiceEngine {
     this.selfSpeakingUntil = now;
     if (!this.hearsSpeakers(now)) {
       // Ember's voice goes on until the page says it stopped (main hushes it on the wake): nothing is sent till then
-      // (hushAwaited). If that never comes, frames after BARGE_IN_VOICE_MS aren't taken for Ember's own any more, or a
-      // later wake's pre-roll would be empty and Voice Match would lose its first look.
-      this.hushAwaited = true;
+      // (hushAwaited, set below). If that never comes, frames after BARGE_IN_VOICE_MS aren't taken for Ember's own any
+      // more, or a later wake's pre-roll would be empty and Voice Match would lose its first look.
       this.selfVoiceUntil = Math.min(this.selfVoiceUntil, now + BARGE_IN_VOICE_MS);
     }
     this.tailFrom = 0;
     this.tail = [];
     // (The bare name shows at once here: the name was heard, and main must hush Ember on the wake.)
     this.announceWake(s.keyword, null, true);
+    // In the tail after the page said Ember stopped, no word comes: waiting for one held every request (review of #144).
+    if (!this.hearsSpeakers(now)) this.hushAwaited = this.pageSpeaking;
     if (this.mode.kind === "listening") this.mode.bargeIn = true;
     this.replayPreRoll();
     return false;
@@ -1007,6 +1014,7 @@ export class VoiceEngine {
     // Ember's own voice, just before a wake that follows its answer, is neither the request nor the room (SELF_LAG_MS).
     // A cut-in (`show`) hears the wake phrase over that voice: its pre-roll and the room are as they were.
     if (!show) this.ring.keepLast(this.ringOwn * 512);
+    this.hushAwaited = false;
     this.wakeAudio = this.ring.read();
     if (!quiet) this.emit({ type: "wake", keyword });
     this.resetListening();
@@ -1466,6 +1474,7 @@ export class VoiceEngine {
     const shown = this.mode.kind !== "listening" || this.mode.announced !== false;
     this.mode = { kind: "idle" };
     this.wasSpeaking = false;
+    this.hushAwaited = false;
     this.tail = [];
     this.tailFrom = 0;
     this.resetListening();
