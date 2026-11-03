@@ -9,7 +9,7 @@
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
-import { AUTONOMY_CONSENT_TEXT, autonomyHint, MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
+import { AUTONOMY_CONSENT_TEXT, autonomyHint, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -867,6 +867,31 @@ $("memory-no").addEventListener("click", () => { $("memory-consent").hidden = tr
 $("memory-forget-all").addEventListener("click", () => { memoryFocus = 0; void window.ember.forgetAllMemory(); });
 window.ember.onSettingsChanged(applyMemorySettings);
 void window.ember.memory().then(renderMemory);
+
+// Better recall (docs/MEMORY.md §2): a one-line download prompt while memory is on; the click is the agreement.
+let recallShown = -1;
+function renderRecall(s: BetterRecallState): void {
+  const off = s.state === "off";
+  for (const id of ["recall-h", "recall-group", "recall-hint"]) $(id).hidden = off;
+  $("recall-text").textContent = betterRecallText(s);
+  ($("recall-dot") as HTMLElement).dataset.phase = s.state === "ready" ? "ready" : s.state === "downloading" ? "starting" : "";
+  const dl = $("recall-download") as HTMLButtonElement;
+  dl.hidden = s.state !== "absent";
+  dl.textContent = betterRecallDownloadLabel(s.bytes);
+  ($("recall-remove") as HTMLButtonElement).hidden = s.state !== "ready";
+  const bar = $("recall-progress") as HTMLProgressElement;
+  bar.hidden = s.state !== "downloading";
+  if (s.state === "downloading") {
+    const fraction = (s.done ?? 0) / (s.bytes || 1);
+    bar.value = fraction;
+    const step = progressStep(fraction);
+    if (step !== recallShown) { recallShown = step; $("recall-live").textContent = betterRecallProgress(fraction); }
+  } else recallShown = -1;
+}
+$("recall-download").addEventListener("click", () => { void window.ember.downloadMemoryModel(); });
+$("recall-remove").addEventListener("click", () => { void window.ember.removeMemoryModel().then(() => $("recall-download").focus()); });
+window.ember.onMemoryModel(renderRecall);
+void window.ember.memoryModel().then(renderRecall);
 window.ember.onMemory(renderMemory);
 
 // ───── Routines and lasting reminders (app/main/agent/routines.ts): kept only once the user turns them on and agrees ─────

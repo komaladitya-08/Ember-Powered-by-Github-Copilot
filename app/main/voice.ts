@@ -138,8 +138,13 @@ export interface VoiceOptions {
 export type EnrolProgress = Extract<VoiceProcessMessage, { type: "enrol" }>;
 
 /** Downloads with Chromium's network stack (system proxy settings apply). A stalled connection fails, so "Downloading…" can't stay up forever. */
-export const electronDownloader: Downloader = async (url, dest, progress) => {
+export const electronDownloader: Downloader = async (url, dest, progress, signal) => {
+  // Already cancelled: nothing is fetched (an abort listener added now would never fire).
+  if (signal?.aborted) throw new Error("cancelled");
   const ac = new AbortController();
+  // Cancelled by the caller (Better recall's download when memory turns off): ends the transfer at once.
+  const cancel = () => ac.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
   let timer: NodeJS.Timeout | undefined;
   const alive = () => { clearTimeout(timer); timer = setTimeout(() => ac.abort(), STALL_MS); };
   alive();
@@ -151,8 +156,10 @@ export const electronDownloader: Downloader = async (url, dest, progress) => {
     body.on("data", (c: Buffer) => { bytes += c.length; alive(); progress(bytes); });
     await pipeline(body, fs.createWriteStream(dest), { signal: ac.signal });
   } catch (err) {
+    if (signal?.aborted) throw new Error("cancelled", { cause: err });
     throw ac.signal.aborted ? new Error(`nothing arrived for ${STALL_MS / 1000} seconds (check the network or proxy)`) : err;
   } finally {
+    signal?.removeEventListener("abort", cancel);
     clearTimeout(timer);
   }
 };

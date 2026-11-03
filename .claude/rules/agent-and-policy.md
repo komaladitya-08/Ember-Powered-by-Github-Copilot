@@ -229,6 +229,11 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   forget_memory. With memory off, the tools and the prompt are today's exactly.
 - **A saved fact is the user's only in their own words** (`ownWords`, service.ts). Anything else is `conversation`.
 - **Sign-out and an account change call `forgetAll()`**, which erases the file too.
+- **Better recall's vectors are facts too** (embed.ts): only in `memory-vectors.json` (0600, through `vectorFile()`),
+  dropped with a forgotten fact, erased by `forgetAll()` and Remove, never sent anywhere. The model runs only in the
+  "Ember memory" process (embed-process.ts, a `StopPart` through `SemanticMemory.stop()`), is fetched only from Settings
+  › Memory's Download while memory is on (better-recall.ts), and is used only while memory is on. With no model,
+  recall must stay byte for byte lexical (memory.test.ts pins it).
 
 ## Settings and admin policy
 
