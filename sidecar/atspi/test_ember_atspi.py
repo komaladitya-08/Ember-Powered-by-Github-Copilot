@@ -368,6 +368,45 @@ class Secrets(unittest.TestCase):
         e.redact_by_layout(nodes, e.SNAPSHOTS.latest().get)
         self.assertEqual([n.get("text") for n in nodes if n["role"] == "entry"], [None, None, "ordinary notes", None])
 
+    def omitted_after(self, root):
+        """The ids walk says have something under them that isn't listed, and the nodes it listed."""
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SNAPSHOTS.begin()
+        budget = e.Budget()
+        nodes = []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        return budget.omitted, nodes
+
+    def test_a_complete_dialog_has_nothing_omitted(self):
+        ok = Acc("push button", "OK", bounds=(10, 60, 60, 24))
+        root = Acc("dialog", "Notepad", bounds=(0, 0, 300, 120), kids=[Acc("label", "Cannot find", bounds=(10, 10, 200, 20)), ok])
+        omitted, nodes = self.omitted_after(root)
+        self.assertEqual(omitted, set())
+        self.assertEqual([n["name"] for n in nodes], ["Notepad", "Cannot find", "OK"])
+
+    def test_a_dialog_control_that_does_not_show_is_omitted_under_its_nearest_listed_parent(self):
+        # Hidden, closed, collapsed, offscreen: none of these is "showing" and "visible", so none is listed (a known
+        # prompt-injection channel), and the dialog says something under it is left out (Ember's dialog waiver).
+        for states in [("enabled", "sensitive"), ("visible", "enabled", "sensitive"), ("showing", "enabled", "sensitive"), ("collapsed",)]:
+            hidden = Acc("push button", "Delete all", states=states, bounds=(10, 90, 60, 24))
+            root = Acc("dialog", "Notepad", bounds=(0, 0, 300, 120), kids=[Acc("push button", "OK", bounds=(10, 60, 60, 24)), hidden])
+            omitted, nodes = self.omitted_after(root)
+            self.assertEqual([n["name"] for n in nodes], ["Notepad", "OK"], states)
+            self.assertEqual(omitted, set([nodes[0]["id"]]), states)
+
+    def test_a_control_without_a_size_or_inside_an_unlisted_panel_is_omitted(self):
+        # A sizeless button is not listed; a hidden panel's control is under the panel's listed parent.
+        sizeless = Acc("push button", "Delete all", bounds=(0, 0, 0, 0))
+        root = Acc("dialog", "Notepad", bounds=(0, 0, 300, 120), kids=[Acc("push button", "OK", bounds=(10, 60, 60, 24)), sizeless])
+        omitted, nodes = self.omitted_after(root)
+        self.assertEqual([n["name"] for n in nodes], ["Notepad", "OK"])
+        self.assertEqual(omitted, set([nodes[0]["id"]]))
+        panel = Acc("filler", "", states=("enabled",), kids=[Acc("check box", "Also delete the files on disk")])
+        root = Acc("dialog", "Notepad", bounds=(0, 0, 300, 120), kids=[Acc("push button", "OK", bounds=(10, 60, 60, 24)), panel])
+        omitted, nodes = self.omitted_after(root)
+        self.assertEqual([n["name"] for n in nodes], ["Notepad", "OK"])
+        self.assertEqual(omitted, set([nodes[0]["id"]]))
+
 
 class Reading(unittest.TestCase):
     def setUp(self):

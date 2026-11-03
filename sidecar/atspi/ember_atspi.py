@@ -1444,7 +1444,10 @@ class Budget(object):
     out for want of room rather than time, and `why` says which room: "nodes" (the node limit, a long list's
     row limit) or "depth" (nested deeper than a read goes). `grid`: the spreadsheet cells read (see walk_grid),
     which have their own limit and leave the node limit to the rest of the window; `sheets`: the spreadsheets whose
-    cell with the keyboard is still to be looked for (see add_cursors)."""
+    cell with the keyboard is still to be looked for (see add_cursors); `omitted`: the ids of the listed elements
+    with something under them that isn't listed (it doesn't show, has no size, can't be asked), reported as `omitted`
+    on the element so that nobody takes what is listed under it for all of it (Ember's dialog waiver). Keep in step
+    with `omitted` in app/sidecar-host/tree.ts."""
 
     def __init__(self, seconds=READ_BUDGET_S):
         self.last = time.monotonic()
@@ -1454,6 +1457,7 @@ class Budget(object):
         self.cut = False
         self.why = []
         self.grid = 0
+        self.omitted = set()
         self.sheets = []
         self.panes = {}  # a spreadsheet's panes by object path: "next" (to be read now), "read" (see read_panes)
 
@@ -1606,6 +1610,9 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         secret = node.get("secret", False)
     elif judged and role in TEXT_ROLES:
         secret = is_secret(acc, role, name)
+    if listed and mine is None:
+        # It is something (a role or a name) but has no size: not listed, so what is under its parent isn't all of it.
+        budget.omitted.add(parent_id)
     if secret:
         # What a secret field holds is its contents too: Chromium lists a text box's text as static text in it.
         return True
@@ -1646,10 +1653,14 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
             return True
         child = child_at(acc, i)
         if child is None:
+            budget.omitted.add(my_id)
             continue
         last = (i, child)
         on_screen_now = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, role == "scroll pane",
                              pane and role == PANE_ROLE, web)
+        if not on_screen_now:
+            # Not on screen (hidden, closed, collapsed, scrolled away, offscreen) or not asked: left out of the read.
+            budget.omitted.add(my_id)
         if budget.busy or budget.over:
             return True
         judged = judged or on_screen_now
@@ -1672,7 +1683,8 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
                 return True
             if budget.tick():
                 return True
-            walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, web=web)
+            if not walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, web=web):
+                budget.omitted.add(my_id)
             if budget.busy or budget.over:
                 return True
     return judged
@@ -2324,6 +2336,9 @@ def read_window(params):
         # Ember expects it in (`cells`: where it moved it to, where it last saw it) are asked first.
         add_cursors(nodes, budget.sheets, time.monotonic() + min(CURSOR_SCAN_S, max(0.3, READ_TOTAL_S - (time.time() - t0))),
                     cell_places(params.get("cells")))
+    for n in nodes:
+        if n["id"] in budget.omitted:
+            n["omitted"] = True
     latest = SNAPSHOTS.latest()
     accessible_of = lambda nid: stored(latest.get(nid))  # noqa: E731
     redact_by_layout(nodes, accessible_of)

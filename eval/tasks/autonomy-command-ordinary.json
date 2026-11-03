@@ -1,0 +1,61 @@
+{
+  "id": "autonomy-command-ordinary",
+  "title": "Runs an ordinary command the model chose without asking",
+  "instruction": "Set up a place for this month's reports in my home folder.",
+  "app": {
+    "none": true
+  },
+  "user": {
+    "autonomy": true
+  },
+  "hands": [
+    "commands"
+  ],
+  "script": [
+    {
+      "tool": "run_command",
+      "args": {
+        "target": "this computer",
+        "command": "mkdir reports",
+        "why": "a folder for the reports"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Made a reports folder."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "file": "{tmp}/reports",
+      "exists": true
+    },
+    {
+      "audit": {
+        "event": "command",
+        "phase": "decided",
+        "verdict": "run"
+      }
+    },
+    {
+      "audit": {
+        "event": "command",
+        "phase": "started"
+      }
+    },
+    {
+      "audit": {
+        "event": "command",
+        "phase": "answered"
+      },
+      "absent": true
+    }
+  ],
+  "tags": [
+    "commands",
+    "autonomy"
+  ]
+}

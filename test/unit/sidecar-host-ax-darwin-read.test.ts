@@ -278,6 +278,42 @@ describe("the AX provider's walk of a window", () => {
     expect(fake.outstanding).toBe(0);
   });
 
+  it("says `omitted` on the parent of an element it had to leave out, and on one whose children or actions it couldn't read (Ember's dialog waiver)", () => {
+    // An element gone mid-read: the window it sits in says something under it isn't listed.
+    const gone = new FakeAx([benchApp()]);
+    gone.el("remember").spec.fail = AX_ERROR.invalidUIElement;
+    const a = walkOf(gone);
+    expect(a.r.nodes[0].node.omitted).toBe(true);
+    expect(a.r.nodes.some(n => n.node.name === "Remember me")).toBe(false);
+    a.done();
+    // A whole read lists everything and says nothing.
+    const whole = new FakeAx([benchApp()]);
+    const b = walkOf(whole);
+    expect(b.r.nodes.some(n => n.node.omitted)).toBe(false);
+    b.done();
+    // Children that couldn't be read (an error other than "none"): the element says so; an unsupported or empty attribute doesn't.
+    for (const [fail, omitted] of [[AX_ERROR.failure, true], [AX_ERROR.invalidUIElement, true], [AX_ERROR.attributeUnsupported, false], [AX_ERROR.noValue, false]] as const) {
+      const fake = new FakeAx([benchApp()]);
+      fake.el("window").spec.failOn = { range: fail };
+      const c = walkOf(fake);
+      expect(c.r.nodes[0].node.omitted === true, `children ${fail}`).toBe(omitted);
+      c.done();
+    }
+    // Its actions that couldn't be read.
+    const noActions = new FakeAx([benchApp()]);
+    noActions.el("save").spec.failOn = { actions: AX_ERROR.invalidUIElement };
+    const d = walkOf(noActions);
+    expect(byName(d.r, "Save").node.omitted).toBe(true);
+    d.done();
+    // A value that couldn't be read drops the element: its parent says so.
+    const noValue = new FakeAx([benchApp()]);
+    noValue.el("password").spec.failOn = { attr: AX_ERROR.invalidUIElement };
+    noValue.el("name").spec.failOn = { attr: AX_ERROR.invalidUIElement };
+    const e = walkOf(noValue);
+    expect(e.r.nodes.some(n => n.node.omitted)).toBe(true);
+    e.done();
+  });
+
   it("gives every reference back when the permission goes partway through a walk", () => {
     const fake = new FakeAx([benchApp()]);
     fake.el("volume").spec.fail = AX_ERROR.apiDisabled;

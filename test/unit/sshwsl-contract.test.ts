@@ -126,7 +126,7 @@ describe("settings for targets and commands", () => {
 
   it("keeps the global consent at 2 (Voice Match that keeps learning and the words it keeps, #145) and versions the three cards, memory, routines, extensions, working without asking and the own model provider apart", () => {
     expect(CONSENT_VERSION).toBe(2);
-    expect(FEATURE_CONSENT_VERSION).toEqual({ wsl: 1, ssh: 1, commands: 1, memory: 2, routines: 1, extensions: 1, autonomy: 1, provider: 1 });
+    expect(FEATURE_CONSENT_VERSION).toEqual({ wsl: 1, ssh: 1, commands: 1, memory: 2, routines: 1, extensions: 1, autonomy: 2, provider: 1 });
   });
 });
 

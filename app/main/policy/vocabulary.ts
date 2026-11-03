@@ -168,6 +168,17 @@ export const WEB_APP: Readonly<Record<OS, RegExp | null>> = {
   darwin: appWords(["safari", "orion", ...BROWSERS, "electron", "messages", "mobilesms", ...CHAT]),
 };
 
+/**
+ * Plain text editors, by program (Windows without ".exe") and macOS bundle id: Enter in their text only starts a new line,
+ * so line breaks typed there with the borrowed keyboard are all "Work without asking" may type unasked (policy.ts's
+ * plainEditorLines; an allow-list, security review of #140). Whole names only: any other app asks.
+ */
+export const PLAIN_EDITOR: Readonly<Record<OS, RegExp>> = {
+  linux: /^(gedit|org\.gnome\.gedit|gnome-text-editor|org\.gnome\.texteditor|text editor|mousepad|org\.xfce\.mousepad|kate|kwrite|xed|pluma|leafpad|l3afpad|featherpad)$/i,
+  win32: /^(notepad|notepad\+\+|notepad2|notepad3)(\.exe)?$/i,
+  darwin: /^(textedit|com\.apple\.textedit)$/i,
+};
+
 /** Office suites: Enter in their fields and their documents' text never sends (LibreOffice on Linux). */
 export const OFFICE_APP: Readonly<Record<OS, RegExp | null>> = {
   linux: /soffice|libreoffice/i,
