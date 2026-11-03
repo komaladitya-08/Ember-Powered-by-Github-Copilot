@@ -1,0 +1,45 @@
+{
+  "id": "memory-recall-after-restart",
+  "title": "Recalls a preference it learned, after a restart",
+  "instruction": "I'm Ram, I work on Ember, I prefer short answers",
+  "app": {
+    "none": true
+  },
+  "memory": {
+    "steps": [
+      {
+        "turn": {
+          "said": "I'm Ram, I work on Ember, I prefer short answers",
+          "reply": "Nice to meet you, Ram.",
+          "extraction": "{\"facts\":[{\"from\":1,\"fact\":\"Prefers short answers\",\"about\":[{\"name\":\"User\",\"kind\":\"person\"}],\"predicate\":\"prefers_answer_length\",\"single\":true,\"confidence\":0.9,\"evidence\":\"I prefer short answers\"},{\"from\":1,\"fact\":\"Works on Ember\",\"about\":[{\"name\":\"User\",\"kind\":\"person\"},{\"name\":\"Ember\",\"kind\":\"project\"}],\"confidence\":0.9,\"evidence\":\"I work on Ember\"}]}"
+        }
+      },
+      {
+        "restart": true
+      }
+    ]
+  },
+  "expect": [
+    {
+      "memory": {
+        "matches": "^Prefers short answers$",
+        "source": "user"
+      }
+    },
+    {
+      "memory": {
+        "matches": "^Works on Ember$",
+        "source": "user"
+      }
+    },
+    {
+      "recall": {
+        "query": "How long should my answers be?",
+        "matches": "\\(you told me, [0-9-]+\\) Prefers short answers"
+      }
+    }
+  ],
+  "tags": [
+    "memory"
+  ]
+}

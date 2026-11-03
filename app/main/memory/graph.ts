@@ -253,6 +253,17 @@ export class MemoryGraph {
     this.names.clear();
   }
 
+  /**
+   * Closes an open fact (sleep-time refinement, ./refine.ts): it is kept as history, no longer holding, so a rewrite
+   * can be audited. `by`: the fact that replaced it. True if it was open.
+   */
+  closeFact(id: string, by: string | null = null): boolean {
+    const f = this.facts.get(id);
+    if (!f || f.invalidAt) return false;
+    this.facts.set(id, { ...f, invalidAt: this.clock.now().toISOString(), supersededBy: by && this.facts.has(by) ? by : null });
+    return true;
+  }
+
   /** Replaces a fact in place (consolidation's merges). */
   replaceFact(f: Fact): void {
     if (this.facts.has(f.id)) this.facts.set(f.id, f);

@@ -465,7 +465,9 @@ describe("AgentHost's routines across a sign-out, a restart and another account 
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     const at = main.indexOf("agent = new AgentHost({");
     const opts = main.slice(at, at + 400);
-    expect(opts).toMatch(/\n\s+memory,\n\s+routines: routineBook,/);
+    expect(opts).toMatch(/\n\s+memory: hostMemory,\n\s+routines: routineBook,/);
+    // hostMemory is made once, unconditionally, from the one MemoryLearning (memory-learning.test.ts covers it).
+    expect(main).toMatch(/\n {2}const hostMemory = \{\n {4}\.\.\.learning\.conductorMemory\(\),/);
     expect(opts).not.toMatch(/Allowed\(\) \? \{ (?:memory|routines)/);
   });
 

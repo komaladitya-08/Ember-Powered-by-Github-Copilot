@@ -129,6 +129,11 @@ export interface ConductorMemory {
   /** The `<memory>` block for `query` ("" when nothing bears on it). */
   context(query: string, history?: boolean): string;
   forget(id: string): boolean;
+  /**
+   * A turn ended (not stopped): what the user said in it and Ember's answer, for memory to learn from off the hot path
+   * (app/main/memory/learning.ts). Absent: nothing is learned but what remember saves.
+   */
+  heard?(said: string, reply: string): void;
 }
 
 export interface ConductorTasks {
@@ -675,6 +680,8 @@ export class Conductor {
   private routineWords: string[] = [];
   /** The routine run_routine ran this turn (at most one runs a turn). */
   private routinesRan = new Set<string>();
+  /** Ember's answer in the turn under way, for memory to learn from when it ends (ConductorMemory.heard). */
+  private answered = "";
   /** The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. */
   private unstarted: string[] = [];
 
@@ -699,6 +706,7 @@ export class Conductor {
     this.said = i < 0 ? "" : this.unstarted[i];
     this.routineWords = [];
     this.routinesRan.clear();
+    this.answered = "";
     this.unstarted.splice(0, i + 1);
     // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
     // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
@@ -822,7 +830,7 @@ export class Conductor {
       }
       if (e.type === "assistant.message") {
         const data = e.data as { content?: string; toolRequests?: unknown[] };
-        if (data.content && !(data.toolRequests?.length)) d.onAnswer?.(data.content);
+        if (data.content && !(data.toolRequests?.length)) { d.onAnswer?.(data.content); this.answered = data.content; }
         else d.onAnswerEnd?.(data.content ?? "");
       }
       if (e.type === "session.error") {
@@ -831,8 +839,20 @@ export class Conductor {
         const err = e.data as { errorType?: unknown; statusCode?: unknown; message?: unknown };
         d.log.warn("conductor.session_error", { errorType: err.errorType, statusCode: err.statusCode, message: String(err.message ?? "").slice(0, 300) });
       }
-      if (e.type === "session.idle") { this.busy = false; this.stopping = false; d.onTurnEnd?.((e.data as { aborted?: boolean }).aborted === true); }
+      if (e.type === "session.idle") {
+        this.busy = false;
+        this.stopping = false;
+        const aborted = (e.data as { aborted?: boolean }).aborted === true;
+        d.onTurnEnd?.(aborted);
+        // Memory learns from the turn (the user's own words and the answer), after it and off its path.
+        if (!aborted && this.said) this.learnFrom(this.said, this.answered);
+      }
     });
+  }
+
+  /** Hands a finished turn to memory (while it is on): a failure there never touches the conversation. */
+  private learnFrom(said: string, reply: string): void {
+    try { this.deps.memory?.heard?.(said, reply); } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
   }
 
   /**

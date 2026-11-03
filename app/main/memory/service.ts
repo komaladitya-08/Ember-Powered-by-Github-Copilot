@@ -11,7 +11,7 @@
 
 import { consolidate } from "./consolidate";
 import { memoryBlock } from "./format";
-import { ENTITY_KINDS, type EntityKind, type Fact, type GraphClock, type MemoryGraph, type Source } from "./graph";
+import { ENTITY_KINDS, type AddResult, type EntityKind, type Fact, type GraphClock, type MemoryGraph, type NewFact, type Source } from "./graph";
 import { recall, type Recalled } from "./recall";
 import { memoryFile, type MemoryFile } from "./store";
 import { terms } from "./text";
@@ -151,6 +151,27 @@ export class MemoryService {
     clearTimeout(this.saveTimer);
     this.saveTimer = null;
     this.save();
+  }
+
+  // ───── Learning on its own (docs/MEMORY.md steps 3–5; ./learning.ts decides when, ./learn.ts and ./refine.ts what) ─────
+
+  /**
+   * Keeps a fact Ember learned by itself (extraction, an introduction, an answer to its question). The caller has
+   * decided its source; the graph's guard still refuses any secret whole.
+   */
+  learn(input: NewFact): AddResult {
+    const r = this.g.add(input);
+    if (r.kind === "refused") return r;
+    this.dirty();
+    this.o.log.info("memory.learned", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
+    return r;
+  }
+
+  /** A sleep-time change over the graph (./refine.ts): `change` says how many things it changed; saved when any did. */
+  refine(change: (g: MemoryGraph) => number): number {
+    const n = change(this.g);
+    if (n > 0) this.dirty();
+    return n;
   }
 
   private now(): Date { return (this.o.clock?.now ?? (() => new Date()))(); }

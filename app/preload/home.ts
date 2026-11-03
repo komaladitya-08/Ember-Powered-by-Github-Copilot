@@ -33,6 +33,7 @@ const api: EmberHomeApi = {
   onMemory: fn => listen<MemoryItem[]>(IPC.memoryChanged, fn),
   forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
   forgetAllMemory: () => ipcRenderer.invoke(IPC.memoryForgetAll),
+  introduceMe: answers => ipcRenderer.invoke(IPC.memoryIntroduce, answers),
   routines: () => ipcRenderer.invoke(IPC.routinesList),
   onRoutines: fn => listen<RoutineRow[]>(IPC.routinesChanged, fn),
   forgetRoutine: id => ipcRenderer.invoke(IPC.routinesForget, id),

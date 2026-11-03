@@ -159,8 +159,21 @@ cache (test/temp-folder.ts).
     only.
   - It never keeps passwords, codes, keys or card numbers.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
-    signing out forgets it all.
+    signing out forgets it all. The list says where each fact came from (you, our conversation, a task).
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
+  - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so, `FEATURE_CONSENT_VERSION.memory` 2, so
+    someone who agreed to the first note is asked again and memory stays off until they do). After conversation
+    turns and finished tasks, a short session of its own on the conversation's model, hardened and with no tools,
+    picks out lasting facts as JSON (zod-checked, dropped whole if invalid): at most one call per three turns or a
+    minute, 12 an hour, 60 a day. A fact is yours only when its evidence is your own words; a task's are `task`;
+    one that reads like an instruction and isn't your words is never kept. After 5 idle minutes (no turn, no task,
+    the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
+    idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
+    fact shows in the conversation as "Ember learned: …" with **Undo**. The kill switch stops all of it (`memory`).
+  - **Tell Ember about you** (Settings › Memory, and first run's optional step 7 of 8): what to call you, your role
+    and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
+    as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
+    from its speakers isn't kept.
 - **Extensions** (Settings › **Extensions**): plugins and extensions from marketplaces the user adds, and connectors
   (GitHub-hosted services such as Slack or Notion). Only the user adds, turns off, removes, connects or disconnects,
   and only here.
@@ -710,7 +723,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
-| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed); a memory file already there is left unused (signing out still deletes it) |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it) |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
@@ -1740,7 +1753,8 @@ with the command above, and create the release with those files.
 ```
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
   memory/           long-term memory (docs/MEMORY.md): the temporal graph, recall (BM25 + Personalized PageRank),
-                    sleep-time consolidation, the secret guard, memory.json and MemoryService (main's)
+                    sleep-time consolidation, the secret guard, memory.json and MemoryService (main's); learning on
+                    its own: learn.ts (extraction), refine.ts, questions.ts, intro.ts and MemoryLearning (learning.ts)
   targets/          the targets runtime: which computers exist, naming and binding, consent cards, noticing ssh (§14)
   commands/         run_command's flow, the classifier, output shaping, the command window's controller; run/: runners
   wsl/              WSL discovery, the WSL runner, the WSLg router and matcher

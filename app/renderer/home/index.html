@@ -120,6 +120,10 @@
         <p class="hint" id="w-voice-later" hidden></p>
       </div>
 
+      <div class="w-pane" data-pane="about" hidden>
+        <div id="w-about"></div>
+      </div>
+
       <div class="w-pane" data-pane="done" hidden>
         <dl class="w-card" id="w-summary" aria-label="Your Ember"></dl>
         <p class="hint" id="w-summary-note"></p>
@@ -244,10 +248,14 @@
           <p id="memory-consent-text"></p>
           <div class="agent-actions"><button type="button" id="memory-yes" class="btn" aria-describedby="memory-consent-text">I agree, remember</button><button type="button" id="memory-no" class="btn quiet">Not now</button></div>
         </div>
+        <label class="switch-row" id="memory-questions-row"><input type="checkbox" id="memory-questions" role="switch" aria-describedby="memory-questions-hint"><span>Ask me questions now and then</span></label>
       </div>
-      <ul class="plain-list" id="memory-list" aria-labelledby="memory-h"></ul>
-      <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember uses what bears on each request; say “Forget that” or use Forget here.</p>
+      <p class="hint" id="memory-questions-hint"></p>
+      <ul class="plain-list memory-list" id="memory-list" aria-labelledby="memory-h"></ul>
+      <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
+      <h3 class="sub" id="about-you-h">Tell Ember about you</h3>
+      <div id="about-you"></div>
       <h3 class="sub" id="routines-h">Routines and reminders</h3>
       <div class="group">
         <label class="switch-row"><input type="checkbox" id="routines-on" role="switch" aria-describedby="routines-hint"><span>Keep my routines and reminders</span></label>

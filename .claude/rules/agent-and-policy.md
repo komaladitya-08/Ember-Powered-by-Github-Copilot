@@ -226,6 +226,17 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   gives the conductor memory only then (`memoryWanted()`), and only then does it have remember, recall and
   forget_memory. With memory off, the tools and the prompt are today's exactly.
 - **A saved fact is the user's only in their own words** (`ownWords`, service.ts). Anything else is `conversation`.
+- **Learning on its own** (`MemoryLearning`, learning.ts; docs/MEMORY.md steps 3–5) runs only while memory is in force,
+  and the host and conductor reach it only through `HostOptions.memory` (`heard`, `taskDone`, `useModel`, `intent`):
+  - every model call is `copilotOneShot()` (agent/one-shot.ts): `hardenedSessionConfig` with `tools: []`,
+    `verifySessionTools(session, [])`, deleted after; its answer is zod-checked (`ExtractionSchema`,
+    `RefinementSchema`) and dropped whole if invalid;
+  - the source is decided in code, never by the model: `turnSource()` (evidence word for word in the user's words)
+    for turns, `task` for results; a non-user fact that `soundsLikeInstruction()` is never kept;
+  - keep within `LEARN_BUDGET` and `REFINE_PER_DAY`; register nothing long-running outside its `memory` StopPart;
+  - a fact the user gives (introduction, interview, an answer to Ember's question) is `user` only when they said it
+    (`own`: not `voiceUnchecked`); Ember's question is built from a name alone (`gapQuestion`).
+- **Changing memory's note** (`MEMORY_CONSENT_TEXT`) means bumping `FEATURE_CONSENT_VERSION.memory` (now 2).
 - **Sign-out and an account change call `forgetAll()`**, which erases the file too.
 
 ## Settings and admin policy

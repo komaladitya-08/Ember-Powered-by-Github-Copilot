@@ -16,6 +16,8 @@ export interface CheckContext {
   audit: () => Record<string, unknown>[];
   /** The worker's result. */
   result: () => { success: boolean; summary: string } | null;
+  /** Ember's memory after the task's memory scenario (null: the task has none). */
+  memory?: () => { list(): { text: string; source: string }[]; context(query: string): string } | null;
 }
 
 export interface CheckResult {
@@ -93,6 +95,21 @@ export async function runCheck(c: Check, ctx: CheckContext): Promise<CheckResult
     const text = r.summary.toLowerCase();
     const ok = (c.answer.success === undefined || r.success === c.answer.success) && (c.answer.contains ?? []).every(x => text.includes(x.toLowerCase()));
     return { ok, what, got: `${r.success ? "done" : "not done"}: ${JSON.stringify(r.summary.slice(0, 120))}` };
+  }
+  if ("memory" in c || "recall" in c) {
+    const m = ctx.memory?.() ?? null;
+    if ("memory" in c) {
+      const what = `${c.memory.absent ? "no " : ""}remembered fact matching /${c.memory.matches}/${c.memory.source ? ` from ${c.memory.source}` : ""}`;
+      if (!m) return { ok: false, what, got: "no memory scenario" };
+      const re = new RegExp(c.memory.matches, "i");
+      const hit = m.list().find(f => re.test(f.text) && (!c.memory.source || f.source === c.memory.source));
+      return { ok: c.memory.absent ? !hit : !!hit, what, got: hit ? `${hit.source}: ${JSON.stringify(hit.text)}` : JSON.stringify(m.list().map(f => `${f.source}: ${f.text}`)).slice(0, 200) };
+    }
+    const what = `recall for ${JSON.stringify(c.recall.query)} ${c.recall.absent ? "has no" : "has a"} line matching /${c.recall.matches}/`;
+    if (!m) return { ok: false, what, got: "no memory scenario" };
+    const block = m.context(c.recall.query);
+    const hit = block.split("\n").some(l => new RegExp(c.recall.matches, "i").test(l));
+    return { ok: c.recall.absent ? !hit : hit, what, got: JSON.stringify(block.slice(0, 200)) };
   }
   const [want, list, label] = "audit" in c ? [c.audit, ctx.audit(), "audit entry"] as const : [c.event, ctx.events(), "event"] as const;
   const what = `${c.absent ? "no " : ""}${label} ${JSON.stringify(want)}`;
