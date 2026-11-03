@@ -41,6 +41,11 @@ function makeWorker(o: {
   screenText?: string;
   /** The window's title, and what the conversation read on the screen before the task (TaskSpec.screen). */
   windowName?: string; specScreen?: string;
+  onLease?: () => void;
+  onGlide?: () => void;
+  onInput?: (kind: string, value?: string) => void;
+  nodeExtra?: Partial<AxNode>;
+  readFails?: () => boolean;
   /** The click closes the window it is in (a Close button): nothing is left to read back, and the window is gone. */
   closes?: boolean;
   /** Keyboard input closes the current window, or fails before anything was pressed. */
@@ -78,7 +83,7 @@ function makeWorker(o: {
   const activity: Record<string, unknown>[] = [];
   const window = { app: "gedit", pid: 1, name: o.windowName ?? "notes.txt", role: "frame", active: true, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(o.busy ? { busy: true } : {}) };
   const startStates = o.states?.() ?? ["enabled", "sensitive"];
-  const node = { id: 1, parent: o.parentRole ? 0 : null, depth: 1, role: o.role ?? "push button", name: o.name ?? "Bold", states: startStates ?? ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 } };
+  const node = { id: 1, parent: o.parentRole ? 0 : null, depth: 1, role: o.role ?? "push button", name: o.name ?? "Bold", states: startStates ?? ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 }, ...o.nodeExtra };
   const extras = o.more ?? [];
   const seen = { window, x11Window: null, nodes: [...(o.parentRole ? [{ id: 0, parent: null, depth: 0, role: o.parentRole, name: "", states: [], bounds: null }] : []), node, ...extras], blocked: !!o.blocked, ms: 0 };
   const presenter = new Presenter(() => undefined);
@@ -105,8 +110,11 @@ function makeWorker(o: {
         return closed ? { ...seen, window: null, nodes: [], text: "", capture: null } : { ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: null };
       },
       read: async (t?: { title?: string; path?: string }) => {
+        if (o.readFails?.()) throw new Error("read unavailable");
         const w = o.wins ? pick(t) : closed ? null : window;
-        return { ...seen, window: w, ...(w ? {} : { nodes: [] }) };
+        return { ...seen, window: w, nodes: w ? seen.nodes.map(n => ({ ...n,
+          ...(n.id === node.id ? { states: o.states?.() ?? n.states, ...o.extra?.() } : {}), ...o.live?.(n.id) })) : [] };
+
       },
       windows: async () => {
         if (o.listFails?.()) throw new Error("the accessibility helper didn't answer");
@@ -142,14 +150,16 @@ function makeWorker(o: {
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter,
-    lease: async () => () => undefined, flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
+    lease: async () => { o.onLease?.(); return () => undefined; }, flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
     onActivity: (e: Record<string, unknown>) => { activity.push(e); },
     cursor: o.noCursor ? undefined : {
-      borrow: { borrow: async (fn: (hand: unknown) => Promise<void>) => fn({ glideTo: async () => undefined, click: async () => undefined, keys: async () => {
+      borrow: { borrow: async (fn: (hand: unknown) => Promise<void>) => fn({ glideTo: async () => { o.onGlide?.(); }, click: async () => { o.onInput?.("click"); }, keys: async (keys: string) => {
         if (o.keysFail) throw new Error("The keyboard wasn't available");
+        o.onInput?.("keys", keys);
         events.push("keys");
         if (o.keysClose) closeWindow();
-      }, type: async () => undefined, scroll: async () => undefined }) },
+      }, type: async (text: string) => { o.onInput?.("type", text); }, scroll: async () => undefined }) },
+
       findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}),
     },
     pointer: o.pointer, activationKey: o.activationKey,
@@ -885,25 +895,156 @@ describe("one question per step (review round 6)", () => {
   });
 });
 
-describe("a menu's approval survives the click that closed it (live: Thunar File > Create Document)", () => {
-  it("Allow keeps its yes for reopening the menu and clicking the same item, so it isn't asked again", async () => {
-    // The user's click on Allow lands outside the open menu: GTK closes it, so the approved click has to be made again.
+describe("approval stays with the action the user saw (safety review)", () => {
+  it.each(["Disposable.txt", "Important.txt"])("checks policy again after Allow closes a menu, including in %s", async title => {
     let closed = false;
     const { call, asked, audit } = makeWorker({
-      role: "menu item", name: "Create Document", parentRole: "menu",
+      role: "menu item", name: "Delete", parentRole: "menu",
       canDo: () => ({ tier1: false, why: "the menu item needs the mouse" }),
-      onAsk: () => { closed = true; },
-      live: () => (closed ? null : undefined),
+      onAsk: () => { closed = true; }, live: () => closed ? null : undefined,
+      wins: [{ name: "Disposable.txt", path: "/w/1" }, { name: "Important.txt", path: "/w/2" }],
     });
     await call("perceive_window", {});
     const first = await call("click", { id: 1 });
-    expect(first.textResultForLlm).toMatch(/closed when you answered .*reopen its menu and click it again, without asking/);
+    expect(first.textResultForLlm).toMatch(/closed when you answered/);
     expect(asked).toHaveLength(1);
     closed = false;
-    const retry = await call("click", { id: 1 });
-    expect(retry.resultType).toBe("success");
+    await call("switch_window", { title });
+    await call("click", { id: 1 });
+    expect(asked).toHaveLength(2);
+    expect(audit.filter(e => e.event === "decision" && e.kind === "cursor_click")).toHaveLength(2);
+    expect(audit).not.toContainEqual(expect.objectContaining({ reason: expect.stringMatching(/already allowed this menu item/) }));
+  });
+
+  it.each(["approval", "lease"])("does not overwrite text added during the %s wait", async wait => {
+    let text = "";
+    const change = () => { text = "USER NEW TEXT".repeat(100); };
+    const { call, asked, events } = makeWorker({ role: "text", name: "Body", grants: {}, setTextOk: true,
+      states: () => ["enabled", "sensitive", "editable"], live: id => id === 1 ? { text } : undefined,
+      ...(wait === "approval" ? { onAsk: change } : { onLease: change }),
+    });
+    await call("perceive_window", {});
+    const result = await call("type_text", { id: 1, text: "New", mode: "replace" });
     expect(asked).toHaveLength(1);
-    expect(audit).toContainEqual(expect.objectContaining({ event: "decision", verdict: "allow", reason: expect.stringMatching(/already allowed this menu item/) }));
+    expect(result.resultType).toBe("failure");
+    expect(events).not.toContain("set_text");
+  });
+
+  it("does not press the same OK after the dialog's consequences change", async () => {
+    let message = "Finished.";
+    const { call, asked, events } = makeWorker({ name: "OK", parentRole: "dialog",
+      more: [{ id: 2, parent: 0, depth: 1, role: "label", name: message, states: [], bounds: null }],
+      live: id => id === 2 ? { name: message } : undefined,
+      onAsk: () => { message = "Delete all documents permanently?"; },
+    });
+    await call("perceive_window", {});
+    const result = await call("click", { id: 1 });
+    expect(asked[0]).toContain("Finished.");
+    expect(result.resultType).toBe("failure");
+    expect(events).toEqual([]);
+  });
+
+  it("does not click after a new consequence appears while the pointer moves", async () => {
+    let message = "Finished.";
+    let inputs = 0;
+    const { call } = makeWorker({ name: "OK", parentRole: "dialog",
+      more: [{ id: 2, parent: 0, depth: 1, role: "label", name: message, states: [], bounds: null }],
+      live: id => id === 2 ? { name: message } : undefined,
+      canDo: () => ({ tier1: false, why: "needs mouse" }),
+      onGlide: () => { message = "Delete all documents permanently?"; }, onInput: () => { inputs++; },
+    });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("failure");
+    expect(inputs).toBe(0);
+  });
+
+  it("refuses when a dialog gains a choice while Allow is being answered", async () => {
+    let role = "label";
+    const { call, events } = makeWorker({ name: "OK", parentRole: "dialog",
+      more: [{ id: 2, parent: 0, depth: 1, role, name: "Keep copies", states: [], bounds: null }],
+      live: id => id === 2 ? { role } : undefined, onAsk: () => { role = "check box"; },
+    });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("failure");
+    expect(events).toEqual([]);
+  });
+
+  it("does not press Enter on the same focused OK after the dialog changes", async () => {
+    let message = "Finished.";
+    let inputs = 0;
+    const { call, asked } = makeWorker({ name: "OK", parentRole: "dialog", states: () => ["enabled", "sensitive", "focused"],
+      more: [{ id: 2, parent: 0, depth: 1, role: "label", name: message, states: [], bounds: null }],
+      live: id => id === 2 ? { name: message } : undefined,
+      onAsk: () => { message = "Delete all documents permanently?"; }, onInput: () => { inputs++; },
+    });
+    await call("perceive_window", {});
+    expect((await call("press_keys", { keys: "Return" })).resultType).toBe("failure");
+    expect(asked[0]).toContain("Finished.");
+    expect(inputs).toBe(0);
+  });
+
+  it.each(["append", "replace"])("allows its own focus click to collapse a selection before ordinary %s typing", async mode => {
+    let focused = false;
+    let selected = true;
+    let text = "Hello";
+    const input: string[] = [];
+    const states = () => ["enabled", "sensitive", "editable", ...(focused ? ["focused"] : []), ...(selected ? ["selected"] : [])];
+    const { call } = makeWorker({ role: "text", name: "Body", states,
+      nodeExtra: { text, selection: text },
+      live: id => id === 1 ? { text, selection: selected ? text : "" } : undefined,
+      canDo: () => ({ tier1: false, why: "needs keyboard" }),
+      onInput: (kind, value) => {
+        input.push(`${kind}:${value ?? ""}`);
+        if (kind === "click") { focused = true; selected = false; }
+        if (kind === "keys" && value === "Delete") text = "";
+        if (kind === "type") text += value;
+      },
+    });
+    await call("perceive_window", {});
+    const result = await call("type_text", { id: 1, text: " world", mode });
+    expect(result.resultType, result.textResultForLlm).toBe("success");
+    expect(input).toContain("click:");
+    expect(input).toContain("type: world");
+    expect(text).toBe(mode === "append" ? "Hello world" : " world");
+  });
+
+  it("still refuses changed text after its own focus click, before any replacement keys", async () => {
+    let text = "Hello";
+    let focused = false;
+    const input: string[] = [];
+    const { call } = makeWorker({ role: "text", name: "Body", nodeExtra: { text },
+      states: () => ["enabled", "sensitive", "editable", ...(focused ? ["focused"] : [])],
+      live: id => id === 1 ? { text } : undefined,
+      canDo: () => ({ tier1: false, why: "needs keyboard" }),
+      onInput: kind => { input.push(kind); if (kind === "click") { focused = true; text = "New user text"; } },
+    });
+    await call("perceive_window", {});
+    expect((await call("type_text", { id: 1, text: "Replacement", mode: "replace" })).resultType).toBe("failure");
+    expect(input).toEqual(["click"]);
+  });
+
+  it.each([false, true])("binds insert-at-caret selection without a focus click (selection changes: %s)", async changed => {
+    let selection = "Hello";
+    const input: string[] = [];
+    const { call } = makeWorker({ role: "text", name: "Body", nodeExtra: { text: "Hello", selection },
+      states: () => ["enabled", "sensitive", "editable", "focused"],
+      live: id => id === 1 ? { text: "Hello", selection } : undefined,
+      canDo: () => ({ tier1: false, why: "needs keyboard", focused: true, windowActive: true }),
+      onAsk: () => { if (changed) selection = ""; }, onInput: kind => { input.push(kind); },
+    });
+    await call("perceive_window", {});
+    const result = await call("type_text", { id: 1, text: "Replacement", mode: "insert" });
+    expect(result.resultType, result.textResultForLlm).toBe(changed ? "failure" : "success");
+    if (changed) expect(input).toEqual([]);
+    else { expect(input.length).toBeGreaterThan(0); expect(input.every(kind => kind === "type")).toBe(true); }
+  });
+
+  it("refuses when the full context can no longer be read after Allow", async () => {
+    let unavailable = false;
+    const { call, events } = makeWorker({ name: "Delete", readFails: () => unavailable, onAsk: () => { unavailable = true; } });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("failure");
+    expect(events).toEqual([]);
   });
 });
 

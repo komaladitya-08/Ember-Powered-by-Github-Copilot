@@ -1090,6 +1090,8 @@ export class Worker {
   private labels = new Map<number, string>();
   /** The latest perceive_window read the whole window (not cut short, not busy): see dialogAround. */
   private knownWhole = false;
+  /** Other windows owned by this app can change what a control will act on. */
+  private knownOthers = "[]";
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
   private target: WindowTarget;
   /** Apps the user allowed for this task only ("Allow once"). */
@@ -1133,11 +1135,6 @@ export class Worker {
   private saidNoThisTask = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
-  /**
-   * A menu item the user allowed, whose menu closed when they clicked Allow (the click landed outside it). The yes
-   * stands for reopening that menu and clicking the same item again, without a second question.
-   */
-  private carriedMenuApproval: { app: string; role: string; name: string; until: number } | null = null;
   /** The working window's frame from the latest perceive_window (an element outside it is scrolled away). */
   private frame: Bounds | null = null;
   /** Its scale (HiDPI): at 1, positions the app reports at a point compare with those read. */
@@ -1170,6 +1167,8 @@ export class Worker {
   private focusInPage = false;
   /** At that look: the dialog the focused element is in (Enter or Space there answers it, as a click does: dialogOf). */
   private focusDialog: Dialog | undefined;
+  /** Semantic context from the same quick read that supplied the key request. */
+  private focusContext: string | null = null;
   /** The latest look for the cell with the keyboard found none because the read was cut short (a busy app): see cellWithKeyboard. */
   private cellLookCut = false;
   /** The user said yes to a key that only moves (onlyMoves) in this window (windowKey): more of those there go without a question. */
@@ -2202,6 +2201,7 @@ export class Worker {
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     // Only a whole read says every control a dialog holds (dialogAround's `whole`).
     this.knownWhole = !p.truncated && !p.busy;
+    this.knownOthers = JSON.stringify((p.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
     // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped. Each
@@ -2368,6 +2368,46 @@ export class Worker {
     return !!current && typed === current ? { ownText: true } : {};
   }
 
+  /**
+   * Bind consent to the window and the tree that supplied the question, not just a button's name. Quick reads
+   * preserve action ids; their own ids may differ, so compare structure by position. Bounds and keyboard focus
+   * may change when Allow is clicked, but text, controls, selection and safety attributes must not.
+   */
+  private actionContext(nodes: Iterable<AxNode> = this.known.values(), clickedTextAt?: number): string {
+    const all = [...nodes];
+    const positions = new Map(all.map((n, i) => [n.id, i]));
+    return JSON.stringify(all.map((n, i) => ({
+      parent: n.parent === null ? null : positions.get(n.parent) ?? "missing",
+      role: n.role, name: n.name, text: n.text, value: n.value, selected: n.selected,
+      selection: i === clickedTextAt ? undefined : n.selection, secret: !!n.secret, withheld: !!n.withheld, omitted: !!n.omitted,
+      editable: !!n.editable, dialogBox: !!n.dialogBox, actions: n.actions,
+      states: n.states.filter(s => /^(editable|multi line|protected|read only|disabled|sensitive|enabled|selected|checked|pressed|expanded)$/.test(s)
+        && !(i === clickedTextAt && s === "selected")).sort(),
+    })));
+  }
+
+  /** Fail closed after approval, a lease or pointer movement if the approved context cannot still be established. */
+  private async checkActionContext(id: number, node: AxNode, context: string, clickedTextAt?: number): Promise<ToolResultObject | null> {
+    const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
+    if (this.isOver) return STOPPED();
+    const w = seen?.window;
+    const changed = !seen || !w || seen.blocked || seen.busy || seen.ember
+      || w.app !== this.window.app || w.name !== this.window.name || w.role !== this.window.role
+      || (this.target.pid !== undefined && w.pid !== this.target.pid)
+      || (this.target.path !== undefined && w.path !== this.target.path)
+      || (!seen.truncated !== this.knownWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
+      || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.knownOthers;
+    if (changed) return fail("The window or its contents changed while preparing this action, so nothing was done. Call perceive_window and ask again if it is still needed.");
+    // A quick tree read can finish before the original accessible object changes: check that object too.
+    const live = await this.sidecar.readElement(id).catch(() => null);
+    if (this.isOver) return STOPPED();
+    if (!live || live.role !== node.role || live.name !== node.name || live.text !== node.text
+      || !!live.secret !== !!node.secret || !!live.withheld !== !!node.withheld || isDisabled(live.states)) {
+      return this.changedWhileDeciding(id, this.elementOf(id, node), live);
+    }
+    return null;
+  }
+
   /** After a question was up, the element must still be the one the user said yes to. */
   private async stillSame(id: number, element: Focus): Promise<ToolResultObject | null> {
     if (!this.asked) return null;
@@ -2380,11 +2420,10 @@ export class Worker {
     return null;
   }
 
-  /** The element changed while a question was up. A menu item whose menu the Allow click closed keeps its yes (see carriedMenuApproval). */
+  /** A changed or closed menu is a new attempt, never a transferable approval. */
   private changedWhileDeciding(id: number, element: Focus, live: ElementInfo | null): ToolResultObject {
     if (this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === element.role && this.nameOf(id, live) === element.name))) {
-      this.carriedMenuApproval = { app: this.window.app.toLowerCase(), role: element.role, name: element.name, until: Date.now() + 60_000 };
-      return fail(`The menu holding ${q(element.name || "the item", 60)} closed when you answered (the click landed outside it), so nothing was clicked. The user's OK still stands: reopen its menu and click it again, without asking.`);
+      return fail(`The menu holding ${q(element.name || "the item", 60)} closed when you answered (the click landed outside it), so nothing was clicked. Call perceive_window before reopening its menu; the next attempt needs a new policy check and, where required, a new approval.`);
     }
     return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
   }
@@ -2458,6 +2497,9 @@ export class Worker {
     };
     // A click on text inside a link (or a row) works the link: the user is asked about what the click works.
     const req: ActionRequest = kind === "click" || kind === "toggle" ? { ...base, element: this.clickJudged(base, element, handler) } : base;
+    const context = this.actionContext();
+    const before = await this.checkActionContext(id, node, context);
+    if (before) return before;
     const verdict = await this.authorize(req);
     if (verdict) return verdict;
     const changed = await this.stillSame(id, element);
@@ -2481,6 +2523,8 @@ export class Worker {
       if (this.place?.userInControl()) return this.deskTaken(kind, element);
       const listed = await listing;
       if (this.isOver) return STOPPED();
+      const changedContext = await this.checkActionContext(id, node, context);
+      if (changedContext) return changedContext;
       this.anchorHome(kind, listed);
       this.authorized(req, { role: node.role, name: node.name });
       const res = await run();
@@ -2662,6 +2706,13 @@ export class Worker {
         ...(this.knownWhole && mainDocument(node, this.known.values()) ? { mainDocument: true } : {}) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
+    const context = this.actionContext();
+    // Append/replace explicitly choose where text goes after this click. Only the target's selection may collapse
+    // under our own focus click; insert-at-caret never clicks and keeps its full selection binding.
+    const clickedTextAt = kind === "cursor_text" && clicks ? [...this.known.keys()].indexOf(id) : undefined;
+    const afterClickContext = clickedTextAt !== undefined ? this.actionContext(undefined, clickedTextAt) : context;
+    const before = await this.checkActionContext(id, node, context);
+    if (before) return before;
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
     if (verdict) return verdict;
     // Where it is now: the window may have moved or scrolled while the user decided.
@@ -2729,12 +2780,16 @@ export class Worker {
           const again = this.landingSpot(id, node, element, there);
           const aim = await this.mustAimAt(id, there!, again, again.shown);
           if (Math.abs(aim.x - spot.x) >= 1 || Math.abs(aim.y - spot.y) >= 1) await hand.glideTo(aim.x, aim.y);
+          const changedContext = await this.checkActionContext(id, node, context);
+          if (changedContext) throw new Error(changedContext.textResultForLlm);
           landedOn = aim.there;
           await hand.click();
         }
         if (kind !== "cursor_text") return;
         // Keys go wherever the keyboard is: this field must have it (a click can land on an overlay), or nothing is typed.
         await this.untilFocused(id, node, element);
+        const changedContext = await this.checkActionContext(id, node, afterClickContext, clickedTextAt);
+        if (changedContext) throw new Error(changedContext.textResultForLlm);
         // "replace" clears what is there first; append goes to the end.
         if (mode === "replace") { await hand.keys(this.kc.edit.selectAll); await hand.keys("Delete"); }
         else if (mode === "append") await hand.keys(this.kc.edit.textEnd);
@@ -3419,6 +3474,10 @@ export class Worker {
     for (let i = 0; ; i++) {
       // A quick look (its ids aren't acted on): the ids of the latest perceive_window stay known however many keys go in.
       const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
+      this.focusContext = seen?.window && !seen.blocked && !seen.busy && !seen.ember
+        ? JSON.stringify({ window: { app: seen.window.app, pid: seen.window.pid, path: seen.window.path, name: seen.window.name, role: seen.window.role },
+          whole: !seen.truncated, nodes: this.actionContext(seen.nodes),
+          others: (seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })) }) : null;
       if (seen?.blocked) return "blocked";
       const f = seen?.window ? focusedElement(seen.nodes) : null;
       const read = !!f && !f.secret && READ_TEXT_ROLES.has(f.role);
@@ -3506,6 +3565,7 @@ export class Worker {
       // On the user's screen, once they said yes to a key that only moves here, more of those go without a question.
       const moves = !this.place && onlyMoves(keys, element, this.kc);
       const covered = moves && this.moving === here;
+      const context = this.focusContext;
       const verdict = await this.authorize(req, { covered, ...(moves && !covered ? { note: "Keys that only move there after this one won't be asked about." } : {}) });
       if (verdict) return verdict;
       const said = this.asked;
@@ -3530,6 +3590,9 @@ export class Worker {
           throw new Error(`Once the window was in front, ${now ? `${q(now.name, 60)} (${q(now.role, 40)})` : "nothing Ember can see"} had the keyboard, not what the user said yes to, so nothing was pressed.`);
         }
         if (!now && activating) throw new Error("Ember can't tell what that key would activate in this window (nothing there says it has the keyboard), so nothing was pressed. Click the control you mean instead.");
+        if (context === null || this.focusContext !== context) {
+          throw new Error("The window or its contents changed while preparing these keys, so nothing was pressed. Call perceive_window and ask again if it is still needed.");
+        }
         if (closing) this.anchorHome("keys", listing);
         turn.into = now;
         await hand.keys(keys);
@@ -3966,17 +4029,6 @@ export class Worker {
     this.asked = false;
     this.lastAuth = null;
     if (this.isOver) return STOPPED();
-    // The user's click on Allow closed the menu this item is in: their yes covers reopening it and clicking the same item.
-    const carried = this.carriedMenuApproval;
-    if (carried && Date.now() > carried.until) this.carriedMenuApproval = null;
-    else if (carried && (request.kind === "click" || request.kind === "cursor_click") && request.app.toLowerCase() === carried.app
-      && request.element?.role === carried.role && request.element.name === carried.name) {
-      this.carriedMenuApproval = null;
-      this.audit({ event: "decision", task: this.spec.id, kind: request.kind, app: request.app, window: request.window, element: request.element, ...auditValue(request), tier: "reversible", verdict: "allow", reason: "the user already allowed this menu item; their answer closed its menu" });
-      const at = performance.now();
-      this.lastAuth = { at, verdict: "confirm", approvedAt: at };
-      return null;
-    }
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
     // What the keys selected ends where text goes in, or the mouse clicks or types into a text field (that moves the
     // caret). A click by accessibility (a toolbar button), a scroll or a look move no caret: the selection stays.
