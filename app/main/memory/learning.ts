@@ -177,7 +177,7 @@ export class MemoryLearning {
         }
         return text;
       },
-      forget: id => this.forget(id),
+      forget: id => this.d.inForce() && this.forget(id),
       forgetAll: () => this.forgetAll(),
       heard: (said, reply, own) => { this.active(); this.learner.heard(said, reply, own); },
     };

@@ -250,7 +250,7 @@ export function providerTestText(r: { ok: true; host: string; models: number | n
  * where, what goes to Copilot, and how to forget it. Changing it means bumping FEATURE_CONSENT_VERSION.memory (2: it
  * learns on its own, docs/MEMORY.md steps 3–5).
  */
-export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It also learns as you go: after you talk and when a task finishes, it picks out what's worth keeping, tidies it while you're away, and now and then asks you a question. To do that, your words, its replies and its tasks' results go to Copilot in short requests of their own. It keeps what it learns on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers, and what it reads on your screen never counts as something you said. You can see where each fact came from and forget it here, and signing out forgets it all.";
+export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, and how you like things done. It learns from conversations and finished tasks using short Copilot requests, and keeps what it learns on this computer. A few relevant facts go to Copilot with each request. Saved memory is tied to your verified GitHub account. Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it. Ember never keeps passwords, codes or card numbers. You can review and forget facts here. Signing out erases saved memory that belongs to your verified account.";
 
 /**
  * Memory was on under an earlier note (version 1, before Ember learned on its own) and waits for the user to agree to
@@ -260,7 +260,9 @@ export function memoryPaused(m: { on: boolean; consent: { version: number } }): 
   return m.on && m.consent.version > 0 && m.consent.version < FEATURE_CONSENT_VERSION.memory;
 }
 /** Said in Settings › Memory while memory is paused, above its new note. */
-export const MEMORY_PAUSED_TEXT = "Memory is paused. Ember now also learns as you go, so it needs you to agree to its new note before it remembers anything more. What it kept is still here.";
+export const MEMORY_PAUSED_TEXT = "Memory is paused until you review the new account privacy note.";
+export const MEMORY_OWNER_WAITING = "Sign in with GitHub to use saved memory.";
+export const MEMORY_OWNER_LOCKED = "Saved memory is hidden until Ember verifies its owner. Use Forget everything to clear it.";
 
 /** Where a remembered fact came from, as Settings › Memory lists it beside the fact. */
 export function memorySourceLabel(source: string): string {

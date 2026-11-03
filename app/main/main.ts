@@ -95,6 +95,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { MemoryOwner } from "./memory/owner";
 import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
@@ -1393,9 +1394,11 @@ function start(): void {
   // Long-term memory (docs/MEMORY.md): memory.json beside the settings, used only while the user has it on and the
   // organisation allows it. Settings lists it; nothing is read from the file until something asks.
   const memoryAllowed = () => policy.features.memory !== false;
+  const memoryOwner = new MemoryOwner(userData);
   // Better recall (memory/better-recall.ts): matching by meaning once the user downloads its model in Settings › Memory,
   // in the "Ember memory" utility process, used only while memory is on.
-  const memoryOn = () => memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
+  const memoryConfigured = () => consented() && memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
+  const memoryOn = () => memoryOwner.ready && memoryConfigured();
   const betterRecall = new BetterRecall({
     dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn,
     fork: () => {
@@ -1408,10 +1411,22 @@ function start(): void {
   });
   betterRecallRef = betterRecall;
   settings.onChange(() => {
+    const before = memoryOwner.state;
+    memoryOwner.refresh(memoryConfigured());
+    if (before !== memoryOwner.state) publishMemoryOwner();
     if (!memoryOn()) learningRef?.stopNow();
     betterRecall.settingsChanged();
   });
-  const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
+  const memoryView = () => ({
+    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
+    ownership: memoryOwner.state,
+  });
+  const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
+  const publishMemoryOwner = () => {
+    if (!memoryOn()) learningRef?.stopNow();
+    betterRecall.settingsChanged();
+    broadcast(IPC.memoryChanged, memoryView());
+  };
   memory.start();
   const words = wordsStore(userData);
   const personal = new PersonalVoice({
@@ -1467,6 +1482,16 @@ function start(): void {
   /** The host's memory: the conductor's tools through `learning`, its model calls, finished tasks and its own requests. */
   const hostMemory = {
     ...learning.conductorMemory(),
+    forgetAll: () => {
+      if (!memoryOwner.mayEraseOnSignOut) return;
+      learning.forgetAll();
+      memoryOwner.clear();
+      memoryOwner.pause();
+      publishMemoryOwner();
+    },
+    verifyAccount: (login: string | null) => { memoryOwner.verify(login, memoryConfigured()); publishMemoryOwner(); },
+    pauseAccount: () => { memoryOwner.pause(); publishMemoryOwner(); },
+    accountReady: memoryOn,
     useModel: (model: OneShot | null) => learning.setModel(model),
     taskDone: (title: string, result: string) => learning.taskDone(title, result),
     intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
@@ -1990,14 +2015,19 @@ function start(): void {
   ipcMain.handle(IPC.voiceWords, guard(() => personal.words()));
   ipcMain.handle(IPC.voiceForgetWord, guard((expected: unknown) => personal.forgetWord(expected)));
   ipcMain.handle(IPC.voiceForgetWords, guard(() => { personal.forgetWords(); log.info("voice.words_forgotten"); }));
-  ipcMain.handle(IPC.memoryList, guard(() => (memoryAllowed() ? memory.list() : [])));
+  ipcMain.handle(IPC.memoryList, guard(memoryView));
   ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
-    if (typeof id !== "string" || !id || id.length > 40) return;
+    if (!memoryOwner.ready || typeof id !== "string" || !id || id.length > 40) return;
     // Through learning: its "Ember learned" line and "forget that" let go of it too.
     learning.forget(id);
   }));
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
-  ipcMain.handle(IPC.memoryForgetAll, guard(() => { learning.forgetAll(); }));
+  ipcMain.handle(IPC.memoryForgetAll, guard(() => {
+    learning.forgetAll();
+    memoryOwner.clear();
+    memoryOwner.refresh(memoryConfigured());
+    publishMemoryOwner();
+  }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
   ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduce(answers)));
   // Better recall's model: its state, and the user's Download (the agreement to fetch it) and Remove.

@@ -412,8 +412,9 @@ describe("memory's one-shot model session", () => {
 });
 
 describe("Home's words for memory", () => {
-  it("pins the note that covers learning on its own (FEATURE_CONSENT_VERSION.memory 2)", () => {
-    expect(MEMORY_CONSENT_TEXT).toBe("Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It also learns as you go: after you talk and when a task finishes, it picks out what's worth keeping, tidies it while you're away, and now and then asks you a question. To do that, your words, its replies and its tasks' results go to Copilot in short requests of their own. It keeps what it learns on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers, and what it reads on your screen never counts as something you said. You can see where each fact came from and forget it here, and signing out forgets it all.");
+  it("pins the account and data disclosure in the memory note", () => {
+    expect(MEMORY_CONSENT_TEXT).toContain("Saved memory is tied to your verified GitHub account.");
+    expect(MEMORY_CONSENT_TEXT).toContain("Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it.");
   });
 
   it("says where each fact came from, what was learned with its Undo, and what Save kept", () => {
@@ -427,10 +428,11 @@ describe("Home's words for memory", () => {
 
   it("says memory is paused for someone who agreed to the first note, until they agree to the new one", () => {
     expect(memoryPaused({ on: true, consent: { version: 1 } })).toBe(true);
-    expect(memoryPaused({ on: true, consent: { version: 2 } })).toBe(false);
+    expect(memoryPaused({ on: true, consent: { version: 2 } })).toBe(true);
+    expect(memoryPaused({ on: true, consent: { version: 3 } })).toBe(false);
     expect(memoryPaused({ on: true, consent: { version: 0 } })).toBe(false);
     expect(memoryPaused({ on: false, consent: { version: 1 } })).toBe(false);
-    expect(MEMORY_PAUSED_TEXT).toBe("Memory is paused. Ember now also learns as you go, so it needs you to agree to its new note before it remembers anything more. What it kept is still here.");
+    expect(MEMORY_PAUSED_TEXT).toBe("Memory is paused until you review the new account privacy note.");
   });
 });
 

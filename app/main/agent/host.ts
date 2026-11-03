@@ -157,6 +157,9 @@ export interface HostOptions {
    */
   memory?: ConductorMemory & {
     forgetAll(): void;
+    verifyAccount?(login: string | null): void;
+    pauseAccount?(): void;
+    accountReady?(): boolean;
     useModel?(model: OneShot | null): void;
     taskDone?(title: string, result: string): void;
     intent?(text: string, how: { own: boolean }): string | null;
@@ -1273,8 +1276,10 @@ export class AgentHost {
         this.carried = [];
       }
       if (!provider && ((this.conversation && login !== this.conversationLogin) || (this.githubLogin !== undefined && login !== this.githubLogin))) await this.accountChanged();
+      if (gen !== this.gen) return;
       if (this.memoryDeletionPending) this.forgetKept();
       if (!provider) this.githubLogin = login;
+      this.o.memory?.verifyAccount?.(provider ? null : login ?? null);
 
       let models: ModelLike[] = [];
       const admin = this.o.admin?.();
@@ -2048,7 +2053,7 @@ export class AgentHost {
   /** Memory is on, agreed to, and allowed (settings.get() has the administrator's switch applied). */
   private memoryWanted(): boolean {
     const m = this.o.settings.get().memory;
-    return !!this.o.memory && m.on && m.consent.version >= FEATURE_CONSENT_VERSION.memory;
+    return !!this.o.memory && (this.o.memory.accountReady?.() ?? true) && m.on && m.consent.version >= FEATURE_CONSENT_VERSION.memory;
   }
 
   get idle(): boolean {
@@ -2500,6 +2505,7 @@ export class AgentHost {
 
   /** `forget`: a clean stop (quit) deletes the conversation; a restart keeps it to resume. */
   private async doStop(forget = false): Promise<void> {
+    this.o.memory?.pauseAccount?.();
     this.projectRun?.abort();
     this.projectRun = null;
     this.projectModel = null;

@@ -6,12 +6,14 @@ import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
 import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
+import type { MemoryOwnership } from "../main/memory/owner";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
 export type ProjectMode = "review" | "plan" | "patch";
 export interface ProjectSelection { names: string[]; error?: string }
 export type ProjectResult = { answer: string } | { error: string };
+export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership }
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
@@ -316,8 +318,8 @@ export interface EmberHomeApi {
   forgetVoiceWord(word: VoiceWord): Promise<VoiceWord[]>;
   forgetVoiceWords(): Promise<void>;
   /** What Ember remembers (newest first), and changes to it. */
-  memory(): Promise<MemoryItem[]>;
-  onMemory(fn: (items: MemoryItem[]) => void): () => void;
+  memory(): Promise<MemoryView>;
+  onMemory(fn: (view: MemoryView) => void): () => void;
   forgetMemory(id: string): Promise<void>;
   forgetAllMemory(): Promise<void>;
   /** Keeps "Tell Ember about you"'s answers; how many were kept, or null while memory is off. */

@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
-import type { MemoryItem } from "../main/memory/service";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { TaskEntry } from "../shared/activity";
 import { TARGETS_IPC, type TargetSummary } from "../shared/targets";
@@ -44,7 +43,7 @@ const api: EmberHomeApi = {
   forgetVoiceWord: word => ipcRenderer.invoke(IPC.voiceForgetWord, word),
   forgetVoiceWords: () => ipcRenderer.invoke(IPC.voiceForgetWords),
   memory: () => ipcRenderer.invoke(IPC.memoryList),
-  onMemory: fn => listen<MemoryItem[]>(IPC.memoryChanged, fn),
+  onMemory: fn => listen(IPC.memoryChanged, fn),
   forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
   forgetAllMemory: () => ipcRenderer.invoke(IPC.memoryForgetAll),
   introduceMe: answers => ipcRenderer.invoke(IPC.memoryIntroduce, answers),
