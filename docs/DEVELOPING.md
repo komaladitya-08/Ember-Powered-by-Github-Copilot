@@ -421,6 +421,13 @@ text you selected), so you can say “make this bold” or “what does this mea
 
 ### Talking to Ember
 
+If neural speech fails, already generated audio finishes before an explicitly local system voice says only the
+ungenerated remainder. Further replies use the system voice until Ember restarts, so speech engines never compete
+while recovery is queued. Stop or a replacement reply cancels queued recovery too. If no local voice matches the
+system language, Ember waits up to three seconds for the voice list to load, then shows a speech warning in Settings;
+the reply remains readable in the bubble. It never submits speech to an unspecified default or online voice.
+
+
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
 the speech models (142 MB, once; agreeing to the microphone note starts the download). Then say “Ember, …” (or “Hey
 Ember, …”) with your request. You can say it in one breath, or pause after the name. Ember answers out loud in its own
