@@ -3155,12 +3155,42 @@ namespace Ember.Uia
       return s.Substring(0, max);
     }
 
+    // A plain native Edit keeps its selected range after losing focus, even when UIA's TextPattern fails.
+    private static JObj NativeEditTextInfo(AutomationElement el, int max)
+    {
+      IntPtr hwnd = new IntPtr(el.Current.NativeWindowHandle);
+      if (hwnd == IntPtr.Zero || Win.PidOf(hwnd) != el.Current.ProcessId) return null;
+      string cls = Win.ClassName(hwnd);
+      if (!cls.Equals("Edit", StringComparison.OrdinalIgnoreCase) &&
+          !cls.StartsWith("WindowsForms10.EDIT.", StringComparison.OrdinalIgnoreCase)) return null;
+      const int GwlStyle = -16, WsChild = 0x40000000, EsMultiline = 0x4, EsPassword = 0x20;
+      int style = Native.GetWindowLongW(hwnd, GwlStyle);
+      if ((style & WsChild) == 0 || (style & (EsMultiline | EsPassword)) != 0) return null;
+      const uint EmGetSel = 0xB0, SmtoAbortIfHung = 0x2, SmtoErrorOnExit = 0x20;
+      IntPtr result;
+      if (Native.SendMessageTimeoutW(hwnd, EmGetSel, IntPtr.Zero, IntPtr.Zero, SmtoAbortIfHung | SmtoErrorOnExit, 30, out result) == IntPtr.Zero) return null;
+      long offsets = result.ToInt64();
+      int start = (int)(offsets & 0xFFFF), end = (int)((offsets >> 16) & 0xFFFF);
+      if (offsets == -1 || end <= start || end > max) return null;
+      string text = el.GetCurrentPropertyValue(ValuePattern.ValueProperty, true) as string;
+      if (text == null || end > text.Length || text.Length > max) return null;
+      return new JObj().Add("source", "value").Add("text", text).Add("selection", text.Substring(start, end - start))
+        .Add("caret", start).Add("selectionLength", end - start).Add("caretAtEnd", end == text.Length);
+    }
+
     private static object TextInfo(Call c)
     {
       Entry e = (Entry)c.Target;
       AutomationElement el = (AutomationElement)e.Element;
       int max = Args.Int(c.Params, "maxChars", Props.TextCap, 1, 100000);
       if (Props.IsSecret(el)) return new JObj().Add("secret", true);
+      try
+      {
+        JObj native = NativeEditTextInfo(el, max);
+        if (native != null) return native;
+      }
+      catch (System.ComponentModel.Win32Exception) { /* Try UIA's normal text path. */ }
+      catch (InvalidOperationException) { /* The provider did not expose a native Edit value. */ }
       object pattern;
       JObj r = new JObj();
       if (el.TryGetCurrentPattern(TextPattern.Pattern, out pattern) && pattern != null)
