@@ -121,6 +121,13 @@ describe("licence texts for packages that ship none (review #211)", () => {
     expect(native).toMatch(/Apache License\s+Version 2\.0, January 2004/);
     expect(native).toMatch(/ONNX Runtime 1\.28\.2/);
     expect(native).toMatch(/Eigen .*MPL-2\.0/);
+    // eSpeak NG is GPL-3.0-or-later and built into both, so each notice says where its exact source is (GPLv3 §6).
+    for (const text of [sherpa, native]) {
+      expect(text).toMatch(/Corresponding Source for eSpeak NG/);
+      expect(text).toContain("https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.8");
+      expect(text).toContain("https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip");
+      expect(text).toContain("https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip");
+    }
     expect(fs.readFileSync(path.resolve("packaging/licences/onnxruntime-1.28.2-ThirdPartyNotices.txt"), "utf8")).toMatch(/^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
     expect(fs.readFileSync(path.resolve("packaging/licences/espeak-ng-COPYING.txt"), "utf8")).toMatch(/^\s+GNU GENERAL PUBLIC LICENSE\n\s+Version 3, 29 June 2007/);
   });
