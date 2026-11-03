@@ -222,14 +222,6 @@ jobs:
           scripts/package/appimage.sh
           # The models are inside it, where Ember looks first.
           (cd /tmp && "$GITHUB_WORKSPACE"/dist/package/Ember-*-x86_64.AppImage --appimage-extract 'ember/resources/voice-models/*.ok' > /dev/null && ls squashfs-root/ember/resources/voice-models/.*.ok && rm -rf squashfs-root)
-      - name: The AppImage starts on rockylinux:8 and runs speech natively (as a normal user)
-        run: |
-          # No FUSE in a container: the AppImage runs from a copy it unpacks.
-          cp dist/package/Ember-*-x86_64.AppImage /home/ci/Ember.AppImage && chown ci /home/ci/Ember.AppImage
-          sudo -u ci env HOME=/home/ci APPIMAGE_EXTRACT_AND_RUN=1 EMBER_LOG_STDOUT=1 xvfb-run -a sh -c 'timeout 25 /home/ci/Ember.AppImage > /tmp/ember-appimage.log 2>&1; true'
-          grep -q '"msg":"window.home.shown"' /tmp/ember-appimage.log || { cat /tmp/ember-appimage.log; exit 1; }
-          grep '"msg":"voice.backend"' /tmp/ember-appimage.log | grep -q '"backend":"native"' || { grep voice /tmp/ember-appimage.log; exit 1; }
-          rm -f /home/ci/Ember.AppImage
       - name: Install the RPM with dnf (resolves every Requires from the distribution)
         run: |
           dnf -y install ./dist/package/ember-*.x86_64.rpm
@@ -301,6 +293,21 @@ jobs:
           if rpm -qf /etc/ember/policy.json; then echo "::error::a package owns /etc/ember/policy.json"; exit 1; fi
           # The packages kept for download are Release 1's.
           rm -f ./dist/package/ember-$v-2.*.rpm
+      # After the RPM steps, so the RPM's install above still has to bring in every library it needs itself.
+      - name: The AppImage starts on rockylinux:8 and runs speech natively (as a normal user)
+        run: |
+          set -euo pipefail
+          # The AppImage carries only Ember: it needs the Electron libraries a RHEL 8 GNOME desktop has. Install the
+          # spec's list of them here, rather than counting on what the RPM's install happened to leave behind.
+          libs=$(awk '/^# Electron \(Chromium\) runtime libraries/ { on = 1; next } on && /^Requires:/ { sub(/^Requires: */, ""); gsub(/,/, " "); print; next } on { exit }' packaging/rpm/ember.spec)
+          test -n "$libs"
+          dnf -y -q install $libs
+          # No FUSE in a container: the AppImage runs from a copy it unpacks.
+          cp dist/package/Ember-*-x86_64.AppImage /home/ci/Ember.AppImage && chown ci /home/ci/Ember.AppImage
+          sudo -u ci env HOME=/home/ci APPIMAGE_EXTRACT_AND_RUN=1 EMBER_LOG_STDOUT=1 xvfb-run -a sh -c 'timeout 25 /home/ci/Ember.AppImage > /tmp/ember-appimage.log 2>&1; true'
+          grep -q '"msg":"window.home.shown"' /tmp/ember-appimage.log || { cat /tmp/ember-appimage.log; exit 1; }
+          grep '"msg":"voice.backend"' /tmp/ember-appimage.log | grep -q '"backend":"native"' || { grep voice /tmp/ember-appimage.log; exit 1; }
+          rm -f /home/ci/Ember.AppImage
       # The packages are about 450 MB with the speech models, so they're kept only when asked for (Run workflow,
       # "packages") and on release tags, for the release job: uploading them on every run filled the account's artifact
       # storage, after which no artifact could be uploaded at all.
