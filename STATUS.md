@@ -1,50 +1,28 @@
 # Ember status
 
-Where the work stands and what comes next. PLAN.md §10 keeps the detailed progress and departures; this file is the short list to pick up from.
+Updated 3 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
 
-## Next steps
+## Completed review and merged repairs
 
-### 1. Quality review across every part of Ember
-A broad pass over the whole app, area by area, looking for bugs and for ways to make Ember a more delightful and convenient thing to use. One reviewer per area:
+- Completed a 15-area source-and-test quality review, including Apple-oriented UI/accessibility, voice, safety, project-session integration and platform resilience. This does **not** certify live UI, audio, assistive-technology quality or parity with a reference voice agent.
+- Merged privacy/consent (#148), multi-turn voice smoke and quieter-follow-up endpoint fix (#149), feedback (#150), lifecycle/PID/reminder guards (#151), extension consent/revocation (#152), incoming-speech cancellation (#153), speech recovery/local-only fallback (#154), action-approval binding (#155), retry/FIFO provenance (#156), memory deletion (#157), command revocation (#158), Linux lock rediscovery (#159), complete settings/audit writes (#160), and installer rollback (#161). [PR links and limits](docs/review-2026-11-03.md#merged-repairs).
+- Wake timing: the earlier synthetic regression was not reproduced in the current narrow fixture (199–222 ms WASM, 192–195 ms native). Keep load/device validation open; these are not real-microphone measurements.
 
-1. first-run setup and consent
-2. Home (Settings, Conversation, Memory)
-3. the overlay, bubble and handle
-4. voice in: wake, listening, Voice Match
-5. voice out: speech, the natural voice
-6. tasks: the conductor, workers, leases
-7. safety: policy, confirmations, the kill switch
-8. commands, WSL and SSH
-9. memory
-10. extensions, connectors and the user's own model provider
-11. Windows
-12. resilience: restarts, sign-out, failures, low disk
+## Next correctness work
 
-Triage what they find, fix it in small PRs, and keep the eval green.
+The review is complete, not the backlog. Prioritise reliable interruption/turn ownership and remaining deterministic P2 cases: meaningful “No” replies, text correction and memory negation, setup/save navigation, Home keyboard focus, stale lease state/session-start cancellation, remote exit-status spoofing, extension metadata consistency, contrast and small-window layout. See [reproductions and acceptance checks](docs/review-2026-11-03.md#remaining-correctness-backlog).
 
-### 2. Wake to listening time
-The eval's "Wake → listening" timing read 321–343 ms against its 300 ms target on branches merged after native Linux speech landed, and 205–234 ms on a quiet machine. Find out whether that is load or a real regression, and fix it if it is real.
+## Architecture and owner decisions
 
-### 3. Super agent
-Turn Ember into an agent that can run real project work, not only drive apps:
-- orchestrate Copilot SDK coding sessions the way other chat-based agents do, so it can work on the user's projects;
-- follow the super-agent approach in the design notes;
-- work naturally in projects that don't use Git or GitHub (most of the owner's work doesn't).
+- Keep the GitHub token out of the runtime environment: inherited-environment filtering does not solve the pinned SDK's explicit token injection. Requires a supported authentication/account-validation design.
+- Durable account-owned memory needs a persistent ownership format and migration/failure policy. Current-run deletion protection is not restart isolation; graph/vector updates are not atomic.
+- Super agent: recover the missing original D1–D15 design notes and obtain the owner's answers before implementing project sessions. Support non-Git folders explicitly; do not repurpose hardened desktop workers by enabling coding tools.
+- Owner decision: spoken trust on Windows/macOS where the user's voice cannot be distinguished from Ember's speakers; the associated CLAUDE.md “Policy decides” wording still needs approval.
+- Owner decision: whether releases should attach eSpeak NG source archives.
 
-Waiting on the owner's answers to the design's open decisions (D1–D15) before building.
+## Native validation still required
 
-### 4. Follow-ups noted while merging
-- Spoken yes: update CLAUDE.md's "Policy decides" bullet to describe task-scoped voice trust (needs the owner's go-ahead).
-- Spoken yes on Windows and macOS: a verified spoken request still grants task trust where Ember can't tell the user from its own speakers. The owner is to decide whether to block it there.
-- Defer the exit in `startupFailed()` (app/main/main.ts) out of Electron's "ready" event, as the login-item test was fixed to do.
-- Voice smoke: add a multi-turn scenario with Ember speaking in between, and require `killswitch.pulled` in the stop scenario.
-- Voice: record real Windows microphones; the measurements so far use synthesised voices. Run `scripts/voice/bench.mjs --kokoro` on the owner's PC for the natural voice's speed check.
-- Work without asking: check Pluma, xed, Mousepad and Notepad++ against real accessibility trees (only gedit was); consider message boxes in CJK, Greek, Arabic, Hebrew and Ukrainian.
-- Bubble: when a newer request is pending as the previous turn ends, Ember's face briefly turns neutral.
-- Tasks: a window closed by keys (Ctrl+W, Ctrl+Q) gets no "closed" note.
-- Extensions: consent cards should show the server's tools; stop removed extension servers at once.
-- Keep the GitHub token out of the runtime's environment.
-- Verify process ids before killing.
-- Guard reminder cancellation.
-- Releases: decide whether to attach the eSpeak NG source archives.
-- Optional: the 20-second extensions integration test failed once on two PRs and passed on re-run; look at it if it fails again.
+- Real Windows microphone recordings and `node scripts/voice/bench.mjs --kokoro` on the owner's PC; held-out voice/physical playback and interruption tests across supported devices.
+- Real accessibility trees for Pluma, xed, Mousepad and Notepad++; message boxes in CJK, Greek, Arabic, Hebrew and Ukrainian.
+- Native keyboard/screen-reader, large-text, contrast, small-window and mixed-DPI checks; OS lock/recovery, suspend, permission revoke/regrant and failed/offline reinstall sequences.
+- Monitor the previously intermittent 20-second extension integration test if it recurs. CI and synthetic measurements do not replace these checks.
