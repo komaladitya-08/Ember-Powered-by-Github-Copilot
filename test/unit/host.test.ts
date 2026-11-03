@@ -2788,4 +2788,36 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     expect(sim.clients.length).toBe(clients);
     for (const s of sim.sessions) expect((s.sent as string[]).join("\n")).not.toContain("held question");
   });
+
+  it("doesn't hold requests for ever when the switch's connect hangs, and Stop everything ends the release (fourth review #136)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    // Today's 15 s waits, shortened for the test.
+    const { host, patches } = makeHost({ hands: hands(), provider: () => now, connectWaitMs: 150 });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    await host.ask("held question");
+    // The new session is never created: the switch's connect hangs.
+    sim.createGate = new Promise<void>(() => undefined);
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(before.disconnected).toBe(true), { timeout: 3000 });
+    // After the release's wait and the usual one, the held question is told Ember is still connecting, and the
+    // release is over: a later question isn't held behind it.
+    await vi.waitFor(() => expect(patches.some(p => p.bubble?.title === "I'm still connecting to Copilot")).toBe(true), { timeout: 3000 });
+    const h = host as unknown as { releasing: boolean; held: unknown[] };
+    await vi.waitFor(() => expect(h.releasing).toBe(false), { timeout: 3000 });
+    const shown = patches.length;
+    await host.ask("later question");
+    expect(h.held).toEqual([]);
+    expect(patches.slice(shown).some(p => p.bubble?.title === "I'm still connecting to Copilot")).toBe(true);
+    // Stop everything during a release that hangs ends it too.
+    h.held.push({ text: "x", context: null, epoch: 0, how: {} });
+    h.releasing = true;
+    await host.abortAll();
+    expect(h.releasing).toBe(false);
+    expect(h.held).toEqual([]);
+    sim.createGate = null;
+  });
 });

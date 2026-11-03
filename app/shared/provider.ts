@@ -58,12 +58,15 @@ export const AGREE_ARM_MS = 500;
 export class AgreeGuard {
   private host: string | null = null;
   private drawnAt = -Infinity;
-  private pressed: { host: string | null; armed: boolean } | null = null;
+  /** Counts every draw of the card, for the same host too. */
+  private draws = 0;
+  private pressed: { host: string | null; armed: boolean; draws: number } | null = null;
 
   constructor(private readonly now: () => number = () => Date.now(), private readonly armMs = AGREE_ARM_MS) {}
 
   /** The card is drawn for `host` (null: no card up). A different host starts the arm delay again. */
   drawn(host: string | null): void {
+    this.draws++;
     if (host === this.host) return;
     this.host = host;
     this.drawnAt = this.now();
@@ -75,7 +78,7 @@ export class AgreeGuard {
 
   /** "I agree" was pressed: the host the card names now, and whether it was armed then. */
   press(): void {
-    this.pressed = { host: this.host, armed: this.armed() };
+    this.pressed = { host: this.host, armed: this.armed(), draws: this.draws };
   }
 
   /**
@@ -83,9 +86,10 @@ export class AgreeGuard {
    * activation with no press before it (a screen reader's) counts as pressed now.
    */
   activate(): string | null {
-    const p = this.pressed ?? { host: this.host, armed: this.armed() };
+    const p = this.pressed ?? { host: this.host, armed: this.armed(), draws: this.draws };
     this.pressed = null;
-    if (!p.armed || !this.armed() || p.host !== this.host) return null;
+    // Redrawn at all since the press (even for the same host): what was pressed may not be what shows now.
+    if (!p.armed || !this.armed() || p.host !== this.host || p.draws !== this.draws) return null;
     return this.host;
   }
 }

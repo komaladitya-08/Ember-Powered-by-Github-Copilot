@@ -621,7 +621,7 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   settings changes can't carry it (`settingsFromHome` drops `provider.consent`), and they merge into the user's own
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
-  pressed, so a card redrawn between the press and the click (pressing blurs the address field, which saves it) agrees
+  pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees
   to nothing (`AgreeGuard`).
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
   from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
@@ -641,7 +641,9 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are
   done, in the order asked (one asked during the switch goes behind them); it never goes to the one before, and no new
   task starts on it (a queued one ends saying the service changed). "Done" is the runtime's own word for the turn, not
-  the bubble's; after a Stop the turn is over at once. Stop, Stop everything and quitting drop the held requests. A
+  the bubble's; after a Stop the turn is over at once. The switch's connect is waited on for at most 15 s, as a
+  request waits for any connect: then they go on, and are told Ember is still connecting. Stop, Stop everything and
+  quitting drop the held requests and end the switch's wait. A
   conversation isn't carried to another service: a new one starts (memory stays). While the user's
   provider is in force, no GitHub sign-in is passed to the runtime, and the setup check's model row says
   "Your own model provider (host)". The runtime gets the address as the URL parser writes it, and the agent's log has

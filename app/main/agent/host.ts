@@ -249,6 +249,8 @@ export interface HostOptions {
   system?: WorkerSystem;
   /** How long a request the runtime took may wait for its turn to begin (ms; TURN_START_MS, see TurnWatch). */
   turnStartMs?: number;
+  /** How long a request waits for a connect under way, and the release of held requests for the switch's (ms; CONNECT_WAIT_MS). */
+  connectWaitMs?: number;
   /** How long a turn under way may hear nothing before Ember says it's still waiting (ms; TURN_SLOW_MS). */
   turnSlowMs?: number;
   /** How long a turn under way may hear nothing before it is given up on (ms; TURN_SILENT_MS). */
@@ -432,6 +434,12 @@ export const PROVIDER_SWITCH_WAIT = "You changed the model service, so I'll send
 /** A task that would have started on the model service the user switched away from. */
 /** How often held requests look again for a quiet moment to go (a turn's end comes a moment after its answer). */
 const HELD_RECHECK_MS = 250;
+/**
+ * How long a request waits for Copilot to finish connecting before it is told Ember is still connecting: also how long
+ * the release of held requests waits on the switch's connect before sending them on (a connect that hangs never holds
+ * requests for ever).
+ */
+const CONNECT_WAIT_MS = 15_000;
 export const PROVIDER_MOVED_TASK = "The model service changed before this task could start. Ask me again and I'll use the new one.";
 
 /** What a connection's endpoint is, to tell a change: its kind, config (key included: kept in memory only) and models. */
@@ -669,6 +677,8 @@ export class AgentHost {
   private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3] }[] = [];
   /** A release of the held requests is under way. */
   private releasing = false;
+  /** Counts releases and the Stops that end them: a release that finds it moved on does nothing more. */
+  private releaseGen = 0;
   /** The next look at whether the held requests can go. */
   private heldTimer: ReturnType<typeof setTimeout> | null = null;
   private models: ModelLike[] = [];
@@ -1820,6 +1830,9 @@ export class AgentHost {
   private dropHeld(): void {
     const had = this.held.length > 0;
     this.held = [];
+    // A release under way ends with them (a connect that hangs leaves nothing holding later requests).
+    this.releaseGen++;
+    this.releasing = false;
     if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = null; }
     if (had) this.noticeBoard.clear();
   }
@@ -1837,10 +1850,14 @@ export class AgentHost {
       return;
     }
     this.releasing = true;
+    const gen = ++this.releaseGen;
     try {
-      if (this.providerMoved()) await this.launch(this.token, this.source);
-      // Each held request, in order, then any asked meanwhile (they queued behind, `releasing`), until none is left.
-      while (this.held.length && !this.quitting) {
+      // The connect to the new service, for at most CONNECT_WAIT_MS: one that hangs doesn't hold the requests for ever.
+      // They go on down the usual path, which waits a little more and then says Ember is still connecting.
+      if (this.providerMoved()) await Promise.race([this.launch(this.token, this.source), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
+      // Each held request, in order, then any asked meanwhile (they queued behind, `releasing`), until none is left. A
+      // Stop meanwhile ends the release (dropHeld): nothing more is sent.
+      while (this.held.length && !this.quitting && gen === this.releaseGen) {
         const h = this.held.shift()!;
         if (!this.held.length) this.noticeBoard.clear();
         this.o.log.info("agent.held_released", { left: this.held.length });
@@ -1848,9 +1865,11 @@ export class AgentHost {
         await this.ask(h.text, h.context, h.epoch, { ...h.how, released: true });
       }
     } finally {
-      this.releasing = false;
-      // One held while it finished (or a release that couldn't go now): looked at again.
-      if (this.held.length) this.releaseHeldSoon();
+      if (gen === this.releaseGen) {
+        this.releasing = false;
+        // One held while it finished (or a release that couldn't go now): looked at again.
+        if (this.held.length) this.releaseHeldSoon();
+      }
     }
   }
 
@@ -2087,7 +2106,7 @@ export class AgentHost {
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
     if (this.starting > 0 || this.status.phase === "starting") {
       this.presenter.userPrompt(text);
-      await Promise.race([this.settled(), sleep(15_000)]);
+      await Promise.race([this.settled(), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
       // Stop was pressed while it waited: the request is dropped, not sent once connected.
       if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }

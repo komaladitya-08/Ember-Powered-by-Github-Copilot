@@ -328,6 +328,18 @@ describe("the card's I agree, armed as Ember's questions are (third review #136)
     expect(AGREE_ARM_MS).toBe(500);
   });
 
+  it("agrees to nothing when the card was redrawn at all between the press and the click, even for the same host (fourth review #136)", () => {
+    const c = clock();
+    const g = new AgreeGuard(c.now);
+    g.drawn("a.example");
+    c.go(AGREE_ARM_MS);
+    g.press();
+    g.drawn("a.example");
+    expect(g.activate()).toBeNull();
+    g.press();
+    expect(g.activate()).toBe("a.example");
+  });
+
   it("takes an activation with no press (a screen reader's) as pressed now, and nothing with no card up", () => {
     const c = clock();
     const g = new AgreeGuard(c.now);
