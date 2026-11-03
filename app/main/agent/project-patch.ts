@@ -60,16 +60,16 @@ export function draftProjectPatch(answer: string, sources: ProjectSource[]): Pro
 /** Rechecks the snapshot after confirmation and commits a same-directory atomic replacement. */
 export function applyProjectPatch(patch: ProjectPatch, signal: AbortSignal, record: () => void): void {
   const { source, output } = patch;
-  const { file, stat, digest } = source;
-  const temporary = path.join(path.dirname(file), ".ember-patch-" + crypto.randomUUID());
+  const { file, resolved, stat, digest } = source;
+  const temporary = path.join(path.dirname(resolved), ".ember-patch-" + crypto.randomUUID());
   const check = () => {
     signal.throwIfAborted();
     const changed = () => new ProjectInputError("The selected file changed or cannot be replaced safely. Draft the patch again.");
     const same = (live: fs.Stats) => live.isFile() && live.nlink === 1 && live.mode === stat.mode && (live.mode & 0o7000) === 0 &&
       live.uid === stat.uid && live.gid === stat.gid && live.dev === stat.dev && live.ino === stat.ino &&
       live.size === stat.size && live.mtimeMs === stat.mtimeMs && live.ctimeMs === stat.ctimeMs;
-    if (!same(fs.lstatSync(file)) || path.relative(file, fs.realpathSync(file)) !== "") throw changed();
-    const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+    if (!same(fs.lstatSync(file)) || path.relative(resolved, fs.realpathSync(file)) !== "") throw changed();
+    const fd = fs.openSync(resolved, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
     try {
       if (!same(fs.fstatSync(fd))) throw changed();
       const bytes = Buffer.alloc(stat.size + 1);
@@ -82,7 +82,7 @@ export function applyProjectPatch(patch: ProjectPatch, signal: AbortSignal, reco
   };
   check();
   // A changed file or cancelled confirmation must never leave a partial write in the target.
-  const fd = fs.openSync(temporary, "wx", stat.mode & 0o777);
+  const fd = fs.openSync(temporary, "wx", 0o600);
   try {
     fs.writeFileSync(fd, (source.bom ? "\uFEFF" : "") + output);
     const created = fs.fstatSync(fd);
@@ -98,7 +98,7 @@ export function applyProjectPatch(patch: ProjectPatch, signal: AbortSignal, reco
   try {
     check();
     record();
-    fs.renameSync(temporary, file);
+    fs.renameSync(temporary, resolved);
   } finally {
     fs.rmSync(temporary, { force: true });
   }

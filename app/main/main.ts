@@ -1991,9 +1991,9 @@ function start(): void {
       if (response !== 1 || run.signal.aborted || !projectAvailable() || projectPatch !== patch || home !== owner) {
         return { done: false, message: "Patch application cancelled." };
       }
-      applyProjectPatch(patch, run.signal, () => record.write({ event: "decision", verb: "project-patch", verdict: "confirmed" }));
+      applyProjectPatch(patch, run.signal, () => record.write({ event: "confirm", kind: "project-patch", answer: "once" }));
       projectPatch = null;
-      try { record.write({ event: "action", verb: "project-patch", outcome: "done" }); } catch { /* the confirmation was recorded before writing */ }
+      try { record.write({ event: "action", kind: "project-patch", ok: true }); } catch { /* the confirmation was recorded before writing */ }
       return { done: true, message: `Patch applied to ${patch.source.name}.` };
     } catch (err) {
       return { done: false, message: run.signal.aborted ? "Patch application cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't apply the patch. Draft it again after checking the file." };

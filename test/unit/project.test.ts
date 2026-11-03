@@ -96,6 +96,32 @@ it("refuses a different target, malformed hunk, cancellation, stale source or fa
   expect(await fs.readdir(dir)).toEqual(["private", "sample.ts"]);
 });
 
+it("binds a selected path through a directory alias to its original destination", async () => {
+  const original = path.join(dir, "original");
+  const other = path.join(dir, "other");
+  const alias = path.join(dir, "alias");
+  await fs.mkdir(original);
+  await fs.mkdir(other);
+  await fs.symlink(original, alias, "junction");
+  const name = "source.ts";
+  const source = path.join(original, name);
+  const selected = path.join(alias, name);
+  await fs.writeFile(source, "before\n");
+  await fs.writeFile(path.join(other, name), "before\n");
+  const snapshots: ProjectSource[] = [];
+  const signal = new AbortController().signal;
+  await projectPrompt([selected], "patch", "Update it.", signal, privateDir, snapshots);
+  const patch = draftProjectPatch(diffAnswer(diff(name, "@@ -1 +1 @@\n-before\n+after")), snapshots)!;
+  await fs.unlink(alias);
+  await fs.symlink(other, alias, "junction");
+  expect(() => applyProjectPatch(patch, signal, () => undefined)).toThrow("changed");
+  expect(await fs.readFile(path.join(other, name), "utf8")).toBe("before\n");
+  await fs.unlink(alias);
+  await fs.symlink(original, alias, "junction");
+  applyProjectPatch(patch, signal, () => undefined);
+  expect(await fs.readFile(source, "utf8")).toBe("after\n");
+});
+
 it("verifies the temporary Copilot session before sending and deletes it after an answer", async () => {
   const session = {
     rpc: { tools: { initializeAndValidate: vi.fn().mockResolvedValue(undefined), getCurrentMetadata: vi.fn().mockResolvedValue({ tools: [] }) } },

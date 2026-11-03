@@ -37,7 +37,7 @@ export function projectNames(files: readonly string[]): string[] {
   return names;
 }
 
-export interface ProjectSource { name: string; file: string; text: string; stat: Stats; digest: string; bom: boolean }
+export interface ProjectSource { name: string; file: string; resolved: string; text: string; stat: Stats; digest: string; bom: boolean }
 
 /** Reads only the selected regular files. A changed file is retried by the user, never sent partly. */
 export async function projectPrompt(files: readonly string[], mode: ProjectMode, question: string, signal: AbortSignal, privateDir: string, snapshots?: ProjectSource[]): Promise<string> {
@@ -77,7 +77,7 @@ export async function projectPrompt(files: readonly string[], mode: ProjectMode,
       sources.push({ name: names[index], text });
       if (snapshots) {
         const bytes = data.subarray(0, length);
-        snapshots.push({ name: names[index], file, text, stat: after,
+        snapshots.push({ name: names[index], file, resolved, text, stat: after,
           digest: crypto.createHash("sha256").update(bytes).digest("hex"), bom: bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])) });
       }
     } finally {

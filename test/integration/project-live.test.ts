@@ -76,6 +76,11 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
     await expect.poll(() => home.locator("#project-status").innerText()).toBe("Patch applied to greeting.ts.");
     expect(fs.readFileSync(source, "utf8")).toBe("export const greeting = 'updated-file-marker';\n");
     expect(fs.readFileSync(neighbour, "utf8")).toContain("neighbour-file-marker");
+    const auditDir = path.join(userData, "audit");
+    const events = fs.readdirSync(auditDir).filter(name => name.endsWith(".jsonl"))
+      .flatMap(name => fs.readFileSync(path.join(auditDir, name), "utf8").trim().split("\n").map(line => JSON.parse(line)));
+    expect(events).toContainEqual(expect.objectContaining({ event: "confirm", kind: "project-patch", answer: "once" }));
+    expect(events).toContainEqual(expect.objectContaining({ event: "action", kind: "project-patch", ok: true }));
     await home.locator("#project-clear").click();
     expect(await home.locator("#project-answer").isHidden()).toBe(true);
     expect(await home.locator("#project-files").isHidden()).toBe(true);
