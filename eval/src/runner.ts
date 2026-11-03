@@ -339,7 +339,7 @@ export class Runner {
       memory: () => memory,
     };
     /** The task's memory after its scenario (null: none). */
-    let memory: { list(): { text: string; source: string }[]; context(query: string): string; stop(): void } | null = null;
+    let memory: { list(): { text: string; source: string }[]; context(query: string): string | Promise<string>; stop(): void } | null = null;
     const savedEnv: Record<string, string | undefined> = {};
     const restore: [string, string, string][] = [];
     let app: ChildProcess | null = null;

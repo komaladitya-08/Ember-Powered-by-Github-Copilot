@@ -5,6 +5,7 @@ import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
 import type { Intro } from "../main/memory/intro";
+import type { MemoryModelStatus } from "../main/memory/better-recall";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
@@ -52,6 +53,11 @@ export const IPC = {
   memoryForgetAll: "memory:forget-all",
   /** "Tell Ember about you": the answers, checked whole in main (IntroSchema) and kept as the user's own facts. */
   memoryIntroduce: "memory:introduce",
+  /** Better recall's model (memory/better-recall.ts): its state and changes to it, Download and Remove. */
+  memoryModel: "memory:model",
+  memoryModelChanged: "memory:model-changed",
+  memoryModelDownload: "memory:model-download",
+  memoryModelRemove: "memory:model-remove",
   /** Routines and lasting reminders (app/main/agent/routines.ts): the routines kept, and deleting one or all of them. */
   routinesList: "routines:list",
   routinesChanged: "routines:changed",
@@ -247,6 +253,11 @@ export interface EmberHomeApi {
   forgetAllMemory(): Promise<void>;
   /** Keeps "Tell Ember about you"'s answers; how many were kept, or null while memory is off. */
   introduceMe(answers: Intro): Promise<number | null>;
+  /** Better recall's model: whether it is here, and changes; the user's Download (the agreement to fetch it) and Remove. */
+  memoryModel(): Promise<MemoryModelStatus>;
+  onMemoryModel(fn: (s: MemoryModelStatus) => void): () => void;
+  downloadMemoryModel(): Promise<void>;
+  removeMemoryModel(): Promise<void>;
   /** The routines kept, and changes to them; deleting one, or all of them with the lasting reminders. */
   routines(): Promise<RoutineRow[]>;
   onRoutines(fn: (rows: RoutineRow[]) => void): () => void;

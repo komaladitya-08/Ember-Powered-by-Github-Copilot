@@ -165,8 +165,10 @@ cache (test/temp-folder.ts).
     someone who agreed to the first note is asked again and memory stays off until they do). After conversation
     turns and finished tasks, a short session of its own on the conversation's model, hardened and with no tools,
     picks out lasting facts as JSON (zod-checked, dropped whole if invalid): at most one call per three turns or a
-    minute, 12 an hour, 60 a day. A fact is yours only when its evidence is your own words; a task's are `task`;
-    one that reads like an instruction and isn't your words is never kept. After 5 idle minutes (no turn, no task,
+    minute, 12 an hour, 60 a day. A fact is yours only when you were heard to say it and every word of it is yours,
+    the same way round; a task's are `task`; nothing that reads like an instruction is ever learned (the remember
+    tool keeps one only in your own words). Learned facts are recalled by meaning too, once Better recall's model is
+    in. After 5 idle minutes (no turn, no task,
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
     idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
     fact shows in the conversation as "Ember learned: …" with **Undo**. The kill switch stops all of it (`memory`).
@@ -174,6 +176,17 @@ cache (test/temp-folder.ts).
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
     from its speakers isn't kept.
+  - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
+    (all-MiniLM-L6-v2, int8, pinned by SHA-256 in `app/voice/models.ts`) that runs on this computer, so Ember finds a
+    fact when you ask in other words ("Who is my manager?" finds "Priya leads the platform team"). It comes from
+    `huggingface.co`, which redirects to its CDN, `*.hf.co` (`us.aws.cdn.hf.co`): a firewall must allow both. The
+    click is the agreement, as for the speech models; nothing is fetched while memory is off, and turning memory off
+    cancels a download under way. Each fact is turned into numbers in the background in the "Ember memory" process
+    (onnxruntime-web's WebAssembly, one thread), which holds 300–400 MB while it runs and ends after 5 idle minutes;
+    opening Ask or saying "Hey Ember" starts it early. The numbers stay in `memory-vectors.json` beside `memory.json`
+    (0600), go with a fact you forget, and **Forget everything**, signing out and **Remove** delete them. At most one
+    fact found by meaning alone goes with a request. Without the model, or when it is slow (1.5 s) or fails, recall
+    works as before. `node scripts/memory/bench.mjs` measures it (docs/MEMORY.md §2).
 - **Extensions** (Settings › **Extensions**): plugins and extensions from marketplaces the user adds, and connectors
   (GitHub-hosted services such as Slack or Notion). Only the user adds, turns off, removes, connects or disconnects,
   and only here.
@@ -622,7 +635,8 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
-| Speech models (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
+| Speech models and Better recall's model (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
+| Long-term memory, and Better recall's vectors of it (0600) | `~/.config/ember/memory.json`, `~/.config/ember/memory-vectors.json` |
 | What Ember made on its desk | `~/Ember/` |
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
@@ -743,7 +757,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
-| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it) |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it). Better recall's model isn't downloaded or run either |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
@@ -1779,7 +1793,8 @@ with the command above, and create the release with those files.
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
   memory/           long-term memory (docs/MEMORY.md): the temporal graph, recall (BM25 + Personalized PageRank),
                     sleep-time consolidation, the secret guard, memory.json and MemoryService (main's); learning on
-                    its own: learn.ts (extraction), refine.ts, questions.ts, intro.ts and MemoryLearning (learning.ts)
+                    its own: learn.ts (extraction), refine.ts, questions.ts, intro.ts and MemoryLearning (learning.ts);
+                    Better recall: the WordPiece tokenizer, the embedding model and its process, the vector index
   targets/          the targets runtime: which computers exist, naming and binding, consent cards, noticing ssh (§14)
   commands/         run_command's flow, the classifier, output shaping, the command window's controller; run/: runners
   wsl/              WSL discovery, the WSL runner, the WSLg router and matcher

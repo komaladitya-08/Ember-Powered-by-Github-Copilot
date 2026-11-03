@@ -43,7 +43,7 @@ import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { VoiceService, voicePermissions } from "./voice";
+import { VoiceService, electronDownloader, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { capiChoice, type BackendChoice } from "../voice/runtime";
@@ -94,6 +94,7 @@ import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
 import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
+import { BetterRecall } from "./memory/better-recall";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
@@ -1155,6 +1156,8 @@ function start(): void {
     // Where a request goes when it names no computer: the picker's choice, as a chip (§8.1).
     const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
     askAsked = asked;
+    // A request is likely: Better recall's model loads meanwhile, if it isn't (memory/embed.ts).
+    betterRecallRef?.semantic.warm();
     // Linux holds the keyboard, so the screen is read first, as always. Windows and macOS can't: the box shows first,
     // and the screen is read after it, of the window the user was in, told what had the keyboard there (ask-open.ts).
     openAskInOrder({
@@ -1181,10 +1184,12 @@ function start(): void {
   let deskViewRef: DeskView | null = null;
   let extensionsRef: ExtensionsService | null = null;
   let learningRef: MemoryLearning | null = null;
+  let betterRecallRef: BetterRecall | null = null;
   const killSwitch = new KillSwitch(() => [
+    // Memory, as one part: Better recall's indexing stops and its memory process ends (the next question or change
+    // starts it again), and memory's own model calls (learning, refinement) are abandoned, its interview and question end.
+    { name: "memory", stop: () => { betterRecallRef?.semantic.stop(); learningRef?.stopNow(); } },
     { name: "borrow", stop: () => borrowRef?.stop() },
-    // Memory's model calls (learning, sleep-time refinement) are abandoned, and its interview and question end.
-    { name: "memory", stop: () => learningRef?.stopNow() },
     { name: "speech", stop: () => voice?.hush() },
     // A request still being spoken is dropped, not sent after Stop.
     { name: "listening", stop: () => voice?.cancelListening() },
@@ -1283,15 +1288,31 @@ function start(): void {
   // Long-term memory (docs/MEMORY.md): memory.json beside the settings, used only while the user has it on and the
   // organisation allows it. Settings lists it; nothing is read from the file until something asks.
   const memoryAllowed = () => policy.features.memory !== false;
-  const memory = new MemoryService({ dir: userData, log: log.child("memory"), onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
+  // Better recall (memory/better-recall.ts): matching by meaning once the user downloads its model in Settings › Memory,
+  // in the "Ember memory" utility process, used only while memory is on.
+  const memoryOn = () => memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
+  const betterRecall = new BetterRecall({
+    dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn,
+    fork: () => {
+      const p = utilityProcess.fork(path.join(__dirname, "memory-embed.cjs"), [], { serviceName: "Ember memory", stdio: "pipe" });
+      p.stderr?.on("data", (d: Buffer) => log.debug("memory.process_stderr", { line: d.toString().slice(0, 300) }));
+      return { postMessage: m => p.postMessage(m), onMessage: fn => p.on("message", fn), onExit: fn => p.on("exit", fn), kill: () => { p.kill(); } };
+    },
+    onStatus: s => broadcast(IPC.memoryModelChanged, s),
+    onReady: () => memory.index(),
+  });
+  betterRecallRef = betterRecall;
+  settings.onChange(() => betterRecall.settingsChanged());
+  const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
-  // Memory that learns on its own (app/main/memory/learning.ts): only while memory is in force (on, its own consent, the
-  // organisation's features.memory; LOCKDOWN turns that off). Its "Ember learned" lines join the conversation Home shows.
-  const memoryInForce = () => memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
+  if (memoryOn() && betterRecall.ready) memory.index();
+  // Memory that learns on its own (app/main/memory/learning.ts): only while memory is in force (memoryOn: on, its own
+  // consent, the organisation's features.memory; LOCKDOWN turns that off). Its "Ember learned" lines join the
+  // conversation Home shows.
   let learnedLines: TranscriptEntry[] = [];
   const conversationNow = (entries: TranscriptEntry[] = agent?.getTranscript() ?? []) => withLearned(entries, learnedLines);
   const learning = new MemoryLearning({
-    memory, inForce: memoryInForce, managed: () => !memoryAllowed(),
+    memory, inForce: memoryOn, managed: () => !memoryAllowed(),
     questionsOn: () => settings.get().memory.questions,
     askedAt: () => settings.get().memory.askedAt,
     setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
@@ -1422,6 +1443,7 @@ function start(): void {
         speechStarts();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
         captureContext();
+        betterRecallRef?.semantic.warm();
         voice?.hush();
         // The bubble is main's now: an answer's leftover hide timer mustn't blank "Listening…".
         agent?.claimBubble();
@@ -1708,9 +1730,14 @@ function start(): void {
     // Through learning: its "Ember learned" line and "forget that" let go of it too.
     learning.forget(id);
   }));
+  // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(() => { learning.forgetAll(); }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
   ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduce(answers)));
+  // Better recall's model: its state, and the user's Download (the agreement to fetch it) and Remove.
+  ipcMain.handle(IPC.memoryModel, guard(() => betterRecall.status()));
+  ipcMain.handle(IPC.memoryModelDownload, guard(() => { void betterRecall.download().catch(() => { /* Settings is told why, in the status */ }); }));
+  ipcMain.handle(IPC.memoryModelRemove, guard(() => { betterRecall.remove(); }));
   ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
   ipcMain.handle(IPC.routinesForget, guard((id: unknown) => {
     if (typeof id !== "string" || !id || id.length > 20) return;

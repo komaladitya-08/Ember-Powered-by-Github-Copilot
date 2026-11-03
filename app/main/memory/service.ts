@@ -10,6 +10,7 @@
  */
 
 import { consolidate } from "./consolidate";
+import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
 import { ENTITY_KINDS, type AddResult, type EntityKind, type Fact, type GraphClock, type MemoryGraph, type NewFact, type Source } from "./graph";
 import { recall, type Recalled } from "./recall";
@@ -38,6 +39,8 @@ export interface MemoryServiceOptions {
   file?: MemoryFile;
   /** Something Settings shows changed. */
   onChange?: () => void;
+  /** Better recall's vectors (./embed.ts): kept up to date with the graph, and asked for a question's matches. */
+  semantic?: SemanticMemory;
 }
 
 /** What a fact the model saves is about: names, with an optional kind ("person", "project"…). */
@@ -92,7 +95,18 @@ export class MemoryService {
   stop(): void {
     if (this.upkeepTimer) { clearInterval(this.upkeepTimer); this.upkeepTimer = null; }
     this.flush();
+    this.o.semantic?.flush();
+    this.o.semantic?.stop();
   }
+
+  /** Better recall's model came (or changed): the vectors catch up with what is remembered, in the background. */
+  index(): void {
+    // Not loaded yet (Ember starting): memory.json is read when something first needs it, and the index catches up then.
+    if (!this.graph) { this.indexPending = true; return; }
+    this.o.semantic?.changed(this.graph);
+  }
+  /** index() came before memory.json was read: the first request catches the index up. */
+  private indexPending = false;
 
   /**
    * The model saves a fact. `said`: what the user said in this turn (whose words make it theirs). The answer is for the
@@ -104,21 +118,28 @@ export class MemoryService {
     const r = this.g.add({ text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
     this.dirty();
+    this.o.semantic?.changed(this.g);
     this.o.log.info("memory.remembered", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
     if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].`;
     return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.`;
   }
 
-  /** The facts that bear on `query` (each counts as used). */
-  recall(query: string, k = CONTEXT_FACTS, history = false): Recalled[] {
-    const found = recall(this.g, query, { k, history, now: this.now() });
+  /** The facts that bear on `query` (each counts as used); `semantic`: its matches by meaning (./embed.ts), if any. */
+  recall(query: string, k = CONTEXT_FACTS, history = false, semantic?: Map<string, number>): Recalled[] {
+    const found = recall(this.g, query, { k, history, now: this.now(), ...(semantic ? { semantic } : {}) });
     if (found.length) { this.g.touch(found.map(r => r.fact.id)); this.dirty(false); }
     return found;
   }
 
-  /** The `<memory>` block for a request ("" when nothing bears on it). */
-  context(request: string): string {
-    return memoryBlock(this.recall(request));
+  /**
+   * The `<memory>` block for a request ("" when nothing bears on it), with Better recall's matches by meaning when its
+   * model is there (otherwise, or if they don't come in time, exactly the lexical recall). `history`: also what used to
+   * be true (the recall tool's).
+   */
+  async context(request: string, history = false): Promise<string> {
+    if (this.indexPending) { this.indexPending = false; this.o.semantic?.changed(this.g); }
+    const semantic = await this.o.semantic?.seeds(request);
+    return memoryBlock(this.recall(request, CONTEXT_FACTS, history, semantic));
   }
 
   /** Forgets one fact by id, and reopens what it had replaced (Undo puts the old value back). True if it was there. */
@@ -128,7 +149,13 @@ export class MemoryService {
     const f = this.g.fact(id);
     const reopened = f && !f.invalidAt ? this.g.reopenSuperseded(id) : 0;
     const had = this.g.forgetFact(id);
-    if (had) { this.dirty(); this.o.log.info("memory.forgot", { count: 1, reopened }); }
+    if (had) {
+      this.o.semantic?.forget(id);
+      // What came back is recalled by meaning again.
+      if (reopened) this.o.semantic?.changed(this.g);
+      this.dirty();
+      this.o.log.info("memory.forgot", { count: 1, reopened });
+    }
     return had;
   }
 
@@ -137,6 +164,7 @@ export class MemoryService {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     this.graph?.clear();
     try { this.file.erase(); } catch (err) { this.o.log.warn("memory.erase_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    this.o.semantic?.forgetAll();
     this.changed = false;
     this.o.log.info("memory.forgot_all");
     this.o.onChange?.();
@@ -154,7 +182,7 @@ export class MemoryService {
     const report = consolidate(this.g, { now: this.now() });
     this.changed = false;
     this.o.log.info("memory.upkeep", { ...report, ...this.g.size });
-    if (report.mergedEntities || report.mergedFacts || report.forgotten || report.orphans) this.dirty();
+    if (report.mergedEntities || report.mergedFacts || report.forgotten || report.orphans) { this.dirty(); this.o.semantic?.changed(this.g); }
   }
 
   /** Writes memory.json now, if a write is pending. */
@@ -175,6 +203,8 @@ export class MemoryService {
     const r = this.g.add(input);
     if (r.kind === "refused") return r;
     this.dirty();
+    // Learned, introduced and answered facts are recalled by meaning too (Better recall).
+    this.o.semantic?.changed(this.g);
     this.o.log.info("memory.learned", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
     return r;
   }
@@ -182,7 +212,7 @@ export class MemoryService {
   /** A sleep-time change over the graph (./refine.ts): `change` says how many things it changed; saved when any did. */
   refine(change: (g: MemoryGraph) => number): number {
     const n = change(this.g);
-    if (n > 0) this.dirty();
+    if (n > 0) { this.dirty(); this.o.semantic?.changed(this.g); }
     return n;
   }
 

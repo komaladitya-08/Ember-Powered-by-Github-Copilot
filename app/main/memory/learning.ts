@@ -22,7 +22,6 @@ import {
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
 import { ownFact, type AboutRef, type MemoryLog, type MemoryService } from "./service";
-import { memoryBlock } from "./format";
 import { fold } from "./text";
 
 /** Idle this long (no turn, no task, screen unlocked) before the sleep-time pass or a question (ms). */
@@ -70,8 +69,8 @@ export interface LearningDeps {
 /** What the conductor gets: MemoryService's tools, plus `heard` at each turn's end. */
 export interface LearningConductorMemory {
   remember(fact: string, about: AboutRef[], said: string, replaces?: string): string;
-  context(query: string, history?: boolean): string;
-  forRequest(request: string, own: boolean): string;
+  context(query: string, history?: boolean): Promise<string>;
+  forRequest(request: string, own: boolean): Promise<string>;
   forget(id: string): boolean;
   forgetAll(): void;
   heard(said: string, reply: string, own: boolean): void;
@@ -153,9 +152,10 @@ export class MemoryLearning {
         return answer;
       },
       // The recall tool: its query is the model's, so it never counts gaps (the screen could choose the question).
-      context: (query, history) => memoryBlock(m.recall(query, undefined, history === true)),
-      forRequest: (request, own) => {
-        const text = m.context(request);
+      // With Better recall's matches by meaning, as for a request (MemoryService.context).
+      context: (query, history) => m.context(query, history === true),
+      forRequest: async (request, own) => {
+        const text = await m.context(request);
         // Nothing bears on what the user asked themselves: the names in it are gaps (known names aren't, and checking
         // doesn't count as a use). Never from words Ember couldn't tell were the user's.
         if (!text && own && this.d.inForce()) {

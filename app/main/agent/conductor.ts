@@ -126,14 +126,17 @@ export interface TargetTools {
 export interface ConductorMemory {
   /** Saves a fact; `said`: what the user said this turn (whose words make the fact theirs). What to tell the model. */
   remember(fact: string, about: { name: string; kind?: string }[], said: string, replaces?: string): string;
-  /** The `<memory>` block for `query` ("" when nothing bears on it): the recall tool's, written by the model. */
-  context(query: string, history?: boolean): string;
+  /**
+   * The `<memory>` block for `query` ("" when nothing bears on it): the recall tool's, written by the model. At once,
+   * or once Better recall's match is in.
+   */
+  context(query: string, history?: boolean): string | Promise<string>;
   /**
    * The `<memory>` block for the user's own request, before its turn (falls back to `context`). `own`: heard from the
    * user. Only this sees what the user asked, so only this may note what memory keeps missing (never the recall tool,
    * whose query the model wrote and the screen may have steered).
    */
-  forRequest?(request: string, own: boolean): string;
+  forRequest?(request: string, own: boolean): string | Promise<string>;
   forget(id: string): boolean;
   /**
    * A turn ended (not stopped): what the user said in it and Ember's answer, for memory to learn from off the hot path
@@ -250,7 +253,7 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
           query: z.string().min(2).max(300).describe("What to look for, in a few words"),
           history: z.boolean().optional().describe("Also what used to be true"),
         }),
-        async ({ query, history }) => memory.store.context(query, history) || "Nothing remembered about that."),
+        async ({ query, history }) => (await memory.store.context(query, history)) || "Nothing remembered about that."),
       checkedTool("forget_memory", "Forget a remembered fact the user asked you to forget, by its id from <memory> or recall (\"f3a9…\").",
         z.object({ id: z.string().min(1).max(40).describe("The fact's id, without brackets") }),
         async ({ id }) => memory.store.forget(id.replace(/^\[|\]$/g, "")) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`),
@@ -658,6 +661,8 @@ export class Conductor {
   private stopping = false;
   /** A turn is in flight (sent, and no idle or error yet). */
   private busy = false;
+  /** Bumped by every Stop (abort()): a request still waiting for its memory before it is sent is dropped. */
+  private stops = 0;
   /** Watches that each request sent gets its turn. */
   private watch: TurnWatch | null = null;
   /**
@@ -885,12 +890,26 @@ export class Conductor {
     const reports = this.deps.takeReports?.() ?? [];
     const entry = { text, own };
     this.unstarted.push(entry);
-    // What Ember remembers that bears on the request (while memory is on): before it, as information.
+    // What Ember remembers that bears on the request (while memory is on): before it, as information. Better recall
+    // may take up to its wait for this (memory/embed.ts), so a Stop meanwhile drops the request, through either path.
+    const stops = this.stops;
     let remembered = "";
     try {
       const m = this.deps.memory;
-      remembered = (m?.forRequest ? m.forRequest(text, own) : m?.context(text)) ?? "";
+      remembered = (await (m?.forRequest ? m.forRequest(text, own) : m?.context(text))) ?? "";
     } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    if (this.stops !== stops || this.session !== session) {
+      // Stopped (or the connection was replaced) while memory was read: nothing is sent, and no turn is owed for it.
+      this.unstarted = this.unstarted.filter(t => t !== entry);
+      if (reports.length) this.deps.returnReports?.(reports);
+      const stopped = this.stops !== stops;
+      this.deps.log.info("conductor.ask_dropped", { stopped });
+      if (stopped) return;
+      // The connection was replaced meanwhile: the user is asked to ask again, and the host drops it from its queue
+      // as for a send that failed (it is already reconnecting).
+      this.deps.presenter.fail(NO_ANSWER);
+      throw new ConnectionLost("the connection was replaced while memory was read");
+    }
     const routines = this.routinesLine(text);
     const parts = [
       ...(reports.length ? [`<task_results untrusted="true">\n${reports.map(r => r.replace(/</g, "‹")).join("\n")}\n</task_results>`] : []),
@@ -949,6 +968,7 @@ export class Conductor {
 
   /** Stops the turn in flight. With nothing running there is no turn to end, so nothing is refused afterwards. */
   async abort(): Promise<void> {
+    this.stops++;
     if (this.session && this.busy) this.stopping = true;
     // The runtime drops the requests waiting behind the turn: no turn is owed for them.
     this.watch?.clear();

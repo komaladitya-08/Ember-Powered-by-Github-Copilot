@@ -59,11 +59,11 @@ describe("MemoryService", () => {
     expect(s.list().map(i => i.text)).toEqual(["Works at Globex"]);
   });
 
-  it("gives a request what bears on it as an untrusted block, and nothing when nothing does", () => {
+  it("gives a request what bears on it as an untrusted block, and nothing when nothing does", async () => {
     const { s } = service();
     s.remember("Works on the Atlas project with Priya", [{ name: "User" }, { name: "Atlas", kind: "project" }, { name: "Priya", kind: "person" }], "I work on the Atlas project with Priya");
-    expect(s.context("Draft a note to Priya about Atlas")).toMatch(/^<memory untrusted="true">\n- \[f1\] \(you told me, 2026-11-01\) Works on the Atlas project with Priya\n<\/memory>$/);
-    expect(s.context("what's the weather")).toBe("");
+    expect(await s.context("Draft a note to Priya about Atlas")).toMatch(/^<memory untrusted="true">\n- \[f1\] \(you told me, 2026-11-01\) Works on the Atlas project with Priya\n<\/memory>$/);
+    expect(await s.context("what's the weather")).toBe("");
   });
 
   it("saves soon after a change, readable by the user alone, and loads it again next time", () => {

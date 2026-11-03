@@ -3,6 +3,7 @@ import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberH
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
+import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { TaskEntry } from "../shared/activity";
 import { TARGETS_IPC, type TargetSummary } from "../shared/targets";
 import type { EmberTargetsApi } from "../renderer/home/computers-copy";
@@ -34,6 +35,10 @@ const api: EmberHomeApi = {
   forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
   forgetAllMemory: () => ipcRenderer.invoke(IPC.memoryForgetAll),
   introduceMe: answers => ipcRenderer.invoke(IPC.memoryIntroduce, answers),
+  memoryModel: () => ipcRenderer.invoke(IPC.memoryModel),
+  onMemoryModel: fn => listen<MemoryModelStatus>(IPC.memoryModelChanged, fn),
+  downloadMemoryModel: () => ipcRenderer.invoke(IPC.memoryModelDownload),
+  removeMemoryModel: () => ipcRenderer.invoke(IPC.memoryModelRemove),
   routines: () => ipcRenderer.invoke(IPC.routinesList),
   onRoutines: fn => listen<RoutineRow[]>(IPC.routinesChanged, fn),
   forgetRoutine: id => ipcRenderer.invoke(IPC.routinesForget, id),
