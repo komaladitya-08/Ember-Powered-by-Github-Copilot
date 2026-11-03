@@ -292,6 +292,23 @@ describe("the sleep-time pass, as it runs", () => {
     expect(s.list()).toHaveLength(2);
     s.stop();
   });
+
+  it.each(["the screen locks", "work begins", "a new request arrives"])("rechecks an idle pass after upkeep when %s", async event => {
+    const model = vi.fn(async () => null);
+    const conditions = { model, locked: false, idle: true };
+    const { l, s, advance } = learning(conditions);
+    s.learn({ text: "Works on Atlas", about: [{ name: "User" }], source: "user" });
+    s.learn({ text: "Likes tea", about: [{ name: "User" }], source: "user" });
+    advance(IDLE_MS);
+    const pending = l.tick();
+    if (event === "the screen locks") conditions.locked = true;
+    else if (event === "work begins") conditions.idle = false;
+    else l.active();
+    await pending;
+    expect(model).not.toHaveBeenCalled();
+    expect(l.usage.refine).toBe(0);
+    s.stop();
+  });
 });
 
 describe("getting to know you", () => {

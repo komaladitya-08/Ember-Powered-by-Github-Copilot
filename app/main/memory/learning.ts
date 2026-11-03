@@ -285,25 +285,25 @@ export class MemoryLearning {
 
   /** One idle check: the sleep-time pass first, else a question. */
   async tick(): Promise<void> {
-    if (!this.d.inForce() || this.d.locked() || !this.d.idle()) return;
+    const stillIdle = () => !this.d.locked() && this.d.idle() && this.now() - this.lastActive >= IDLE_MS;
+    if (!this.d.inForce() || !stillIdle()) return;
     const now = this.now();
-    if (now - this.lastActive < IDLE_MS) return;
     if (!this.refinedThisIdle && this.model && !this.refining && this.refines.allows(now)) {
       this.refinedThisIdle = true;
-      await this.refine();
+      await this.refine(stillIdle);
       return;
     }
     this.maybeAsk();
   }
 
   /** The sleep-time pass: consolidate(), then one model pass over what changed lately. What it changed. */
-  async refine(): Promise<number> {
+  async refine(mayStart = () => true): Promise<number> {
     const m = this.d.memory;
     if (this.refining || !this.d.inForce()) return 0;
     const run = new AbortController();
     this.refining = run;
     try {
-      if (!await m.upkeep() || run.signal.aborted || !this.d.inForce()) return 0;
+      if (!await m.upkeep() || run.signal.aborted || !this.d.inForce() || !mayStart()) return 0;
       const model = this.model;
       if (!model) return 0;
       let shown: Fact[] = [];
