@@ -123,7 +123,10 @@ export class MemoryService {
 
   /** Forgets one fact by id, and reopens what it had replaced (Undo puts the old value back). True if it was there. */
   forget(id: string): boolean {
-    const reopened = this.g.fact(id) ? this.g.reopenSuperseded(id) : 0;
+    // Only an open fact gives back what it replaced: a closed one was itself replaced since, and reopening under it would
+    // leave a single predicate with two open values.
+    const f = this.g.fact(id);
+    const reopened = f && !f.invalidAt ? this.g.reopenSuperseded(id) : 0;
     const had = this.g.forgetFact(id);
     if (had) { this.dirty(); this.o.log.info("memory.forgot", { count: 1, reopened }); }
     return had;

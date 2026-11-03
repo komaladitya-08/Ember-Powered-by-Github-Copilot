@@ -29,13 +29,17 @@ const COMMON = new Set([
   "why", "how", "can", "could", "would", "will", "is", "are", "do", "does", "open", "show", "tell", "find", "send", "make",
 ]);
 
+/** The most words a name has. */
+export const MAX_NAME_WORDS = 3;
+
 /** The names in a request: capitalised words not at its start (and runs of them: "Priya Shah"). */
 export function namesIn(request: string): string[] {
   const out: string[] = [];
   for (const sentence of request.split(/[.!?\n]+/)) {
     const words = sentence.trim().split(/\s+/);
     let run: string[] = [];
-    const end = () => { if (run.length) out.push(run.join(" ")); run = []; };
+    // At most three words: a longer capitalised run is a title or a heading, not a name (review of PR #142).
+    const end = () => { if (run.length && run.length <= MAX_NAME_WORDS) out.push(run.join(" ")); run = []; };
     words.forEach((raw, i) => {
       const w = raw.replace(/^[^\p{L}]+|[^\p{L}\p{N}]+$/gu, "").replace(/'s$/, "");
       if (i > 0 && /^\p{Lu}[\p{L}\p{N}-]{1,30}$/u.test(w) && !COMMON.has(fold(w))) run.push(w);
@@ -106,7 +110,8 @@ export function looksLikeRequest(text: string): boolean {
 export function describes(text: string, name: string): boolean {
   const t = text.trim();
   if (fold(t).includes(fold(name))) return true;
-  return /^(?:(?:she|he|they|it|that|this)(?:['’](?:s|re)\b|\s+\p{L}+)|(?:a|an|my|our|his|her|their|one\s+of)\s+\p{L})/iu.test(t);
+  // "It's…" or "That…" alone describes nothing ("It's raining"): only with what it is ("It's our billing service").
+  return /^(?:(?:she|he|they)(?:['’](?:s|re)\b|\s+\p{L}+)|(?:it|that|this)(?:['’]s|\s+is|\s+was)\s+(?:a|an|the|our|my|his|her|their|one\s+of)\s+\p{L}|(?:a|an|my|our|his|her|their|one\s+of)\s+\p{L})/iu.test(t);
 }
 
 /** The answer as a `user` fact about the name asked after. */

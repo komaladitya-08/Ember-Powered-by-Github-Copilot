@@ -60,6 +60,8 @@ export interface LearningDeps {
   onLearned?: (items: LearnedItem[]) => void;
   /** Everything was forgotten: what showed as learned goes. */
   onForgotAll?: () => void;
+  /** One fact was forgotten: its "Ember learned" line goes. */
+  onForgot?: (id: string) => void;
   log: MemoryLog;
   now?: () => number;
   budget?: Partial<LearnBudget>;
@@ -109,7 +111,8 @@ export class MemoryLearning {
   /** Starts watching for idle time. */
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => { void this.tick(); }, IDLE_CHECK_MS);
+    // A failing pass is logged, never an unhandled rejection.
+    this.timer = setInterval(() => { this.tick().catch(err => this.d.log.warn("memory.tick_failed", { err: err instanceof Error ? err.message : String(err) })); }, IDLE_CHECK_MS);
     this.timer.unref?.();
   }
 
@@ -161,10 +164,21 @@ export class MemoryLearning {
         }
         return text;
       },
-      forget: id => m.forget(id),
+      forget: id => this.forget(id),
       forgetAll: () => this.forgetAll(),
       heard: (said, reply, own) => { this.active(); this.learner.heard(said, reply, own); },
     };
+  }
+
+  /**
+   * One fact is forgotten (Home's Forget or Undo, forget_memory, "forget that"): "forget that" can no longer reach it,
+   * and its "Ember learned" line goes (`onForgot`). True if it was there.
+   */
+  forget(id: string): boolean {
+    const had = this.d.memory.forget(id);
+    this.recent = this.recent.filter(r => r.id !== id);
+    if (had) this.d.onForgot?.(id);
+    return had;
   }
 
   /** Everything is forgotten (sign-out, Forget everything): what waits to be learned goes too. */
@@ -227,8 +241,7 @@ export class MemoryLearning {
       if (!this.d.inForce()) return null;
       const last = this.recent.at(-1);
       if (!last || now - last.at > FORGET_THAT_MS) return null;
-      this.recent.pop();
-      return this.d.memory.forget(last.id) ? forgotReply(last.text) : null;
+      return this.forget(last.id) ? forgotReply(last.text) : null;
     }
     // A request ("open Thunderbird and send the report to Bob") is never an answer: the question is let go of and the
     // conversation takes the request.

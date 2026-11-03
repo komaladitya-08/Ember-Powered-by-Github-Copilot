@@ -1310,6 +1310,12 @@ function start(): void {
       learnedLines = [];
       broadcast(IPC.conversationChanged, conversationNow());
     },
+    // One fact forgotten (Forget, Undo, forget_memory, "forget that"): its line and its Undo go.
+    onForgot: id => {
+      const before = learnedLines.length;
+      learnedLines = learnedLines.filter(l => l.fact !== id);
+      if (learnedLines.length !== before) broadcast(IPC.conversationChanged, conversationNow());
+    },
     log: log.child("memory"),
   });
   learningRef = learning;
@@ -1699,7 +1705,8 @@ function start(): void {
   ipcMain.handle(IPC.memoryList, guard(() => (memoryAllowed() ? memory.list() : [])));
   ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
     if (typeof id !== "string" || !id || id.length > 40) return;
-    memory.forget(id);
+    // Through learning: its "Ember learned" line and "forget that" let go of it too.
+    learning.forget(id);
   }));
   ipcMain.handle(IPC.memoryForgetAll, guard(() => { learning.forgetAll(); }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.

@@ -4,8 +4,8 @@
  * JSON that zod checks here:
  * - a short summary of each entity it is asked about, kept as a `summary` fact that closes the one before (the old
  *   summary stays, closed, so every rewrite can be audited);
- * - contradictions: a fact a newer one says otherwise about, closed (never deleted). A fact the user said is closed only
- *   by another the user said;
+ * - contradictions: a fact a newer one says otherwise about, closed (never deleted). A fact the user said is never
+ *   closed here: only the user changes what they said;
  * - reflections: a higher-level fact drawn from two or more facts, at a low confidence, never the user's own.
  *
  * The model only proposes: every change is checked against the graph here (the ids it names must be among those it was
@@ -107,8 +107,9 @@ export function applyRefinement(g: MemoryGraph, r: Refinement, shown: Fact[]): R
     // Both must be facts the pass was shown or already knew, still open, about the same subject, the newer one newer.
     if (!old || !now || old.id === now.id || (!seen.has(old.id) && !seen.has(now.id))) continue;
     if (old.invalidAt || now.invalidAt || old.entities[0] !== now.entities[0] || now.createdAt < old.createdAt) continue;
-    // A weaker source never overrules a stronger one; what the user said is closed only by what the user said.
-    if (rank(now.source) > rank(old.source)) continue;
+    // What the user said is never closed by refinement (only by the user: a newer fact of theirs for the same
+    // predicate, `forget`, or Undo); a weaker source never overrules a stronger one.
+    if (old.source === "user" || rank(now.source) > rank(old.source)) continue;
     if (g.closeFact(old.id, now.id)) report.closed++;
   }
 

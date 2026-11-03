@@ -682,8 +682,6 @@ export class Conductor {
   private said = "";
   /** The turn under way's request was heard from the user (ask()'s `own`), for memory to learn from. */
   private saidOwn = true;
-  /** Requests sent (ask()) that were heard where Ember can't tell the user from its speakers. */
-  private unheard = new Set<string>();
   /**
    * The steps of the routines run_routine ran this turn: the user's own words when they saved them, so a reminder or a
    * fact one sets counts as theirs, and a task one starts checks its risky steps against them (AgentHost.userWordsOf).
@@ -693,8 +691,11 @@ export class Conductor {
   private routinesRan = new Set<string>();
   /** Ember's answer in the turn under way, for memory to learn from when it ends (ConductorMemory.heard). */
   private answered = "";
-  /** The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. */
-  private unstarted: string[] = [];
+  /**
+   * The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. `own`: heard
+   * from the user (ask()'s `own`), carried with each request so two of the same words can't swap it.
+   */
+  private unstarted: { text: string; own: boolean }[] = [];
 
   /** What the user said this turn, with the steps of the routines it ran. */
   private get turnSaid(): string {
@@ -713,15 +714,13 @@ export class Conductor {
    */
   private turnBegan(content: string): void {
     const said = content.trimEnd();
-    const i = this.unstarted.findIndex(t => said.endsWith(t.trim()));
-    this.said = i < 0 ? "" : this.unstarted[i];
-    this.saidOwn = !this.unheard.delete(this.said);
+    const i = this.unstarted.findIndex(t => said.endsWith(t.text.trim()));
+    this.said = i < 0 ? "" : this.unstarted[i].text;
+    this.saidOwn = i < 0 || this.unstarted[i].own;
     this.routineWords = [];
     this.routinesRan.clear();
     this.answered = "";
     this.unstarted.splice(0, i + 1);
-    // Requests that never ran take their mark with them.
-    for (const t of this.unheard) if (!this.unstarted.includes(t)) this.unheard.delete(t);
     // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
     // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
     this.deps.extensions?.newTurn?.();
@@ -884,8 +883,8 @@ export class Conductor {
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
-    this.unstarted.push(text);
-    if (!own) this.unheard.add(text);
+    const entry = { text, own };
+    this.unstarted.push(entry);
     // What Ember remembers that bears on the request (while memory is on): before it, as information.
     let remembered = "";
     try {
@@ -912,8 +911,7 @@ export class Conductor {
       watch?.unsent();
       this.busy = false;
       // No turn will come for it.
-      this.unstarted = this.unstarted.filter(t => t !== text);
-      this.unheard.delete(text);
+      this.unstarted = this.unstarted.filter(t => t !== entry);
       // The finished tasks' results were in the request that never went: they wait for the next one.
       if (reports.length) this.deps.returnReports?.(reports);
       // The runtime went away (crash, restart): say so instead of "Thinking…" forever. Not when this

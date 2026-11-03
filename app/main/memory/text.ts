@@ -40,8 +40,11 @@ export function nameKey(name: string): string {
 
 /** Words that turn a statement round ("not", "never", "don't"…). */
 const NEGATION = /\b(?:not|no|never|none|nobody|nothing|neither|nor|without|cannot|nowhere)\b|n['’]t\b/gu;
-/** Verbs that say the opposite of liking ("hate", "dislike"…; "can't stand" is already a negation): "I hate Teams" is not "Likes Teams". */
-const AVERSE = /\b(?:hate[sd]?|hating|dislike[sd]?|disliking|detest(?:s|ed)?|loathe[sd]?|avoid(?:s|ed)?)\b/gu;
+/**
+ * Words that say the opposite of liking or doing ("hate", "stopped", "tired of"…; "can't stand" is already a
+ * negation): "I hate Teams" is not "Likes Teams", nor "I quit Globex" "Works at Globex" (review of PR #142).
+ */
+const AVERSE = /\b(?:hate[sd]?|hating|dislike[sd]?|disliking|detest(?:s|ed)?|loathe[sd]?|avoid(?:s|ed)?|stopp(?:ed|ing)|quit(?:s|ting)?|tired\s+of|sick\s+of|fed\s+up|gave\s+up|giv(?:e|es|ing)\s+up)\b/gu;
 
 /** A statement's polarity: true when it is said the other way round (an odd number of negations and aversions). */
 export function negated(s: string): boolean {
@@ -51,18 +54,17 @@ export function negated(s: string): boolean {
 
 /**
  * Whether `fact` says what `said` says the same way round: its clause that covers the most of the fact's terms ("I'm
- * not on Atlas any more, I'm on Orion now" for "Works on Orion") has the fact's polarity.
+ * not on Atlas any more, I'm on Orion now" for "Works on Orion") has the fact's polarity. Clauses that cover it
+ * equally and disagree can't tell ("I work with Bob, not with Alice" for "Works with Alice"): not the same way round.
  */
 export function samePolarity(fact: string, said: string): boolean {
   const want = new Set(terms(fact));
   const clauses = said.split(/[.;!?\n,]+|\s+(?:but|although|though|whereas)\s+/i).filter(c => c.trim());
-  let best = said;
-  let most = -1;
-  for (const c of clauses) {
-    const n = terms(c).filter(t => want.has(t)).length;
-    if (n > most) { most = n; best = c; }
-  }
-  return negated(fact) === negated(best);
+  if (!clauses.length) clauses.push(said);
+  const counted = clauses.map(c => ({ c, n: terms(c).filter(t => want.has(t)).length }));
+  const most = Math.max(...counted.map(x => x.n));
+  const ways = new Set(counted.filter(x => x.n === most).map(x => negated(x.c)));
+  return ways.size === 1 && ways.has(negated(fact));
 }
 
 /** How alike two texts are, 0 to 1 (Jaccard on their terms): near-duplicate facts score 0.8 and up. */

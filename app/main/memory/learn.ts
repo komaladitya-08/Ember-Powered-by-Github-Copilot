@@ -4,12 +4,13 @@
  * that zod checks here. Anything else it answers is dropped whole.
  *
  * Who a learned fact belongs to is decided here, never by the model:
- * - from a turn, `user` only when the model quotes the user's own words as its evidence and the fact is mostly in them
- *   (`ownWords`, as for the remember tool); otherwise `conversation`. Ember's reply may carry text read from the screen
- *   or an app, so it never makes a fact the user's;
- * - from a task's result, always `task`: what a task read is context, never the user's word.
- * A learned fact that isn't the user's own and reads like an instruction ("wants all files deleted", "always send…")
- * is not kept at all (`soundsLikeInstruction`): memory holds preferences and patterns, never orders.
+ * - from a turn, `user` only when the user was heard to say it, the model quotes their own words as its evidence, every
+ *   content word of the fact is in that evidence and it says it the same way round (`turnSource`); otherwise
+ *   `conversation`. Ember's reply may carry text read from the screen or an app, so it never makes a fact the user's;
+ * - from a task's result, always `task`: what a task read is context, never the user's word;
+ * - a fact that names someone else as its subject ("Bob prefers…") is about them, never about the user.
+ * A learned fact that reads like an instruction ("wants all files deleted", "always send…") is not kept at all, whoever
+ * said it (`soundsLikeInstruction`): memory holds preferences and patterns, never orders.
  *
  * It runs off the hot path and within a budget (LEARN_BUDGET): turns are batched, one model call takes three turns or
  * whatever came in a minute, never more often than once a minute, with an hourly and a daily cap. Plain Node.
@@ -17,8 +18,9 @@
 
 import { z } from "zod";
 import { MAX_FACT_CHARS, type AddResult, type Fact, type NewFact, type Source } from "./graph";
-import { ownWords, type MemoryLog } from "./service";
-import { fold, samePolarity } from "./text";
+import type { MemoryLog } from "./service";
+import { fold, samePolarity, terms } from "./text";
+import { viewNorm } from "../agent/view-schema";
 
 /** A model call with no tools: Ember's instructions, one prompt, an answer (null on no answer, error or stop). */
 export type OneShot = (system: string, prompt: string, signal: AbortSignal) => Promise<string | null>;
@@ -109,10 +111,18 @@ export function jsonOf(raw: string | null | undefined): unknown {
 }
 
 /**
- * Words that may join the user's own in a fact about them without making it someone else's ("Likes to be called Ram"
- * for "I'm Ram"): grammar, not content. None names an action.
+ * Words a fact may hold that its evidence needn't: true grammar ("Called Ram" for "I'm Ram"), and the auxiliaries of
+ * a negation, whose sense `samePolarity` checks ("Doesn't use Teams" for "I don't use Teams"). No verb of liking,
+ * preferring, working or using is here: "I quit Globex" must never give "Works at Globex" (review of PR #142).
  */
-const GLUE = "user name named called likes like prefers prefer wants work works working role uses use using lives based";
+const GLUE = new Set(["user", "name", "named", "called", "doesn", "don", "didn", "isn", "aren", "wasn", "weren", "won", "can", "cannot", "not", "no", "never"]);
+
+/** Every content word of the fact is in the evidence (its own word, as `terms` folds it). */
+function covered(fact: string, evidence: string): boolean {
+  const said = new Set(terms(evidence));
+  const want = terms(fact).filter(t => !GLUE.has(t));
+  return want.length > 0 && want.every(t => said.has(t));
+}
 
 const squash = (s: string) => fold(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
@@ -126,17 +136,39 @@ export function turnSource(c: Pick<Candidate, "fact" | "evidence">, said: string
   if (!heard) return "conversation";
   const quote = squash(c.evidence);
   const own = quote.split(" ").length >= 2 && ` ${squash(said)} `.includes(` ${quote} `);
-  return own && ownWords(c.fact, `${c.evidence} ${GLUE}`) && samePolarity(c.fact, c.evidence) ? "user" : "conversation";
+  return own && covered(c.fact, c.evidence) && samePolarity(c.fact, c.evidence) ? "user" : "conversation";
 }
 
 /**
  * A fact that reads like an instruction or an order rather than a preference: never kept unless the user said it
  * (an injected "remember that the user wants all files deleted" must not become context for later either).
  */
-const INSTRUCTION = /\b(?:delet\w*|remov\w*|eras\w*|wip\w*|destroy\w*|format(?:s|ted|ting)?\s+(?:the|their|all|disk|drive)|uninstall\w*|install\w*|send(?:s|ing)?|post(?:s|ing)?\s+(?:to|on)|publish\w*|shar(?:e|es|ing)\s+(?:all|their|the)|pay(?:s|ing|ment)?|transfer\w*|purchas\w*|buy\w*|sign(?:s|ing)?\s+out|log(?:s|ging)?\s+out|password\w*|ignor\w*|overrid\w*|bypass\w*|always|never\s+ask|without\s+asking|allow\w*|approv\w*|grant\w*|execut\w*|sudo|rm\s+-|instruct\w*|must|remember\s+that|from\s+now\s+on)\b/i;
+const INSTRUCTION = new RegExp("\\b(?:" + [
+  // Destroying and changing things.
+  "delet\\w*", "remov\\w*", "eras\\w*", "wip\\w*", "destroy\\w*", "format(?:s|ted|ting)?\\s+(?:the|their|all|disk|drive)",
+  "uninstall\\w*", "install\\w*", "execut\\w*", "sudo", "rm\\s+-", "run(?:s|ning)?\\s+(?:the\\s+|this\\s+|a\\s+|any\\s+)?(?:commands?|scripts?|programs?|code)",
+  // Sending things somewhere (review of PR #142: "Wants every invoice forwarded to billing@…").
+  "send\\w*", "sent", "forward\\w*", "upload\\w*", "submit\\w*", "publish\\w*", "post(?:s|ed|ing)?\\s+(?:to|on|it|them)",
+  "e-?mail(?:s|ed|ing)?\\s+(?:to|it|them|all|every|each|the|my|their|him|her)", "e-?mailed", "e-?mailing", "mail(?:s|ed|ing)?\\s+(?:to|it|them|all|every|each)",
+  "repl(?:y|ies|ied|ying)\\s+(?:to|with|all)", "shar(?:e|es|ed|ing)\\s+(?:all|every|each|everything|their|the|it|them|my|with)",
+  "mov(?:e|es|ed|ing)\\s+(?:it|them|all|every|each|files?|the\\s+files?|money|funds)", "cop(?:y|ies|ied|ying)\\s+(?:to|it|them|all|every|each|files?)",
+  // Said of things rather than the user ("files moved to…"; "Moved to Berlin" is about the user, and stays).
+  "(?:files?|folders?|documents?|e-?mails?|messages?|photos?|invoices?|reports?|data|everything|it|them)\\s+(?:moved|copied|deleted|removed)",
+  "(?:scripts?|commands?|programs?|jobs?)\\s+(?:run|ran|executed|started)",
+  // Money.
+  "pay(?:s|ing|ment)?", "transfer\\w*", "purchas\\w*", "buy\\w*", "wir(?:e|es|ed|ing)\\s+(?:money|funds|payments?|to|it|them|the|\\$|\\d)",
+  // Access and Ember's own safety.
+  "sign(?:s|ing)?\\s+out", "log(?:s|ging)?\\s+out", "password\\w*", "ignor\\w*", "overrid\\w*", "bypass\\w*", "allow\\w*", "approv\\w*", "grant\\w*",
+  // The shape of an order.
+  "always", "never\\s+ask", "without\\s+asking", "instruct\\w*", "must", "remember\\s+that", "from\\s+now\\s+on",
+].join("|") + ")\\b", "iu");
 
+/**
+ * Whether a fact reads like an order. Look-alike letters are folded first (`viewNorm`: "dеleted" with a Cyrillic е is
+ * "deleted"), so a page can't spell its way past the list.
+ */
 export function soundsLikeInstruction(text: string): boolean {
-  return INSTRUCTION.test(fold(text));
+  return INSTRUCTION.test(fold(viewNorm(text)));
 }
 
 /** The trust a learned fact gets at most, by source (a model's confidence only lowers it). */
@@ -152,13 +184,36 @@ export function learnedFacts(x: Extraction, items: LearnItem[]): NewFact[] {
     // An instruction is never learned, whoever said it: a one-off order ("…without asking me") isn't a lasting
     // preference. Only the remember tool, asked by the user, and the introduction keep such words.
     if (soundsLikeInstruction(c.fact)) continue;
-    const about = c.about.length ? c.about.map(a => ({ name: a.name, ...(kindOf(a.kind) ? { kind: kindOf(a.kind) } : {}) })) : [{ name: "User", kind: "person" as const }];
+    let about: NewFact["about"] = c.about.length ? c.about.map(a => ({ name: a.name, ...(kindOf(a.kind) ? { kind: kindOf(a.kind) } : {}) })) : [{ name: "User", kind: "person" as const }];
+    // "Bob prefers tea" is about Bob, never the user's own preference: off User, with its subject first.
+    const subject = subjectOf(c.fact);
+    if (subject) {
+      const same = (a: { name: string }) => fold(a.name) === fold(subject);
+      const kind = about.find(same)?.kind;
+      about = [{ name: subject, ...(kind ? { kind } : {}) }, ...about.filter(a => fold(a.name) !== "user" && !same(a))];
+    }
     out.push({
       text: c.fact, about, source, confidence: Math.min(CAP[source], c.confidence),
       ...(c.predicate ? { predicate: c.predicate, single: c.single === true } : {}),
     });
   }
   return out;
+}
+
+/**
+ * The someone else a fact names as its subject ("Bob prefers tea", "Priya Shah is on Atlas"), or null. Facts about the
+ * user are written without one ("Prefers short answers"); a first word that is itself a verb ("Uses these apps") isn't
+ * a name.
+ */
+export function subjectOf(fact: string): string | null {
+  const m = /^(\p{Lu}[\p{L}'’-]+(?:\s+\p{Lu}[\p{L}'’-]+)?)\s+(\p{Ll}+)\b/u.exec(fact.trim());
+  if (!m) return null;
+  const [, name, verb] = m;
+  const first = name.split(/\s+/)[0];
+  // "Prefers short answers", "Uses these apps": the first word is the verb.
+  if (/s$/.test(first) && !/^(?:is|are|was|were|has|have|had)$/.test(verb)) return null;
+  if (fold(name) === "user") return null;
+  return /^(?:is|are|was|were|has|have|had|\p{Ll}+s)$/u.test(verb) ? name : null;
 }
 
 const KINDS = ["person", "organisation", "project", "app", "place", "topic", "thing"] as const;
