@@ -130,6 +130,8 @@ export type EnrolProgress = Extract<VoiceProcessMessage, { type: "enrol" }>;
 
 /** Downloads with Chromium's network stack (system proxy settings apply). A stalled connection fails, so "Downloading…" can't stay up forever. */
 export const electronDownloader: Downloader = async (url, dest, progress, signal) => {
+  // Already cancelled: nothing is fetched (an abort listener added now would never fire).
+  if (signal?.aborted) throw new Error("cancelled");
   const ac = new AbortController();
   // Cancelled by the caller (Better recall's download when memory turns off): ends the transfer at once.
   const cancel = () => ac.abort();

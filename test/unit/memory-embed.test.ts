@@ -17,7 +17,7 @@ import type { EmbedIn, EmbedOut } from "../../app/main/memory/embed-process";
 import { MemoryGraph, type GraphClock } from "../../app/main/memory/graph";
 import { MemoryService } from "../../app/main/memory/service";
 import { memoryFile } from "../../app/main/memory/store";
-import { MEMORY_MODEL, MEMORY_MODEL_BYTES } from "../../app/voice/models";
+import { MEMORY_MODEL, MEMORY_MODEL_BYTES, ensureMemoryModel } from "../../app/voice/models";
 
 const MODEL = "a".repeat(64);
 const quiet = { info: () => undefined, warn: () => undefined };
@@ -343,6 +343,22 @@ describe("Better recall's download", () => {
     expect(r.status()).toEqual({ state: "absent", bytes: MEMORY_MODEL_BYTES, failed: "checksum" });
     expect(fs.readdirSync(path.join(dir, "models"))).toEqual([]);
     expect(r.ready).toBe(false);
+  });
+
+  it("fetches nothing more once cancelled between the model and its vocabulary (re-review of PR #141)", async () => {
+    const root = path.join(tmp(), "models");
+    fs.mkdirSync(root);
+    // The model file is in place and verified; the vocabulary is still to come.
+    const [model, vocab] = MEMORY_MODEL;
+    fs.writeFileSync(path.join(root, model.target), "model");
+    fs.writeFileSync(path.join(root, `.${model.target}.ok`), `${model.sha256}\n`);
+    const ac = new AbortController();
+    const fetched: string[] = [];
+    // Memory is turned off as the first file is done.
+    const progress = (done: number) => { if (done >= model.bytes) ac.abort(); };
+    await expect(ensureMemoryModel(root, async url => { fetched.push(url); }, progress, ac.signal)).rejects.toThrow("cancelled");
+    expect(fetched).toEqual([]);
+    expect(fs.existsSync(path.join(root, vocab.target))).toBe(false);
   });
 
   it("cancels a download under way when memory is turned off, and keeps nothing of it (review of PR #141)", async () => {

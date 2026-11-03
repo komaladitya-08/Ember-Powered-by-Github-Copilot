@@ -155,6 +155,8 @@ export function memoryModelReady(root: string): boolean {
 export async function ensureMemoryModel(root: string, download: Downloader, progress: (done: number, total: number) => void = () => undefined, signal?: AbortSignal): Promise<{ model: string; vocab: string }> {
   let done = 0;
   for (const m of MEMORY_MODEL) {
+    // Cancelled between the files (memory turned off while the first was checked or moved): the next isn't fetched.
+    if (signal?.aborted) throw new Error("cancelled");
     const base = done;
     await ensureModel(root, m, download, bytes => progress(base + Math.min(bytes, m.bytes), MEMORY_MODEL_BYTES), signal);
     done += m.bytes;

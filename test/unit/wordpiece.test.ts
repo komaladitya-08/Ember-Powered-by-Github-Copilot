@@ -45,6 +45,17 @@ describe("the memory model's tokenizer", () => {
     expect(e.types).toEqual(new Array(8).fill(0));
   });
 
+  it("cuts a long text before normalising it, never inside a surrogate pair (re-review of PR #141)", () => {
+    const tiny = new WordPiece("[PAD]\n[UNK]\n[CLS]\n[SEP]");
+    // 4,096 characters are read for 128 tokens: the emoji's high surrogate is the last of them.
+    const text = `${" ".repeat(4095)}🙂 more`;
+    expect(text.charCodeAt(4095)).toBeGreaterThanOrEqual(0xd800);
+    expect(text.charCodeAt(4095)).toBeLessThanOrEqual(0xdbff);
+    // A lone surrogate left in would be a word of its own ([UNK]); the cut drops it whole.
+    expect(tiny.encode(text).ids).toEqual([tiny.cls, tiny.sep]);
+    expect(tiny.encode(`${" ".repeat(4094)}🙂 more`).ids).toEqual([tiny.cls, tiny.unk, tiny.sep]);
+  });
+
   it("refuses a vocabulary without its special tokens", () => {
     expect(() => new WordPiece("hello\nworld")).toThrow(/\[CLS\]/);
   });

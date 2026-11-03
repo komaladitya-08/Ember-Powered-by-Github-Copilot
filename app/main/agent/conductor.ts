@@ -861,8 +861,13 @@ export class Conductor {
       // Stopped (or the connection was replaced) while memory was read: nothing is sent, and no turn is owed for it.
       this.unstarted = this.unstarted.filter(t => t !== text);
       if (reports.length) this.deps.returnReports?.(reports);
-      this.deps.log.info("conductor.ask_dropped", { stopped: this.stops !== stops });
-      return;
+      const stopped = this.stops !== stops;
+      this.deps.log.info("conductor.ask_dropped", { stopped });
+      if (stopped) return;
+      // The connection was replaced meanwhile: the user is asked to ask again, and the host drops it from its queue
+      // as for a send that failed (it is already reconnecting).
+      this.deps.presenter.fail(NO_ANSWER);
+      throw new ConnectionLost("the connection was replaced while memory was read");
     }
     const routines = this.routinesLine(text);
     const parts = [

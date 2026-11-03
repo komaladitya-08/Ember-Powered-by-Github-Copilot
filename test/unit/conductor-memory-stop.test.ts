@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { Conductor, type ConductorMemory } from "../../app/main/agent/conductor";
+import { Conductor, ConnectionLost, NO_ANSWER, type ConductorMemory } from "../../app/main/agent/conductor";
 import { KillSwitch } from "../../app/main/agent/killswitch";
 import { SemanticMemory, type Embedder } from "../../app/main/memory/embed";
 import { MemoryService } from "../../app/main/memory/service";
@@ -71,6 +71,26 @@ describe("a Stop while the request waits for memory", () => {
     await kill.pull("hotkey");
     await asked;
     expect(sent).toEqual([]);
+  });
+
+  it("asks the user to ask again when the connection was replaced during the wait, and sends nothing (re-review of PR #141)", async () => {
+    let release!: (v: string) => void;
+    const memory: ConductorMemory = { remember: () => "", forget: () => false, context: () => new Promise<string>(r => { release = r; }) };
+    const failed: string[] = [];
+    const sent: string[] = [];
+    const c = new Conductor({
+      client: {} as never, settings, presenter: { userPrompt() {}, fail: (m: string) => { failed.push(m); } } as never, log: quiet,
+      stateFile: path.join(tmp(), "agent.json"), workDir: "/tmp", model: "m", memory,
+    });
+    const session = { send: async (m: { prompt: string }) => { sent.push(m.prompt); }, abort: async () => undefined };
+    (c as unknown as { session: unknown }).session = session;
+    const asked = c.ask("open Mail");
+    await Promise.resolve();
+    (c as unknown as { session: unknown }).session = { ...session };
+    release("");
+    await expect(asked).rejects.toBeInstanceOf(ConnectionLost);
+    expect(sent).toEqual([]);
+    expect(failed).toEqual([NO_ANSWER]);
   });
 
   it("still sends a request nobody stopped", async () => {

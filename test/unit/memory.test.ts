@@ -367,6 +367,17 @@ describe("recall by meaning (Better recall's benchmark, docs/MEMORY.md §2)", ()
     expect(all(() => ({ semantic: undefined }))).toEqual(lexical);
   });
 
+  it("doesn't let the word \"user\" make a fact count as named (re-review of PR #141)", () => {
+    const g = benchGraph();
+    // Three facts by meaning alone; "user" is in each of their texts and they are all about the User entity.
+    const semantic = new Map([["f13", 0.4], ["f25", 0.35], ["f37", 0.3]]);
+    for (const q of ["Add a user to the team", "What is the user's username?"]) {
+      const lexical = recall(g, q, { k: 6, now }).map(r => r.fact.id);
+      const got = recall(g, q, { k: 6, now, semantic }).map(r => r.fact.id);
+      expect(got.filter(id => semantic.has(id) && !lexical.includes(id)), q).toEqual(["f13"]);
+    }
+  });
+
   it("counts a match at the floor or below as no match by meaning", () => {
     const g = benchGraph();
     const texts = (semantic: Map<string, number>) => recall(g, "Who is my manager?", { now, semantic }).map(r => r.fact.text);

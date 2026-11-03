@@ -178,7 +178,11 @@ export function recall(graph: MemoryGraph, query: string, o: RecallOptions = {})
   const lexical = bm25(graph, facts, q);
   const named = namedEntities(graph, query);
   // Facts the question's words or names also reach count from the floor; of the rest, only the best SEMANTIC_ALONE.
-  const about = (id: string) => lexical.has(id) || graph.fact(id)?.entities.some(e => named.has(e)) === true;
+  // The user's own entity, and the word "user" ("add a user", "my username"), are in almost every fact: neither says a
+  // request is about one, so neither lets a fact past SEMANTIC_ALONE.
+  const isUser = (e: string) => nameKey(graph.entity(e)?.name ?? "") === "user";
+  const aboutWords = o.semantic?.size && q.includes("user") ? bm25(graph, facts, q.filter(t => t !== "user")) : lexical;
+  const about = (id: string) => aboutWords.has(id) || graph.fact(id)?.entities.some(e => named.has(e) && !isUser(e)) === true;
   let alone = 0;
   const kept = o.semantic?.size
     ? new Map([...o.semantic].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).filter(([id]) => about(id) || alone++ < SEMANTIC_ALONE))
