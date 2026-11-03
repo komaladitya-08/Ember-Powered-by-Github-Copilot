@@ -204,7 +204,7 @@ describe("bestVoice", () => {
     expect(bestVoice([v("English (America) espeak-ng", "en-US", true, true), v("Mary")], "en-US")?.name).toBe("Mary");
   });
 
-  it("keeps to the language, and lets the system choose when it has none for it", () => {
+  it("keeps to the language, and returns no voice when none local matches", () => {
     expect(bestVoice([v("Thomas (Enhanced)", "fr-FR"), v("Alex", "en-GB")], "en-US")?.name).toBe("Alex");
     expect(bestVoice([v("Thomas", "fr-FR")], "en-US")).toBeNull();
   });
