@@ -1850,6 +1850,18 @@ off. The schema is strict, so **an Ember from before these keys locks down when 
 that is the intended fail-closed behaviour, and why CHANGELOG.md tells administrators to update Ember first. Any key
 added later has the same effect on the Embers before it: say so in the release notes.
 
+### 14.7 Copilot project work
+
+In Home under Copilot, choose up to six source files, then send a review, plan or patch request. The
+connected model sees only the files you send. For an exact patch to one existing UTF-8 file with a final
+newline, Ember shows the diff in **Review changes before applying**. Check it, choose **Apply patch** and
+confirm the destination. If the source has changed since you sent it, draft the patch again. Ember keeps
+LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
+unsupported diff formats remain available as text.
+
+With a build ready, run `EMBER_PROJECT_TEST=1 npm run test:integration -- test/integration/project-live.test.ts`
+to exercise the Home workflow through Electron and the Copilot runtime against an offline mock model.
+
 ## 15. Publishing a release
 
 The README sends users to the Releases page and tells them to check each file against `SHA256SUMS`, so every release

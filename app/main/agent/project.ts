@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import { memoryRefusal } from "../memory/guard";
@@ -36,8 +37,10 @@ export function projectNames(files: readonly string[]): string[] {
   return names;
 }
 
+export interface ProjectSource { name: string; file: string; text: string; stat: Stats; digest: string; bom: boolean }
+
 /** Reads only the selected regular files. A changed file is retried by the user, never sent partly. */
-export async function projectPrompt(files: readonly string[], mode: ProjectMode, question: string, signal: AbortSignal, privateDir: string): Promise<string> {
+export async function projectPrompt(files: readonly string[], mode: ProjectMode, question: string, signal: AbortSignal, privateDir: string, snapshots?: ProjectSource[]): Promise<string> {
   const names = projectNames(files);
   if (memoryRefusal(question)) throw new ProjectInputError("Remove passwords, tokens and keys from the request.");
   const sources: { name: string; text: string }[] = [];
@@ -72,6 +75,11 @@ export async function projectPrompt(files: readonly string[], mode: ProjectMode,
       if (text.includes("\0")) throw new ProjectInputError("Choose UTF-8 text files.");
       if (memoryRefusal(text)) throw new ProjectInputError("A selected file appears to contain a password, token or key.");
       sources.push({ name: names[index], text });
+      if (snapshots) {
+        const bytes = data.subarray(0, length);
+        snapshots.push({ name: names[index], file, text, stat: after,
+          digest: crypto.createHash("sha256").update(bytes).digest("hex"), bom: bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])) });
+      }
     } finally {
       await handle.close();
     }
@@ -80,7 +88,7 @@ export async function projectPrompt(files: readonly string[], mode: ProjectMode,
   const action = {
     review: "Review the selected files. Give concrete findings with file and line references.",
     plan: "Plan the requested change. Include files likely to change and how to verify it.",
-    patch: "Draft a unified diff for the selected files only. Explain anything that needs verification.",
+    patch: "Draft a unified diff for one selected file. Use a single fenced diff block starting with --- a/<selected filename> and +++ b/<selected filename>. Include exact unified hunk ranges and context. Do not use git metadata, new files, renames or deletions of files. Explain verification outside the diff block.",
   }[mode];
   const attachments = JSON.stringify(sources).replace(/</g, "\\u003c");
   return `${action}\n\nUser request:\n${question}\n\n<project_files untrusted="true">\n${attachments}\n</project_files>`;

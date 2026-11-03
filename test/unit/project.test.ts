@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { projectNames, projectPrompt, projectRequest, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { applyProjectPatch, draftProjectPatch } from "../../app/main/agent/project-patch";
+import type { ProjectSource } from "../../app/main/agent/project";
 import { copilotOneShot } from "../../app/main/agent/one-shot";
 import type { Logger } from "../../app/main/logger";
 
@@ -51,6 +53,47 @@ it("rejects unsafe files, ambiguous names, excess data and invalid request modes
   await fs.mkdir(folder);
   await expect(prompt([folder])).rejects.toThrow("regular files");
   await expect(prompt([bad], AbortSignal.abort())).rejects.toThrow();
+});
+
+const diffAnswer = (diff: string) => "A change to review.\n\n" + ["```diff", diff, "```"].join("\n");
+const diff = (name: string, hunks: string) => `--- a/${name}\n+++ b/${name}\n${hunks}`;
+
+it("applies exactly the reviewed hunks and preserves CRLF and the UTF-8 BOM", async () => {
+  const source = await file("sample.ts", "\uFEFFone\r\ntwo\r\nthree\r\nfour\r\n");
+  const snapshots: ProjectSource[] = [];
+  const signal = new AbortController().signal;
+  await projectPrompt([source], "patch", "Update it.", signal, privateDir, snapshots);
+  const change = diff("sample.ts", "@@ -1,2 +1,3 @@\n one\n-two\n+TWO\n+extra\n@@ -4 +5 @@\n-four\n+FOUR");
+  const patch = draftProjectPatch(diffAnswer(change), snapshots)!;
+  expect(patch.diff).toBe(change);
+  const audited = vi.fn();
+  applyProjectPatch(patch, signal, audited);
+  expect(audited).toHaveBeenCalledOnce();
+  expect(await fs.readFile(source, "utf8")).toBe("\uFEFFone\r\nTWO\r\nextra\r\nthree\r\nFOUR\r\n");
+  expect(await fs.readdir(dir)).toEqual(["private", "sample.ts"]);
+});
+
+it("refuses a different target, malformed hunk, cancellation, stale source or failed audit", async () => {
+  const source = await file("sample.ts", "before\n");
+  const snapshots: ProjectSource[] = [];
+  const signal = new AbortController().signal;
+  await projectPrompt([source], "patch", "Update it.", signal, privateDir, snapshots);
+  for (const change of [
+    diff("../sample.ts", "@@ -1 +1 @@\n-before\n+after"),
+    diff("sample.ts", "@@ -1 +1 @@\n-wrong\n+after"),
+    diff("sample.ts", "@@ -1,2 +1 @@\n-before\n+after"),
+    diff("sample.ts", "@@ -1 +1 @@\n-before\n+after\n--- a/other.ts\n+++ b/other.ts"),
+  ]) expect(draftProjectPatch(diffAnswer(change), snapshots)).toBeNull();
+  const patch = draftProjectPatch(diffAnswer(diff("sample.ts", "@@ -1 +1 @@\n-before\n+after")), snapshots)!;
+  const audited = vi.fn();
+  expect(() => applyProjectPatch(patch, AbortSignal.abort(), audited)).toThrow();
+  expect(() => applyProjectPatch(patch, signal, () => { throw new Error("audit unavailable"); })).toThrow("audit unavailable");
+  expect(await fs.readFile(source, "utf8")).toBe("before\n");
+  await fs.writeFile(source, "edited\n");
+  expect(() => applyProjectPatch(patch, signal, audited)).toThrow("changed");
+  expect(audited).not.toHaveBeenCalled();
+  expect(await fs.readFile(source, "utf8")).toBe("edited\n");
+  expect(await fs.readdir(dir)).toEqual(["private", "sample.ts"]);
 });
 
 it("verifies the temporary Copilot session before sending and deletes it after an answer", async () => {

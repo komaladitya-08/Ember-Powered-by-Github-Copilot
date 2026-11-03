@@ -12,7 +12,7 @@ import type { MemoryOwnership } from "../main/memory/owner";
 export interface RoutineRow { id: string; name: string; steps: string[] }
 export type ProjectMode = "review" | "plan" | "patch";
 export interface ProjectSelection { names: string[]; error?: string }
-export type ProjectResult = { answer: string } | { error: string };
+export type ProjectResult = { answer: string; patch?: { name: string; diff: string } } | { error: string };
 export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership }
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
@@ -66,6 +66,7 @@ export const IPC = {
   projectRun: "project:run",
   projectClear: "project:clear",
   projectCancel: "project:cancel",
+  projectApply: "project:apply",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -293,6 +294,7 @@ export interface EmberHomeApi {
   projectRun(request: { mode: ProjectMode; question: string }): Promise<ProjectResult>;
   projectClear(): Promise<void>;
   projectCancel(): Promise<void>;
+  projectApply(): Promise<{ message: string; done: boolean }>;
   onAgentStatus(fn: (s: AgentStatus) => void): () => void;
   signIn(): Promise<void>;
   onSignInProgress(fn: (p: SignInProgress) => void): () => void;
