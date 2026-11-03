@@ -734,7 +734,8 @@ export class Conductor {
   /** Memory's tools, while memory is on (deps.memory). */
   private get memoryTools(): { store: ConductorMemory; said: () => string } | undefined {
     const store = this.deps.memory;
-    return store ? { store, said: () => this.turnSaid } : undefined;
+    // Unchecked speech is not the owner’s evidence; saved routines retain their own provenance.
+    return store ? { store, said: () => this.saidOwn ? this.turnSaid : this.routineSaid } : undefined;
   }
 
   /** The routine tools, while routines are on (deps.routines). */

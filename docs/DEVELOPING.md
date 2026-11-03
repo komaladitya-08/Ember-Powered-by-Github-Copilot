@@ -153,8 +153,13 @@ cache (test/temp-folder.ts).
     settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
 - Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
+- When a task closes its window with keys (Ctrl+W or Ctrl+Q, Command+W or Command+Q on macOS), the next read tells it
+  the window closed, as a click on Close does. Closing a tab leaves a live window alone; denied or failed keys never
+  claim a close. A task never carries on in an unrelated window in the closed window's place.
 - **Memory** (Settings › Memory › **Remember what I tell you**, off until you turn it on and agree to its note):
   Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
+  - Switching memory off stops remembering and recall during existing turns too. Pending recall is dropped on
+    Stop or Forget; unchecked speech never counts as your own words when a fact is saved.
   - It keeps this in `memory.json` in its data folder (mode 0600).
   - While it is in force, the names in what you told it (its `user` facts) also help Ember hear them right
     (app/main/personal/correct.ts); nothing more is kept for that.
@@ -632,6 +637,11 @@ compute queued by an earlier slow frame. Compare the same backend and machine lo
 300 ms as a recognition regression; selecting the native libraries for the app does not select them for a separate
 eval unless its environment includes that directory too.
 
+A follow-up's admission stays tied to the original wake's loudness, even across successive requests. Once admitted,
+its own loudness decides when its softer words end. Reusing the louder wake for both checks cut a third request at
+"And make the text" before "a bit bigger"; the real-model suite keeps that slightly softer three-turn recording as a
+regression alongside the Electron smoke.
+
 **What Ember costs at rest.** On Linux, after `npm run build` and `node scripts/voice/prepare.mjs`, run
 `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs`.
 - It starts the built app with a throwaway data folder, consent and voice on, and silence for a microphone (`--sound`
@@ -721,6 +731,9 @@ and window title, ignoring characters that show nothing, such as a soft hyphen, 
 managers and polkit are listed by default).
 
 ### Your own model provider ("bring your own key")
+
+Removing a key, signing out, or changing the provider settings invalidates keyring work already in progress.
+A late keyring answer cannot restore a removed key or reconnect an old endpoint.
 
 Home › Copilot › **Model provider** lets a user point Ember at a model service of their own instead of GitHub Copilot
 (`settings.provider`, off by default; app/main/provider.ts): **Provider** (OpenAI-compatible, Azure OpenAI or

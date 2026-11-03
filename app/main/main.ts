@@ -1326,7 +1326,10 @@ function start(): void {
     onReady: () => memory.index(),
   });
   betterRecallRef = betterRecall;
-  settings.onChange(() => betterRecall.settingsChanged());
+  settings.onChange(() => {
+    if (!memoryOn()) learningRef?.stopNow();
+    betterRecall.settingsChanged();
+  });
   const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
   const words = wordsStore(userData);

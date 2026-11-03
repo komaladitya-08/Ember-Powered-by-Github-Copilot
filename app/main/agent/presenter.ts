@@ -1238,9 +1238,8 @@ export class Presenter {
         if (!this.answering && this.work !== "progress" && typeof d.intent === "string") this.apply({ bubble: { ...this.state.bubble, title: d.intent } });
         break;
       case "user.message": {
-        // A request's turn begins while one asked is still owed its turn. Asked while the turn before was still
-        // ending, it lost its "Thinking…" to that turn's end (session.idle): it is thinking again. The latest one's
-        // own message (it ends with the user's words) settles it.
+        // A request's turn begins while one asked is still owed its turn. If the earlier answer covered its
+        // "Thinking…", it is thinking again. The latest one's own message (it ends with the user's words) settles it.
         const asked = this.asked;
         if (asked !== null) {
           if (!this.busy && !this.silent) {
@@ -1369,6 +1368,18 @@ export class Presenter {
       }
       case "session.idle": {
         const aborted = d.aborted === true;
+        // The old turn ending does not end a newer request's wait. Keep its face and busy ring, with no answer's
+        // hide timer; heard() above cancelled its slow timer, so start that again for the request still owed a turn.
+        if (!aborted && this.work === "reply" && this.asked !== null && !this.silent && this.state.bubble.mood === "thinking") {
+          this.cancelHide();
+          this.answering = false;
+          this.produced = false;
+          this.turnOn = false;
+          this.turnAsked = null;
+          this.apply({ emotion: "thinking", talking: false, bubble: { ...this.state.bubble, streaming: true } });
+          this.armSlow();
+          break;
+        }
         // The conversation's turn ended with neither words nor a step while "Thinking…" was up: it says so instead of
         // leaving an empty or stale bubble that just fades.
         // (Not the end of the turn before a request still owed its own: that one's "Thinking…" stays.)

@@ -279,6 +279,40 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(sent(user.events)).toMatchObject([{ window: "wake" }, { text: expect.stringMatching(/do not disturb/i), window: "follow-up" }]);
   });
 
+  it("keeps the last words of a softer third request after Ember's spoken replies (PR #149 voice smoke)", () => {
+    // The smoke's committed clips, 6 s gaps, room floor and 16-bit PCM rounding. Chromium can place a frame anywhere
+    // against them: this 4 ms offset, with the third request just 3.1 dB softer, reproduced CI's "And make the text."
+    // at 25.600 s, before "a bit bigger" was said. Do not relax the last-word assertion or amplify the fixture to pass.
+    for (const gain of [0.7, 1]) {
+      let seed = 12345;
+      const recording = cat(silence(5), read("wake"), silence(6), read("followup"), silence(6), read("bigger").map(x => x * gain), silence(3));
+      const pcm = recording.map(x => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return Math.max(-32768, Math.min(32767, Math.round((x + (seed / 0x7fffffff - 0.5) * 7e-4) * 32767))) / 32768;
+      });
+      const audio = cat(new Float32Array(64), pcm), events: VoiceEvent[] = [];
+      let t = 0, speakAt = Infinity, quietAt = Infinity;
+      const engine = new VoiceEngine(backend, e => {
+        events.push(e);
+        if (e.type === "utterance") { speakAt = t + 80; quietAt = t + 670; }
+      }, { now: () => t });
+      try {
+        for (let i = 0; i + 512 <= audio.length; i += 512) {
+          if (t >= speakAt) { engine.selfSpeaking(true); speakAt = Infinity; }
+          if (t >= quietAt) { engine.selfSpeaking(false); engine.followUp(8000); quietAt = Infinity; }
+          engine.feed(audio.subarray(i, i + 512));
+          t += 32;
+        }
+        expect(sent(events), `third request gain ${gain}`).toMatchObject([
+          { text: expect.stringMatching(/night ?light/i), window: "wake" },
+          { text: expect.stringMatching(/do not disturb/i), window: "follow-up" },
+          { text: expect.stringMatching(/make the text.*bigger/i), window: "follow-up" },
+        ]);
+        expect(events.filter(e => e.type === "wake")).toHaveLength(1);
+      } finally { backend.resetVad(); }
+    }
+  });
+
   it("hears a request said softer than 'Hey Ember' after a pause, also right after Ember's answer where it can't hear its speakers (Windows)", () => {
     // Ember's answer reaches the microphone 10 dB down (Web Audio's playback isn't echo-cancelled), then 1.2 s on: "Hey
     // Ember." … 1.5 s … "And make the text a bit bigger." 6 dB softer. Ember's voice isn't the room's talk (VO9-3), nor the

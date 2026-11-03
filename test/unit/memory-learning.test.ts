@@ -749,3 +749,33 @@ describe("the second re-review of PR #142", () => {
     }
   });
 });
+
+describe("live memory consent and forgetting", () => {
+  it("refuses callbacks acquired before memory is switched off", async () => {
+    let on = true;
+    const { l, s } = learning({ inForce: () => on });
+    const m = l.conductorMemory();
+    let reads = 0;
+    s.context = async () => { reads++; return "private facts"; };
+    on = false;
+    expect(m.remember("Works on Ember", [], "I work on Ember")).toMatch(/^Not remembered/);
+    expect(await m.context("Ember")).toBe("");
+    expect(await m.forRequest("Ember", true)).toBe("");
+    expect(s.list()).toEqual([]);
+    expect(reads).toBe(0);
+  });
+
+  it.each(["off", "stop", "forget", "forgetAll"])("drops pending recall after %s", async action => {
+    let on = true;
+    const { l, s } = learning({ inForce: () => on });
+    let release!: (text: string) => void;
+    s.context = () => new Promise<string>(r => { release = r; });
+    const pending = l.conductorMemory().context("Ember");
+    if (action === "off") on = false;
+    if (action === "stop") l.stopNow();
+    if (action === "forget") l.forget("f1");
+    if (action === "forgetAll") l.forgetAll();
+    release("private facts");
+    expect(await pending).toBe("");
+  });
+});
