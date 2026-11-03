@@ -41,8 +41,12 @@ export async function startMockLlm(opts = {}) {
     try { json = JSON.parse(body); } catch { /* not JSON */ }
     const messages = json.messages ?? [];
     const tools = (json.tools ?? []).map(t => t.function?.name).filter(Boolean);
-    requests.push({ messages, tools, model: json.model });
+    // `at`, `doneAt`: when the request came and its answer was all sent (Date.now(): timings for scripts/perf/latency.mjs).
+    const entry = { messages, tools, model: json.model, at: Date.now() };
+    requests.push(entry);
     const reply = (opts.respond ?? defaultRespond)(messages, tools);
+    if (reply.tool) entry.tool = reply.tool.name;
+    res.on("finish", () => { entry.doneAt = Date.now(); });
     const id = `cmpl-${requests.length}`;
     const created = Math.floor(Date.now() / 1000);
     const chunk = (delta, finish = null, usage) =>

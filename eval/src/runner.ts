@@ -75,6 +75,12 @@ export interface Attempt {
   ms: number;
   /** From the request to Ember's first action in an app. */
   firstActionMs: number | null;
+  /**
+   * Scripted only, from the mock model's clock: the request to the worker's first model request (its session made),
+   * to its first tool call (the model's first answer sent), and each tool call's time (from the model's answer naming
+   * it to the next model request: the worker's own work, with the runtime's hand-off), by tool too.
+   */
+  timing?: { firstRequestMs: number; firstCallMs: number | null; toolMs: number[]; byTool: Record<string, number[]> };
 }
 
 export interface Outcome {
@@ -209,7 +215,7 @@ export class Runner {
   private sidecar: AtspiSidecar;
   private x11: X11 | null;
   private xinput: XInput | null;
-  private mock: { baseUrl: string; close(): Promise<void> } | null = null;
+  private mock: { baseUrl: string; requests: { at: number; doneAt?: number; tool?: string }[]; close(): Promise<void> } | null = null;
   private current: Task | null = null;
   private calls = 0;
   private copilotDir: string | null = null;
@@ -289,6 +295,22 @@ export class Runner {
     return { task, status: attempts.every(a => a.ok) ? "pass" : "fail", attempts };
   }
 
+  /** An attempt's timings from the mock model's requests since `from` (see Attempt.timing); null with a live model. */
+  private timing(from: number, asked: number): Attempt["timing"] | null {
+    const reqs = this.mock?.requests.slice(from) ?? [];
+    if (!reqs.length) return null;
+    const toolMs: number[] = [], byTool: Record<string, number[]> = {};
+    for (let i = 0; i + 1 < reqs.length; i++) {
+      const r = reqs[i], next = reqs[i + 1];
+      if (!r.tool || r.doneAt === undefined) continue;
+      const ms = next.at - r.doneAt;
+      toolMs.push(ms);
+      (byTool[r.tool] ??= []).push(ms);
+    }
+    const firstCall = reqs.find(r => r.tool && r.doneAt !== undefined);
+    return { firstRequestMs: reqs[0].at - asked, firstCallMs: firstCall ? firstCall.doneAt! - asked : null, toolMs, byTool };
+  }
+
   private async attempt(task: Task): Promise<Attempt> {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `ember-eval-${task.id}-`));
     const expand = (s: string) => s.replace(/\{tmp\}/g, tmp).replace(/\{home\}/g, os.homedir()).replace(/\{python\}/g, this.o.python).replace(/\{root\}/g, this.o.root);
@@ -312,6 +334,7 @@ export class Runner {
     const usage = { input: 0, output: 0 };
     const questions: string[] = [];
     const callsBefore = this.calls;
+    const requestsBefore = this.mock?.requests.length ?? 0;
     try {
       // Setup: files and settings, remembering settings to put back.
       for (const s of task.setup) {
@@ -405,6 +428,7 @@ export class Runner {
 
       const entries = auditEntries();
       const firstAction = entries.find(e => e.event === "action" && e.ok);
+      const timing = this.timing(requestsBefore, asked);
       const checks = await Promise.all(task.expect.map(c => runCheck(c, ctx)));
       const after = await Promise.all(task.unchanged.map(c => snapshot(c, ctx)));
       const changed = task.unchanged.flatMap((c, i) => (before[i] !== after[i] ? [`${JSON.stringify(c)}: ${before[i]} → ${after[i]}`] : []));
@@ -415,6 +439,7 @@ export class Runner {
         ok, finished: true, result, checks, changed, safety, questions, tokens: usage, ms: Date.now() - t0,
         steps: this.o.mode === "scripted" ? this.calls - callsBefore : entries.filter(e => e.event === "decision").length,
         firstActionMs: firstAction ? new Date((firstAction as { t: string }).t).getTime() - asked : null,
+        ...(timing ? { timing } : {}),
       };
     } catch (err) {
       // Whatever Ember did before the attempt broke off still counts: an action without the user's OK
