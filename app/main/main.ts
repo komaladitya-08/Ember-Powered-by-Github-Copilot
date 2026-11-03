@@ -17,7 +17,7 @@ import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
-import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnTrust, type SettingsPatch } from "./settings";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
 import { VOICE_ANSWER_REFUSED, voiceAnswer, type VoiceAnswerOutcome } from "./agent/voice-answer";
@@ -93,6 +93,10 @@ import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
+import { registerProviderIpc } from "./provider-ipc";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, createProviderService, ownProviderAuth, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
+import { PROVIDER_IPC } from "../shared/ipc";
+import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, routinesFile } from "./agent/routines";
@@ -318,7 +322,10 @@ async function runDoctor(): Promise<void> {
     const admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
     let auth: DoctorProbes["auth"] = null;
+    // The user's own provider by its host, with a key saved only if it was saved for that host (no keyring asked).
+    const ownProvider = admin.policy.provider ? null : ownProviderAuth(settingsText(), admin, new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage).savedHost());
     if (admin.policy.provider) auth = { kind: "provider", host: new URL(admin.policy.provider.baseUrl).host };
+    else if (ownProvider) auth = ownProvider;
     else {
       const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage), process.env, ghOptions()).catch(() => null);
       // After "Sign out" in Ember, a GitHub CLI or environment sign-in isn't used (as Ember itself does).
@@ -535,7 +542,7 @@ function start(): void {
     // A save that failed reaches the window as one plain sentence (review #84). A change to Work without asking is Home's
     // (its audit entry says so; one found in the file otherwise is "file").
     if (patch && typeof patch === "object" && "autonomy" in patch) autonomyChangedBy = { via: "home", verified: false };
-    try { return settings.update(ownNeverLook(withOwnTrust(patch, settings.own().trust)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
+    try { return settings.update(ownNeverLook(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -1425,6 +1432,22 @@ function start(): void {
   };
   let tokens: TokenStore | null = null;
   let currentToken: string | null = null;
+  // The user's own model provider (app/main/provider.ts): its API key is sealed in provider-key.bin, apart from the
+  // settings, for the host it was entered for, and held by the service in memory only for the runtime's provider config.
+  // Never logged (the agent's log is redacted), audited, shown or passed on. The keyring is asked only once the user's
+  // provider is on with a key saved for its host: never otherwise, and on macOS only off the main thread (a Keychain
+  // prompt there would hold Ember, and a second Ember waiting to hand over to it).
+  const providers = createProviderService({
+    settings, admin: () => admin, consented: () => consented(),
+    keys: new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
+    // Electron's fetch follows the system's proxy, as the runtime does.
+    fetch: (url, init) => net.fetch(url, init) as unknown as ReturnType<FetchLike>,
+    log: log.child("provider"),
+    changed: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); },
+  });
+  /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */
+  let fixedProvider: ActiveProvider | null = null;
+  const providerNow = (): ActiveProvider | null => activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() });
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /**
@@ -1479,6 +1502,8 @@ function start(): void {
     tokens?.clear();
     currentToken = null;
     keeper.use(null);
+    // Signing out forgets the user's own provider's key too (its other settings stay, without a key).
+    providers.forget();
     // Refusals don't outlive the sign-in: the account may have Copilot now, so the next sign-in tries every source afresh.
     refusedTokens.clear();
     askHistory = [];
@@ -1632,6 +1657,15 @@ function start(): void {
   // nothing in the browser.
   const extensionsDemo = demoVariant(devEnv("EMBER_TEST_EXTENSIONS"));
   const extensionsApi: ExtensionsApi | null = extensionsDemo ? demoExtensionsApi(extensionsDemo) : extensions;
+  // The user's own model provider (Home › Copilot): the settings window's own page only, as guard. The key comes in once
+  // (saveKey) and is never sent back; "Test connection" makes one request to the endpoint in settings, with the saved key.
+  registerProviderIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, providers.api, { log: log.child("provider") });
+  // Any settings change may move the endpoint in force (the switch, its address, its models, its card): the host
+  // reconnects when nothing would be cut off, else before the next request between turns.
+  settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); });
   registerExtensionsIpc(ipcMain, event => {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
@@ -1956,15 +1990,17 @@ function start(): void {
     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
     // On macOS the saved sign-in is opened and sealed asynchronously: the keychain prompt after an update holds no main thread.
     tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion(), asyncKeyring: platform.os === "darwin" });
-    // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in.
+    // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in; it always
+    // wins over the user's own provider (providerNow).
     let adminKey: string | undefined;
     try { adminKey = policy.provider ? sys.adminPolicy.providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
     const testProvider = devEnv("EMBER_TEST_PROVIDER_URL");
-    const provider = testProvider
-      ? { type: "openai" as const, baseUrl: testProvider, apiKey: "test" }
+    fixedProvider = testProvider
+      ? { kind: "test", config: { type: "openai" as const, baseUrl: testProvider, apiKey: "test" } }
       : policy.provider
-        ? { type: policy.provider.type, baseUrl: policy.provider.baseUrl, apiKey: adminKey, wireApi: policy.provider.wireApi, azure: policy.provider.azure }
-        : undefined;
+        ? { kind: "admin", config: { type: policy.provider.type, baseUrl: policy.provider.baseUrl, apiKey: adminKey, wireApi: policy.provider.wireApi, azure: policy.provider.azure } }
+        : null;
+    const provider = fixedProvider;
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
     if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
     // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
@@ -2184,6 +2220,8 @@ function start(): void {
     targets = createTargets({
       log: log.child("targets"), os: platform.os, sys, userData, appDir: __dirname, resourcesPath: process.resourcesPath,
       execPath: process.execPath, packaged: app.isPackaged, settings, admin: () => admin, audit: () => audit, confirmer: () => confirmer,
+      // The user's own model provider's host while it is in force: the consent cards say what is read goes there.
+      ownService: () => { const p = providerNow(); return p?.kind === "user" ? endpointHost(p.config.baseUrl) : null; },
       localHands: hands ?? null, showState: setState, notify,
       // "computers:host": the section, then the control there to focus (the settings page reads it).
       openSettings: (section, focus) => { showHome(); if (section) sendToHome(IPC.focusSection, focus ? `${section}:${focus}` : section); },
@@ -2252,7 +2290,7 @@ function start(): void {
       readTime,
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),
-      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy, signInWith: signInWith(),
+      userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secrets()).child("agent"), setState, provider: providerNow, admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).
@@ -2353,6 +2391,12 @@ function start(): void {
       // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that
       // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
       // without the keychain words. The status lasts through both reads (renewing a sign-in that ran out reads it first).
+      // The user's own provider's key, read once (the keychain may ask on macOS, as for the sign-in).
+      // The user's own provider's key, read once it is needed (the keychain may ask on macOS): the status says what for.
+      if (!provider && providers.needsRead()) {
+        setStatus("keychain", "Reading your saved API key…");
+        try { await providers.ensureKey(); } finally { setStatus("keychain", null); }
+      }
       const keychain = !provider && platform.os === "darwin" && !!tokens?.firstReadSinceUpdate();
       if (keychain) {
         setStatus("keychain", "Reading your saved sign-in from the keychain…");
@@ -2360,7 +2404,7 @@ function start(): void {
       }
       if (!provider) await keeper.freshen();
       const found = provider ? null : await resolveToken(tokens, process.env, ghOptions()).finally(() => { if (keychain) setStatus("keychain", null); });
-      log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none", ...(tokens?.unreadable ? { saved: "unreadable" } : {}) });
+      log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none", ...(providerNow()?.kind === "user" ? { provider: "user" } : {}), ...(tokens?.unreadable ? { saved: "unreadable" } : {}) });
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
       // (then "Sign in" may use it at once, so it isn't counted as the token in use). One Copilot refuses gives way to
       // the next source. Signed out while it looked (the settings window is up during a keychain prompt or a slow

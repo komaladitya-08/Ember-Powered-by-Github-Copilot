@@ -17,7 +17,7 @@ import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfi
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
 import { NO_CAPS, emberSystemMessage } from "./persona";
-import { friendlyError, type Presenter } from "./presenter";
+import { friendlyError, type Presenter, type ServiceKind } from "./presenter";
 import type { Logger } from "../logger";
 import { CHARACTERS, type SettingsStore } from "../settings";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
@@ -37,6 +37,8 @@ export interface ConductorDeps {
   workDir: string;
   model: string | null;
   provider?: ProviderConfig;
+  /** Whose endpoint `provider` is, for the words of an error (ServiceKind; default: the organisation's when one is given). */
+  service?: ServiceKind;
   /**
    * Text description of the user's screen (M3 perception); `target`: the computer the model named (only offered with
    * caps.targets), whose screen is read instead.
@@ -519,14 +521,19 @@ export class TurnWatch {
     this.silentMs = opts.silentMs ?? TURN_SILENT_MS;
   }
 
+  /** A request was sent and its turn hasn't ended (sent, taken, or at work): whatever the bubble shows meanwhile. */
+  get open(): boolean { return !this.over && (this.owed > 0 || this.taken || this.working || this.inTurn); }
   /** A request is about to be sent (its message may come before session.send returns). */
   sending(): void { this.owed++; }
   /** session.send returned: the turn begins now, or when the one under way ends. */
   sent(): void { this.check(); }
   /** session.send failed: no turn comes for it. */
   unsent(): void { this.owed = Math.max(0, this.owed - 1); this.check(); }
-  /** Stop: the runtime ends the turn under way and drops the requests waiting. */
-  clear(): void { this.owed = 0; this.taken = false; this.working = false; this.tools.clear(); this.check(); }
+  /**
+   * Stop: the runtime ends the turn under way and drops the requests waiting. From Ember's side the turn is over at once,
+   * whether or not the runtime confirms it (a request held for a new model service mustn't wait for that for ever).
+   */
+  clear(): void { this.owed = 0; this.taken = false; this.inTurn = false; this.working = false; this.tools.clear(); this.check(); }
   /** The session is let go: nothing fires any more. */
   dispose(): void { this.over = true; this.disarm(); }
   /** The turn it gave up on has ended and the session goes on: it watches again (from what the events since say). */
@@ -729,6 +736,14 @@ export class Conductor {
     return start && ((...a: A) => this.stopping ? "The user just stopped everything. Don't start anything now; say you've stopped." : start(...a));
   }
 
+  /**
+   * A turn of this conversation is under way or owed, as the runtime's events say, whatever the bubble shows (a notice
+   * may cover a streaming answer): a reconnect now would cut it off.
+   */
+  get turnOpen(): boolean {
+    return this.watch?.open ?? false;
+  }
+
   get sessionId(): string | null {
     return this.session?.sessionId ?? null;
   }
@@ -865,7 +880,7 @@ export class Conductor {
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);
       this.deps.log.warn("conductor.send_failed", { err, replaced: this.session !== session });
-      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: !!this.deps.provider, settingsKey: this.settingsKey() }));
+      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: this.deps.service ?? !!this.deps.provider, settingsKey: this.settingsKey() }));
       throw new ConnectionLost(msg);
     }
   }

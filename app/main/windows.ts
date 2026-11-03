@@ -396,14 +396,20 @@ export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuAc
 /**
  * What the settings page may change through IPC.updateSettings: anything but where Ember works (`targets`) and what
  * commands may do (`commands`). Those change only through the targets runtime's own channel, behind their consent
- * cards (TARGETS_IPC): a page that sent them here would skip a card, so they are dropped (fail closed).
+ * cards (TARGETS_IPC): a page that sent them here would skip a card, so they are dropped (fail closed). So is the own
+ * model provider's card record (`provider.consent`): it is recorded only through PROVIDER_IPC.agree.
  */
-export function settingsFromHome(patch: SettingsPatch): { patch: SettingsPatch; dropped: ("targets" | "commands")[] } {
+export function settingsFromHome(patch: SettingsPatch): { patch: SettingsPatch; dropped: ("targets" | "commands" | "provider.consent")[] } {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { patch, dropped: [] };
-  const dropped = (["targets", "commands"] as const).filter(k => Object.prototype.hasOwnProperty.call(patch, k));
-  if (!dropped.length) return { patch, dropped };
+  const dropped: ("targets" | "commands" | "provider.consent")[] = (["targets", "commands"] as const).filter(k => Object.prototype.hasOwnProperty.call(patch, k));
   const { targets: _targets, commands: _commands, ...rest } = patch;
-  return { patch: rest, dropped };
+  const p = (rest as { provider?: unknown }).provider;
+  if (p && typeof p === "object" && !Array.isArray(p) && Object.prototype.hasOwnProperty.call(p, "consent")) {
+    const { consent: _consent, ...provider } = p as Record<string, unknown>;
+    dropped.push("provider.consent");
+    return { patch: { ...rest, provider: provider as SettingsPatch["provider"] }, dropped };
+  }
+  return { patch: dropped.length ? rest : patch, dropped };
 }
 
 /**

@@ -22,6 +22,7 @@ import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerConsentText, providerHint, providerTestText } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -797,5 +798,49 @@ describe("Comfort & access › Glass (the Glass setting)", () => {
     expect(GLASS_LABEL).toBe("How much shows through");
     expect(GLASS_CHOICES).toEqual([{ value: "clear", label: "Clear" }, { value: "regular", label: "Regular" }, { value: "solid", label: "Solid" }]);
     expect(GLASS_HINT).toBe("How much of your screen shows through Ember's bubble, task cards, handle and ask box. Clear is an even, lighter tint, with Ember's words kept easy to read; Solid shows nothing through. Calm mode, and your desktop's settings to reduce transparency or increase contrast, make it solid.");
+  });
+});
+
+describe("the Model provider group's words (Copilot section)", () => {
+  it("names the endpoint's host in the card, with screenshots and the key's destination, in sentence case and British spelling", () => {
+    expect(providerConsentText("models.example.com")).toBe("Ember will send what it would send to GitHub Copilot to models.example.com instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to models.example.com. Turn this off to go back to Copilot.");
+  });
+
+  it("says what the switch does now, and when the organisation decides it", () => {
+    expect(providerHint({ managed: null, inForce: false, on: false, host: null })).toBe("Use a model service of your own instead of GitHub Copilot: OpenAI, Azure OpenAI, Anthropic, or a model server on this computer such as Ollama or LM Studio.");
+    expect(providerHint({ managed: null, inForce: false, on: true, host: null })).toBe("Enter the service's address to use it.");
+    expect(providerHint({ managed: null, inForce: false, on: true, host: "models.example.com" })).toBe("Ember uses GitHub Copilot until you agree to use models.example.com.");
+    expect(providerHint({ managed: null, inForce: true, on: true, host: "localhost:11434" })).toBe("Ember sends your requests to localhost:11434 instead of Copilot. A change applies from your next message; tasks already running finish where they started.");
+    expect(providerHint({ managed: "organisation", inForce: false, on: false, host: null })).toBe("Managed by your organisation: Ember uses its model service.");
+    expect(providerHint({ managed: "off", inForce: false, on: true, host: "x.example.com" })).toBe("Managed by your organisation: Ember uses GitHub Copilot.");
+  });
+
+  it("reports a connection test in one sentence, and says why a key can't be kept", () => {
+    expect(providerTestText({ ok: true, host: "models.example.com", models: 3 })).toBe("Connected to models.example.com. It lists 3 models.");
+    expect(providerTestText({ ok: true, host: "models.example.com", models: 1 })).toBe("Connected to models.example.com. It lists 1 model.");
+    expect(providerTestText({ ok: true, host: "localhost:1234", models: null })).toBe("Connected to localhost:1234.");
+    expect(providerTestText({ ok: false, why: "models.example.com needs an API key." })).toBe("models.example.com needs an API key.");
+    expect(PROVIDER_NO_KEYRING).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. A model server on this computer that needs no key still works.");
+    expect(PROVIDER_WORDS).toEqual({
+      keySaved: "Key saved.", keyRemoved: "Key removed.", pasteKey: "Paste the API key first.", testing: "Testing…",
+      testFailed: "Ember couldn't test the connection. Try again.",
+      badModel: "A model name has no spaces in it, such as gpt-4.1 or llama3.2:3b.",
+      badAddress: "Enter the service's full address, starting with https://.",
+      readAgain: "The address changed: read the note again for the new one, then agree.",
+      badAzure: "Enter the API version as Azure writes it, such as 2024-10-21.",
+    });
+  });
+
+  it("labels the group's rows in sentence case, with the key in a password field that is never filled from main", () => {
+    const html = readFileSync("app/renderer/home/index.html", "utf8");
+    for (const words of ["Use my own model provider", ">Provider<", ">Endpoint<", ">API key<", "Conversation model", "Model for tasks (must understand images)", ">Advanced<", ">Wire API<", "Azure API version", "Test connection", "Key saved", ">Replace<", ">Remove<", "I agree, use this provider", "Not now"]) {
+      expect(html).toContain(words);
+    }
+    expect(html).toMatch(/<input id="byok-key" type="password"[^>]*autocomplete="off"/);
+    const page = readFileSync("app/renderer/home/provider.ts", "utf8");
+    // The page writes the key field only to empty it after a save.
+    expect(page).not.toContain('fill("byok-key"');
+    expect(page.match(/ field\.value = /g)).toHaveLength(1);
+    expect(page).toContain('field.value = ""');
   });
 });

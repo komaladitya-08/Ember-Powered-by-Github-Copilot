@@ -387,3 +387,61 @@ export interface EmberExtensionsApi {
   reagree(id: string): Promise<ExtensionsDone>;
   agree(): Promise<ExtensionsDone>;
 }
+
+/**
+ * Home's own model provider rows (app/main/provider-ipc.ts): main takes these only from the settings window, checks
+ * every argument's type and size, and answers in plain words. The API key travels from the page to main once, in
+ * saveKey, and is never sent back: the page hears only whether one is saved.
+ */
+export const PROVIDER_IPC = {
+  /** Whether the user's own provider may be used and is in force, and whether a key is saved (ProviderState). */
+  state: "provider:state",
+  /** Main says the state changed (a key saved or removed, the connection): the page asks again. */
+  changed: "provider:changed",
+  saveKey: "provider:save-key",
+  removeKey: "provider:remove-key",
+  /**
+   * The user said yes to the card for this host: main records it (FEATURE_CONSENT_VERSION.provider, with the host) only
+   * when the host is the one the endpoint in settings names now. Home's general settings changes never carry the card's
+   * record (settingsFromHome drops it).
+   */
+  agree: "provider:agree",
+  /** One small request to the endpoint in settings (its model list), with the saved key: ProviderTest. */
+  test: "provider:test",
+} as const;
+
+/** The user's own model provider as Home shows it. Never the key itself. */
+export interface ProviderState {
+  /** The organisation allows a provider of the user's own (no `provider` of its own, `features.userProvider` not false, not locked down). */
+  allowed: boolean;
+  /** Why it isn't allowed, for the managed note: the organisation's own service is in use, or it is turned off (or locked down). */
+  managed: "organisation" | "off" | null;
+  /** An API key is saved (encrypted with the keyring). */
+  keySaved: boolean;
+  /** A key can be kept safely here (a keyring, not basic_text). */
+  keyring: boolean;
+  /** The user's provider is what Ember uses now: on, agreed to for its host, and allowed. */
+  inForce: boolean;
+  /** The endpoint's host in settings (with its port), or null when there is no usable address. */
+  host: string | null;
+  /** The card was agreed to for that host: until then nothing goes there, Test connection included. */
+  agreed: boolean;
+}
+
+/** How a provider action went: `why` is one plain sentence for the page. */
+export type ProviderDone = { ok: true } | { ok: false; why: string };
+
+/** "Test connection": the service answered (`models`: how many it lists, when it says), or why not in one sentence. */
+export type ProviderTest = { ok: true; host: string; models: number | null } | { ok: false; why: string };
+
+/** The settings window's provider API (`window.emberProvider`, app/preload/home.ts). */
+export interface EmberProviderApi {
+  state(): Promise<ProviderState>;
+  onChanged(fn: () => void): () => void;
+  /** Saves the API key, encrypted (refused without a keyring); it is never sent back. */
+  saveKey(key: string): Promise<ProviderDone>;
+  removeKey(): Promise<ProviderDone>;
+  /** Records the yes to the card for `host` (the endpoint's host in settings now), and turns the provider on. */
+  agree(host: string): Promise<ProviderDone>;
+  test(): Promise<ProviderTest>;
+}

@@ -94,7 +94,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, CUT_OFF, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import type { ActiveProvider } from "../../app/main/provider";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
 import { Presenter, expandedBubble } from "../../app/main/agent/presenter";
@@ -2638,5 +2639,185 @@ describe("a notice saying why Ember couldn't answer goes once that no longer hol
     expect(await host.start(TOKEN, "stored")).toBe("ready");
     expect(screen().bubble?.visible).toBe(false);
     await host.stop();
+  });
+});
+
+describe("the user's own model service changed while a task runs (PR #136 B2)", () => {
+  const at = (host: string): ActiveProvider => ({ kind: "user", config: { type: "openai", baseUrl: `https://${host}/v1`, apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } });
+
+  it("holds the next request for the new service, never sends it to the old one, starts no task on the old one, and sends it once the task ends", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, patches } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    expect(before.config.provider.baseUrl).toBe("https://a.example/v1");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    // The user moves to b.example while the task runs: nothing reconnects under it.
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    const sent = before.sent.length;
+    expect(await host.ask("summarise my inbox")).toBe(true);
+    expect(before.sent.length).toBe(sent);
+    expect(before.sent.join("\n")).not.toContain("summarise my inbox");
+    expect(patches.some(p => p.bubble?.title === PROVIDER_SWITCH_TITLE)).toBe(true);
+    // A task asked for on the old connection never starts there: no session is made for it.
+    const t2 = host.tasks!.start("tidy my downloads");
+    await vi.waitFor(() => expect(host.tasks!.get(t2.id)?.status).toBe("failed"));
+    expect(host.tasks!.get(t2.id)?.result?.summary).toBe(PROVIDER_MOVED_TASK);
+    expect(sim.sessions.some(s => s.sessionId === `ember-task-${t2.id}`)).toBe(false);
+    // The running task ends: Ember reconnects to b.example and the held request goes there.
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    const after = conductorSession();
+    expect(after.config.provider.baseUrl).toBe("https://b.example/v1");
+    await vi.waitFor(() => expect(after.sent.join("\n")).toContain("summarise my inbox"), { timeout: 3000 });
+    expect(before.sent.join("\n")).not.toContain("summarise my inbox");
+    await host.stop();
+  });
+
+  it("never cuts off a turn still running, and sends the held requests in order once it ends (re-review N-B2a)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    // Q1's turn begins on a.example and keeps running (its session hasn't gone idle).
+    await host.ask("first question");
+    await vi.waitFor(() => expect(before.sent.join("\n")).toContain("first question"));
+    now = at("b.example");
+    await host.ask("second question");
+    // The task ends while Q1's turn still runs: nothing reconnects, so Q1's answer isn't cut off.
+    host.tasks!.cancel(t.id);
+    await new Promise(r => setTimeout(r, 400));
+    expect(before.disconnected).toBe(false);
+    expect(conductorSession()).toBe(before);
+    // A third question waits behind the second, never jumping ahead or cutting the turn.
+    await host.ask("third question");
+    expect(before.disconnected).toBe(false);
+    expect(before.sent.join("\n")).not.toMatch(/second question|third question/);
+    // Q1's turn ends: Ember moves to b.example and sends the held questions there, in order.
+    before.emit("assistant.turn_end");
+    before.emit("session.idle", {});
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    const after = conductorSession();
+    expect(after.config.provider.baseUrl).toBe("https://b.example/v1");
+    await vi.waitFor(() => expect(after.sent.join("\n")).toContain("third question"), { timeout: 3000 });
+    const joined = after.sent.join("\n");
+    expect(joined.indexOf("second question")).toBeGreaterThanOrEqual(0);
+    expect(joined.indexOf("second question")).toBeLessThan(joined.indexOf("third question"));
+    await host.stop();
+  });
+
+  it("drops the held requests on Stop: none is sent afterwards", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    await host.ask("held question");
+    await host.abortAll();
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 }).catch(() => undefined);
+    await new Promise(r => setTimeout(r, 400));
+    for (const s of sim.sessions) expect((s.sent as string[]).join("\n")).not.toContain("held question");
+    await host.stop();
+  });
+
+  for (const how of ["stopAnswer", "abortAll"] as const) {
+    it(`sends a request after ${how} to the new service, though the runtime never confirms the stop (third review #136)`, async () => {
+      sim.abortEnds = false;
+      let now: ActiveProvider | null = at("a.example");
+      const { host } = makeHost({ hands: hands(), provider: () => now });
+      expect(await host.start(null)).toBe("ready");
+      const before = conductorSession();
+      await host.ask("first question");
+      await vi.waitFor(() => expect(before.sent.join("\n")).toContain("first question"));
+      now = at("b.example");
+      await host[how]();
+      await host.ask("after stop");
+      await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 2000 });
+      const after = conductorSession();
+      expect(after.config.provider.baseUrl).toBe("https://b.example/v1");
+      await vi.waitFor(() => expect(after.sent.join("\n")).toContain("after stop"), { timeout: 2000 });
+      expect(before.sent.join("\n")).not.toContain("after stop");
+      await host.stop();
+    });
+  }
+
+  it("queues a request asked while the switch connects behind the held ones (third review #136)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    await host.ask("held question");
+    // The new session's creation waits: the switch is under way when the next question comes.
+    let open = () => {};
+    sim.createGate = new Promise<void>(r => { open = r; });
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(before.disconnected).toBe(true), { timeout: 3000 });
+    void host.ask("asked while switching");
+    await new Promise(r => setTimeout(r, 50));
+    sim.createGate = null;
+    open();
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    const after = conductorSession();
+    await vi.waitFor(() => expect(after.sent.join("\n")).toContain("asked while switching"), { timeout: 3000 });
+    const joined = after.sent.join("\n");
+    expect(joined.indexOf("held question")).toBeGreaterThanOrEqual(0);
+    expect(joined.indexOf("held question")).toBeLessThan(joined.indexOf("asked while switching"));
+    await host.stop();
+  });
+
+  it("drops the held requests when Ember quits: nothing reconnects afterwards", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    await host.ask("held question");
+    const clients = sim.clients.length;
+    await host.stop();
+    await new Promise(r => setTimeout(r, 400));
+    expect(sim.clients.length).toBe(clients);
+    for (const s of sim.sessions) expect((s.sent as string[]).join("\n")).not.toContain("held question");
+  });
+
+  it("doesn't hold requests for ever when the switch's connect hangs, and Stop everything ends the release (fourth review #136)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    // Today's 15 s waits, shortened for the test.
+    const { host, patches } = makeHost({ hands: hands(), provider: () => now, connectWaitMs: 150 });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    await host.ask("held question");
+    // The new session is never created: the switch's connect hangs.
+    sim.createGate = new Promise<void>(() => undefined);
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(before.disconnected).toBe(true), { timeout: 3000 });
+    // After the release's wait and the usual one, the held question is told Ember is still connecting, and the
+    // release is over: a later question isn't held behind it.
+    await vi.waitFor(() => expect(patches.some(p => p.bubble?.title === "I'm still connecting to Copilot")).toBe(true), { timeout: 3000 });
+    const h = host as unknown as { releasing: boolean; held: unknown[] };
+    await vi.waitFor(() => expect(h.releasing).toBe(false), { timeout: 3000 });
+    const shown = patches.length;
+    await host.ask("later question");
+    expect(h.held).toEqual([]);
+    expect(patches.slice(shown).some(p => p.bubble?.title === "I'm still connecting to Copilot")).toBe(true);
+    // Stop everything during a release that hangs ends it too.
+    h.held.push({ text: "x", context: null, epoch: 0, how: {} });
+    h.releasing = true;
+    await host.abortAll();
+    expect(h.releasing).toBe(false);
+    expect(h.held).toEqual([]);
+    sim.createGate = null;
   });
 });

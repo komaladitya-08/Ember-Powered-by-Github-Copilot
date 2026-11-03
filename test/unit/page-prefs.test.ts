@@ -208,7 +208,7 @@ describe("the text size", () => {
     expect(minHeight(read("app/renderer/overlay/styles.css"), ".task-actions button.stop")).toBe("calc(28px * var(--text-scale))");
     expect(minHeight(home, ".start")).toBe("calc(36px * var(--text-scale))");
     expect(height(home, ".models select, .choice select, #text-size, #handle-position, #glass")).toBe("calc(28px * var(--text-scale))");
-    expect(height(home, ".add-row input")).toBe("calc(28px * var(--text-scale))");
+    expect(height(home, ".add-row input, .field-row > input")).toBe("calc(28px * var(--text-scale))");
     expect(minHeight(read("app/renderer/prompt/styles.css"), ".form input")).toBe("calc(30px * var(--text-scale))");
     // The guard sees them wherever they are, by element, class or the page's ids, and leaves what holds no words.
     expect(fixedControlHeights(".btn { min-height: 28px; } @media (hover: hover) { .x button { min-height: 20px; } } .tab-where { min-height: 9px; }")).toEqual([".btn", ".x button"]);

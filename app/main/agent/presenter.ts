@@ -59,22 +59,36 @@ export function plainText(s: string): string {
 export const SIGN_IN_REFUSED = "Copilot didn't accept the sign-in. Open settings to sign in again.";
 
 /**
+ * Which model service Ember uses, for the words of its errors: false GitHub Copilot, true the organisation's own
+ * endpoint (the administrator's `provider`; there is no GitHub sign-in to blame then), "user" the user's own model
+ * provider (Home › Copilot; the API key they entered is what to check).
+ */
+export type ServiceKind = boolean | "user";
+
+/**
  * One plain sentence for an error from Copilot, instead of the raw SDK or HTTP text.
- * `raw` is kept for the log by the caller. `provider`: the organisation's own model service
- * is configured (there is no GitHub sign-in to blame then). `settingsKey`: the settings
+ * `raw` is kept for the log by the caller. `provider`: which model service is in use (ServiceKind).
+ * `settingsKey`: the settings
  * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E"); null while another app holds
  * it: the sentence names none (cross-review X5).
  */
-export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: boolean; settingsKey?: string | null } = {}): string {
+export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: ServiceKind; settingsKey?: string | null } = {}): string {
   const key = ctx.settingsKey === undefined ? SHORTCUTS.linux.settings.label : ctx.settingsKey;
   /** "in settings (Ctrl+Alt+E)", or where to go without a shortcut. */
   const inSettings = (own: boolean) => (key ? `in ${own ? "Ember's " : ""}settings (${key})` : "in Ember's settings");
   const m = `${errorType ?? ""} ${raw}`;
   const status = ctx.statusCode ?? Number(/\b(?:HTTP|status|code)?\s*\(?(40[1-4]|429)\b/i.exec(raw)?.[1] ?? 0);
-  const service = ctx.provider ? "your organisation's model service" : "Copilot";
+  const mine = ctx.provider === "user";
+  const service = mine ? "your model service" : ctx.provider ? "your organisation's model service" : "Copilot";
   // Before the policy rule: a filtered prompt mentions a "content management policy", not the user's seat.
   if (/content.?(management|filter)|content_filter|filtered due to|responsible ?ai/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} content filter blocked that request. Try asking in other words.`;
+  // A model that takes no images was sent a screenshot (the user's own provider's models are taken to read them unless
+  // the service says otherwise, which it does only by refusing one).
+  if (/\b(image|images|image_url|vision|multimodal|multi-modal)\b/i.test(m) && /not (supported|support|allowed|enabled)|only supported|unsupported|doesn't support|does not support|cannot|can't|invalid/i.test(m)) {
+    return `This model can't read images. Choose a model for tasks that understands images ${inSettings(true)}.`;
+  }
   if (ctx.provider && (errorType === "authentication" || status === 401 || status === 403 || /authenticat|unauthori[sz]ed|forbidden/i.test(m))) {
+    if (mine) return `Your model service refused the request. Check its API key ${inSettings(true)}.`;
     return "Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.";
   }
   const refused = "Copilot refused this for your account (an organisation policy or a missing Copilot seat).";
@@ -88,7 +102,7 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
   // The runtime's own connection went away ("Pending response rejected since connection got disposed").
   if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
-  if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${ctx.provider ? "Your organisation's model service" : "Copilot"} had a problem on its side. Try again in a moment.`;
+  if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${mine ? "Your model service" : ctx.provider ? "Your organisation's model service" : "Copilot"} had a problem on its side. Try again in a moment.`;
   // A request that timed out (not the network's ETIMEDOUT, which is above).
   if (/timed? ?out|timeout|took too long/i.test(m)) return `${ctx.provider ? "The model service" : "Copilot"} took too long to answer. Try again in a moment.`;
   const short = raw.replace(/\{[\s\S]*\}/g, "").replace(/^\w*Error:\s*/, "").trim();
@@ -142,7 +156,7 @@ export function settingsHelps(said: string): boolean {
  * of Ember's own); "Copilot had a problem" when it says nothing more particular. `provider`: the organisation's own
  * model service is configured (a problem on its side is said as its).
  */
-export function problemTitle(said: string, provider = false): string {
+export function problemTitle(said: string, provider: ServiceKind = false): string {
   const service = provider ? "The model service" : "Copilot";
   if (/content filter/i.test(said)) return "Request blocked";
   if (/didn't accept the sign-in/i.test(said)) return "Copilot didn't accept the sign-in";
@@ -617,6 +631,11 @@ export class Presenter {
   private readonly readTime: () => number;
   private readonly textScale: () => number;
 
+  /** Which model service is in use now (see the constructor's `service`). */
+  private get provider(): ServiceKind {
+    return typeof this.service === "function" ? this.service() : this.service;
+  }
+
   constructor(
     private push: (patch: Partial<EmberState>) => void,
     private timers: { set: typeof setTimeout; clear: typeof clearTimeout } = { set: setTimeout, clear: clearTimeout },
@@ -625,8 +644,11 @@ export class Presenter {
     owner: BubbleOwner | { current: object | null } = new BubbleOwner(),
     /** A finished answer, in full (the bubble shows only the start of a long one). */
     private onFinalAnswer?: (text: string) => void,
-    /** The organisation's own endpoint is configured: errors don't mention a GitHub sign-in. */
-    private provider = false,
+    /**
+     * Which model service is in use (ServiceKind), or a function that says it now (the user's own provider can be
+     * switched on and off while Ember runs): errors don't mention a GitHub sign-in when it isn't Copilot.
+     */
+    private service: ServiceKind | (() => ServiceKind) = false,
     opts: PresenterOptions = {},
   ) {
     this.work = opts.task ? "progress" : "reply";

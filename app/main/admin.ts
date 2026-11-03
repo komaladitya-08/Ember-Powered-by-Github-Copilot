@@ -61,6 +61,12 @@ export const AdminPolicySchema = z.object({
      * the switch shows off and managed. Also off wherever `allowGrants` is false or `confirmEveryAction` is true.
      */
     autonomy: z.boolean().optional(),
+    /**
+     * The user's own model provider (Home › Copilot, "Use my own model provider"): false, users can't point Ember at
+     * a model service of their own (the switch shows off and managed). The administrator's own `provider` turns it off
+     * too, and always wins.
+     */
+    userProvider: z.boolean().optional(),
   }).strict().default({}),
   /** Apps and windows Ember never reads, captures or acts in (added to the user's never-look list). */
   neverLook: z.array(name).max(200).default([]),
@@ -121,7 +127,7 @@ export interface LoadedAdminPolicy {
 
 /** Everything off that could act or listen: used when the policy file is broken. */
 const LOCKDOWN: AdminPolicy = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false, routines: false, extensions: false, autonomy: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false, routines: false, extensions: false, autonomy: false, userProvider: false },
   allowGrants: false,
   confirmEveryAction: true,
   commands: { local: "off", wsl: "off", ssh: "off" },
@@ -224,6 +230,14 @@ export function autonomyAllowed(admin: Pick<AdminPolicy, "features" | "allowGran
   return admin.features.autonomy !== false && admin.allowGrants !== false && !admin.confirmEveryAction && admin.features.actions !== false;
 }
 
+/**
+ * May users point Ember at a model service of their own? Not where the administrator set the organisation's own
+ * `provider` (it always wins) or turned it off (`features.userProvider`, false under LOCKDOWN too).
+ */
+export function userProviderAllowed(admin: Pick<AdminPolicy, "features" | "provider">): boolean {
+  return !admin.provider && admin.features.userProvider !== false;
+}
+
 /** The settings Ember actually uses: the user's, with the administrator's values on top. */
 export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   const s: Settings = structuredClone(user);
@@ -247,6 +261,9 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   const allowed = admin.models.allowed;
   const pick = (pinned: string | undefined, chosen: string | null) => pinned ?? (chosen && allowed && !allowed.includes(chosen) ? null : chosen);
   s.models = { conductor: pick(admin.models.conductor, s.models.conductor), worker: pick(admin.models.worker, s.models.worker) };
+  // The user's own model provider: off where it isn't allowed, and its model ids held to the administrator's as above.
+  s.provider = { ...s.provider, conductor: pick(admin.models.conductor, s.provider.conductor), worker: pick(admin.models.worker, s.provider.worker) };
+  if (!userProviderAllowed(admin)) s.provider.on = false;
   return s;
 }
 
@@ -263,6 +280,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.extensions === false) keys.push("extensions");
   if (!autonomyAllowed(admin)) keys.push("autonomy");
   if (admin.provider) keys.push("provider");
+  if (!userProviderAllowed(admin)) keys.push("userProvider");
   return keys;
 }
 

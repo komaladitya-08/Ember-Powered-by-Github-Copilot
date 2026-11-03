@@ -226,6 +226,6 @@ describe("a change sent from the settings window", () => {
     expect(withOwnTrust({ size: 70 }, own)).toEqual({ size: 70 });
     const home = fs.readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
     expect(home).toContain("void save({ trust: { askedApps: (e.target as HTMLInputElement).checked } } as SettingsPatch);");
-    expect(fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain("settings.update(ownNeverLook(withOwnTrust(patch, settings.own().trust))");
+    expect(fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain("settings.update(ownNeverLook(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider))");
   });
 });

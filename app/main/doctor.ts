@@ -42,7 +42,11 @@ export interface DoctorProbes {
   voiceModelsMissing?: ModelId[];
   runtime: boolean;
   /** How Ember will reach a model: an organisation endpoint, a GitHub sign-in, or nothing yet. */
-  auth: { kind: "provider"; host: string } | { kind: "github"; source: string } | null;
+  /**
+   * Where model requests go: the organisation's model service (`provider`), the user's own (`own-provider`, while it is
+   * on and agreed to), each by its host only (never the key), or GitHub Copilot with the sign-in found.
+   */
+  auth: { kind: "provider"; host: string } | { kind: "own-provider"; host: string; key: boolean } | { kind: "github"; source: string } | null;
   /**
    * How this build signs in (github-app.ts), and whether the GitHub CLI is installed: without Ember's own GitHub App the
    * fix says sign-in needs a GitHub account with Copilot and the GitHub CLI. Absent: the fix offers "Sign in with GitHub".
@@ -189,6 +193,8 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     ? { id: "copilot", status: "fail", label: "Copilot", detail: "Ember's Copilot runtime is missing from the installation.", fix: reinstall }
     : p.auth?.kind === "provider"
       ? { id: "copilot", status: "ok", label: "Model service", detail: `Your organisation's model service (${p.auth.host}).` }
+      : p.auth?.kind === "own-provider"
+        ? { id: "copilot", status: "ok", label: "Model service", detail: `Your own model provider (${p.auth.host}), ${p.auth.key ? "with its API key saved" : "with no API key saved"}.` }
       : p.auth?.kind === "github"
         ? { id: "copilot", status: "ok", label: "Copilot", detail: `Signed in (${p.auth.source === "stored" ? "Ember's saved sign-in" : p.auth.source === "github-cli" ? "GitHub CLI sign-in" : "token from the environment"}).` }
         : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: p.signIn?.with === "github-cli"

@@ -19,6 +19,7 @@ export function searchFold(s: string): string {
  */
 export const SEARCH_ALIASES: Readonly<Record<string, string>> = {
   "copilot-h": "github account sign in sign out login model",
+  "byok-h": "byok bring your own key api key provider openai azure anthropic ollama lm studio endpoint local model server",
   "voice-h": "mic microphone wake word hey ember speech speak listen voice match hearing",
   "pick-h": "character avatar size handle",
   "memory-h": "remember forget routines reminders",

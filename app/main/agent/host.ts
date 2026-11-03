@@ -15,7 +15,8 @@ import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
+import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import type { ActiveProvider } from "../provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
@@ -124,6 +125,11 @@ export interface AgentStatus {
   usage: { calls: number; inputTokens: number; outputTokens: number };
   /** Copilot stopped answering, and Ember reconnects once the tasks that are running finish (reconnecting now would stop them). */
   waitingForTasks?: boolean;
+  /**
+   * The model service this connection uses when it isn't GitHub Copilot: the organisation's ("admin"), the user's own
+   * ("user") or a development test server ("test"), by its host only (never the key).
+   */
+  service?: { kind: ActiveProvider["kind"]; host: string };
 }
 
 /** One line of the conversation, kept in memory for this session only (the settings window shows them). */
@@ -198,8 +204,14 @@ export interface HostOptions {
    * drops what it kept of it too (the ask box's history).
    */
   onAccountChanged?: () => void;
-  /** The organisation's own endpoint (admin policy), or for tests and offline demos an OpenAI-compatible server. */
-  provider?: ProviderConfig;
+  /**
+   * A model endpoint instead of GitHub Copilot: a fixed one (the organisation's own from the admin policy, or for tests
+   * and offline demos an OpenAI-compatible server), or a function that says which is in force now (main's: the
+   * administrator's, else the user's own provider while it is on and agreed to, app/main/provider.ts). The function is
+   * asked at every connect; a change takes effect at the next reconnect (providerChanged, or the next request between
+   * turns), and tasks already running finish on the endpoint they started with.
+   */
+  provider?: ProviderConfig | (() => ActiveProvider | null);
   /** Admin lockdown (/etc/ember/policy.json). */
   admin?: () => AdminPolicy;
   /**
@@ -237,6 +249,8 @@ export interface HostOptions {
   system?: WorkerSystem;
   /** How long a request the runtime took may wait for its turn to begin (ms; TURN_START_MS, see TurnWatch). */
   turnStartMs?: number;
+  /** How long a request waits for a connect under way, and the release of held requests for the switch's (ms; CONNECT_WAIT_MS). */
+  connectWaitMs?: number;
   /** How long a turn under way may hear nothing before Ember says it's still waiting (ms; TURN_SLOW_MS). */
   turnSlowMs?: number;
   /** How long a turn under way may hear nothing before it is given up on (ms; TURN_SILENT_MS). */
@@ -291,6 +305,11 @@ export function proxyFromChromium(rule: string): { url: string | null; socks?: s
   const kind = m[1].toUpperCase();
   if (kind.startsWith("SOCKS")) return { url: null, socks: `${kind === "SOCKS5" ? "socks5" : "socks4"}://${m[2]}` };
   return { url: `${kind === "HTTPS" ? "https" : "http"}://${m[2]}` };
+}
+
+/** A URL's host with its port, as Ember names a model service ("models.example.com", "127.0.0.1:11434"). */
+function serviceHost(url: string): string {
+  try { return new URL(url).host || "?"; } catch { return "?"; }
 }
 
 /** The host name of a URL, as NO_PROXY lists it (null if it isn't one). */
@@ -403,7 +422,40 @@ const transient = (err: unknown, msg: string) => err instanceof SessionToolsTime
 const TRANSIENT_DETAIL = "Copilot had a problem on its side while Ember connected. Ember will try again in a moment.";
 
 /** A start's error that names no model Ember may use (thrown by doStart itself): shown as it is. */
-const NO_MODEL = /^(None of the models|Copilot lists no models)/;
+const NO_MODEL = /^(None of the models|Copilot lists no models|Enter the model)/;
+
+/** The user's own provider is on with no model named (Home › Copilot's Model fields). */
+export const USER_PROVIDER_NO_MODEL = "Enter the model your provider should use in Ember's settings, under Copilot.";
+/** Every model the user named for their own provider is outside the administrator's allowed list. */
+export const USER_PROVIDER_NOT_ALLOWED = "None of the models you entered for your provider are allowed by your administrator.";
+/** A request held because the model service changed while a turn or a task was under way (it never goes to the one before). */
+export const PROVIDER_SWITCH_TITLE = "Switching model service";
+export const PROVIDER_SWITCH_WAIT = "You changed the model service, so I'll send this there once what I'm doing now has finished. It won't go to the one before.";
+/** A task that would have started on the model service the user switched away from. */
+/** How often held requests look again for a quiet moment to go (a turn's end comes a moment after its answer). */
+const HELD_RECHECK_MS = 250;
+/**
+ * How long a request waits for Copilot to finish connecting before it is told Ember is still connecting: also how long
+ * the release of held requests waits on the switch's connect before sending them on (a connect that hangs never holds
+ * requests for ever).
+ */
+const CONNECT_WAIT_MS = 15_000;
+export const PROVIDER_MOVED_TASK = "The model service changed before this task could start. Ask me again and I'll use the new one.";
+
+/** What a connection's endpoint is, to tell a change: its kind, config (key included: kept in memory only) and models. */
+function providerKey(p: ActiveProvider | null): string {
+  return p ? JSON.stringify([p.kind, p.config, p.models ?? null]) : "";
+}
+
+/** The model service a conversation is held with: "copilot", or a provider's kind and address. */
+function serviceOf(p: ActiveProvider | null): string {
+  return p ? `${p.kind} ${p.config.baseUrl}` : "copilot";
+}
+
+/** The words an error uses for `p` (ServiceKind). */
+function kindOf(p: ActiveProvider | null): ServiceKind {
+  return p ? (p.kind === "user" ? "user" : true) : false;
+}
 
 /**
  * The runtime can't start: starting it failed ("spawn … ENOENT"), the SDK didn't find it, or a file error names the
@@ -610,6 +662,25 @@ export class AgentHost {
   private conversation: string | null = null;
   /** The account the conversation belongs to: signed in as another, it isn't resumed. */
   private conversationLogin: string | undefined;
+  /** The GitHub account Ember last connected to Copilot with (kept across connections to another model service). */
+  private githubLogin: string | undefined;
+  /**
+   * The model service the conversation was held with ("copilot", or a provider's kind and address): on another, it isn't
+   * resumed (its history isn't sent to a service it wasn't held with); a new conversation starts, and memory stays.
+   */
+  private conversationService: string | null = null;
+  /** The endpoint this connection uses (null: GitHub Copilot), asked of HostOptions.provider as it started. */
+  private active: ActiveProvider | null = null;
+  /** What providerNow() said as this connection started (providerKey), to see a change since. */
+  private startedProvider = "";
+  /** Requests asked after the model service changed while a turn or a task was under way: sent to the new one later. */
+  private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3] }[] = [];
+  /** A release of the held requests is under way. */
+  private releasing = false;
+  /** Counts releases and the Stops that end them: a release that finds it moved on does nothing more. */
+  private releaseGen = 0;
+  /** The next look at whether the held requests can go. */
+  private heldTimer: ReturnType<typeof setTimeout> | null = null;
   private models: ModelLike[] = [];
   /** The bubble is shared by the conversation and every task (see BubbleOwner). */
   private readonly owner: BubbleOwner;
@@ -725,10 +796,10 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
-    this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
+    this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), () => this.serviceKind(),
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
-    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
-    this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
+    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
+    this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     // Reminders kept from the last run come back now, not once Copilot connects: one due while Ember was offline or
     // signed out is still told on time (a reminder never needs Copilot). Not before the user has agreed to Ember at
     // all: nothing is read or told until then (they come back with the conversation, once it starts).
@@ -812,7 +883,7 @@ export class AgentHost {
    */
   private async checkSignIn(gen: number): Promise<void> {
     const client = this.client;
-    if (this.o.provider || this.checkingSignIn || gen !== this.gen || this.status.phase !== "ready" || !client) return;
+    if (this.active || this.checkingSignIn || gen !== this.gen || this.status.phase !== "ready" || !client) return;
     this.checkingSignIn = true;
     try {
       const auth = await within(client.getAuthStatus(), 10_000);
@@ -841,7 +912,7 @@ export class AgentHost {
     if (!caps?.commandsOffered || caps.commands) return;
     // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short), and
     // stays as long as the user's More time to read and answer says, as every bubble does.
-    const p = this.commandsHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider, this.bubbleOptions);
+    const p = this.commandsHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     p.outcome({
       title: "Commands are off", text: "Ember can run commands for you in its own command window once you turn them on in its settings (Commands).",
       emotion: "neutral", gesture: "rest", mood: "idle", actions: [{ id: "ui:settings", label: "Open settings" }],
@@ -1062,6 +1133,8 @@ export class AgentHost {
    */
   stop(): Promise<void> {
     this.quitting = true;
+    // Requests held for a new model service go with Ember (not doStop, which every reconnect runs: the switch itself).
+    this.dropHeld();
     return this.halt(true);
   }
 
@@ -1077,16 +1150,19 @@ export class AgentHost {
     await this.doStop();
     if (gen !== this.gen) return;
     // The administrator's policy locks Ember down: nothing connects, so nothing Ember reads goes anywhere.
+    // The endpoint in force as this connection starts: it holds until the next connect (tasks keep theirs).
+    const provider = this.active = this.providerNow();
+    this.startedProvider = providerKey(provider);
     const refused = this.o.refuseConnect?.() ?? null;
     if (refused) {
-      this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined });
+      this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined, service: undefined });
       return;
     }
-    if (!token && !this.o.provider) {
-      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined });
+    if (!token && !provider) {
+      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined, service: undefined });
       return;
     }
-    this.setStatus({ phase: "starting", detail: "Connecting to Copilot…", source: this.source });
+    this.setStatus({ phase: "starting", detail: provider?.kind === "user" ? `Connecting to ${serviceHost(provider.config.baseUrl)}…` : "Connecting to Copilot…", source: this.source });
     let unreachable = false;
     try {
       const env = await this.runtimeEnv();
@@ -1098,7 +1174,8 @@ export class AgentHost {
           mode: "empty",
           baseDirectory: path.join(this.o.userData, "copilot"),
           useLoggedInUser: false,
-          ...(token ? { gitHubToken: token } : {}),
+          // With another model service in use, no GitHub sign-in goes to the runtime: requests go only to that service.
+          ...(token && !provider ? { gitHubToken: token } : {}),
           connection: RuntimeConnection.forStdio({ path: this.o.runtimePath }),
           logLevel: "warning",
           env,
@@ -1107,7 +1184,7 @@ export class AgentHost {
         this.client = client;
         await client.start();
         if (gen !== this.gen) return;
-        if (this.o.provider) break;
+        if (provider) break;
         const auth = await client.getAuthStatus();
         if (gen !== this.gen) return;
         if (auth.isAuthenticated) { login = (auth as { login?: string }).login; break; }
@@ -1128,13 +1205,28 @@ export class AgentHost {
       // Another account than the conversation's (signed in again from the error state, or the GitHub CLI's
       // account changed): it isn't resumed under this one. It's deleted, as at sign-out, and what it said and
       // how its tasks ended go with it.
-      if (this.conversation && login !== this.conversationLogin) await this.accountChanged();
+      // Another model service than the conversation's (the user's own provider turned on or off, or changed): the
+      // conversation isn't resumed there, so its history goes nowhere it wasn't sent before. A new one starts, and what
+      // Ember remembers stays (it is the same person).
+      const service = serviceOf(provider);
+      if (this.conversation && this.conversationService !== null && service !== this.conversationService) {
+        this.o.log.info("agent.service_changed", { kind: provider?.kind ?? "copilot" });
+        await this.forgetCurrent(RUNTIME_WAIT_MS);
+        this.carried = [];
+      }
+      if (!provider && ((this.conversation && login !== this.conversationLogin) || (this.githubLogin !== undefined && login !== this.githubLogin))) await this.accountChanged();
+      if (!provider) this.githubLogin = login;
 
       let models: ModelLike[] = [];
       const admin = this.o.admin?.();
       const allowed = admin?.models.allowed;
-      if (!this.o.provider) {
+      if (!provider) {
         models = (await client.listModels()) as ModelLike[];
+      } else if (provider.kind === "user") {
+        // The user's own provider serves the models they named (within the administrator's allowed list, below).
+        const named = [...new Set([provider.models?.conductor, provider.models?.worker].filter((m): m is string => !!m))];
+        if (!named.length) throw new Error(USER_PROVIDER_NO_MODEL);
+        models = named.map(id => ({ id, name: id, capabilities: { supports: { vision: true } } }));
       } else {
         // A custom endpoint serves the models the admin named (its deployments and allowed list), or a test model.
         const named = [...new Set([admin?.models.conductor, admin?.models.worker, ...(allowed ?? [])].filter((m): m is string => !!m))];
@@ -1146,13 +1238,16 @@ export class AgentHost {
       const listed = models.length;
       if (allowed) models = models.filter(m => allowed.includes(m.id));
       const s = this.o.settings.get();
-      const choice = chooseModels(models, { conductor: s.models.conductor ?? undefined, worker: s.models.worker ?? undefined });
+      const wanted = provider?.kind === "user"
+        ? { conductor: provider.models?.conductor ?? provider.models?.worker ?? undefined, worker: provider.models?.worker ?? provider.models?.conductor ?? undefined }
+        : { conductor: s.models.conductor ?? undefined, worker: s.models.worker ?? undefined };
+      const choice = chooseModels(models, wanted);
       // The runtime's default model only where nothing limits the models (it may be one the administrator didn't allow).
       const runtimeDefault = !choice.conductor
-        && mayUseRuntimeDefault(listed, { provider: !!this.o.provider, allowed, conductor: admin?.models.conductor, worker: admin?.models.worker });
+        && mayUseRuntimeDefault(listed, { provider: !!provider, allowed, conductor: admin?.models.conductor, worker: admin?.models.worker });
       // Said by cause: the administrator's list, their pinned model with nothing listed, or models listed but none turned on.
       if (!choice.conductor && !runtimeDefault) {
-        throw new Error(allowed ? "None of the models your administrator allows are available to this account."
+        throw new Error(allowed ? (provider?.kind === "user" ? USER_PROVIDER_NOT_ALLOWED : "None of the models your administrator allows are available to this account.")
           : listed === 0 ? "Copilot lists no models for this account, and your administrator chose which model Ember uses, so Ember can't use Copilot's default one."
           : "None of the models Copilot lists are enabled for this account. Turn one on in your Copilot settings on GitHub.");
       }
@@ -1182,6 +1277,8 @@ export class AgentHost {
           this.finishedLately = [...this.finishedLately.filter(t => t !== task && Date.now() - (t.finished ?? 0) <= CATCH_UP_MS), task].slice(-FINISHED_KEPT);
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
+          // Requests held for a model service the user switched to go there once nothing else is under way.
+          this.releaseHeldSoon();
           // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
           const why = task.status === "cancelled" ? this.stoppedWhy.get(task.id) : undefined;
           this.stoppedWhy.delete(task.id);
@@ -1219,9 +1316,12 @@ export class AgentHost {
           // The user closed the card: its result, if it hasn't shown yet, doesn't pop up afterwards.
           if (byUser && p?.waiting) p.drop();
         },
-        provider: !!this.o.provider,
+        provider: kindOf(provider),
         actionsAllowed: () => this.actionsAllowed(),
         makeWorker: (spec, progress, update, activity) => {
+          // The model service changed since this connection started: no task starts on the one before (a queued task, or
+          // one a turn already under way asked for). Tasks running now finish where they started.
+          if (this.providerMoved()) return refusedWorker(spec, PROVIDER_MOVED_TASK);
           // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
           // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
           // and only for a task on this computer: one bound elsewhere never runs on this screen's hands (fail closed).
@@ -1242,7 +1342,7 @@ export class AgentHost {
           this.taskStatus.set(spec.id, followStatus(h.commands?.runner, text => presenter.progress(text)));
           return new Worker({
             client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && h.binding.desktop === "screen",
-            provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
+            provider: provider?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
             reviewCommands: () => this.o.settings.get().trust.reviewCommands && this.o.admin?.().features.aiReview !== false,
@@ -1275,7 +1375,7 @@ export class AgentHost {
         stateFile: this.stateFile,
         resume: this.conversation,
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
-        model: choice.conductor, provider: this.o.provider,
+        model: choice.conductor, provider: provider?.config, service: kindOf(provider),
         // What the conversation reads on the screen goes with the tasks it starts in that turn (their goals may carry it).
         describeScreen: targets ? async (choice?: string) => { const turn = this.turn; const seen = await this.describeTarget(choice); if (seen.read) turn?.screen.push(seen.text); return seen.text; }
           : this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.describeThisScreen(); if (seen.read) turn?.screen.push(seen.text); return seen.text; } : undefined,
@@ -1295,6 +1395,7 @@ export class AgentHost {
           // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
           this.o.onTurnEnd?.(aborted);
+          this.releaseHeldSoon();
         },
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
@@ -1420,9 +1521,11 @@ export class AgentHost {
       this.conversation = this.conductor.sessionId;
       this.convoCaps = caps;
       this.conversationLogin = login;
+      this.conversationService = service;
       if (gen !== this.gen) return;
 
-      const signedIn = login ? `Signed in as ${login}.` : "Connected.";
+      const where = provider?.kind === "user" ? serviceHost(provider.config.baseUrl) : null;
+      const signedIn = login ? `Signed in as ${login}.` : where ? `Connected to ${where}.` : "Connected.";
       this.setStatus({
         phase: "ready",
         detail: runtimeDefault ? `${signedIn} Using Copilot's default model: this account doesn't list models to choose from.` : signedIn,
@@ -1433,6 +1536,7 @@ export class AgentHost {
         models: models.map(m => ({ id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true, ...(m.billing?.multiplier !== undefined ? { cost: costOf(m) } : {}) })),
         conductorModel: choice.conductor,
         workerModel: choice.worker,
+        service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
       });
       this.o.log.info("agent.ready", { login, conductorModel: choice.conductor, workerModel: choice.worker, models: models.length, runtimeDefault });
       // Connected: the wait before the next offline try starts short again. (Crashes count for ten minutes:
@@ -1477,9 +1581,10 @@ export class AgentHost {
     };
     let p = await proxyFor("https://api.github.com/");
     let direct: string[] = [];
-    const endpoint = this.o.provider?.baseUrl ? hostOf(this.o.provider.baseUrl) : null;
-    if (endpoint) {
-      const own = await proxyFor(this.o.provider!.baseUrl!);
+    const baseUrl = this.active?.config.baseUrl;
+    const endpoint = baseUrl ? hostOf(baseUrl) : null;
+    if (baseUrl && endpoint) {
+      const own = await proxyFor(baseUrl);
       if (own.url || own.socks) p = own;
       else direct = [endpoint];
     }
@@ -1597,7 +1702,7 @@ export class AgentHost {
     const where = binding ? whereWords(binding) ?? (othersNamed ? "on this computer" : undefined) : undefined;
     const place = where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ` : "";
     const announce = this.o.onAnnounce;
-    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
+    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, () => this.serviceKind(), {
       task: id, corner: corner && this.o.cornerTasks === true, ...this.bubbleOptions, ...(where ? { where } : {}),
       ...(announce ? { onAnnounce: (text: string) => announce(`${place}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
     });
@@ -1691,6 +1796,100 @@ export class AgentHost {
     if (seen.blocked) return "that window is private (a password prompt, or on the never-look list).";
     if (!seen.window) return seen.busy ? "the window doesn't answer right now." : "Ember can't read that window (it exposes no accessibility information).";
     return null;
+  }
+
+  /** The endpoint in force now, as HostOptions.provider says it (a fixed config is the organisation's); null: Copilot. */
+  private providerNow(): ActiveProvider | null {
+    const p = this.o.provider;
+    if (!p) return null;
+    if (typeof p !== "function") return { kind: "admin", config: p };
+    return p();
+  }
+
+  /** The words errors use for the service in use (this connection's, or before one starts, the one in force). */
+  private serviceKind(): ServiceKind {
+    return kindOf(this.active ?? this.providerNow());
+  }
+
+  /** Checks, once the current turn of events settles, whether the held requests can go (releaseHeld). */
+  private releaseHeldSoon(): void {
+    if (this.held.length) void Promise.resolve().then(() => this.releaseHeld());
+  }
+
+  /**
+   * Nothing a switch of model service would cut off: no start under way, no request waiting for its turn, no task
+   * running or queued, and no conversation turn under way or owed as the runtime's own events say. Not the bubble's
+   * state: a notice may cover a streaming answer (the hold's own), and after a Stop the runtime never confirms, the
+   * bubble may still look busy though the turn is over from Ember's side (TurnWatch.clear).
+   */
+  private quietForSwitch(): boolean {
+    return this.starting === 0 && !this.queued.length && !this.tasksAtWork() && !(this.conductor?.turnOpen ?? false);
+  }
+
+  /** Drops the requests held for a new model service (Stop, quit): none of them is sent, and the notice goes. */
+  private dropHeld(): void {
+    const had = this.held.length > 0;
+    this.held = [];
+    // A release under way ends with them (a connect that hangs leaves nothing holding later requests).
+    this.releaseGen++;
+    this.releasing = false;
+    if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = null; }
+    if (had) this.noticeBoard.clear();
+  }
+
+  /**
+   * Sends the requests held for a new model service once nothing is under way any more: Ember reconnects to the service
+   * in force, then asks each in order. A Stop pressed meanwhile drops them (their epoch is old). Nothing goes to the
+   * service before.
+   */
+  private async releaseHeld(): Promise<void> {
+    if (this.quitting || this.releasing || !this.held.length) return;
+    if (!this.quietForSwitch()) {
+      // A turn's end reaches the runtime's events a moment after its answer: looked at again shortly, until it is quiet.
+      if (!this.heldTimer) this.heldTimer = setTimeout(() => { this.heldTimer = null; void this.releaseHeld(); }, HELD_RECHECK_MS);
+      return;
+    }
+    this.releasing = true;
+    const gen = ++this.releaseGen;
+    try {
+      // The connect to the new service, for at most CONNECT_WAIT_MS: one that hangs doesn't hold the requests for ever.
+      // They go on down the usual path, which waits a little more and then says Ember is still connecting.
+      if (this.providerMoved()) await Promise.race([this.launch(this.token, this.source), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
+      // Each held request, in order, then any asked meanwhile (they queued behind, `releasing`), until none is left. A
+      // Stop meanwhile ends the release (dropHeld): nothing more is sent.
+      while (this.held.length && !this.quitting && gen === this.releaseGen) {
+        const h = this.held.shift()!;
+        if (!this.held.length) this.noticeBoard.clear();
+        this.o.log.info("agent.held_released", { left: this.held.length });
+        // `released`: this one goes through; any other asked while it is sent queues behind.
+        await this.ask(h.text, h.context, h.epoch, { ...h.how, released: true });
+      }
+    } finally {
+      if (gen === this.releaseGen) {
+        this.releasing = false;
+        // One held while it finished (or a release that couldn't go now): looked at again.
+        if (this.held.length) this.releaseHeldSoon();
+      }
+    }
+  }
+
+  /** The endpoint in force is no longer the one this connection started with. */
+  private providerMoved(): boolean {
+    return providerKey(this.providerNow()) !== this.startedProvider;
+  }
+
+  /**
+   * The model service in force may have changed (main calls this when the user's own provider is turned on or off,
+   * edited, or its key saved or removed): Copilot is reconnected now when nothing would be cut off (not connected, or
+   * ready and idle), so the next request goes to the service in force. Otherwise the next request reconnects once the
+   * turn and the tasks under way are done (ask), and they finish where they started. Resolves to the phase once the
+   * reconnect is done, or null when nothing reconnects now.
+   */
+  providerChanged(): Promise<AgentPhase> | null {
+    if (this.quitting || !this.providerMoved()) return null;
+    if (this.status.phase === "ready" && (!this.quietForSwitch() || this.held.length > 0)) return null;
+    this.o.log.info("agent.provider_changed", { kind: this.providerNow()?.kind ?? "copilot" });
+    return this.launch(this.token, this.source);
   }
 
   /**
@@ -1801,7 +2000,7 @@ export class AgentHost {
    * behind a turn under way), just before it is sent: main's acknowledgement waits for it, so "On it." never comes
    * while the request still waits, nor over another turn's answer.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; short?: boolean; onSent?: () => void } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; short?: boolean; onSent?: () => void; released?: boolean } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
     // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
@@ -1876,9 +2075,27 @@ export class AgentHost {
       this.o.log.info("agent.tasks_available");
       void this.launch(this.token, this.source);
     }
-    // Memory was turned on or off since the conversation's tools were made: Copilot is reconnected first (the
-    // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
-    if (this.status.phase === "ready" && (this.memoryWanted() !== this.memoryOn || this.routinesWanted() !== this.routinesOn) && this.idle) {
+    // The model service in force changed since this connection started (the user's own provider turned on or off, or
+    // edited): reconnected first, so this request goes to the one in force now. Tasks finish on the service they started
+    // with; while they (or a turn) are under way, the request is held for the new service instead.
+    if (!how.released && (this.held.length > 0 || this.releasing || (this.status.phase === "ready" && this.providerMoved() && !this.quietForSwitch()))) {
+      // A turn or a task is under way on the service before: this request goes to the one in force now, never to that
+      // one. It waits (saying so) until they are done, then Ember reconnects and sends it (releaseHeld). One asked while
+      // others wait goes behind them, in order. The notice is the notice board's, so the conversation's own state (a
+      // turn still streaming) is left as it is.
+      this.o.log.info("agent.request_held", { kind: this.providerNow()?.kind ?? "copilot", waiting: this.held.length });
+      this.held.push({ text, context, epoch, how });
+      // It stays for as long as anything is held (no timer): it goes when they are sent or dropped.
+      this.noticeBoard.post({ title: PROVIDER_SWITCH_TITLE, thought: PROVIDER_SWITCH_WAIT, actions: [], mood: "attention" });
+      this.releaseHeldSoon();
+      return true;
+    }
+    if (this.status.phase !== "starting" && this.providerMoved()) {
+      this.o.log.info("agent.provider_changed", { kind: this.providerNow()?.kind ?? "copilot" });
+      void this.launch(this.token, this.source);
+    } else if (this.status.phase === "ready" && (this.memoryWanted() !== this.memoryOn || this.routinesWanted() !== this.routinesOn) && this.idle) {
+      // Memory was turned on or off since the conversation's tools were made: Copilot is reconnected first (the
+      // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
       this.o.log.info("agent.memory_changed", { on: this.memoryWanted(), routines: this.routinesWanted() });
       void this.launch(this.token, this.source);
     } else if (this.status.phase === "ready" && this.o.extensions && this.o.extensions.generation !== this.extensionsGen && this.idle) {
@@ -1889,7 +2106,7 @@ export class AgentHost {
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
     if (this.starting > 0 || this.status.phase === "starting") {
       this.presenter.userPrompt(text);
-      await Promise.race([this.settled(), sleep(15_000)]);
+      await Promise.race([this.settled(), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
       // Stop was pressed while it waited: the request is dropped, not sent once connected.
       if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
@@ -1948,6 +2165,7 @@ export class AgentHost {
   async stopAnswer(): Promise<void> {
     this.stops++;
     this.queued = [];
+    this.dropHeld();
     this.presenter.stopped();
     this.o.log.info("agent.answer_stopped");
     await this.conductor?.abort();
@@ -1959,8 +2177,10 @@ export class AgentHost {
    */
   async abortAll(): Promise<void> {
     this.stops++;
-    // Requests still waiting for their turn are dropped with it (the runtime runs none of them).
+    // Requests still waiting for their turn are dropped with it (the runtime runs none of them), and those held for a
+    // new model service.
     this.queued = [];
+    this.dropHeld();
     this.claimBubble();
     this.presenter.quiet();
     // (A connection's bubble too: the kill switch stops its reconnects, so "I'll try to reconnect" doesn't come back.)
@@ -2050,6 +2270,8 @@ export class AgentHost {
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
     this.forgetKept();
     this.setSignedOut(true);
+    // The next account to sign in is nobody's successor: no account change is told for it.
+    this.githubLogin = undefined;
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();
     this.finishedLately = [];

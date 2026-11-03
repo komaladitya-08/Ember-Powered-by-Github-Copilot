@@ -16,7 +16,7 @@ import type { Worker, WorkerResult, TaskSpec } from "./worker";
 import type { AuditEntry, AuditLog } from "../policy/audit";
 import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
-import { friendlyError } from "./presenter";
+import { friendlyError, type ServiceKind } from "./presenter";
 import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
 import type { TaskActivity, TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
@@ -80,8 +80,8 @@ export interface TaskManagerDeps {
   onFinished?: (task: Task) => void;
   /** A finished card went: the user closed it (`byUser`), or its time was up. */
   onRemoved?: (task: Task, byUser: boolean) => void;
-  /** The organisation's own endpoint is configured (a task's error doesn't mention a GitHub sign-in). */
-  provider?: boolean;
+  /** Which model service the tasks use (ServiceKind: a task's error doesn't mention a GitHub sign-in unless it is Copilot). */
+  provider?: ServiceKind;
   /**
    * Whether tasks may act now (false: the organisation turned acting off). A failed card offers Try again only while
    * they may: the retry would refuse to start otherwise, a button that does nothing. Default: they may.
