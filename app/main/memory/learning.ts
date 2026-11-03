@@ -187,6 +187,8 @@ export class MemoryLearning {
    * and its "Ember learned" line goes (`onForgot`). True if it was there.
    */
   forget(id: string): boolean {
+    // A refinement still reading this fact must never reintroduce it in a summary after Forget.
+    this.refining?.abort();
     ++this.recallRevision;
     const had = this.d.memory.forget(id);
     this.recent = this.recent.filter(r => r.id !== id);
@@ -197,9 +199,9 @@ export class MemoryLearning {
   /** Everything is forgotten (sign-out, Forget everything): what waits to be learned goes too. */
   forgetAll(): void {
     this.stopNow();
+    this.d.memory.forgetAll();
     this.gaps.clear();
     this.recent = [];
-    this.d.memory.forgetAll();
     // The "Ember learned" lines and their Undo go too.
     this.d.onForgotAll?.();
   }

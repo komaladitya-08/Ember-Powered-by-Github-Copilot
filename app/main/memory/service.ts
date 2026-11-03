@@ -12,7 +12,7 @@
 import { consolidate } from "./consolidate";
 import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
-import { ENTITY_KINDS, type AddResult, type EntityKind, type Fact, type GraphClock, type MemoryGraph, type NewFact, type Source } from "./graph";
+import { ENTITY_KINDS, type AddResult, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
 import { recall, type Recalled } from "./recall";
 import { memoryFile, type MemoryFile } from "./store";
 import { samePolarity, terms } from "./text";
@@ -148,25 +148,43 @@ export class MemoryService {
   forget(id: string): boolean {
     // Only an open fact gives back what it replaced: a closed one was itself replaced since, and reopening under it would
     // leave a single predicate with two open values.
-    const f = this.g.fact(id);
-    const reopened = f && !f.invalidAt ? this.g.reopenSuperseded(id) : 0;
-    const had = this.g.forgetFact(id);
-    if (had) {
+    if (!this.g.fact(id)) return false;
+    // Stage the edit separately: a failed disk write must not remove the visible fact or reopen its predecessor.
+    const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
+    const f = next.fact(id)!;
+    const reopened = !f.invalidAt ? next.reopenSuperseded(id) : 0;
+    next.forgetFact(id);
+    try {
+      // Derived data first. If the graph write fails, missing vectors can safely be rebuilt from the retained graph.
       this.o.semantic?.forget(id);
-      // What came back is recalled by meaning again.
-      if (reopened) this.o.semantic?.changed(this.g);
-      this.dirty();
-      this.o.log.info("memory.forgot", { count: 1, reopened });
+      this.file.save(next);
+    } catch (err) {
+      this.o.semantic?.changed(this.g);
+      this.o.log.warn("memory.erase_failed", { err: err instanceof Error ? err.message : String(err) });
+      throw new Error("Ember couldn't finish deleting this memory. It is still listed; try Forget again.", { cause: err });
     }
-    return had;
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    this.graph = next;
+    this.changed = true;
+    this.o.semantic?.changed(next);
+    this.o.log.info("memory.forgot", { count: 1, reopened });
+    this.o.onChange?.();
+    return true;
   }
 
-  /** Forgets everything: the graph and the file. */
+  /** Forgets everything only after both persistent stores have been erased successfully. */
   forgetAll(): void {
+    try {
+      this.o.semantic?.forgetAll();
+      this.file.erase();
+    } catch (err) {
+      if (this.graph) this.o.semantic?.changed(this.graph);
+      this.o.log.warn("memory.erase_failed", { err: err instanceof Error ? err.message : String(err) });
+      throw new Error("Ember couldn't finish deleting memory from this computer. It is still listed; try Forget everything again.", { cause: err });
+    }
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     this.graph?.clear();
-    try { this.file.erase(); } catch (err) { this.o.log.warn("memory.erase_failed", { err: err instanceof Error ? err.message : String(err) }); }
-    this.o.semantic?.forgetAll();
+    this.indexPending = false;
     this.changed = false;
     this.o.log.info("memory.forgot_all");
     this.o.onChange?.();

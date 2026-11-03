@@ -23,7 +23,7 @@ import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
+  dayLabel, describeEntry, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, memoryDeleteFailedText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
   rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed, withCommandShells,
   type HomePatch, type Segment,
 } from "./copy";
@@ -721,7 +721,7 @@ $("retry").addEventListener("click", () => {
   }, err => signInMsg(ipcErrorText(err), true));
 });
 $("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });
-$("sign-out").addEventListener("click", () => { void window.ember.signOut(); });
+$("sign-out").addEventListener("click", () => { void window.ember.signOut().catch(err => signInMsg(memoryDeleteFailedText(err), true)); });
 
 /** The device code row: "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]". */
 function showCode(userCode: string, uri: string): void {
@@ -865,7 +865,7 @@ function renderMemory(rows: MemoryRow[]): void {
       li.append(fact);
       const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
       btn.setAttribute("aria-label", forgetMemoryLabel(r.text));
-      btn.addEventListener("click", () => { memoryFocus = i; void window.ember.forgetMemory(r.id); });
+      btn.addEventListener("click", () => { void deleteMemory(btn, () => window.ember.forgetMemory(r.id), i); });
       li.append(btn);
       return li;
     })
@@ -917,7 +917,19 @@ $("memory-yes").addEventListener("click", () => {
   $("memory-on").focus();
 });
 $("memory-no").addEventListener("click", () => { $("memory-consent").hidden = true; $("memory-on").focus(); });
-$("memory-forget-all").addEventListener("click", () => { memoryFocus = 0; void window.ember.forgetAllMemory(); });
+/** A rejected deletion keeps the list and presents a retryable, user-safe failure. */
+async function deleteMemory(button: HTMLButtonElement, remove: () => Promise<unknown>, focus: number): Promise<void> {
+  if (button.disabled) return;
+  button.disabled = true;
+  $("memory-error").textContent = "";
+  memoryFocus = focus;
+  try { await remove(); }
+  catch (err) { memoryFocus = null; $("memory-error").textContent = memoryDeleteFailedText(err); }
+  finally { button.disabled = false; }
+}
+$("memory-forget-all").addEventListener("click", () => {
+  void deleteMemory($("memory-forget-all") as HTMLButtonElement, () => window.ember.forgetAllMemory(), 0);
+});
 window.ember.onSettingsChanged(applyMemorySettings);
 void window.ember.memory().then(renderMemory);
 
@@ -942,7 +954,7 @@ function renderRecall(s: BetterRecallState): void {
   } else recallShown = -1;
 }
 $("recall-download").addEventListener("click", () => { void window.ember.downloadMemoryModel(); });
-$("recall-remove").addEventListener("click", () => { void window.ember.removeMemoryModel().then(() => $("recall-download").focus()); });
+$("recall-remove").addEventListener("click", () => { void window.ember.removeMemoryModel().then(() => $("recall-download").focus(), err => { $("memory-error").textContent = memoryDeleteFailedText(err); }); });
 window.ember.onMemoryModel(renderRecall);
 void window.ember.memoryModel().then(renderRecall);
 window.ember.onMemory(renderMemory);
