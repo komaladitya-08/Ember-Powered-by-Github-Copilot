@@ -10,7 +10,7 @@ import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, naturalVoiceView, setupBadge, setupView } from "./copy";
 import {
-  AUTONOMY_CONSENT_TEXT, autonomyHint, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, LEARNED_UNDONE, MEMORY_CONSENT_TEXT,
+  AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, LEARNED_UNDONE, MEMORY_CONSENT_TEXT,
   MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, undoLearnedLabel,
 } from "./copy";
@@ -280,9 +280,13 @@ let checksBeforeStart = false;
 let shownChecks = "";
 /** The setup check's rows as last shown: the voice line's fix button comes from its microphone row. */
 let checksNow: Status["environment"]["checks"] = [];
+/** Whether the organisation manages "Work without asking" (applyAutonomySettings): its hint is redrawn with the checks. */
+let autonomyManaged = false;
 function renderChecks(environment: Status["environment"]): void {
   shownChecks = JSON.stringify(environment.checks);
   checksNow = environment.checks;
+  // The switch's hint says when Ember runs elevated (every command asks then).
+  $("autonomy-hint").textContent = autonomyHint(autonomyManaged, elevationOf(checksNow));
   renderVoiceFix();
   const hadFocus = $("checks").contains(document.activeElement);
   // A fix button that had focus keeps it when its row is drawn again (the row's check id says which).
@@ -984,7 +988,8 @@ $("routines-forget-all").addEventListener("click", () => { routineFocus = 0; voi
 $("autonomy-consent-text").textContent = AUTONOMY_CONSENT_TEXT;
 function applyAutonomySettings(s: Settings): void {
   ($("autonomy-on") as HTMLInputElement).checked = s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION;
-  $("autonomy-hint").textContent = autonomyHint(managed.has("autonomy"));
+  autonomyManaged = managed.has("autonomy");
+  $("autonomy-hint").textContent = autonomyHint(autonomyManaged, elevationOf(checksNow));
 }
 $("autonomy-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;

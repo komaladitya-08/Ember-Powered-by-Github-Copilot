@@ -1,0 +1,60 @@
+{
+  "id": "autonomy-borrow-announced",
+  "title": "Borrows the keyboard for an ordinary shortcut without asking",
+  "instruction": "Save the test bench with Ctrl+S.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "autonomy": true
+  },
+  "hands": [
+    "cursor"
+  ],
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "press_keys",
+      "args": {
+        "keys": "ctrl+s"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Pressed Ctrl+S."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "key",
+        "name": "s",
+        "ctrl": true
+      }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "kind": "keys",
+        "verdict": "allow",
+        "autonomy": true
+      }
+    },
+    {
+      "audit": {
+        "event": "confirm"
+      },
+      "absent": true
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier3",
+    "autonomy"
+  ]
+}

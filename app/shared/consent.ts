@@ -9,7 +9,7 @@ export const CONSENT_VERSION = 1;
  * card again, and nothing else. `provider`: the user's own model provider (Home's Copilot section), agreed to per
  * endpoint host (settings `provider.consent.host`).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 2, routines: 1, extensions: 1, autonomy: 1, provider: 1 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 2, routines: 1, extensions: 1, autonomy: 2, provider: 1 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

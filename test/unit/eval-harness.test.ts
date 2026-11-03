@@ -25,6 +25,11 @@ function toolsFor(t: Task) {
     lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
     ...(t.hands.includes("cursor") ? { cursor: { borrow: {}, findWindow: () => 0, setBorrowing: () => undefined } } : {}),
     ...(t.hands.includes("desk") ? { desk: async () => ({}), onDesk: () => undefined } : {}),
+    // Commands on this computer, as the runner's local service offers them (bash and sh on Linux).
+    ...(t.hands.includes("commands") ? {
+      target: { id: "local", kind: "local", label: "This computer", screenOs: "linux", shellOs: "linux", desktop: "screen" },
+      commands: { binding: { id: "local", kind: "local", label: "This computer", screenOs: "linux", shellOs: "linux", desktop: "screen" }, capability: () => ({ state: "on", askEvery: null }), shells: () => ["bash", "sh"] },
+    } : {}),
   } as unknown as WorkerDeps;
   const worker = new Worker(deps, { id: t.id, goal: t.instruction, target: {}, mode: t.mode });
   return new Map(worker.tools().map(tool => [tool.name, tool.parameters as unknown as z.ZodObject<z.ZodRawShape>]));

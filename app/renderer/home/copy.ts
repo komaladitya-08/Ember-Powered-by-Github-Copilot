@@ -309,12 +309,32 @@ export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you
  * without asking, what still asks, that Ember says what it does, and that a stop always works. Change it only with a bump
  * of that version.
  */
-export const AUTONOMY_CONSENT_TEXT = "Ember will use your apps, borrow your mouse and keyboard, run ordinary commands and move text between apps for what you ask, without asking you first each time. It says what it is doing as it goes, in its bubble and on the task's card, and keeps a record under What Ember did. It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and dangerous commands. It never types passwords and never acts in sign-in prompts, and if a page or file tries to give it instructions, that task goes back to asking. Saying “Ember, stop”, or Ember's stop shortcut, stops everything at once, and moving your mouse takes it back.";
+export const AUTONOMY_CONSENT_TEXT = "Ember will use your apps, borrow your mouse and keyboard, run ordinary commands, move text between apps and press OK on a simple message box (one whose only button is OK, with nothing to choose or tick) for what you ask, without asking you first each time. It says what it is doing as it goes, in its bubble and on the task's card, and keeps a record under What Ember did. It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question. It never types passwords and never acts in sign-in prompts, and if a page or file tries to give it instructions, that task goes back to asking. Saying “Ember, stop”, or Ember's stop shortcut, stops everything at once, and moving your mouse takes it back.";
 
-/** Under the "Work without asking" switch: what changes, and that questions can be answered by voice (Voice Match). */
-export function autonomyHint(managed: boolean): string {
-  if (managed) return "Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, and before moving text between apps.";
-  return "Off, Ember asks before its first step in an app, before using your mouse and keyboard, and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: “Ember, allow” (with Voice Match on) or “Ember, not now”.";
+/**
+ * Under the "Work without asking" switch: what changes, and that questions can be answered by voice (Voice Match).
+ * `elevated`: Ember runs as an administrator or as root (elevationOf), so every command asks whatever the switch says
+ * (commands/decide.ts): said, so the user can tell why.
+ */
+export function autonomyHint(managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null): string {
+  const base = managed
+    ? "Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps."
+    : "Off, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: “Ember, allow” (with Voice Match on) or “Ember, not now”.";
+  if (elevated === "administrator") return `${base} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
+  if (elevated === "maybe-administrator") return `${base} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
+  if (elevated === "root") return `${base} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
+  return base;
+}
+
+/**
+ * Whether the setup check says Ember runs elevated (Windows' "elevated" row, Linux's "elevated" and macOS's "root",
+ * whenever it isn't ok: one that can't tell counts, as the commands do, but is said as "may be"), and how to say it.
+ */
+export function elevationOf(checks: readonly { id: string; label: string; status: string; detail?: string }[]): "administrator" | "maybe-administrator" | "root" | null {
+  const row = checks.find(c => (c.id === "elevated" || c.id === "root") && c.status !== "ok");
+  if (!row) return null;
+  if (row.label !== "Administrator") return "root";
+  return /couldn't tell/i.test(row.detail ?? "") ? "maybe-administrator" : "administrator";
 }
 
 /** The routines note (FEATURE_CONSENT_VERSION.routines): change it only with a bump of that version. */

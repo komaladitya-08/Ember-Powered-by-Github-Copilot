@@ -135,6 +135,8 @@ export interface RawNode {
   native?: number;
   /** The element went away while it was being read (UIA ElementNotAvailable). */
   gone?: boolean;
+  /** Snapshots: something under it is left out and isn't listed, so what is listed under it isn't all of it (tree.ts: `omitted`). */
+  omitted?: boolean;
 }
 
 /**

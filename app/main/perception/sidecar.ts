@@ -44,6 +44,14 @@ export interface AxNode {
   /** The part of `bounds` that shows, where some of it is scrolled out of its list or lies outside its window. */
   shown?: Bounds;
   /**
+   * Something under it isn't listed (offscreen, closed, hidden, collapsed, without a size, or couldn't be asked): what
+   * is listed under it isn't all of it. Absent from a reader that doesn't say (policy treats a dialog's controls as
+   * unknown only where something under it says `omitted`; see dialogAround).
+   */
+  omitted?: boolean;
+  /** A Win32 dialog box (class #32770: a MessageBox, a property sheet): where its title bar's Close answers as OK does. */
+  dialogBox?: boolean;
+  /**
    * A spreadsheet's cell (LibreOffice Calc), read from its sheet by row and column: named by its address ("B7"), its
    * text what it holds. A cell with the keyboard that is scrolled away has no `bounds`.
    */
