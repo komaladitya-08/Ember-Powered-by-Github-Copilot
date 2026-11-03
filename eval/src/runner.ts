@@ -295,7 +295,11 @@ export class Runner {
     return { task, status: attempts.every(a => a.ok) ? "pass" : "fail", attempts };
   }
 
-  /** An attempt's timings from the mock model's requests since `from` (see Attempt.timing); null with a live model. */
+  /**
+   * An attempt's timings from the mock model's requests since `from` (see Attempt.timing); null with a live model.
+   * Informational only (scripts/perf/latency.mjs reads them; no gate does): the mock serves every session, so a
+   * request from another session running meanwhile (a guide's, a conversation's) can fall between the attempt's own.
+   */
   private timing(from: number, asked: number): Attempt["timing"] | null {
     const reqs = this.mock?.requests.slice(from) ?? [];
     if (!reqs.length) return null;

@@ -267,6 +267,8 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
    */
   const recent = new Ring(VAD_MAX_SAMPLES / SAMPLE_RATE + 1);
   const before = new WeakMap<Float32Array, Float32Array>();
+  /** Where each segment's speech ended, by Silero's own test (before the AFTER_SEGMENT added to it), as `fed` counts. */
+  const ends = new WeakMap<Float32Array, number>();
   let fed = 0, speechFrom = -1, speechStart = -1, checkSpeech = 0;
   const drain = (): Float32Array[] => {
     if (vad.isEmpty()) return [];
@@ -283,6 +285,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
       seg.set(after, samples.length);
       const ago = fed - start;
       if (ago < heard.length) before.set(seg, heard.slice(Math.max(0, heard.length - ago - BEFORE_SEGMENT), heard.length - ago));
+      ends.set(seg, start + samples.length);
       out.push(seg);
     }
     return out;
@@ -356,6 +359,8 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
       const heard = recent.read();
       return heard.slice(Math.max(0, heard.length - (fed - speechStart) - SO_FAR_LEAD));
     },
+    fed: () => fed,
+    speechEnd: seg => ends.get(seg) ?? null,
     resetVad: () => reset(),
     transcribe(samples) {
       if (samples.length < MIN_TRANSCRIBE_SAMPLES) return "";

@@ -514,13 +514,16 @@ request that fits none of these (or isn't in English) gets no acknowledgement: a
 A streamed answer is spoken from its first clause once that has at least 18 characters and 4 words ("I can't do that
 one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
-character in WebAssembly.
+character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
+field…" starts with "The bench has a name field,").
 
 **When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
 lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,
 app/voice/engine.ts): if the VAD then ends the request with no sound since, that transcript is the request's, and it
-is sent without waiting for Moonshine again. When a request ends doesn't change: a request that goes on after the
-pause throws that transcript away. A bare "Ember, …" not shown yet, a cut-in over Ember's voice, a wake still being
+is sent without waiting for Moonshine again, but only when the VAD's own speech ended by the time that transcript was
+made (soft words it heard as speech after the pause are in its segment, which is then transcribed), and only for a
+request of up to 6 s so far (`AHEAD_MAX`). When a request ends doesn't change: a request that goes on after the pause
+throws that transcript away. A bare "Ember, …" not shown yet, a cut-in over Ember's voice, a wake still being
 checked and a room where others talk are transcribed from the VAD's own segment, as before.
 
 **Timing the latencies.** `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/latency.mjs`

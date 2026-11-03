@@ -60,10 +60,11 @@ at the mock model's 30 ms a word.
 | Step (median / p95, ms) | n | Before | After |
 |---|---|---|---|
 | "Hey Ember." ends → listening | 17–18 | 154 / 795 | 155 / 880 |
-| End of speech → transcript, request after a pause | 17–18 | 833 / 923 | **713 / 771** |
-| … of which the VAD's silence (audio time) | | 700 / 780 | 712 / 770 |
-| … of which work after it (Moonshine) | | 125 / 229 | **1 / 30** |
-| End of speech → transcript, "Hey Ember, …" in one breath | 13–14 | 902 / 928 | **737 / 1,008** |
+| End of speech → transcript, request after a pause | 17–18 | 833 / 923 | **721 / 775** |
+| … of which the VAD's silence (audio time) | | 700 / 780 | 716 / 768 |
+| … of which work after it (Moonshine) | | 125 / 229 | **1 / 20** |
+| End of speech → transcript, "Hey Ember, …" in one breath | 13–16 | 902 / 928 | **705 / 873** |
+| "Ember, stop" 0.4 s after a request → stop (after: ahead on / off, same audio) | 14 | — | 758 / 872 · 759 / 917 |
 | First answer token → first chunk ready to speak | 24 | 180 / 540 | **150 / 300** |
 | First chunk → its audio (Piper "Kristin", warm) | 24 | 818 / 1,925 | 865 / **1,218** |
 | First answer token → first spoken audio | 24 | 994 / 2,465 | 1,015 / **1,473** |
@@ -87,6 +88,12 @@ and the audio service 28 MB at 4.5 %. Xvfb has no compositor, so there are no ov
 card stands in for them).
 
 **What the numbers say.**
+- After review (PR #137), a transcript made ahead is used only when the VAD's own speech ended by the time it was
+  made: soft words after the pause, under the engine's silence test but speech to Silero ("Turn on night light … in
+  the bedroom"), are in the VAD's segment, which is then transcribed. And only a request of up to 6 s so far is
+  transcribed ahead (`AHEAD_MAX`), so a long dictation costs one extra transcription at most and no frame waits on a
+  long one: "Ember, stop" said 0.4 s after a request came as fast with it as without (758 against 759 ms), and the
+  slowest frame was 364 against 268 ms. The rows above are from after that fix.
 - The request's end was the VAD's 0.6 s (0.7 s after the voice, with Silero's own lag) plus Moonshine's 0.13 s. The
   transcription is now made at the pause, ahead of the VAD (`SPECULATE_FRAMES`, app/voice/engine.ts): when the VAD
   ends the request with no sound since, that transcript is sent at once. When a request ends is unchanged. A first

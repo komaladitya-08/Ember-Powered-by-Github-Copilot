@@ -1396,13 +1396,27 @@ describe("a request transcribed ahead of the VAD, at its pause (SPECULATE_FRAMES
    * The energy fake with a VAD that waits 19 quiet frames (0.6 s), speechSoFar, and transcripts that say how long the
    * audio was (after the wake phrase, unless `wake` is false: the recognizer didn't hear it).
    */
-  function ahead(wake = true) {
+  function ahead(wake = true, o: { noise?: number } = {}) {
     const b = talking({ wake: 9, hangover: 19 });
     let seg: Float32Array[] = [];
     const vad = b.vad.bind(b), reset = b.resetVad.bind(b), flush = b.flushVad.bind(b);
     const calls: number[] = [];
-    b.vad = f => { const out = vad(f); seg = out.length ? [] : b.speaking() ? [...seg, f] : []; return out; };
-    b.resetVad = () => { seg = []; reset(); };
+    // `noise`: the room's noise, which raises what the VAD takes for speech (its own test, not the engine's loudness).
+    let fed = 0, spoke = 0;
+    const ends = new WeakMap<Float32Array, number>();
+    b.vad = f => {
+      const g = f.slice();
+      g[5] -= o.noise ?? 0;
+      fed += 512;
+      if (g[5] > 0.005) spoke = fed;
+      const out = vad(g);
+      for (const x of out) ends.set(x, spoke);
+      seg = out.length ? [] : b.speaking() ? [...seg, f] : [];
+      return out;
+    };
+    b.fed = () => fed;
+    b.speechEnd = x => ends.get(x) ?? null;
+    b.resetVad = () => { seg = []; fed = 0; reset(); };
     b.flushVad = () => { seg = []; return flush(); };
     b.speechSoFar = () => {
       if (!seg.length) return null;
@@ -1451,6 +1465,34 @@ describe("a request transcribed ahead of the VAD, at its pause (SPECULATE_FRAMES
     const { b, calls } = ahead(false);
     hear(b, [...n(47, loud), ...n(60, quiet)]);
     expect(calls).toHaveLength(2);
+  });
+
+  it("never loses soft words the VAD heard after the pause: its segment is transcribed, not the request so far (review of PR #137)", () => {
+    // In a room's noise (0.015), "Turn on night light" (0.1), 14 quiet frames, "in the bedroom" softly (0.032: under the
+    // engine's silence test, speech to the VAD, within 12 dB of the request), then quiet.
+    const frames = [...n(60, () => level(0.015)), level(0.003, 9), ...n(47, () => level(0.1)), ...n(14, () => level(0.015)), ...n(25, () => level(0.032)), ...n(80, () => level(0.015))];
+    const sent = (on: boolean) => {
+      const { b } = ahead(true, { noise: 0.015 });
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t, verifyWake: false, transcribeAhead: on });
+      for (const f of frames) { e.feed(f); c.t += 32; }
+      return events.flatMap(x => (x.type === "utterance" ? [x.text] : []));
+    };
+    expect(sent(false)).toEqual([expect.stringMatching(/^Heard \d+ frames\.$/)]);
+    expect(sent(true)).toEqual(sent(false));
+  });
+
+  it("transcribes a long request only at its end: a 15 s request with three pauses costs at most one extra transcription", () => {
+    // 3 s of speech, a 0.45 s pause, three times over, then 4.5 s more and the end (15 s in all). Transcribing the whole
+    // takes two calls (the recognizer gets at most 12 s at a time); the first pause's 3.4 s is the one extra.
+    const part = [...n(94, loud), ...n(14, quiet)];
+    const frames = [...part, ...part, ...part, ...n(140, loud), ...n(60, quiet)];
+    const on = ahead(), off = ahead();
+    const [said] = hear(on.b, frames), [whole] = hear(off.b, frames, { transcribeAhead: false });
+    expect(on.calls.length - off.calls.length).toBe(1);
+    expect(on.calls[0]).toBeLessThan(6 * 16_000 / 512);
+    expect(said.text).toBe(whole.text);
   });
 
   it("transcribes the VAD's segment itself when turned off, or with a backend that can't give the speech so far", () => {

@@ -48,6 +48,8 @@ function row(section, what, samples, note = "") {
 
 // The app's own modules, bundled as bench.mjs does (sherpa-onnx, koffi and the Copilot SDK stay external).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-latency-"));
+// Gone however the run ends (a section that throws included), with the bundle below.
+process.on("exit", () => { fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(path.join(root, "node_modules", ".ember-latency.cjs"), { force: true }); });
 const entry = path.join(tmp, "entry.ts");
 const at = f => JSON.stringify(path.join(root, f));
 fs.writeFileSync(entry, [
@@ -83,6 +85,16 @@ function to16k(samples, rate) {
   for (let i = 0; i < out.length; i++) { const x = i * rate / SR, j = Math.floor(x), f = x - j; out[i] = samples[j] * (1 - f) + (samples[j + 1] ?? 0) * f; }
   return out;
 }
+/** 16-bit mono WAV → floats (as bench.mjs reads the test clips). */
+function readWav(file) {
+  const b = fs.readFileSync(file);
+  for (let at = 12; at + 8 <= b.length;) {
+    const id = b.toString("ascii", at, at + 4), size = b.readUInt32LE(at + 4);
+    if (id === "data") { const out = new Float32Array(size / 2); for (let i = 0; i < out.length; i++) out[i] = b.readInt16LE(at + 8 + i * 2) / 32768; return out; }
+    at += 8 + size + (size & 1);
+  }
+  throw new Error(`no data in ${file}`);
+}
 /** The last sample above speech loudness (10 ms windows), as the eval's wake gate finds a phrase's end. */
 function speechEnd(s) {
   let end = 0;
@@ -98,7 +110,7 @@ const noise = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return ((
  */
 function play(backend, audio, opts = {}) {
   const events = [];
-  let clock = 0, audioT = 0, start = 0, c0 = 0, ready = 0;
+  let clock = 0, audioT = 0, start = 0, c0 = 0, ready = 0, worst = 0;
   // `ready`: when the frame that brought the event was complete (audio time); `wall`: when the event came, with every
   // frame's compute on a real-time clock.
   const engine = new m.VoiceEngine(backend, e => events.push({ ...e, ready, wall: start + (performance.now() - c0) }), { now: () => audioT, ...opts });
@@ -110,9 +122,11 @@ function play(backend, audio, opts = {}) {
     engine.feedMonitor(quiet);
     engine.feed(audio.subarray(i, i + FRAME));
     clock = start + (performance.now() - c0);
+    worst = Math.max(worst, performance.now() - c0);
     audioT += FRAME_MS;
   }
   backend.resetVad();
+  events.worstFrame = worst;
   return events;
 }
 
@@ -164,6 +178,29 @@ if (only.has("voice")) {
     row("voice", "  of which: the VAD's silence (audio time)", tailMs);
     row("voice", "  of which: work after it (Moonshine, unless done ahead)", asrMs);
     row("voice", "end of speech → transcript (one breath)", oneBreathMs, "“Hey Ember, …” said at once");
+    // "Ember, stop" said right after a request's pause, as its transcript is made ahead: the stop's own wait, ahead and
+    // not (the same audio), and the longest any frame took (what a frame after it waits for at most).
+    // The test clip's "Ember, stop!" (Amy's voice: the spotter hears hers every time; Ryan's only now and then).
+    const stopClip = readWav(path.join(root, "test/fixtures/voice/stop.wav"));
+    const stopOn = [], stopOff = [];
+    let worstOn = 0, worstOff = 0, unheard = 0;
+    for (const speed of [0.9, 1.0, 1.1]) for (const request of REQUESTS) {
+      const one = synth(`Hey Ember, ${request.charAt(0).toLowerCase()}${request.slice(1)}`, speed), stop = stopClip;
+      const lead = Math.round(0.6 * SR), oneEnd = speechEnd(one), stopAt = lead + oneEnd + Math.round(0.4 * SR);
+      const audio = new Float32Array(stopAt + stop.length + Math.round(2 * SR));
+      audio.set(one.subarray(0, oneEnd), lead); audio.set(stop, stopAt);
+      for (let i = 0; i < audio.length; i++) audio[i] += noise();
+      const end = (stopAt + speechEnd(stop)) / 16;
+      for (const [on, out] of [[true, stopOn], [false, stopOff]]) {
+        const ev = play(backend, audio, { transcribeAhead: on });
+        const worst = ev.worstFrame ?? 0;
+        if (on) worstOn = Math.max(worstOn, worst); else worstOff = Math.max(worstOff, worst);
+        const st = ev.find(e => e.type === "stop");
+        if (st) out.push(st.wall - end); else if (on) unheard++;
+      }
+    }
+    row("voice", "“Ember, stop” right after a request's pause → stop", stopOn, `${unheard} of ${REQUESTS.length * 3} not heard; slowest frame ${Math.round(worstOn)} ms`);
+    row("voice", "  the same, transcribed at the VAD's end", stopOff, `slowest frame ${Math.round(worstOff)} ms`);
     // Cut short: a request said in two parts with a pause between them must arrive whole. The first part of each
     // reads as a whole request on its own (the hard case) or doesn't; the pause is 0.3 to 0.6 s (the VAD's own wait
     // is 0.6 s). Cut short: the request ended before its second part began.
