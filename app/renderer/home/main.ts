@@ -29,7 +29,7 @@ import { PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { revealAsking, startTasks } from "./tasks";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
-import { searchMatches, searchMessage } from "./search-copy";
+import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import type { TaskEntry } from "../../shared/activity";
 
@@ -1049,12 +1049,12 @@ new ResizeObserver(() => placeHighlight(false)).observe($("jump"));
 // ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
 // Enter goes to the first setting found (System Settings' search, HIG/search-fields) ─────
 const SEARCHED = "h2, h3.sub, label, summary, .hint, .row-note, .intro, .agent-actions > button, .pick-row label";
-function searchItems(): { pane: string; text: string; el: HTMLElement }[] {
-  const items: { pane: string; text: string; el: HTMLElement }[] = [];
+function searchItems(): { pane: string; text: string; alias?: string; el: HTMLElement }[] {
+  const items: { pane: string; text: string; alias?: string; el: HTMLElement }[] = [];
   for (const el of document.querySelectorAll<HTMLElement>(`.home > [data-pane] :is(${SEARCHED})`)) {
     const p = paneOf(el);
     if (!p || hiddenHere(el) || !el.textContent?.trim()) continue;
-    items.push({ pane: p, text: el.textContent, el });
+    items.push({ pane: p, text: el.textContent, alias: SEARCH_ALIASES[el.id], el });
   }
   return items;
 }
@@ -1069,17 +1069,27 @@ search.addEventListener("input", () => {
     a.classList.toggle("unmatched", !!q.trim() && !(h && panes.has(paneOf(h) ?? "")));
   }
   setText("search-msg", searchMessage(q, found.length, panes.size));
+  // Nothing found is said where the links were too (an empty sidebar read as broken).
+  const none = !!q.trim() && !found.length;
+  $("search-none").hidden = !none;
+  if (none) setText("search-none", searchMessage(q, 0, 0));
 });
 search.addEventListener("keydown", e => {
   if (e.key === "Escape" && search.value) { e.preventDefault(); search.value = ""; search.dispatchEvent(new Event("input")); return; }
   if (e.key !== "Enter" || !found.length) return;
   e.preventDefault();
-  const { pane: p, el } = found[0];
+  const { pane: p, el: hit } = found[0];
+  // A group's header or footnote stands for its group, which it describes as a whole: a group of one row is that row
+  // (marked, its control focused); a longer one is marked whole and takes focus itself, so no one row is picked for it.
+  const sibling = hit.matches("h3.sub") ? hit.nextElementSibling : hit.matches(".hint") ? hit.previousElementSibling : null;
+  const group = sibling instanceof HTMLElement && sibling.matches(".group") && !hiddenHere(sibling) ? sibling : null;
+  const rows = group ? [...group.children].filter((r): r is HTMLElement => r instanceof HTMLElement && !hiddenHere(r)) : [];
+  const el = !group ? hit : rows.length === 1 ? rows[0] : group;
   showPane(p, true);
   // A setting in a fold (What Ember did, About) shows once its folds are open.
   for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) d.open = true;
   // The setting found takes focus (its control, when it is a label), marked until it loses focus.
-  const control = el.matches("label") ? el.querySelector<HTMLElement>("input, select") ?? el : el.matches("summary, button") ? el : null;
+  const control = el === group ? null : el.matches("label") ? el.querySelector<HTMLElement>("input, select") ?? el : el.matches("summary, button") ? el : el.querySelector<HTMLElement>("input, select, button");
   const to = control ?? el;
   const madeFocusable = !control && !to.hasAttribute("tabindex");
   if (madeFocusable) to.tabIndex = -1;

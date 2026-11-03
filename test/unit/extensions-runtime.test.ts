@@ -8,7 +8,7 @@ import path from "node:path";
 import { classify, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, toolHash, shownHash, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
-import { probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
+import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
 import { parseLaunchSpec } from "../../app/main/extensions/launch";
 import { ExtensionsService, withoutUserinfo, type ExtensionsDeps } from "../../app/main/extensions/service";
 import { copyPlugin, ExtensionStore } from "../../app/main/extensions/store";
@@ -18,6 +18,7 @@ import { DEFAULT_SETTINGS, type Settings } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { CopilotSession } from "@github/copilot-sdk";
 import crypto from "node:crypto";
+import { getEventListeners } from "node:events";
 import { consentCard } from "../../app/renderer/home/extensions-copy";
 import { SAVED_OUTPUT, clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 
@@ -330,6 +331,19 @@ describe("asking a server for its tools", () => {
     const r = await probeStdio({ command: process.execPath, args: [FIXTURE], env: { PATH: process.env.PATH ?? "", MCP_LOG: log }, cwd: os.tmpdir() });
     expect(r.ok && r.tools.map(t => [t.name, isReadOnly(t)])).toEqual([["lookup", true], ["post_message", false], ["broken", true], ["huge", true]]);
     expect(fs.readFileSync(log, "utf8")).toContain("started secrets=\n");
+    fs.rmSync(log, { force: true });
+  });
+
+  it("lets go of the kill switch's signal once a probe ends, so probes at every start don't pile up on it", async () => {
+    const stop = new AbortController();
+    const log = path.join(os.tmpdir(), `ember-mcp-sig-${process.pid}.log`);
+    for (let i = 0; i < 3; i++) {
+      const r = await probeStdio({ command: process.execPath, args: [FIXTURE], env: { PATH: process.env.PATH ?? "", MCP_LOG: log }, cwd: os.tmpdir(), signal: stop.signal });
+      expect(r.ok).toBe(true);
+    }
+    const ok = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), { headers: { "content-type": "application/json" } });
+    await probeHttp({ url: "https://mcp.example.test/", headers: {}, fetch: async () => ok.clone(), signal: stop.signal });
+    expect(getEventListeners(stop.signal, "abort")).toHaveLength(0);
     fs.rmSync(log, { force: true });
   });
 

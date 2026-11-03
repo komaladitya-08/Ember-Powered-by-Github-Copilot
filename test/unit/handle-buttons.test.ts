@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ArmClock, armMsFor, TASK_ARM_MS } from "../../app/renderer/handle/arm";
-import { cardRisky } from "../../app/renderer/handle/card";
+import { cardAutonomous, cardRisky } from "../../app/renderer/handle/card";
 
 describe("corner card buttons", () => {
   it("does not make a question's Allow wait longer than the Confirmer's own arm", () => {
@@ -53,5 +53,19 @@ describe("a risky question on the corner card (no compositor)", () => {
     // Forced colours: a plain button with a firmer edge; Increase Contrast: a firmer caution edge.
     expect(css).toContain('body[data-risky="true"] .actions button.primary { forced-color-adjust: auto; color: ButtonText; background: ButtonFace; border: 2px solid CanvasText; }');
     expect(css).toContain('body[data-risky="true"] .actions button.primary { box-shadow: inset 0 0 0 2px var(--yellow); }');
+  });
+
+  it("shows Ember's own Without asking tag on the corner card, as the bubble does, and lines its buttons up under the words (HIG alerts)", () => {
+    expect(cardAutonomous({ visible: true, autonomous: true })).toBe(true);
+    expect(cardAutonomous({ visible: true })).toBe(false);
+    expect(cardAutonomous({ visible: false, autonomous: true })).toBe(false);
+    const main = readFileSync("app/renderer/handle/main.ts", "utf8");
+    expect(main).toContain('$("auto").textContent = AUTONOMOUS_TAG;');
+    expect(main).toContain("if (document.body.dataset.autonomous !== autonomous) document.body.dataset.autonomous = autonomous;");
+    expect(css).toContain('body.fallback[data-autonomous="true"] .auto { display: inline-flex; }');
+    // 8 px in, the 96 px face and its 10 px gap: the buttons start where the words do.
+    expect(css).toContain("body.fallback .actions { margin-left: 114px; }");
+    expect(css).toMatch(/body\.fallback \.handle \{[^}]*padding: 12px 16px 8px 8px;/);
+    expect(css).toContain("body.fallback #face { width: 96px; height: 96px; }");
   });
 });

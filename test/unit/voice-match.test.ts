@@ -147,6 +147,29 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([{ type: "stop" }, { type: "wake", keyword: "ember" }]);
   });
 
+  it("survives a later request's check failing while an earlier one is still being checked (no unhandled rejection ends the voice process)", async () => {
+    const unhandled: unknown[] = [];
+    const note = (r: unknown) => unhandled.push(r);
+    process.on("unhandledRejection", note);
+    try {
+      let calls = 0;
+      // The first check is slow; the second fails at once (the voiceprint thread answered it with an error).
+      const printer: Printer = { print: s => ++calls === 1 ? new Promise(r => setTimeout(() => r(unit(Float32Array.from([s[0], s[1]]))), 30)) : Promise.reject(new Error("no voiceprint")) };
+      const sent: VoiceEvent[] = [], errors: unknown[] = [];
+      const g = new VoiceGate(() => printer, e => sent.push(e), err => errors.push(err));
+      g.setOwner(owner);
+      g.event(utterance("Someone else."), Float32Array.from([0, 1]));
+      g.event(utterance("Open the files."), Float32Array.from([0, 1]));
+      await new Promise(r => setTimeout(r, 60));
+      expect(unhandled).toEqual([]);
+      // Both are dealt with in order: the first turned away, the second heard unverified with the failure reported.
+      expect(sent.map(e => e.type)).toEqual(["rejected", "listening", "utterance"]);
+      expect(errors).toHaveLength(1);
+    } finally {
+      process.off("unhandledRejection", note);
+    }
+  });
+
   it("hears the request when the model fails (Voice Match failing never leaves Ember deaf), unverified, and says so", async () => {
     const sent: VoiceEvent[] = [], errors: unknown[] = [];
     const g = new VoiceGate(() => fakePrinter(true), e => sent.push(e), err => errors.push(err));

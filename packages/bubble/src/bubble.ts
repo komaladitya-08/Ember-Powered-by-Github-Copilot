@@ -383,6 +383,13 @@ export const BUBBLE_CSS = `
 html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember-bubble .eb-risk, html[data-glass="clear"] .ember-bubble .eb-auto { color: var(--label, #f5f2ef); }
 /* (Their tints darkened a little there, under the label's words: the lighter glass let them pale.) */
 html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }
+/* (A risky question's tag is the exception: there its tint paled to grey, so it is filled with Clear's light yellow
+   under dark words, unmistakably the caution colour; the brackets and Allow's edge match it. Never in a contrast theme,
+   where both tokens are system colours, a solid pill with its words in the highlight's text: invisible. The forced
+   block below restates the tag too, after this rule, in case a browser ignores the media query's not.) */
+@media not (forced-colors: active) {
+  html[data-glass="clear"] .ember-bubble .eb-risk { color: var(--on-accent, #1d1204); background: var(--yellow, #fff0a0); }
+}
 .eb-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--eb-mood); }
 /* The dot pulses only while Ember is busy; a finished answer sits still, and so does a question (it waits for you:
    nothing about it hurries you). */
@@ -572,6 +579,8 @@ html.calm .ember-bubble { transition: opacity var(--t-calm-fade, 150ms) ease, vi
   .eb-whole { border: 1px solid CanvasText; }
   /* The state's tag and the risky tag keep an edge (their tint is dropped); the brackets are drawn as they are. */
   .eb-chip, .eb-risk, .eb-auto { border: 1px solid CanvasText; }
+  /* The risky tag's words on the window's colour in every Glass setting (Clear fills it otherwise). */
+  html[data-glass] .ember-bubble .eb-risk { color: CanvasText; background: Canvas; }
   .eb-lock, .ember-bubble[data-risky="true"] .eb-lock { forced-color-adjust: none; --eb-lock: CanvasText; }
   .ember-bubble[data-risky="true"] .eb-actions button.eb-primary, .ember-bubble[data-risky="true"] .eb-actions button.eb-primary:hover { forced-color-adjust: auto; color: ButtonText; background: ButtonFace; border: 2px solid CanvasText; }
   .eb-step kbd { outline: 1px solid CanvasText; outline-offset: -1px; }

@@ -1,9 +1,9 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
+import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
 import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
-import { cardRisky, cardTask, cardText } from "./card";
+import { cardAutonomous, cardRisky, cardTask, cardText } from "./card";
 import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
@@ -75,6 +75,8 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
 const thoughtEl = $("thought");
 // A risky question's tag beside Ember's name (shown by styles.css only while body[data-risky="true"], on the card).
 $("risk").textContent = RISKY_TAG;
+// Ember's own "Without asking" tag beside its name, as the bubble shows it (body[data-autonomous="true"], on the card).
+$("auto").textContent = AUTONOMOUS_TAG;
 let wasStreaming = false;
 /**
  * Without a compositor nothing else speaks for Ember: finished answers, questions and problems are said once
@@ -232,6 +234,8 @@ api.onState(s => {
   // nothing invites a reflex yes. Only how it looks: it is answered as any question.
   const risky = String(cardRisky(b));
   if (document.body.dataset.risky !== risky) document.body.dataset.risky = risky;
+  const autonomous = String(cardAutonomous(b));
+  if (document.body.dataset.autonomous !== autonomous) document.body.dataset.autonomous = autonomous;
   document.body.classList.toggle("streaming", b.visible && b.streaming);
   const actions = b.visible ? b.actions : [];
   // A question (not just "Read all" or "Open settings", which are Ember's own buttons).
