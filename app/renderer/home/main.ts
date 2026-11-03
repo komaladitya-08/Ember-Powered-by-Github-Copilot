@@ -9,7 +9,7 @@
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
-import { AUTONOMY_CONSENT_TEXT, autonomyHint, LEARNED_UNDONE, MEMORY_CONSENT_TEXT, MEMORY_QUESTIONS_HINT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText, memorySourceLabel, routinesEmptyText, undoLearnedLabel } from "./copy";
+import { AUTONOMY_CONSENT_TEXT, autonomyHint, LEARNED_UNDONE, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText, memorySourceLabel, routinesEmptyText, undoLearnedLabel } from "./copy";
 import { mountAboutYou } from "./about-you";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
@@ -242,7 +242,7 @@ function renderStatus(): void {
   const listening = !!settings?.wakeWord && !!settings?.voice.consent;
   setText("whats-on", whatsOnText({
     voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
-    memory: !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION,
+    memory: settings && memoryPaused(settings.memory) ? "paused" : !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION,
     commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
     computers: settings?.targets.hosts.length ?? 0,
     wsl: !!settings?.targets.wsl.on,
@@ -870,6 +870,8 @@ const aboutYou = mountAboutYou($("about-you"), {
   askConsent: () => { $("memory-consent").hidden = false; $("memory-yes").focus(); },
 });
 $("memory-questions-hint").textContent = MEMORY_QUESTIONS_HINT;
+/** The paused note was shown (once a session: Not now hides it). */
+let pausedSeen = false;
 function applyMemorySettings(s: Settings): void {
   const on = s.memory.on && s.memory.consent.version >= MEMORY_VERSION;
   ($("memory-on") as HTMLInputElement).checked = on;
@@ -878,6 +880,12 @@ function applyMemorySettings(s: Settings): void {
   $("memory-questions-row").hidden = !on;
   $("memory-questions-hint").hidden = !on;
   aboutYou.refresh(s, managed.has("memory"));
+  // On under the earlier note: paused until the new one is agreed to, which shows open with a line saying why (until
+  // Not now this session).
+  const paused = memoryPaused(s.memory) && !managed.has("memory");
+  $("memory-paused").textContent = MEMORY_PAUSED_TEXT;
+  $("memory-paused").hidden = !paused;
+  if (paused && !pausedSeen) { pausedSeen = true; $("memory-consent").hidden = false; }
   if (!memoryRows.length) renderMemory(memoryRows);
 }
 $("memory-on").addEventListener("change", e => {

@@ -264,6 +264,20 @@ export class MemoryGraph {
     return true;
   }
 
+  /**
+   * Reopens the facts `id` closed when it replaced them (the user forgot the newer one: "Ram" → "Rum" → Undo is "Ram"
+   * again). How many were reopened.
+   */
+  reopenSuperseded(id: string): number {
+    let n = 0;
+    for (const f of this.facts.values()) {
+      if (f.supersededBy !== id) continue;
+      this.facts.set(f.id, { ...f, invalidAt: null, supersededBy: null });
+      n++;
+    }
+    return n;
+  }
+
   /** Replaces a fact in place (consolidation's merges). */
   replaceFact(f: Fact): void {
     if (this.facts.has(f.id)) this.facts.set(f.id, f);

@@ -18,7 +18,7 @@
 import { z } from "zod";
 import { MAX_FACT_CHARS, type AddResult, type Fact, type NewFact, type Source } from "./graph";
 import { ownWords, type MemoryLog } from "./service";
-import { fold } from "./text";
+import { fold, samePolarity } from "./text";
 
 /** A model call with no tools: Ember's instructions, one prompt, an answer (null on no answer, error or stop). */
 export type OneShot = (system: string, prompt: string, signal: AbortSignal) => Promise<string | null>;
@@ -74,7 +74,7 @@ export const EXTRACT_SYSTEM = [
 
 /** One thing to learn from. */
 export type LearnItem =
-  | { kind: "turn"; said: string; reply: string }
+  | { kind: "turn"; said: string; reply: string; own: boolean }
   | { kind: "task"; title: string; result: string };
 
 const esc = (s: string, n = ITEM_CHARS) => s.slice(0, n).replace(/</g, "‹");
@@ -94,9 +94,13 @@ export function parseExtraction(raw: string | null | undefined): Extraction | nu
   return r.success ? r.data : null;
 }
 
+/** The longest model answer read at all (characters). */
+export const MAX_ANSWER_CHARS = 20_000;
+
 /** The JSON object in a model's answer (fenced or bare), or undefined. */
 export function jsonOf(raw: string | null | undefined): unknown {
-  if (!raw) return undefined;
+  // An answer far longer than any it was asked for is dropped unread (nothing it held could fit the schema anyway).
+  if (!raw || raw.length > MAX_ANSWER_CHARS) return undefined;
   const text = raw.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
   const a = text.indexOf("{");
   const b = text.lastIndexOf("}");
@@ -113,13 +117,16 @@ const GLUE = "user name named called likes like prefers prefer wants work works 
 const squash = (s: string) => fold(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /**
- * Whose a fact from a conversation turn is: the user's only when its evidence is their own words, word for word, and
- * the fact is mostly in what they said. Ember's reply never counts (it may quote the screen).
+ * Whose a fact from a conversation turn is: the user's only when the user was heard to say it (`heard`: typed, or a
+ * voice Ember could tell from its own speakers), its evidence is their own words word for word, the fact's content
+ * words are in that evidence, and it says it the same way round ("I hate Teams" is never "Likes Teams"). Ember's reply
+ * never counts (it may quote the screen).
  */
-export function turnSource(c: Pick<Candidate, "fact" | "evidence">, said: string): Extract<Source, "user" | "conversation"> {
+export function turnSource(c: Pick<Candidate, "fact" | "evidence">, said: string, heard = true): Extract<Source, "user" | "conversation"> {
+  if (!heard) return "conversation";
   const quote = squash(c.evidence);
   const own = quote.split(" ").length >= 2 && ` ${squash(said)} `.includes(` ${quote} `);
-  return own && ownWords(c.fact, `${said} ${GLUE}`) ? "user" : "conversation";
+  return own && ownWords(c.fact, `${c.evidence} ${GLUE}`) && samePolarity(c.fact, c.evidence) ? "user" : "conversation";
 }
 
 /**
@@ -141,8 +148,10 @@ export function learnedFacts(x: Extraction, items: LearnItem[]): NewFact[] {
   for (const c of x.facts.slice(0, 5)) {
     const item = items[c.from - 1];
     if (!item) continue;
-    const source: Source = item.kind === "task" ? "task" : turnSource(c, item.said);
-    if (source !== "user" && soundsLikeInstruction(c.fact)) continue;
+    const source: Source = item.kind === "task" ? "task" : turnSource(c, item.said, item.own);
+    // An instruction is never learned, whoever said it: a one-off order ("…without asking me") isn't a lasting
+    // preference. Only the remember tool, asked by the user, and the introduction keep such words.
+    if (soundsLikeInstruction(c.fact)) continue;
     const about = c.about.length ? c.about.map(a => ({ name: a.name, ...(kindOf(a.kind) ? { kind: kindOf(a.kind) } : {}) })) : [{ name: "User", kind: "person" as const }];
     out.push({
       text: c.fact, about, source, confidence: Math.min(CAP[source], c.confidence),
@@ -211,10 +220,13 @@ export class Learner {
 
   private now(): number { return (this.d.now ?? Date.now)(); }
 
-  /** A conversation turn ended: the user's own words and Ember's reply. */
-  heard(said: string, reply: string): void {
+  /**
+   * A conversation turn ended: the user's own words and Ember's reply. `own`: heard from the user (false for speech
+   * Ember can't tell from its own speakers: a video, a call, its own echo), whose facts are never theirs.
+   */
+  heard(said: string, reply: string, own = true): void {
     if (!said.trim() || !this.d.inForce()) return;
-    this.add({ kind: "turn", said, reply });
+    this.add({ kind: "turn", said, reply, own });
   }
 
   /** A task finished with this result. */

@@ -18,7 +18,6 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
   return async (system, prompt, signal) => {
     if (signal.aborted) return null;
     const sessionId = `ember-memory-${crypto.randomUUID()}`;
-    let made = false;
     try {
       const session = await o.client.createSession(hardenedSessionConfig({
         sessionId, model: o.model ?? undefined, provider: o.provider, tools: [],
@@ -26,7 +25,6 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
         workingDirectory: o.workDir,
         onPermissionRequest: () => ({ kind: "reject", feedback: "Memory's model calls have no tools." }),
       }));
-      made = true;
       // No tool at all may be offered (fail closed: a session that shows one is not asked).
       await verifySessionTools(session, []);
       if (signal.aborted) return null;
@@ -42,7 +40,9 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
       o.log.warn("memory.model_failed", { err: err instanceof Error ? err.message : String(err) });
       return null;
     } finally {
-      if (made) void o.client.deleteSession(sessionId).catch(() => undefined);
+      // Always, even when createSession failed: it may have made the session before it rejected (each session holds an
+      // inotify instance). Deleting one that doesn't exist only fails, and that is ignored.
+      void Promise.resolve().then(() => o.client.deleteSession(sessionId)).catch(() => undefined);
     }
   };
 }

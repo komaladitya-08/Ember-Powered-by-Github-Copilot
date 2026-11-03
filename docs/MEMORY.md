@@ -116,29 +116,36 @@ SHA-256 pinned and downloaded only with consent, like the speech models).
      `untrusted="true"` elements, `<` escaped.
    - The answer is JSON checked by zod (`ExtractionSchema`: `from`, `fact`, `about`, `predicate`, `single`,
      `confidence`, `evidence`); anything else is dropped whole.
-   - The source is decided in code: from a turn, `user` only when `evidence` is the user's own words word for word
-     and `ownWords` holds for the fact (with a few grammar words such as "called" and "prefers"); otherwise
-     `conversation`. From a task, always `task`. A fact that isn't the user's and reads like an instruction
-     (`soundsLikeInstruction`: deleting, sending, paying, installing, "always", "without asking"…) is never kept;
-     the conductor's `remember` refuses one too. Every fact goes through `MemoryGraph.add()` and the guard.
+   - The source is decided in code: from a turn, `user` only when the request was heard from the user (typed, or a
+     voice Ember can tell from its own speakers: `Conductor.ask`'s `own`), `evidence` is their words word for word,
+     the fact's content words are in that evidence (with a few grammar words such as "called" and "prefers"), and it
+     says it the same way round (`samePolarity`: "I hate Teams" is never "Likes Teams"); otherwise `conversation`.
+     From a task, always `task`. No extracted fact that reads like an instruction (`soundsLikeInstruction`:
+     deleting, sending, paying, installing, "always", "without asking"…) is ever kept, whoever said it: a one-off
+     order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact goes
+     through `MemoryGraph.add()` and the guard.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
-     minutes forgets the newest without a model turn.
+     minutes forgets the newest without a model turn. Forgetting a fact reopens the one it had replaced
+     (`reopenSuperseded`), and **Forget everything** clears the lines too.
 4. **Sleep-time refinement** (done; `refine.ts`). After 5 minutes idle (no turn, no task, the screen unlocked; an
    unknown lock counts as locked), `MemoryLearning` runs `consolidate()`, then one model pass (the same one-shot
    session) over up to 40 facts changed or used since the last pass:
-   - a one-sentence summary of each entity, kept as a `summary` fact that closes the one before (kept, closed);
+   - a one-sentence summary of each entity, kept as a `summary` fact that closes the one before (kept, closed), as
+     trusted as the weakest fact it was written from (a summary of task facts is `task`, never `user`);
    - contradictions closed (`MemoryGraph.closeFact`, never deleted), only by an equal or stronger source, so what
      the user said is closed only by what the user said;
    - reflections from two or more facts, at confidence 0.4, never `user`.
 
    The model only proposes: ids must be among the facts it was shown, and every new fact goes through `add()`. At
    most one pass an idle stretch and 6 a day; the kill switch (`memory` StopPart) abandons it.
-5. **Asking** (done; `questions.ts`). Names in requests that recall finds nothing for are counted (`Gaps`); once one
+5. **Asking** (done; `questions.ts`). Names in the user's own requests (never the recall tool's queries, which the
+   model writes, nor words Ember couldn't tell were the user's, nor a name that reads like an order) that recall finds
+   nothing for are counted (`Gaps`); once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
    unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the
    conversation (and aloud when replies are spoken). The question is built from the name alone; no model writes it.
-   The next short statement within ten minutes is the answer, a `user` fact ("Priya: leads the platform team");
-   "skip" or a new request lets it go. **Ask me questions now and then** (`memory.questions`, on by default) turns
+   The next short statement about the name within ten minutes is the answer, a `user` fact ("Priya: leads the
+   platform team"); "skip", "forget that", a new request or anything else lets it go to the conversation. **Ask me questions now and then** (`memory.questions`, on by default) turns
    it off.
 
 **Getting to know you** (done; `intro.ts`). "Tell Ember about you" in Settings › Memory and as first run's optional
@@ -152,7 +159,8 @@ Settings at memory's note.
 
 **Consent.** The note now says Ember learns as you go and that your words, its replies and its tasks' results go to
 Copilot in short requests of their own, so `FEATURE_CONSENT_VERSION.memory` is 2: someone who agreed to the first
-note has memory off until they agree again (their `memory.json` is kept, unused).
+note has memory off until they agree again (their `memory.json` is kept, unused). Home says "Memory paused" and
+opens the new note once with a line saying why (`memoryPaused`, `MEMORY_PAUSED_TEXT`).
 
 **Cost.** In model requests on the conversation's model: extraction at most 12 an hour and 60 a day (typically one
 per three turns, plus one per finished task), refinement at most 6 a day, questions none. At the extremes, 12 + 6 = 18

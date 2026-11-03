@@ -512,7 +512,7 @@ export class Runner {
     for (const step of task.memory!.steps) {
       if ("turn" in step) {
         this.memoryAnswer = step.turn.extraction;
-        m.conversation.heard(step.turn.said, step.turn.reply);
+        m.conversation.heard(step.turn.said, step.turn.reply, true);
         await m.learning.flush();
       } else if ("taskResult" in step) {
         this.memoryAnswer = step.taskResult.extraction;

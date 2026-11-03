@@ -1290,6 +1290,11 @@ function start(): void {
       learnedLines = [...learnedLines, ...items.map(i => ({ t, who: "learned" as const, text: i.text.slice(0, 400), fact: i.id }))].slice(-30);
       broadcast(IPC.conversationChanged, conversationNow());
     },
+    // Forget everything (or sign-out): the "Ember learned" lines and their Undo leave the page too.
+    onForgotAll: () => {
+      learnedLines = [];
+      broadcast(IPC.conversationChanged, conversationNow());
+    },
     log: log.child("memory"),
   });
   learningRef = learning;

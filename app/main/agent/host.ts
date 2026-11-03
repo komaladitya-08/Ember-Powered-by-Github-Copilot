@@ -2184,7 +2184,7 @@ export class AgentHost {
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
       if (first) how.onSent?.();
-      await this.conductor.ask(text, context?.text, this.trustedLine());
+      await this.conductor.ask(text, context?.text, this.trustedLine(), !how.voiceUnchecked);
     } catch (err) {
       // Never sent: no turn of its own will come (nor its hint).
       this.hintOwed = false;

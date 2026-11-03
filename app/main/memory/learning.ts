@@ -17,10 +17,12 @@ import type { Fact, NewFact, Source } from "./graph";
 import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, introFacts, isGetToKnowMe, type Intro } from "./intro";
 import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
 import {
-  ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, forgotReply, gapFact, gapQuestion, isForgetThat,
+  ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes, forgotReply, gapFact, gapQuestion, isForgetThat,
+  looksLikeRequest,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
-import { ownWords, type AboutRef, type MemoryLog, type MemoryService } from "./service";
+import { ownFact, type AboutRef, type MemoryLog, type MemoryService } from "./service";
+import { memoryBlock } from "./format";
 import { fold } from "./text";
 
 /** Idle this long (no turn, no task, screen unlocked) before the sleep-time pass or a question (ms). */
@@ -56,6 +58,8 @@ export interface LearningDeps {
   openMemory?: () => void;
   /** New facts were kept (the "Ember learned" line). */
   onLearned?: (items: LearnedItem[]) => void;
+  /** Everything was forgotten: what showed as learned goes. */
+  onForgotAll?: () => void;
   log: MemoryLog;
   now?: () => number;
   budget?: Partial<LearnBudget>;
@@ -65,9 +69,10 @@ export interface LearningDeps {
 export interface LearningConductorMemory {
   remember(fact: string, about: AboutRef[], said: string, replaces?: string): string;
   context(query: string, history?: boolean): string;
+  forRequest(request: string, own: boolean): string;
   forget(id: string): boolean;
   forgetAll(): void;
-  heard(said: string, reply: string): void;
+  heard(said: string, reply: string, own: boolean): void;
 }
 
 export class MemoryLearning {
@@ -135,7 +140,7 @@ export class MemoryLearning {
     return {
       remember: (fact, about, said, replaces) => {
         // Not the user's words and sounding like an order: never kept, whoever asked the model to keep it.
-        if (!ownWords(fact, said) && soundsLikeInstruction(fact)) {
+        if (!ownFact(fact, said) && soundsLikeInstruction(fact)) {
           this.d.log.info("memory.instruction_refused", { chars: fact.length });
           return "Not remembered: it reads like an instruction, and only what the user says themselves may tell me what to do.";
         }
@@ -144,18 +149,21 @@ export class MemoryLearning {
         this.noteNew(m.list().filter(i => !before.has(i.id)));
         return answer;
       },
-      context: query => {
-        const text = m.context(query);
-        // Nothing bears on it: the names in it are gaps (known names aren't, and checking doesn't count as a use).
-        if (!text && this.d.inForce()) {
+      // The recall tool: its query is the model's, so it never counts gaps (the screen could choose the question).
+      context: (query, history) => memoryBlock(m.recall(query, undefined, history === true)),
+      forRequest: (request, own) => {
+        const text = m.context(request);
+        // Nothing bears on what the user asked themselves: the names in it are gaps (known names aren't, and checking
+        // doesn't count as a use). Never from words Ember couldn't tell were the user's.
+        if (!text && own && this.d.inForce()) {
           const known = m.list().map(i => fold(i.text));
-          this.gaps.missed(query, name => known.some(t => t.includes(fold(name))));
+          this.gaps.missed(request, name => known.some(t => t.includes(fold(name))));
         }
         return text;
       },
       forget: id => m.forget(id),
       forgetAll: () => this.forgetAll(),
-      heard: (said, reply) => { this.active(); this.learner.heard(said, reply); },
+      heard: (said, reply, own) => { this.active(); this.learner.heard(said, reply, own); },
     };
   }
 
@@ -165,6 +173,8 @@ export class MemoryLearning {
     this.gaps.clear();
     this.recent = [];
     this.d.memory.forgetAll();
+    // The "Ember learned" lines and their Undo go too.
+    this.d.onForgotAll?.();
   }
 
   /** A task finished: learn from its result (source `task`). */
@@ -212,26 +222,33 @@ export class MemoryLearning {
       this.interviewAt = now;
       return this.interview.start();
     }
+    // "Forget that" first: never an answer to a question (the interview's or Ember's own).
+    if (isForgetThat(text)) {
+      if (!this.d.inForce()) return null;
+      const last = this.recent.at(-1);
+      if (!last || now - last.at > FORGET_THAT_MS) return null;
+      this.recent.pop();
+      return this.d.memory.forget(last.id) ? forgotReply(last.text) : null;
+    }
+    // A request ("open Thunderbird and send the report to Bob") is never an answer: the question is let go of and the
+    // conversation takes the request.
+    const request = looksLikeRequest(text);
     if (this.interview) {
-      if (!this.d.inForce()) { this.interview = null; return null; }
+      if (!this.d.inForce() || request) { this.interview = null; return null; }
       const step = this.interview.answer(text, how.own);
       this.interviewAt = now;
       this.keepAll(step.keep);
       if (step.done) this.interview = null;
       return step.say;
     }
-    if (isForgetThat(text) && this.d.inForce()) {
-      const last = this.recent.at(-1);
-      if (!last || now - last.at > FORGET_THAT_MS) return null;
-      this.recent.pop();
-      return this.d.memory.forget(last.id) ? forgotReply(last.text) : null;
-    }
     if (this.question) {
       const q = this.question;
       if (declinesQuestion(text)) { this.question = null; return "All right."; }
-      if (!answersQuestion(text) || !this.d.inForce()) { this.question = null; return null; }
       this.question = null;
+      // Only a statement about the name answers it ("She leads the platform team"); "the build is broken" is not.
+      if (request || !answersQuestion(text) || !describes(text, q.name) || !this.d.inForce()) return null;
       if (!how.own) return "I couldn't be sure that was you, so I didn't keep it.";
+      if (soundsLikeInstruction(text)) return "I'll keep descriptions, not instructions, so I didn't keep that.";
       return this.keepAll([gapFact(q.name, text)]) ? `Thanks. I'll remember that about “${q.name}”.` : "I couldn't keep that.";
     }
     return null;

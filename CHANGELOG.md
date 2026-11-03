@@ -315,15 +315,15 @@ allows them.
   picks out what's worth keeping (your preferences, your work, the people and apps in it), tidies its memory while
   you're away, and at most once a day asks about a name it keeps finding nothing on (**Ask me questions now and
   then** turns that off). Only what you say yourself counts as yours; what it reads on screen or in a task's result
-  never does, and anything that reads like an instruction from a page is never kept. A new fact shows in the
-  conversation as "Ember learned: …" with **Undo**; "Ember, forget that" works too. The list says where each fact
-  came from.
+  never does, nor speech it can't tell from its own speakers, and it never learns an instruction or a one-off order
+  as a preference. A new fact shows in the conversation as "Ember learned: …" with **Undo** (which puts back what
+  it replaced); "Ember, forget that" works too. The list says where each fact came from.
 - **Tell Ember about you**: what to call you, your role and work, the apps you use most, how you like answers, your
   timezone or hours, each optional, in Settings › Memory and as an optional step of first run. Or say “Ember, get to
   know me” for a short spoken version.
 - Memory's note changed to say all this, so if you had memory on, Ember asks you to agree again before it remembers
-  anything more; what it kept stays until you do. Learning uses a few short requests of its own (at most 12 an hour
-  and 60 a day, plus 6 a day while you're away).
+  anything more (Home says "Memory paused"); what it kept stays until you do. Learning uses a few short requests of
+  its own (at most 12 an hour and 60 a day, plus 6 a day while you're away).
 - For administrators: `features.memory: false` (and a lockdown) turns all of it off.
 
 ### Your own model provider

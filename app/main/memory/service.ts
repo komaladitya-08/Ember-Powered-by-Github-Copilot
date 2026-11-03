@@ -14,7 +14,7 @@ import { memoryBlock } from "./format";
 import { ENTITY_KINDS, type AddResult, type EntityKind, type Fact, type GraphClock, type MemoryGraph, type NewFact, type Source } from "./graph";
 import { recall, type Recalled } from "./recall";
 import { memoryFile, type MemoryFile } from "./store";
-import { terms } from "./text";
+import { samePolarity, terms } from "./text";
 
 /** How long after a change memory.json is written (ms): a burst of remembering is one write. */
 export const SAVE_DELAY_MS = 1000;
@@ -49,6 +49,14 @@ export function ownWords(fact: string, said: string): boolean {
   if (!f.length) return false;
   const s = new Set(terms(said));
   return f.filter(t => s.has(t)).length / f.length >= OWN_WORDS;
+}
+
+/**
+ * Whether a remembered fact is the user's: mostly their own words (`ownWords`) and said the same way round
+ * (`samePolarity`: "Priya is not my manager" never makes "Priya is the manager" theirs).
+ */
+export function ownFact(fact: string, said: string): boolean {
+  return ownWords(fact, said) && samePolarity(fact, said);
 }
 
 const kindOf = (k: string | undefined): EntityKind | undefined => (ENTITY_KINDS as readonly string[]).includes(k ?? "") ? (k as EntityKind) : undefined;
@@ -92,7 +100,7 @@ export class MemoryService {
    */
   remember(fact: string, about: AboutRef[], said: string, replaces?: string): string {
     const refs = (about.length ? about : [{ name: "User", kind: "person" }]).map(a => ({ name: a.name, kind: kindOf(a.kind) }));
-    const source: Source = ownWords(fact, said) ? "user" : "conversation";
+    const source: Source = ownFact(fact, said) ? "user" : "conversation";
     const r = this.g.add({ text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
     this.dirty();
@@ -113,10 +121,11 @@ export class MemoryService {
     return memoryBlock(this.recall(request));
   }
 
-  /** Forgets one fact by id. True if it was there. */
+  /** Forgets one fact by id, and reopens what it had replaced (Undo puts the old value back). True if it was there. */
   forget(id: string): boolean {
+    const reopened = this.g.fact(id) ? this.g.reopenSuperseded(id) : 0;
     const had = this.g.forgetFact(id);
-    if (had) { this.dirty(); this.o.log.info("memory.forgot", { count: 1 }); }
+    if (had) { this.dirty(); this.o.log.info("memory.forgot", { count: 1, reopened }); }
     return had;
   }
 

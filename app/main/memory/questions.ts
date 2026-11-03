@@ -9,6 +9,7 @@
  */
 
 import type { NewFact } from "./graph";
+import { soundsLikeInstruction } from "./learn";
 import { fold, nameKey } from "./text";
 
 /** A gap is asked about once recall has missed it in this many requests. */
@@ -52,7 +53,8 @@ export class Gaps {
   /** Recall found nothing for `request`; `known`: whether memory already knows a name. */
   missed(request: string, known: (name: string) => boolean): void {
     for (const name of namesIn(request)) {
-      if (known(name)) continue;
+      // A name that reads like an order ("Always Approve Wire Transfers") is never asked about.
+      if (known(name) || soundsLikeInstruction(name)) continue;
       const key = nameKey(name);
       const m = this.misses.get(key) ?? { name, n: 0 };
       this.misses.set(key, { name: m.name, n: m.n + 1 });
@@ -87,8 +89,24 @@ export const declinesQuestion = (text: string) => DECLINE.test(text.trim());
  */
 export function answersQuestion(text: string): boolean {
   const t = text.trim();
-  if (!t || /\?\s*$/.test(t) || t.split(/\s+/).length > 25) return false;
-  return !/^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:open|show|start|run|send|write|draft|find|search|tell|what|who|where|when|why|how|can|could|would|will|close|play|stop|remind|set|turn|make|create)\b/i.test(t);
+  return !!t && t.split(/\s+/).length <= 25 && !looksLikeRequest(t);
+}
+
+/** A request or a question to Ember, which goes to the conversation, never into memory as an answer. */
+const REQUEST = /^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:(?:open|show|start|run|send|write|draft|find|search|tell|close|play|stop|remind|set|turn|make|create|delete|remove|email|mail|message|call|book|schedule|check|move|copy|rename|install|launch|reply|forward|share|post|upload|download|print|save|add|go)\s+(?!source\b)\S|(?:what|who|where|when|why|how|which|can|could|would|will|is|are|do|does|did)\b)/i;
+export function looksLikeRequest(text: string): boolean {
+  const t = text.trim();
+  return /\?\s*$/.test(t) || REQUEST.test(t);
+}
+
+/**
+ * Whether an answer to "who or what is <name>?" is about the name: it names it, or starts as a description does ("She
+ * leads the platform team", "Our billing service", "It's a project"). "The build is broken" isn't one.
+ */
+export function describes(text: string, name: string): boolean {
+  const t = text.trim();
+  if (fold(t).includes(fold(name))) return true;
+  return /^(?:(?:she|he|they|it|that|this)(?:['’](?:s|re)\b|\s+\p{L}+)|(?:a|an|my|our|his|her|their|one\s+of)\s+\p{L})/iu.test(t);
 }
 
 /** The answer as a `user` fact about the name asked after. */

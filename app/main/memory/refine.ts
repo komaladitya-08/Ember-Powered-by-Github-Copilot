@@ -72,6 +72,11 @@ export function parseRefinement(raw: string | null | undefined): Refinement | nu
 }
 
 const rank = (s: Source) => SOURCES.indexOf(s);
+/** The weakest of these sources, and never `user` (what Ember wrote is never the user's word). */
+function weakestBelowUser(sources: Source[]): Source {
+  const weakest = sources.reduce((a, b) => (rank(a) >= rank(b) ? a : b));
+  return weakest === "user" ? "conversation" : weakest;
+}
 const KINDS = ["person", "organisation", "project", "app", "place", "topic", "thing"] as const;
 const kindOf = (k: string | undefined) => (KINDS as readonly string[]).includes(k ?? "") ? (k as (typeof KINDS)[number]) : undefined;
 
@@ -87,8 +92,12 @@ export function applyRefinement(g: MemoryGraph, r: Refinement, shown: Fact[]): R
   for (const s of r.summaries) {
     const e = g.find(s.entity);
     if (!e || !asked.has(e.name) || soundsLikeInstruction(s.summary)) continue;
+    // As trusted as the weakest fact it was written from (never the user's own): a summary of a task's findings is `task`.
+    const from = shown.filter(f => f.entities.includes(e.id));
+    if (!from.length) continue;
+    const source = weakestBelowUser(from.map(f => f.source));
     // `single`: the new summary closes the one before (kept, closed, so the rewrite can be audited).
-    const added = g.add({ text: s.summary, about: [{ name: e.name }], predicate: "summary", single: true, source: "conversation", confidence: SUMMARY_CONFIDENCE });
+    const added = g.add({ text: s.summary, about: [{ name: e.name }], predicate: "summary", single: true, source, confidence: SUMMARY_CONFIDENCE });
     if (added.kind === "added") report.summaries++;
   }
 
@@ -107,8 +116,7 @@ export function applyRefinement(g: MemoryGraph, r: Refinement, shown: Fact[]): R
     const from = x.from.map(id => seen.get(id)).filter((f): f is Fact => !!f && !f.invalidAt);
     if (from.length < 2 || soundsLikeInstruction(x.fact)) continue;
     // Never the user's own: the weakest source among what it rests on, and at least `conversation`.
-    const weakest = from.map(f => f.source).reduce((a, b) => (rank(a) >= rank(b) ? a : b));
-    const source: Source = weakest === "user" ? "conversation" : weakest;
+    const source = weakestBelowUser(from.map(f => f.source));
     const added = g.add({ text: x.fact, about: x.about.map(a => ({ name: a.name, ...(kindOf(a.kind) ? { kind: kindOf(a.kind) } : {}) })), source, confidence: REFLECTION_CONFIDENCE });
     if (added.kind === "added") report.reflections++;
   }

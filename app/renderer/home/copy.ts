@@ -9,6 +9,7 @@ import type { ActivityEntry, SpeechModelId, StatusPlatform } from "../../shared/
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { onboardingRest } from "./computers-copy";
 import { needsUser, type SetupRow } from "../../shared/setup-attention";
@@ -235,6 +236,16 @@ export function providerTestText(r: { ok: true; host: string; models: number | n
  * learns on its own, docs/MEMORY.md steps 3–5).
  */
 export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It also learns as you go: after you talk and when a task finishes, it picks out what's worth keeping, tidies it while you're away, and now and then asks you a question. To do that, your words, its replies and its tasks' results go to Copilot in short requests of their own. It keeps what it learns on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers, and what it reads on your screen never counts as something you said. You can see where each fact came from and forget it here, and signing out forgets it all.";
+
+/**
+ * Memory was on under an earlier note (version 1, before Ember learned on its own) and waits for the user to agree to
+ * the new one: it remembers nothing more until then, and keeps what it has.
+ */
+export function memoryPaused(m: { on: boolean; consent: { version: number } }): boolean {
+  return m.on && m.consent.version > 0 && m.consent.version < FEATURE_CONSENT_VERSION.memory;
+}
+/** Said in Settings › Memory while memory is paused, above its new note. */
+export const MEMORY_PAUSED_TEXT = "Memory is paused. Ember now also learns as you go, so it needs you to agree to its new note before it remembers anything more. What it kept is still here.";
 
 /** Where a remembered fact came from, as Settings › Memory lists it beside the fact. */
 export function memorySourceLabel(source: string): string {
