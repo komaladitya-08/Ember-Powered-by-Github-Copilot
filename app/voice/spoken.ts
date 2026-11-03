@@ -6,6 +6,14 @@
 const CODE = "(code shown in the bubble)";
 const TABLE = "(table shown in the bubble)";
 
+/** A key chord as written ("Ctrl+Alt+Y", "Win + Shift + S", "Cmd+Space"): modifiers joined by "+" to a key. */
+const CHORD = /\b(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)\b/gi;
+/** How a key in a chord is said (keyLabel's names, for the ear): the rest are said as they are written. */
+const KEY_SAID: Readonly<Record<string, string>> = {
+  ctrl: "Control", win: "Windows key", cmd: "Command", opt: "Option", esc: "Escape", del: "Delete", return: "Enter",
+  pgup: "Page Up", pgdn: "Page Down",
+};
+
 export function spokenText(markdown: string): string {
   return markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
@@ -26,6 +34,12 @@ export function spokenText(markdown: string): string {
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+][ \t]+/gm, "")
     .replace(/^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
+    // Key chords as said ("Ctrl+Shift+T" is "Control Shift T", not "C T R L plus…"), and a path through menus or
+    // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".
+    .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
+    .replace(/\s*›\s*(?=\S)/g, ", then ")
+    .replace(/\s+(?:→|->)\s+/g, " to ")
+    .replace(/(\w)\s+&\s+(?=\w)/g, "$1 and ")
     .replace(/\n{2,}/g, "\n")
     .trim();
 }

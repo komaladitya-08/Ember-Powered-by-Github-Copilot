@@ -3,6 +3,20 @@
 import { describe, expect, it } from "vitest";
 import { cancelWords, endsWithQuestion, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 
+describe("spokenText says keys, menu paths and symbols as people say them", () => {
+  it.each([
+    ["Press Ctrl+Shift+T to reopen the tab.", "Press Control Shift T to reopen the tab."],
+    ["Use `Win+Shift+S` for a screenshot.", "Use Windows key Shift S for a screenshot."],
+    ["Cmd + Space opens Spotlight.", "Command Space opens Spotlight."],
+    ["Ctrl+Alt+Del, then Esc.", "Control Alt Delete, then Esc."],
+    ["Open Settings › Privacy › Camera.", "Open Settings, then Privacy, then Camera."],
+    ["Drag it from Documents → Archive.", "Drag it from Documents to Archive."],
+    ["Tom & Jerry", "Tom and Jerry"],
+    // Not chords, not paths: left as they are.
+    ["C++ and a+b are fine, and so is 3 + 4.", "C++ and a+b are fine, and so is 3 + 4."],
+  ])("%j is said %j", (text, said) => expect(spokenText(text)).toBe(said));
+});
+
 describe("spokenText", () => {
   it.each([
     ["Run this:\n\n```bash\nsudo dnf install foo\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],
