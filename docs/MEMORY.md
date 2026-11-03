@@ -174,7 +174,8 @@ download, so English-only MiniLM is the trade-off for now.
      same); otherwise `conversation`. A fact whose subject is someone else ("Bob prefers tea") is about them, never
      the user. From a task, always `task`. No extracted fact that reads like an instruction
      (`soundsLikeInstruction`: deleting, sending, forwarding, emailing, uploading, moving, paying, installing,
-     "always", "without asking", being asked, confirmations, dialogs, trust, cc, sync, export, attach, paste…, after
+     "always", "without asking", being asked, confirmations, dialogs and popups, trust, "on its own", "fewer questions", cc,
+     sync, export, attach, paste…, after
      folding look-alike letters with `viewNorm`) is ever kept, whoever said it: a
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
      goes through `MemoryGraph.add()` and the guard.

@@ -181,6 +181,9 @@ const INSTRUCTION = new RegExp("\\b(?:" + [
   // Shaping Ember's approvals ("Doesn't need to be asked before Ember acts", "Is fine with Ember clicking OK on every
   // dialog", "Trusts every page Ember reads"): never learned as a preference (review of PR #142).
   "(?:need(?:s|ed|ing)?|without)\\b[^.!?\\n]{0,30}\\bask(?:s|ed|ing)?", "confirm\\w*", "skip\\w*", "dialogs?", "trust(?:s|ed|ing)?",
+  // Other ways to say "stop checking with me" ("Wants Ember to act on its own", "Wants fewer questions", "Is fine with
+  // popups", "Doesn't want to check with me", "Believes Ember can be left to it"): a safe false positive for a few facts.
+  "on\\s+(?:its|their)\\s+own", "fewer\\s+(?:questions|prompts|confirmations|interruptions)", "pop-?ups?", "check(?:s|ed|ing)?\\s+with\\s+(?:me|them|him|her)", "believ(?:e|es|ed|ing)",
   // The shape of an order.
   "always", "never\\s+ask", "without\\s+asking", "instruct\\w*", "must", "remember\\s+that", "from\\s+now\\s+on",
 ].join("|") + ")\\b", "iu");
