@@ -16,7 +16,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { Conductor, ConnectionLost, NO_ANSWER, type ConductorMemory } from "../../app/main/agent/conductor";
+import { conductorTools, Conductor, ConnectionLost, NO_ANSWER, type ConductorMemory } from "../../app/main/agent/conductor";
+import { Reminders } from "../../app/main/agent/reminders";
 import { KillSwitch } from "../../app/main/agent/killswitch";
 import { SemanticMemory, type Embedder } from "../../app/main/memory/embed";
 import { MemoryService } from "../../app/main/memory/service";
@@ -115,18 +116,41 @@ describe("a Stop while the request waits for memory", () => {
     });
     const a = c.ask("old first");
     const b = c.ask("old second");
-    await vi.waitFor(() => expect(releases).toHaveLength(2));
-    releases[1]("");
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
     await c.abort();
     const fresh = c.ask("new request");
-    await vi.waitFor(() => expect(releases).toHaveLength(3));
-    releases[2]("");
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    releases[1]("");
     await fresh;
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatch(/new request$/);
     releases[0]("");
     await Promise.all([a, b]);
     expect(sent).toHaveLength(1);
+  });
+
+  it("recalls queued requests only at dispatch, after consent changes while an earlier send waits", async () => {
+    let consent = true;
+    const seen: string[] = [];
+    const { c, sent } = conductor({ remember: () => "", forget: () => false, context: text => {
+      seen.push(text);
+      return consent ? "<memory untrusted=\"true\">private fact</memory>" : "";
+    } });
+    let release!: () => void;
+    const sending = new Promise<void>(resolve => { release = resolve; });
+    (c as unknown as { session: unknown }).session = { send: async (m: { prompt: string }) => {
+      sent.push(m.prompt);
+      if (sent.length === 1) await sending;
+    } };
+    const a = c.ask("first request");
+    const b = c.ask("second request");
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(seen).toEqual(["first request"]);
+    consent = false;
+    release();
+    await Promise.all([a, b]);
+    expect(seen).toEqual(["first request", "second request"]);
+    expect(sent[1]).not.toContain("private fact");
   });
 
   it("does not consume waiting authority or claim ownership for an unmatched message (ORCH-2)", async () => {
@@ -158,5 +182,62 @@ describe("a Stop while the request waits for memory", () => {
     await c.ask("what's the weather");
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatch(/what's the weather$/);
+  });
+});
+
+describe("memory provenance for unchecked speech", () => {
+  it("uses each queued turn's ownership, even when the words repeat, preserving saved routine steps", async () => {
+    const store = new MemoryService({ dir: tmp(), log: quiet });
+    const { c, sent } = conductor(store);
+    const state = c as unknown as {
+      turnBegan(text: string): void;
+      routineWords: string[];
+      memoryTools: { store: ConductorMemory; said(): string };
+    };
+    const words = "I prefer short answers";
+    for (const own of [false, true, false]) await c.ask(words, undefined, undefined, own);
+    for (const [i, own] of [false, true, false].entries()) {
+      state.turnBegan(sent[i]);
+      const memory = state.memoryTools;
+      expect(memory.said()).toBe(own ? words : "");
+      memory.store.remember("Prefers short answers", [], memory.said());
+      expect(store.list()[0].source).toBe(own ? "user" : "conversation");
+      store.forgetAll();
+    }
+    state.routineWords = ["I work on Ember"];
+    expect(state.memoryTools.said()).toBe("I work on Ember");
+  });
+});
+
+
+describe("request correlation with current-turn reminder authority", () => {
+  it("keeps unchecked, unmatched and saved routine words from cancelling reminders, but accepts the owner's request", async () => {
+    const { c, sent } = conductor({ remember: () => "", forget: () => false, context: () => "" });
+    const reminders = new Reminders({ onDue() {} });
+    const state = c as unknown as {
+      deps: { reminders: Reminders };
+      turnBegan(text: string): void;
+      routineWords: string[];
+      reminderTools: { store: Reminders; said(): string; own(): string };
+    };
+    state.deps.reminders = reminders;
+    const words = "cancel the reminder to call Priya";
+    reminders.add("call Priya", Date.now() + 60_000, "remind me in a minute to call Priya");
+    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, state.reminderTools);
+    const cancel = tools.find(t => t.name === "cancel_reminder")!;
+    const id = reminders.list()[0].id;
+    const run = () => cancel.handler!({ id }, {} as never);
+    await c.ask(words, undefined, undefined, false);
+    state.turnBegan(sent.at(-1)!);
+    expect(await run()).toMatch(/Not cancelled/);
+    state.turnBegan("unmatched runtime notification");
+    state.routineWords = [words];
+    expect(await run()).toMatch(/Not cancelled/);
+    expect(reminders.list()).toHaveLength(1);
+    await c.ask(words);
+    state.turnBegan(sent.at(-1)!);
+    expect(await run()).toMatch(/^Cancelled/);
+    expect(reminders.list()).toHaveLength(0);
+    reminders.clear();
   });
 });

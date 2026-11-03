@@ -1355,13 +1355,16 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     const { host, specs, session, tool } = await withTasks();
     const conductor = (host as any).conductor;
     const releases: ((text: string) => void)[] = [];
-    conductor.deps.memory = { forRequest: () => new Promise<string>(resolve => releases.push(resolve)) };
+    const recalls = [0, 1].map(() => new Promise<string>(resolve => releases.push(resolve)));
+    let recalled = 0;
+    conductor.deps.memory = { forRequest: () => recalls[recalled++] };
     sim.holdTurns = true;
     const firstContext = { ...mail, targetId: "ssh:first" as const };
     const secondContext = { ...terminal, targetId: "ssh:second" as const };
     const first = host.ask(a, firstContext, undefined, { voiceUnchecked: true });
     const second = host.ask(b, secondContext);
-    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    await vi.waitFor(() => expect(recalled).toBe(1));
+    // The later result is available first, but recall and dispatch keep the user's order.
     releases[1]("");
     await Promise.resolve();
     await Promise.resolve();

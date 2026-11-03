@@ -147,6 +147,10 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
   Target-dependent refusals (no borrowing in WSLg windows) live only in policy/target-rules.ts. On the user's screen, text typed with the borrowed keyboard always goes in by paste (any layout, accents, long text), and the clipboard is put back afterwards. Ember pastes only when it can put the clipboard back. On the desk, text is typed.
 - **The desk** (Linux only; `Platform.desk` is null elsewhere) is a private Xvfb with its own D-Bus, clipboard and app profiles. Make every desk X call in the desk helper (app/main/desk/agent-process.ts, bundled as dist/app/desk-agent.cjs and run with `ELECTRON_RUN_AS_NODE`), never in Ember's own process. Risky steps on the desk are still confirmed. Desks use displays :90 to :139.
 - **The kill switch.** Register every new long-running part with `KillSwitch` as a `StopPart`. After a stop, no tool sends anything to any app.
+- **Process cleanup.** Never signal a cached pid without checking what it names. Linux desk and command sweeps retain
+  `/proc/<pid>/stat` start times and check them again immediately before signalling; unreadable or reused identities
+  are left alone. macOS sweeps re-read the target pid and its run marker. The desk relay stops its own live child
+  handle, never a pid cached by the main thread.
 
 ## The overlay
 

@@ -494,7 +494,7 @@ describe("Presenter: tasks and guides sharing the bubble (review round 4)", () =
 });
 
 describe("Presenter: a question asked while the turn before is still ending (review round 9, BLD9-1)", () => {
-  it("the turn before's session.idle doesn't take the queued question's Thinking: it thinks again when its turn begins, and says when Copilot is quiet", () => {
+  it("keeps thinking without a neutral flash or a hide timer while the next question waits for its turn", () => {
     const { p, states, last } = setup();
     p.userPrompt("remember the word pineapple");
     p.event({ type: "user.message", data: { content: "<current_datetime>now</current_datetime>\n\nremember the word pineapple" } });
@@ -505,11 +505,15 @@ describe("Presenter: a question asked while the turn before is still ending (rev
     p.userPrompt("what time is it in Tokyo");
     p.event({ type: "assistant.turn_end", data: {} });
     p.event({ type: "session.idle", data: {} });
-    // Its turn begins: thinking again, and the hide armed by the old turn's end is off.
+    expect(last()).toMatchObject({ emotion: "thinking", talking: false, bubble: { visible: true, title: "Thinking…", thought: "“what time is it in Tokyo”", streaming: true } });
+    expect(p.busy).toBe(true);
+    vi.advanceTimersByTime(60_000);
+    expect(last().bubble).toMatchObject({ visible: true, title: STILL_WAITING, streaming: true, actions: [STOP_ANSWER] });
+    // Its turn begins: the face never stopped thinking and the answer before never armed a hide.
     p.event({ type: "user.message", data: { content: "what time is it in Tokyo" } });
     p.event({ type: "assistant.turn_start", data: {} });
     expect(p.busy).toBe(true);
-    expect(last()).toMatchObject({ emotion: "thinking", bubble: { visible: true, title: "Thinking…", thought: "“what time is it in Tokyo”", streaming: true } });
+    expect(last().bubble).toMatchObject({ visible: true, title: STILL_WAITING, thought: "“what time is it in Tokyo”", streaming: true });
     p.stalled(true);
     expect(last().bubble?.title).toBe(STILL_WAITING);
     vi.advanceTimersByTime(60_000);
@@ -535,6 +539,9 @@ describe("Presenter: a question asked while the turn before is still ending (rev
     expect(last().bubble).toMatchObject({ title: "Thinking…", thought: "“and beta?”" });
     p.event({ type: "assistant.turn_end", data: {} });
     p.event({ type: "session.idle", data: {} });
+    expect(last()).toMatchObject({ emotion: "thinking", bubble: { title: "Thinking…", streaming: true } });
+    vi.advanceTimersByTime(THINK_SLOW_MS);
+    expect(last().bubble?.title).toBe(STILL_WAITING);
     p.event({ type: "user.message", data: { content: "and beta?" } });
     p.event({ type: "assistant.turn_start", data: {} });
     p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Thinking about beta" } });
@@ -1271,7 +1278,14 @@ describe("the end of a conversation turn that said nothing (the owner's report o
     startedTask(p);
     p.userPrompt("and open the calculator");
     p.event({ type: "session.idle", data: {} });
-    expect(last().bubble).toMatchObject({ visible: true, mood: "thinking", title: "Thinking…" });
+    expect(last()).toMatchObject({ emotion: "thinking", talking: false, bubble: { visible: true, mood: "thinking", title: "Thinking…", streaming: true } });
+    vi.advanceTimersByTime(60_000);
+    expect(last().bubble).toMatchObject({ visible: true, title: STILL_WAITING, streaming: true });
+    // Stop still clears that pending request and its slow timer.
+    p.stopped();
+    p.event({ type: "session.idle", data: { aborted: true } });
+    expect(last()).toMatchObject({ emotion: "neutral", bubble: { title: "Stopped", streaming: false } });
+    expect(p.busy).toBe(false);
   });
 
   it("keeps a guide's bubble up when the turn ends", () => {
