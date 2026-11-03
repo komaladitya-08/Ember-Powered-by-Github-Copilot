@@ -24,7 +24,7 @@ import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, refusalEndsTrust, re
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus } from "../shared/ipc";
+import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -61,6 +61,7 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { projectNames, projectPrompt, projectRequest, ProjectInputError } from "./agent/project";
 import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
@@ -412,6 +413,10 @@ function start(): void {
   app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
+  let projectFiles: string[] = [];
+  let projectPicking = false;
+  let projectJob: AbortController | null = null;
+  const clearProject = () => { projectFiles = []; projectJob?.abort(); };
   /** First run's "Hey Ember" try is showing: the microphone's level goes to the settings window too (IPC.watchLevel). */
   let homeWantsLevel = false;
   /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
@@ -451,17 +456,18 @@ function start(): void {
     home.once("ready-to-show", () => log.info("window.home.shown"));
     const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); };
     // A crashed settings page comes back (it may be the consent page on first run).
-    revive(home, reason => { cancelHomeListenOnce(); log.warn("window.home.renderer_gone", { reason }); });
+    revive(home, reason => { cancelHomeListenOnce(); clearProject(); log.warn("window.home.renderer_gone", { reason }); });
     // While the user works in settings, Ember waits beside the window instead of over it.
     for (const e of ["focus", "blur", "move", "resize", "minimize", "restore", "hide", "show"] as const) home.on(e as "focus", stepAside);
     // Minimised or hidden, the page stops drawing its characters (X11 still reports it visible).
     const win = home;
     win.once("show", () => bringToFront(win));
     const shown = (on: boolean) => () => { if (!win.isDestroyed()) win.webContents.send(IPC.homeVisibility, on); };
-    const hidden = () => { shown(false)(); cancelHomeListenOnce(); };
+    const hidden = () => { shown(false)(); cancelHomeListenOnce(); projectJob?.abort(); };
     win.on("minimize", hidden); win.on("hide", hidden); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
       cancelHomeListenOnce();
+      clearProject();
       home = null;
       homeWantsLevel = false;
       stepAside();
@@ -1245,6 +1251,7 @@ function start(): void {
     { name: "agent", stop: () => agent?.abortAll() },
     // Every command stops, on every target, and every remote is told to stop (at once, whatever the network does).
     { name: "targets", stop: () => targets?.stopAll() },
+    { name: "project", stop: () => projectJob?.abort() },
     // Every extension call is refused from now on, its questions dropped, and every extension server ended.
     { name: "extensions", stop: () => extensionsRef?.stopPart().stop() },
     // The user's take-over of the desk ends too (its keys are released).
@@ -1892,6 +1899,49 @@ function start(): void {
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
+  const projectAvailable = () => consented() && screenLock?.locked === false && policy.features.actions !== false &&
+    agent?.getStatus().phase === "ready" && home?.isVisible() && !home.isMinimized();
+  ipcMain.handle(IPC.projectPick, guard(async (): Promise<ProjectSelection> => {
+    const names = projectFiles.length ? projectNames(projectFiles) : [];
+    const owner = home;
+    if (!owner || !projectAvailable() || projectPicking || projectJob) return { names, error: "Project work is unavailable right now." };
+    const previous = projectFiles;
+    projectPicking = true;
+    try {
+      const selected = await dialog.showOpenDialog(owner, { title: "Choose project files", properties: ["openFile", "multiSelections"] });
+      if (home !== owner || projectFiles !== previous || !projectAvailable()) return { names: [] };
+      if (selected.canceled) return { names };
+      const next = projectNames(selected.filePaths);
+      projectFiles = selected.filePaths;
+      return { names: next };
+    } catch (err) {
+      return { names: home === owner && projectFiles === previous ? names : [], error: err instanceof ProjectInputError ? err.message : "Couldn't choose project files." };
+    } finally {
+      projectPicking = false;
+    }
+  }));
+  ipcMain.handle(IPC.projectRun, guard(async (request: unknown): Promise<ProjectResult> => {
+    const input = projectRequest.safeParse(request);
+    if (!input.success) return { error: "Enter a project request of up to 4,000 characters." };
+    const host = agent;
+    if (!host || !projectAvailable() || projectJob || projectPicking) return { error: "Project work is unavailable right now." };
+    const run = projectJob = new AbortController();
+    const files = projectFiles;
+    try {
+      const prompt = await projectPrompt(files, input.data.mode, input.data.question, run.signal, userData);
+      if (run.signal.aborted || projectFiles !== files || host !== agent || !projectAvailable()) return { error: "Project request cancelled." };
+      const answer = await host.runProject(prompt, run);
+      if (run.signal.aborted || !projectAvailable()) return { error: "Project request cancelled." };
+      if (!answer) return { error: "The model didn't finish the project request. Try again." };
+      return { answer: answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer };
+    } catch (err) {
+      return { error: run.signal.aborted ? "Project request cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't read the selected files. Choose them again." };
+    } finally {
+      if (projectJob === run) projectJob = null;
+    }
+  }));
+  ipcMain.handle(IPC.projectClear, guard(clearProject));
+  ipcMain.handle(IPC.projectCancel, guard(() => projectJob?.abort()));
   const listenOnceFromHome = guard((on: boolean): ListenOnceStatus => on && (!home?.isVisible() || home.isMinimized())
     ? { phase: "blocked", detail: "Open Ember’s settings to listen here." }
     : requestListenOnce("home", on));
@@ -2666,6 +2716,7 @@ function start(): void {
         syncListenOnce();
       },
       onStatus: status => {
+        if (status.phase !== "ready") clearProject();
         // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.
         // Ember's own that ran out unnoticed (the computer slept) is renewed and reconnected instead (cross-review X12).
         if (status.phase === "error" && status.reason === "sign-in" && currentToken) { refusedTokens.add(currentToken); keeper.refused(currentToken); }
@@ -2680,7 +2731,7 @@ function start(): void {
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
-      onAccountChanged: () => { askHistory = []; },
+      onAccountChanged: () => { askHistory = []; clearProject(); },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.
@@ -2934,7 +2985,7 @@ function start(): void {
     // desktop stop, as on a remote computer whose screen locks. What stopped is said once the user is back.
     const lockControl = new LockController({
       stopDesktopTasks: () => agent?.cancelTasksOn("local", "desktop") ?? 0,
-      setLocked: locked => voice?.setLocked(locked),
+      setLocked: locked => { if (locked) projectJob?.abort(); voice?.setLocked(locked); },
       showNotice: n => showNotice(n, 8000),
     });
     screenLock = new ScreenLock({

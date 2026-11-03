@@ -31,6 +31,7 @@ import {
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { providerSettings, startProvider } from "./provider";
+import { mountProject } from "./project";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
@@ -658,9 +659,11 @@ function renderTaskReasoning(): void {
   select.value = chosen;
 }
 
+const projectReady = mountProject();
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
   agent = a;
+  projectReady(a.phase === "ready");
   const had = document.activeElement;
   ($("agent-dot") as HTMLElement).dataset.phase = a.phase;
   $("agent-text").textContent = a.detail;

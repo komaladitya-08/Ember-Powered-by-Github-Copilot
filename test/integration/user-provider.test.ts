@@ -20,6 +20,7 @@ import { SettingsStore } from "../../app/main/settings";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
 import { ProviderKeyStore, activeProvider, testConnection, type FetchLike } from "../../app/main/provider";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { projectPrompt } from "../../app/main/agent/project";
 import { endpointHost } from "../../app/shared/provider";
 import { createLogger } from "../../app/main/logger";
 import type { SecretBox } from "../../app/main/agent/auth";
@@ -132,6 +133,16 @@ describe("the user's own model provider on the real Copilot runtime", () => {
       // The real SDK reports the live conversation context even for this custom model. Its default limit is only a guess.
       expect(host.getStatus().conversationContext).toMatchObject({ kind: "usage", currentTokens: expect.any(Number) });
       expect(host.getStatus().conversationContext).not.toHaveProperty("tokenLimit");
+      const source = path.join(dir, "example.ts");
+      fs.writeFileSync(source, "export const greeting = 'hello from the selected project file';");
+      const run = new AbortController();
+      const project = await projectPrompt([source], "review", "Explain the greeting.", run.signal, userData);
+      const projectBefore = mock.requests.length;
+      expect(await host.runProject(project, run)).toContain("You said:");
+      const projectSent = JSON.stringify(mock.requests.slice(projectBefore));
+      expect(projectSent).toContain("hello from the selected project file");
+      expect(projectSent).toContain("Explain the greeting.");
+      expect(projectSent).not.toContain("hello from my own provider");
       settings.update({ provider: { ...settings.get().provider, on: false } });
       expect(await host.providerChanged(), phases.join("\n")).toBe("signed-out");
       expect(host.getStatus().conversationContext).toBeUndefined();

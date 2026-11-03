@@ -14,17 +14,19 @@ import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 /** How long one memory call may take (ms). */
 export const ONE_SHOT_MS = 30_000;
 
-export function copilotOneShot(o: { client: CopilotClient; model: string | null; provider?: ProviderConfig; workDir: string; log: Logger }): OneShot {
+export function copilotOneShot(o: { client: CopilotClient; model: string | null; provider?: ProviderConfig; workDir: string; log: Logger; purpose?: "project" }): OneShot {
   return async (system, prompt, signal) => {
     if (signal.aborted) return null;
-    const sessionId = `ember-memory-${crypto.randomUUID()}`;
+    const purpose = o.purpose ?? "memory";
+    const sessionId = `ember-${purpose}-${crypto.randomUUID()}`;
     try {
-      const session = await o.client.createSession(hardenedSessionConfig({
+      const config = hardenedSessionConfig({
         sessionId, model: o.model ?? undefined, provider: o.provider, tools: [],
         systemMessage: { mode: "replace", content: system },
         workingDirectory: o.workDir,
-        onPermissionRequest: () => ({ kind: "reject", feedback: "Memory's model calls have no tools." }),
-      }));
+        onPermissionRequest: () => ({ kind: "reject", feedback: "This session has no tools." }),
+      });
+      const session = await o.client.createSession(purpose === "project" ? { ...config, infiniteSessions: { enabled: false } } : config);
       // No tool at all may be offered (fail closed: a session that shows one is not asked).
       await verifySessionTools(session, []);
       if (signal.aborted) return null;
@@ -37,7 +39,8 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
         signal.removeEventListener("abort", abort);
       }
     } catch (err) {
-      o.log.warn("memory.model_failed", { err: err instanceof Error ? err.message : String(err) });
+      if (purpose === "project") o.log.warn("project.model_failed");
+      else o.log.warn("memory.model_failed", { err: err instanceof Error ? err.message : String(err) });
       return null;
     } finally {
       // Always, even when createSession failed: it may have made the session before it rejected (each session holds an

@@ -87,6 +87,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 .copilot { display: grid; gap: 12px; padding: 16px; }
 /* Rows: 48 px tall, divided by hairlines; an empty or hidden row takes no room. */
 .group { display: grid; padding: 0 16px; }
+#project-form { gap: 8px; padding-block: 12px; }
+#project-question { width: 100%; resize: vertical; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 8px; }
+#project-files { overflow-wrap: anywhere; }
+.project-answer { margin: 0; max-height: 22em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .group > * { min-height: 48px; padding: 12px 0; margin: 0; }
 .group > * + * { border-top: 1px solid var(--line); }
 .group > [hidden], .group > .agent-actions:not(:has(> :not([hidden]))) { display: none; }

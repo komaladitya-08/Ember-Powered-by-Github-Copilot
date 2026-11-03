@@ -9,6 +9,9 @@ import type { MemoryModelStatus } from "../main/memory/better-recall";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
+export type ProjectMode = "review" | "plan" | "patch";
+export interface ProjectSelection { names: string[]; error?: string }
+export type ProjectResult = { answer: string } | { error: string };
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
@@ -57,6 +60,10 @@ export const IPC = {
   openSignInPage: "agent:open-sign-in-page",
   conversation: "agent:conversation",
   conversationChanged: "agent:conversation-changed",
+  projectPick: "project:pick",
+  projectRun: "project:run",
+  projectClear: "project:clear",
+  projectCancel: "project:cancel",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -280,6 +287,10 @@ export interface EmberHomeApi {
   /** Applies a fix offered by a setup check; returns the new report. */
   applyFix(fix: NonNullable<EnvReport["checks"][number]["fix"]>): Promise<EnvReport>;
   agentStatus(): Promise<AgentStatus>;
+  projectPick(): Promise<ProjectSelection>;
+  projectRun(request: { mode: ProjectMode; question: string }): Promise<ProjectResult>;
+  projectClear(): Promise<void>;
+  projectCancel(): Promise<void>;
   onAgentStatus(fn: (s: AgentStatus) => void): () => void;
   signIn(): Promise<void>;
   onSignInProgress(fn: (p: SignInProgress) => void): () => void;
