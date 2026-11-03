@@ -37,7 +37,6 @@ import type { ElectronParts, Input, Platform, PlatformDeps, Rect, ScreenLike, Si
 import type { Logger } from "../../app/main/logger";
 import { loadPlatform } from "../../app/main/platform";
 import { loadWin32 } from "../../app/main/platform/win32/ffi";
-import { topLevels } from "../../app/main/platform/win32/hwnd";
 import { AtspiSidecar, type SidecarStatus } from "../../app/main/perception/sidecar";
 import { Perception } from "../../app/main/perception";
 import { matchFrame } from "../../app/main/perception/windows";
@@ -137,6 +136,13 @@ const decode = async (c: Capture) => {
 const inner = (r: Rect, fx = 0.6, fy = 0.4): Rect => ({ x: r.x + r.width * (1 - fx) / 2, y: r.y + r.height * (1 - fy) / 2, width: r.width * fx, height: r.height * fy });
 const dark = (r: number, g: number, b: number) => r < 40 && g < 40 && b < 40;
 const red = (r: number, g: number, b: number) => r >= 200 && g <= 60 && b <= 60;
+
+interface AskMenuProbe {
+  editable: boolean | null;
+  popup: boolean;
+  shown: boolean;
+  closed: boolean;
+}
 /** A raw BGRA capture's share of red pixels. */
 function redShareBgra(bgra: Buffer): number {
   let n = 0;
@@ -427,8 +433,23 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
 
       // Review #77: open the field's edit menu, then click a point on the bench outside the Ask window.
       // If the native menu swallows the first click, Ask keeps the keyboard until the next click reaches the bench.
-      const { at, askId } = await ember.evaluate(async ({ BrowserWindow, screen }) => {
+      const { at, askId } = await ember.evaluate(async ({ BrowserWindow, Menu, screen }) => {
         const w = BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!;
+        // Observe the real menu in this test's disposable Electron process. Its HWND varies across Windows versions.
+        const probe: AskMenuProbe = { editable: null, popup: false, shown: false, closed: false };
+        (globalThis as { __askMenuProbe?: AskMenuProbe }).__askMenuProbe = probe;
+        w.webContents.once("context-menu", (_event, params) => { probe.editable = params.isEditable; });
+        const popup = Menu.prototype.popup;
+        Menu.prototype.popup = function (options) {
+          if (options?.window !== w) return popup.call(this, options);
+          Menu.prototype.popup = popup;
+          probe.popup = true;
+          this.once("menu-will-show", () => { probe.shown = true; });
+          return popup.call(this, {
+            ...options,
+            callback: () => { probe.closed = true; options.callback?.(); },
+          });
+        };
         const box = w.getBounds();
         const field = await w.webContents.executeJavaScript(`(() => {
           const { x, y, width, height } = document.getElementById("q").getBoundingClientRect();
@@ -437,17 +458,21 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         // Electron bounds are DIP; SendInput positions are physical pixels.
         return { at: screen.dipToScreenPoint({ x: Math.round(box.x + field.x), y: Math.round(box.y + field.y) }), askId: w.getNativeWindowHandle().readUInt32LE(0) };
       });
+      const menuState = () => ember.evaluate(() => (globalThis as { __askMenuProbe?: AskMenuProbe }).__askMenuProbe);
       const api = loadWin32()!;
       const hit = (x: number, y: number) => api.root(api.windowFromPoint(x, y));
-      const appPid = api.threadProcess(askId).pid;
-      const visibleOwned = () => topLevels(api).filter(h => api.isVisible(h) && api.threadProcess(h).pid === appPid);
-      const beforeMenu = new Set(visibleOwned());
-      expect(hit(at.x, at.y), "the right-click reaches the Ask field").toBe(askId);
       x.move(at.x, at.y);
       await sleep(150);
+      expect(hit(at.x, at.y), "the right-click reaches the Ask field").toBe(askId);
       x.button(3, true);
       x.button(3, false);
-      const menu = await waitFor("the Ask edit menu to appear", () => visibleOwned().find(h => !beforeMenu.has(h)), 3_000);
+      await waitFor("the Ask edit menu to appear", async () => {
+        const state = await menuState();
+        if (state?.closed) throw new Error("the Ask edit menu closed before the bench click");
+        return state?.editable === true && state.shown;
+      }, 3_000).catch(async (err: Error) => {
+        throw new Error(`${err.message}: ${JSON.stringify({ menu: await menuState(), ask: await askWindow() })}`, { cause: err });
+      });
       expect((await askWindow())?.visible, "Ask stays open while its menu is up").toBe(true);
       const benchX = ready.window.x + ready.window.width - 40, benchY = ready.window.y + ready.window.height - 40;
       expect(hit(benchX, benchY), "the dismissing click reaches the bench, not Ask or its menu").toBe(ready.hwnd);
@@ -455,7 +480,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       await sleep(150);
       x.button(1, true);
       x.button(1, false);
-      await waitFor("the Ask edit menu to close", () => !api.isVisible(menu), 3_000);
+      await waitFor("the Ask edit menu to close", async () => (await menuState())?.closed, 3_000);
       await sleep(1500);
       const after = await askWindow();
       const benchActive = ws.activeWindow()?.id === ready.hwnd;
