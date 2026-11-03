@@ -4,6 +4,7 @@ import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
+import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 
 /** A routine as Home lists it. */
@@ -43,6 +44,8 @@ export const IPC = {
   voiceWords: "voice:words",
   voiceForgetWord: "voice:forget-word",
   voiceForgetWords: "voice:forget-words",
+  /** The natural voice's download failed: try again (Home's "Try again" under its switch). */
+  voiceNaturalRetry: "voice:natural-retry",
   askClose: "agent:ask-close",
   /** One of Ember's suggestions chosen in the Ask box (sent as Ember's words the user chose, not typed). */
   askSuggestion: "agent:ask-suggestion",
@@ -59,6 +62,8 @@ export const IPC = {
   memoryChanged: "memory:changed",
   memoryForget: "memory:forget",
   memoryForgetAll: "memory:forget-all",
+  /** "Tell Ember about you": the answers, checked whole in main (IntroSchema) and kept as the user's own facts. */
+  memoryIntroduce: "memory:introduce",
   /** Better recall's model (memory/better-recall.ts): its state and changes to it, Download and Remove. */
   memoryModel: "memory:model",
   memoryModelChanged: "memory:model-changed",
@@ -133,7 +138,21 @@ export interface VoiceStatus {
   speechMissing?: boolean;
   /** Voice Match: whether a voiceprint is kept (`enrolled`) and in use (`on`), and enrolment's progress while it runs. */
   match?: VoiceMatchStatus;
+  /** The natural voice (Kokoro, Windows and macOS): what became of turning it on, shown under its switch. */
+  natural?: NaturalVoiceStatus;
 }
+
+/**
+ * The natural voice as Home shows it (VoiceService.naturalStatus): `off` (not wanted); `later` (on since Ember started:
+ * decided the next time it speaks); `checking` (Ember's voice is loading to time this computer); `needs-voice` (Ember's own voice isn't downloaded yet, so nothing can be timed);
+ * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now);
+ * `too-slow`; `failed` (the download failed: Try again); `wont-load` (downloaded, but it wouldn't load); `needs-native`
+ * (Ember's faster speech didn't load on this computer, and Kokoro needs it).
+ */
+export type NaturalVoiceStatus =
+  | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
+  | { state: "downloading"; percent: number }
+  | { state: "failed"; detail: string };
 
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */
 export type SpeechModelId = "kws" | "vad" | "asr" | "tts" | "speaker";
@@ -255,6 +274,8 @@ export interface EmberHomeApi {
   voiceStatus(): Promise<VoiceStatus>;
   onVoiceStatus(fn: (s: VoiceStatus) => void): () => void;
   downloadVoice(): Promise<void>;
+  /** Fetches the natural voice again after its download failed. */
+  retryNaturalVoice(): Promise<void>;
   /** Voice Match: starts teaching Ember the owner's voice (false: Ember isn't listening, so it can't), or stops; forgets the voiceprint. */
   enrolVoice(): Promise<boolean>;
   cancelEnrolVoice(): Promise<void>;
@@ -275,6 +296,8 @@ export interface EmberHomeApi {
   onMemory(fn: (items: MemoryItem[]) => void): () => void;
   forgetMemory(id: string): Promise<void>;
   forgetAllMemory(): Promise<void>;
+  /** Keeps "Tell Ember about you"'s answers; how many were kept, or null while memory is off. */
+  introduceMe(answers: Intro): Promise<number | null>;
   /** Better recall's model: whether it is here, and changes; the user's Download (the agreement to fetch it) and Remove. */
   memoryModel(): Promise<MemoryModelStatus>;
   onMemoryModel(fn: (s: MemoryModelStatus) => void): () => void;

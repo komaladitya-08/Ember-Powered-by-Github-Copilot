@@ -21,11 +21,20 @@ export type EnrolState =
   | { state: "cancelled"; got: number; of: number };
 
 /**
- * The least voice a request needs for Voice Match to vouch for it (`verified`, what a spoken yes and turning "Work
- * without asking" on need): VOICE_MATCH_THRESHOLD was tuned on requests of about 2.5 s (voiceprint.ts), and a bare
- * "allow" (0.4 s) is too short to tell voices apart (security review of #127).
+ * The least voice what follows the wake phrase needs for Voice Match to vouch for it (`verified`, what a spoken yes and
+ * turning "Work without asking" on need), checked on its own at VOICE_MATCH_THRESHOLD (owner decision of 2026-11-03;
+ * it was 1.5 s, which almost no natural yes reached). Measured on LibriSpeech dev-clean (33 speakers, enrolled from four
+ * 3 s phrases, pieces cut by voiced length): at 0.5 s another voice passes 0.5 % of the time and the owner's is turned
+ * away 52 %; at 1.5 s, 1.9 % and 6.5 %. A shorter piece makes another voice no easier to pass, only the owner's harder.
+ * A shorter or weaker match is `short`, which only a task the owner asked for by voice may still take (TaskVoiceTrust).
+ * Never the whole request with the wake phrase in it: the owner's recorded "Hey Ember" then another voice passed 65 %.
  */
-export const APPROVAL_MIN_SECONDS = 1.5;
+export const APPROVAL_MIN_SECONDS = 0.5;
+/**
+ * What follows the wake phrase is scored on its own (`restScore`) when it holds this much voice: under it, too few
+ * frames for the voiceprint to say anything.
+ */
+export const SCORE_MIN_SECONDS = 0.25;
 
 /** The voice process's frames (32 ms at 16 kHz): voice is counted frame by frame. */
 const FRAME = 512;
@@ -156,10 +165,9 @@ export class VoiceGate {
       // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
-      // own: the threshold was tuned on 2.5 s requests, a bare "allow" is too short to tell voices apart, and a recording
-      // of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
+      // own: a recording of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
       if (this.matches(print, owner)) {
-        const heard = await this.vouched(e, audio, owner, withWake, this.matches(print, owner, true));
+        const heard = await this.vouched(e, audio, owner, withWake, print);
         this.send(heard);
         if (heard.type === "utterance" && heard.verified) this.onSample?.(print, score, afterWakePhrase(audio, withWake));
         return;
@@ -171,21 +179,34 @@ export class VoiceGate {
 
   /**
    * The owner's request (it matched as a whole) as main gets it: `verified` when what follows the wake phrase holds at
-   * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`. A check that fails says
-   * neither (heard, but it can't approve anything), and so does one that matched only a learnt print, not the
-   * enrolment at its own threshold (`strict`, adapt.ts ADAPT.verifiedFloor).
+   * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`, with that part's own score
+   * (`restScore`) when it held SCORE_MIN_SECONDS of voice or more (`print`: the whole request's voiceprint, which is that
+   * part's when there was no wake phrase). A check that fails says neither (heard, but it can't approve anything).
+   *
+   * `verified` needs `matches(…, strict)` (adapt.ts): the learnt print at its raised threshold AND the enrolment at its own
+   * threshold, so what Voice Match learnt never lowers the bar for a spoken yes. `restScore` goes out unrounded and is
+   * the cosine to the ENROLLED voiceprint (the one VOICE_MATCH_THRESHOLD and main's SHORT_YES_FLOOR are measured against),
+   * or, once the print learnt, the lower of that and the cosine to the print in use: what was learnt never makes a short
+   * yes score higher (voice-answer.ts SHORT_YES_FLOOR is compared with exactly this number).
    */
-  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, strict: boolean): Promise<VoiceEvent> {
+  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, print: Float32Array): Promise<VoiceEvent> {
+    const enrolled = this.anchor ?? owner;
+    const scored = (p: Float32Array) => Math.min(similarity(p, owner), similarity(p, enrolled));
     const rest = afterWakePhrase(audio, withWake);
-    if (voicedSeconds(rest) < APPROVAL_MIN_SECONDS) return { ...e, short: true };
-    if (!strict) return e;
-    if (rest === audio) return { ...e, verified: true };
+    const voiced = voicedSeconds(rest);
+    if (rest === audio) {
+      if (voiced < APPROVAL_MIN_SECONDS) return { ...e, short: true, ...(voiced >= SCORE_MIN_SECONDS ? { restScore: scored(print) } : {}) };
+      return this.matches(print, owner, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(print) };
+    }
+    if (voiced < SCORE_MIN_SECONDS) return { ...e, short: true };
+    let restPrint: Float32Array;
     try {
-      return this.matches(await this.printer().print(rest), owner, true) ? { ...e, verified: true } : { ...e, short: true };
+      restPrint = await this.printer().print(rest);
     } catch (err) {
       this.onError(err);
       return e;
     }
+    return voiced >= APPROVAL_MIN_SECONDS && this.matches(restPrint, owner, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(restPrint) };
   }
 
   private lookAtWake(e: Extract<VoiceEvent, { type: "wake" }>, audio: Float32Array, owner: Float32Array): void {

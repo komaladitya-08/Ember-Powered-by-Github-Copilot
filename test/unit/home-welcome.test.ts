@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
+  CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, aboutNext, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
   gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
@@ -17,14 +17,27 @@ const MAIN = read("main/main.ts");
 const HOME = read("renderer/home/main.ts");
 
 describe("first run's steps", () => {
-  it("go hello, character, consent, sign-in, checks, try, done, one decision each", () => {
-    expect([...WELCOME_STEPS]).toEqual(["hello", "character", "consent", "sign-in", "checks", "try", "done"]);
-    expect(stepCount("hello")).toBe("Step 1 of 7");
-    expect(stepCount("done")).toBe("Step 7 of 7");
+  it("go hello, character, consent, sign-in, checks, try, about you, done, one decision each", () => {
+    expect([...WELCOME_STEPS]).toEqual(["hello", "character", "consent", "sign-in", "checks", "try", "about", "done"]);
+    expect(stepCount("hello")).toBe("Step 1 of 8");
+    expect(stepCount("done")).toBe("Step 8 of 8");
     expect(stepBefore("hello")).toBeNull();
     expect(stepAfter("done")).toBeNull();
     expect(stepAfter("consent")).toBe("sign-in");
     expect(stepBefore("sign-in")).toBe("consent");
+    expect(stepAfter("try")).toBe("about");
+  });
+
+  it("offers the about-you step as optional: its button skips until memory is on and something is answered", () => {
+    expect(STEP_TEXT.about).toEqual({
+      title: "Tell me about you",
+      lead: "Optional. A few short answers help me get things right for you, and you can skip any of them. I keep them only once you turn memory on.",
+    });
+    expect(aboutNext({ ready: false, filled: true })).toBe("Skip for now");
+    expect(aboutNext({ ready: true, filled: false })).toBe("Skip for now");
+    expect(aboutNext({ ready: true, filled: true })).toBe("Save and continue");
+    // Saving waits for main's answer before going on; skipping keeps nothing.
+    expect(SCRIPT).toContain("if (about.ready && about.filled) void about.submit().then(() => go(\"done\"));");
   });
 
   it("can't pass the consent step without agreement, whichever step is asked for (M8.8)", () => {

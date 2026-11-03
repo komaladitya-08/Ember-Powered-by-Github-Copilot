@@ -204,7 +204,7 @@ describe("routines and the user's own words (audit of the conversation features)
     const c = new Conductor({ client: {} as never, settings, presenter: { userPrompt() {} } as never, log: quiet, stateFile: path.join(tmp(), "agent.json"), workDir: "/tmp", model: "m", reminders, routines });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the conductor's turn, without Copilot
     const inner = c as any;
-    inner.unstarted = ["start my day"];
+    inner.unstarted = [{ text: "start my day", own: true }];
     inner.turnBegan("start my day");
     const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, inner.reminderTools, inner.routineTools);
     expect(await handler(tools, "set_reminder")({ text: "call Priya", minutes: 20 })).toMatch(/user's own words/);
@@ -212,7 +212,7 @@ describe("routines and the user's own words (audit of the conversation features)
     expect(await handler(tools, "set_reminder")({ text: "call Priya", minutes: 20 })).toMatch(/^Set \[/);
     expect(c.routineSaid).toBe("open Mail\nremind me in 20 minutes to call Priya");
     // The next turn starts with the user's words alone.
-    inner.unstarted = ["thanks"];
+    inner.unstarted = [{ text: "thanks", own: true }];
     inner.turnBegan("thanks");
     expect(c.routineSaid).toBe("");
     reminders.clear();
@@ -357,7 +357,7 @@ describe("run_routine and delete_routine need the request to be about the routin
     const c = new Conductor({ client: {} as never, settings, presenter: { userPrompt() {} } as never, log: quiet, stateFile: path.join(tmp(), "agent.json"), workDir: "/tmp", model: "m", routines });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the conductor's turn, without Copilot
     const inner = c as any;
-    inner.unstarted = ["start my day"];
+    inner.unstarted = [{ text: "start my day", own: true }];
     inner.turnBegan("start my day");
     const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, inner.routineTools);
     expect(await handler(tools, "run_routine")({ name: "start my day" })).toContain("1. open Mail");
@@ -377,7 +377,7 @@ describe("run_routine and delete_routine need the request to be about the routin
     const c = new Conductor({ client: {} as never, settings, presenter: { userPrompt() {} } as never, log: quiet, stateFile: path.join(tmp(), "agent.json"), workDir: "/tmp", model: "m", routines });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the conductor's turn, without Copilot
     const inner = c as any;
-    inner.unstarted = ["start my day"];
+    inner.unstarted = [{ text: "start my day", own: true }];
     inner.turnBegan("start my day");
     const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, inner.routineTools);
     expect(await handler(tools, "run_routine")({ name: "start my day" })).toContain("2. clean up");
@@ -465,7 +465,9 @@ describe("AgentHost's routines across a sign-out, a restart and another account 
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     const at = main.indexOf("agent = new AgentHost({");
     const opts = main.slice(at, at + 400);
-    expect(opts).toMatch(/\n\s+memory,\n\s+routines: routineBook,/);
+    expect(opts).toMatch(/\n\s+memory: hostMemory,\n\s+routines: routineBook,/);
+    // hostMemory is made once, unconditionally, from the one MemoryLearning (memory-learning.test.ts covers it).
+    expect(main).toMatch(/\n {2}const hostMemory = \{\n {4}\.\.\.learning\.conductorMemory\(\),/);
     expect(opts).not.toMatch(/Allowed\(\) \? \{ (?:memory|routines)/);
   });
 

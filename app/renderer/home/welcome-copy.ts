@@ -9,7 +9,7 @@
 import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attention";
 
 /** The steps, in order. The try step and the summary come after the consent gate; nothing before it reads or sends. */
-export const WELCOME_STEPS = ["hello", "character", "consent", "sign-in", "checks", "try", "done"] as const;
+export const WELCOME_STEPS = ["hello", "character", "consent", "sign-in", "checks", "try", "about", "done"] as const;
 export type WelcomeStep = (typeof WELCOME_STEPS)[number];
 
 /** Where first run opens: at the start, or (terms already agreed in an earlier run that didn't finish) at sign-in. */
@@ -65,6 +65,10 @@ export const STEP_TEXT: Readonly<Record<WelcomeStep, { title: string; lead: stri
   try: {
     title: "Try me out",
     lead: "A few things worth trying now. Each is optional.",
+  },
+  about: {
+    title: "Tell me about you",
+    lead: "Optional. A few short answers help me get things right for you, and you can skip any of them. I keep them only once you turn memory on.",
   },
   done: {
     title: "Your Ember",
@@ -289,3 +293,8 @@ export const START_LABEL = "Start Ember";
 
 /** The navigation buttons. */
 export const NAV = { back: "Back", next: "Continue", begin: "Get started", skip: "Skip for now" } as const;
+
+/** The "about you" step's main button: it saves what was answered, or goes on without (nothing kept). */
+export function aboutNext(o: { ready: boolean; filled: boolean }): string {
+  return o.ready && o.filled ? "Save and continue" : NAV.skip;
+}

@@ -8,8 +8,13 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
-import { AUTONOMY_CONSENT_TEXT, autonomyHint, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, naturalVoiceView, setupBadge, setupView } from "./copy";
+import {
+  AUTONOMY_CONSENT_TEXT, autonomyHint, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, LEARNED_UNDONE, MEMORY_CONSENT_TEXT,
+  MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
+  memorySourceLabel, routinesEmptyText, undoLearnedLabel,
+} from "./copy";
+import { mountAboutYou } from "./about-you";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -242,7 +247,7 @@ function renderStatus(): void {
   const listening = !!settings?.wakeWord && !!settings?.voice.consent;
   setText("whats-on", whatsOnText({
     voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
-    memory: !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION,
+    memory: settings && memoryPaused(settings.memory) ? "paused" : !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION,
     commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
     computers: settings?.targets.hosts.length ?? 0,
     wsl: !!settings?.targets.wsl.on,
@@ -487,7 +492,7 @@ function renderAdmin(a: Status["admin"]): void {
   }
   const service = document.querySelector<HTMLElement>("#w-full #model-service");
   if (a.provider && !sendLine && service) service.textContent = `your organisation's model service (${new URL(a.provider).host})`;
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -779,6 +784,24 @@ let shownConversation: Entry[] = [];
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");
   li.className = e.who;
+  // "Ember learned: …" with Undo (forgets that fact): a small line of its own, not a message.
+  if (e.who === "learned") {
+    const text = Object.assign(document.createElement("p"), { textContent: learnedLine(e.text) });
+    li.append(text);
+    const id = e.fact;
+    if (id) {
+      const undo = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Undo" });
+      undo.setAttribute("aria-label", undoLearnedLabel(e.text));
+      undo.addEventListener("click", () => {
+        if (undo.disabled) return;
+        undo.disabled = true;
+        undo.textContent = LEARNED_UNDONE;
+        void window.ember.forgetMemory(id);
+      });
+      li.append(undo);
+    }
+    return li;
+  }
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
   const t = Object.assign(document.createElement("time"), { textContent: time(e.t), dateTime: e.t });
   const text = Object.assign(document.createElement("p"), { textContent: e.text });
@@ -832,7 +855,10 @@ function renderMemory(rows: MemoryRow[]): void {
   list.replaceChildren(...(rows.length
     ? rows.map((r, i) => {
       const li = document.createElement("li");
-      li.append(Object.assign(document.createElement("span"), { textContent: r.text }));
+      // The fact, and under it where it came from (you, our conversation, a task).
+      const fact = Object.assign(document.createElement("span"), { className: "mem-fact" });
+      fact.append(Object.assign(document.createElement("span"), { textContent: r.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memorySourceLabel(r.source) }));
+      li.append(fact);
       const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
       btn.setAttribute("aria-label", forgetMemoryLabel(r.text));
       btn.addEventListener("click", () => { memoryFocus = i; void window.ember.forgetMemory(r.id); });
@@ -847,20 +873,43 @@ function renderMemory(rows: MemoryRow[]): void {
     memoryFocus = null;
   }
 }
+/** Memory's settings as they are, so a change to one of its fields keeps the others (the patch replaces it whole). */
+const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, at: null }, questions: true, askedAt: null };
+/** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */
+const aboutYou = mountAboutYou($("about-you"), {
+  id: "ay", save, ownSave: true,
+  askConsent: () => { $("memory-consent").hidden = false; $("memory-yes").focus(); },
+});
+$("memory-questions-hint").textContent = MEMORY_QUESTIONS_HINT;
+/** The paused note was shown (once a session: Not now hides it). */
+let pausedSeen = false;
 function applyMemorySettings(s: Settings): void {
-  ($("memory-on") as HTMLInputElement).checked = s.memory.on && s.memory.consent.version >= MEMORY_VERSION;
+  const on = s.memory.on && s.memory.consent.version >= MEMORY_VERSION;
+  ($("memory-on") as HTMLInputElement).checked = on;
+  // Questions are memory's: their switch shows only while memory is on.
+  ($("memory-questions") as HTMLInputElement).checked = s.memory.questions;
+  $("memory-questions-row").hidden = !on;
+  $("memory-questions-hint").hidden = !on;
+  aboutYou.refresh(s, managed.has("memory"));
+  // On under the earlier note: paused until the new one is agreed to, which shows open with a line saying why (until
+  // Not now this session).
+  const paused = memoryPaused(s.memory) && !managed.has("memory");
+  $("memory-paused").textContent = MEMORY_PAUSED_TEXT;
+  $("memory-paused").hidden = !paused;
+  if (paused && !pausedSeen) { pausedSeen = true; $("memory-consent").hidden = false; }
   if (!memoryRows.length) renderMemory(memoryRows);
 }
 $("memory-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const consent = settings?.memory.consent ?? { version: 0, at: null };
-  // First time: the note comes first, and focus moves to it so it is read and answered.
+  // First time (or the note changed since it was agreed to): the note comes first, and focus moves to it so it is read and answered.
   if (on && consent.version < MEMORY_VERSION) { $("memory-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("memory-yes").focus(); return; }
-  void save({ memory: { consent, on } });
+  void save({ memory: { ...memoryNow(), consent, on } });
 });
+$("memory-questions").addEventListener("change", e => { void save({ memory: { ...memoryNow(), questions: (e.target as HTMLInputElement).checked } }); });
 $("memory-yes").addEventListener("click", () => {
   $("memory-consent").hidden = true;
-  void save({ memory: { on: true, consent: { version: MEMORY_VERSION, at: new Date().toISOString() } } });
+  void save({ memory: { ...memoryNow(), on: true, consent: { version: MEMORY_VERSION, at: new Date().toISOString() } } });
   $("memory-on").focus();
 });
 $("memory-no").addEventListener("click", () => { $("memory-consent").hidden = true; $("memory-on").focus(); });
@@ -981,6 +1030,8 @@ function showSection(value: string): void {
   if (opened && inPane) { restoring = null; showPane(inPane, true); }
   // Asked for by voice ("work without asking" before its card was agreed to): the card shows, focused on its agree button.
   if (control === "autonomy-yes" && !managed.has("autonomy")) $("autonomy-consent").hidden = false;
+  // Asked for by voice ("get to know me" while memory is off): its note shows, focused on its agree button.
+  if (control === "memory-yes" && !managed.has("memory")) $("memory-consent").hidden = false;
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;
@@ -1308,6 +1359,7 @@ function renderVoice(v: VoiceStatus): void {
   // Off, the switch above says so: no lone "Off" row under it (UI audit #15). Screen readers still hear the change.
   $("voice-text").parentElement!.hidden = v.state === "off";
   renderStatus();
+  renderNatural();
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);
@@ -1394,6 +1446,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
   ($("natural") as HTMLInputElement).checked = s.voice.natural;
   personalSettings(s);
   if (voice) renderVoice(voice);
+  else renderNatural();
 }
 $("wake").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
@@ -1409,6 +1462,22 @@ $("consent-yes").addEventListener("click", () => {
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
+/** The natural voice's state as last said to screen readers (not every percent of its download). */
+let naturalSaid = "";
+/** Under the natural voice's switch: what became of turning it on (copy.ts naturalVoiceView), and Try again after a failed download. */
+function renderNatural(): void {
+  const on = ($("natural") as HTMLInputElement).checked;
+  const view = naturalVoiceView(on ? voice?.natural : undefined);
+  $("natural-text").textContent = view.text;
+  const retry = $("natural-retry") as HTMLButtonElement;
+  const had = document.activeElement === retry;
+  retry.hidden = !view.retry;
+  if (had && retry.hidden) ($("natural") as HTMLInputElement).focus();
+  const state = on ? voice?.natural?.state ?? "" : "";
+  if (state && state !== naturalSaid && state !== "downloading") voiceLive(view.text);
+  naturalSaid = state;
+}
+$("natural-retry").addEventListener("click", () => { void window.ember.retryNaturalVoice(); });
 $("natural").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false, learn: true, words: true, suggest: true }), natural: on } });

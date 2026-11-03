@@ -40,11 +40,14 @@ import { whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
+import { copilotOneShot } from "./one-shot";
+import type { OneShot } from "../memory/learn";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
+import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, statusQuestion, statusReply } from "./status";
 
@@ -133,16 +136,28 @@ export interface AgentStatus {
 }
 
 /** One line of the conversation, kept in memory for this session only (the settings window shows them). */
-/** `heardId`: a request Ember heard, as voice personalisation knows it (app/main/personal/service.ts heard()). */
-export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem"; text: string; heardId?: number }
+/**
+ * `learned`: an "Ember learned: …" line (main adds them beside the host's own lines; never in the host's transcript,
+ * which userWordsOf reads), with the fact's id for its Undo. `heardId`: a request Ember heard, as voice personalisation
+ * knows it (app/main/personal/service.ts heard()).
+ */
+export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; fact?: string; heardId?: number }
 
 export interface HostOptions {
   userData: string;
   /**
    * Long-term memory (app/main/memory/service.ts): the conductor gets it while the user has it on (settings `memory`,
    * with its consent) and the administrator allows it. Signing out, or another account signing in, erases it.
+   * Learning on its own (app/main/memory/learning.ts), while the conductor has it: `useModel` gets one-shot sessions
+   * with no tools on this connection, `taskDone` each finished task's result, and `intent` a request first ("get to
+   * know me" and its answers, the answer to Ember's own question, "forget that"): the reply to say, or null.
    */
-  memory?: ConductorMemory & { forgetAll(): void };
+  memory?: ConductorMemory & {
+    forgetAll(): void;
+    useModel?(model: OneShot | null): void;
+    taskDone?(title: string, result: string): void;
+    intent?(text: string, how: { own: boolean }): string | null;
+  };
   /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
   onReminder?: (r: Reminder) => void;
   /** Routines and lasting reminders (routines.ts): used only while the user has them on, agreed and allowed. */
@@ -155,6 +170,11 @@ export interface HostOptions {
   extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number; conversationEnded?(): void };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
+  /**
+   * Which tasks the owner asked for in a verified voice (voice-answer.ts TaskVoiceTrust): a task started in a turn whose
+   * request Voice Match verified is granted it, and a task changed by a request it didn't verify loses it. Absent: none.
+   */
+  voiceTrust?: Pick<TaskVoiceTrust, "grant" | "end">;
   /**
    * "Work without asking" by voice (autonomy-intent.ts): its state, turning it on or off, and opening its switch (with
    * its card) in Settings. Absent: the words go to the conversation like any others.
@@ -604,6 +624,8 @@ interface UserRequest {
    * the user's own words for commands either (no announce-with-Stop for a dangerous command it names); not voice.
    */
   suggested?: boolean;
+  /** Spoken and verified by Voice Match as the owner's, at this time (a task it starts holds voice trust from then). */
+  verifiedAt?: number;
 }
 /** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
 const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
@@ -977,6 +999,14 @@ export class AgentHost {
   }
 
   /**
+   * A question's answer ("Thanks! Carrying on.") has had its moment (the Confirmer's afterAnswer): what the question held
+   * off or covered shows again. False when nothing is left to show: main empties the bubble (afterAnswerPatch).
+   */
+  afterAnswer(): boolean {
+    return this.owner.afterAnswer();
+  }
+
+  /**
    * The expanded answer went without its Close button (main cleared it for settings, or a question replaced it): a pinned
    * hold has nothing left to keep, and no timer would end it, so it ends now as Close ends it. Any other hold of main's
    * ("Listening…") keeps its own time. `showing`: what is on screen now.
@@ -1311,6 +1341,8 @@ export class AgentHost {
           const view = task.view ? viewText(task.view) : "";
           const said = this.remember("task", view ? `${text}\n${view}` : text);
           if (summary) this.results.set(said, summary);
+          // Memory learns from what a finished task found (source `task`: context, never the user's word).
+          if (this.memoryOn && task.status === "done" && summary && !why) this.o.memory?.taskDone?.(task.title, view ? `${summary}\n${view}` : summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
           // Quitting: nothing more is shown or said.
           if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
@@ -1375,6 +1407,8 @@ export class AgentHost {
       const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
       const memory = this.memoryWanted() ? this.o.memory : undefined;
       this.memoryOn = !!memory;
+      // Memory's own model calls (learning, sleep-time refinement) go on this connection, each a session with no tools.
+      this.o.memory?.useModel?.(memory ? copilotOneShot({ client, model: choice.conductor, provider: provider?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"), log: this.o.log.child("memory") }) : null);
       const routines = this.keepRoutines();
       // The extension tools as they are now (none while extensions are off): a later change reconnects between turns.
       this.extensionsGen = this.o.extensions?.generation ?? 0;
@@ -1488,6 +1522,9 @@ export class AgentHost {
             ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
           });
           if (binding) this.taskBindings.set(t.id, binding);
+          // Asked for in the owner's verified voice: its own questions may take a short spoken yes (owner decision of
+          // 2026-11-03; voice-answer.ts TaskVoiceTrust).
+          if (r?.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
           this.announced.add(t.id);
           return `Task ${t.id} started${where ? ` ${where}` : ""}: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
@@ -1526,7 +1563,12 @@ export class AgentHost {
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
           // (A change of plan is the user's own words: a routine run this turn doesn't steer a task.)
-          steer: (id, text) => { const said = this.userWordsOf(this.turn, { routine: false }); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords); },
+          steer: (id, text) => {
+            const said = this.userWordsOf(this.turn, { routine: false });
+            // Changed by a request Voice Match didn't verify (typed, or another voice's): its short yeses are no longer trusted.
+            if (this.turn?.verifiedAt === undefined) this.o.voiceTrust?.end(id, "steered");
+            return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords);
+          },
         } : undefined,
       });
       await this.conductor.start();
@@ -1984,6 +2026,18 @@ export class AgentHost {
     this.o.onTurnEnd?.(false);
   }
 
+  /**
+   * Memory's question (app/main/memory/questions.ts): said as Ember's own line, shown and spoken like an answer, only
+   * while nothing is under way and Ember is connected. False when it can't be said now.
+   */
+  sayFromMemory(text: string): boolean {
+    if (!this.idle || !this.betweenTurns() || this.status.phase !== "ready") return false;
+    this.remember("ember", text);
+    this.presenter.say(text);
+    this.o.onAnswer?.(text);
+    return true;
+  }
+
   /** The tasks on cards now, and those that finished lately whose cards have gone (finishedLately). */
   private tasksLately(): Task[] {
     const now = this.tasks?.list() ?? [];
@@ -2030,6 +2084,14 @@ export class AgentHost {
       this.o.log.info("agent.autonomy_switch", { intent: mode, set: plan.set ?? null, saved, opened: !!plan.open, verified: how.verified === true });
       // Said only once it is so: a change that couldn't be saved or recorded says that instead (review of #127).
       this.answerLocally(text, saved ? plan.reply : AUTONOMY_NOT_SAVED, how.voiceUnchecked);
+      return true;
+    }
+    // Memory's own words (app/main/memory/learning.ts): "get to know me" and its answers, the answer to Ember's own
+    // question, "forget that". Answered here, never by the conductor; a fact is the user's only if Ember heard them.
+    const remembered = this.betweenTurns() ? this.o.memory?.intent?.(text, { own: !how.voiceUnchecked }) ?? null : null;
+    if (remembered) {
+      this.o.log.info("agent.memory_local");
+      this.answerLocally(text, remembered, how.voiceUnchecked);
       return true;
     }
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
@@ -2148,7 +2210,7 @@ export class AgentHost {
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
-      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}),
+      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
     };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
@@ -2160,7 +2222,7 @@ export class AgentHost {
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
       if (first) how.onSent?.();
-      await this.conductor.ask(text, context?.text, this.trustedLine());
+      await this.conductor.ask(text, context?.text, this.trustedLine(), !how.voiceUnchecked);
     } catch (err) {
       // Never sent: no turn of its own will come (nor its hint).
       this.hintOwed = false;

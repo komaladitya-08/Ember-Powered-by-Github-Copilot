@@ -63,7 +63,7 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log">> & { onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log" | "onNatural">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
@@ -961,6 +961,102 @@ describe("speech models", () => {
       tts.emit("exit", 1);
       v.speak("Again.");
       expect(posted(electron.procs[1], "init")[0]).toMatchObject({ natural: null });
+    });
+
+    describe("what becomes of turning the natural voice on, shown in Home (owner report of 2026-11-03: it did nothing on Windows)", () => {
+      const withKokoro = () => {
+        fs.mkdirSync(path.join(root, NATURAL_VOICE.target));
+        fs.writeFileSync(path.join(root, `.${NATURAL_VOICE.target}.ok`), `${NATURAL_VOICE.sha256}\n`);
+      };
+
+      it("starts the check and the download at once when turned on after Ember's voice loaded, with its progress, and offers Try again when it fails", async () => {
+        const seen: unknown[] = [];
+        let calls = 0;
+        const downloader = vi.fn(async (_url: string, _dest: string, progress: (bytes: number) => void) => { calls++; progress(NATURAL_VOICE.bytes / 2); throw new Error("HTTP 503"); });
+        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader, onNatural: s => seen.push(s) });
+        v.speak("Hello.");
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.05 }) });
+        electron.procs[0].emit("message", { type: "done", id: 1 });
+        expect(v.naturalStatus).toEqual({ state: "off" });
+        v.setNaturalVoice(true);
+        // No later reply needed: the Piper voice running now has already timed this computer.
+        await vi.waitFor(() => expect(v.naturalStatus.state).toBe("failed"));
+        expect(calls).toBe(1);
+        expect(seen).toEqual([{ state: "downloading", percent: 0 }, { state: "downloading", percent: 50 }, { state: "failed", detail: expect.stringMatching(/can.t reach the download site/) }]);
+        v.retryNaturalVoice();
+        await vi.waitFor(() => expect(calls).toBe(2));
+      });
+
+      it("loads Ember's voice at once to time this computer when turned on before Ember has spoken", async () => {
+        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn(async () => { throw new Error("HTTP 503"); }) });
+        expect(electron.procs).toHaveLength(0);
+        v.setNaturalVoice(true);
+        expect(electron.procs).toHaveLength(1);
+        expect(v.naturalStatus).toEqual({ state: "checking" });
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.2 }) });
+        expect(v.naturalStatus).toEqual({ state: "too-slow" });
+      });
+
+      it("says “later”, not “Checking…”, when turned on while the screen is locked, and decides once it is unlocked (review of #143)", async () => {
+        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn(async () => { throw new Error("HTTP 503"); }) });
+        v.setLocked(true);
+        v.setNaturalVoice(true);
+        expect(electron.procs).toHaveLength(0);
+        expect(v.naturalStatus).toEqual({ state: "later" });
+        v.setLocked(false);
+        expect(v.naturalStatus).toEqual({ state: "checking" });
+        await vi.waitFor(() => expect(electron.procs.length).toBeGreaterThan(0));
+        electron.procs.at(-1)!.emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.2 }) });
+        expect(v.naturalStatus).toEqual({ state: "too-slow" });
+      });
+
+      it("switches to it now once it is downloaded, and says when it speaks", async () => {
+        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn() });
+        withKokoro();
+        v.speak("Hello.");
+        const [first] = electron.procs;
+        first.emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.05 }) });
+        first.emit("message", { type: "done", id: 1 });
+        v.setNaturalVoice(true);
+        expect(first.kill).toHaveBeenCalled();
+        // Started again straight away (not at some later reply), with Kokoro.
+        expect(electron.procs).toHaveLength(2);
+        expect(posted(electron.procs[1], "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
+        expect(v.naturalStatus).toEqual({ state: "checking" });
+        electron.procs[1].emit("message", { type: "ready", loadMs: 3000, rate: 24_000, voice: piper({ voice: "kokoro", rtf: 0.4 }) });
+        expect(v.naturalStatus).toEqual({ state: "on" });
+      });
+
+      it("says why the downloaded voice doesn't speak: too slow, it wouldn't load, or it needs the native build", () => {
+        for (const [naturalWhy, state] of [["slow", "too-slow"], ["load", "wont-load"], ["native", "needs-native"]] as const) {
+          electron.procs.length = 0;
+          const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader: vi.fn() });
+          withKokoro();
+          expect(v.naturalStatus).toEqual({ state: "later" });
+          v.speak("Hello.");
+          electron.procs[0].emit("message", { type: "ready", loadMs: 3000, rate: 22_050, voice: piper({ natural: "not here", naturalWhy }) });
+          expect(v.naturalStatus, naturalWhy).toEqual({ state });
+          v.stop();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      });
+
+      it("says it needs Ember's faster speech where speech runs on WebAssembly, and Ember's own voice where that isn't downloaded", () => {
+        const wasm = service(true, { neuralVoice: true, naturalVoice: false, native: false, downloader: vi.fn() });
+        wasm.v.setNaturalVoice(true);
+        expect(wasm.v.naturalStatus).toEqual({ state: "needs-native" });
+        wasm.v.stop();
+        fs.rmSync(root, { recursive: true, force: true });
+        const fellBack = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader: vi.fn() });
+        fellBack.v.speak("Hello.");
+        electron.procs.at(-1)!.emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ backend: "wasm", rtf: undefined }) });
+        expect(fellBack.v.naturalStatus).toEqual({ state: "needs-native" });
+        fellBack.v.stop();
+        fs.rmSync(root, { recursive: true, force: true });
+        const noVoice = service(LISTENING, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn() });
+        noVoice.v.setNaturalVoice(true);
+        expect(noVoice.v.naturalStatus).toEqual({ state: "needs-voice" });
+      });
     });
   });
 });

@@ -47,7 +47,7 @@ describe("admin policy file", () => {
     expect(s.privacy.neverLook).toContain("Thunderbird");
     expect(s.privacy.neverLook.filter(x => x.toLowerCase() === "keepassxc")).toHaveLength(1);
     // Without grants nobody may let Ember work without asking either (policy/autonomy.ts).
-    expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "models", "grants", "askedApps", "autonomy"]);
+    expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "naturalVoice", "models", "grants", "askedApps", "autonomy"]);
     expect(s.trust).toEqual({ askedApps: false, reviewCommands: false });
     // An admin can't turn on what the user turned off.
     expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, wakeWord: false }, AdminPolicySchema.parse({ features: { voice: true } })).wakeWord).toBe(false);

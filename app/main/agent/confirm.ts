@@ -29,21 +29,26 @@
  */
 
 import type { BubbleState, EmberState } from "../../shared/overlay";
+import { IDLE_BUBBLE } from "../../shared/overlay";
 import type { ConsentPanel } from "../../shared/consent";
 import type { CommandCard } from "../commands/types";
 
 /** How an answer arrived: a bubble button, Ember's approve/deny keys, the panel window's own buttons, or spoken. */
 export type AnswerVia = "bubble" | "key" | "panel" | "voice";
 
-/** How a question was answered (the audit records it): `verified`, for a spoken answer, whether Voice Match verified it. */
-export interface AnswerChannel { via: AnswerVia; verified?: boolean }
+/**
+ * How a question was answered (the audit records it): `verified`, for a spoken answer, whether Voice Match verified it;
+ * `trust`: a short yes taken on the asking task's voice trust ("task-voice", always with verified false).
+ */
+export interface AnswerChannel { via: AnswerVia; verified?: boolean; trust?: "task-voice" }
 
 /**
  * What became of a spoken answer: taken ("answered"), or why not. A yes needs a verified voice ("unverified"), never
  * answers a question whose card only a click may allow ("click-only"), and waits as a key would for the question to be
- * armed, its whole text read, or its panel shown whole ("not-yet").
+ * armed, its whole text read, or its panel shown whole ("not-yet"). A short yes on a task's trust only for that task's
+ * own question, never a panel's ("untrusted").
  */
-export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "click-only" | "not-yet" | "stale" | "locked";
+export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "untrusted" | "click-only" | "not-yet" | "stale" | "locked";
 
 /** A question whose full content shows in a window of Ember's own (the command card, a consent card). */
 export type QuestionPanel =
@@ -78,6 +83,44 @@ export interface Question {
   detail?: string;
 }
 
+/**
+ * How long a question's answer ("Thanks! Carrying on.", "Okay, I won't.") stays before what waited behind the question
+ * shows, or, with nothing waiting, the bubble empties (ConfirmerTiming.afterAnswer).
+ */
+export const ANSWER_MS = 1500;
+
+/**
+ * What main does once a question's answer has been up its moment (ConfirmerTiming.afterAnswer): nothing when something
+ * else has replaced it on screen (`onScreen`) or what the question held off or covered shows again (`reshow`, the shared
+ * bubble's afterAnswer); otherwise the bubble empties and Ember's face rests. The answer's bubble belongs to no task or
+ * turn, so nothing else would ever take it down: a task in the corner that ends after it ends on its card, and "Working ·
+ * Thanks! Carrying on." stayed up for good, with the busy ring, after the task had closed Microsoft Edge (the owner's
+ * report of 2026-11-03).
+ */
+export function afterAnswerPatch(onScreen: BubbleState, shown: BubbleState, reshow: () => boolean): Partial<EmberState> | null {
+  if (onScreen !== shown || reshow()) return null;
+  return { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE };
+}
+
+/**
+ * Ember was hidden and showed itself for an answer the user asked for (main's `shownForAnswer`): it hides again once
+ * the bubble goes, the empty bubble after a question's answer (afterAnswerPatch) included.
+ */
+export function hidesAgainAfter(shownForAnswer: boolean, next: Partial<EmberState>): boolean {
+  return shownForAnswer && !!next.bubble && !next.bubble.visible;
+}
+
+/**
+ * The Confirmer's afterAnswer as main wires it: `onScreen` reads main's last state's bubble, `reshow` is the shared
+ * bubble's afterAnswer (AgentHost.afterAnswer) and `set` main's guarded setState.
+ */
+export function answerSettler(d: { onScreen: () => BubbleState; reshow: () => boolean; set: (patch: Partial<EmberState>) => void }): (shown: BubbleState) => void {
+  return shown => {
+    const patch = afterAnswerPatch(d.onScreen(), shown, d.reshow);
+    if (patch) d.set(patch);
+  };
+}
+
 /** The hash a panel question's yes must carry back: the command card's, or the consent card's. */
 const panelSha256 = (panel: QuestionPanel): string => (panel.kind === "command" ? panel.card.sha256 : panel.consent.sha256);
 /** A SHA-256 as sha256Hex writes it: a card whose hash isn't one (empty, cut short) can't be allowed (fail closed). */
@@ -97,6 +140,13 @@ export interface ConfirmerTiming {
   armMs?: number;
   /** The pause between one question being answered and the next appearing. */
   gapMs?: number;
+  /** How long a question's answer shows before afterAnswer (default ANSWER_MS). */
+  answerMs?: number;
+  /**
+   * A question's answer (`shown`, the very bubble it wrote) has been up `answerMs` and no question has come up since:
+   * main takes it down unless something replaced it (afterAnswerPatch). Absent (tests, the eval): it stays as before.
+   */
+  afterAnswer?: (shown: BubbleState) => void;
   now?: () => number;
   /** No answers are taken while this is true (Ember is using the mouse). */
   blocked?: () => boolean;
@@ -134,6 +184,10 @@ export class Confirmer {
   private readKeyHint: ConfirmerTiming["readKeyHint"];
   private panelReady: ConfirmerTiming["panelReady"];
   private panelHint: ConfirmerTiming["panelHint"];
+  private answerMs: number;
+  private afterAnswer: ConfirmerTiming["afterAnswer"];
+  /** The answer's bubble is up: afterAnswer runs when this fires. */
+  private answerTimer: ReturnType<typeof setTimeout> | null = null;
   /** Waiting for no question to be up or queued (settled()). */
   private settledWaiters: (() => void)[] = [];
   /** How each answered question was answered (howAnswered), kept only as long as the question object is. */
@@ -151,6 +205,8 @@ export class Confirmer {
     this.readKeyHint = t.readKeyHint;
     this.panelReady = t.panelReady;
     this.panelHint = t.panelHint;
+    this.answerMs = t.answerMs ?? ANSWER_MS;
+    this.afterAnswer = t.afterAnswer;
   }
 
   /**
@@ -216,9 +272,12 @@ export class Confirmer {
    * the primary option ("Allow", never "Always"), "deny" Not now. A "Not now" is taken from anyone at once (the safer
    * way). A yes only when `verified` (Voice Match matched the owner's voice), and as the approve key would be: not while
    * Ember borrows the mouse, not on a click-only question (a consent card), not before the question is armed, its whole
-   * text has been in view or its panel window shows all of it.
+   * text has been in view or its panel window shows all of it. Or, unverified, a short yes on a task's voice trust
+   * (`trust`: the task main found holding it, voice-answer.ts TaskVoiceTrust): only for a question that task raised itself,
+   * never one shown in a panel window (the command card, a consent card) and never a click-only one, and otherwise as a
+   * verified yes (owner decision of 2026-11-03).
    */
-  answerVoice(which: "allow" | "deny", o: { verified: boolean; question?: number | null; startedAt?: number }): VoiceAnswerResult {
+  answerVoice(which: "allow" | "deny", o: { verified: boolean; question?: number | null; startedAt?: number; trust?: { task: string } }): VoiceAnswerResult {
     const c = this.current;
     if (!c) return "no-question";
     // Tied to this question (security review of #127): said for it, after it was up and armed, never for one before it.
@@ -230,15 +289,17 @@ export class Confirmer {
       this.finish(c, "deny");
       return "answered";
     }
-    if (o.verified !== true) return "unverified";
+    const trusted = o.verified !== true && o.trust !== undefined;
+    if (o.verified !== true && !trusted) return "unverified";
     if (c.voiceLocked) return "locked";
     if (c.q.clickOnly) return "click-only";
+    if (trusted && (c.q.panel || !c.q.task || c.q.task !== o.trust!.task)) return "untrusted";
     const opt = c.q.options.find(x => x.primary) ?? c.q.options[0];
     if (!opt || opt.id === "always" || opt.id === "deny") return "not-yet";
     if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
     // As the approve key: its whole text read and armed again since, and a panel only while its window shows all of it.
     if (!this.allowedFrom(c, opt.id, "key", undefined)) return "not-yet";
-    this.channels.set(c.q, { via: "voice", verified: true });
+    this.channels.set(c.q, trusted ? { via: "voice", verified: false, trust: "task-voice" } : { via: "voice", verified: true });
     this.finish(c, opt.id);
     return "answered";
   }
@@ -246,6 +307,11 @@ export class Confirmer {
   /** The question up now (its number), or null: main notes it at a wake, so a spoken answer is tied to it. */
   get currentNumber(): number | null {
     return this.current?.n ?? null;
+  }
+
+  /** The task that raised the question up now, or undefined (none up, or not a task's). */
+  get currentTask(): string | undefined {
+    return this.current?.q.task;
   }
 
   /**
@@ -379,6 +445,8 @@ export class Confirmer {
     this.gapTimer = null;
     this.current = this.queue.shift() ?? null;
     if (!this.current) { this.checkSettled(); return; }
+    // The next question replaces the answer before it.
+    this.cancelAnswer();
     const p = this.current;
     p.shownAt = this.now();
     p.timer = setTimeout(() => this.finish(p, null), this.timeoutOf(p));
@@ -410,6 +478,22 @@ export class Confirmer {
     };
   }
 
+  /** The answer `shown` went up: unless a question replaces it first, afterAnswer hears of it answerMs later. */
+  private answerShown(shown: BubbleState): void {
+    this.cancelAnswer();
+    const after = this.afterAnswer;
+    if (!after) return;
+    this.answerTimer = setTimeout(() => {
+      this.answerTimer = null;
+      if (this.current) return;
+      try { after(shown); } catch { /* main's bubble only: the next bubble replaces it anyway */ }
+    }, this.answerMs);
+  }
+
+  private cancelAnswer(): void {
+    if (this.answerTimer) { clearTimeout(this.answerTimer); this.answerTimer = null; }
+  }
+
   private finish(p: Pending, answer: string | null): void {
     if (p.timer) clearTimeout(p.timer);
     p.off?.();
@@ -421,7 +505,9 @@ export class Confirmer {
       this.current = null;
       // "Not now" (or no answer) leaves Ember idle, not still working.
       const yes = !!answer && answer !== "deny";
-      this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) } });
+      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
+      this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: shown });
+      this.answerShown(shown);
     }
     p.resolve(answer);
     if (wasCurrent) this.onChange?.(null);

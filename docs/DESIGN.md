@@ -87,7 +87,11 @@ They share one emotion rig, so switching never changes behaviour.
   says "Its card in the corner shows how it's going.", so the bubble and the card tell one story. Under a finished
   answer (and only that answer) the bubble may show what you might say next: a caption, "Ember suggests", then up to
   three quiet 24 px capsules (never the accent, never under a question), in its clickable area; the Ask box shows the
-  same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7). A question about
+  same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7). A question's
+  answer ("Thanks! Carrying on.", "Okay, I won't.") stays 1.5 s; then what the question covered or held off shows
+  again, or the bubble empties and the ring rests, so a task that ends on its card never leaves "Working" behind. A
+  turn that only ran steps (it started a task and said nothing) leaves no "Working" bubble either, and one that
+  said its answer before its step shows that answer at its end. A question about
   typing more than 160 characters (or a cell value cut short) shows all of the text under its
   sentence, every character as it will be typed, in a flat panel that scrolls (seven lines);
   **Allow** stays dimmed, with "Scroll down to read it all first." above it, until every line

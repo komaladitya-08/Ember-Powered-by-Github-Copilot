@@ -2,6 +2,29 @@
 
 import { describe, expect, it } from "vitest";
 import { cancelWords, endsWithQuestion, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
+import { heardCutInWake } from "../../app/voice/engine";
+
+describe("spokenText says keys, menu paths and symbols as people say them", () => {
+  it.each([
+    ["Press Ctrl+Shift+T to reopen the tab.", "Press Control Shift T to reopen the tab."],
+    ["Use `Win+Shift+S` for a screenshot.", "Use Windows key Shift S for a screenshot."],
+    ["Cmd + Space opens Spotlight.", "Command Space opens Spotlight."],
+    ["Ctrl+Alt+Del, then Esc.", "Control Alt Delete, then Esc."],
+    ["Open Settings › Privacy › Camera.", "Open Settings, then Privacy, then Camera."],
+    ["Drag it from Documents → Archive.", "Drag it from Documents to Archive."],
+    ["Tom & Jerry", "Tom and Jerry"],
+    // Not chords, not paths: left as they are.
+    ["C++ and a+b are fine, and so is 3 + 4.", "C++ and a+b are fine, and so is 3 + 4."],
+    ["Rows 1 & 2, and a && b.", "Rows 1 & 2, and a && b."],
+  ])("%j is said %j", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it("reads a chord only where it stands on its own, never inside a word, an address or a path (review of #143)", () => {
+    for (const text of ["Write to ops.alt+s@example.com today.", "Open build/ctrl+c.log now.", "The file is shift+x.txt."]) {
+      expect(spokenText(text), text).not.toMatch(/\b(?:alt s|Control c|shift x)\b/);
+    }
+    expect(spokenText("Then press Ctrl+S.")).toBe("Then press Control S.");
+  });
+});
 
 describe("spokenText", () => {
   it.each([
@@ -56,4 +79,40 @@ describe("endsWithQuestion", () => {
     "Shall I send it to “Sarah”?”",
   ])("%j asks something", t => expect(endsWithQuestion(t)).toBe(true));
   it.each(["Done. Night Light is on.", "What? No, that's already done.", "Here it is:\n\n```\nls -la\n```", ""])("%j doesn't", t => expect(endsWithQuestion(t)).toBe(false));
+});
+
+describe("withoutOwnPhrases and the cut-in (Windows, macOS: Ember can't tell its own voice from the user's)", () => {
+  // Ember's own words never make it cut in on itself (review of PR #144: S1).
+  it.each([
+    "Hi Emma, the meeting moved.",
+    "Okay, Emma's report is ready.",
+    "Okay. Ember can't open that.",
+    "Okay, PMB is the box",
+    "Say “Hey Ember” and then what you want.",
+    "Hey, Ember here. Okay, Ember is listening.",
+    "You'll pay. Ember can't buy it.",
+    "hey ember, stop",
+    "OK Emmer, I'll do it.",
+    "Hi! Ember's settings are open.",
+    "They remember. Hey Ember!",
+    "Okay! Ember is on it.",
+    "Hi... Ember here.",
+    "OK, ember.",
+  ])("Ember saying %j can't sound like a cut-in", t => expect(heardCutInWake(withoutOwnPhrases(t))).toBe(false));
+
+  it("names the wake phrase only where the greeting and the name sit together, and drops no word where a sentence ends between them", () => {
+    expect(withoutOwnPhrases("Say “Hey Ember” and then what you want.")).toBe("Say the wake phrase and then what you want.");
+    expect(withoutOwnPhrases("OK, Ember.")).toBe("the wake phrase.");
+    expect(withoutOwnPhrases("Okay. Ember can't open that.")).toBe("Okay. So Ember can't open that.");
+    expect(withoutOwnPhrases("You'll pay. Ember can't buy it.")).toBe("You'll pay. So Ember can't buy it.");
+    expect(withoutOwnPhrases("Okay! Ember is on it.")).toBe("Okay! So Ember is on it.");
+  });
+
+  it.each(["Hey Ember, what's the weather?", "…in the evening. Hey, Ember", "Okay Ember", "Pay Ember open Notepad", "Hey Emmer"])("takes %j, said by the user, as one", t => {
+    expect(heardCutInWake(t)).toBe(true);
+  });
+
+  it.each(["Hi Emma, the meeting moved.", "They remember the box.", "Hey Amber, dinner.", "Okay, Ember's report is ready.", "A. M. B."])("doesn't take %j as one", t => {
+    expect(heardCutInWake(t)).toBe(false);
+  });
 });

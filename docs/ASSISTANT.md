@@ -217,10 +217,13 @@ reported in every PR that touches it.
    mid-thought. Silero VAD stays the hard limit.
 3. **Barge-in without the wake word.** While Ember speaks, your voice (VAD, after Chromium's echo cancellation, with
    speaker rejection where `parec` exists) stops it within about 200 ms, and what you say becomes the next request.
-   Where Ember can't tell its own voice from yours (`rejectsSpeakers` false), keep needing "Hey Ember", as today.
-   Safety is unchanged: no voice ever approves an action.
+   Where Ember can't tell its own voice from yours (`rejectsSpeakers` false), keep needing "Hey Ember": since
+   2026-11-03 "Hey Ember" cuts in there too (Ember never says the phrase there, the bare name doesn't cut in, and
+   nothing said over Ember's voice is sent; PLAN.md §10 "Voice on Windows"). Safety is unchanged: no voice ever
+   approves an action.
 4. **Longer conversation.** The follow-up window grows from 8 s to "until a natural pause of about 20 s", with the
-   mic dot showing it. You can turn it off.
+   mic dot showing it. You can turn it off. Done so far (2026-11-03): up to three follow-ups in a row, each in the
+   voice that woke Ember, and "Hey Ember" said in a follow-up window starts a wake's; the window is still 8 s.
 
 ### Phase 3: understand *you*
 

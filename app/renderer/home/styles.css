@@ -322,6 +322,23 @@ progress[hidden] { display: none; }
 .conversation form.teach { order: 4; flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 6px; }
 .conversation form.teach input { flex: 1 1 240px; max-width: 86%; min-width: 0; }
 .conversation .teach-note { order: 0; max-width: 86%; margin: 0; padding: 0; background: none; color: var(--muted); font: var(--type-footnote); text-align: right; }
+/* "Ember learned: …" and its Undo: one quiet line of its own, not a message. */
+.conversation li.learned { flex-wrap: nowrap; align-items: center; }
+.conversation li.learned::before { content: none; }
+.conversation li.learned p { order: 0; flex: 1; min-width: 0; max-width: none; margin: 0; background: transparent; padding: 2px 6px; border-radius: 0; color: var(--muted); font: var(--type-footnote); }
+.conversation li.learned .btn { flex: none; }
+/* Memory's list: the fact, and where it came from under it. */
+.mem-fact { display: grid; gap: 2px; min-width: 0; }
+.mem-fact > span { min-width: 0; overflow-wrap: anywhere; }
+.mem-from { color: var(--muted); font: var(--type-footnote); }
+/* "Tell Ember about you": memory off, the line and its button sit on one row. */
+.about-off:not(.consent) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.about-off .row-note { margin: 0; min-width: 0; padding-right: 0; }
+.about-off[hidden] { display: none; }
+.about-off .btn { flex: none; white-space: nowrap; }
+.about-msg:empty { display: none; }
+/* Its group and the hints under it are spaced as a section's own children are. */
+#about-you, #w-about { display: grid; gap: 8px; }
 
 /* ───── Task activity: one group per task, newest first. Its title with the state symbol, its plan as a checklist, a
    row for each thing it did (the time after it started, the state symbol, the words), and how it ended. Opaque and

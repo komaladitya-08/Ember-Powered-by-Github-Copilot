@@ -126,9 +126,24 @@ export interface TargetTools {
 export interface ConductorMemory {
   /** Saves a fact; `said`: what the user said this turn (whose words make the fact theirs). What to tell the model. */
   remember(fact: string, about: { name: string; kind?: string }[], said: string, replaces?: string): string;
-  /** The `<memory>` block for `query` ("" when nothing bears on it): at once, or once Better recall's match is in. */
+  /**
+   * The `<memory>` block for `query` ("" when nothing bears on it): the recall tool's, written by the model. At once,
+   * or once Better recall's match is in.
+   */
   context(query: string, history?: boolean): string | Promise<string>;
+  /**
+   * The `<memory>` block for the user's own request, before its turn (falls back to `context`). `own`: heard from the
+   * user. Only this sees what the user asked, so only this may note what memory keeps missing (never the recall tool,
+   * whose query the model wrote and the screen may have steered).
+   */
+  forRequest?(request: string, own: boolean): string | Promise<string>;
   forget(id: string): boolean;
+  /**
+   * A turn ended (not stopped): what the user said in it and Ember's answer, for memory to learn from off the hot path
+   * (app/main/memory/learning.ts). `own`: the request was heard from the user (not where Ember can't tell them from its
+   * speakers). Absent: nothing is learned but what remember saves.
+   */
+  heard?(said: string, reply: string, own: boolean): void;
 }
 
 export interface ConductorTasks {
@@ -670,6 +685,8 @@ export class Conductor {
    * turn waits for it, and its words must not stand for the turn still running.
    */
   private said = "";
+  /** The turn under way's request was heard from the user (ask()'s `own`), for memory to learn from. */
+  private saidOwn = true;
   /**
    * The steps of the routines run_routine ran this turn: the user's own words when they saved them, so a reminder or a
    * fact one sets counts as theirs, and a task one starts checks its risky steps against them (AgentHost.userWordsOf).
@@ -677,8 +694,13 @@ export class Conductor {
   private routineWords: string[] = [];
   /** The routine run_routine ran this turn (at most one runs a turn). */
   private routinesRan = new Set<string>();
-  /** The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. */
-  private unstarted: string[] = [];
+  /** Ember's answer in the turn under way, for memory to learn from when it ends (ConductorMemory.heard). */
+  private answered = "";
+  /**
+   * The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. `own`: heard
+   * from the user (ask()'s `own`), carried with each request so two of the same words can't swap it.
+   */
+  private unstarted: { text: string; own: boolean }[] = [];
 
   /** What the user said this turn, with the steps of the routines it ran. */
   private get turnSaid(): string {
@@ -697,10 +719,12 @@ export class Conductor {
    */
   private turnBegan(content: string): void {
     const said = content.trimEnd();
-    const i = this.unstarted.findIndex(t => said.endsWith(t.trim()));
-    this.said = i < 0 ? "" : this.unstarted[i];
+    const i = this.unstarted.findIndex(t => said.endsWith(t.text.trim()));
+    this.said = i < 0 ? "" : this.unstarted[i].text;
+    this.saidOwn = i < 0 || this.unstarted[i].own;
     this.routineWords = [];
     this.routinesRan.clear();
+    this.answered = "";
     this.unstarted.splice(0, i + 1);
     // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
     // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
@@ -824,7 +848,7 @@ export class Conductor {
       }
       if (e.type === "assistant.message") {
         const data = e.data as { content?: string; toolRequests?: unknown[] };
-        if (data.content && !(data.toolRequests?.length)) d.onAnswer?.(data.content);
+        if (data.content && !(data.toolRequests?.length)) { d.onAnswer?.(data.content); this.answered = data.content; }
         else d.onAnswerEnd?.(data.content ?? "");
       }
       if (e.type === "session.error") {
@@ -833,15 +857,28 @@ export class Conductor {
         const err = e.data as { errorType?: unknown; statusCode?: unknown; message?: unknown };
         d.log.warn("conductor.session_error", { errorType: err.errorType, statusCode: err.statusCode, message: String(err.message ?? "").slice(0, 300) });
       }
-      if (e.type === "session.idle") { this.busy = false; this.stopping = false; d.onTurnEnd?.((e.data as { aborted?: boolean }).aborted === true); }
+      if (e.type === "session.idle") {
+        this.busy = false;
+        this.stopping = false;
+        const aborted = (e.data as { aborted?: boolean }).aborted === true;
+        d.onTurnEnd?.(aborted);
+        // Memory learns from the turn (the user's own words and the answer), after it and off its path.
+        if (!aborted && this.said) this.learnFrom(this.said, this.answered, this.saidOwn);
+      }
     });
+  }
+
+  /** Hands a finished turn to memory (while it is on): a failure there never touches the conversation. */
+  private learnFrom(said: string, reply: string, own: boolean): void {
+    try { this.deps.memory?.heard?.(said, reply, own); } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
   }
 
   /**
    * `context`: a snapshot of where the user was when they called Ember (untrusted). `line`: the host's trusted line
-   * about where Ember works and what commands can do now (§2.6), before the context; absent or "": none.
+   * about where Ember works and what commands can do now (§2.6), before the context; absent or "": none. `own`: heard
+   * from the user (false for speech Ember can't tell from its own speakers): memory never makes such words theirs.
    */
-  async ask(text: string, context?: string, line?: string): Promise<void> {
+  async ask(text: string, context?: string, line?: string, own = true): Promise<void> {
     // A turn that went silent is being ended: a request sent now would run (and show) only after it.
     if (this.endingTurn) await this.endingTurn;
     const session = this.session;
@@ -851,15 +888,19 @@ export class Conductor {
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
-    this.unstarted.push(text);
+    const entry = { text, own };
+    this.unstarted.push(entry);
     // What Ember remembers that bears on the request (while memory is on): before it, as information. Better recall
-    // may take up to its wait for this (memory/embed.ts), so a Stop meanwhile drops the request.
+    // may take up to its wait for this (memory/embed.ts), so a Stop meanwhile drops the request, through either path.
     const stops = this.stops;
     let remembered = "";
-    try { remembered = (await this.deps.memory?.context(text)) ?? ""; } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    try {
+      const m = this.deps.memory;
+      remembered = (await (m?.forRequest ? m.forRequest(text, own) : m?.context(text))) ?? "";
+    } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
     if (this.stops !== stops || this.session !== session) {
       // Stopped (or the connection was replaced) while memory was read: nothing is sent, and no turn is owed for it.
-      this.unstarted = this.unstarted.filter(t => t !== text);
+      this.unstarted = this.unstarted.filter(t => t !== entry);
       if (reports.length) this.deps.returnReports?.(reports);
       const stopped = this.stops !== stops;
       this.deps.log.info("conductor.ask_dropped", { stopped });
@@ -889,7 +930,7 @@ export class Conductor {
       watch?.unsent();
       this.busy = false;
       // No turn will come for it.
-      this.unstarted = this.unstarted.filter(t => t !== text);
+      this.unstarted = this.unstarted.filter(t => t !== entry);
       // The finished tasks' results were in the request that never went: they wait for the next one.
       if (reports.length) this.deps.returnReports?.(reports);
       // The runtime went away (crash, restart): say so instead of "Thinking…" forever. Not when this

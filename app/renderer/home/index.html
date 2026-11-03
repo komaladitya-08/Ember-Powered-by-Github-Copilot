@@ -120,6 +120,10 @@
         <p class="hint" id="w-voice-later" hidden></p>
       </div>
 
+      <div class="w-pane" data-pane="about" hidden>
+        <div id="w-about"></div>
+      </div>
+
       <div class="w-pane" data-pane="done" hidden>
         <dl class="w-card" id="w-summary" aria-label="Your Ember"></dl>
         <p class="hint" id="w-summary-note"></p>
@@ -241,12 +245,15 @@
       <div class="group">
         <label class="switch-row"><input type="checkbox" id="memory-on" role="switch" aria-describedby="memory-hint"><span>Remember what I tell you</span></label>
         <div id="memory-consent" class="consent" role="group" aria-label="Before Ember remembers" hidden>
+          <p id="memory-paused" class="row-note" hidden></p>
           <p id="memory-consent-text"></p>
           <div class="agent-actions"><button type="button" id="memory-yes" class="btn" aria-describedby="memory-consent-text">I agree, remember</button><button type="button" id="memory-no" class="btn quiet">Not now</button></div>
         </div>
+        <label class="switch-row" id="memory-questions-row"><input type="checkbox" id="memory-questions" role="switch" aria-describedby="memory-questions-hint"><span>Ask me questions now and then</span></label>
       </div>
-      <ul class="plain-list" id="memory-list" aria-labelledby="memory-h"></ul>
-      <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember uses what bears on each request; say “Forget that” or use Forget here.</p>
+      <p class="hint" id="memory-questions-hint"></p>
+      <ul class="plain-list memory-list" id="memory-list" aria-labelledby="memory-h"></ul>
+      <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
       <h3 class="sub" id="recall-h" hidden>Better recall</h3>
       <div class="group" id="recall-group" role="group" aria-labelledby="recall-h" hidden>
@@ -256,6 +263,8 @@
         <progress id="recall-progress" max="1" value="0" aria-label="Language model downloaded" hidden></progress>
       </div>
       <p class="hint" id="recall-hint" hidden>It runs only on this computer, and only while memory is on. What it makes of what Ember remembers stays here with it, and Forget everything deletes that too.</p>
+      <h3 class="sub" id="about-you-h">Tell Ember about you</h3>
+      <div id="about-you"></div>
       <h3 class="sub" id="routines-h">Routines and reminders</h3>
       <div class="group">
         <label class="switch-row"><input type="checkbox" id="routines-on" role="switch" aria-describedby="routines-hint"><span>Keep my routines and reminders</span></label>
@@ -304,6 +313,7 @@
         <div id="natural-row" hidden>
           <label class="switch-row"><input type="checkbox" id="natural" role="switch" aria-describedby="natural-text"><span>Use a more natural voice</span></label>
           <p class="hint" id="natural-text">Kokoro: downloads 350 MB once, and speaks only where this computer is fast enough for it (otherwise Ember's usual voice does).</p>
+          <div class="agent-actions"><button type="button" id="natural-retry" class="btn quiet" aria-describedby="natural-text" hidden>Try again</button></div>
         </div>
         <div class="choice">
           <label for="speak">Speak replies, questions and results out loud</label>

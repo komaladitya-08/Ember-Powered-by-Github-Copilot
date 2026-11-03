@@ -136,10 +136,13 @@ describe("Voice Match that keeps learning", () => {
     g.event({ type: "utterance", text: "Between.", ms: 100, window: "follow-up" }, clip(1));
     g.event({ type: "utterance", text: "Owner.", ms: 100, window: "follow-up" }, clip(0));
     await new Promise(r => setTimeout(r, 0));
-    expect(sent).toEqual([
-      { type: "utterance", text: "Between.", ms: 100, window: "follow-up" },
-      { type: "utterance", text: "Owner.", ms: 100, window: "follow-up", verified: true },
-    ]);
+    expect(sent[1]).toEqual({ type: "utterance", text: "Owner.", ms: 100, window: "follow-up", verified: true });
+    // Heard, never verified: short, with its score against the ENROLMENT (#143's restScore), under the enrolment's own threshold.
+    expect(sent[0]).toMatchObject({ type: "utterance", text: "Between.", short: true });
+    expect(sent[0]).not.toHaveProperty("verified");
+    const between1 = (sent[0] as { restScore: number }).restScore;
+    expect(between1).toBeGreaterThanOrEqual(ADAPT.anchorFloor);
+    expect(between1).toBeLessThan(VOICE_MATCH_THRESHOLD);
   });
 
   it("puts a print out of reach of the enrolment (a changed file) back within reach", () => {
@@ -618,10 +621,13 @@ describe("VoiceGate's spoken yes after a learnt print (match.ts vouched)", () =>
     g.event({ type: "utterance", text: "Between.", ms: 100, window: "wake" }, joined(wake, voice(16_000 * 3, pair(41.8))), true);
     g.event({ type: "utterance", text: "Owner.", ms: 100, window: "wake" }, joined(wake, voice(16_000 * 3, pair(36))), true);
     await new Promise(r => setTimeout(r, 10));
-    expect(sent).toEqual([
-      { type: "utterance", text: "Between.", ms: 100, window: "wake", short: true },
-      { type: "utterance", text: "Owner.", ms: 100, window: "wake", verified: true },
-    ]);
+    expect(sent[1]).toEqual({ type: "utterance", text: "Owner.", ms: 100, window: "wake", verified: true });
+    expect(sent[0]).toMatchObject({ type: "utterance", text: "Between.", short: true });
+    expect(sent[0]).not.toHaveProperty("verified");
+    // Its restScore is the cosine to the enrolled voiceprint (or lower), never the learnt print's higher one.
+    const score = (sent[0] as { restScore: number }).restScore;
+    expect(score).toBeCloseTo(Math.cos((41.8 * Math.PI) / 180), 3);
+    expect(score).toBeLessThan(VOICE_MATCH_THRESHOLD);
   });
 });
 
@@ -629,6 +635,15 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
   const MAIN = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
   it("learns nothing from a spoken answer to a question: the heard request is cleared before it is answered (review of #145)", () => {
     expect(MAIN).toContain('if (spokenReply.kind !== "none") { lastHeard = null; answerByVoice(spokenReply); break; }');
+  });
+  it("judges a spoken answer on the raw words, ends trust and learning on another voice, and forgets the words with the voice (merge with #143)", () => {
+    // voiceAnswer reads what the recogniser wrote (e.text), never personal.heard()'s corrected words.
+    expect(MAIN).toContain("text: e.text, questionUp: confirmer?.waiting ?? false");
+    expect(MAIN).toContain('if (e.reason === "voice") personal.strangerTurnedAway();');
+    expect(MAIN).toContain('if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");');
+    expect(MAIN).toContain('personal.forgetVoice();\n    // A task\'s voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).\n    voiceTrust.endAll("voice-changed");');
+    expect(MAIN).toContain("...(voice ? { natural: voice.naturalStatus } : {}),");
+    expect(MAIN).toContain("enrolling, learnt: voiceprints.learnt().clips },");
   });
   it("holds learning while a question Voice Match locked is up (review of #145)", () => {
     expect(MAIN).toContain("locked: confirmer?.voiceLocked ?? false");

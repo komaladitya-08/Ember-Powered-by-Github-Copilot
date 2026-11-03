@@ -30,6 +30,8 @@ export interface VoiceInfo {
   rtf?: number;
   /** Why the natural voice isn't speaking, when it was downloaded. */
   natural?: string;
+  /** The same as Home says it: too slow here, it wouldn't load, or speech doesn't run natively (main's naturalStatus). */
+  naturalWhy?: "slow" | "load" | "native";
 }
 
 /** `audio`: one chunk of `id`'s speech (mono, `rate` Hz); `done`: the last of it was sent; `failed`: it couldn't be said. */
@@ -70,6 +72,7 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
   const sherpa = sherpaRuntime(m.wasm ? { prefer: "wasm" } : m.capiDir ? { capiDir: m.capiDir } : {});
   const list = providers(sherpa.backend);
   let natural: string | undefined;
+  let naturalWhy: VoiceInfo["naturalWhy"];
   if (m.natural && sherpa.backend === "native") {
     // Kokoro is the model a GPU helps: CoreML competes with the CPU for it on macOS.
     const list = providers(sherpa.backend, process.platform, process.env, { gpu: true });
@@ -84,11 +87,14 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
       if (rtf <= NATURAL_MAX_RTF) return { voice: chosen.made, speaker, info: { voice: "kokoro", ...info } };
       chosen.made.free();
       natural = `too slow here: ${rtf} of real time (at most ${NATURAL_MAX_RTF})`;
+      naturalWhy = "slow";
     } catch (err) {
       natural = `it couldn't be loaded: ${message(err)}`;
+      naturalWhy = "load";
     }
   } else if (m.natural) {
     natural = `it needs the native build (${sherpa.detail})`;
+    naturalWhy = "native";
   }
   // One thread: on a computer kept busy by other apps, a second made it slower (all 4 cores busy: 0.16 of real time on
   // two threads, 0.14 on one), and when idle it saved only about 30 ms a sentence (0.10 against 0.13).
@@ -101,7 +107,7 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
   const rtf = sherpa.backend === "native" ? realTimeFactor(chosen.made, 0) : undefined;
   return {
     voice: chosen.made, speaker: 0,
-    info: { voice: "piper", backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, ...(rtf !== undefined ? { rtf } : {}), ...(natural ? { natural } : {}) },
+    info: { voice: "piper", backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, ...(rtf !== undefined ? { rtf } : {}), ...(natural ? { natural, naturalWhy } : {}) },
   };
 }
 

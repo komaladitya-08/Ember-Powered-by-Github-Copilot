@@ -163,8 +163,23 @@ cache (test/temp-folder.ts).
     only.
   - It never keeps passwords, codes, keys or card numbers.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
-    signing out forgets it all.
+    signing out forgets it all. The list says where each fact came from (you, our conversation, a task).
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
+  - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so, `FEATURE_CONSENT_VERSION.memory` 2, so
+    someone who agreed to the first note is asked again and memory stays off until they do). After conversation
+    turns and finished tasks, a short session of its own on the conversation's model, hardened and with no tools,
+    picks out lasting facts as JSON (zod-checked, dropped whole if invalid): at most one call per three turns or a
+    minute, 12 an hour, 60 a day. A fact is yours only when you were heard to say it and every word of it is yours,
+    the same way round; a task's are `task`; nothing that reads like an instruction is ever learned (the remember
+    tool keeps one only in your own words). Learned facts are recalled by meaning too, once Better recall's model is
+    in. After 5 idle minutes (no turn, no task,
+    the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
+    idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
+    fact shows in the conversation as "Ember learned: …" with **Undo**. The kill switch stops all of it (`memory`).
+  - **Tell Ember about you** (Settings › Memory, and first run's optional step 7 of 8): what to call you, your role
+    and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
+    as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
+    from its speakers isn't kept.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
     (all-MiniLM-L6-v2, int8, pinned by SHA-256 in `app/voice/models.ts`) that runs on this computer, so Ember finds a
     fact when you ask in other words ("Who is my manager?" finds "Priya leads the platform team"). It comes from
@@ -277,9 +292,18 @@ Say “Ember, work without asking” (Voice Match must recognise you, and the ca
 Ember opens the switch or its card here) or “Ember, ask me first again” (anyone) to switch it by voice.
 
 **Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “go ahead”) answers it, and “Ember, not now”
-(or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you, from at least 1.5 s of your
-voice (say “Ember, yes, go ahead and allow it”; a bare “allow” is too short to be sure); otherwise the bubble says
-how, and the question stays. It counts only for the question that was up, and armed, when you started speaking, and
+(or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you
+in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is enough). A shorter
+yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
+10 minutes of asking, unless that short yes is too quiet or clipped to tell (it is then too short, never trusted) or sounds clearly unlike
+you, Voice Match has turned another voice away since, you forgot or taught your voice again,
+or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
+another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
+question (“Proceed?”) or a bare “okay” isn't one. Otherwise the bubble says how, and the question stays. Measured on
+LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
+someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
+Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too
+quiet or clipped to score is refused (PLAN.md §2 “Approvals”). It counts only for the question that was up, and armed, when you started speaking, and
 once Voice Match turned another voice away during a question, that question takes a click or the keys only. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
 own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts), never says
 “Always” by voice, and never takes a spoken yes for a consent card. A command card or a long typed text is allowed by
@@ -410,13 +434,16 @@ asked it to remember; when it still gets one wrong, **That's not what I said** u
 lets you type what you said, and with **Learn my words** on it hears it right from then on (`words.json`, mode 0600,
 listed under **Words Ember learnt** with Forget; never a swap of common words or of a verb such as open for close). A
 correction never makes a request risky: one about sending, deleting or paying, or one that addresses someone (message,
-call, tell, invite…), keeps every name as heard. **Suggest what I might say next** shows two or three likely next requests under
+call, tell, invite…), keeps every name as heard, and a person's name from Memory is only used in a request that looks
+something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
 Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
 as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
 you just asked. Both are in “Before Ember starts” (`CONSENT_VERSION` 2). After Ember answers a “Hey Ember” request you
 have 8 seconds (12 when it asked you something) for
-one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
-“OK” is the answer). “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
+a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
+“OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows, macOS and Linux without
+`parec`, where Ember can't hear its own speakers, “Ember” alone doesn't (Ember's own words have it), and what you said before it went quiet isn't
+sent: say the request once it has stopped. “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
 record of its tasks (the step each one is on, one waiting for your answer or stopping, how many wait, how the last one
 went), with no Copilot request, so it works offline too. A spoken request's short acknowledgement (“On it.”) comes only
 once the request has gone to Copilot, after anything Ember is already saying. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
@@ -439,8 +466,10 @@ routine”; a reminder is cancelled only by words such as “cancel the reminder
 before a task makes that task ask before every step. Home lists them with
 **Delete**, and signing out deletes them all, also while your organisation has routines turned off.
 “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
-Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
-over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
+Ember is speaking, “Hey Ember” alone makes it stop talking and listen. With `parec` on Linux Ember tells its own voice
+apart; on Windows, macOS and Linux without `parec` it interrupts too, but “Ember” alone doesn't there, and nothing said
+before Ember has gone quiet is sent. A short request said all over its voice isn't sent, so say it again once Ember
+is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no
 audio leaves it, and only the text of your request is sent to Copilot. Ember ignores “Hey Ember” and
 “Ember, stop” when they come out of your speakers (needs `parec`, in `pulseaudio-utils`); it follows the default sound
@@ -505,7 +534,12 @@ runs natively on the Piper voice at no more than 0.143 of real time (Kokoro is a
 `NATURAL_COST` in `app/voice/tts.ts`; `voice.natural_fetching`, `voice.natural_ready`), and the speech process starts
 again with it once it has nothing to say. Each time it loads, Kokoro is timed on a sentence (on up to 4 threads, and
 against CoreML on macOS: the one model a GPU is tried for): at more than 0.5 of real time (`NATURAL_MAX_RTF`) the Piper
-voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). No package carries
+voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). Turning the switch on
+decides at once, not at some later reply: the Piper voice running then (or started for it) times the computer, the
+download starts, and once it is in the speech process starts again with Kokoro straight away. Every outcome shows under
+the switch (`VoiceService.naturalStatus`, `naturalVoiceView` in app/renderer/home/copy.ts): checking, the download's
+percentage, ready, on, too slow, wouldn't load, needs Ember's faster (native) speech, needs Ember's own voice first, or
+a failed download with **Try again** (`voice:natural-retry`). No package carries
 Kokoro. The int8 Kokoro builds aren't used: onnxruntime made them slower on x86 (below). `node scripts/voice/bench.mjs
 --kokoro` times listening, the Piper voice and Kokoro on the computer it runs on (both builds, every thread count and
 provider Ember would try), as a table and as JSON.
@@ -756,14 +790,14 @@ settings window says so), and the restart reads the new policy whole. Every key 
 
 | Key | Effect |
 |---|---|
-| `features.voice` / `speak` | No "Hey Ember" / no spoken replies |
+| `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the natural voice (Kokoro) off and its 350 MB download from starting, shown as managed |
 | `features.actions` | Ember answers and guides ("show me") but never acts in apps |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model |
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
-| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed); a memory file already there is left unused (signing out still deletes it). Better recall's model isn't downloaded or run either |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it). Better recall's model isn't downloaded or run either |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
@@ -882,7 +916,9 @@ harness turns off the Confirmer's guard against too-early clicks, which would dr
 typed text through first, as a user scrolls to its end before **Allow** works. Ember's test
 windows need GTK 3 for the sidecar's Python (`python3-gobject`, `gtk3`); without it their tasks are skipped, with
 the reason. Each attempt's temporary folder (settings, audit log, files) is deleted when it has been judged; `--keep`
-keeps them (`/tmp/ember-eval-<task>-…`) to look into a failure, and `--verbose` prints Ember's warnings.
+keeps them (`/tmp/ember-eval-<task>-…`) to look into a failure, and `--verbose` prints Ember's warnings. A script
+step's optional `result` is a regex its tool result must match before the mock replays the next step (what Ember
+told the model, as in `editor-close-window`); anything else stops the script and fails the task.
 
 | Tier | Model | Where | Gate |
 |---|---|---|---|
@@ -1803,8 +1839,9 @@ with the command above, and create the release with those files.
 ```
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
   memory/           long-term memory (docs/MEMORY.md): the temporal graph, recall (BM25 + Personalized PageRank),
-                    sleep-time consolidation, the secret guard, memory.json and MemoryService (main's); Better
-                    recall: the WordPiece tokenizer, the embedding model and its process, the vector index
+                    sleep-time consolidation, the secret guard, memory.json and MemoryService (main's); learning on
+                    its own: learn.ts (extraction), refine.ts, questions.ts, intro.ts and MemoryLearning (learning.ts);
+                    Better recall: the WordPiece tokenizer, the embedding model and its process, the vector index
   personal/         voice personalisation (docs/ASSISTANT.md §7): the transcript corrected against the user's words
                     (phonetic.ts, correct.ts, words.json), what they might say next (predict.ts), PersonalVoice
   targets/          the targets runtime: which computers exist, naming and binding, consent cards, noticing ssh (§14)

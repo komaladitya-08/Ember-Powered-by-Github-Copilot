@@ -1,0 +1,62 @@
+{
+  "id": "editor-close-window",
+  "title": "Closes the window it works in, and ends",
+  "instruction": "Close the notes window.",
+  "app": {
+    "editor": "{tmp}/notes.txt"
+  },
+  "setup": [
+    {
+      "file": "{tmp}/notes.txt",
+      "content": "Standup notes\n- ship M9\n"
+    }
+  ],
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "click",
+      "args": {
+        "id": {
+          "find": "^push button \"Close\""
+        }
+      }
+    },
+    {
+      "tool": "perceive_window",
+      "result": "^The window this task was working in has closed: your last step closed it\\."
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Closed the notes window."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "audit": {
+        "event": "action",
+        "kind": "click",
+        "ok": true,
+        "gone": true
+      }
+    },
+    {
+      "answer": {
+        "success": true
+      }
+    },
+    {
+      "file": "{tmp}/notes.txt",
+      "equals": "Standup notes\n- ship M9\n"
+    }
+  ],
+  "timeout": 60,
+  "tags": [
+    "editor",
+    "tier1"
+  ]
+}

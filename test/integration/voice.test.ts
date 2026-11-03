@@ -279,6 +279,36 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(sent(user.events)).toMatchObject([{ window: "wake" }, { text: expect.stringMatching(/do not disturb/i), window: "follow-up" }]);
   });
 
+  it("hears a request said softer than 'Hey Ember' after a pause, also right after Ember's answer where it can't hear its speakers (Windows)", () => {
+    // Ember's answer reaches the microphone 10 dB down (Web Audio's playback isn't echo-cancelled), then 1.2 s on: "Hey
+    // Ember." … 1.5 s … "And make the text a bit bigger." 6 dB softer. Ember's voice isn't the room's talk (VO9-3), nor the
+    // request; and "Hey Ember" said again in the follow-up window after an answer is a wake.
+    const answer = cat(trimmed("chat"), silence(0.2), trimmed("remember")).map(x => x * 0.3);
+    const ask = cat(silence(1.2), read("wake_pause").subarray(0, at(1.52)), silence(1.5), trimmed("bigger").map(x => x * 0.5), silence(2));
+    // In a quiet room too: measured on the wake phrase's loudness, the request was cut at its softer words ("And make the text.").
+    const quiet = session();
+    quiet.hear(inRoom(cat(silence(4), ask)));
+    quiet.end();
+    expect(sent(quiet.events).map(u => u.text)).toEqual([expect.stringMatching(/bigger/i)]);
+    const after = session();
+    after.hear(inRoom(silence(1)));
+    after.engine.selfSpeaking(true);
+    after.hear(inRoom(answer));
+    after.engine.selfSpeaking(false);
+    after.hear(inRoom(ask));
+    after.end();
+    expect(sent(after.events).map(u => u.text)).toEqual([expect.stringMatching(/bigger/i)]);
+    const followUp = session();
+    followUp.hear(inRoom(cat(read("wake"), silence(1))));
+    followUp.engine.selfSpeaking(true);
+    followUp.hear(inRoom(answer));
+    followUp.engine.selfSpeaking(false);
+    followUp.engine.followUp(8000);
+    followUp.hear(inRoom(ask));
+    followUp.end();
+    expect(sent(followUp.events)).toMatchObject([{ text: expect.stringMatching(/night ?light/i), window: "wake" }, { text: expect.stringMatching(/bigger/i), window: "wake" }]);
+  });
+
   it("hears a one-word reply in a follow-up (the VAD hears speech only 0.2 s into it)", () => {
     // "Bigger." alone, and "Stop!" 3 dB softer than the request: both were dropped before the recognizer.
     for (const [word, then] of [[trimmed("bigger").subarray(at(1.45)), "utterance"], [trimmed("stop").subarray(at(0.45)).map(x => x * 0.7), "stop"]] as const) {
@@ -291,7 +321,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     }
   });
 
-  it("stops on 'Hey Ember, stop' said while Ember speaks, and takes no wake then", () => {
+  it("stops on 'Hey Ember, stop' said while Ember speaks; without the speakers' stream 'Hey Ember' then cuts in, and sends nothing said over Ember's voice", () => {
     const heyStop = cat(read("wake_pause").subarray(0, at(1.52)), silence(0.1), read("stop").subarray(at(1.09)), silence(1));
     const stop = session();
     stop.engine.selfSpeaking(true);
@@ -302,7 +332,22 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     wake.engine.selfSpeaking(true);
     wake.hear(inRoom(cat(read("wake"), silence(1))));
     wake.end();
-    expect(wake.events.filter(e => e.type !== "rejected")).toEqual([]);
+    // Whether or not it cut in (natively the check heard the clip's greeting less often), nothing is sent: Ember hasn't said
+    // it stopped speaking, so all of the one-breath request was said over its voice.
+    expect(wake.events.filter(e => e.type === "utterance")).toEqual([]);
+    // "Hey Ember." over the start of Ember's answer (20 dB down at the microphone, as in VO9-2); main hushes Ember on the wake; then the request.
+    const answer = cat(trimmed("chat"), silence(0.2), trimmed("remember"), silence(0.2), trimmed("chat")).map(x => x * 0.1), hey = read("wake_pause").subarray(0, at(1.52));
+    const over = answer.slice(0, at(0.2 + 1.52 + 0.15)); // (its voice stops once main hushes it)
+    over.set(hey.map((x, i) => x + answer[at(0.2) + i]), at(0.2));
+    const cut = session();
+    cut.engine.selfSpeaking(true);
+    let hushed = false;
+    const hush = { onFrame: () => { if (!hushed && cut.events.some(e => e.type === "wake")) { hushed = true; cut.engine.selfSpeaking(false); } } };
+    cut.hear(inRoom(over), hush);
+    cut.hear(inRoom(cat(silence(0.8), trimmed("bigger"), silence(2))), hush);
+    cut.end();
+    expect(cut.events.filter(e => e.type === "wake")).toHaveLength(1);
+    expect(sent(cut.events).map(u => u.text)).toEqual([expect.stringMatching(/bigger/i)]);
   });
 
   it("cuts in on Ember's answer when its speakers didn't say 'Hey Ember': Ember is hushed, and the request is heard (VO9-2)", () => {

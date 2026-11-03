@@ -45,7 +45,9 @@ the work in your real apps where you can watch, without taking over your mouse. 
   recognition on this computer (Moonshine v2 tiny, punctuated; the models download once, 142 MB, or come with the
   `ember-voice-models` RPM); only the text of a request goes to Copilot. The name heard inside another word
   ("remember", "September", "the embers") shows nothing: a wake by the bare name shows once the recogniser has heard
-  the name start what was said. Ember speaks its replies, questions and results in its own natural neural voice (Piper
+  the name start what was said. After Ember answers you can go on without the wake word, up to three requests in a
+  row; “Hey Ember” said then works too. While Ember speaks, “Hey Ember” makes it stop and listen, on Windows and macOS
+  too (there “Ember” alone doesn't, and nothing said over Ember's voice is sent). Ember speaks its replies, questions and results in its own natural neural voice (Piper
   "Kristin", made on this computer), sentence by sentence while Copilot is still writing, so it starts talking within
   about a second; until its voice is downloaded, or should it fail, the system's most natural voice speaks (a Natural
   voice on Windows 11, a Premium or Enhanced one on a Mac). It speaks always (the default), when a screen reader runs,
@@ -309,10 +311,31 @@ allows them.
   work without asking” (Voice Match must recognise you) or “Ember, ask me first again”.
 - **Answer questions by voice**: while Ember asks, “Ember, allow” (with Voice Match on and recognising you) or “Ember,
   not now” (anyone) answers it. Never “Always”, never Ember's own voice, and a command card or a long text only once
-  all of it has been shown. The audit log says the answer was spoken.
+  all of it has been shown. The audit log says the answer was spoken. Half a second of your voice after “Ember” is
+  enough to recognise you, and a shorter yes counts for the questions of a task you asked for in your recognised voice,
+  within 10 minutes (never a command card, a consent card or another task's question; the audit says
+  `trust: "task-voice"`; not a yes too quiet or clipped to tell, either). A yes asked as a question, or a bare
+  “okay”, isn't one.
 - For administrators: `features.autonomy: false` turns Work without asking off (managed); so do `allowGrants: false`,
   `confirmEveryAction` and a lockdown. An older Ember reads a policy with this key as broken and locks down, so update
   Ember before adding it.
+
+### Memory that learns as you go
+
+- **Ember learns on its own** while memory is on (Settings › **Memory**): after you talk and when a task finishes, it
+  picks out what's worth keeping (your preferences, your work, the people and apps in it), tidies its memory while
+  you're away, and at most once a day asks about a name it keeps finding nothing on (**Ask me questions now and
+  then** turns that off). Only what you say yourself counts as yours; what it reads on screen or in a task's result
+  never does, nor speech it can't tell from its own speakers, and it never learns an instruction or a one-off order
+  as a preference. A new fact shows in the conversation as "Ember learned: …" with **Undo** (which puts back what
+  it replaced); "Ember, forget that" works too. The list says where each fact came from.
+- **Tell Ember about you**: what to call you, your role and work, the apps you use most, how you like answers, your
+  timezone or hours, each optional, in Settings › Memory and as an optional step of first run. Or say “Ember, get to
+  know me” for a short spoken version.
+- Memory's note changed to say all this, so if you had memory on, Ember asks you to agree again before it remembers
+  anything more (Home says "Memory paused"); what it kept stays until you do. Learning uses a few short requests of
+  its own (at most 12 an hour and 60 a day, plus 6 a day while you're away).
+- For administrators: `features.memory: false` (and a lockdown) turns all of it off.
 
 ### Your own model provider
 

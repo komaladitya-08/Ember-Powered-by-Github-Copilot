@@ -6,6 +6,17 @@
 const CODE = "(code shown in the bubble)";
 const TABLE = "(table shown in the bubble)";
 
+/**
+ * A key chord as written ("Ctrl+Alt+Y", "Win + Shift + S", "Cmd+Space"): modifiers joined by "+" to a key, standing on
+ * its own: never inside a word, an address or a path ("me.alt+s@example.com", "build/ctrl+c"; review of #143).
+ */
+const CHORD = /(?<![\w.@+/\\-])(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)(?![\w@+/\\-]|\.\w)/gi;
+/** How a key in a chord is said (keyLabel's names, for the ear): the rest are said as they are written. */
+const KEY_SAID: Readonly<Record<string, string>> = {
+  ctrl: "Control", win: "Windows key", cmd: "Command", opt: "Option", esc: "Escape", del: "Delete", return: "Enter",
+  pgup: "Page Up", pgdn: "Page Down",
+};
+
 export function spokenText(markdown: string): string {
   return markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
@@ -26,6 +37,13 @@ export function spokenText(markdown: string): string {
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+][ \t]+/gm, "")
     .replace(/^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
+    // Key chords as said ("Ctrl+Shift+T" is "Control Shift T", not "C T R L plus…"), and a path through menus or
+    // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".
+    .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
+    .replace(/\s*›\s*(?=\S)/g, ", then ")
+    .replace(/\s+(?:→|->)\s+/g, " to ")
+    // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
+    .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ")
     .replace(/\n{2,}/g, "\n")
     .trim();
 }
@@ -53,8 +71,14 @@ export function cancelWords(o: { killPhrase: boolean; stopKey: string | null }):
 
 /** "Ember, stop" in any of its forms, with its quotes (and a full stop inside them, which is kept). */
 const KILL_PHRASE = /["“‘']?\b(?:(?:hey|hi|ok|okay)[\s,]+)?embers?[\s,.!…-]*(?:please[\s,]+)?stop\b(?:([.!]?)["”’'])?/gi;
-/** "Hey Ember" (or "OK Ember"), with its quotes. */
-const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay)[\s,]+ember\b(?:([,.!]?)["”’'])?/gi;
+/** "Hey Ember" (or "OK Ember"), with its quotes: the greeting and the name together. */
+const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay|hay|pay|pey)[\s,]*(?:ember|emmer)\b(?!['’]?s\b)(?:([,.!]?)["”’'])?/gi;
+/**
+ * The greeting ending one sentence and the name starting the next ("Okay. Ember can't open that."): the recognizer
+ * writes it as engine.ts's CUT_IN_WAKE takes for a cut-in, so a word goes between them ("Okay. So Ember can't…"), and
+ * none is dropped. voice-spoken.test.ts checks on a corpus that CUT_IN_WAKE never matches what Ember says.
+ */
+const WAKE_APART = /\b(hey|hi|ok|okay|hay|pay|pey)([\s,]*[.!][\s,.!]*)(ember|emmer)\b(?!['’]?s\b)/gi;
 
 /**
  * What Ember says, without the stop and wake phrases, where it can't tell its own voice from the user's: its
@@ -62,5 +86,8 @@ const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay)[\s,]+ember\b(?:([,.!]?)["�
  * (review #251). They are named instead ("the stop phrase"); the bubble still shows them.
  */
 export function withoutOwnPhrases(text: string): string {
-  return text.replace(KILL_PHRASE, (_m, p?: string) => `the stop phrase${p ?? ""}`).replace(WAKE_PHRASE, (_m, p?: string) => `the wake phrase${p ?? ""}`);
+  return text
+    .replace(KILL_PHRASE, (_m, p?: string) => `the stop phrase${p ?? ""}`)
+    .replace(WAKE_PHRASE, (_m, p?: string) => `the wake phrase${p ?? ""}`)
+    .replace(WAKE_APART, (_m, greeting: string, between: string, name: string) => `${greeting}${between}So ${name}`);
 }
