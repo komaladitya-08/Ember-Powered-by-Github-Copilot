@@ -47,7 +47,7 @@ import { runCommandTool } from "../commands/flow";
 import { DEFAULT_TERM_SIZE } from "../commands/window";
 import { afterTheStep } from "../policy/audit";
 import type { CommandService } from "../commands/types";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { OneShot } from "../memory/learn";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
@@ -2321,6 +2321,15 @@ export class AgentHost {
     return true;
   }
 
+  /** The signed-in identity or provider credential that owns the current workspace library. */
+  projectWorkspaceScope(): string | null {
+    if (this.status.phase !== "ready" || this.providerMoved()) return null;
+    const provider = this.providerNow();
+    const owner = provider ? JSON.stringify([provider.kind, provider.config])
+      : this.githubAccountId === null ? null : `github:${this.githubAccountId}`;
+    return owner === null ? null : createHash("sha256").update(owner).digest("hex");
+  }
+
   /** Project commands use the same classifier, review card, runner and audit as desktop tasks. */
   async runProjectCommand(command: string, folder: string, service: CommandService, signal: AbortSignal, projectFolderCurrent: () => boolean): Promise<string> {
     const base = this.o.taskBase;
@@ -2346,7 +2355,7 @@ export class AgentHost {
   }
 
   async runProject(prompt: string, run: AbortController): Promise<string | null> {
-    if (run.signal.aborted || this.projectRun || this.status.phase !== "ready" || !this.projectModel || this.o.screenLocked?.()) return null;
+    if (run.signal.aborted || this.projectRun || this.status.phase !== "ready" || this.providerMoved() || !this.projectModel || this.o.screenLocked?.()) return null;
     this.projectRun = run;
     try {
       return await this.projectModel(PROJECT_SYSTEM, prompt, run.signal);

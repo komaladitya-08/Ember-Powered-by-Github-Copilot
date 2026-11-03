@@ -11,8 +11,14 @@ import type { MemoryOwnership } from "../main/memory/owner";
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
 export type ProjectMode = "review" | "plan" | "patch";
-export interface ProjectSelection { names: string[]; error?: string }
-export type ProjectResult = { answer: string; patch?: { name: string; diff: string } } | { error: string };
+export interface ProjectSelection { names: string[]; changed?: boolean; error?: string }
+export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; canContinue: boolean } | { error: string };
+export type ProjectWorkspaceAction = { action: "list" } | { action: "save" | "open" | "forget"; name: string };
+export interface ProjectWorkspaceReply {
+  names?: string[];
+  message?: string;
+  opened?: { files: string[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
+}
 export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership }
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
@@ -69,6 +75,7 @@ export const IPC = {
   projectApply: "project:apply",
   projectChooseFolder: "project:choose-folder",
   projectRunCommand: "project:run-command",
+  projectWorkspace: "project:workspace",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -293,12 +300,13 @@ export interface EmberHomeApi {
   applyFix(fix: NonNullable<EnvReport["checks"][number]["fix"]>): Promise<EnvReport>;
   agentStatus(): Promise<AgentStatus>;
   projectPick(): Promise<ProjectSelection>;
-  projectRun(request: { mode: ProjectMode; question: string }): Promise<ProjectResult>;
+  projectRun(request: { mode: ProjectMode; question: string; includePrevious?: boolean }): Promise<ProjectResult>;
   projectClear(): Promise<void>;
   projectCancel(): Promise<void>;
   projectApply(): Promise<{ message: string; done: boolean }>;
   projectChooseFolder(): Promise<{ folder: string | null; message?: string }>;
   projectRunCommand(command: string): Promise<string>;
+  projectWorkspace(input: ProjectWorkspaceAction): Promise<ProjectWorkspaceReply>;
   onAgentStatus(fn: (s: AgentStatus) => void): () => void;
   signIn(): Promise<void>;
   onSignInProgress(fn: (p: SignInProgress) => void): () => void;

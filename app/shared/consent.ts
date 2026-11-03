@@ -6,7 +6,7 @@ import type { TargetId } from "./targets";
  * 3: Listen once can open the microphone for a single request while wake listening is off.
  * 4: Project work sends the text files the user selects to the connected model.
  */
-export const CONSENT_VERSION = 4;
+export const CONSENT_VERSION = 5;
 
 /**
  * The versions of the first-use consent cards for WSL, SSH (per host) and commands (per target), recorded apart from
