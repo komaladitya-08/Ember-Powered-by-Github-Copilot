@@ -263,7 +263,12 @@ app.whenReady().then(() => {
   // "read" only asks, as Ember does at start (the settings window's note); "on" and "off" sync as Ember does.
   const changed = mode === "read" ? null : win32Autostart(o).sync(mode === "on");
   fs.writeFileSync(out, JSON.stringify({ changed, settings: app.getLoginItemSettings({ path: item.path, args: item.args }) }));
-  app.exit(0);
+  // Not app.exit() here: "ready" is emitted before the main message loop runs, and there Electron leaves through the C
+  // runtime's exit(), whose static destructors free the sandbox broker while a thread-pool worker is still launching
+  // the GPU process: 0xC0000005 in sandbox::TopLevelDispatcher or GpuSandboxedProcessLauncherDelegate::InitializeConfig,
+  // in 76 of 600 starts on windows-2022 while a theme change went round (the dark-mode test's, just before) and in 4 of
+  // about 550 otherwise; none in 480 once deferred (electron/electron#55011). From the loop app.exit() shuts down first.
+  setImmediate(() => app.exit(0));
 });`);
     /** Each Electron start in order, with how it ended: a crash (an exit code like 0xC0000005) is evidence, kept. */
     const steps: string[] = [];
