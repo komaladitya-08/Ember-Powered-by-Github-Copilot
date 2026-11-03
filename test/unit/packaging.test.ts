@@ -672,6 +672,32 @@ describe("staging in CI", () => {
     expect(install).toMatch(/^\s+grep -qx 'Exec=ember --ask' \/usr\/share\/applications\/ember\.desktop$/m);
     expect(install.indexOf("desktop-file-validate")).toBeLessThan(install.indexOf("RPM lifecycle"));
   });
+  it("ships native speech on Linux: pinned libraries staged, checked for glibc, generating no RPM dependencies, and chosen when installed", () => {
+    const stage = fs.readFileSync(path.resolve("scripts/package/stage.mjs"), "utf8");
+    // Copied only as the pinned bytes, from what fetch-capi.mjs fetched; nothing downloaded while staging.
+    expect(stage).toContain('const capiSrc = path.join(root, ".cache/voice/capi", CAPI_RELEASE.target, "lib");');
+    expect(stage).toContain('if (got !== sha256) throw new Error(');
+    expect(stage).toContain("for (const l of capiLibs) fs.writeFileSync(path.join(dest, l.file), l.bytes, { mode: 0o755 });");
+    for (const f of ["scripts/package/rpm.sh", "scripts/package/appimage.sh"]) {
+      expect(fs.readFileSync(path.resolve(f), "utf8"), f).toContain('[ -f "$stage/ember/resources/voice-native/libsherpa-onnx-c-api.so" ] ||');
+    }
+    const pkg = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8"));
+    expect(pkg.ember.nativeModules).toEqual([]);
+    expect(pkg.scripts["check:symvers"]).toBe('scripts/check-symvers.sh node_modules "$(node scripts/voice/fetch-capi.mjs)"');
+    for (const s of ["package", "package:rpm"]) expect(pkg.scripts[s]).toContain("node scripts/voice/fetch-capi.mjs && node scripts/package/stage.mjs");
+    expect(fs.readFileSync(path.resolve("scripts/rebuild-el8.sh"), "utf8")).toContain('scripts/check-symvers.sh node_modules "$capi"');
+    const job = ci.slice(ci.indexOf("\n  package:"), ci.indexOf("\n  eval:"));
+    expect(job).toContain("grep -cE '^ok +dist/package/ember/resources/voice-native/lib(onnxruntime|sherpa-onnx-c-api)\\.so ' /tmp/symvers.txt)\" = 2");
+    expect(job).toContain("if rpm -qpR dist/package/ember-*.x86_64.rpm | grep -E '\\.so|onnx|sherpa'; then exit 1; fi");
+    expect(job).toContain("ELECTRON_RUN_AS_NODE=1 /opt/ember/ember test/smoke/capi-load.mjs /opt/ember/resources/voice-native | grep -x 'sherpa-onnx 1.13.8'");
+    // The installed RPM and the AppImage both chose native speech, and the check-up says so.
+    expect(job.match(/grep -q '"backend":"native"'/g)).toHaveLength(2);
+    expect(job).toContain("grep -qE '^ok +Speech +On this computer \\(native\\)\\.$'");
+    // Both builds on RHEL 8's glibc.
+    const el8 = ci.slice(ci.indexOf("\n  el8:"), ci.indexOf("\n  package:"));
+    expect(el8).toContain("EMBER_VOICE_BACKEND=wasm npm run test:integration -- test/integration/voice.test.ts");
+    expect(el8).toContain('EMBER_SHERPA_CAPI="$(node scripts/voice/fetch-capi.mjs)" npm run test:integration -- test/integration/voice.test.ts');
+  });
   it("lets rpm.sh build another release of the same version (an upgrade to test)", () => {
     const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
     expect(spec).toMatch(/^Release:\s+%\{\?ember_release\}%\{!\?ember_release:1\}%\{\?dist\}$/m);

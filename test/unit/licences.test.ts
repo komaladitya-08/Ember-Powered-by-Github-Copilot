@@ -64,7 +64,19 @@ describe("the licence check before staging", () => {
       expect(uncoveredLicences(addon, ["Apache-2.0", "MIT", "BSD-3-Clause", "GPL-3.0-or-later"])).toEqual([`${name}'s Eigen (MPL-2.0)`]);
       expect(uncoveredLicences(addon, specLicenceIds(spec)), name).toEqual([]);
     }
-    expect(spec).toMatch(/native\s+addon, with Eigen \(MPL-2\.0\)/);
+    expect(spec).toMatch(/sherpa-onnx's native\s+addon/);
+  });
+
+  it("names what the Linux packages' native speech libraries hold in the spec's comment and their notices", () => {
+    // sherpa-onnx's C API (resources/voice-native) is no npm package, so the spec's comment and stage.mjs say it.
+    expect(spec).toMatch(/sherpa-onnx's prebuilt C API[^]*?Apache-2\.0, with\s+(#\s+)?Eigen \(MPL-2\.0\)/);
+    expect(spec).toMatch(/ONNX Runtime 1\.28\.2 \(MIT\)/);
+    for (const id of ["Apache-2.0", "MIT", "MPL-2.0", "BSD-3-Clause", "GPL-3.0-or-later"]) expect(specLicenceIds(spec)).toContain(id);
+    const native = fs.readFileSync(path.resolve("packaging/licences/sherpa-onnx-native.txt"), "utf8");
+    expect(native).toMatch(/libsherpa-onnx-c-api\.so and libonnxruntime\.so/);
+    const stage = fs.readFileSync(path.resolve("scripts/package/stage.mjs"), "utf8");
+    expect(stage).toContain('const texts = ["packaging/licences/sherpa-onnx-native.txt", "packaging/licences/onnxruntime-1.28.2-ThirdPartyNotices.txt", "packaging/licences/espeak-ng-COPYING.txt"];');
+    expect(stage).toContain("...(layout.voiceNative ? [capiNotice(");
   });
 
   it.skipIf(!libvipsReadme || !fs.existsSync(libvipsReadme))("passes for what Ember bundles today (the spec names every library's licence)", () => {
@@ -109,6 +121,13 @@ describe("licence texts for packages that ship none (review #211)", () => {
     expect(native).toMatch(/Apache License\s+Version 2\.0, January 2004/);
     expect(native).toMatch(/ONNX Runtime 1\.28\.2/);
     expect(native).toMatch(/Eigen .*MPL-2\.0/);
+    // eSpeak NG is GPL-3.0-or-later and built into both, so each notice says where its exact source is (GPLv3 §6).
+    for (const text of [sherpa, native]) {
+      expect(text).toMatch(/Corresponding Source for eSpeak NG/);
+      expect(text).toContain("https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.8");
+      expect(text).toContain("https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip");
+      expect(text).toContain("https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip");
+    }
     expect(fs.readFileSync(path.resolve("packaging/licences/onnxruntime-1.28.2-ThirdPartyNotices.txt"), "utf8")).toMatch(/^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
     expect(fs.readFileSync(path.resolve("packaging/licences/espeak-ng-COPYING.txt"), "utf8")).toMatch(/^\s+GNU GENERAL PUBLIC LICENSE\n\s+Version 3, 29 June 2007/);
   });

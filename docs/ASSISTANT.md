@@ -182,8 +182,13 @@ reported in every PR that touches it.
    through koffi with struct layouts generated from its header (scripts/voice/capi-structs.mjs), and
    `EMBER_SHERPA_CAPI` (development builds, filled by scripts/voice/fetch-capi.mjs) turns it on. On a 2.8 GHz Xeon
    with 4 threads (bench.mjs), Piper's first audio was 137 ms against WebAssembly's 551, listening ran at a real-time
-   factor of 0.075 against 0.136, and Kokoro ran at 0.565 on 4 threads (just over the 0.5 Ember needs). Shipping it in
-   the RPM and AppImage is the next step.
+   factor of 0.075 against 0.136, and Kokoro ran at 0.565 on 4 threads (just over the 0.5 Ember needs).
+   **Done (2026-11-03):** the RPM and the AppImage carry the two libraries in `resources/voice-native` (pinned by
+   SHA-256, checked by check-symvers, 32 MB installed, about 9 MB of each package) and use them by default, with
+   WebAssembly as the fallback (`capiChoice` in app/voice/runtime.ts; PLAN.md §10 "Native speech on Linux"). On a
+   busy 2.1 GHz Xeon (4 vCPUs), `scripts/perf/latency.mjs` measured first token → first audio at 352 ms median, 626
+   ms p95 (WebAssembly: 733 and 1,280), and bench.mjs listening at 0.077 of real time (0.220). Kokoro stays off on
+   Linux for now (no setting there; 0.5 of real time needs about 4 free cores).
 2. **Speak the first clause, not the first sentence.** (Built; from 18 characters since 2026-11-02, §1.1.)
    `SpeechStream` lets the first chunk end at a comma or dash once it has at least about 4 words, and keeps whole
    sentences after that. This saves the time Copilot spends writing the rest of a long first sentence.

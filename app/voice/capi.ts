@@ -24,14 +24,49 @@ export const CAPI_LIBS = ["libonnxruntime.so", "libsherpa-onnx-c-api.so"] as con
 /** Whether `dir` holds the C API's libraries. */
 export const hasCapi = (dir: string): boolean => CAPI_LIBS.every(f => fs.existsSync(path.join(dir, f)));
 
+/**
+ * The processor features (/proc/cpuinfo's flag names) the libraries need beyond x86-64's baseline; a processor without
+ * one runs speech on WebAssembly (runtime.ts capiChoice). None for 1.13.8, measured by disassembling both (objdump -d):
+ * libsherpa-onnx-c-api.so has no AVX-encoded instruction, and every AVX, AVX2 and AVX-512 instruction in
+ * libonnxruntime.so is in MLAS's kernels, which onnxruntime picks at run time from CPUID; the rest is SSE2 (its tzcnt
+ * runs as bsf on a processor without BMI1). A build that needs more lists it here.
+ */
+export const CAPI_CPU_NEEDS: readonly string[] = [];
+
+/**
+ * Which of `needs` the processor lacks, from /proc/cpuinfo's text (its "flags" lines). It fails closed: without the
+ * text (null: unreadable) or a flags line in it, all of `needs` count as missing.
+ */
+export function cpuLacks(needs: readonly string[], cpuinfo: string | null): string[] {
+  if (!needs.length) return [];
+  const lines = cpuinfo?.split("\n").filter(l => /^flags\s*:/.test(l)) ?? [];
+  if (!lines.length) return [...needs];
+  // Every processor's line: a feature counts only if all of them have it (a task may run on any of them).
+  const sets = lines.map(l => new Set(l.slice(l.indexOf(":") + 1).trim().split(/\s+/)));
+  return needs.filter(n => !sets.every(s => s.has(n)));
+}
+
 /** koffi's error for a type defined twice ("Duplicate type name 'X'"): the struct was defined by an earlier capiSherpa(). */
 export const isDuplicateType = (err: unknown): boolean => /^Duplicate type name\b/.test(String((err as Error)?.message ?? err));
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- koffi's functions are untyped */
 type Fn = (...a: any[]) => any;
 
-/** The C API's sherpa-onnx in `dir` (throws if it can't be loaded). */
+/** Each folder's bound library, so its libraries load and its functions bind once per process. */
+const loaded = new Map<string, Sherpa>();
+
+/**
+ * The C API's sherpa-onnx in `dir` (throws if it can't be loaded). Bound once per folder and process: a later call
+ * returns the same object. A load that throws isn't kept.
+ */
 export function capiSherpa(dir: string): Sherpa {
+  const key = path.resolve(dir);
+  let s = loaded.get(key);
+  if (!s) { s = bindCapi(key); loaded.set(key, s); }
+  return s;
+}
+
+function bindCapi(dir: string): Sherpa {
   const koffi = createRequire(__filename)("koffi") as typeof import("koffi");
   // onnxruntime first, from this folder, so the C API's own load finds it whatever the RPATH resolves to.
   koffi.load(path.join(dir, CAPI_LIBS[0]));
