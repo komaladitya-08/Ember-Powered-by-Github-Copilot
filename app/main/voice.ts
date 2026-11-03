@@ -168,6 +168,8 @@ export class VoiceService {
   private wanted = false;
   /** The screen is locked: no listening and no speech until it's unlocked. */
   private locked = false;
+  /** The natural voice was turned on while the screen was locked: it is decided once it is unlocked. */
+  private naturalOnUnlock = false;
   private downloading: Promise<void> | null = null;
   /** Until when Ember is speaking, or about to: a follow-up window waits until it's done. */
   private speakingUntil = 0;
@@ -375,7 +377,12 @@ export class VoiceService {
   setLocked(on: boolean): void {
     if (on === this.locked) return;
     this.locked = on;
-    if (!on) { void this.start(); return; }
+    if (!on) {
+      void this.start();
+      // The natural voice turned on while locked is decided now.
+      if (this.naturalOnUnlock) { this.naturalOnUnlock = false; if (this.naturalWanted) this.checkNatural(); }
+      return;
+    }
     this.hush();
     this.cancelRetry();
     this.teardown();
@@ -540,15 +547,15 @@ export class VoiceService {
     if (this.naturalFetch) { this.setNatural({ state: "downloading", percent: this.naturalPercent }); return; }
     if (this.rootOf("natural") !== null) {
       if (this.ttsInfo?.voice === "kokoro") { this.setNatural({ state: "on" }); return; }
-      this.setNatural({ state: "checking" });
       this.switchVoice = true;
       this.switchWhenIdle();
-      if (!this.tts) this.warmVoice();
-      return;
-    }
-    if (this.ttsInfo) { this.decideNatural(this.ttsInfo); return; }
+      if (this.tts) { this.setNatural({ state: "checking" }); return; }
+    } else if (this.ttsInfo) { this.decideNatural(this.ttsInfo); return; }
+    // Nothing speaks while the screen is locked, so nothing can tell: "later", and it is decided once it is unlocked
+    // (setLocked), never "Checking…" for as long as the lock lasts (review of #143).
+    if (this.locked) { this.naturalOnUnlock = true; this.setNatural({ state: "later" }); return; }
     this.setNatural({ state: "checking" });
-    // Its "ready" decides (voiceReady). Locked: it is decided once Ember speaks again.
+    // Its "ready" decides (voiceReady).
     this.warmVoice();
   }
 

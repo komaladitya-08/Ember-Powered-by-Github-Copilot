@@ -997,6 +997,19 @@ describe("speech models", () => {
         expect(v.naturalStatus).toEqual({ state: "too-slow" });
       });
 
+      it("says “later”, not “Checking…”, when turned on while the screen is locked, and decides once it is unlocked (review of #143)", async () => {
+        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn(async () => { throw new Error("HTTP 503"); }) });
+        v.setLocked(true);
+        v.setNaturalVoice(true);
+        expect(electron.procs).toHaveLength(0);
+        expect(v.naturalStatus).toEqual({ state: "later" });
+        v.setLocked(false);
+        expect(v.naturalStatus).toEqual({ state: "checking" });
+        await vi.waitFor(() => expect(electron.procs.length).toBeGreaterThan(0));
+        electron.procs.at(-1)!.emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.2 }) });
+        expect(v.naturalStatus).toEqual({ state: "too-slow" });
+      });
+
       it("switches to it now once it is downloaded, and says when it speaks", async () => {
         const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn() });
         withKokoro();
