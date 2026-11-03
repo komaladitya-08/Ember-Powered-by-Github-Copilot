@@ -52,8 +52,21 @@ export const isDuplicateType = (err: unknown): boolean => /^Duplicate type name\
 /* eslint-disable @typescript-eslint/no-explicit-any -- koffi's functions are untyped */
 type Fn = (...a: any[]) => any;
 
-/** The C API's sherpa-onnx in `dir` (throws if it can't be loaded). */
+/** Each folder's bound library, so its libraries load and its functions bind once per process. */
+const loaded = new Map<string, Sherpa>();
+
+/**
+ * The C API's sherpa-onnx in `dir` (throws if it can't be loaded). Bound once per folder and process: a later call
+ * returns the same object. A load that throws isn't kept.
+ */
 export function capiSherpa(dir: string): Sherpa {
+  const key = path.resolve(dir);
+  let s = loaded.get(key);
+  if (!s) { s = bindCapi(key); loaded.set(key, s); }
+  return s;
+}
+
+function bindCapi(dir: string): Sherpa {
   const koffi = createRequire(__filename)("koffi") as typeof import("koffi");
   // onnxruntime first, from this folder, so the C API's own load finds it whatever the RPATH resolves to.
   koffi.load(path.join(dir, CAPI_LIBS[0]));

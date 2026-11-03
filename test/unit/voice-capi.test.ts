@@ -12,7 +12,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CAPI_STRUCTS, CAPI_VERSION } from "../../app/voice/capi-structs";
 import { capiChoice, sherpaRuntime } from "../../app/voice/runtime";
-import { CAPI_CPU_NEEDS, CAPI_LIBS, cpuLacks, isDuplicateType } from "../../app/voice/capi";
+import { CAPI_CPU_NEEDS, CAPI_LIBS, capiSherpa, cpuLacks, isDuplicateType } from "../../app/voice/capi";
 import { CAPI_RELEASE, modelPaths } from "../../app/voice/models";
 import { piperSpec } from "../../app/voice/tts-spec";
 
@@ -65,6 +65,12 @@ describe("sherpaRuntime with a C API folder", () => {
 
   it.skipIf(!runnable)("has the pinned bytes in the folder fetch-capi.mjs filled", () => {
     for (const [f, sha] of Object.entries(CAPI_RELEASE.libs)) expect(crypto.createHash("sha256").update(fs.readFileSync(path.join(capiDir, f))).digest("hex"), f).toBe(sha);
+  });
+
+  it.skipIf(!runnable)("loads the libraries and binds their functions once per folder and process (CLAUDE.md koffi rule)", () => {
+    const first = capiSherpa(capiDir);
+    expect(capiSherpa(capiDir)).toBe(first);
+    expect(capiSherpa(path.join(capiDir, "..", "lib"))).toBe(first);
   });
 
   it("runs on WebAssembly, without loading anything, on a processor without a feature the libraries need", () => {
