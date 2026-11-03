@@ -53,14 +53,14 @@ import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
-import { Confirmer, guardWhileAsking } from "./agent/confirm";
+import { Confirmer, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
 import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type ShortcutDef, type ShortcutId } from "../shared/shortcuts";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
-import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } from "./agent/host";
+import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
@@ -92,6 +92,8 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { MemoryLearning, withLearned } from "./memory/learning";
+import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { ExtensionsService } from "./extensions/service";
@@ -604,7 +606,7 @@ function start(): void {
     lastState = { ...lastState, ...next };
     if (next.tasks) tasksShown();
     // Shown just for an answer the user asked for while Ember was hidden: hidden again once it's read.
-    if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
+    if (hidesAgainAfter(shownForAnswer, next)) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
     handle?.sendState(lastState);
     syncHandle();
@@ -1181,10 +1183,12 @@ function start(): void {
   let borrowRef: CursorBorrow | null = null;
   let deskViewRef: DeskView | null = null;
   let extensionsRef: ExtensionsService | null = null;
+  let learningRef: MemoryLearning | null = null;
   let betterRecallRef: BetterRecall | null = null;
   const killSwitch = new KillSwitch(() => [
-    // Better recall's indexing stops, and its memory process ends (the next question or change starts it again).
-    { name: "memory", stop: () => betterRecallRef?.semantic.stop() },
+    // Memory, as one part: Better recall's indexing stops and its memory process ends (the next question or change
+    // starts it again), and memory's own model calls (learning, refinement) are abandoned, its interview and question end.
+    { name: "memory", stop: () => { betterRecallRef?.semantic.stop(); learningRef?.stopNow(); } },
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
     // A request still being spoken is dropped, not sent after Stop.
@@ -1302,6 +1306,48 @@ function start(): void {
   const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
   if (memoryOn() && betterRecall.ready) memory.index();
+  // Memory that learns on its own (app/main/memory/learning.ts): only while memory is in force (memoryOn: on, its own
+  // consent, the organisation's features.memory; LOCKDOWN turns that off). Its "Ember learned" lines join the
+  // conversation Home shows.
+  let learnedLines: TranscriptEntry[] = [];
+  const conversationNow = (entries: TranscriptEntry[] = agent?.getTranscript() ?? []) => withLearned(entries, learnedLines);
+  const learning = new MemoryLearning({
+    memory, inForce: memoryOn, managed: () => !memoryAllowed(),
+    questionsOn: () => settings.get().memory.questions,
+    askedAt: () => settings.get().memory.askedAt,
+    setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
+    idle: () => agent?.idle ?? false,
+    // Fail closed: without a lock watcher the screen counts as locked (nothing runs while away).
+    locked: () => screenLock?.locked ?? true,
+    say: text => agent?.sayFromMemory(text) ?? false,
+    openMemory: () => { showHome(); sendToHome(IPC.focusSection, "memory:memory-yes"); },
+    onLearned: items => {
+      const t = new Date().toISOString();
+      learnedLines = [...learnedLines, ...items.map(i => ({ t, who: "learned" as const, text: i.text.slice(0, 400), fact: i.id }))].slice(-30);
+      broadcast(IPC.conversationChanged, conversationNow());
+    },
+    // Forget everything (or sign-out): the "Ember learned" lines and their Undo leave the page too.
+    onForgotAll: () => {
+      learnedLines = [];
+      broadcast(IPC.conversationChanged, conversationNow());
+    },
+    // One fact forgotten (Forget, Undo, forget_memory, "forget that"): its line and its Undo go.
+    onForgot: id => {
+      const before = learnedLines.length;
+      learnedLines = learnedLines.filter(l => l.fact !== id);
+      if (learnedLines.length !== before) broadcast(IPC.conversationChanged, conversationNow());
+    },
+    log: log.child("memory"),
+  });
+  learningRef = learning;
+  learning.start();
+  /** The host's memory: the conductor's tools through `learning`, its model calls, finished tasks and its own requests. */
+  const hostMemory = {
+    ...learning.conductorMemory(),
+    useModel: (model: OneShot | null) => learning.setModel(model),
+    taskDone: (title: string, result: string) => learning.taskDone(title, result),
+    intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
+  };
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
   const extensions = new ExtensionsService({
@@ -1531,7 +1577,7 @@ function start(): void {
   const progress = (p: SignInProgress) => broadcast(IPC.signInProgress, p);
 
   ipcMain.handle(IPC.agentStatus, guard(() => agent?.getStatus() ?? null));
-  ipcMain.handle(IPC.conversation, guard(() => agent?.getTranscript() ?? []));
+  ipcMain.handle(IPC.conversation, guard(() => conversationNow()));
   // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
   ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
@@ -1685,9 +1731,13 @@ function start(): void {
   ipcMain.handle(IPC.memoryList, guard(() => (memoryAllowed() ? memory.list() : [])));
   ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
     if (typeof id !== "string" || !id || id.length > 40) return;
-    memory.forget(id);
+    // Through learning: its "Ember learned" line and "forget that" let go of it too.
+    learning.forget(id);
   }));
-  ipcMain.handle(IPC.memoryForgetAll, guard(() => { memory.forgetAll(); }));
+  // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
+  ipcMain.handle(IPC.memoryForgetAll, guard(() => { learning.forgetAll(); }));
+  // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
+  ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduce(answers)));
   // Better recall's model: its state, and the user's Download (the agreement to fetch it) and Remove.
   ipcMain.handle(IPC.memoryModel, guard(() => betterRecall.status()));
   ipcMain.handle(IPC.memoryModelDownload, guard(() => { void betterRecall.download().catch(() => { /* Settings is told why, in the status */ }); }));
@@ -1882,6 +1932,7 @@ function start(): void {
     globalShortcut.unregisterAll();
     overlay?.stop();
     // What Ember just remembered is written before it goes (a save waits a second after a change).
+    learning.stop();
     memory.stop();
     if (quitting || sessionEnding) return;
     quitting = true;
@@ -2143,6 +2194,9 @@ function start(): void {
       panelReady: n => targets?.panelReady(n) ?? false,
       // And how to reach that window from the keyboard (the bubble's buttons are mouse-only).
       panelHint: p => targets?.panelHint(p),
+      // An answer nobody replaces (a task in the corner ends on its card) goes after its moment, or what the question
+      // covered shows again: never "Thanks! Carrying on." for good after the task is done.
+      afterAnswer: answerSettler({ onScreen: () => lastState.bubble, reshow: () => agent?.afterAnswer() ?? false, set: setState }),
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);
@@ -2326,8 +2380,8 @@ function start(): void {
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
       // Always given, so sign-out and an account change forget them even while the organisation has them off (the host
-      // uses them only while settings, with the policy applied, have them on).
-      memory,
+      // uses them only while settings, with the policy applied, have them on). Memory learns on its own (hostMemory).
+      memory: hostMemory,
       routines: routineBook,
       extensions,
       // Ember's two bodies: tasks work in the corner, on their cards; the cursor's bubble is the conversation's.
@@ -2370,7 +2424,11 @@ function start(): void {
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
         showState({ idle: idleNow(status), setup: setupNow(status) });
       },
-      onTranscript: entries => broadcast(IPC.conversationChanged, entries),
+      onTranscript: entries => {
+        // Forgotten (sign-out, another account): the "Ember learned" lines go with it.
+        if (!entries.length) learnedLines = [];
+        broadcast(IPC.conversationChanged, conversationNow(entries));
+      },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
       onAccountChanged: () => { askHistory = []; },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.

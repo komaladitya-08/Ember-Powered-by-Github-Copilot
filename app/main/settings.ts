@@ -209,9 +209,13 @@ export const SettingsSchema = z.object({
   /**
    * Long-term memory (docs/MEMORY.md): off until the user turns it on and agrees to its note in Settings ›
    * Conversation (`consent`, FEATURE_CONSENT_VERSION.memory). What Ember remembers is kept in memory.json, apart from
-   * the settings (app/main/memory/store.ts).
+   * the settings (app/main/memory/store.ts). `questions`: Ember may ask about what it keeps missing, at most once a day
+   * while idle (app/main/memory/questions.ts); `askedAt`: when it last did (ISO), so a restart doesn't ask again.
    */
-  memory: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
+  memory: z.object({
+    on: z.boolean().default(false), consent: ConsentRecord,
+    questions: z.boolean().default(true), askedAt: z.string().max(40).nullable().default(null),
+  }).default({ on: false, consent: { version: 0, at: null }, questions: true, askedAt: null }),
   /**
    * Routines and lasting reminders (app/main/agent/routines.ts): off until the user turns them on and agrees to their
    * note in Settings › Conversation (`consent`, FEATURE_CONSENT_VERSION.routines). Kept in routines.json.

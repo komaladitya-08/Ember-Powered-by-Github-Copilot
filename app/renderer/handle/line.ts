@@ -5,7 +5,8 @@
  * unit-tested.
  */
 
-import type { TaskCard } from "../../shared/overlay";
+import type { BubbleState, TaskCard } from "../../shared/overlay";
+import { plainStream } from "@ember/bubble";
 import type { MicState } from "../../shared/voice";
 import { idleLine as micLine } from "../../shared/mic";
 import { busyLine } from "../overlay/stack";
@@ -23,4 +24,15 @@ export function handleLine(s: { idle?: string; setup?: string | null; mic?: MicS
   if (failed) return `${count(failed, "task", "tasks")} failed`;
   if (s.setup) return s.setup;
   return micLine(s.idle, s.mic);
+}
+
+/**
+ * The pill's one line: the status line, else what the bubble says (an answer's title is the character's name, already
+ * shown above it: the line shows what it said; anything else, its title), else `idle` (handleLine). So the line follows
+ * the bubble: once the bubble is empty it says `idle` again, never a task that has ended.
+ */
+export function pillLine(s: { status?: string | null; bubble: Pick<BubbleState, "visible" | "title" | "thought" | "streaming"> }, name: string, idle: string): string {
+  const b = s.bubble;
+  const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
+  return s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
 }

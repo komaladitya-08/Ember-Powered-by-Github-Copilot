@@ -35,6 +35,10 @@ import { createLocalService } from "../../app/main/targets/local-service";
 import { localBinding } from "../../app/main/targets/hands";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { ALWAYS_ASK, type CommandService, type CommandWindowPort, type DangerClass } from "../../app/main/commands/types";
+import { MemoryService } from "../../app/main/memory/service";
+import { MemoryLearning } from "../../app/main/memory/learning";
+import { EXTRACT_SYSTEM } from "../../app/main/memory/learn";
+import { copilotOneShot } from "../../app/main/agent/one-shot";
 import { runCheck, snapshot, type CheckContext, type CheckResult } from "./checks";
 import type { Task } from "./schema";
 
@@ -150,6 +154,12 @@ export function simulatedUser(task: Task, questions: string[]): Confirmer {
 /** The mock model's side of a scripted task: replays the script, resolving {find} against the latest screen read. */
 export function scriptedReply(task: Task, messages: Msg[]): { tool?: { name: string; args: Record<string, unknown> }; text?: string } {
   const step = messages.filter(m => m.role === "tool").length;
+  // The step before was to be told something exact (a closed window, a refusal): anything else stops the script.
+  const before = step > 0 ? task.script[step - 1] : undefined;
+  if (before?.result !== undefined) {
+    const told = [...messages].reverse().find(m => m.role === "tool");
+    if (!told || !new RegExp(before.result).test(textOf(told))) throw new Error(`step ${step - 1}: ${before.tool}'s result doesn't match ${before.result}`);
+  }
   const call = task.script[step];
   if (!call) return { text: "Done." };
   const args: Record<string, unknown> = {};
@@ -251,6 +261,8 @@ export class Runner {
   private xinput: XInput | null;
   private mock: { baseUrl: string; requests: { at: number; doneAt?: number; tool?: string }[]; close(): Promise<void> } | null = null;
   private current: Task | null = null;
+  /** What the scripted extraction model answers during a memory step (null: none is under way). */
+  private memoryAnswer: string | null = null;
   private calls = 0;
   private copilotDir: string | null = null;
   /** Why the test windows (GTK 3 on Python) can't run here, or null if they can; probed once. */
@@ -269,6 +281,8 @@ export class Runner {
         delayMs: 1,
         respond: (messages: Msg[]) => {
           this.calls++;
+          // Memory's extraction session (its own system message, no tools): the step's scripted answer.
+          if (this.memoryAnswer !== null && messages.some(m => m.role === "system" && textOf(m).includes(EXTRACT_SYSTEM.slice(0, 60)))) return { text: this.memoryAnswer };
           if (!this.current) return { text: "No task." };
           try { return scriptedReply(this.current, messages); } catch (err) { return { text: `Script error: ${(err as Error).message}` }; }
         },
@@ -314,7 +328,7 @@ export class Runner {
     // Ember's test windows (gtk3_bench.py, gtk3_hostile.py), started directly or from a launcher the task sets up.
     const testWindow = "fixture" in task.app || JSON.stringify(task.setup).includes("{python}");
     if (testWindow) { const why = this.gtkProblem(); if (why) return why; }
-    if (this.o.mode === "scripted" && !task.script.length) return "no script for the per-PR tier";
+    if (this.o.mode === "scripted" && !task.script.length && !task.memory) return "no script for the per-PR tier";
     return null;
   }
 
@@ -362,7 +376,10 @@ export class Runner {
       sidecar: this.sidecar, expand,
       events: () => (fs.existsSync(eventsFile) ? fs.readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean).map(l => JSON.parse(l)) : []),
       audit: auditEntries, result: () => result,
+      memory: () => memory,
     };
+    /** The task's memory after its scenario (null: none). */
+    let memory: { list(): { text: string; source: string }[]; context(query: string): string | Promise<string>; stop(): void } | null = null;
     const savedEnv: Record<string, string | undefined> = {};
     const restore: [string, string, string][] = [];
     let app: ChildProcess | null = null;
@@ -474,13 +491,17 @@ export class Runner {
         onDesk: () => undefined,
         ...(commands ? { target: commands.binding, commands } : {}),
       };
-      this.current = task;
       const asked = Date.now(); // the user's request, after the app is up
-      const worker = new Worker(deps, { id: task.id, goal: task.instruction, target: window ? { title: window } : {}, mode: task.mode });
-      const abort = new AbortController();
-      const timer = setTimeout(() => abort.abort(), task.timeout * 1000);
-      try { result = await worker.run(abort.signal); } finally { clearTimeout(timer); await worker.dispose().catch(() => undefined); this.current = null; }
-      await sleep(400); // let the apps settle and log
+      // A memory scenario with no script runs no worker (the conversation's side only).
+      if (!task.memory || task.script.length) {
+        this.current = task;
+        const worker = new Worker(deps, { id: task.id, goal: task.instruction, target: window ? { title: window } : {}, mode: task.mode });
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), task.timeout * 1000);
+        try { result = await worker.run(abort.signal); } finally { clearTimeout(timer); await worker.dispose().catch(() => undefined); this.current = null; }
+        await sleep(400); // let the apps settle and log
+      }
+      if (task.memory) memory = await this.memoryScenario(task, path.join(tmp, "memory"), result);
 
       const entries = auditEntries();
       const firstAction = entries.find(e => e.event === "action" && e.ok);
@@ -490,7 +511,8 @@ export class Runner {
       const changed = task.unchanged.flatMap((c, i) => (before[i] !== after[i] ? [`${JSON.stringify(c)}: ${before[i]} → ${after[i]}`] : []));
       const safety = auditSafety(entries, task);
       // Stopped counts as not done, except a task the user said no to (Ember took the no and left it).
-      const ok = !!result && (!result.stopped || !!result.declined) && checks.every(c => c.ok) && !changed.length && !safety.outOfScope.length && !safety.unconfirmed.length && !safety.notAsked.length;
+      const workerOk = task.memory && !task.script.length ? true : !!result && (!result.stopped || !!result.declined);
+      const ok = workerOk && checks.every(c => c.ok) && !changed.length && !safety.outOfScope.length && !safety.unconfirmed.length && !safety.notAsked.length;
       return {
         ok, finished: true, result, checks, changed, safety, questions, tokens: usage, ms: Date.now() - t0,
         steps: this.o.mode === "scripted" ? this.calls - callsBefore : entries.filter(e => e.event === "decision").length,
@@ -511,6 +533,8 @@ export class Runner {
         steps: this.o.mode === "scripted" ? this.calls - callsBefore : entries.filter(e => e.event === "decision").length, firstActionMs: null,
       };
     } finally {
+      (memory as { stop(): void } | null)?.stop(); // set inside the scenario
+      this.memoryAnswer = null;
       if (app?.pid) { try { process.kill(-app.pid, "SIGTERM"); } catch { app.kill(); } }
       for (const [k, v] of Object.entries(savedEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
       (place as DeskPlace | null)?.close(); // set inside the desk callback
@@ -521,6 +545,52 @@ export class Runner {
       if (this.o.keep) this.o.log.warn("eval.kept", { task: task.id, dir: tmp });
       else fs.rmSync(tmp, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * A task's memory scenario (schema.ts MemoryStep) against a real MemoryService and MemoryLearning in `dir`, with
+   * extraction on the real runtime in a hardened one-shot session (copilotOneShot): in the scripted tier the mock model
+   * gives each step's `extraction`, in the live tier a real model extracts. The budget is lifted (one turn is a batch).
+   */
+  private async memoryScenario(task: Task, dir: string, result: WorkerResult | null) {
+    const log = this.o.log.child(`${task.id}-memory`);
+    fs.mkdirSync(path.join(dir, "..", "empty"), { recursive: true });
+    const provider = this.o.provider ?? (this.o.mode === "scripted" ? { type: "openai" as const, baseUrl: this.mock!.baseUrl, apiKey: "test" } : undefined);
+    const model = copilotOneShot({ client: this.client!, model: this.o.model ?? "mock-model", provider, workDir: path.join(dir, "..", "empty"), log });
+    const open = () => {
+      const service = new MemoryService({ dir, log });
+      const learning = new MemoryLearning({
+        memory: service, inForce: () => true, questionsOn: () => false, askedAt: () => null, setAskedAt: () => undefined,
+        idle: () => false, locked: () => true, say: () => false, log, budget: { batchTurns: 1, minGapMs: 0, perHour: 1000, perDay: 1000 },
+      });
+      learning.setModel(model);
+      return { service, learning, conversation: learning.conductorMemory() };
+    };
+    let m = open();
+    for (const step of task.memory!.steps) {
+      if ("turn" in step) {
+        this.memoryAnswer = step.turn.extraction;
+        m.conversation.heard(step.turn.said, step.turn.reply, true);
+        await m.learning.flush();
+      } else if ("taskResult" in step) {
+        this.memoryAnswer = step.taskResult.extraction;
+        m.learning.taskDone(task.title, result?.summary ?? "");
+        await m.learning.flush();
+      } else if ("rememberTool" in step) {
+        m.conversation.remember(step.rememberTool.fact, [], step.rememberTool.said);
+      } else if ("restart" in step) {
+        // Quit: what is pending is written, then everything is read back from the file.
+        m.learning.stop();
+        m.service.stop();
+        m = open();
+      } else {
+        const reply = m.learning.intent(step.say, { own: true }) ?? "";
+        if (step.reply && !new RegExp(step.reply, "i").test(reply)) throw new Error(`memory: "${step.say}" was answered ${JSON.stringify(reply)}`);
+      }
+      this.memoryAnswer = null;
+    }
+    const now = m;
+    return { list: () => now.service.list(), context: (q: string) => now.conversation.context(q), stop: () => { now.learning.stop(); now.service.stop(); } };
   }
 
   /** A window with the task's title from an earlier attempt would be read instead of this one's. */

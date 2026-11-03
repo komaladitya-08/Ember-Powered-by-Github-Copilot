@@ -15,9 +15,10 @@ import type { Status, VoiceStatus } from "../../shared/ipc";
 import { LEVEL_STEPS } from "../../shared/level";
 import { keptWords } from "./admin-copy";
 import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel } from "./copy";
+import { mountAboutYou } from "./about-you";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
-  DEFAULT_SIZE, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry, type WelcomeStep,
+  DEFAULT_SIZE, aboutNext, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
 /** What the settings window lends the welcome. */
@@ -78,6 +79,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   arc.replaceChildren(...WELCOME_STEPS.map(() => el("i")));
 
   const consented = () => (settings?.consent.version ?? 0) >= CONSENT_VERSION;
+  // "Tell me about you" (optional): memory's note inline, its answers saved by this step's main button.
+  const about = mountAboutYou($("w-about"), { id: "w-ay", save: deps.save, ownSave: false, changed: () => { if (active && step === "about") render(); } });
+  const memoryManaged = () => status?.admin.features.memory === false;
   const live = (text: string) => { $("w-try-live").textContent = text; };
 
   function begin(): void {
@@ -133,6 +137,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "sign-in") ({ label, why } = renderSignIn());
     if (step === "checks") label = renderChecks();
     if (step === "try") renderTry();
+    if (step === "about") label = aboutNext(about);
     if (step === "done") { renderSummary(); label = START_LABEL; next.className = "start"; }
     wantLevel(step === "try" && voiceState() === "listening");
     next.textContent = label;
@@ -326,6 +331,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // Sign in is the step's button only while signing in can help (not with the organisation's own service, nor locked).
     if (step === "sign-in" && signInFirst) { signIn(); return; }
     // Start that couldn't be saved says why in the notice at the top (review #84).
+    // What was answered is saved, then on (nothing answered, or memory left off: nothing is kept).
+    if (step === "about") {
+      if (about.ready && about.filled) void about.submit().then(() => go("done"));
+      else go("done");
+      return;
+    }
     if (step === "done") { void deps.save({ onboarded: true }).then(ok => { if (!ok) window.scrollTo({ top: 0 }); }); return; }
     const to = stepAfter(step);
     if (to) go(to);
@@ -436,6 +447,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     settings(s: Settings): boolean {
       const was = active;
       settings = s;
+      about.refresh(s, memoryManaged());
       if (!s.onboarded && !active) begin();
       else if (s.onboarded && active) finish();
       else if (active) render();
@@ -443,6 +455,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     },
     status(st: Status): void {
       status = st;
+      about.refresh(settings, memoryManaged());
       if (active) render();
     },
     toConsent(): void { if (active) go("consent"); },

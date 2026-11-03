@@ -313,6 +313,23 @@ progress[hidden] { display: none; }
 }
 .conversation li.you p { border-radius: var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl); background: color-mix(in srgb, var(--accent) 26%, var(--surface-1)); color: #fff3e2; }
 .conversation li.task p, .conversation li.problem p { background: transparent; padding: 2px 6px; border-radius: 0; color: var(--muted); }
+/* "Ember learned: …" and its Undo: one quiet line of its own, not a message. */
+.conversation li.learned { flex-wrap: nowrap; align-items: center; }
+.conversation li.learned::before { content: none; }
+.conversation li.learned p { order: 0; flex: 1; min-width: 0; max-width: none; margin: 0; background: transparent; padding: 2px 6px; border-radius: 0; color: var(--muted); font: var(--type-footnote); }
+.conversation li.learned .btn { flex: none; }
+/* Memory's list: the fact, and where it came from under it. */
+.mem-fact { display: grid; gap: 2px; min-width: 0; }
+.mem-fact > span { min-width: 0; overflow-wrap: anywhere; }
+.mem-from { color: var(--muted); font: var(--type-footnote); }
+/* "Tell Ember about you": memory off, the line and its button sit on one row. */
+.about-off:not(.consent) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.about-off .row-note { margin: 0; min-width: 0; padding-right: 0; }
+.about-off[hidden] { display: none; }
+.about-off .btn { flex: none; white-space: nowrap; }
+.about-msg:empty { display: none; }
+/* Its group and the hints under it are spaced as a section's own children are. */
+#about-you, #w-about { display: grid; gap: 8px; }
 
 /* ───── Task activity: one group per task, newest first. Its title with the state symbol, its plan as a checklist, a
    row for each thing it did (the time after it started, the state symbol, the words), and how it ended. Opaque and

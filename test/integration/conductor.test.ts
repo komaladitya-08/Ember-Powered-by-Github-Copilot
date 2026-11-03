@@ -10,6 +10,8 @@ import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { Conductor, type ConductorMemory } from "../../app/main/agent/conductor";
 import { MemoryService } from "../../app/main/memory/service";
+import { MemoryLearning } from "../../app/main/memory/learning";
+import { copilotOneShot } from "../../app/main/agent/one-shot";
 import { AgentHost } from "../../app/main/agent/host";
 import { Presenter } from "../../app/main/agent/presenter";
 import { locateRuntime } from "../../app/main/agent/runtime";
@@ -414,6 +416,67 @@ describe("memory on the real Copilot runtime (docs/MEMORY.md step 2)", () => {
       expect(sent).toContain(fact);
       await conductor.stop();
     } finally {
+      memory.stop();
+      await scripted.close();
+    }
+  }, 60000);
+
+  it("keeps nothing from a conversation about the user unless the model calls remember (the gap automatic learning fills)", async () => {
+    // The model only answers: it never calls remember.
+    const answering = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Nice to meet you, Ram." }) });
+    const memory = new MemoryService({ dir: path.join(dir, "memory-gap"), log: { info: () => undefined, warn: () => undefined } });
+    try {
+      const states: Partial<EmberState>[] = [];
+      const { conductor } = makeConductor(states, undefined, { baseUrl: answering.baseUrl, memory });
+      await conductor.start();
+      await conductor.ask("I'm Ram, I work on Ember, I prefer short answers");
+      await idle(states, 0);
+      expect(answering.requests.at(-1)!.tools).toEqual(expect.arrayContaining(["remember"]));
+      expect(memory.list()).toEqual([]);
+      await conductor.stop();
+    } finally {
+      memory.stop();
+      await answering.close();
+    }
+  }, 60000);
+
+  it("learns the user's own facts from that conversation after the turn, in a hardened session of its own with no tools (docs/MEMORY.md step 3)", async () => {
+    const extracted = JSON.stringify({ facts: [
+      { from: 1, fact: "Prefers short answers", about: [{ name: "User", kind: "person" }], predicate: "answer_length", single: true, confidence: 0.9, evidence: "I prefer short answers" },
+      { from: 1, fact: "Works on Ember", about: [{ name: "User", kind: "person" }, { name: "Ember", kind: "project" }], confidence: 0.9, evidence: "I work on Ember" },
+      // Only Ember's reply says it: never the user's.
+      { from: 1, fact: "Lives in Pune", about: [{ name: "User", kind: "person" }], confidence: 0.8, evidence: "you live in Pune" },
+    ] });
+    const scripted = await startMockLlm({
+      delayMs: 5,
+      respond: (messages: { role: string; content: unknown }[]) => {
+        const system = JSON.stringify(messages.filter(m => m.role === "system").map(m => m.content));
+        return system.includes("You pick out lasting facts") ? { text: extracted } : { text: "Nice to meet you, Ram. I hear you live in Pune." };
+      },
+    });
+    const memory = new MemoryService({ dir: path.join(dir, "memory-learn"), log: { info: () => undefined, warn: () => undefined } });
+    const learning = new MemoryLearning({
+      memory, inForce: () => true, questionsOn: () => true, askedAt: () => null, setAskedAt: () => undefined,
+      idle: () => true, locked: () => false, say: () => true, log: { info: () => undefined, warn: () => undefined },
+      // One turn is a batch here (the app's budget waits for three, or a minute).
+      budget: { batchTurns: 1, minGapMs: 0 },
+    });
+    learning.setModel(copilotOneShot({ client, model: "mock-model", provider: { type: "openai", baseUrl: scripted.baseUrl, apiKey: "test" }, workDir: path.join(dir, "empty"), log: createLogger({ dir: path.join(dir, "logs") }) }));
+    try {
+      const states: Partial<EmberState>[] = [];
+      const { conductor } = makeConductor(states, undefined, { baseUrl: scripted.baseUrl, memory: learning.conductorMemory() });
+      await conductor.start();
+      await conductor.ask("I'm Ram, I work on Ember, I prefer short answers");
+      await idle(states, 0);
+      for (let i = 0; i < 200 && memory.list().length < 3; i++) await new Promise(r => setTimeout(r, 100));
+      expect(memory.list().map(i => [i.text, i.source]).sort()).toEqual([["Lives in Pune", "conversation"], ["Prefers short answers", "user"], ["Works on Ember", "user"]]);
+      // The extraction's request carried no tools, and nothing but memory's own instructions and the turn.
+      const extraction = scripted.requests.find((r: { tools: string[]; messages: unknown[] }) => JSON.stringify(r.messages).includes("You pick out lasting facts"))!;
+      expect(extraction.tools).toEqual([]);
+      expect(JSON.stringify(extraction.messages)).toContain("<user_said>I'm Ram, I work on Ember, I prefer short answers</user_said>");
+      await conductor.stop();
+    } finally {
+      learning.stop();
       memory.stop();
       await scripted.close();
     }

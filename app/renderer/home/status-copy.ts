@@ -64,7 +64,8 @@ export function taskCounts(tasks: readonly Pick<TaskEntry, "status">[]): { runni
 export interface WhatsOn {
   /** The microphone: listening for the wake word, muted, or off (listening turned off, or not agreed to). */
   voice: "listening" | "muted" | "off";
-  memory: boolean;
+  /** "paused": it was on, and waits for the user to agree to its changed note (FEATURE_CONSENT_VERSION.memory). */
+  memory: boolean | "paused";
   /** Computers commands are on for (this one included). */
   commands: number;
   /** Computers over SSH the user added. */
@@ -79,7 +80,7 @@ export interface WhatsOn {
 export function whatsOnText(o: WhatsOn): string {
   return [
     o.voice === "listening" ? "Listening on" : o.voice === "muted" ? "Microphone off" : "Listening off",
-    o.memory ? "Memory on" : "Memory off",
+    o.memory === "paused" ? "Memory paused" : o.memory ? "Memory on" : "Memory off",
     o.commands ? "Commands on" : "Commands off",
     o.computers ? `${count(o.computers, "computer")} over SSH` : "",
     o.wsl ? "WSL" : "",

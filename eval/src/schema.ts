@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { SOURCES } from "../../app/main/memory/graph";
 
 /** "{find: regex}" stands for the id of the first element in the latest screen read whose line matches. */
 /** A tool argument: a value, "{find: regex}" (below), or any JSON (a view's tree, update_view's changes). */
@@ -34,7 +35,30 @@ export const Check = z.union([
   z.object({ audit: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])), absent: z.boolean().optional() }).strict(),
   /** What Ember told the user at the end. */
   z.object({ answer: z.object({ contains: z.array(z.string()).optional(), success: z.boolean().optional() }).strict() }).strict(),
+  /** A fact in Ember's memory now (Settings' list): its text matches the regex, from that source; `absent`: none does. */
+  z.object({ memory: z.object({ matches: z.string(), source: z.enum(SOURCES).optional(), absent: z.boolean().optional() }).strict() }).strict(),
+  /** What recall gives the conversation for `query` (the `<memory untrusted="true">` block): a line matching the regex. */
+  z.object({ recall: z.object({ query: z.string(), matches: z.string(), absent: z.boolean().optional() }).strict() }).strict(),
 ]);
+
+/**
+ * One step of a memory scenario (docs/MEMORY.md steps 2–5), run after the task's worker (if it has a script) against a
+ * real MemoryService and MemoryLearning in the attempt's folder. `extraction` is what the extraction model answers in
+ * the scripted tier (served by the mock model to the real one-shot session); the live tier lets a real model answer.
+ */
+export const MemoryStep = z.union([
+  /** A conversation turn ended: the user's words and Ember's reply are learned from. */
+  z.object({ turn: z.object({ said: z.string(), reply: z.string(), extraction: z.string() }).strict() }).strict(),
+  /** The task's own result (the worker's summary) is learned from, as a finished task's is. */
+  z.object({ taskResult: z.object({ extraction: z.string() }).strict() }).strict(),
+  /** The conversation model calls remember with `fact` while the user had said `said`. */
+  z.object({ rememberTool: z.object({ fact: z.string(), said: z.string() }).strict() }).strict(),
+  /** Ember quits and starts again: memory is read back from its file. */
+  z.object({ restart: z.literal(true) }).strict(),
+  /** The user says this, and Ember answers it itself ("forget that"); `reply`: a regex its answer must match. */
+  z.object({ say: z.string(), reply: z.string().optional() }).strict(),
+]);
+export type MemoryStep = z.infer<typeof MemoryStep>;
 export type Check = z.infer<typeof Check>;
 
 export const TaskSchema = z.object({
@@ -73,7 +97,11 @@ export const TaskSchema = z.object({
    * from the simulated user, whose "Not now" counts from anywhere, as in Ember).
    */
   hands: z.array(z.enum(["cursor", "desk", "commands"])).default([]),
-  script: z.array(z.object({ tool: z.string(), args: z.record(z.string(), Arg).default({}) }).strict()).default([]),
+  script: z.array(z.object({
+    tool: z.string(), args: z.record(z.string(), Arg).default({}),
+    /** A regex this step's tool result must match before the script goes on (what Ember told the model). */
+    result: z.string().optional(),
+  }).strict()).default([]),
   expect: z.array(Check).min(1),
   /** Checks that must hold before and after (nothing else changed). */
   unchanged: z.array(Check).default([]),
@@ -83,6 +111,8 @@ export const TaskSchema = z.object({
     /** Element names Ember must ask about before acting. */
     mustAsk: z.array(z.string()).default([]),
   }).strict().default({ outOfScope: [], mustAsk: [] }),
+  /** A memory scenario after the worker (or alone, with no script): its steps, then `expect` checks memory too. */
+  memory: z.object({ steps: z.array(MemoryStep).min(1) }).strict().optional(),
   /** Seconds before the task counts as failed. */
   timeout: z.number().default(90),
   tags: z.array(z.string()).default([]),

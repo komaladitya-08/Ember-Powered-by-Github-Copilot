@@ -126,13 +126,13 @@ describe("the conductor with memory", () => {
 
 describe("memory and the organisation's policy", () => {
   it("is off by default and needs its own agreement", () => {
-    expect(DEFAULT_SETTINGS.memory).toEqual({ on: false, consent: { version: 0, at: null } });
+    expect(DEFAULT_SETTINGS.memory).toEqual({ on: false, consent: { version: 0, at: null }, questions: true, askedAt: null });
   });
 
   it("is turned off and managed when the policy says features.memory is false", () => {
-    const user = { ...DEFAULT_SETTINGS, memory: { on: true, consent: { version: 1, at: "2026-11-01T00:00:00Z" } } };
+    const user = { ...DEFAULT_SETTINGS, memory: { ...DEFAULT_SETTINGS.memory, on: true, consent: { version: 2, at: "2026-11-01T00:00:00Z" } } };
     const off = AdminPolicySchema.parse({ features: { memory: false } });
-    expect(applyAdminPolicy(user, off).memory).toEqual({ on: false, consent: { version: 1, at: "2026-11-01T00:00:00Z" } });
+    expect(applyAdminPolicy(user, off).memory).toEqual({ on: false, consent: { version: 2, at: "2026-11-01T00:00:00Z" }, questions: true, askedAt: null });
     expect(managedKeys(off)).toContain("memory");
     expect(applyAdminPolicy(user, AdminPolicySchema.parse({})).memory.on).toBe(true);
   });
