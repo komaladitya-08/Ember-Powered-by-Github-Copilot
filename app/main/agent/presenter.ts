@@ -637,6 +637,8 @@ export class Presenter {
   private askedOverAnswer = false;
   /** The turn under way has shown words or run a step (one that has neither by its end says so). */
   private produced = false;
+  /** The answer this turn said (onFinalAnswer), before or after its tools: its end shows it, never hides it. */
+  private saidThisTurn = "";
   /** An announcement is up (announce): its Stop's id and the bubble it replaced, put back by endAnnouncement. */
   private beforeAnnounce: { stopId: string; bubble: BubbleState } | null = null;
   /** A notice (post) that stays until it is answered or cleared: it waits its turn again when something covers it. */
@@ -1260,6 +1262,7 @@ export class Presenter {
         this.answering = false;
         this.answer = "";
         this.produced = false;
+        this.saidThisTurn = "";
         this.toolRan = false;
         this.startedTask = false;
         break;
@@ -1330,6 +1333,7 @@ export class Presenter {
           // No words after all (only a tool call came, or a blank answer): nothing is shown or kept as an answer.
           if (!full.trim()) { this.answering = false; this.answer = ""; break; }
           this.produced = true;
+          this.saidThisTurn = full;
           this.onFinalAnswer?.(full);
           // A newer question is owed its turn (asked after this answer's words came, before this message): its
           // "Thinking…" stays, the earlier answer isn't put back under it (it is kept for "Read the last answer").
@@ -1380,20 +1384,24 @@ export class Presenter {
         }
         // The conversation's turn ran its steps and said nothing (start_task alone, a task's card says the rest): its
         // "Working" bubble has nothing to read, so it goes now rather than keep the busy ring for its reading time.
-        // (Not while a newer request's "Thinking…" is up. Held off meanwhile, it never shows.)
+        // A turn that said its answer before its tool ("Sure, I'll close Edge.", then start_task) shows that answer as
+        // an answer, not as "Working" (review of PR #139). (Not while a newer request's "Thinking…" is up. Held off
+        // meanwhile, it never shows.)
         const mood = this.state.bubble.mood;
-        if (!aborted && this.work === "reply" && this.asked === null && this.state.bubble.visible && (mood === "acting" || mood === "thinking")) {
+        const working = !aborted && this.work === "reply" && this.asked === null && this.state.bubble.visible && (mood === "acting" || mood === "thinking");
+        if (working && !this.saidThisTurn) {
           this.answering = false;
           this.turnOn = false;
           this.turnAsked = null;
           this.hide();
           break;
         }
+        const said = working ? { mood: "idle" as const, title: this.name(), thought: clip(this.saidThisTurn), step: this.startedTask ? TASK_IN_CORNER : null } : {};
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
         const face = aborted ? "neutral" : this.answering ? "happy" : this.state.emotion === "thinking" || this.state.emotion === "focused" ? "neutral" : this.state.emotion;
-        this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...(aborted ? { title: "Stopped", mood: "idle" as const, step: null } : {}) } });
+        this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...said, ...(aborted ? { title: "Stopped", mood: "idle" as const, step: null } : {}) } });
         // Long answers stay up longer (they also have "Read all", and the settings window keeps them).
-        const chars = this.answer.length;
+        const chars = Math.max(this.answer.length, this.saidThisTurn.length);
         this.hideLater(Math.min(30000, 6000 + chars * 50));
         this.answering = false;
         // The request had its turn: a later problem (the runtime stopping meanwhile) doesn't offer to ask it again.

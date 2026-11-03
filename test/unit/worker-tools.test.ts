@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { WINDOW_CLOSED_BY_TASK, Worker, afterKeys, dialogClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
+import { LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
 import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -48,6 +48,8 @@ function makeWorker(o: {
    */
   wins?: { name: string; role?: string; app?: string; pid?: number; path?: string }[];
   opens?: { name: string; role?: string; app?: string; pid?: number; path?: string };
+  /** The one installed app (its name is the window's app): open_app starts it, and this window appears. */
+  launches?: { name: string; role?: string; app: string; pid?: number; path?: string };
 } = {}) {
   let closed = false;
   const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
@@ -71,8 +73,18 @@ function makeWorker(o: {
   const presenter = new Presenter(() => undefined);
   const show = presenter.guide.bind(presenter);
   presenter.guide = (say, step) => { guided.push(say); show(say, step); };
+  const launched = o.launches;
+  const system = launched ? {
+    ...LINUX_WORKER_SYSTEM,
+    apps: {
+      list: () => [{ id: launched.app, name: launched.app }],
+      find: (list: { name: string }[], n: string) => list.find(a => a.name.toLowerCase().includes(n.toLowerCase())) ?? null,
+      isTerminalApp: () => false, programsOf: (a: { name: string }) => new Set([a.name.toLowerCase()]), appKey: (n: string) => n.toLowerCase(),
+      launch: () => { open.push(asWin(launched)); },
+    },
+  } : undefined;
   const w = new Worker({
-    client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
+    client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp", ...(system ? { system } : {}),
     perception: {
       perceive: async (r: { target?: { title?: string; path?: string } }) => {
         if (o.wins) {
@@ -127,7 +139,9 @@ function makeWorker(o: {
   } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: o.wins?.[0]?.name ?? "notes.txt" }, mode: o.mode, ...(o.specScreen ? { screen: o.specScreen } : {}) });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
-  return { w, audit, events, asked, questions, call, flown, guided, activity };
+  /** A window the user opens meanwhile (with `wins`). */
+  const openWindow = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) => { open.push(asWin(x)); };
+  return { w, audit, events, asked, questions, call, flown, guided, activity, openWindow };
 }
 
 describe("a task whose own step closes its window (the owner's report of 2026-11-03)", () => {
@@ -165,12 +179,68 @@ describe("a task whose own step closes its window (the owner's report of 2026-11
     expect((await call("finish_task", { success: true, summary: "Saved it." })).textResultForLlm).toMatch(/^Task closed/);
   });
 
-  it("treats a dialog it switched into as a dialog even when its role says frame (Preferences, then OK)", async () => {
+  it("keeps its own window when another window of its app closes under it, and doesn't urge it on (Preferences, then OK)", async () => {
     const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "notes.txt", path: "/w/1" }, { name: "Preferences", path: "/w/3" }] });
     await call("perceive_window", {});
     await call("switch_window", { title: "Preferences" });
     await call("click", { id: 1 });
-    expect((await call("perceive_window", {})).textResultForLlm).toBe(dialogClosedNote({ app: "gedit", title: "notes.txt" }));
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(otherWindowClosedNote({ app: "gedit", title: "notes.txt" }));
+    expect(look.textResultForLlm).not.toMatch(/carry on|dialog/i);
+  });
+
+  it("calls a second window of its app that closed a window, not a dialog (Mail after News in Edge, review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "Close", closes: true, wins: [{ name: "News - Microsoft Edge", app: "msedge", pid: 4, path: "/w/1" }, { name: "Mail - Microsoft Edge", app: "msedge", pid: 4, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("switch_window", { title: "Mail" });
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(otherWindowClosedNote({ app: "msedge", title: "News - Microsoft Edge" }));
+    expect(look.textResultForLlm).not.toMatch(/carry on|dialog/i);
+  });
+
+  it("finishes when it closes the app it switched to from the user's window (Firefox, then Calculator: review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "Close", closes: true, wins: [{ name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/1" }, { name: "Calculator", app: "gnome-calculator", pid: 3, path: "/w/2" }] });
+    await call("perceive_window", {});
+    expect((await call("switch_window", { title: "Calculator" })).resultType).toBe("success");
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("Inbox");
+  });
+
+  it("finishes when it closes the app it opened from the user's window (Firefox, then open_app Calculator)", async () => {
+    const { call } = makeWorker({ name: "Close", closes: true, wins: [{ name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/1" }], launches: { name: "Calculator", app: "gnome-calculator", pid: 3, path: "/w/2" } });
+    await call("perceive_window", {});
+    const opened = await call("open_app", { name: "calculator" });
+    expect(opened.textResultForLlm).toMatch(/now working in its window "Calculator"/);
+    expect((await call("perceive_window", {})).resultType).toBe("success");
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("goes back to the dialog's own app when it only ever read the dialog, never to list_windows (review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "Save", closes: true, wins: [{ name: "Save As", role: "file chooser", path: "/w/2" }, { name: "notes.txt", path: "/w/1" }, { name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/9" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(dialogClosedNote({ app: "gedit", title: "notes.txt" }));
+    expect(look.textResultForLlm).not.toContain("list_windows");
+  });
+
+  it("finishes when the only dialog it read closes with its app", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Done", role: "alert", app: "zenity", pid: 5, path: "/w/5" }, { name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/9" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("never offers a window the user opened meanwhile as the one its app opened in its place (review of PR #139)", async () => {
+    const { call, openWindow } = makeWorker({ name: "Open", closes: true, wins: [{ name: "LibreOffice", app: "soffice", pid: 7, path: "/w/1" }], opens: { name: "letter.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/9" } });
+    await call("perceive_window", {});
+    openWindow({ name: "notes.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/8" });
+    await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(windowReplacedNote("soffice", ["letter.odt - LibreOffice Writer"]));
   });
 
   it("is told where to go on when its app replaces its window (Start Center opens the document)", async () => {
