@@ -4,7 +4,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
+import { LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, closesWindow, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
+import { KEYS } from "../../app/shared/shortcuts";
 import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -42,6 +43,8 @@ function makeWorker(o: {
   windowName?: string; specScreen?: string;
   /** The click closes the window it is in (a Close button): nothing is left to read back, and the window is gone. */
   closes?: boolean;
+  /** Keyboard input closes the current window, or fails before anything was pressed. */
+  keysClose?: boolean; keysFail?: boolean;
   /**
    * Several windows (the first is the task's): reads find one by its key (path, else a title it contains), and a
    * closing click removes the window last read, then opens `opens` if given (an app that replaces its window).
@@ -58,6 +61,12 @@ function makeWorker(o: {
     ({ app: x.app ?? "gedit", pid: x.pid ?? 1, name: x.name, role: x.role ?? "frame", active: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(x.path ? { path: x.path } : {}) });
   const open = (o.wins ?? []).map(asWin);
   let current: ReturnType<typeof asWin> | null = null;
+  const closeWindow = () => {
+    if (o.wins) {
+      if (current) open.splice(open.indexOf(current), 1);
+      if (o.opens) open.push(asWin(o.opens));
+    } else closed = true;
+  };
   const pick = (t?: { title?: string; path?: string }) =>
     (t?.path ? open.find(x => x.path === t.path) : t?.title ? open.find(x => x.name.toLowerCase().includes(t.title!.toLowerCase())) : open[0]) ?? null;
   const flown: unknown[] = [];
@@ -95,7 +104,10 @@ function makeWorker(o: {
         }
         return closed ? { ...seen, window: null, nodes: [], text: "", capture: null } : { ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: null };
       },
-      read: async () => seen,
+      read: async (t?: { title?: string; path?: string }) => {
+        const w = o.wins ? pick(t) : closed ? null : window;
+        return { ...seen, window: w, ...(w ? {} : { nodes: [] }) };
+      },
       windows: async () => {
         if (o.listFails?.()) throw new Error("the accessibility helper didn't answer");
         return o.wins ? [...open] : closed ? [] : [window];
@@ -115,12 +127,7 @@ function makeWorker(o: {
       },
       doAction: async () => {
         events.push("start"); await sleep(80); events.push("end");
-        if (o.closes && o.wins) {
-          if (current) open.splice(open.indexOf(current), 1);
-          if (o.opens) open.push(asWin(o.opens));
-          return { ok: true, after: null };
-        }
-        if (o.closes) { closed = true; return { ok: true, after: null }; }
+        if (o.closes) { closeWindow(); return { ok: true, after: null }; }
         return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } };
       },
       setText: async (_id: number, text: string) => {
@@ -138,7 +145,11 @@ function makeWorker(o: {
     lease: async () => () => undefined, flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
     onActivity: (e: Record<string, unknown>) => { activity.push(e); },
     cursor: o.noCursor ? undefined : {
-      borrow: { borrow: async (fn: (hand: unknown) => Promise<void>) => fn({ glideTo: async () => undefined, click: async () => undefined, keys: async () => undefined, type: async () => undefined, scroll: async () => undefined }) },
+      borrow: { borrow: async (fn: (hand: unknown) => Promise<void>) => fn({ glideTo: async () => undefined, click: async () => undefined, keys: async () => {
+        if (o.keysFail) throw new Error("The keyboard wasn't available");
+        events.push("keys");
+        if (o.keysClose) closeWindow();
+      }, type: async () => undefined, scroll: async () => undefined }) },
       findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}),
     },
     pointer: o.pointer, activationKey: o.activationKey,
@@ -147,10 +158,88 @@ function makeWorker(o: {
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
   /** A window the user opens meanwhile (with `wins`). */
   const openWindow = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) => { open.push(asWin(x)); };
-  return { w, audit, events, asked, questions, call, flown, guided, activity, openWindow };
+  return { w, audit, events, asked, questions, call, flown, guided, activity, openWindow, closeWindow };
 }
 
 describe("a task whose own step closes its window (the owner's report of 2026-11-03)", () => {
+  it("recognises closing shortcuts with the platform's primary modifier, not ordinary typing or arbitrary keys", () => {
+    for (const kc of [KEYS.linux, KEYS.win32, KEYS.darwin]) {
+      for (const k of [`${kc.primary}+W`, `${kc.primary}+Q`, `Shift+${kc.primary}+W`, "Alt+F4"]) expect(closesWindow(k, kc), `${kc.os}: ${k}`).toBe(true);
+      for (const k of ["w", "q", `${kc.primary}+s`, "Escape", "Return", "unknown+q"]) expect(closesWindow(k, kc), `${kc.os}: ${k}`).toBe(false);
+    }
+    expect(closesWindow("Control + W")).toBe(true);
+    expect(closesWindow("Ctrl+Q", KEYS.darwin)).toBe(false);
+  });
+
+  it.each(["Ctrl+W", "Ctrl+Q", "Control + W"])("gives the closed note after %s, with no fallback into another window", async keys => {
+    const { call, events, audit } = makeWorker({ keysClose: true, states: () => ["enabled", "focused"] });
+    await call("perceive_window", {});
+    expect((await call("press_keys", { keys })).resultType).toBe("success");
+    expect(events).toEqual(["keys"]);
+    expect(audit.some(e => e.event === "action" && e.kind === "keys" && e.ok)).toBe(true);
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect((await call("finish_task", { success: true, summary: "Closed it." })).resultType).toBe("success");
+  });
+
+  it("keeps a closed tab as a live window and never claims a close before the window is gone", async () => {
+    const { call, closeWindow } = makeWorker({ states: () => ["enabled", "focused"] });
+    await call("perceive_window", {});
+    expect((await call("press_keys", { keys: "Ctrl+W" })).resultType).toBe("success");
+    expect((await call("perceive_window", {})).resultType).toBe("success");
+    closeWindow();
+    expect((await call("perceive_window", {})).textResultForLlm).not.toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it.each(["denied", "failed", "ordinary"])("does not claim a window closed under %s keys", async why => {
+    const { call, closeWindow } = makeWorker({ states: () => ["enabled", "focused"], ...(why === "denied" ? { answer: "no" } : why === "failed" ? { keysFail: true } : {}) });
+    await call("perceive_window", {});
+    const result = await call("press_keys", { keys: why === "ordinary" ? "Ctrl+B" : "Ctrl+Q" });
+    expect(result.resultType === "success").toBe(why === "ordinary");
+    closeWindow();
+    expect((await call("perceive_window", {})).textResultForLlm).not.toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("does not offer another window already open when Ctrl+W closes its own window", async () => {
+    const { call, openWindow } = makeWorker({ keysClose: true, states: () => ["enabled", "focused"], wins: [{ name: "notes.txt", path: "/w/1" }] });
+    await call("perceive_window", {});
+    openWindow({ name: "other.txt", path: "/w/2" });
+    expect((await call("press_keys", { keys: "Ctrl+W" })).resultType).toBe("success");
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("goes back only to a known window of its own app when closing keys close its dialog", async () => {
+    const { call } = makeWorker({ keysClose: true, states: () => ["enabled", "focused"], wins: [{ name: "notes.txt", path: "/w/1" }, { name: "Preferences", role: "dialog", path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("switch_window", { title: "Preferences" });
+    expect((await call("press_keys", { keys: "Ctrl+W" })).resultType).toBe("success");
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(dialogClosedNote({ app: "gedit", title: "notes.txt" }));
+  });
+
+  it("identifies a replacement after closing keys from the listing taken just before them", async () => {
+    const { call, openWindow } = makeWorker({ keysClose: true, states: () => ["enabled", "focused"], wins: [{ name: "notes.txt", path: "/w/1" }], opens: { name: "Start", path: "/w/3" } });
+    await call("perceive_window", {});
+    openWindow({ name: "other.txt", path: "/w/2" });
+    expect((await call("press_keys", { keys: "Ctrl+W" })).resultType).toBe("success");
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(windowReplacedNote("gedit", ["Start"]));
+  });
+
+  it("does not guess a replacement when the listing before closing keys fails", async () => {
+    const { call } = makeWorker({ keysClose: true, states: () => ["enabled", "focused"], wins: [{ name: "notes.txt", path: "/w/1" }], opens: { name: "Start", path: "/w/3" }, listFails: () => true });
+    await call("perceive_window", {});
+    expect((await call("press_keys", { keys: "Ctrl+W" })).resultType).toBe("success");
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("presses nothing when Stop happens during the listing before closing keys", async () => {
+    const { w, call, events } = makeWorker({ keysClose: true, states: () => ["enabled", "focused"], listFails: () => {
+      (w as unknown as { halt: AbortController }).halt.abort();
+      return false;
+    } });
+    await call("perceive_window", {});
+    expect((await call("press_keys", { keys: "Ctrl+W" })).resultType).toBe("denied");
+    expect(events).toEqual([]);
+  });
+
   it("is told the window closed under its step and that closing it may be the task, and finishes", async () => {
     const { call, audit, events } = makeWorker({ name: "Close", closes: true });
     await call("perceive_window", {});
