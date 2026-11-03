@@ -686,7 +686,6 @@ export class VoiceEngine {
       // A bare name's window not shown yet ("…remember…" may yet be taken back): it becomes the follow-up window, which
       // needs no name, rather than be extended and then dropped with the follow-up in it. What it heard so far stays.
       const m = this.mode;
-      this.peak = this.voice;
       this.mode = { kind: "listening", until: Math.max(m.until, this.now() + ms), ms, heardSpeech: m.heardSpeech, first: false, reason: "follow-up", checkAt: null, keyword: "", afterQuestion: !!o.afterQuestion };
       this.emit({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
       if (this.wasSpeaking) this.emit({ type: "speech", on: true });
@@ -694,7 +693,10 @@ export class VoiceEngine {
     }
     if (this.mode.kind === "listening") { this.mode.until = Math.max(this.mode.until, this.now() + ms); return; }
     this.resetListening();
-    this.peak = this.voice;
+    // End this request against its own loudness: a follow-up 3 dB softer than the wake was cut at "And make the text"
+    // before "a bit bigger". Admission still uses the original wake's unchanged `voice` in mustBeClose/loudFrames;
+    // quieter room talk cannot start a request or lower that reference over successive follow-ups.
+    this.peak = 0;
     this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "follow-up", checkAt: null, keyword: "", afterQuestion: !!o.afterQuestion };
     // Opened during the tail after Ember's answer: what was heard since its voice ended (before it said so) may be a reply.
     if (this.tailFrom) this.tail = this.recentFrames(TAIL_KEEP_FRAMES);

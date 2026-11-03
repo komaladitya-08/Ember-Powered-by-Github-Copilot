@@ -24,20 +24,20 @@ type FromMain =
   /** `voiceprint`: the owner's (Voice Match on), base64 (voiceprint.ts). */
   /** `wasm`: run on WebAssembly (a voice process before this one died loading natively; runtime.ts). */
   /** `anchor`, `clips`: what Voice Match learnt since enrolment (adapt.ts): the enrolment's print, and how many samples. */
-  | { type: "init"; models: ModelPaths; monitor: boolean; dev: boolean; voiceprint?: string | null; anchor?: string; clips?: number; wasm?: boolean; capiDir?: string }
+  | { type: "init"; generation: number; models: ModelPaths; monitor: boolean; dev: boolean; voiceprint?: string | null; anchor?: string; clips?: number; wasm?: boolean; capiDir?: string }
   /** Voice Match turned on (the owner's voiceprint) or off (null); `anchor` and `clips` as init's. */
-  | { type: "voiceprint"; print: string | null; anchor?: string; clips?: number }
+  | { type: "voiceprint"; generation: number; refresh?: boolean; print: string | null; anchor?: string; clips?: number }
   /** Voice Match keeps learning (adapt.ts): the owner's well-matched requests are offered to main as samples, or not. */
   | { type: "learning"; on: boolean }
   /** Enrolment: listen for the owner's phrases (nothing heard meanwhile is a request), or stop doing so. */
-  | { type: "enrol" }
+  | { type: "enrol"; generation: number }
   | { type: "enrol-cancel" }
   | { type: "self-speaking"; on: boolean }
   /** One of Ember's questions is up (or no longer): a "no" in a follow-up window then answers it. */
   | { type: "question"; up: boolean }
   /** `afterQuestion`: Ember's answer asked something ("Okay." is then a reply, not a closer). */
   | { type: "follow-up"; ms: number; afterQuestion?: boolean }
-  | { type: "cancel" };
+  | { type: "cancel"; generation: number };
 
 /**
  * Messages for main (VoiceService); `error`: listening couldn't start (`models`: the speech models couldn't be loaded,
@@ -49,7 +49,7 @@ type FromMain =
  * the wrong input), or sends sound again.
  */
 export type VoiceProcessMessage =
-  | VoiceEvent
+  | (VoiceEvent & { generation: number })
   /** `backend`: which build of sherpa-onnx runs the recognizers, and how (runtime.ts). */
   | { type: "ready"; loadMs: number; backend: BackendInfo }
   | { type: "error"; message: string; models?: boolean; model?: "kws" | "vad" | "asr" }
@@ -71,7 +71,7 @@ export type VoiceProcessMessage =
    * phrase (`voiced`) and which utterance it belongs to (`utterance`: the nth this process sent, so main pairs it with
    * that request and no other). Main decides whether it is learnt.
    */
-  | { type: "voice-sample"; print: string; score: number; oneVoice: boolean; voiced: number; utterance: number };
+  | { type: "voice-sample"; generation: number; print: string; score: number; oneVoice: boolean; voiced: number; utterance: number };
 
 /** Which model a ModelLoadError is about, by the name sherpa.ts gives it ("The wake word model couldn't be loaded."). */
 const LOADED_AS: [RegExp, "kws" | "vad" | "asr"][] = [[/wake word/i, "kws"], [/voice activity/i, "vad"], [/speech recognition/i, "asr"]];
@@ -116,7 +116,9 @@ function voiceprinter(): Printer {
 /** Requests go through Voice Match on their way to main. */
 /** The utterances sent to main so far (a voice-sample says which one it belongs to). */
 let utterances = 0;
-const gate = new VoiceGate(voiceprinter, e => { if (e.type === "utterance") utterances++; send(e); }, err => send({ type: "voice-match-error", message: err instanceof Error ? err.message : String(err) }),
+/** Main owns this revision so messages already queued on IPC can be revoked immediately. */
+let generation = 0;
+const gate = new VoiceGate(voiceprinter, e => { if (e.type === "utterance") utterances++; send({ ...e, generation }); }, err => send({ type: "voice-match-error", message: err instanceof Error ? err.message : String(err) }),
   undefined, () => engine?.cancel());
 /** What Voice Match learnt, as main sends it: the enrolment to check too, and the learnt print's threshold (adapt.ts). */
 function learntOf(m: { anchor?: string; clips?: number }): { anchor: Float32Array; threshold: number } | null {
@@ -135,9 +137,10 @@ gate.onSample = (print, score, rest) => {
   sampledAt = now;
   // The utterance just sent (the gate sends it before it offers its sample).
   const utterance = utterances;
+  const sampleGeneration = generation, gateGeneration = gate.generation;
   const voiced = Math.floor(voicedSeconds(rest) * 10) / 10;
   void oneVoice(voiceprinter(), rest, p => gate.matches(p, owner)).then(
-    whole => send({ type: "voice-sample", print: encodePrint(print), score: Math.round(score * 1000) / 1000, oneVoice: whole, voiced, utterance }),
+    whole => { if (sampleGeneration === generation && gateGeneration === gate.generation) send({ type: "voice-sample", generation, print: encodePrint(print), score: Math.round(score * 1000) / 1000, oneVoice: whole, voiced, utterance }); },
     () => undefined, // the model failed: nothing to learn from this one (the gate reported failures already)
   );
 };
@@ -191,6 +194,7 @@ let dump: fs.WriteStream | null = null;
 parent.on("message", e => {
   const m = e.data as FromMain;
   if (m.type === "init") {
+    generation = m.generation;
     if (m.dev && process.env.EMBER_VOICE_DUMP) dump = fs.createWriteStream(process.env.EMBER_VOICE_DUMP);
     try {
       const t0 = Date.now();
@@ -240,13 +244,19 @@ parent.on("message", e => {
   } else if (m.type === "follow-up") {
     engine?.followUp(m.ms, { afterQuestion: m.afterQuestion });
   } else if (m.type === "cancel") {
+    generation = m.generation;
+    gate.cancel();
     engine?.cancel();
   } else if (m.type === "voiceprint") {
-    gate.setOwner(decodePrint(m.print), learntOf(m));
+    generation = m.generation;
+    gate.setOwner(decodePrint(m.print), learntOf(m), m.refresh);
+    if (!m.refresh) engine?.cancel();
   } else if (m.type === "learning") {
     learning = m.on;
   } else if (m.type === "enrol") {
+    generation = m.generation;
     if (enrolment || !backend) return;
+    gate.cancel();
     engine?.cancel();
     backend.resetVad();
     const made: Enrolment = new Enrolment(voiceprinter(), st => {

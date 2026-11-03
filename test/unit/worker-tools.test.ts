@@ -45,6 +45,9 @@ function makeWorker(o: {
   onGlide?: () => void;
   onInput?: (kind: string, value?: string) => void;
   nodeExtra?: Partial<AxNode>;
+  treeNode?: (node: AxNode) => AxNode;
+  onSetText?: (text: string) => void;
+  options?: string[];
   readFails?: () => boolean;
   /** The click closes the window it is in (a Close button): nothing is left to read back, and the window is gone. */
   closes?: boolean;
@@ -113,7 +116,7 @@ function makeWorker(o: {
         if (o.readFails?.()) throw new Error("read unavailable");
         const w = o.wins ? pick(t) : closed ? null : window;
         return { ...seen, window: w, nodes: w ? seen.nodes.map(n => ({ ...n,
-          ...(n.id === node.id ? { states: o.states?.() ?? n.states, ...o.extra?.() } : {}), ...o.live?.(n.id) })) : [] };
+          ...(n.id === node.id ? { states: o.states?.() ?? n.states, ...o.extra?.() } : {}), ...o.live?.(n.id) })).map(n => o.treeNode?.(n) ?? n) : [] };
 
       },
       windows: async () => {
@@ -141,7 +144,13 @@ function makeWorker(o: {
       setText: async (_id: number, text: string) => {
         events.push("set_text");
         if (!o.setTextOk) throw new Error("background_unavailable: this element's text can't be edited directly");
+        o.onSetText?.(text);
         return { ok: true, after: { role: node.role, name: node.name, states: ["enabled", "editable"], bounds: node.bounds, text } };
+      },
+      listOptions: async () => ({ options: o.options ?? [] }),
+      selectOption: async (_id: number, selected: string) => {
+        events.push(`select:${selected}`);
+        return { ok: true, after: { role: node.role, name: node.name, states: node.states, bounds: node.bounds, selected } };
       },
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
@@ -1037,6 +1046,69 @@ describe("approval stays with the action the user saw (safety review)", () => {
     expect(result.resultType, result.textResultForLlm).toBe(changed ? "failure" : "success");
     if (changed) expect(input).toEqual([]);
     else { expect(input.length).toBeGreaterThan(0); expect(input.every(kind => kind === "type")).toBe(true); }
+  });
+
+  it.each(["", "\ufffc", "x".repeat(800)])("compares AT-SPI tree and detailed target text to their own baselines (%s)", async text => {
+    const { call, events } = makeWorker({ role: "text", name: "Name", setTextOk: true,
+      states: () => ["enabled", "sensitive", "editable"], live: id => id === 1 ? { text } : undefined,
+      treeNode: n => n.id === 1 ? { ...n, text: text === "" || text === "\ufffc" ? undefined : text.slice(0, 200) } : n,
+    });
+    await call("perceive_window", {});
+    const result = await call("type_text", { id: 1, text: "Ada Lovelace", mode: "replace" });
+    expect(result.resultType, result.textResultForLlm).toBe("success");
+    expect(events).toContain("set_text");
+  });
+
+  it("rejects a changed full-text suffix even when the tree's 200-character prefix stays identical", async () => {
+    let text = "x".repeat(800) + "Original user text";
+    const { call, events, asked } = makeWorker({ role: "text", name: "Name", setTextOk: true,
+      states: () => ["enabled", "sensitive", "editable"], live: id => id === 1 ? { text } : undefined,
+      treeNode: n => n.id === 1 ? { ...n, text: text.slice(0, 200) } : n,
+      onAsk: () => { text = "x".repeat(800) + "New user text"; },
+    });
+    await call("perceive_window", {});
+    expect((await call("type_text", { id: 1, text: "Replacement", mode: "replace" })).resultType).toBe("failure");
+    expect(asked).toHaveLength(1);
+    expect(events).not.toContain("set_text");
+  });
+
+  it("refreshes context between legitimate form actions without transferring the old approval", async () => {
+    let text = "";
+    let status = "Empty";
+    const { call, events } = makeWorker({ role: "text", name: "Name", setTextOk: true,
+      states: () => ["enabled", "sensitive", "editable"],
+      more: [{ id: 2, parent: null, depth: 1, role: "label", name: "Empty", states: [], bounds: null },
+        { id: 3, parent: null, depth: 1, role: "push button", name: "Save", states: ["enabled", "sensitive"], bounds: null }],
+      live: id => id === 1 ? { text } : id === 2 ? { name: status } : undefined,
+      treeNode: n => n.id === 1 ? { ...n, text: text || undefined } : n,
+      onSetText: value => { text = value; status = "Ready"; },
+    });
+    await call("perceive_window", {});
+    expect((await call("type_text", { id: 1, text: "Ada Lovelace", mode: "replace" })).resultType).toBe("success");
+    const saved = await call("click", { id: 3 });
+    expect(saved.resultType, saved.textResultForLlm).toBe("success");
+    expect(events).toEqual(["set_text", "start", "end"]);
+  });
+
+  it("chooses an AT-SPI combo option whose detailed read contains an omitted object placeholder", async () => {
+    const { call, events } = makeWorker({ role: "combo box", name: "Category", options: ["Travel", "Meals"],
+      nodeExtra: { selected: "Travel" }, live: id => id === 1 ? { text: "\ufffc", selected: "Travel" } : undefined,
+      treeNode: n => n.id === 1 ? { ...n, text: undefined } : n,
+    });
+    await call("perceive_window", {});
+    const result = await call("choose_option", { id: 1, option: "Meals" });
+    expect(result.resultType, result.textResultForLlm).toBe("success");
+    expect(events).toEqual(["select:Meals"]);
+  });
+
+  it("retains the original action id when quick reads allocate different tree ids", async () => {
+    const { call, events } = makeWorker({ role: "text", name: "Name", setTextOk: true,
+      live: id => id === 1 ? { text: "" } : undefined,
+      treeNode: n => ({ ...n, id: n.id + 100, parent: n.parent === null ? null : n.parent + 100, text: undefined }),
+    });
+    await call("perceive_window", {});
+    expect((await call("type_text", { id: 1, text: "Ada", mode: "replace" })).resultType).toBe("success");
+    expect(events).toContain("set_text");
   });
 
   it("refuses when the full context can no longer be read after Allow", async () => {

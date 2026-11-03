@@ -1092,6 +1092,8 @@ export class Worker {
   private knownWhole = false;
   /** Other windows owned by this app can change what a control will act on. */
   private knownOthers = "[]";
+  /** The current quick-tree baseline, separate from readElement's longer, differently represented target text. */
+  private actionTree: AxNode[] = [];
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
   private target: WindowTarget;
   /** Apps the user allowed for this task only ("Allow once"). */
@@ -2369,11 +2371,53 @@ export class Worker {
   }
 
   /**
+   * Refresh policy context before preparing an action. Quick reads preserve the original actionable ids. Match
+   * the same tree structure before remapping those ids; a structural change requires a new perceive_window.
+   * Keep this tree separate from fresh(): AT-SPI omits empty/object text here and caps text at 200 characters,
+   * whereas readElement returns up to 2,000. Compare each source against itself across the approval wait.
+   */
+  private async refreshActionContext(id: number): Promise<ToolResultObject | null> {
+    if (!this.known.has(id)) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window and use its ids.`);
+    const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
+    if (this.isOver) return STOPPED();
+    const w = seen?.window;
+    if (!seen || !w || seen.blocked || seen.busy || seen.ember || w.app !== this.window.app || w.name !== this.window.name
+      || w.role !== this.window.role || (this.target.pid !== undefined && w.pid !== this.target.pid)
+      || (this.target.path !== undefined && w.path !== this.target.path)) {
+      return fail("The window's current contents could not be verified, so nothing was done. Call perceive_window.");
+    }
+    const old = [...this.known.values()];
+    const oldAt = new Map(old.map((n, i) => [n.id, i]));
+    const newAt = new Map(seen.nodes.map((n, i) => [n.id, i]));
+    const parentAt = (n: AxNode, at: Map<number, number>) => n.parent === null ? null : at.get(n.parent) ?? "missing";
+    if (old.length !== seen.nodes.length || old.some((n, i) => n.role !== seen.nodes[i].role
+      || parentAt(n, oldAt) !== parentAt(seen.nodes[i], newAt))) {
+      return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
+    }
+    // The original accessible object must still be the target at this position, not a neighbouring replacement.
+    const at = oldAt.get(id)!;
+    const live = await this.sidecar.readElement(id).catch(() => null);
+    if (this.isOver) return STOPPED();
+    if (!live || live.role !== seen.nodes[at].role || live.name !== seen.nodes[at].name) {
+      return fail("The target changed while reading its context, so nothing was done. Call perceive_window.");
+    }
+    this.actionTree = seen.nodes.map((n, i) => ({ ...n, id: old[i].id, parent: old[i].parent }));
+    this.known = new Map(this.actionTree.map(n => [n.id, n]));
+    this.knownWhole = !seen.truncated;
+    this.knownOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
+    this.labels = inferLabels(this.actionTree);
+    const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
+    this.remember(w, words);
+    this.flagInjection(words, "window", w.app);
+    return null;
+  }
+
+  /**
    * Bind consent to the window and the tree that supplied the question, not just a button's name. Quick reads
    * preserve action ids; their own ids may differ, so compare structure by position. Bounds and keyboard focus
    * may change when Allow is clicked, but text, controls, selection and safety attributes must not.
    */
-  private actionContext(nodes: Iterable<AxNode> = this.known.values(), clickedTextAt?: number): string {
+  private actionContext(nodes: Iterable<AxNode> = this.actionTree, clickedTextAt?: number): string {
     const all = [...nodes];
     const positions = new Map(all.map((n, i) => [n.id, i]));
     return JSON.stringify(all.map((n, i) => ({
@@ -2464,6 +2508,8 @@ export class Worker {
   /** Policy check, confirmation, lease, motion, action, audit: the one path every window action takes. */
   private async act(kind: ActionKind, id: number, value: string | undefined, run: () => Promise<ActionResult>, mode?: TextMode): Promise<ToolResultObject> {
     if (this.place?.userInControl()) return this.deskTaken(kind);
+    const refreshed = await this.refreshActionContext(id);
+    if (refreshed) return refreshed;
     const f = await this.fresh(id);
     if (!("node" in f)) return f;
     const { node, element } = f;

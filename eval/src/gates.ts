@@ -21,6 +21,7 @@ import { corpusDir, loadCorpus } from "./corpus";
 import type { Logger } from "../../app/main/logger";
 import type { Attempt, Outcome } from "./runner";
 import { LIVE_PASS_PCT } from "./exit";
+import { VoiceFrameClock, voiceRuntime } from "./voice-timing";
 
 export interface GateResult {
   id: string;
@@ -203,20 +204,21 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
   if (modelsReady(models)) {
     const sherpa = createRequire(__filename)("sherpa-onnx");
     // As Ember runs it: the speakers check on (so a wake waits out its window), real compute time counted.
-    const backend = sherpaBackend(modelPaths(models), { monitor: true });
+    const backend = sherpaBackend(modelPaths(models), { monitor: true, runtime: voiceRuntime(process.env) });
     const play = (samples: Float32Array) => {
-      /** `at`: audio time when the frame that caused the event was complete, plus the compute spent before the event. */
+      /** `at`: when the event reaches the listener, including compute queued by earlier frames under load. */
       const events: (VoiceEvent & { at: number })[] = [];
-      let t = 0, cpu = 0, frameStart = 0;
-      const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") events.push({ ...e, at: t + 32 + (performance.now() - frameStart) }); }, { now: () => t });
+      let t = 0, cpu = 0;
+      const clock = new VoiceFrameClock();
+      const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") events.push({ ...e, at: clock.eventAt() }); }, { now: () => t });
       const all = new Float32Array(samples.length + 16000 * 2);
       all.set(samples);
       const silence = new Float32Array(512);
       for (let i = 0; i + 512 <= all.length; i += 512) {
-        frameStart = performance.now();
+        clock.start(t + 32);
         engine.feedMonitor(silence); // nothing playing on the speakers
         engine.feed(all.subarray(i, i + 512));
-        cpu += performance.now() - frameStart;
+        cpu += clock.finish();
         t += 32;
       }
       backend.resetVad();
@@ -233,7 +235,7 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
     const wake = play(wp).events.find(e => e.type === "wake");
     const delay = wake ? wake.at - (speechEnd / 16) : null;
     add({ id: "wake-latency", name: "Wake → listening", target: "< 300 ms", blocking: false, value: delay !== null ? ms(Math.max(0, delay)) : "no wake", status: delay !== null ? (delay < 300 ? "pass" : "fail") : "fail",
-      note: "end of “Hey Ember” to the listening cue, with real compute time; at the pause the spotter decides at once, without waiting for its next chunk" });
+      note: `end of “Hey Ember” to the listening cue, with real compute time and queued frames; ${backend.info.backend} (${backend.info.detail}); at the pause the spotter decides at once, without waiting for its next chunk` });
     // Missed and false wakes: fixture clips, plus many synthesized renderings when the TTS voice is here.
     const positives: Float32Array[] = ["wake", "wake_pause", "dnd"].map(clip);
     /** The bare name ("Ember, …"), a wake of its own (KEYWORDS): measured on its own, so "Hey Ember"'s figure stays comparable. */

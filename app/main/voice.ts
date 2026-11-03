@@ -21,7 +21,7 @@ import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import type { TtsProcessMessage, VoiceInfo } from "../voice/tts-process";
 import { nativePackage } from "../voice/runtime";
-import { NATURAL_COST, NATURAL_MAX_RTF } from "../voice/tts";
+import { NATURAL_COST, NATURAL_MAX_RTF, speechChunks } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
 import { readLevel, type SoundLevel } from "../shared/level";
@@ -37,8 +37,8 @@ const STALL_MS = 30_000;
 const SPEECH_START_MS = 3000;
 /** The same while Ember's own voice is still loading (its first reply: 1–2.5 s to load, then its first sentence; ms). */
 const VOICE_START_MS = 8000;
-/** Ember's own voice failing this many times (it stopped, or couldn't say a reply) leaves replies to the system's voice until Ember restarts. */
-const VOICE_FAILURES = 3;
+/** One synthesis failure retires this engine, keeping recovery and subsequent streamed sentences in order. */
+const VOICE_FAILURES = 1;
 /** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks; ms). */
 const SPEAKING_MAX_MS = 60_000;
 /**
@@ -47,8 +47,6 @@ const SPEAKING_MAX_MS = 60_000;
  * a few hundred ms, under Ember's voice starting up (VOICE_START_MS).
  */
 const SPEAKER_IDLE_MS = 60_000;
-/** A request heard this soon after a cancel (the kill switch) was already on its way: it's dropped (ms). */
-const CANCEL_GRACE_MS = 1000;
 /** Listening that broke starts again after 1 s, 5 s, then every 30 s (ms). */
 const RESTART_MS = [1000, 5000, 30_000];
 /**
@@ -196,7 +194,7 @@ export class VoiceService {
   private followUpMs = 0;
   private followUpAsked = false;
   private followUpTimer: NodeJS.Timeout | null = null;
-  private cancelledAt = Number.NEGATIVE_INFINITY;
+  private listeningGeneration = 0;
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
   private micLost = false;
   /** The microphone sends only digital silence (the voice line says so until sound comes back). */
@@ -222,8 +220,8 @@ export class VoiceService {
   /** Replies are numbered; those up to `ttsHushed` were hushed (their late audio is dropped). */
   private ttsId = 0;
   private ttsHushed = 0;
-  /** Replies given to Ember's voice and not yet done: their words (for the system's voice, should it fail) and their page. */
-  private ttsPending = new Map<number, { text: string; send: PageSend }>();
+  /** Replies still being synthesised: original text, producer-reported ungenerated suffix, and their page. */
+  private ttsPending = new Map<number, { text: string; remaining: string; send: PageSend }>();
   /** Enrolment (Voice Match) is under way in the voice process. */
   private enrolling = false;
   /** The voice and speech processes run on WebAssembly: one died loading natively (reset when the models change). */
@@ -479,9 +477,10 @@ export class VoiceService {
    * listening (enrolment needs the microphone) or its voiceprint model isn't there.
    */
   enrol(): boolean {
+    if (this.enrolling) return true;
     if (!this.proc || !this.readyAt || !this.matchReady) return false;
     this.enrolling = true;
-    this.proc.postMessage({ type: "enrol" });
+    this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
     return true;
   }
 
@@ -493,11 +492,12 @@ export class VoiceService {
 
   /**
    * Voice Match turned on (the owner's voiceprint) or off (null): the voice process checks requests from now on, or
-   * doesn't. Without its model, it stays off.
+   * doesn't. Without its model, it stays off. Only an adaptation sample uses `refresh`, preserving pending requests.
    */
-  setVoiceprint(print: string | null): void {
+  setVoiceprint(print: string | null, refresh = false): void {
     const p = this.matchReady ? print : null;
-    this.proc?.postMessage({ type: "voiceprint", print: p, ...(p ? this.o.matchLearnt?.() ?? {} : {}) });
+    if (!refresh) this.listeningGeneration++;
+    this.proc?.postMessage({ type: "voiceprint", generation: this.listeningGeneration, refresh, print: p, ...(p ? this.o.matchLearnt?.() ?? {} : {}) });
   }
 
   /** Voice Match keeps learning (Settings › Voice), or stops: the voice process offers samples (onSample), or doesn't. */
@@ -507,9 +507,9 @@ export class VoiceService {
 
   /** Stops listening for a request at once (the kill switch): a wake being checked, a waiting follow-up and a request already on its way are dropped. */
   cancelListening(): void {
-    this.cancelledAt = Date.now();
+    this.listeningGeneration++;
     this.dropFollowUp();
-    this.proc?.postMessage({ type: "cancel" });
+    this.proc?.postMessage({ type: "cancel", generation: this.listeningGeneration });
   }
 
   /**
@@ -526,7 +526,7 @@ export class VoiceService {
     const send = this.pageSend();
     if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}) } satisfies SpeakRequest); return; }
     const id = ++this.ttsId;
-    this.ttsPending.set(id, { text, send });
+    this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.voiceProcess().postMessage({ type: "say", id, text });
   }
 
@@ -621,7 +621,7 @@ export class VoiceService {
     if (this.neuralVoice && !this.locked) this.voiceProcess();
   }
 
-  /** Whether replies are said in Ember's own voice: wanted, its model is in, and it hasn't kept failing. */
+  /** Whether replies are said in Ember's own voice: wanted, its model is in, and it hasn't failed this session. */
   private get neuralVoice(): boolean {
     return !!this.o.neuralVoice && this.ttsFailures < VOICE_FAILURES && this.rootOf("tts") !== null;
   }
@@ -671,8 +671,8 @@ export class VoiceService {
       if (m.type === "error") { this.o.log.error("voice.tts_error", { message: m.message }); this.ttsFailures = VOICE_FAILURES; this.voiceFailed(); return; }
       const pending = this.ttsPending.get(m.id);
       if (m.id <= this.ttsHushed || !pending) return;
-      if (m.type === "audio") { pending.send(VOICE.audio, { id: m.id, samples: m.samples, rate: m.rate } satisfies SpeechAudio); return; }
-      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); this.ttsFailures++; }
+      if (m.type === "audio") { pending.remaining = m.remaining; pending.send(VOICE.audio, { id: m.id, samples: m.samples, rate: m.rate } satisfies SpeechAudio); return; }
+      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); this.voiceFailed(); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
       this.switchWhenIdle();
@@ -766,10 +766,11 @@ export class VoiceService {
   }
 
   /**
-   * Ember's voice stopped or couldn't load: the replies it hadn't finished are said by the system's voice (from where
-   * they were: a reply it had begun is said whole), and the next reply starts it again, unless it keeps failing.
+   * Retire a failed synthesiser for this session. The page drains already generated audio before the local system
+   * voice says only the remaining chunks. Later streamed sentences use that same engine, never overlap it.
    */
   private voiceFailed(): void {
+    this.ttsFailures = VOICE_FAILURES;
     const tts = this.tts;
     this.tts = null;
     this.ttsInfo = null;
@@ -778,7 +779,8 @@ export class VoiceService {
     this.ttsPending.clear();
     for (const [id, p] of pending) {
       p.send(VOICE.audioDone, id);
-      p.send(VOICE.speak, { text: p.text, append: true } satisfies SpeakRequest);
+      const text = p.remaining;
+      if (text) p.send(VOICE.speak, { text, append: true } satisfies SpeakRequest);
     }
   }
 
@@ -868,7 +870,7 @@ export class VoiceService {
       if (m.type === "enrol") { this.enrolling = m.state !== "done" && m.state !== "cancelled"; this.o.onEnrol?.(m); return; }
       if (m.type === "voice-match-error") { this.o.log.warn("voice.match_error", { message: m.message }); return; }
       // A request Voice Match may learn from (app/voice/adapt.ts): main decides (numbers only, never audio).
-      if (m.type === "voice-sample") { this.o.onSample?.(m); return; }
+      if (m.type === "voice-sample") { if (m.generation === this.listeningGeneration) this.o.onSample?.(m); return; }
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
       // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
       if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }
@@ -891,16 +893,17 @@ export class VoiceService {
       }
       // Every utterance the voice process sends is counted, dropped or not: a voice-sample names its request by this number.
       if (m.type === "utterance") this.utterances++;
-      if (m.type === "utterance" && Date.now() - this.cancelledAt < CANCEL_GRACE_MS) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
+      if (m.type !== "stop" && m.generation !== this.listeningGeneration) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
       if (m.type === "wake") { this.o.log.info("voice.wake", { keyword: m.keyword }); this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
       if (m.type === "stop") this.o.log.info("voice.stop");
       if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });
-      this.o.onEvent(m, m.type === "utterance" ? { utterance: this.utterances } : undefined);
+      const { generation: _generation, ...event } = m;
+      this.o.onEvent(event, m.type === "utterance" ? { utterance: this.utterances } : undefined);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
+    proc.postMessage({ type: "init", generation: this.listeningGeneration, models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
     if (this.o.learning?.()) proc.postMessage({ type: "learning", on: true });
 
     this.mic = hiddenWindow("Ember microphone");
