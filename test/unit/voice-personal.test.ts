@@ -708,10 +708,10 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
 
 describe("what Ember keeps for Voice Match and words, and asking again (review of #145)", () => {
   const SENTENCE = "If you teach Ember your voice, it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct when it mishears you, on this computer until you forget them.";
-  it("is said in 'Before Ember starts' and the microphone's card, and everyone who agreed before is asked again (CONSENT_VERSION 2)", () => {
+  it("is said in 'Before Ember starts' and the microphone's card, including temporary listening (CONSENT_VERSION 3)", () => {
     const html = fs.readFileSync(path.join(__dirname, "../../app/renderer/home/index.html"), "utf8");
     expect(html.split(SENTENCE)).toHaveLength(3); // the full text's microphone line, and the card's text
-    expect(CONSENT_VERSION).toBe(2);
-    expect(fs.readFileSync(path.join(__dirname, "../../app/shared/consent.ts"), "utf8")).toContain("export const CONSENT_VERSION = 2;");
+    expect(CONSENT_VERSION).toBe(3);
+    expect(fs.readFileSync(path.join(__dirname, "../../app/shared/consent.ts"), "utf8")).toContain("export const CONSENT_VERSION = 3;");
   });
 });

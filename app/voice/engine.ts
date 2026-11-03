@@ -747,7 +747,7 @@ export class VoiceEngine {
   feed(frame: Float32Array, capturedAt?: number): void {
     const now = this.now();
     if (this.mode.kind === "listening" && this.mode.reason === "manual") {
-      if (now >= this.mode.until) this.endListening("timeout");
+      if (now >= this.mode.until) { this.endListening("timeout"); return; }
       else if (capturedAt === undefined || capturedAt <= Math.max(this.manualFrom, this.selfSpeakingUntil)) return;
       else if (!this.manualReady) {
         this.manualReady = true;

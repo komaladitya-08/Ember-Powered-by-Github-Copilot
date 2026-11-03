@@ -61,7 +61,7 @@ async function measure(mode) {
   const userData = mkdtempSync(path.join(tmpdir(), `ember-echo-${mode}-`));
   // Voice on and agreed, replies spoken, speaker rejection off: the raw case, as barge-in would face it.
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-    version: 1, onboarded: true, consent: { version: 2, at: new Date().toISOString() },
+    version: 1, onboarded: true, consent: { version: 3, at: new Date().toISOString() },
     wakeWord: true, speak: true, voice: { consent: true, speakerRejection: false, muted: false, match: false },
   }));
   const dump = path.join(userData, "heard.f32");

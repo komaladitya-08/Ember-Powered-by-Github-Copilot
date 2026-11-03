@@ -124,7 +124,7 @@ describe("the first-run window", () => {
     for (const os of ["linux", "win32", "darwin"] as const) expect(NEVER_LOOK_DEFAULTS[os], os).toEqual(expect.arrayContaining(["1password", "bitwarden"]));
     // Settings' own pin (review #164) holds within it.
     expect(welcome).toContain("App windows on your never-look list and password prompts are never read.");
-    expect(welcome).toContain("<b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.");
+    expect(welcome).toContain("<b>The microphone stays off</b> unless you turn on “Hey Ember” in settings or choose Listen once for one request.");
   });
 });
 

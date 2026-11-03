@@ -800,7 +800,7 @@ function start(): void {
       // "Work on" (which computer requests go to), when there is more than this one.
       // An item that opens settings ("Bring Ember to a computer…") marks it before its click (targets/menu.ts).
       ...menuOptions(targets?.menuItems() ?? [], () => { opens = true; }),
-      ...(voice && settings.get().wakeWord && settings.get().voice.consent
+      ...(voice && consented() && policy.features.voice !== false
         ? [{ ...keyed(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
         : []),
       // A microphone that can't hear "Hey Ember": the way to fix it (Settings, at Voice, says why and how).
@@ -1318,7 +1318,7 @@ function start(): void {
   /** What Ember showed before a wake, put back if the wake turns out to be another word. */
   let beforeWake: Pick<EmberState, "emotion" | "bubble"> | null = null;
   const toggleMute = () => {
-    if (!voice || !(settings.get().wakeWord && settings.get().voice.consent)) return;
+    if (!voice || !consented() || policy.features.voice === false) return;
     voice.setMuted(!voice.isMuted);
     // Remembered: a restart (or login) doesn't quietly open the microphone again.
     try { settings.update({ voice: { ...settings.get().voice, muted: voice.isMuted } }); } catch (err) { log.warn("voice.mute_not_saved", { err }); }
@@ -1331,7 +1331,6 @@ function start(): void {
     if (policy.features.voice === false) return blocked("Your organisation has turned voice off.");
     if (!consented()) return blocked("Finish Ember’s setup first.");
     if (screenLock?.locked) return blocked("The screen is locked.");
-    if (!s.wakeWord || !s.voice.consent) return blocked("Turn on “Listen for Ember” in Settings.");
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
     if (confirmer?.waiting) return blocked("Answer Ember’s question first.");
@@ -2901,6 +2900,7 @@ function start(): void {
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));
       micConsent = next.voice.consent;
       if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); }
+      if (!consented()) voice?.cancelListenOnce();
       syncListenOnce();
     });
     powerMonitor.on("suspend", () => voice?.cancelListenOnce());

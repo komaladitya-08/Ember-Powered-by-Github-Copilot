@@ -206,7 +206,7 @@ export class VoiceService {
   private listeningGeneration = 0;
   private capturing = false;
   private captureGeneration = 0;
-  private manual: { phase: "starting" | "listening" | "checking"; timer: NodeJS.Timeout } | null = null;
+  private manual: { phase: "starting" | "listening" | "checking"; timer: NodeJS.Timeout; temporary: boolean; armed: boolean } | null = null;
   private manualGeneration = 0;
   private manualDetail = "";
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
@@ -271,12 +271,17 @@ export class VoiceService {
       const capturing = s.state === "capturing" && s.context === "running";
       const paused = this.capturing && !capturing;
       this.capturing = capturing;
+      if (this.manual?.temporary && (s.state === "error" || s.state === "lost" || paused)) {
+        this.cancelListenOnce(s.state === "error" || s.state === "lost" ? micHelp(s.message, this.o.micHint) : "The microphone paused. Try again.");
+        return;
+      }
       if (paused) { this.captureGeneration++; this.cancelListenOnce(); }
       if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
       else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
       else if (s.state === "capturing") {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
         if (this.micLost) { this.micLost = false; this.setState("waiting"); }
+        this.armListenOnce();
       }
       this.o.onListenOnce?.();
     });
@@ -336,32 +341,46 @@ export class VoiceService {
     const blocked = (detail: string): ListenOnceStatus => ({ phase: "blocked", detail });
     if (this.locked) return blocked("The screen is locked.");
     if (this.muted) return blocked("Unmute the microphone first.");
-    if (!this.wanted) return blocked("Turn on “Listen for Ember” in Settings.");
     if (this.enrolling) return blocked("Finish teaching Ember your voice first.");
-    if (this.state === "needs-models") return blocked("Download speech models in Settings first.");
-    if (this.state === "downloading") return blocked("Speech models are downloading.");
+    if (!this.modelsReady) return blocked(this.downloading ? "Speech models are downloading." : "Download speech models in Settings first.");
+    if (this.saidSpeaking || this.ttsPending.size || this.speakingUntil > Date.now()) return blocked("Wait until Ember finishes speaking.");
+    if (!this.wanted) return { phase: "ready", detail: this.manualDetail || "Opens the microphone for one request." };
     if (this.state === "error") return blocked("Check the microphone and voice status in Settings.");
     if (!this.capturing || !this.readyAt || !this.proc) return blocked("The microphone or speech recogniser is getting ready.");
     if (this.state === "active") return blocked("Ember is already listening.");
-    if (this.saidSpeaking || this.ttsPending.size || this.speakingUntil > Date.now()) return blocked("Wait until Ember finishes speaking.");
     return { phase: "ready", detail: this.manualDetail };
   }
 
   listenOnce(): boolean {
-    if (this.listenOnceStatus.phase !== "ready" || !this.proc) return false;
+    if (this.listenOnceStatus.phase !== "ready") return false;
     this.dropFollowUp();
-    this.manual = { phase: "starting", timer: setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), LISTEN_ONCE_MS + LISTEN_ONCE_CHECK_MS) };
+    this.manualGeneration++;
+    const temporary = !this.wanted;
+    this.manual = { phase: "starting", temporary, armed: false, timer: setTimeout(() => this.cancelListenOnce("The microphone did not get ready. Try again."), 30_000) };
     this.manual.timer.unref();
-    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS });
+    if (temporary) {
+      const manual = this.manual;
+      void this.start().catch(() => { if (this.manual === manual) this.cancelListenOnce("Couldn't start the microphone. Try again."); });
+    }
+    else this.armListenOnce();
     this.o.onListenOnce?.();
     return true;
   }
 
+  private armListenOnce(): void {
+    const manual = this.manual;
+    if (!manual || manual.armed || !this.readyAt || !this.capturing || !this.proc) return;
+    manual.armed = true;
+    clearTimeout(manual.timer);
+    manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), LISTEN_ONCE_MS + LISTEN_ONCE_CHECK_MS);
+    manual.timer.unref();
+    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS });
+  }
+
   cancelListenOnce(detail = "Listening cancelled."): void {
     // Recognition can be done while the request still waits for its desktop context.
-    this.manualGeneration++;
-    if (!this.manual) return;
-    this.cancelListening(detail);
+    if (this.manual) this.cancelListening(detail);
+    else this.manualGeneration++;
   }
 
   /** A manual request may be waiting for its pre-focus context after Voice Match let it through. */
@@ -369,14 +388,21 @@ export class VoiceService {
     const manual = this.manualGeneration;
     const generation = this.listeningGeneration;
     const capture = this.captureGeneration;
-    return () => manual === this.manualGeneration && generation === this.listeningGeneration && capture === this.captureGeneration && this.capturing && this.wanted && !this.muted && !this.locked;
+    const temporary = this.manual?.temporary;
+    return () => manual === this.manualGeneration && !this.muted && !this.locked &&
+      (temporary || (generation === this.listeningGeneration && capture === this.captureGeneration && this.capturing && this.wanted));
   }
 
-  private finishListenOnce(detail: string): void {
-    if (!this.manual) return;
-    clearTimeout(this.manual.timer);
+  private finishListenOnce(detail: string, accepted = false): void {
+    const manual = this.manual;
+    if (!manual) return;
+    clearTimeout(manual.timer);
     this.manual = null;
     this.manualDetail = detail;
+    if (manual.temporary) {
+      if (this.proc) this.teardown(accepted);
+      if (this.state !== "error") this.setState("off");
+    }
     this.o.onListenOnce?.();
   }
 
@@ -453,6 +479,7 @@ export class VoiceService {
 
   /** Listening on or off (from settings and consent). */
   async setWanted(on: boolean): Promise<void> {
+    if (this.manual?.temporary) this.cancelListenOnce();
     this.wanted = on;
     if (!on) { this.cancelRetry(); this.teardown(); this.setState("off"); return; }
     await this.start();
@@ -460,7 +487,9 @@ export class VoiceService {
 
   setMuted(on: boolean): void {
     this.muted = on;
-    if (on) { this.cancelRetry(); this.teardown(); this.setState("muted"); } else void this.start();
+    if (on) { this.cancelRetry(); this.teardown(); this.setState("muted"); }
+    else if (this.wanted) void this.start();
+    else this.setState("off");
   }
 
   get isMuted(): boolean {
@@ -531,7 +560,7 @@ export class VoiceService {
    * itself. `afterQuestion`: the answer asked something, so "Okay." or "Fine." is a reply to send (not "that's all").
    */
   followUp(ms = 8000, o: { afterQuestion?: boolean } = {}): void {
-    if (this.manual) return;
+    if (this.manual || !this.wanted) return;
     this.followUpMs = ms;
     this.followUpAsked = !!o.afterQuestion;
     this.openFollowUp();
@@ -559,7 +588,7 @@ export class VoiceService {
    */
   enrol(): boolean {
     if (this.enrolling) return true;
-    if (!this.proc || !this.readyAt || !this.matchReady) return false;
+    if (!this.wanted || !this.proc || !this.readyAt || !this.matchReady) return false;
     this.cancelListenOnce();
     this.enrolling = true;
     this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
@@ -591,6 +620,7 @@ export class VoiceService {
 
   /** Stops listening for a request at once (the kill switch): a wake being checked, a waiting follow-up and a request already on its way are dropped. */
   cancelListening(detail = "Listening cancelled."): void {
+    this.manualGeneration++;
     this.listeningGeneration++;
     this.dropFollowUp();
     this.proc?.postMessage({ type: "cancel", generation: this.listeningGeneration });
@@ -923,7 +953,8 @@ export class VoiceService {
   }
 
   private async start(): Promise<void> {
-    if (!this.wanted || this.proc) return;
+    const temporary = !!this.manual?.temporary;
+    if ((!this.wanted && !temporary) || this.proc) return;
     this.cancelRetry();
     if (this.muted) { this.setState("muted"); return; }
     if (this.locked) { this.setState("off", LOCKED_TEXT); return; }
@@ -936,10 +967,12 @@ export class VoiceService {
     this.utterances = 0;
     const proc = utilityProcess.fork(path.join(appDir, "voice.cjs"), [], { serviceName: "Ember voice", stdio: "pipe" });
     this.proc = proc;
+    let connectTemporaryMic: (() => void) | undefined;
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.stderr", { line: d.toString().slice(0, 300) }));
     proc.on("exit", code => {
       if (this.proc !== proc) return;
-      if (!this.readyAt && this.native && !this.wasmOnly.voice) {
+      if (temporary && !this.readyAt && this.native) this.wasmOnly.voice = true;
+      if (!temporary && !this.readyAt && this.native && !this.wasmOnly.voice) {
         // It died loading, natively (a damaged model aborts the addon's onnxruntime): started again at once on
         // WebAssembly, which says whether the models are damaged.
         this.o.log.warn("voice.native_failed", { code });
@@ -960,7 +993,11 @@ export class VoiceService {
         this.o.log.info("voice.ready", { loadMs: m.loadMs, ...(b ? { backend: b.backend, detail: b.detail, provider: b.provider, threads: b.threads, tried: b.tried } : {}) });
         // A model the native build couldn't make runs on WebAssembly (slower): worth a warning, it may be the build's fault.
         if (b?.wasmModels?.length) this.o.log.warn("voice.model_wasm_fallback", { models: b.wasmModels, detail: b.detail });
-        this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting"); return;
+        this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting");
+        connectTemporaryMic?.();
+        connectTemporaryMic = undefined;
+        this.armListenOnce();
+        return;
       }
       if (m.type === "error") {
         this.o.log.error("voice.error", { message: m.message, models: !!m.models });
@@ -1009,6 +1046,7 @@ export class VoiceService {
       // Every utterance the voice process sends is counted, dropped or not: a voice-sample names its request by this number.
       if (m.type === "utterance") this.utterances++;
       if (m.type !== "stop" && m.generation !== this.listeningGeneration) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
+      if (temporary && m.type !== "stop" && !("window" in m && m.window === "manual")) return;
       if (m.type === "wake") { this.finishListenOnce("Listening cancelled."); this.o.log.info("voice.wake", { keyword: m.keyword }); this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
       if (m.type === "stop") this.o.log.info("voice.stop");
       const { generation: _generation, ...event } = m;
@@ -1018,11 +1056,14 @@ export class VoiceService {
         if (m.type === "utterance") {
           this.o.onEvent(event, { utterance: this.utterances });
           if (this.state === "active") this.setState("waiting");
-          this.finishListenOnce("Request heard.");
+          this.finishListenOnce("Request heard.", true);
           return;
         }
         if (m.on) manual.phase = "listening";
-        else if (m.reason === "done") manual.phase = "checking";
+        else if (m.reason === "done") {
+          manual.phase = "checking";
+          if (temporary) { this.capturing = false; this.closeMic(); }
+        }
         this.setState(m.on ? "active" : "waiting");
         this.o.onEvent(event);
         if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? "No request heard. Try again." : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
@@ -1035,7 +1076,7 @@ export class VoiceService {
       this.o.onEvent(event, m.type === "utterance" ? { utterance: this.utterances } : undefined);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", generation: this.listeningGeneration, models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
+    proc.postMessage({ type: "init", generation: this.listeningGeneration, models: this.paths(), monitor: !temporary && this.o.monitor, ...(temporary ? { manualOnly: true } : {}), dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
     if (this.o.learning?.()) proc.postMessage({ type: "learning", on: true });
 
     this.mic = hiddenWindow("Ember microphone");
@@ -1045,9 +1086,14 @@ export class VoiceService {
     mic.webContents.on("render-process-gone", (_e, d) => {
       if (this.mic === mic) { this.o.log.warn("voice.mic_gone", { reason: d.reason }); this.restartLater("The microphone page stopped."); }
     });
-    await mic.loadURL(this.micPage()).catch(() => undefined);
+    await mic.loadURL(this.micPage()).catch(err => {
+      if (temporary && this.proc === proc) this.cancelListenOnce("Couldn't open the microphone. Try again.");
+      this.o.log.warn("voice.mic_page_failed", { err });
+    });
     if (mic.isDestroyed() || this.mic !== mic) return;
-    mic.webContents.postMessage(VOICE.port, null, [port2]);
+    const connectMic = () => mic.webContents.postMessage(VOICE.port, null, [port2]);
+    if (temporary && !this.readyAt) connectTemporaryMic = connectMic;
+    else connectMic();
   }
 
   /**
@@ -1069,6 +1115,7 @@ export class VoiceService {
 
   /** Listening broke (the voice process or the mic page died, or no sound arrives): start again after 1 s, 5 s, then every 30 s, saying so meanwhile. */
   private restartLater(why: string): void {
+    if (this.manual?.temporary) { this.cancelListenOnce(why); return; }
     this.teardown();
     if (!this.wanted || this.muted) return;
     if (this.readyAt && Date.now() - this.readyAt > 60_000) this.failures = 0; // it had been working: start the backoff over
@@ -1132,10 +1179,10 @@ export class VoiceService {
     this.proc?.postMessage({ type: "self-speaking", on: false });
   }
 
-  private teardown(): void {
+  private teardown(acceptedTemporary = false): void {
+    if (!acceptedTemporary) this.manualGeneration++;
     this.listeningGeneration++;
     this.capturing = false;
-    this.finishListenOnce("Listening cancelled.");
     this.enrolling = false;
     this.closeMic();
     this.dropFollowUp();
@@ -1143,6 +1190,7 @@ export class VoiceService {
     this.monitorOn = false;
     const p = this.proc;
     this.proc = null;
+    this.finishListenOnce("Listening cancelled.");
     if (!p) return;
     p.kill();
     // Not started yet (no pid): kill() does nothing then, and with its handle dropped the process would live on, models
