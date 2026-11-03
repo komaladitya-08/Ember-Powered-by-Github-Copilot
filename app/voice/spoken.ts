@@ -53,8 +53,11 @@ export function cancelWords(o: { killPhrase: boolean; stopKey: string | null }):
 
 /** "Ember, stop" in any of its forms, with its quotes (and a full stop inside them, which is kept). */
 const KILL_PHRASE = /["“‘']?\b(?:(?:hey|hi|ok|okay)[\s,]+)?embers?[\s,.!…-]*(?:please[\s,]+)?stop\b(?:([.!]?)["”’'])?/gi;
-/** "Hey Ember" (or "OK Ember"), with its quotes. */
-const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay)[\s,]+ember\b(?:([,.!]?)["”’'])?/gi;
+/**
+ * "Hey Ember" (or "OK Ember", "Okay. Ember"), with its quotes: everything engine.ts's CUT_IN_WAKE takes for a cut-in
+ * where Ember can't tell its own voice from the user's (voice-spoken.test.ts checks it on a corpus).
+ */
+const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay|hay|pay|pey)[\s,.!]*(?:ember|emmer)\b(?!['’]?s\b)(?:([,.!]?)["”’'])?/gi;
 
 /**
  * What Ember says, without the stop and wake phrases, where it can't tell its own voice from the user's: its

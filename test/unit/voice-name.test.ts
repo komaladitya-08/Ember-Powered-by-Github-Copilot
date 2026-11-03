@@ -39,18 +39,27 @@ describe("calledByName", () => {
     "Members only, please.",
     "Member, remember to call mum.",
     "Number.",
+    // Sentences that start with "Member" (review of PR #144).
+    "Member of staff, please call me back.",
+    "Member services, how can I help?",
+    "Member since 2019.",
+    "Member states agreed on Tuesday.",
+    "Member login is down.",
+    "Member what time is it?",
   ])("doesn't take %j", t => expect(calledByName(t)).toBe(false));
 
   // How Moonshine wrote a lone "Ember." or "Ember?", and "Ember, what time is it?", for voices it didn't write the name for
   // (the bare name didn't wake Ember on Windows).
-  it.each(["Member.", "Member?", "Embra.", "Embro.", "Member what time is it?", "Member, open Notepad."])("takes %j, a spelling of the name that isn't a name, said first", t => {
+  it.each(["Member.", "Member?", "Embra.", "Embro.", "Member, open Notepad.", "Member, what time is it?"])("takes %j, a spelling of the name that isn't a name, said first", t => {
     expect(calledByName(t)).toBe(true);
   });
 
   it("leaves the request once the name is stripped", () => {
     expect(stripWake("Ember, turn on night light.", true)).toBe("Turn on night light.");
     expect(stripWake("Okay. Ember, open the terminal.", true)).toBe("Open the terminal.");
-    expect(stripWake("Member what time is it?", true)).toBe("What time is it?");
+    expect(stripWake("Member, what time is it?", true)).toBe("What time is it?");
+    // Ember's own possessive isn't the name said: "Ember's own…" never becomes "'s own…".
+    expect(stripWake("Ember's own next sentence.", true)).toBe("Ember's own next sentence.");
     expect(stripWake("Embra.", true)).toBe("");
   });
 });

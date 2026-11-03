@@ -409,8 +409,9 @@ routine”; a reminder is cancelled only by words such as “cancel the reminder
 before a task makes that task ask before every step. Home lists them with
 **Delete**, and signing out deletes them all, also while your organisation has routines turned off.
 “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
-Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
-over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
+Ember is speaking, “Hey Ember” alone makes it stop talking and listen (on Linux this needs `parec`; on Windows and
+macOS it works without, though “Ember” alone doesn't interrupt there); a short request said all over its voice isn't
+sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no
 audio leaves it, and only the text of your request is sent to Copilot. Ember ignores “Hey Ember” and
 “Ember, stop” when they come out of your speakers (needs `parec`, in `pulseaudio-utils`); it follows the default sound
