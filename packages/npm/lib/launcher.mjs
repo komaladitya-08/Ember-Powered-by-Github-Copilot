@@ -177,8 +177,22 @@ export async function ensureInstalled(o) {
 
   const parent = p.dirname(dir);
   fs.mkdirSync(parent, { recursive: true });
-  const work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
+  // Serialise installers before downloading. Never steal a lock: its owner may still be publishing or rolling back.
+  const lock = p.join(parent, `.${o.version}-install-lock`);
   try {
+    fs.mkdirSync(lock);
+  } catch (err) {
+    if (err.code === "EEXIST") throw new Error(`another installer may be running; retry later (lock: ${lock}). If an installer was interrupted, see packages/npm/README.md for recovery; remove the lock only when no installer is running`, { cause: err });
+    throw err;
+  }
+  let work;
+  let preserveWork = false;
+  try {
+    // A first install may have completed between our initial cache check and acquiring the lock.
+    if (!o.force && fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe))) {
+      return { dir, exe: at(target.exe), app: at(target.app), fresh: false };
+    }
+    work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
     say(`getting Ember ${o.version} for ${platform}-${o.arch ?? process.arch} (${target.asset}) from GitHub Releases`);
     const sumsText = await (await get(downloadUrl(o.version, "SHA256SUMS", env))).text();
     const want = parseSha256Sums(sumsText).get(target.asset);
@@ -206,17 +220,34 @@ export async function ensureInstalled(o) {
     }
     fs.writeFileSync(p.join(stage, MARKER), `${target.asset} ${got}\n`);
 
-    fs.rmSync(dir, { recursive: true, force: true });
+    // Keep the previous installation until publication succeeds. In particular, Windows open handles can make
+    // either rename fail. The version lock prevents another installer from publishing into the rollback gap.
+    const previous = p.join(work, "previous");
+    const hadPrevious = fs.existsSync(dir);
+    if (hadPrevious) fs.renameSync(dir, previous);
     try {
       fs.renameSync(stage, dir);
     } catch (err) {
-      // Another launcher finished first: use its copy.
-      if (!fs.existsSync(p.join(dir, MARKER))) throw err;
+      if (hadPrevious) {
+        try {
+          // Never remove an unexpected destination (for example one created by an older, unlocked launcher).
+          if (fs.existsSync(dir)) throw new Error("the cache destination is occupied", { cause: err });
+          fs.renameSync(previous, dir);
+        } catch (rollbackError) {
+          preserveWork = true;
+          throw new AggregateError([err, rollbackError], `installation failed and the previous installation could not be restored; it is saved at ${previous}, and the checked replacement at ${stage}`, { cause: rollbackError });
+        }
+      }
+      throw err;
     }
     say(`installed Ember ${o.version} in ${dir}`);
     return { dir, exe: at(target.exe), app: at(target.app), fresh: true };
   } finally {
-    fs.rmSync(work, { recursive: true, force: true });
+    try {
+      if (work && !preserveWork) fs.rmSync(work, { recursive: true, force: true });
+    } finally {
+      fs.rmdirSync(lock);
+    }
   }
 }
 

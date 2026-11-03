@@ -54,6 +54,19 @@ Environment: `EMBER_NPM_CACHE` moves the cache folder, `EMBER_NPM_DOWNLOAD_BASE`
 `https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases/download`, `EMBER_NPM_QUIET=1` hides the
 progress messages.
 
+## Failed or interrupted installs
+
+A reinstall keeps the previous copy until the checked replacement is published. If publication fails, the launcher
+restores the previous copy so a normal launch can still work offline. If restoration also fails, the error gives the
+paths to the saved previous copy and checked replacement; neither is deleted. Close Ember before manually restoring
+one of those folders to the path printed by `ember --npm-where`, and do not overwrite another completed install.
+
+Only one installer per version runs at a time. A concurrent install reports that another installer may be running;
+retry after it finishes. A normal launch can still use a complete cached copy while a reinstall downloads. If an
+installer is killed, its `.<version>-install-lock` folder may remain beside the version folder. Remove that lock only
+after checking that no installer is running. An interruption between publication renames may also leave the previous
+copy in `.<version>-<random>/previous`; restore it before retrying offline. Crash recovery is not automatic.
+
 ## Uninstall
 
 ```bash
