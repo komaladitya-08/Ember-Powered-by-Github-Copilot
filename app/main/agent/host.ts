@@ -47,6 +47,7 @@ import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
+import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, statusQuestion, statusReply } from "./status";
 
@@ -168,6 +169,11 @@ export interface HostOptions {
   extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number; conversationEnded?(): void };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
+  /**
+   * Which tasks the owner asked for in a verified voice (voice-answer.ts TaskVoiceTrust): a task started in a turn whose
+   * request Voice Match verified is granted it, and a task changed by a request it didn't verify loses it. Absent: none.
+   */
+  voiceTrust?: Pick<TaskVoiceTrust, "grant" | "end">;
   /**
    * "Work without asking" by voice (autonomy-intent.ts): its state, turning it on or off, and opening its switch (with
    * its card) in Settings. Absent: the words go to the conversation like any others.
@@ -612,6 +618,8 @@ interface UserRequest {
   targetId?: TargetId;
   /** Heard where Ember can't tell the user from its speakers: never the user's own words for commands (OWNER V1). */
   voiceUnchecked?: boolean;
+  /** Spoken and verified by Voice Match as the owner's, at this time (a task it starts holds voice trust from then). */
+  verifiedAt?: number;
 }
 /** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
 const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
@@ -1502,6 +1510,9 @@ export class AgentHost {
             ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
           });
           if (binding) this.taskBindings.set(t.id, binding);
+          // Asked for in the owner's verified voice: its own questions may take a short spoken yes (owner decision of
+          // 2026-11-03; voice-answer.ts TaskVoiceTrust).
+          if (r?.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
           this.announced.add(t.id);
           return `Task ${t.id} started${where ? ` ${where}` : ""}: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
@@ -1540,7 +1551,12 @@ export class AgentHost {
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
           // (A change of plan is the user's own words: a routine run this turn doesn't steer a task.)
-          steer: (id, text) => { const said = this.userWordsOf(this.turn, { routine: false }); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords); },
+          steer: (id, text) => {
+            const said = this.userWordsOf(this.turn, { routine: false });
+            // Changed by a request Voice Match didn't verify (typed, or another voice's): its short yeses are no longer trusted.
+            if (this.turn?.verifiedAt === undefined) this.o.voiceTrust?.end(id, "steered");
+            return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords);
+          },
         } : undefined,
       });
       await this.conductor.start();
@@ -2180,7 +2196,7 @@ export class AgentHost {
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
-      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}),
+      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
     };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));

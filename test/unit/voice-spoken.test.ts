@@ -4,6 +4,28 @@ import { describe, expect, it } from "vitest";
 import { cancelWords, endsWithQuestion, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 import { heardCutInWake } from "../../app/voice/engine";
 
+describe("spokenText says keys, menu paths and symbols as people say them", () => {
+  it.each([
+    ["Press Ctrl+Shift+T to reopen the tab.", "Press Control Shift T to reopen the tab."],
+    ["Use `Win+Shift+S` for a screenshot.", "Use Windows key Shift S for a screenshot."],
+    ["Cmd + Space opens Spotlight.", "Command Space opens Spotlight."],
+    ["Ctrl+Alt+Del, then Esc.", "Control Alt Delete, then Esc."],
+    ["Open Settings › Privacy › Camera.", "Open Settings, then Privacy, then Camera."],
+    ["Drag it from Documents → Archive.", "Drag it from Documents to Archive."],
+    ["Tom & Jerry", "Tom and Jerry"],
+    // Not chords, not paths: left as they are.
+    ["C++ and a+b are fine, and so is 3 + 4.", "C++ and a+b are fine, and so is 3 + 4."],
+    ["Rows 1 & 2, and a && b.", "Rows 1 & 2, and a && b."],
+  ])("%j is said %j", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it("reads a chord only where it stands on its own, never inside a word, an address or a path (review of #143)", () => {
+    for (const text of ["Write to ops.alt+s@example.com today.", "Open build/ctrl+c.log now.", "The file is shift+x.txt."]) {
+      expect(spokenText(text), text).not.toMatch(/\b(?:alt s|Control c|shift x)\b/);
+    }
+    expect(spokenText("Then press Ctrl+S.")).toBe("Then press Control S.");
+  });
+});
+
 describe("spokenText", () => {
   it.each([
     ["Run this:\n\n```bash\nsudo dnf install foo\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],

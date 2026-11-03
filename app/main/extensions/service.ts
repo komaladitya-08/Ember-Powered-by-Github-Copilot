@@ -636,7 +636,7 @@ export class ExtensionsService implements ExtensionsApi {
     const yes = answer === "once" && after !== null && after.verdict !== "deny";
     // A spoken answer says so, and whether Voice Match verified it (confirm.ts answerVoice).
     const how = confirmer.howAnswered?.(question);
-    const channel = how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {};
+    const channel = how?.via === "voice" ? { via: "voice", verified: how.verified === true, ...(how.trust ? { trust: how.trust } : {}) } : {};
     try { this.audit({ phase: "answer", ...base, answer: yes ? "allow" : answer === null ? "none" : answer === "once" ? "stale" : "deny", ...channel }); } catch { return deny("Ember couldn't record this step, so it didn't take it."); }
     if (yes) return { permissionDecision: "allow" };
     if (answer === "once" && after) return deny(after.reason);

@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, SettingsSchema } from "../../app/main/settings";
-import { applyAdminPolicy, parseAdminPolicy } from "../../app/main/admin";
+import { applyAdminPolicy, managedKeys, parseAdminPolicy } from "../../app/main/admin";
 import { speakChoice, speakSettings, speaksAloud } from "../../app/shared/speech";
 
 describe("speaking out loud", () => {
@@ -41,5 +41,17 @@ describe("speaking out loud", () => {
     // The user's own choice is kept for when the organisation allows speaking again.
     expect(user.speakResults).toBe(true);
     expect(applyAdminPolicy(user, parseAdminPolicy("{}", "/etc/ember/policy.json").policy).speakResults).toBe(true);
+  });
+
+  it("keeps the natural voice (and its 350 MB download) off, and its switch managed, where voice or speech is off or in a lockdown (review of #143)", () => {
+    const user = { ...DEFAULT_SETTINGS, voice: { ...DEFAULT_SETTINGS.voice, natural: true } };
+    for (const json of [JSON.stringify({ features: { voice: false } }), JSON.stringify({ features: { speak: false } }), "{ broken"]) {
+      const admin = parseAdminPolicy(json, "/etc/ember/policy.json").policy;
+      expect(applyAdminPolicy(user, admin).voice.natural, json).toBe(false);
+      expect(managedKeys(admin), json).toContain("naturalVoice");
+    }
+    const open = parseAdminPolicy("{}", "/etc/ember/policy.json").policy;
+    expect(applyAdminPolicy(user, open).voice.natural).toBe(true);
+    expect(managedKeys(open)).not.toContain("naturalVoice");
   });
 });

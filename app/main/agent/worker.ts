@@ -1179,10 +1179,13 @@ export class Worker {
     this.activity({ type: "announce", text: words });
   }
 
-  /** How question `q` was answered, for its audit entry: a spoken answer says so, and whether Voice Match verified it. */
-  private channelOf(q: Question): { via?: "voice"; verified?: boolean } {
+  /**
+   * How question `q` was answered, for its audit entry: a spoken answer says so, whether Voice Match verified it, and
+   * `trust: "task-voice"` for a short yes taken on this task's voice trust.
+   */
+  private channelOf(q: Question): { via?: "voice"; verified?: boolean; trust?: "task-voice" } {
     const how = this.d.confirmer.howAnswered?.(q);
-    return how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {};
+    return how?.via === "voice" ? { via: "voice", verified: how.verified === true, ...(how.trust ? { trust: how.trust } : {}) } : {};
   }
 
   /** Tells the task's activity (its card); a listener's fault never stops the task. */

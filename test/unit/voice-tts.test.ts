@@ -5,8 +5,48 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { SpeechStream, speechChunks } from "../../app/voice/tts";
+import { REST_IN_BUBBLE, SPOKEN_MAX, SpeechStream, speechChunks } from "../../app/voice/tts";
 import { Player, type PlayerAudio, type PlayerSource, playerAudio } from "../../app/renderer/mic/player";
+
+describe("SpeechStream with a long answer", () => {
+  const sentence = (i: number) => `This is sentence number ${i} of a long answer that goes on.`;
+  it("says no more than SPOKEN_MAX of it, ending at a sentence, then that the rest is in the bubble, once", () => {
+    const s = new SpeechStream();
+    const said = Array.from({ length: 30 }, (_, i) => s.push(`${sentence(i)} `)).flat();
+    const rest = s.finish(Array.from({ length: 30 }, (_, i) => sentence(i)).join(" "));
+    const all = [...said, ...rest];
+    expect(all.at(-1)!.endsWith(REST_IN_BUBBLE)).toBe(true);
+    expect(all.filter(x => x.includes(REST_IN_BUBBLE))).toHaveLength(1);
+    expect(all.join(" ").length).toBeLessThanOrEqual(SPOKEN_MAX + REST_IN_BUBBLE.length + 2);
+    expect(all.join(" ")).toContain(sentence(0));
+  });
+
+  it("cuts an answer given whole at its last sentence that fits", () => {
+    const text = Array.from({ length: 30 }, (_, i) => sentence(i)).join(" ");
+    const [said] = new SpeechStream().finish(text);
+    expect(said).toMatch(/goes on\. The rest is in the bubble\.$/);
+    expect(said.length).toBeLessThanOrEqual(SPOKEN_MAX + REST_IN_BUBBLE.length + 1);
+  });
+
+  it("still says the answer's closing question past the cap, as the follow-up window waits for its reply (review of #143)", () => {
+    const body = Array.from({ length: 30 }, (_, i) => sentence(i)).join(" ");
+    const s = new SpeechStream();
+    const said = [...s.push(`${body} `), ...s.push("Which of them shall I open? ")];
+    const all = [...said, ...s.finish(`${body} Which of them shall I open?`)];
+    expect(all.at(-1)).toBe("Which of them shall I open?");
+    expect(all.filter(x => x.includes(REST_IN_BUBBLE))).toHaveLength(1);
+    // Given whole, too; and an answer that ends without a question says only the note at the end.
+    expect(new SpeechStream().finish(`${body} Shall I go on?`).at(-1)).toBe("Shall I go on?");
+    expect(new SpeechStream().finish(`${body} Is that it? That's all.`).at(-1)).toMatch(/The rest is in the bubble\.$/);
+  });
+
+  it("says a short answer whole, and starts afresh for the next answer", () => {
+    const s = new SpeechStream(60);
+    expect(s.finish("Night Light is on.")).toEqual(["Night Light is on."]);
+    expect(s.finish("x ".repeat(20) + "and that is a very long first sentence without an end")).toEqual([expect.stringMatching(/…\s+The rest is in the bubble\.$/)]);
+    expect(s.finish("Done.")).toEqual(["Done."]);
+  });
+});
 import { bestVoice } from "../../app/renderer/mic/voices";
 
 describe("speechChunks", () => {

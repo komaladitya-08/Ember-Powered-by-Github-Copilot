@@ -113,7 +113,7 @@ export const SettingsSchema = z.object({
     /** Voice Match: answer only the owner's voice (its voiceprint is kept apart, in voiceprint.json: voiceprint-store.ts). */
     match: z.boolean().default(false),
     /**
-     * Ember's natural voice (Kokoro, 320 MB, downloaded when this is turned on): Windows and macOS only, where speech
+     * Ember's natural voice (Kokoro, 350 MB, downloaded when this is turned on): Windows and macOS only, where speech
      * runs natively, and only where this computer makes it fast enough (VoiceService, tts-process.ts).
      */
     natural: z.boolean().default(false),

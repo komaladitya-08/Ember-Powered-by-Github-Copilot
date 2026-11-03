@@ -839,7 +839,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     };
     const answer = await ctx.confirmer.ask(question, ctx.signal);
     const how = ctx.confirmer.howAnswered?.(question);
-    audit({ phase: "answered", answer: ctx.isOver() ? "stopped" : answer ?? "expired", q, ...(how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {}) });
+    audit({ phase: "answered", answer: ctx.isOver() ? "stopped" : answer ?? "expired", q, ...(how?.via === "voice" ? { via: "voice", verified: how.verified === true, ...(how.trust ? { trust: how.trust } : {}) } : {}) });
     if (ctx.isOver()) return "stopped";
     if (answer === "once") return "once";
     ctx.onDeclined?.();

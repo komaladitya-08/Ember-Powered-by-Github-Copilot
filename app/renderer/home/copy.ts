@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, SpeechModelId, StatusPlatform } from "../../shared/ipc";
+import type { ActivityEntry, NaturalVoiceStatus, SpeechModelId, StatusPlatform } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -778,3 +778,26 @@ export const GLASS_CHOICES: readonly { value: "clear" | "regular" | "solid"; lab
 ];
 export const GLASS_LABEL = "How much shows through";
 export const GLASS_HINT = "How much of your screen shows through Ember's bubble, task cards, handle and ask box. Clear is an even, lighter tint, with Ember's words kept easy to read; Solid shows nothing through. Calm mode, and your desktop's settings to reduce transparency or increase contrast, make it solid.";
+
+/** What the natural voice's row says before it is turned on (and while it is off). */
+export const NATURAL_HINT = "Kokoro: downloads 350 MB once, and speaks only where this computer is fast enough for it (otherwise Ember's usual voice does).";
+
+/**
+ * The natural voice's row under its switch (Voice): what became of turning it on, so the switch never stays on with
+ * nothing happening and nothing said. `retry`: the download failed, and its Try again button shows.
+ */
+export function naturalVoiceView(s: NaturalVoiceStatus | undefined): { text: string; retry: boolean; busy: boolean } {
+  switch (s?.state) {
+    case "later": return { text: "On: Ember switches to it the next time it speaks, if this computer is fast enough for it.", retry: false, busy: false };
+    case "checking": return { text: "Checking whether this computer is fast enough for the natural voice…", retry: false, busy: true };
+    case "needs-voice": return { text: "Ember's own voice needs to be downloaded first (Download the speech models, above).", retry: false, busy: false };
+    case "downloading": return { text: `Downloading the natural voice… ${Math.max(0, Math.min(99, Math.round(s.percent)))}%`, retry: false, busy: true };
+    case "ready": return { text: "Ready: Ember will use it from its next reply.", retry: false, busy: false };
+    case "on": return { text: "On: Ember speaks in the natural voice.", retry: false, busy: false };
+    case "too-slow": return { text: "This computer is too slow for the natural voice, so Ember keeps its usual voice.", retry: false, busy: false };
+    case "wont-load": return { text: "The natural voice wouldn't load on this computer, so Ember keeps its usual voice.", retry: false, busy: false };
+    case "needs-native": return { text: "Needs Ember's faster speech, which didn't load on this computer, so Ember keeps its usual voice.", retry: false, busy: false };
+    case "failed": return { text: `Couldn't download the natural voice. ${s.detail}`.trim(), retry: true, busy: false };
+    default: return { text: NATURAL_HINT, retry: false, busy: false };
+  }
+}

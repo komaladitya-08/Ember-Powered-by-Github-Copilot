@@ -37,6 +37,8 @@ export const IPC = {
   voiceMatchEnrol: "voice:match-enrol",
   voiceMatchCancel: "voice:match-cancel",
   voiceMatchForget: "voice:match-forget",
+  /** The natural voice's download failed: try again (Home's "Try again" under its switch). */
+  voiceNaturalRetry: "voice:natural-retry",
   askClose: "agent:ask-close",
   activity: "ember:activity",
   /** "Check again": look for a sign-in once more and reconnect. */
@@ -127,7 +129,21 @@ export interface VoiceStatus {
   speechMissing?: boolean;
   /** Voice Match: whether a voiceprint is kept (`enrolled`) and in use (`on`), and enrolment's progress while it runs. */
   match?: VoiceMatchStatus;
+  /** The natural voice (Kokoro, Windows and macOS): what became of turning it on, shown under its switch. */
+  natural?: NaturalVoiceStatus;
 }
+
+/**
+ * The natural voice as Home shows it (VoiceService.naturalStatus): `off` (not wanted); `later` (on since Ember started:
+ * decided the next time it speaks); `checking` (Ember's voice is loading to time this computer); `needs-voice` (Ember's own voice isn't downloaded yet, so nothing can be timed);
+ * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now);
+ * `too-slow`; `failed` (the download failed: Try again); `wont-load` (downloaded, but it wouldn't load); `needs-native`
+ * (Ember's faster speech didn't load on this computer, and Kokoro needs it).
+ */
+export type NaturalVoiceStatus =
+  | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
+  | { state: "downloading"; percent: number }
+  | { state: "failed"; detail: string };
 
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */
 export type SpeechModelId = "kws" | "vad" | "asr" | "tts" | "speaker";
@@ -242,6 +258,8 @@ export interface EmberHomeApi {
   voiceStatus(): Promise<VoiceStatus>;
   onVoiceStatus(fn: (s: VoiceStatus) => void): () => void;
   downloadVoice(): Promise<void>;
+  /** Fetches the natural voice again after its download failed. */
+  retryNaturalVoice(): Promise<void>;
   /** Voice Match: starts teaching Ember the owner's voice (false: Ember isn't listening, so it can't), or stops; forgets the voiceprint. */
   enrolVoice(): Promise<boolean>;
   cancelEnrolVoice(): Promise<void>;

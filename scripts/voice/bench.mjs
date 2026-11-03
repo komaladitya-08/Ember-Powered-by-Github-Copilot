@@ -3,7 +3,7 @@
 // the Piper voice on 1 and 2 threads, and Kokoro (the natural voice) on 2, 3 and 4 threads with each provider this
 // computer can try. Run it as the computer usually is (other apps open): a real-time factor (rtf) below 1 keeps up;
 // Kokoro speaks in Ember only at 0.5 or less. Prints a table, and the same as JSON for pasting into an issue.
-// Needs the models from `node scripts/voice/prepare.mjs`; --kokoro also fetches Kokoro (320 MB, verified) into the
+// Needs the models from `node scripts/voice/prepare.mjs`; --kokoro also fetches Kokoro (350 MB, verified) into the
 // same folder. On Linux, EMBER_SHERPA_CAPI=<folder from fetch-capi.mjs> times the C API as the native build.
 //   usage: node scripts/voice/bench.mjs [--kokoro] [models dir]   (default: .cache/voice/models)
 import { build } from "esbuild";
@@ -112,7 +112,7 @@ if (fs.existsSync(paths.natural)) {
     for (const n of [2, 3, 4]) speak(`natural voice (Kokoro ${path.basename(paths.natural)})`, "native", kokoro, provider, n, 1);
   }
 } else {
-  console.log("\n  (Kokoro not timed: run with --kokoro to fetch it, 320 MB)");
+  console.log("\n  (Kokoro not timed: run with --kokoro to fetch it, 350 MB)");
 }
 console.log(`\n${JSON.stringify({ cpu: os.cpus()[0]?.model, threads: os.availableParallelism(), platform: `${process.platform}-${process.arch}`, rows })}`);
 fs.rmSync(bundle, { force: true });
