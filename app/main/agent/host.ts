@@ -42,6 +42,7 @@ import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { copilotOneShot } from "./one-shot";
+import { PROJECT_SYSTEM } from "./project";
 import type { OneShot } from "../memory/learn";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
@@ -671,6 +672,8 @@ const agrees = (reply: string, asked: string): boolean => {
 };
 
 export class AgentHost {
+  private projectModel: ReturnType<typeof copilotOneShot> | null = null;
+  private projectRun: AbortController | null = null;
   private client: CopilotClient | null = null;
   /** The connected runtime, for the extensions' marketplaces (null until Copilot is ready). */
   get copilotClient(): CopilotClient | null {
@@ -1600,6 +1603,10 @@ export class AgentHost {
       this.conversationService = service;
       if (gen !== this.gen) return;
 
+      this.projectModel = (system, prompt, signal) => copilotOneShot({
+        client, model: this.status.conductorModel, provider: provider?.config,
+        workDir: path.join(this.o.userData, "copilot", "empty-workdir"), log: this.o.log.child("project"), purpose: "project",
+      })(system, prompt, signal);
       const where = provider?.kind === "user" ? serviceHost(provider.config.baseUrl) : null;
       const signedIn = login ? `Signed in as ${login}.` : where ? `Connected to ${where}.` : "Connected.";
       this.setStatus({
@@ -1751,7 +1758,7 @@ export class AgentHost {
 
   private async sweepTaskSessions(client: CopilotClient): Promise<void> {
     try {
-      const old = (await client.listSessions()).filter(m => m.sessionId.startsWith("ember-task-"));
+      const old = (await client.listSessions()).filter(m => /^ember-(?:task|project)-/.test(m.sessionId));
       await Promise.all(old.map(m => client.deleteSession(m.sessionId).catch(err => this.o.log.warn("agent.sweep_failed", { sessionId: m.sessionId, err }))));
       if (old.length) this.o.log.info("agent.swept_task_sessions", { count: old.length });
     } catch (err) {
@@ -2291,6 +2298,16 @@ export class AgentHost {
     return true;
   }
 
+  async runProject(prompt: string, run: AbortController): Promise<string | null> {
+    if (run.signal.aborted || this.projectRun || this.status.phase !== "ready" || !this.projectModel || this.o.screenLocked?.()) return null;
+    this.projectRun = run;
+    try {
+      return await this.projectModel(PROJECT_SYSTEM, prompt, run.signal);
+    } finally {
+      if (this.projectRun === run) this.projectRun = null;
+    }
+  }
+
   /**
    * The conversation's own Stop (its bubble's, while Copilot keeps it waiting: presenter STOP_ANSWER): the turn under
    * way ends, and so does a request still waiting to be sent. Tasks and their questions go on (the kill switch stops
@@ -2321,6 +2338,7 @@ export class AgentHost {
    * message right after: nothing of the conversation's or a stopped task's replaces it.
    */
   async abortAll(): Promise<void> {
+    this.projectRun?.abort();
     this.stops++;
     // Requests still waiting for their turn are dropped with it (the runtime runs none of them), and those held for a
     // new model service.
@@ -2482,6 +2500,9 @@ export class AgentHost {
 
   /** `forget`: a clean stop (quit) deletes the conversation; a restart keeps it to resume. */
   private async doStop(forget = false): Promise<void> {
+    this.projectRun?.abort();
+    this.projectRun = null;
+    this.projectModel = null;
     this.setConversationContext(undefined);
     if (this.health) { clearInterval(this.health); this.health = null; }
     // (A reconnect put off until the tasks were done: this is it, or something newer.)

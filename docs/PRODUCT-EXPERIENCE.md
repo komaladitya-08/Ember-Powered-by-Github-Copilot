@@ -37,6 +37,10 @@ The checkout uses the pinned TypeScript SDK and bundled runtime. GitHub's curren
 | Project workspace | Existing desktop and project-session design notes. | Evaluate skills, agents, worktrees, local edits, shell, attachments, diffs, checkpoints, persistence and parallel work inside a selected project. Show the work plan and approval requests in the same task UI. Local project commands, network and publishing each need defined authority and recovery. |
 | Cloud and shared sessions | SDK support depends on release, account and policy. | Treat cloud execution or a shared session as a separate choice with a named destination, a visible data summary and explicit retention. |
 
+## Project work
+
+In Home under Copilot, **Project work** can review selected source files, plan changes, or draft a patch for inspection. It shows the selected filenames before sending. The connected model receives the request and the selected UTF-8 text, up to six files and 64 KiB combined. Ember blocks recognised credentials and keeps a project request separate from the conversation, with no tools or workspace access. The answer is available in Home for inspection and copying. The temporary Copilot session is deleted after the request and cleaned up on the next connection if a crash interrupted it. Applying patches, running commands and resuming project sessions are separate capabilities.
+
 ## Release evidence
 
 For each PR, keep the regression, the affected native smoke run and the exact GitHub head together. For speech quality, report wake misses and false wakes, endpoint truncation, request-to-first-audio, quiet-after-Stop, and correction harm separately. The existing targets are wake-to-earcon under 300 ms, first action p50 under 3 s and p95 under 6 s, fewer than 5% missed wakes, fewer than 0.5 false wakes an hour, and Stop within 300 ms.

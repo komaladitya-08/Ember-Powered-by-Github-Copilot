@@ -68,7 +68,7 @@
           <h3 id="welcome-h">Before Ember starts</h3>
           <ul class="terms">
             <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already. <span id="permissions-note" hidden></span></li>
-            <li data-icon="send"><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
+            <li data-icon="send"><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. In Project work, choosing Send selected files shares your request and the contents of those files with the connected model. Nothing is sent before you ask.</li>
             <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span data-key-held="stop"><span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</span><span data-key-taken="stop" hidden>Stop everything, in Ember's handle menu and in settings, stops everything at once.</span></li>
             <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (<span id="retention">kept 30 days</span>), in <code id="data-dir">~/.config/ember</code>. The rest of your conversation with Ember is kept only while it runs. It sends no usage statistics.</li>
             <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” in settings or choose Listen once for one request. Listen once processes audio on this computer, sends the request as text, and closes temporary capture before Ember answers. If you teach Ember your voice, it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct when it mishears you, on this computer until you forget them.</li>
@@ -214,6 +214,24 @@
         <p class="usage" id="usage"></p>
         <p class="usage" id="conversation-context"></p>
       </div>
+      <h3 class="sub" id="project-h">Project work</h3>
+      <form class="group" id="project-form" aria-labelledby="project-h">
+        <p class="hint" id="project-privacy">Choose up to six source or text files. When you send, Ember shares those files and your request with the connected model. The answer stays here for you to review.</p>
+        <div class="agent-actions">
+          <button type="button" id="project-pick" class="btn quiet" aria-describedby="project-privacy" disabled>Choose files…</button>
+          <button type="button" id="project-clear" class="btn quiet" disabled>Clear</button>
+        </div>
+        <ul id="project-files" aria-label="Selected project files" hidden></ul>
+        <label class="choice"><span>What should Ember do?</span><select id="project-mode"><option value="review">Review files</option><option value="plan">Plan a change</option><option value="patch">Draft a patch</option></select></label>
+        <label for="project-question">Project request</label>
+        <textarea id="project-question" rows="3" maxlength="4000" required aria-describedby="project-privacy"></textarea>
+        <div class="agent-actions">
+          <button type="submit" id="project-send" class="btn" disabled>Send selected files</button>
+          <button type="button" id="project-cancel" class="btn quiet" hidden>Cancel</button>
+        </div>
+        <p class="hint" id="project-status" role="status">Connect a model to work with project files.</p>
+        <pre id="project-answer" class="project-answer" aria-label="Project answer" tabindex="0" hidden></pre>
+      </form>
       <h3 class="sub" id="byok-h">Model provider</h3>
       <div class="group byok" id="byok" role="group" aria-labelledby="byok-h">
         <label class="switch-row"><input type="checkbox" id="byok-on" role="switch" aria-describedby="byok-hint"><span>Use my own model provider</span></label>

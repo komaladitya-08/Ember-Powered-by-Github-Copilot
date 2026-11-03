@@ -136,7 +136,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     const userData = path.join(dir, "userData");
     fs.mkdirSync(userData, { recursive: true });
     fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-      version: 1, character: "cinder", size: 60, speak: false, wakeWord: false, onboarded: true, consent: { version: 3, at: "2026-10-15T00:00:00.000Z" },
+      version: 1, character: "cinder", size: 60, speak: false, wakeWord: false, onboarded: true, consent: { version: 4, at: "2026-10-15T00:00:00.000Z" },
     }));
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
