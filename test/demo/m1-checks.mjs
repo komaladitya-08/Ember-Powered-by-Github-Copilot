@@ -16,7 +16,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const xdo = (...a) => execFileSync("xdotool", a, { env: process.env }).toString();
 const userData = mkdtempSync(path.join(tmpdir(), "ember-check-"));
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 60, speak: false, wakeWord: true, onboarded: true, consent: { version: 2, at: "2026-10-15T00:00:00.000Z" } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 60, speak: false, wakeWord: true, onboarded: true, consent: { version: 3, at: "2026-10-15T00:00:00.000Z" } }));
 
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)("electron"),

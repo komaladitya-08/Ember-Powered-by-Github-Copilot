@@ -65,7 +65,7 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav">> & { onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
@@ -94,7 +94,7 @@ afterEach(() => { vi.useRealTimers(); for (const s of services) s.stop(); fs.rmS
 describe("VoiceService", () => {
   it("requires both a running capture and the recogniser before Listen once can arm", async () => {
     const { v } = service();
-    expect(v.listenOnce()).toBe(false);
+    expect(electron.procs).toHaveLength(0);
     await v.setWanted(true);
     const [proc] = electron.procs;
     captured();
@@ -109,6 +109,67 @@ describe("VoiceService", () => {
     expect(posted(proc, "listen-once")).toEqual([{ type: "listen-once", generation: expect.any(Number), from: expect.any(Number), ms: 8000 }]);
     expect(v.listenOnceStatus.phase).toBe("starting");
   });
+
+  it("opens temporary capture after recogniser readiness and closes it before dispatching one accepted request", async () => {
+    let current: (() => boolean) | undefined;
+    const onEvent = vi.fn((event: VoiceEvent) => { if (event.type === "utterance") current = v.listenOnceStillCurrent(); });
+    const { v } = service(true, { onEvent });
+    expect(v.listenOnceStatus.phase).toBe("ready");
+    expect(electron.windows).toHaveLength(0);
+    expect(v.listenOnce()).toBe(true);
+    await flush();
+    const [proc] = electron.procs;
+    const [mic] = electron.windows;
+    expect(posted(proc, "init")[0]).toMatchObject({ manualOnly: true, monitor: false });
+    expect(mic.webContents.postMessage).not.toHaveBeenCalled();
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    expect(mic.webContents.postMessage).toHaveBeenCalledOnce();
+    expect(posted(proc, "listen-once")).toHaveLength(0);
+    captured();
+    const generation = (posted(proc, "listen-once")[0] as { type: string; generation: number }).generation;
+    proc.emit("message", { type: "wake", keyword: "hey_ember", generation });
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(v.enrol()).toBe(false);
+    proc.emit("message", { type: "listening", window: "manual", on: false, reason: "done", generation });
+    expect(mic.destroyed).toBe(true);
+    expect(proc.kill).not.toHaveBeenCalled();
+    onEvent.mockClear();
+    const request = { type: "utterance", window: "manual", text: "One request.", ms: 0, generation };
+    proc.emit("message", request);
+    proc.emit("message", request);
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(mic.destroyed).toBe(true);
+    expect(proc.kill).toHaveBeenCalled();
+    expect(v.micState).toBe("off");
+    expect(current?.()).toBe(true);
+    v.cancelListening();
+    expect(current?.()).toBe(false);
+    v.followUp();
+    expect(posted(proc, "follow-up")).toHaveLength(0);
+  });
+
+  it.each(["cancel", "mute", "lock", "permission", "device", "wake setting", "startup timeout"] as const)(
+    "retires temporary capture without reopening it on %s", async reason => {
+      const { v } = service();
+      vi.useFakeTimers();
+      expect(v.listenOnce()).toBe(true);
+      await Promise.resolve();
+      const [proc] = electron.procs;
+      const [mic] = electron.windows;
+      if (reason === "cancel") v.cancelListenOnce();
+      if (reason === "mute") v.setMuted(true);
+      if (reason === "lock") v.setLocked(true);
+      if (reason === "permission" || reason === "device") electron.ipcMain.emit(VOICE.status, { sender: mic.webContents }, { state: reason === "permission" ? "error" : "lost", message: "NotAllowedError" });
+      if (reason === "wake setting") await v.setWanted(false);
+      if (reason === "startup timeout") vi.advanceTimersByTime(30_000);
+      proc.emit("message", { type: "ready", loadMs: 20 });
+      vi.advanceTimersByTime(60_000);
+      expect(mic.destroyed).toBe(true);
+      expect(proc.kill).toHaveBeenCalled();
+      expect(electron.procs).toHaveLength(1);
+      expect(posted(proc, "listen-once")).toHaveLength(0);
+    },
+  );
 
   it("keeps a manual request until Voice Match finishes, then accepts it only once", async () => {
     const { v, events } = service();

@@ -25,7 +25,7 @@ type FromMain =
   /** `voiceprint`: the owner's (Voice Match on), base64 (voiceprint.ts). */
   /** `wasm`: run on WebAssembly (a voice process before this one died loading natively; runtime.ts). */
   /** `anchor`, `clips`: what Voice Match learnt since enrolment (adapt.ts): the enrolment's print, and how many samples. */
-  | { type: "init"; generation: number; models: ModelPaths; monitor: boolean; dev: boolean; voiceprint?: string | null; anchor?: string; clips?: number; wasm?: boolean; capiDir?: string }
+  | { type: "init"; generation: number; models: ModelPaths; monitor: boolean; dev: boolean; manualOnly?: boolean; voiceprint?: string | null; anchor?: string; clips?: number; wasm?: boolean; capiDir?: string }
   /** Voice Match turned on (the owner's voiceprint) or off (null); `anchor` and `clips` as init's. */
   | { type: "voiceprint"; generation: number; refresh?: boolean; print: string | null; anchor?: string; clips?: number }
   /** Voice Match keeps learning (adapt.ts): the owner's well-matched requests are offered to main as samples, or not. */
@@ -223,6 +223,7 @@ parent.on("message", e => {
     const port = e.ports[0];
     port.on("message", ev => {
       watchdog.frame();
+      if (m.manualOnly && !engine?.listening) return;
       const data = ev.data as ArrayBuffer | ArrayBufferView | MicFrame;
       // The native backend smoke probe also supplies unlabelled frames, for wake recognition only.
       const packet = "samples" in data ? data : null;

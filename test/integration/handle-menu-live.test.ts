@@ -72,7 +72,7 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
     });
     userData = fs.mkdtempSync(path.join(os.tmpdir(), "ember-menu-"));
     const at = new Date().toISOString();
-    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, consent: { version: 2, at }, wakeWord: false }));
+    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, consent: { version: 3, at }, wakeWord: false }));
     const { _electron } = requireCjs("playwright-core") as { _electron: { launch(o: object): Promise<ElectronApp> } };
     app = await _electron.launch({
       executablePath: requireCjs("electron") as unknown as string,

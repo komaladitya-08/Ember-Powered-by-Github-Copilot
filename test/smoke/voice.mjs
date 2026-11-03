@@ -40,7 +40,7 @@ const otherVoice = path.resolve(process.env.EMBER_VOICE_E2E_OTHER ?? path.join(r
 const verbose = process.env.EMBER_VOICE_E2E_VERBOSE === "1";
 const wantBackend = process.env.EMBER_VOICE_E2E_BACKEND || null;
 if (wantBackend && wantBackend !== "native" && wantBackend !== "wasm") { console.error("EMBER_VOICE_E2E_BACKEND is native or wasm"); process.exit(2); }
-const DEFAULT_SCENARIOS = ["reply", "name", "multi", "stop", "match"];
+const DEFAULT_SCENARIOS = ["reply", "name", "multi", "stop", "match", "listen-once-off"];
 const SCENARIOS = [...DEFAULT_SCENARIOS, "listen-once"];
 const wanted = process.argv.slice(2);
 if (wanted.some(s => !SCENARIOS.includes(s))) { console.error(`usage: node test/smoke/voice.mjs [${SCENARIOS.join(" | ")}]...`); process.exit(2); }
@@ -122,15 +122,15 @@ function inRoom(samples) {
   return out;
 }
 
-function startEmber(name, wav, { debugPort = false } = {}) {
+function startEmber(name, wav, { debugPort = false, wakeWord = true } = {}) {
   const userData = mkdtempSync(path.join(tmpdir(), `ember-voice-${name}-`));
   const micWav = path.join(userData, "mic.wav");
   writeWav(micWav, inRoom(wav));
   // Set up, listening and speaking: wake word on, the microphone agreed to, replies spoken. Speaker rejection off, so
   // the run is the same with or without parec and a sound server (it changes how "Hey Ember" over Ember's voice is taken).
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-    version: 1, onboarded: true, consent: { version: 2, at: new Date().toISOString() },
-    wakeWord: true, speak: true, voice: { consent: true, speakerRejection: false, muted: false, match: false },
+    version: 1, onboarded: true, consent: { version: 3, at: new Date().toISOString() },
+    wakeWord, speak: true, voice: { consent: wakeWord, speakerRejection: false, muted: false, match: false },
   }));
   const env = {
     ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1", EMBER_LOG_LEVEL: "debug",
@@ -265,6 +265,35 @@ async function spoken(inst, from, ms = 30_000) {
 }
 
 const scenarios = {
+  async "listen-once-off"() {
+    reply = "Do not disturb is on. You can turn it off whenever you need to.";
+    const sent = mock.requests.length;
+    const inst = startEmber("listen-once-off", cat(silence(4), clip("followup"), silence(3), clip("wake"), silence(16)), { debugPort: true, wakeWord: false });
+    try {
+      await waitFor(inst, e => e.msg === "window.home.shown", 20_000, "Home to finish loading");
+      await evaluateInSettings(inst, "window.ember.openAsk()");
+      expect(all(inst, "voice.mic").length === 0 && index(inst, "voice.ready") < 0, "the microphone or recogniser started before the click");
+      await evaluateInSettings(inst, `(async () => {
+        for (let i = 0; i < 50; i++) {
+          const button = document.getElementById("listen-once");
+          if (button?.getAttribute("aria-disabled") === "false") { button.click(); return; }
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        throw new Error("Listen once never became available");
+      })()`, "ask");
+      const ready = await waitFor(inst, e => e.msg === "voice.ready", 30_000, "the speech recogniser after the click");
+      const mic = await waitFor(inst, e => e.msg === "voice.mic" && e.context === "running", 15_000, "temporary microphone capture", ready);
+      const heard = await waitFor(inst, e => e.msg === "voice.utterance" && e.window === "manual", 15_000, "the temporary request", mic);
+      expect(await evaluateInSettings(inst, "window.ember.voiceStatus().then(v => v.state === 'off')"), "the microphone did not close after recognition");
+      const answer = await spoken(inst, heard);
+      expect(inst.log[answer.audio].page === "speaker", "the answer played from the microphone window");
+      if (wantBackend) expect(inst.log[ready].backend === wantBackend, "temporary recognition did not use the requested backend");
+      expect(asked(sent, /do not disturb/i), "the model did not receive the temporary request");
+      expect(all(inst, "voice.utterance").length === 1 && index(inst, "voice.wake") < 0 && index(inst, "voice.follow_up") < 0, "the temporary request left listening open");
+      console.log("ok   listen-once-off: no capture before click, one request, microphone closed before reply, no wake or follow-up");
+    } finally { await finish(inst); }
+  },
+
   async "listen-once"() {
     reply = "Do not disturb is on. You can turn it off whenever you need to.";
     const sent = mock.requests.length;
