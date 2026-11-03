@@ -148,6 +148,97 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe("connecting and signing in", () => {
+  it("keeps queued spoken and typed replies with the turn that actually starts (review turn ownership)", async () => {
+    const started: { text: string; spoken: boolean }[] = [];
+    const { host } = makeHost({ onTurnStart: turn => started.push(turn) });
+    await host.start(TOKEN, "stored");
+    await host.ask("First spoken request", null, host.stopEpoch, { spoken: true });
+    sim.holdTurns = true;
+    await host.ask("Second typed request");
+    expect(started).toEqual([{ text: "First spoken request", spoken: true }]);
+    conductorSession().emit("session.idle");
+    conductorSession().nextTurn();
+    expect(started).toEqual([{ text: "First spoken request", spoken: true }, { text: "Second typed request", spoken: false }]);
+    await host.stop();
+  });
+
+  it("never speaks late interrupted chunks, including after a newer turn starts (review turn ownership)", async () => {
+    const deltas: string[] = [], answers: string[] = [];
+    const { host } = makeHost({ onAnswerDelta: text => deltas.push(text), onAnswer: text => answers.push(text) });
+    await host.start(TOKEN, "stored");
+    await host.ask("First request");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "old", deltaContent: "First sentence. " });
+    host.interruptAnswer();
+    session.emit("assistant.message_delta", { messageId: "old", deltaContent: "Late old sentence. " });
+    session.emit("assistant.message", { messageId: "old", content: "The whole old answer." });
+    session.emit("session.idle");
+    await host.ask("New request");
+    session.emit("assistant.message_delta", { messageId: "old", deltaContent: "Even later old sentence. " });
+    session.emit("assistant.message", { messageId: "old", content: "Old answer after the new turn." });
+    session.emit("assistant.message_delta", { messageId: "new", deltaContent: "New sentence. " });
+    session.emit("assistant.message", { messageId: "new", content: "The new answer." });
+    expect(deltas).toEqual(["First sentence. ", "New sentence. "]);
+    expect(answers).toEqual(["The new answer."]);
+    expect(session.aborted).toBe(0);
+    await host.stop();
+  });
+
+  it("drops reply callbacks after Stop and from a disconnected session (review turn ownership)", async () => {
+    const answers: string[] = [];
+    const { host } = makeHost({ onAnswer: text => answers.push(text) });
+    await host.start(TOKEN, "stored");
+    await host.ask("A request");
+    const old = conductorSession();
+    await host.stopAnswer();
+    old.emit("assistant.message", { messageId: "stopped", content: "Late stopped answer." });
+    old.emit("session.idle", { aborted: true });
+    await host.stop();
+    old.emit("assistant.message", { messageId: "disconnected", content: "Late disconnected answer." });
+    expect(answers).toEqual([]);
+  });
+
+  it("keeps same-turn completion after a formal approval while retiring pre-question chunks (review approval pause)", async () => {
+    const deltas: string[] = [], answers: string[] = [], ends: boolean[] = [];
+    const { host } = makeHost({ onAnswerDelta: text => deltas.push(text), onAnswer: text => answers.push(text), onTurnEnd: aborted => ends.push(aborted) });
+    const confirmer = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, onChange: q => { if (q) host.pauseAnswer(); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("Update the event", null, host.stopEpoch, { spoken: true });
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "before-question", deltaContent: "I will update it. " });
+    const permission = confirmer.ask({ title: "May I?", prompt: "Update the event?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    session.emit("assistant.message_delta", { messageId: "before-question", deltaContent: "Late old words. " });
+    expect(confirmer.answerKey("primary")).toBe(true);
+    expect(await permission).toBe("once");
+    session.emit("assistant.message_delta", { messageId: "after-approval", deltaContent: "The event is updated. " });
+    session.emit("assistant.message", { messageId: "after-approval", content: "The event is updated." });
+    session.emit("session.idle");
+    expect(deltas).toEqual(["I will update it. ", "The event is updated. "]);
+    expect(answers).toEqual(["The event is updated."]);
+    expect(ends).toEqual([false]);
+    expect(session.sent).toHaveLength(1);
+    await host.stop();
+  });
+
+  it.each(["wake", "Stop"])("does not revive a paused turn when its old question closes after %s (review approval pause)", async reason => {
+    const answers: string[] = [], ends: boolean[] = [];
+    const { host } = makeHost({ onAnswer: text => answers.push(text), onTurnEnd: aborted => ends.push(aborted) });
+    const confirmer = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, onChange: q => { if (q) host.pauseAnswer(); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("Update the event", null, host.stopEpoch, { spoken: true });
+    const session = conductorSession();
+    const permission = confirmer.ask({ title: "May I?", prompt: "Update the event?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    if (reason === "wake") host.interruptAnswer();
+    else await host.stopAnswer();
+    expect(confirmer.answerKey("primary")).toBe(true);
+    await permission;
+    session.emit("assistant.message", { messageId: "old-post-approval", content: "Old completion must stay quiet." });
+    session.emit("session.idle");
+    expect(answers).toEqual([]);
+    expect(ends).toEqual([true]);
+    await host.stop();
+  });
+
   it("start() resolves to how it ended", async () => {
     const { host } = makeHost();
     expect(await host.start(TOKEN, "stored")).toBe("ready");

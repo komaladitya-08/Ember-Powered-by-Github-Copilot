@@ -132,6 +132,8 @@ describe("remembering the fastest provider", () => {
       fs.writeFileSync(model, "x");
       const key = modelKey(model, ["coreml", "cpu"], 2);
       expect(key).not.toBeNull();
+      expect(modelKey(model, ["cpu"], 2)).not.toBe(key);
+      expect(modelKey(model, ["coreml", "cpu"], 1)).not.toBe(key);
       let t = 0, probes = 0;
       const probe = (p: string) => { probes++; t += p === "coreml" ? 90 : 40; };
       const first = fastestProvider(["coreml", "cpu"], p => p, probe, { now: () => t, cache: { store, key } });

@@ -5,8 +5,24 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { REST_IN_BUBBLE, SPOKEN_MAX, SpeechStream, speechChunks } from "../../app/voice/tts";
+import { NATURAL_RECHECK_MS, REST_IN_BUBBLE, SPOKEN_MAX, SpeechStream, rememberedSlow, slowVerdict, speechChunks } from "../../app/voice/tts";
 import { Player, type PlayerAudio, type PlayerSource, playerAudio } from "../../app/renderer/mic/player";
+
+describe("the natural voice's too-slow verdict", () => {
+  it("holds for a week, then lets Kokoro be timed again", () => {
+    const at = 1_800_000_000_000;
+    const verdict = slowVerdict(0.598, at);
+    expect(rememberedSlow(verdict, at)).toBe(0.598);
+    expect(rememberedSlow(verdict, at + NATURAL_RECHECK_MS - 1)).toBe(0.598);
+    expect(rememberedSlow(verdict, at + NATURAL_RECHECK_MS)).toBeNull();
+  });
+
+  it("ignores missing, damaged, fast and future-dated verdicts", () => {
+    for (const value of [undefined, "cpu", "slow:abc:1", "slow:Infinity:1", `slow:${"9".repeat(400)}:1`, "slow:0.5:1", slowVerdict(0.7, 5000)]) {
+      expect(rememberedSlow(value, 1000), value).toBeNull();
+    }
+  });
+});
 
 describe("SpeechStream with a long answer", () => {
   const sentence = (i: number) => `This is sentence number ${i} of a long answer that goes on.`;

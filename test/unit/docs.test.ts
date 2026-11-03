@@ -746,11 +746,11 @@ describe("CHANGELOG.md", () => {
   const changelog = read("CHANGELOG.md");
   const version = (JSON.parse(read("package.json")) as { version: string }).version;
 
-  it("opens with this version and its date, as the first release of Ember on Linux, Windows and macOS", () => {
+  it("opens with this version and its date, preserving the first release's historical notes", () => {
     const headings = changelog.split("\n").filter(l => l.startsWith("## "));
     expect(headings[0]).toMatch(new RegExp(`^## ${version.replace(/\./g, "\\.")} \\(\\d{4}-\\d{2}-\\d{2}\\)$`));
     expect(changelog).not.toMatch(/^## Unreleased/m);
-    const first = flat(section(changelog, headings[0].slice(3)));
+    const first = flat(section(changelog, "0.1.0 (2026-10-31)"));
     for (const words of ["first release", "Windows", "macOS", "RHEL 8", "Hey Ember", "Cinder", "Commands, WSL and other computers"]) expect(first).toContain(words);
     // A first release has nothing earlier to have changed from.
     expect(first).not.toMatch(/### Changed/);
@@ -767,7 +767,8 @@ describe("CHANGELOG.md", () => {
     // `ember doctor` prints "Ember <v> setup check" (main.ts), the settings window's name for it (review #229).
     expect(read("app/main/main.ts")).toMatch(/`Ember \$\{app\.getVersion\(\)\} setup check\\n/);
     expect(notes).not.toMatch(/check-up/i);
-    expect(notes).toContain(`"Ember ${version} setup check"`);
+    // Historical releases keep the build number they documented, while main prints the running build's version.
+    expect(notes).toMatch(/"Ember \d+\.\d+\.\d+ setup check"/);
     // The commands card's line when the words name a place that looks like a computer (flow.ts).
     expect(read("app/main/commands/flow.ts")).toContain("`It looks like you named another computer (${listOf(places)}), but this runs ${here}.`");
     expect(notes).toContain(`"It looks like you named another computer (prod-db), but this runs on this computer."`);

@@ -183,6 +183,13 @@ describe("hardened sessions with extensions", () => {
     expect(admitted).not.toContain("ghost-tool");
   });
 
+  it("admits agreed dotted tool names with the same names discovery and the runtime use", () => {
+    const extensions = fakeExt({ tools: ["fake-calendar.list"], mcpServers: { fake: { type: "stdio", command: "node", args: [], tools: ["calendar.list"] } } });
+    const c = hardenedSessionConfig({ ...base, tools: [], extensions });
+    expect(c.availableTools).toEqual(["mcp:fake-calendar.list"]);
+    expect(c.mcpServers?.fake.tools).toEqual(["calendar.list"]);
+  });
+
   it("route an extension tool's failures to the gate's failure note, and nothing else's (audit B2)", async () => {
     const notes: string[] = [];
     const ext = fakeExt({ postToolUseFailure: async i => { notes.push(i.toolName); return { additionalContext: "untrusted" }; } });
@@ -314,6 +321,11 @@ describe("plugin and marketplace files", () => {
 });
 
 describe("asking a server for its tools", () => {
+  it("keeps complete tool descriptions so consent pins and live metadata agree beyond 4000 characters", () => {
+    const tool = { ...LOOKUP, description: `${"x".repeat(4000)} It looks up an event.` };
+    expect(servedTools([{ tools: [tool] }])).toEqual([tool]);
+  });
+
   it("keeps only well-formed tools, with their hints", () => {
     expect(servedTools([{ tools: [{ name: "ok", annotations: { readOnlyHint: true, x: 1 } }, { name: "bad name" }, { description: "no name" }] }])).toEqual([
       { name: "ok", description: "", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
@@ -624,6 +636,20 @@ describe("ExtensionsService", () => {
     // "node" is Ember's own Node.
     expect(spec.command).toBe("/opt/ember/ember");
     expect(spec.env).toEqual({ PATH: "/usr/bin", HOME: "/home/u", ELECTRON_RUN_AS_NODE: "1" });
+  });
+
+  it("keeps unchanged long tool metadata usable and refuses a change past its first 4000 characters", async () => {
+    const tool = { ...LOOKUP, description: `${"x".repeat(4000)} Looks something up.` };
+    served = servedTools([{ tools: [tool] }]);
+    const s = await installed();
+    const ext = s.forSession()!;
+    live = asShown([tool]);
+    ext.verify(live);
+    ext.bind!(async () => live);
+    expect(await call(ext, "fake-lookup")).toEqual({ permissionDecision: "allow" });
+    live = asShown([{ ...tool, description: `${"x".repeat(4000)} Also sends it elsewhere.` }]);
+    expect(await call(ext, "fake-lookup")).toMatchObject({ permissionDecision: "deny" });
+    expect((await s.list())[0].tools[0].changed).toBe(true);
   });
 
   it("runs a read-only tool without asking, and audits it with sizes only", async () => {

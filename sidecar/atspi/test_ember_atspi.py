@@ -1048,6 +1048,17 @@ class Reading(unittest.TestCase):
         self.assertEqual(label.asked_actions, 0)
         self.assertEqual([n.get("actions") for n in nodes], [None, None, ["click"]])
 
+    def test_atspi_button_rename_keeps_actions_and_click_handler(self):
+        label = Acc("label", "Reveal password")
+        for role in ("push button", "button"):
+            button = Acc(role, "Reveal password", acts=["click"], kids=[label])
+            label.parent = button
+            nodes = []
+            e.walk(button, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+            self.assertEqual((nodes[0]["role"], nodes[0]["actions"]), ("push button", ["click"]))
+            self.assertEqual(e.node_info(button)["role"], "push button")
+            self.assertEqual(e.click_handler(label, "clickancestor"), {"role": "push button", "name": "Reveal password"})
+
     def test_positionless_widgets_have_no_bounds(self):
         self.assertIsNone(e.bounds_of(e.INT_MIN, e.INT_MIN, 10, 10))
         self.assertIsNone(e.bounds_of(0, 0, -1, -1))
@@ -1366,7 +1377,7 @@ class Acting(unittest.TestCase):
                 cells.append(cell)
         for cell in cells + [k for c in cells for k in c.kids]:
             cell.queryAction = (lambda acc: lambda: types.SimpleNamespace(
-                nActions=3, getName=lambda i: acc.acts[i], doAction=lambda i: table.activated.append(i) or True))(cell)
+                nActions=len(acc.acts), getName=lambda i: acc.acts[i], doAction=lambda i: table.activated.append(i) or True))(cell)
         table.kids = cells
 
         def show_cursor():
@@ -1511,17 +1522,19 @@ class Acting(unittest.TestCase):
         try:
             table, named = self.file_list(names, window="active")
             box = table.kids[1 * 2 + 1]
-            box.acts = ["toggle", "Expands or contracts the row in the tree view containing this cell",
-                        "Creates a widget in which the contents of the cell can be edited", "Activates the cell"]
             box.name = ""
-            for kind in ("click", "toggle"):
-                out = self.act_on(box, "can_do", kind=kind)
-                self.assertEqual((out["tier1"], out["action"]), (False, "toggle"), kind)
-                self.assertIn("ticked only by a click on it", out["why"])
-                self.assertNotIn("handler", out)
-                with self.assertRaises(RuntimeError) as ctx:
-                    self.act_on(box, "do_action", action=kind)
-                self.assertIn("background_unavailable", str(ctx.exception))
+            for actions in (["toggle", "Expands or contracts the row in the tree view containing this cell",
+                             "Creates a widget in which the contents of the cell can be edited", "Activates the cell"],
+                            ["toggle", "expand or contract", "edit", "activate"]):
+                box.acts = actions
+                for kind in ("click", "toggle"):
+                    out = self.act_on(box, "can_do", kind=kind)
+                    self.assertEqual((out["tier1"], out["action"]), (False, "toggle"), kind)
+                    self.assertIn("ticked only by a click on it", out["why"])
+                    self.assertNotIn("handler", out)
+                    with self.assertRaises(RuntimeError) as ctx:
+                        self.act_on(box, "do_action", action=kind)
+                    self.assertIn("background_unavailable", str(ctx.exception))
             # A toggle on a cell of a row (its own action a double click's) turns nothing on: refused, nothing opened.
             self.assertEqual(self.act_on(named[1], "can_do", kind="toggle"), {"tier1": True, "action": "select row"})
             with self.assertRaises(RuntimeError) as ctx:

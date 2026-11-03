@@ -30,7 +30,7 @@ export function servedTools(pages: unknown[]): ServedTool[] {
       const a = (o.annotations && typeof o.annotations === "object" ? o.annotations : {}) as Record<string, unknown>;
       const hints: ToolHints = {};
       for (const k of ["readOnlyHint", "destructiveHint", "openWorldHint", "idempotentHint"] as const) if (typeof a[k] === "boolean") hints[k] = a[k] as boolean;
-      out.push({ name: o.name, description: typeof o.description === "string" ? o.description.slice(0, 4000) : "", inputSchema: o.inputSchema ?? { type: "object" }, annotations: hints });
+      out.push({ name: o.name, description: typeof o.description === "string" ? o.description : "", inputSchema: o.inputSchema ?? { type: "object" }, annotations: hints });
       if (out.length >= MAX_TOOLS) return out;
     }
   }

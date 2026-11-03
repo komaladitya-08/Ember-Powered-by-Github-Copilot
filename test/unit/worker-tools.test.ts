@@ -6,7 +6,8 @@
 import { describe, expect, it } from "vitest";
 import { LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, closesWindow, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
 import { KEYS } from "../../app/shared/shortcuts";
-import type { AxNode } from "../../app/main/perception/sidecar";
+import type { ActionResult, AxNode } from "../../app/main/perception/sidecar";
+import { TaskManager } from "../../app/main/agent/tasks";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import type { Logger } from "../../app/main/logger";
@@ -42,6 +43,9 @@ function makeWorker(o: {
   /** The window's title, and what the conversation read on the screen before the task (TaskSpec.screen). */
   windowName?: string; specScreen?: string;
   onLease?: () => void;
+  lease?: WorkerDeps["lease"];
+  taskId?: string;
+  onAction?: () => ActionResult;
   onGlide?: () => void;
   onInput?: (kind: string, value?: string) => void;
   nodeExtra?: Partial<AxNode>;
@@ -140,6 +144,7 @@ function makeWorker(o: {
       },
       doAction: async () => {
         events.push("start"); await sleep(80); events.push("end");
+        if (o.onAction) return o.onAction();
         if (o.closes) { closeWindow(); return { ok: true, after: null }; }
         return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } };
       },
@@ -161,7 +166,7 @@ function makeWorker(o: {
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter,
-    lease: async () => { o.onLease?.(); return () => undefined; }, flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
+    lease: o.lease ?? (async () => { o.onLease?.(); return () => undefined; }), flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
     onActivity: (e: Record<string, unknown>) => { activity.push(e); },
     cursor: o.noCursor ? undefined : {
       borrow: { borrow: async (fn: (hand: unknown) => Promise<void>) => fn({ glideTo: async () => { o.onGlide?.(); }, click: async () => { o.onInput?.("click"); }, keys: async (keys: string) => {
@@ -174,7 +179,7 @@ function makeWorker(o: {
       findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}),
     },
     pointer: o.pointer, activationKey: o.activationKey,
-  } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: o.wins?.[0]?.name ?? "notes.txt" }, mode: o.mode, ...(o.specScreen ? { screen: o.specScreen } : {}) });
+  } as unknown as WorkerDeps, { id: o.taskId ?? "t1", goal: "make it bold", target: { title: o.wins?.[0]?.name ?? "notes.txt" }, mode: o.mode, ...(o.specScreen ? { screen: o.specScreen } : {}) });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
   /** A window the user opens meanwhile (with `wins`). */
@@ -570,6 +575,58 @@ describe("worker tools on a window with text aimed at an AI agent (injection.ts)
 });
 
 describe("worker tools", () => {
+  it("two workers turning the same checkbox on both succeed with one mutation under the window lease", async () => {
+    const manager = new TaskManager({ log: quiet, makeWorker: () => { throw new Error("not used"); }, currentWindow: () => ({}), setCards: () => undefined, deleteSession: async () => undefined });
+    let on = false;
+    const changes: boolean[] = [];
+    const state = () => ["enabled", "sensitive", ...(on ? ["checked"] : [])];
+    const workers = ["one", "two"].map(taskId => makeWorker({
+      taskId, role: "check box", name: "Show line numbers", states: state, lease: manager.lease.bind(manager),
+      onAction: () => { on = !on; changes.push(on); return { ok: true, after: { role: "check box", name: "Show line numbers", states: state(), bounds: null } }; },
+    }));
+    await Promise.all(workers.map(w => w.call("perceive_window", {})));
+    const results = await Promise.all(workers.map(w => w.call("toggle", { id: 1, on: true })));
+    expect(results.map(r => r.resultType)).toEqual(["success", "success"]);
+    expect(changes).toEqual([true]);
+    expect(on).toBe(true);
+    expect(results.some(r => r.textResultForLlm.startsWith("Already on"))).toBe(true);
+  });
+
+  it("rechecks a checkbox's desired state and safety after waiting for its window", async () => {
+    let on = false;
+    const states = () => ["enabled", "sensitive", ...(on ? ["checked"] : [])];
+    const already = makeWorker({ role: "check box", name: "Show line numbers", states, onLease: () => { on = true; } });
+    await already.call("perceive_window", {});
+    expect((await already.call("toggle", { id: 1, on: true })).textResultForLlm).toMatch(/^Already on/);
+    expect(already.events).toEqual([]);
+
+    const denied = makeWorker({ role: "check box", name: "Share publicly", grants: {}, answer: "deny" });
+    await denied.call("perceive_window", {});
+    expect((await denied.call("toggle", { id: 1, on: true })).resultType).toBe("denied");
+    expect(denied.events).toEqual([]);
+
+    let disabled = false;
+    const changed = makeWorker({ role: "check box", name: "Show line numbers", states: () => disabled ? ["disabled", "checked"] : ["enabled", "checked"], onLease: () => { disabled = true; } });
+    await changed.call("perceive_window", {});
+    expect((await changed.call("toggle", { id: 1, on: true })).resultType).not.toBe("success");
+    expect(changed.events).toEqual([]);
+  });
+
+  it("doesn't toggle after Stop while waiting for its window lease", async () => {
+    const manager = new TaskManager({ log: quiet, makeWorker: () => { throw new Error("not used"); }, currentWindow: () => ({}), setCards: () => undefined, deleteSession: async () => undefined });
+    const release = await manager.lease("notes.txt", "other");
+    let waiting!: () => void;
+    const reached = new Promise<void>(resolve => { waiting = resolve; });
+    const h = makeWorker({ role: "check box", name: "Show line numbers", lease: (key, id, signal) => { waiting(); return manager.lease(key, id, signal); } });
+    await h.call("perceive_window", {});
+    const result = h.call("toggle", { id: 1, on: true });
+    await reached;
+    (h.w as unknown as { halt: AbortController }).halt.abort();
+    release();
+    expect((await result).textResultForLlm).toMatch(/Stopped/);
+    expect(h.events).toEqual([]);
+  });
+
   it("stopping a guide says it was cancelled, not a bare “Stopped.” (live test)", async () => {
     const guide = makeWorker({ mode: "guide" });
     const stopGuide = new AbortController();
@@ -1461,15 +1518,13 @@ describe("guide words and highlights (live retest: font chooser)", () => {
 
   it("a press in a text editor's page (gedit: a multi-line text) is no search box (review)", async () => {
     const page: AxNode = { id: 2, parent: null, depth: 3, role: "text", name: "", states: ["enabled", "editable", "multi line"], bounds: { x: 0, y: 100, width: 800, height: 450 } };
-    let t0 = 0;
-    const pointer = () => {
-      const t = t0 ? Date.now() - t0 : 0;
-      return t > 100 && t < 160 ? { x: 300, y: 300, mask: 256 } : t > 600 && t < 660 ? { x: 20, y: 15, mask: 256 } : { x: 0, y: 0, mask: 0 };
-    };
-    const { call } = makeWorker({ name: "Save", mode: "guide", more: [page], pointer });
+    const up = { x: 0, y: 0, mask: 0 };
+    const samples: typeof up[] = [];
+    const { call } = makeWorker({ name: "Save", mode: "guide", more: [page], pointer: () => samples.shift() ?? up });
     await call("perceive_window", {});
-    t0 = Date.now();
+    samples.push(up, { x: 300, y: 300, mask: 256 }, up, { x: 20, y: 15, mask: 256 });
     expect((await call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user clicked it/);
+    expect(samples).toHaveLength(0);
   }, 10_000);
 
   it("OK whose dialog closed but still reads as a 0×0 box is no cancel, and no wait to the timeout (review)", async () => {

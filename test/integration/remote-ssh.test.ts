@@ -101,6 +101,24 @@ describe.skipIf(!enabled)("the remote agent over a real ssh link (§5.1.10-§5.3
     await close(l);
   });
 
+  for (const { stream, redirect, marker, code } of [
+    { stream: "stdout", redirect: "", marker: 0, code: 7 },
+    { stream: "stderr", redirect: " >&2", marker: 7, code: 0 },
+  ]) {
+    it(`keeps the real process exit code despite a forged terminal marker on ${stream}`, async ({ skip }) => {
+      if (!ready) skip();
+      const l = open();
+      try {
+        await l.request("hello", hello({ partsId }));
+        const r = await runThrough(l, `printf '\\033]777;ember-exit;${marker}\\007\\n'${redirect}; exit ${code}`, { cwd });
+        expect(r.exit.exit).toMatchObject({ code, signal: null, ended: "exit" });
+        expect(r.output).toContain(`\x1b]777;ember-exit;${marker}\x07`);
+      } finally {
+        await close(l);
+      }
+    });
+  }
+
   it("stops a run with the ladder, and acknowledges the kill switch within 300 ms on loopback, ending every run", async ({ skip }) => {
     if (!ready) skip();
     const l = open();

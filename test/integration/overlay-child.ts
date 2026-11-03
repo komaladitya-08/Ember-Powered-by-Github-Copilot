@@ -17,14 +17,16 @@ import { buildSync } from "esbuild";
 import { electronBinary } from "./vocabulary-clipboard";
 
 const CHILD = `
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, screen } from "electron";
 import fs from "node:fs";
 import { applyAllWorkspaces, hoverShaper } from "./app/main/platform/compose";
 
 const commands = process.argv[process.argv.length - 5];
-const [x, y, width, height] = process.argv.slice(-4).map(Number);
+const [px, py, pw, ph] = process.argv.slice(-4).map(Number);
 const shaper = hoverShaper(process.platform === "darwin" ? "darwin" : "win32");
 app.whenReady().then(async () => {
+  const physical = { x: px, y: py, width: pw, height: ph };
+  const { x, y, width, height } = process.platform === "win32" ? screen.screenToDipRect(null, physical) : physical;
   const floating = shaper.floating("overlay");
   const win = new BrowserWindow({
     x, y, width, height, transparent: true, frame: false, backgroundColor: "#00000000", hasShadow: false, resizable: false,
@@ -75,10 +77,10 @@ export interface OverlayChild {
   hwnd: number;
   /** Goes transparent as Ember does for a capture; resolves once it has, with the function that shows it again. */
   hide(): Promise<() => Promise<void>>;
-  close(): void;
+  close(): Promise<void>;
 }
 
-/** Builds the stand-in into .cache/test under `root` and shows it over `rect` (physical pixels at 100 %, DIP otherwise). */
+/** Builds the stand-in into .cache/test under `root` and shows it over `rect` (physical screen pixels). */
 export async function startOverlayChild(root: string, rect: { x: number; y: number; width: number; height: number }): Promise<OverlayChild> {
   const dir = path.join(root, ".cache", "test", "overlay-child-electron");
   fs.mkdirSync(dir, { recursive: true });
@@ -127,11 +129,11 @@ export async function startOverlayChild(root: string, rect: { x: number; y: numb
         await shown;
       };
     },
-    close() {
-      if (child.exitCode === null) {
-        send("quit");
-        setTimeout(() => { if (child.exitCode === null) child.kill(); }, 2_000).unref();
-      }
+    async close() {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const done = new Promise<void>(resolve => child.once("exit", () => resolve()));
+      const timer = setTimeout(() => child.kill(), 2_000);
+      try { send("quit"); await done; } finally { clearTimeout(timer); }
     },
   };
 }

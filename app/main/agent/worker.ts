@@ -1259,6 +1259,22 @@ export class Worker {
     void this.session?.abort().catch(() => undefined);
   }
 
+  /** A runtime request cannot keep a stopped task's slot forever, even before it has a session to abort. */
+  private async waitForRuntime<T>(pending: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onOver!: () => void;
+    const stopped = new Promise<never>((_, reject) => {
+      onOver = () => { timer = setTimeout(() => reject(new BorrowStopped()), STOP_GRACE_MS); };
+      this.overSignal.addEventListener("abort", onOver, { once: true });
+      if (this.isOver) onOver();
+    });
+    try { return await Promise.race([pending, stopped]); }
+    finally {
+      if (timer) clearTimeout(timer);
+      this.overSignal.removeEventListener("abort", onOver);
+    }
+  }
+
   /** Asks the user a question of this task (its steps' and its commands'): the wait for the answer isn't the task's time. */
   private async ask(question: Question, signal: AbortSignal = this.overSignal, asked?: string): Promise<string | null> {
     const ask = () => this.d.confirmer.ask(question, signal);
@@ -1424,16 +1440,21 @@ export class Worker {
       this.tool("toggle", "Turn a switch, check box or toggle button on or off.",
         z.object({ id, on: z.boolean().describe("true to turn it on, false to turn it off") }),
         async a => {
-          const node = this.known.get(a.id);
-          if (node) {
-            const now = await this.sidecar.readElement(a.id).catch(() => null);
+          // Keep the desired-state read and the action together; act's nested lease is re-entrant for this task.
+          const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
+          try {
             if (this.isOver) return STOPPED();
-            const on = now ? isOn(now.states) : null;
-            if (on === a.on) return done(`Already ${a.on ? "on" : "off"}: ${describeAfter(now!)}`);
+            const refreshed = await this.refreshActionContext(a.id);
+            if (refreshed) return refreshed;
+            const fresh = await this.fresh(a.id);
+            if (!("node" in fresh)) return fresh;
+            const now = fresh.node;
+            const on = isOn(now.states);
+            if (on === a.on) return done(fresh.element.secret || fresh.element.withheld ? `Already ${a.on ? "on" : "off"}.` : `Already ${a.on ? "on" : "off"}: ${describeAfter(now)}`);
             // Its action would do nothing (Chromium's "uncheck" on a radio button): a radio button goes off when another goes on.
-            if (on && /^radio/.test(now!.role)) return fail("A radio button turns off only when another one in its group is chosen: toggle that one on instead.");
-          }
-          return this.act("toggle", a.id, a.on ? "on" : "off", () => this.sidecar.doAction(a.id, "toggle"));
+            if (on && !a.on && /^radio/.test(now.role)) return fail("A radio button turns off only when another one in its group is chosen: toggle that one on instead.");
+            return await this.act("toggle", a.id, a.on ? "on" : "off", () => this.sidecar.doAction(a.id, "toggle"));
+          } finally { release(); }
         }),
       this.tool("type_text",
         "Put text into a text field or document. mode: \"replace\" replaces everything in it, \"insert\" types at the caret, \"append\" adds at the end. " +
@@ -1749,9 +1770,18 @@ export class Worker {
         workingDirectory: d.workDir,
         onPermissionRequest: () => ({ kind: "reject", feedback: "Workers use only Ember's own tools." }),
       });
-      this.session = await d.client.createSession(config);
-      await verifySessionTools(this.session, tools.map(t => t.name));
-      const session = this.session;
+      const session = await this.waitForRuntime(d.client.createSession(config).then(session => {
+        if (this.isOver) {
+          // Creation may finish after Stop released the task's slot. Never send to this late session.
+          void session.abort().catch(() => undefined);
+          void session.disconnect().catch(() => undefined);
+          void d.client.deleteSession(session.sessionId).catch(err => d.log.warn("worker.delete_failed", { err }));
+          throw new BorrowStopped();
+        }
+        this.session = session;
+        return session;
+      }));
+      await this.waitForRuntime(verifySessionTools(session, tools.map(t => t.name)));
       // A turn ends at idle or error; after Stop it ends at the latest a moment later, even if the runtime is gone.
       const idle = () => new Promise<void>((resolve, reject) => {
         let grace: ReturnType<typeof setTimeout> | null = null;
@@ -1813,7 +1843,7 @@ export class Worker {
         const send = async (prompt: string) => {
           this.activity({ type: "turn" });
           watch.sending();
-          try { await session.send({ prompt }); } catch (err) { watch.unsent(); throw err; }
+          try { await this.waitForRuntime(session.send({ prompt })); } catch (err) { watch.unsent(); throw err; }
           watch.sent();
         };
         try {
@@ -1831,6 +1861,8 @@ export class Worker {
           watch.dispose();
         }
       }
+    } catch (err) {
+      if (!this.isOver) throw err;
     } finally {
       clock.stop();
       this.ended.abort();

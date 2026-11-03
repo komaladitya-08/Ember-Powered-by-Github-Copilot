@@ -3,8 +3,8 @@
  * system API binds and reads Windows' folders, the screen-reader flag, elevation and the session; every Start Menu
  * shortcut reads as WScript.Shell reads it; the catalogue lists Settings and File Explorer (Calculator only when its
  * package is registered, asked independently of Ember with Get-AppxPackage); Notepad opens through explorer.exe and
- * its window appears; an app opened through a shortcut gets Explorer's environment, never Ember's tokens or EMBER_*
- * variables; dark mode for apps goes round and is put back; no HKLM policy reads as "no policy"; autostart writes the
+ * its window appears; an app opened through a shortcut gets Explorer's environment without Ember's injected token or
+ * marker; dark mode for apps goes round and is put back; no HKLM policy reads as "no policy"; autostart writes the
  * Run value named after the AUMID through real Electron and removes it again; the doctor's helper row names a real
  * PowerShell; and systemDialogOpen is false at rest.
  *
@@ -179,26 +179,35 @@ describe.skipIf(!onWindows && !required)("Windows system integration on a real d
     if (!notepad) throw new Error("no Notepad in the catalogue");
     const ws = openWin32Windows({ screen });
     if (!ws) throw new Error("port/win32's window system didn't open");
-    const before = new Set(ws.clientWindows().filter(w => w.wmClass === "notepad").map(w => w.pid));
-    system.apps.launch(notepad);
-    const opened = await waitFor(() => ws.clientWindows().find(w => w.wmClass === "notepad" && w.pid !== null && !before.has(w.pid)), 20_000, "Notepad's window");
-    console.log(`Notepad opened: pid ${opened.pid}, "${opened.title}"`);
-    try { process.kill(opened.pid!); } catch { /* already closed */ }
-    ws.close();
+    const before = new Set(ws.clientWindows().map(w => w.id));
+    let opened: ReturnType<typeof ws.clientWindows>[number] | undefined;
+    try {
+      system.apps.launch(notepad);
+      // Windows 11's Notepad.exe keeps its case and may open another window in its existing process.
+      opened = await waitFor(() => ws.clientWindows().find(w => /^notepad$/i.test(w.wmClass) && !before.has(w.id)), 20_000, "Notepad's new window");
+      console.log(`Notepad opened: pid ${opened.pid}, "${opened.title}"`);
+    } finally {
+      // Close only the new empty fixture window, never Notepad's shared process or the user's other documents.
+      if (opened) ps(`Add-Type -AssemblyName UIAutomationClient; $w = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]${opened.id}); $w.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close()`);
+      ws.close();
+    }
     if (ciFlag("EMBER_CI_ELEVATED") === true || ciFlag("EMBER_CI_LUA") === false) notTestable("an app opened while Ember is elevated starts non-elevated", "the runner runs elevated and so does its shell (explorer.exe), so what Explorer starts is elevated too");
   }, 60_000);
 
-  it("gives an app opened through a shortcut Explorer's environment, never Ember's tokens or EMBER_* variables", async () => {
+  it("gives an app opened through a shortcut Explorer's environment without Ember's injected token or marker", async () => {
     const script = path.join(tmp, "probe.cjs");
     const out = path.join(tmp, "env.json");
-    fs.writeFileSync(script, `require("fs").writeFileSync(process.argv[2], JSON.stringify(Object.keys(process.env)));`);
+    const markerValue = `ember-probe-${process.pid}-${Date.now()}`;
+    const tokenValue = `gho_${markerValue}`;
+    // Compare only our unique probe values: Explorer may already have the user's own credentials in its environment.
+    fs.writeFileSync(script, `require("fs").writeFileSync(process.argv[2], JSON.stringify({ inheritedMarker: process.env.EMBER_WINSYS_MARKER === ${JSON.stringify(markerValue)}, inheritedToken: process.env.GH_TOKEN === ${JSON.stringify(tokenValue)}, hasPath: Object.keys(process.env).some(k => k.toUpperCase() === "PATH") }));`);
     const lnk = path.join(tmp, "Ember Environment Probe.lnk");
     ps(`$l = (New-Object -ComObject WScript.Shell).CreateShortcut('${lnk}'); $l.TargetPath = '${process.execPath}'; $l.Arguments = '"${script}" "${out}"'; $l.Save()`);
     const verdict = appFromShortcut(parseShellLink(fs.readFileSync(lnk)), { file: lnk, id: "probe", env: process.env, execPath: "C:\\NotEmber\\Ember.exe", exists: fs.existsSync });
     if (!("app" in verdict)) throw new Error(`the probe shortcut wasn't offered: ${verdict.skip}`);
     const marker = process.env.EMBER_WINSYS_MARKER, token = process.env.GH_TOKEN;
-    process.env.EMBER_WINSYS_MARKER = "1";
-    process.env.GH_TOKEN = "gho_ember_test_token";
+    process.env.EMBER_WINSYS_MARKER = markerValue;
+    process.env.GH_TOKEN = tokenValue;
     try {
       win32System(deps()).apps.launch(verdict.app as DesktopApp);
     } finally {
@@ -206,9 +215,7 @@ describe.skipIf(!onWindows && !required)("Windows system integration on a real d
       if (token === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = token;
     }
     await waitFor(() => fs.existsSync(out) && fs.statSync(out).size > 0, 30_000, "the probe's environment");
-    const keys = JSON.parse(fs.readFileSync(out, "utf8")) as string[];
-    expect(keys.filter(k => /^(EMBER_|GH_|GITHUB_|COPILOT_)|_TOKEN$/i.test(k))).toEqual([]);
-    expect(keys.some(k => k.toUpperCase() === "PATH")).toBe(true);
+    expect(JSON.parse(fs.readFileSync(out, "utf8"))).toEqual({ inheritedMarker: false, inheritedToken: false, hasPath: true });
   }, 60_000);
 
   it("turns dark mode for apps on and off and puts it back", async () => {

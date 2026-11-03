@@ -109,11 +109,6 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
   let ws: Win32WindowSystem;
   const started: number[] = [];
 
-  /** A top-level window whose title contains `title` (any case), from the stack, with its Win32 class. */
-  const windowTitled = (title: string) => {
-    const w = ws.stack().find(s => s.title.toLowerCase().includes(title.toLowerCase()));
-    return w ? { ...w, className: loadWin32()?.className(w.id) ?? "" } : null;
-  };
   const dialogOpen = () => {
     const sys = loadWin32System();
     return win32SystemDialog(ws, loadWin32(), sys ? (hwnd: number): Rect | null => sys.monitorRect(hwnd) : null, VOCAB);
@@ -135,7 +130,9 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
 
   it("judges a console window a terminal by its program and by its class, whatever it hosts", async () => {
     const title = `Ember vocabulary ${process.pid}`;
-    const pid = start(path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe"), `/k title ${title}`);
+    const system32 = path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32");
+    const pid = start(path.win32.join(system32, "conhost.exe"), `-- "${path.win32.join(system32, "cmd.exe")}" /d /k title ${title}`);
+    expect(pid).toBeGreaterThan(0);
     started.push(pid);
     const win = await waitFor(() => ws.clientWindows().find(w => w.title.includes(title)), 15_000, `a console window titled "${title}"`);
     console.log(`console window: ${JSON.stringify({ wmClass: win.wmClass, wmClassName: win.wmClassName, clientProgram: win.clientProgram, title: win.title })}`);
@@ -147,26 +144,35 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
   }, 60_000);
 
   it("doesn't take Notepad for a terminal, an app with a shell, a security window or an office suite", async () => {
-    const pid = start("notepad.exe");
-    started.push(pid);
-    const win = await waitFor(() => ws.clientWindows().find(w => w.pid === pid || w.wmClass === "notepad"), 15_000, "Notepad's window");
-    console.log(`Notepad's window: ${JSON.stringify({ wmClass: win.wmClass, wmClassName: win.wmClassName, title: win.title })}`);
-    expect(win.wmClass.toLowerCase()).toBe("notepad");
-    expect(isTerminalApp({ id: win.wmClass, name: win.wmClass, windowClass: win.wmClassName }, W)).toBe(false);
-    expect(hasBuiltInShell({ id: win.wmClass, name: win.wmClass }, W)).toBe(false);
-    expect(isSecurityWindow({ app: win.wmClass, title: win.title }, W)).toBe(false);
-    expect(TABBED_APP.win32?.test(win.wmClass)).toBe(false);
-    expect(OFFICE_APP.win32?.test(win.wmClass)).toBe(false);
-    expect(friendlyApp(win.wmClass)).toBe("Notepad");
-    kill(pid);
+    const before = new Set(ws.clientWindows().map(w => w.id));
+    start("notepad.exe");
+    let win: ReturnType<typeof ws.clientWindows>[number] | undefined;
+    try {
+      win = await waitFor(() => ws.clientWindows().find(w => /^notepad$/i.test(w.wmClass) && !before.has(w.id)), 15_000, "Notepad's new window");
+      console.log(`Notepad's window: ${JSON.stringify({ wmClass: win.wmClass, wmClassName: win.wmClassName, title: win.title })}`);
+      expect(win.wmClass.toLowerCase()).toBe("notepad");
+      expect(isTerminalApp({ id: win.wmClass, name: win.wmClass, windowClass: win.wmClassName }, W)).toBe(false);
+      expect(hasBuiltInShell({ id: win.wmClass, name: win.wmClass }, W)).toBe(false);
+      expect(isSecurityWindow({ app: win.wmClass, title: win.title }, W)).toBe(false);
+      expect(TABBED_APP.win32?.test(win.wmClass)).toBe(false);
+      expect(OFFICE_APP.win32?.test(win.wmClass)).toBe(false);
+      expect(friendlyApp(win.wmClass)).toBe("Notepad");
+    } finally {
+      // Notepad may reuse a process holding the user's documents: only our new empty window is closed.
+      if (win) ps(`Add-Type -AssemblyName UIAutomationClient; $w = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]${win.id}); $w.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close()`);
+    }
   }, 60_000);
 
   it("knows the stored-credentials dialog by its title, and systemDialogOpen sees it while it is up", async () => {
     expect(dialogOpen()).toBe(false); // at rest
     const pid = start("rundll32.exe", "keymgr.dll,KRShowKeyMgr");
     started.push(pid);
+    const credentialWindow = () => {
+      const w = ws.stack().find(w => w.pid === pid && /^Stored User\s*Names and Passwords$/i.test(w.title));
+      return w ? { ...w, className: loadWin32()?.className(w.id) ?? "" } : null;
+    };
     try {
-      const win = await waitFor(() => windowTitled("Stored User Names and Passwords"), 15_000, "the Stored User Names and Passwords dialog");
+      const win = await waitFor(credentialWindow, 15_000, "the stored-credentials dialog");
       console.log(`keymgr dialog: ${JSON.stringify({ wmClass: win.wmClass, className: win.className, title: win.title })}`);
       expect(SECURITY_TITLE.win32?.test(normalizeLabel(win.title))).toBe(true);
       expect(isSecurityWindow({ app: win.wmClass, title: win.title }, W)).toBe(true);
@@ -174,7 +180,7 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
     } finally {
       kill(pid);
     }
-    await waitFor(() => !windowTitled("Stored User Names and Passwords"), 10_000, "the dialog to close");
+    await waitFor(() => !credentialWindow(), 10_000, "the dialog to close");
     expect(dialogOpen()).toBe(false);
   }, 60_000);
 
@@ -196,6 +202,9 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
     const [addressRule, runRule] = TYPING_REFUSED.win32;
     expect(addressRule.app.test("explorer")).toBe(true);
     expect(runRule.app.test("explorer")).toBe(true);
+    // Address vocabulary is independent of the user's folders and their item count.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-address-"));
+    const folder = path.basename(dir);
     const host = await startHost();
     const input = openWin32Input();
     if (!input) throw new Error(`Windows input didn't open: ${String(win32Error)}`);
@@ -207,17 +216,17 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
     };
     let explorerFrame = 0;
     try {
-      // File Explorer on C:\Windows, read as Ember reads a window.
-      ps(`(New-Object -ComObject Shell.Application).Open('C:\\Windows')`);
-      const win = await waitForAsync(async () => (await host.listWindows(own)).windows.find(w => /^explorer$/i.test(w.app) && /\bWindows\b/.test(w.name) && !!w.path), 20_000, "a File Explorer window on C:\\Windows");
+      // An owned empty folder, read as Ember reads a window.
+      ps(`(New-Object -ComObject Shell.Application).Open(${quote(dir)})`);
+      const win = await waitForAsync(async () => (await host.listWindows(own)).windows.find(w => /^explorer$/i.test(w.app) && w.name.includes(folder) && !!w.path), 20_000, "File Explorer on the address check folder");
       const read = () => host.readWindow({ pid: win.pid!, path: win.path, ...own });
-      // Its address band reads "Address: C:\Windows" once Explorer has built it.
+      const frame = await waitFor(() => ws.clientWindows().find(w => w.pid === win.pid && w.title.includes(folder)), 5_000, "File Explorer's frame");
+      explorerFrame = frame.id;
+      // Windows names it "Address: <folder>" or "Address Bar" once Explorer has built it.
       const band = await waitForAsync(async () => (await read()).nodes.find(n => addressRule.field.test(n.name.trim())), 15_000, "the address band")
         .catch(async (err: Error) => { throw new Error(`${err.message}: ${JSON.stringify(summary((await read()).nodes))}`, { cause: err }); });
       console.log(`File Explorer's address band: ${band.role} "${band.name}"`);
       // The box the user types into: Alt+D puts the keyboard in it.
-      const frame = await waitFor(() => ws.clientWindows().find(w => w.pid === win.pid && /\bWindows\b/.test(w.title)), 5_000, "File Explorer's frame");
-      explorerFrame = frame.id;
       input.activate(frame.id);
       await waitFor(() => ws.activeWindow()?.id === frame.id, 5_000, "File Explorer in front");
       press("Alt_L", "d");
@@ -252,6 +261,7 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
       if (explorerFrame) ps(`(New-Object -ComObject Shell.Application).Windows() | Where-Object { $_.HWND -eq ${explorerFrame} } | ForEach-Object { $_.Quit() }`);
       input.releaseAll();
       input.close();
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 180_000);
 

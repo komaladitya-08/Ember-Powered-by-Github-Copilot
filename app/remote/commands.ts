@@ -21,8 +21,6 @@ export type StopWhy = "user" | "task" | "timeout" | "killswitch" | "lost";
 
 /** The start marker every POSIX run prints first (shells.ts POSIX_PRELUDE): a run whose output lacks it never started. */
 const START_MARK = Buffer.from("\x1b]777;ember-start\x07", "latin1");
-/** An exit marker some launchers print (BSD script's exit status, §3.3): its code wins over script's own. */
-const EXIT_MARK = /\x1b\]777;ember-exit;(\d{1,3})\x07/; // eslint-disable-line no-control-regex -- the OSC sequence is matched byte for byte
 /** stderr kept for a failed start's reason (only its first part is ever shown). */
 const STDERR_KEEP = 8 * 1024;
 /** RunExit.error's cap (protocol CAPS.str.reason). */
@@ -82,7 +80,6 @@ interface Run {
   started: boolean;
   tail: Buffer;
   stderr: string;
-  exitMark: number | null;
   outBytes: number;
   /**
    * Its output is dropped: the kill switch stopped it (nobody reads it), or it printed past the cap while being stopped,
@@ -143,7 +140,7 @@ export class RemoteRuns {
     const ended = new Promise<void>(r => { end = r; });
     const run: Run = {
       spec, channel, child: null, pid: null, sid: null, slot: null, interactive: false, started: false, tail: Buffer.alloc(0), stderr: "",
-      exitMark: null, outBytes: 0, discard: false, t0: this.d.now(), stopWhy: null, ladder: null, timers: [], ended, end,
+      outBytes: 0, discard: false, t0: this.d.now(), stopWhy: null, ladder: null, timers: [], ended, end,
     };
     this.runs.set(spec.runId, run);
     let launch: ReturnType<AgentContracts["launchArgv"]>;
@@ -177,7 +174,7 @@ export class RemoteRuns {
     }
     const out = (chunk: Buffer, isErr: boolean) => {
       if (isErr && run.stderr.length < STDERR_KEEP) run.stderr += chunk.toString("utf8");
-      if (!run.started || run.exitMark === null) this.scan(run, chunk);
+      if (!run.started) this.scan(run, chunk);
       if (run.discard) return;
       if (run.stopWhy && this.d.backlog && this.d.backlog() > BACKLOG.high) {
         // Being stopped it flows (its end must be seen), so what it prints past the cap is dropped, and nothing after
@@ -285,12 +282,10 @@ export class RemoteRuns {
     return Promise.all([...this.runs.values()].map(r => r.ladder ?? Promise.resolve())).then(() => undefined);
   }
 
-  /** Looks for the start and exit markers across chunk boundaries. */
+  /** Looks for the start marker across chunk boundaries. */
   private scan(run: Run, chunk: Buffer): void {
     const seen = Buffer.concat([run.tail, chunk]);
     if (!run.started && seen.includes(START_MARK)) run.started = true;
-    const m = EXIT_MARK.exec(seen.toString("latin1"));
-    if (m) run.exitMark = Number(m[1]);
     run.tail = seen.subarray(Math.max(0, seen.length - 64));
   }
 
@@ -348,7 +343,7 @@ export class RemoteRuns {
     let exit: RunExit;
     if (run.stopWhy) exit = { code, signal, ended: ENDED_BY[run.stopWhy], ms };
     else if (!run.started) exit = { code, signal, ended: "failed-to-start", ms, error: startError(run.stderr, "It couldn't start (it printed nothing).") };
-    else exit = { code: run.exitMark ?? code, signal, ended: "exit", ms };
+    else exit = { code, signal, ended: "exit", ms };
     this.finish(run, exit);
   }
 

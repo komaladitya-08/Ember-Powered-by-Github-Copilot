@@ -558,9 +558,11 @@ shown on Windows and macOS) lets Ember fetch Kokoro v1.0 (`kokoro-multi-lang-v1_
 English, Apache-2.0, 350 MB, pinned by SHA-256) into the user's models folder. It is fetched only where Ember's voice
 runs natively on the Piper voice at no more than 0.143 of real time (Kokoro is about 3.5 times the work:
 `NATURAL_COST` in `app/voice/tts.ts`; `voice.natural_fetching`, `voice.natural_ready`), and the speech process starts
-again with it once it has nothing to say. Each time it loads, Kokoro is timed on a sentence (on up to 4 threads, and
+again with it once it has nothing to say. Unless a too-slow result for this model/provider/thread configuration was
+recorded within the last week, Kokoro is loaded and timed on a sentence (on up to 4 threads, and
 against CoreML on macOS: the one model a GPU is tried for): at more than 0.5 of real time (`NATURAL_MAX_RTF`) the Piper
-voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). Turning the switch on
+voice speaks instead and the slow verdict is kept for a week; `voice.tts_ready` says why (`natural`, including
+“timed before” when cached). Damaged, future-dated and expired entries are ignored. Turning the switch on
 decides at once, not at some later reply: the Piper voice running then (or started for it) times the computer, the
 download starts, and once it is in the speech process starts again with Kokoro straight away. Every outcome shows under
 the switch (`VoiceService.naturalStatus`, `naturalVoiceView` in app/renderer/home/copy.ts): checking, the download's
@@ -1740,6 +1742,8 @@ downloads it on first use per target and checks it before sending.
   user's SID).
 - **Fail closed**: an unknown target, a malformed message from a remote or a distro, an unverifiable bundle, a policy
   that can't be read, or a command that can't be shown exactly as it will run is refused, saying why in plain words.
+- **Command output is not completion status**: remote runs use the child process's exit code and signal. Printed
+  `ember-exit` sequences on stdout or stderr cannot override them, including on pipes and Linux/macOS PTYs.
 - **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's
   exact texts (`persona-commands.test.ts`), the terminal words are unchanged unless WSL is on, and Linux, Windows and
   macOS behave as before.
@@ -1934,9 +1938,15 @@ An approval applies to the window, control and contents shown when Ember asked. 
 
 Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. This lets a completed form step update its status and contents without carrying its approval into the next step.
 
+AT-SPI 2.60 calls push buttons `button`. The sidecar uses the same role for older and newer servers so click actions and protection around password-reveal controls still apply. A GTK list checkbox with alternate cell actions still requires a pointer click rather than accessibility row selection.
+
+Toggle requests hold the window lease from their fresh context/desired-state read through approval and mutation. A second request for the state already reached succeeds without toggling again. Stop and deadlines also bound waits for worker session creation, tool validation and submission: the task settles within its two-second grace even if a runtime request remains unresolved. Late-created sessions receive no prompt and are aborted, disconnected and deleted.
+
 ### Voice request cancellation
 
 `VoiceService` owns the listening generation sent with init, cancel, enrolment and voiceprint changes. The voice process tags engine events and learning samples with that generation; main rejects old generations even when IPC or inference is delayed beyond a second. `VoiceGate.cancel()` separately revokes pending checks and held wakes, without making new requests wait for old inference. Stop always passes through. Explicit owner changes revoke work, while the adaptation-only refresh preserves the generation and each pending request uses one captured owner/anchor/threshold configuration. Run `npx vitest run test/unit/voice-cancellation.test.ts test/unit/voice-service.test.ts test/unit/voice-match.test.ts test/unit/voice-process.test.ts` for the deterministic regressions; these do not establish real-microphone accuracy.
+
+Answer speech belongs to the request that actually starts, including queued typed and spoken requests. An accepted wake or Stop retires old chunks and acknowledgements; a permission question pauses prior speech while allowing the same turn to answer after approval. Playback callbacks carry their hush generation, and follow-up waits for appended synthesis and playback to drain (or the bounded no-voice recovery). A short negative reply to an ordinary clarification is conversation input; formal approval still goes through the existing question-bound gate.
 
 ### npm launcher recovery
 

@@ -414,8 +414,8 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
     const script = [
       "$ErrorActionPreference = 'Stop'",
       `$link = (New-Object -ComObject WScript.Shell).CreateShortcut(${quote(lnk)})`,
-      "$link.TargetPath = Join-Path $env:SystemRoot 'System32\\cmd.exe'",
-      `$link.Arguments = ${quote(`/k title ${title}`)}`,
+      "$link.TargetPath = Join-Path $env:SystemRoot 'System32\\conhost.exe'",
+      `$link.Arguments = ${quote(`-- "${join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe")}" /d /k title ${title}`)}`,
       "$link.Save()",
       `$p = Start-Process -FilePath ${quote(lnk)} -PassThru`,
       "if ($p) { $p.Id } else { 0 }",
@@ -423,28 +423,19 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
     const r = spawnSync(powershell, [...POWERSHELL_ARGS, "-Command", script], { encoding: "utf8", windowsHide: true, timeout: 60_000 });
     expect(r.status, r.stderr).toBe(0);
     const started = Number(r.stdout.trim().split(/\r?\n/).pop()) || 0;
-    let consolePid = started;
+    expect(started, "the fixture's own console host").toBeGreaterThan(0);
     try {
       const win = await waitFor(() => ws.clientWindows().find(w => w.title.includes(title)), 15_000, `a window titled "${title}"`);
-      if (win.wmClassName === "CASCADIA_HOSTING_WINDOW_CLASS") {
-        // Windows 11's default terminal took the console over: the window is Windows Terminal's own.
-        expect(win.wmClass.toLowerCase()).toBe("windowsterminal");
-        // §10 item 10's wording, in the log and the job summary, so the check is listed as not run rather than passed.
-        const note = "not testable on this runner: the default terminal is Windows Terminal, so no classic console window opened";
-        console.log(note);
-        if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `- console windows: ${note}\n`);
-        return;
-      }
-      if (!consolePid) consolePid = win.pid ?? 0;
       expect(win).toMatchObject({ wmClass: "conhost", clientProgram: "cmd", wmClassName: "ConsoleWindowClass" });
-      if (started) expect(win.pid).toBe(started);
+      expect(win.pid).toBeGreaterThan(0);
+      expect(win.pid).not.toBe(started); // Win32 reports the client, not the host we started.
       expect(ws.stack().find(w => w.id === win.id)).toMatchObject({ wmClass: "conhost", clientProgram: "cmd", pid: win.pid });
       expect(x.findWindow(win.title, undefined, "conhost")).toBe(win.id);
       x.activate(win.id);
       await waitFor(() => x.activeWindow() === win.id, 3_000, "the console window to take the foreground");
       expect(ws.activeWindow()).toMatchObject({ id: win.id, wmClass: "conhost", clientProgram: "cmd" });
     } finally {
-      if (consolePid) spawnSync("taskkill", ["/PID", String(consolePid), "/T", "/F"], { windowsHide: true });
+      spawnSync("taskkill", ["/PID", String(started), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
     }
   }, 90_000);
 });

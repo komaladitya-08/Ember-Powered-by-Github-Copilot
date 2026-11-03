@@ -66,6 +66,12 @@ describe("an installed item says what state it is in, in words (never colour alo
     expect(xc.installedRow(item({ status: "failed", detail: "Error: spawn ENOENT at Object.<anonymous> (x.js:1)" })).note).toBe("Turn it off and on again, or remove it and add it again.");
     expect(xc.installedRow(item({ status: "failed", detail: "The plugin's server stopped answering." })).note).toBe("The plugin's server stopped answering.");
   });
+
+  it("gives plugin authentication advice for its own server, rather than GitHub's connector page", () => {
+    const row = xc.installedRow(item({ status: "needs-auth" }));
+    expect(row.note).toBe("Check this plugin's authentication setup with its provider, then remove it and add it again.");
+    expect(row.actions.map(a => a.label)).toEqual(["Remove"]);
+  });
 });
 
 describe("error words are one plain sentence, never the runtime's own text", () => {
@@ -139,6 +145,12 @@ describe("the consent card says plainly what Ember will do before anything is ad
 });
 
 describe("the section says why extensions can't be used", () => {
+  it("names unavailable hosted connectors honestly and points to the supported plugin path", () => {
+    expect(xc.EXTENSIONS_INTRO).toBe("Extensions give Ember more tools through plugins from marketplaces you add. Only you can add them, here.");
+    expect(xc.CONNECTORS_EMPTY).toBe("GitHub-hosted connectors aren't available in Ember yet.");
+    expect(xc.CONNECTORS_HINT).toBe("To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.");
+  });
+
   it("is unavailable without a runtime, off under the organisation's policy, and off while locked down", () => {
     expect(xc.extensionsBlocked({ available: false, allowed: false, lockdown: false })).toBe("Extensions aren't available in this version of Ember yet.");
     expect(xc.extensionsBlocked({ available: true, allowed: false, lockdown: false })).toBe("Your organisation has turned off extensions.");

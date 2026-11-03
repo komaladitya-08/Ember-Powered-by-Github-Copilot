@@ -1,5 +1,22 @@
 # Release notes
 
+## 0.1.1 (2026-11-03)
+
+Reliability beta, prepared for validation before publication.
+
+- Remote command output cannot replace the real process's exit code or signal.
+- Concurrent checkbox requests recheck their desired state under the window lease, so two requests to turn one on do not toggle it off again.
+- Stop and task deadlines return control when task startup or request submission stalls; late work cannot start after cancellation.
+- Interrupted replies cannot resume from delayed old speech chunks. Queued typed and spoken requests keep their own speech and follow-up ownership; a short “No” still answers an ordinary clarification.
+- Windows window discovery retries a changing window order instead of missing a window raised during enumeration.
+- Windows recognises both spellings of the stored-credentials dialog and refuses program text in Explorer's Address Bar.
+- Linux recognises buttons on newer AT-SPI releases, including controls that reveal passwords. A click on a GTK list checkbox uses the checkbox rather than selecting its row.
+- A Kokoro voice that is too slow is remembered for a week, avoiding repeated startup benchmarks. Changes to the model, providers or thread configuration trigger a fresh check.
+- Extensions consistently admit dotted tool names, pin complete tool descriptions, and give provider-appropriate sign-in advice. Settings accurately describe unavailable hosted connectors and the supported MCP plugin path.
+- Chart tests accept the valid compact million suffix casing used by different ICU versions.
+
+The release is unsigned beta software. Real-device microphone, playback and assistive-technology acceptance, and native macOS/RHEL validation remain release gates; automated fixtures are reported separately.
+
 ## 0.1.0 (2026-10-31)
 
 Ember's first release: a small, expressive companion that lives beside your cursor, listens for "Hey Ember" and does

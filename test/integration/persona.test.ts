@@ -12,8 +12,11 @@ import { hardenedSessionConfig } from "../../app/main/agent/session-config";
 import { conductorTools } from "../../app/main/agent/conductor";
 import { emberSystemMessage, TONE } from "../../app/main/agent/persona";
 import { guideSystemMessage, workerSystemMessage, WORKER_RULES } from "../../app/main/agent/worker-persona";
-import { locateRuntime } from "../../app/main/agent/runtime";
+import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { SettingsStore } from "../../app/main/settings";
+import type { OS } from "../../app/shared/shortcuts";
+
+const { id: runtimeId, exe } = runtimeFor(process.platform as OS, process.arch);
 
 let mock: { baseUrl: string; requests: { messages: { role: string; content: unknown }[] }[]; close(): Promise<void> };
 let dir: string;
@@ -24,7 +27,7 @@ beforeAll(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-persona-"));
   client = new CopilotClient({
     mode: "empty", baseDirectory: path.join(dir, "copilot"), useLoggedInUser: false,
-    connection: RuntimeConnection.forStdio({ path: locateRuntime({ appPath: process.cwd() }).path }),
+    connection: RuntimeConnection.forStdio({ path: locateRuntime({ appPath: process.cwd(), runtimeId, exe }).path }),
     env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" },
   });
   await client.start();

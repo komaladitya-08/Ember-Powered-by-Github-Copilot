@@ -14,10 +14,13 @@ import { MemoryLearning } from "../../app/main/memory/learning";
 import { copilotOneShot } from "../../app/main/agent/one-shot";
 import { AgentHost } from "../../app/main/agent/host";
 import { Presenter } from "../../app/main/agent/presenter";
-import { locateRuntime } from "../../app/main/agent/runtime";
+import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { SettingsStore } from "../../app/main/settings";
 import { createLogger } from "../../app/main/logger";
 import type { EmberState } from "../../app/shared/overlay";
+import type { OS } from "../../app/shared/shortcuts";
+
+const { id: runtimeId, exe } = runtimeFor(process.platform as OS, process.arch);
 
 let mock: { baseUrl: string; requests: { tools: string[]; messages: { role: string; content: unknown }[] }[]; close(): Promise<void> };
 let dir: string;
@@ -26,7 +29,7 @@ let client: CopilotClient;
 beforeAll(async () => {
   mock = await startMockLlm({ delayMs: 5 });
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-conductor-"));
-  const runtime = locateRuntime({ appPath: process.cwd() });
+  const runtime = locateRuntime({ appPath: process.cwd(), runtimeId, exe });
   expect(runtime.exists).toBe(true);
   client = new CopilotClient({
     mode: "empty", baseDirectory: path.join(dir, "copilot"), useLoggedInUser: false,
@@ -220,7 +223,7 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
     settings.load();
     const states: Partial<EmberState>[] = [];
     const host = new AgentHost({
-      userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
+      userData, runtimePath: locateRuntime({ appPath: process.cwd(), runtimeId, exe }).path, settings,
       log: createLogger({ dir: path.join(userData, "logs") }),
       setState: p => states.push(p), onStatus: () => undefined,
       provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
@@ -229,7 +232,7 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
     const stored = async () => {
       const store = new CopilotClient({
         mode: "empty", baseDirectory: path.join(userData, "copilot"), useLoggedInUser: false,
-        connection: RuntimeConnection.forStdio({ path: locateRuntime({ appPath: process.cwd() }).path }),
+        connection: RuntimeConnection.forStdio({ path: locateRuntime({ appPath: process.cwd(), runtimeId, exe }).path }),
         env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" },
       });
       await store.start();
@@ -277,7 +280,7 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
     const phases: string[] = [];
     let turnsEnded = 0;
     const host = new AgentHost({
-      userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
+      userData, runtimePath: locateRuntime({ appPath: process.cwd(), runtimeId, exe }).path, settings,
       log: createLogger({ dir: path.join(userData, "logs") }),
       setState: p => states.push(p), onStatus: s => phases.push(s.phase), onTurnEnd: () => { turnsEnded++; },
       provider: { type: "openai", baseUrl: `http://127.0.0.1:${(relay.address() as net.AddressInfo).port}/v1`, apiKey: "test" },
@@ -340,7 +343,7 @@ describe("the organisation's endpoint behind the system's proxy settings (host o
     settings.load();
     const states: Partial<EmberState>[] = [];
     const host = new AgentHost({
-      userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
+      userData, runtimePath: locateRuntime({ appPath: process.cwd(), runtimeId, exe }).path, settings,
       log: createLogger({ dir: path.join(userData, "logs") }),
       setState: p => states.push(p), onStatus: () => undefined,
       provider: { type: "openai", baseUrl: endpoint, apiKey: "test" },

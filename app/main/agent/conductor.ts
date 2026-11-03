@@ -63,6 +63,8 @@ export interface ConductorDeps {
   onAnswerEnd?: (text: string) => void;
   /** A turn finished (for the voice follow-up window). */
   onTurnEnd?: (aborted: boolean) => void;
+  /** Main drops buffered speech and acknowledgement timers when this answer is interrupted. */
+  onAnswerInterrupted?: () => void;
   /**
    * The runtime took a request and no turn began for it ("not-started"), or a turn under way went silent and the
    * abort that ends it didn't (no session.idle within TURN_END_GRACE_MS: "silent"; see TurnWatch): the host says
@@ -654,6 +656,10 @@ export class Conductor {
   private stopping = false;
   /** A turn is in flight (sent, and no idle or error yet). */
   private busy = false;
+  private answerMuted = false;
+  private readonly answerMessages = new Set<string>();
+  private readonly retiredMessages = new Set<string>();
+  private runtimeTurn: string | undefined;
   /** Bumped by every Stop (abort()): a request still waiting for its memory before it is sent is dropped. */
   private stops = 0;
   /** Watches that each request sent gets its turn. */
@@ -713,6 +719,11 @@ export class Conductor {
    */
   private turnBegan(content: string): void {
     const i = this.unstarted.findIndex(t => t.prompt === content);
+    for (const id of this.answerMessages) this.retiredMessages.add(id);
+    this.answerMessages.clear();
+    this.runtimeTurn = undefined;
+    this.answerMuted = i < 0;
+    if (i >= 0) this.stopping = false;
     this.said = i < 0 ? "" : this.unstarted[i].text;
     this.saidOwn = i >= 0 && this.unstarted[i].own;
     this.routineWords = [];
@@ -823,12 +834,25 @@ export class Conductor {
       onSlow: slow => { if (!this.stuck) d.presenter.stalled(slow); },
     });
     this.watch = watch;
-    this.session.on(e => {
+    const session = this.session;
+    session.on(e => {
+      if (this.session !== session) return;
       watch.event(e);
+      const data = e.data as { messageId?: string; turnId?: string };
+      if (e.type.startsWith("assistant.message")) {
+        if (data.messageId && this.retiredMessages.has(data.messageId)) return;
+        if (data.turnId && this.runtimeTurn && data.turnId !== this.runtimeTurn) return;
+        if (data.messageId) this.answerMessages.add(data.messageId);
+        if (this.answerMuted) {
+          if (data.messageId) this.retiredMessages.add(data.messageId);
+          return;
+        }
+      }
       if (e.type === "user.message" && !(e as { agentId?: string }).agentId) {
         const content = (e.data as { content?: unknown } | undefined)?.content;
         this.turnBegan(typeof content === "string" ? content : "");
       }
+      if (e.type === "assistant.turn_start") this.runtimeTurn = data.turnId;
       if (this.stuck) {
         // The silent turn being ended has ended (Ember said so already): the conversation goes on.
         if (e.type === "session.idle") this.settleEnding?.(true);
@@ -854,10 +878,11 @@ export class Conductor {
       if (e.type === "session.idle") {
         this.busy = false;
         this.stopping = false;
-        const aborted = (e.data as { aborted?: boolean }).aborted === true;
+        const aborted = (e.data as { aborted?: boolean }).aborted === true || this.answerMuted;
         d.onTurnEnd?.(aborted);
         // Memory learns from the turn (the user's own words and the answer), after it and off its path.
         if (!aborted && this.said) this.learnFrom(this.said, this.answered, this.saidOwn);
+        this.answerMuted = true;
       }
     });
   }
@@ -889,8 +914,6 @@ export class Conductor {
     if (this.endingTurn) await this.endingTurn;
     if (this.stops !== stops) return;
     if (!session || this.session !== session) throw new ConnectionLost("the connection was replaced before dispatch");
-    // A new request: an earlier Stop doesn't refuse what the user asks for now.
-    this.stopping = false;
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
@@ -980,6 +1003,7 @@ export class Conductor {
 
   /** Stops the turn in flight. With nothing running there is no turn to end, so nothing is refused afterwards. */
   async abort(): Promise<void> {
+    this.interruptAnswer();
     this.stops++;
     // New requests after Stop must not wait on an old recall or send that never settles.
     this.dispatch = Promise.resolve();
@@ -990,6 +1014,18 @@ export class Conductor {
     await this.session?.abort();
   }
 
+  /** Quiet this answer without stopping its desktop tasks; only a new matched request may speak again. */
+  interruptAnswer(): void {
+    this.answerMuted = true;
+    this.pauseAnswer();
+    this.deps.onAnswerInterrupted?.();
+  }
+
+  /** A formal question retires pre-question messages; the same turn may answer after the tool is allowed or denied. */
+  pauseAnswer(): void {
+    for (const id of this.answerMessages) this.retiredMessages.add(id);
+  }
+
   /**
    * The runtime took a request and no turn began for it within `ms`, though it may still answer its health check
    * (TurnWatch): the host says so and reconnects (the conversation is resumed; the user asks again). Or the turn
@@ -997,6 +1033,7 @@ export class Conductor {
    * is ended (endSilentTurn); only the conversation's request is given up on, and the tasks running go on.
    */
   private stuckTurn(why: Stuck, ms: number): void {
+    this.interruptAnswer();
     this.stuck = true;
     this.busy = false;
     this.stopping = false;

@@ -232,6 +232,12 @@ def extents(acc):
     return bounds_of(e.x, e.y, e.width, e.height)
 
 
+def role_name(acc):
+    role = acc.getRoleName()
+    # AT-SPI 2.60 renamed the role. Keep Ember's action and secret-field rules on the same vocabulary.
+    return "push button" if role == "button" else role
+
+
 def actions(acc):
     try:
         a = acc.queryAction()
@@ -1575,7 +1581,7 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         budget.cut_short("depth")
         return True
     try:
-        role = acc.getRoleName()
+        role = role_name(acc)
         name = (acc.name or "").strip()
     except Exception:
         return False
@@ -2807,7 +2813,7 @@ def node_info(acc, nid=None):
     if "defunct" in states:
         raise ElementGone("element %s is gone (the window changed); read the window again" % (nid if nid is not None else ""))
     try:
-        role = acc.getRoleName()
+        role = role_name(acc)
         name = (acc.name or "").strip()
     except Exception as err:
         raise unreachable(nid, err, t0)
@@ -3015,7 +3021,7 @@ def click_handler(acc, picked):
     it is in (a list's row around its label), only one that covers where the mouse lands (see takes_click_at).
     {"unknown": True}: by accessibility, handed on further up than HANDLER_LEVELS (what it works can't be told)."""
     try:
-        role = acc.getRoleName()
+        role = role_name(acc)
     except Exception:
         return None
     if picked is not None and (picked not in PASSES_CLICK or (picked == "dodefault" and role in CLICK_CONTROLS)):
@@ -3031,7 +3037,7 @@ def click_handler(acc, picked):
             cur = cur.parent
             if cur is None:
                 return None
-            r = cur.getRoleName()
+            r = role_name(cur)
         except Exception:
             return None
         if r in HANDLER_STOP:
@@ -3089,10 +3095,10 @@ def instead_of_action(acc, names, picked):
     except Exception:
         return None
     if role in ROW_CELL_ROLES:
-        if picked == "toggle":
-            others = [n for n in names if n != "toggle"]
-            return "check box" if any(n.startswith(GTK_CELL_ACTIONS) for n in others) else None
-        return "select row" if picked in ("activate", "expand or contract", "edit") else None
+        row_action = picked in ("activate", "expand or contract", "edit")
+        if (row_action or picked == "toggle") and "toggle" in names and any(n.startswith(GTK_CELL_ACTIONS) for n in names):
+            return "check box"
+        return "select row" if row_action else None
     if role in ICON_ROLES and picked == "activate":
         return "select item"
     return None
@@ -4208,7 +4214,7 @@ def at_point(params):
     over = [popup] if popup is not None else open_menu_at(acc, x, y, budget) if params.get("menus", True) is not False else []
     for el in over:
         try:
-            role, name = el.getRoleName(), (el.name or "").strip()
+            role, name = role_name(el), (el.name or "").strip()
         except Exception:
             role, name = "", ""
         chain.append({"role": role, "name": name_of(el, name, role), "bounds": extents(el)})
@@ -4229,7 +4235,7 @@ def at_point(params):
             step = [holder]
         for el in step:
             try:
-                role, name = el.getRoleName(), (el.name or "").strip()
+                role, name = role_name(el), (el.name or "").strip()
             except Exception:
                 role, name = "", ""
             # A secret field: neither its name nor what is in it (Chromium's text children hold its contents) leaves,

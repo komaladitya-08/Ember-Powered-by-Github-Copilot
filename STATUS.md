@@ -1,6 +1,6 @@
 # Ember status
 
-Updated 3 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
+Updated 4 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
 
 ## Completed review and merged repairs
 
@@ -8,9 +8,20 @@ Updated 3 November 2026. This is the short pickup list; [the review backlog](doc
 - Merged privacy/consent (#148), multi-turn voice smoke and quieter-follow-up endpoint fix (#149), feedback (#150), lifecycle/PID/reminder guards (#151), extension consent/revocation (#152), incoming-speech cancellation (#153), speech recovery/local-only fallback (#154), action-approval binding (#155), retry/FIFO provenance (#156), memory deletion (#157), command revocation (#158), Linux lock rediscovery (#159), complete settings/audit writes (#160), and installer rollback (#161). [PR links and limits](docs/review-2026-11-03.md#merged-repairs).
 - Wake timing: the earlier synthetic regression was not reproduced in the current narrow fixture (199–222 ms WASM, 192–195 ms native). Keep load/device validation open; these are not real-microphone measurements.
 
+## Repairs in this checkout
+
+- Remote command completion now uses the child process's exit code and signal. Fake-process cases cover pipes and Linux/macOS PTY launchers. Native Linux loopback SSH confirmed both forged statuses before the fix and preserved the real statuses after it (13 passed, one system-policy case skipped); native macOS SSH remains open.
+- Checkbox state is rechecked under its window lease; stopped workers release their slots even while session creation, tool validation or sending is stalled. Late sessions are disposed without starting work.
+- Speech belongs to the request that starts, including queued typed/spoken turns. Interrupted streams and acknowledgements are retired, playback callbacks carry their hush generation, and ordinary negative clarification replies reach the conversation without changing formal approval rules.
+- Reapplied #106's bounded Windows window-order walk and #98's one-week slow-Kokoro cache. Fixed extension tool-name/description consistency, provider sign-in advice and hosted-connector availability text, plus the ICU-dependent chart-test expectation.
+- Native Windows testing also closed two safety gaps: the joined “Stored Usernames and Passwords” title is blocked, and Explorer's “Address Bar” refuses program text. The full native desktop and accessibility group passed 74/74 after those fixes.
+- Newer AT-SPI versions report push buttons as “button”; normalizing the role preserves click actions and password-reveal protection. GTK list checkboxes with an alternate activation action stay on the pointer path.
+- The five Windows voice smoke scenarios passed through the native listener with synthetic microphone recordings. On the Windows test machine Kokoro took 1.01–1.37 seconds to produce a second of speech (the cutoff is 0.50); native Piper produced its first audio in 121–257 ms.
+- Reconciled #99/#114 with the current voice and gated MCP plugin architecture in [PR-RECONCILIATION.md](docs/PR-RECONCILIATION.md). App and npm launcher versions are aligned at 0.1.1 for release preparation; no tag or release has been published.
+
 ## Next correctness work
 
-The review is complete, not the backlog. Prioritise reliable interruption/turn ownership and remaining deterministic P2 cases: meaningful “No” replies, text correction and memory negation, setup/save navigation, Home keyboard focus, stale lease state/session-start cancellation, remote exit-status spoofing, extension metadata consistency, contrast and small-window layout. See [reproductions and acceptance checks](docs/review-2026-11-03.md#remaining-correctness-backlog).
+The review is complete, not the backlog. Remaining follow-ups include text correction and memory negation, setup/save navigation, Home keyboard focus, speech segmentation/watchdog behaviour, actually-heard-content measurement, contrast and small-window layout. See [reproductions and acceptance checks](docs/review-2026-11-03.md#remaining-correctness-backlog). The local repairs above still need final integrated and native validation before release.
 
 ## Architecture and owner decisions
 
@@ -22,7 +33,7 @@ The review is complete, not the backlog. Prioritise reliable interruption/turn o
 
 ## Native validation still required
 
-- Real Windows microphone recordings and `node scripts/voice/bench.mjs --kokoro` on the owner's PC; held-out voice/physical playback and interruption tests across supported devices.
+- Real microphone recordings, physical playback and interruption tests across supported devices, including held-out Voice Match speakers.
 - Real accessibility trees for Pluma, xed, Mousepad and Notepad++; message boxes in CJK, Greek, Arabic, Hebrew and Ukrainian.
 - Native keyboard/screen-reader, large-text, contrast, small-window and mixed-DPI checks; OS lock/recovery, suspend, permission revoke/regrant and failed/offline reinstall sequences.
 - Monitor the previously intermittent 20-second extension integration test if it recurs. CI and synthetic measurements do not replace these checks.

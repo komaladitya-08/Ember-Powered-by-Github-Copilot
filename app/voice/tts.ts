@@ -19,6 +19,21 @@ export const NATURAL_MAX_RTF = 0.5;
  * time on its one thread (in WebAssembly: 0.36–0.49), Kokoro v1.0 (fp32) at 0.41 on 3 threads and 0.38 on 4.
  */
 export const NATURAL_COST = 3.5;
+/** A laptop timed on battery or while busy gets another try after a week, without loading slow Kokoro every start. */
+export const NATURAL_RECHECK_MS = 7 * 24 * 3_600_000;
+
+/** The cached slow voice's real-time factor, or null when the verdict is missing, damaged, future-dated or expired. */
+export function rememberedSlow(value: string | undefined, now: number): number | null {
+  const m = /^slow:(\d+(?:\.\d+)?):(\d+)$/.exec(value ?? "");
+  if (!m) return null;
+  const rtf = Number(m[1]), at = Number(m[2]);
+  return Number.isFinite(rtf) && rtf > NATURAL_MAX_RTF && at <= now && now - at < NATURAL_RECHECK_MS ? rtf : null;
+}
+
+/** A verdict to remember after the natural voice was timed too slow at `now`. */
+export function slowVerdict(rtf: number, now: number): string {
+  return `slow:${rtf}:${Math.round(now)}`;
+}
 
 /**
  * A first chunk longer than FIRST_SOON is cut at its first comma (or semicolon, colon or dash) between FIRST_MIN and

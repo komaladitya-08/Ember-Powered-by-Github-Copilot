@@ -12,7 +12,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -148,6 +148,10 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
   let coldMs = 0;
   let firstExit: BridgeExit | undefined;
   let nodes: RawNode[] = [];
+  const endConsole = () => {
+    if (consolePid) spawnSync("taskkill", ["/PID", String(consolePid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    consolePid = 0;
+  };
 
   const ui = () => {
     expect(bridge, "a running bridge").toBeTruthy();
@@ -212,7 +216,7 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     bridge?.kill();
     stopBench(bench);
     stopBench(x86);
-    end(consolePid);
+    endConsole();
     await sleep(500);
     if (dir) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
@@ -525,26 +529,31 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
   });
 
   it("names a console window conhost, with the program running in it as its client", async () => {
-    // A classic console window of its own, titled with a token to find it by (start opens it; this cmd /c then ends).
+    // Start an owned classic host explicitly: the user's default terminal may share its process with unrelated tabs.
     const token = `EmberConsole-${process.pid}-${Date.now()}`;
-    spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", "start", `"${token}"`, "cmd.exe", "/d", "/k"], { stdio: "ignore", windowsVerbatimArguments: true });
+    const conhost = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "conhost.exe");
+    const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
+    // Start-Process gives conhost a console; Node's stdio handles would make it a headless PTY host instead.
+    const launch = spawnSync(POWERSHELL, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+      `$ErrorActionPreference = 'Stop'; (Start-Process -FilePath ${quote(conhost)} -ArgumentList ${quote(`-- "${process.env.ComSpec ?? "cmd.exe"}" /d /k title ${token}`)} -PassThru).Id`,
+    ], { encoding: "utf8", windowsHide: true, timeout: 15_000 });
+    expect(launch.status, launch.stderr).toBe(0);
+    consolePid = Number(launch.stdout.trim()) || 0;
+    expect(consolePid, "the fixture's own console host").toBeGreaterThan(0);
     const w = await waitFor("the console window among the top-level windows", async () => {
       const { windows } = await ui().call<{ windows: UiaWindow[] }>("topWindows", { deadlineMs: 4000 }, 10_000);
       return windows.find(x => (x.name ?? "").includes(token));
     }, 15_000);
-    consolePid = w.pid;
     console.log(`uia-bridge: the console window: ${JSON.stringify({ className: w.className, processName: w.processName, clientProgram: w.clientProgram, busy: w.busy, reason: w.reason })}`);
-    // Windows Terminal as the default terminal would open it in a CASCADIA_HOSTING_WINDOW_CLASS window instead.
-    expect(w.className, "a classic console window (set the default terminal to Windows Console Host if this fails)").toBe("ConsoleWindowClass");
+    expect(w.className, "the explicitly started classic console window").toBe("ConsoleWindowClass");
     expect(w.processName).toBe("conhost");
     // Windows reports the console's first client as the window's process: the cmd that start ran.
     expect(w.clientProgram?.toLowerCase()).toBe("cmd");
-    end(consolePid);
+    endConsole();
     await waitFor("the console window to close", async () => {
       const { windows } = await ui().call<{ windows: UiaWindow[] }>("topWindows", { deadlineMs: 4000 }, 10_000);
       return !windows.some(x => x.hwnd === w.hwnd);
     });
-    consolePid = 0;
   });
 
   it("reads what shows of a long list scrolled to its end, and nothing inside the rows that don't show", async () => {
