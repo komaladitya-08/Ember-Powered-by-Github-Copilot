@@ -5,7 +5,7 @@
  */
 
 export type Kind = "plugin" | "connector" | "extension";
-export interface ToolInfo { server?: string; name: string; description: string; readOnly: boolean; changed?: boolean }
+export interface ToolInfo { server?: string; name: string; description: string; readOnly: boolean; changed?: boolean; nameConflict?: boolean }
 export interface Installed { id: string; kind: Kind; name: string; publisher?: string; source: string; version?: string;
   enabled: boolean; consented: boolean; status: "ready" | "starting" | "needs-auth" | "failed" | "disabled";
   detail?: string; tools: ToolInfo[];

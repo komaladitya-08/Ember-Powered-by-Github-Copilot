@@ -37,6 +37,7 @@ import { canonical, checkPins, isReadOnly, pinAll, shownHash, type PinnedTool } 
 import { probeHttp, probeStdio, type ProbeResult } from "./probe";
 import { SAVED_OUTPUT } from "../agent/runtime-temp";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
+import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "./tool-name";
 
 export interface ExtensionsDeps {
   /** `<userData>/extensions`. */
@@ -86,6 +87,16 @@ export function withoutUserinfo(v: string): string {
 
 /** Letters and digits only, for ids and server keys. */
 const slug = (s: string, max: number) => s.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, max) || "x";
+
+function toolInfo(server: StoredServer, tools: PinnedTool[], review = false): ToolInfo[] {
+  const clashes = clashingToolNames(server.key, tools.map(t => t.name));
+  return tools.map(t => ({
+    ...(review ? { server: server.name } : {}),
+    name: t.name, description: t.description, readOnly: isReadOnly(t),
+    ...(!review && t.changed ? { changed: true } : {}),
+    ...(clashes.has(modelToolName(server.key, t.name)) ? { nameConflict: true } : {}),
+  }));
+}
 
 /** A friendly sentence for an error a marketplace operation threw (never the raw text). */
 function why(err: unknown, fallback: string): string {
@@ -220,7 +231,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   private view(i: StoredItem): Installed {
-    const tools: ToolInfo[] = i.servers.flatMap(s => s.tools.map(t => ({ name: t.name, description: t.description, readOnly: isReadOnly(t), ...(t.changed ? { changed: true } : {}) })));
+    const tools = i.servers.flatMap(s => toolInfo(s, s.tools));
     const needsReview = i.servers.some(s => s.reviewTools && canonical(s.reviewTools.map(t => t.hash)) !== canonical(s.tools.map(t => t.hash)));
     const failed = i.servers.find(s => s.status === "failed");
     const auth = i.servers.find(s => s.status === "needs-auth");
@@ -229,7 +240,7 @@ export class ExtensionsService implements ExtensionsApi {
     return {
       id: i.id, kind: i.kind, name: i.name, source: i.source, enabled: i.enabled, consented: i.consentedAt !== null && this.consented(), status, tools, needsReview,
       reviewToken: this.reviewToken(i),
-      reviewTools: i.servers.flatMap(s => (s.reviewTools ?? s.tools).map(t => ({ server: s.name, name: t.name, description: t.description, readOnly: isReadOnly(t) }))),
+      reviewTools: i.servers.flatMap(s => toolInfo(s, s.reviewTools ?? s.tools, true)),
       ...(i.publisher ? { publisher: i.publisher } : {}), ...(i.version ? { version: i.version } : {}), ...(detail ? { detail } : {}),
       reaches: i.servers.filter(s => s.spec).map(s => reachOf(s.spec!, this.store.pluginDir(i.id))),
     };
@@ -583,9 +594,10 @@ export class ExtensionsService implements ExtensionsApi {
       if (!item.enabled || item.consentedAt === null) continue;
       for (const s of item.servers) {
         if (s.status !== "ready" || !s.spec || (s.spec.type === "stdio" && !this.o.launcher)) continue;
-        const tools = s.tools.filter(t => !t.changed && /^[A-Za-z0-9_-]{1,64}$/.test(t.name));
+        const clashes = clashingToolNames(s.key, s.tools.map(t => t.name));
+        const tools = s.tools.filter(t => !t.changed && MCP_TOOL_NAME.test(t.name) && !clashes.has(modelToolName(s.key, t.name)));
         if (!tools.length) continue;
-        for (const t of tools) gate.tools.set(`${s.key}-${t.name}`, { item, server: s, tool: t });
+        for (const t of tools) gate.tools.set(modelToolName(s.key, t.name), { item, server: s, tool: t });
         mcpServers[s.key] = this.serverConfig(item, s, tools.map(t => t.name));
       }
     }

@@ -260,6 +260,11 @@ export interface ActivityEntry {
   [key: string]: unknown;
 }
 
+/** The live model prompt window, separate from cumulative usage and any account allowance. */
+export type ConversationContext =
+  | { kind: "usage"; currentTokens: number; tokenLimit?: number }
+  | { kind: "compacting" };
+
 export interface EmberHomeApi {
   getStatus(): Promise<Status>;
   updateSettings(patch: SettingsPatch): Promise<Settings>;
@@ -289,7 +294,7 @@ export interface EmberHomeApi {
   /** The corrections learnt, and forgetting one (by its place) or all. */
   voiceWords(): Promise<VoiceWord[]>;
   onVoiceWords(fn: (words: VoiceWord[]) => void): () => void;
-  forgetVoiceWord(index: number): Promise<VoiceWord[]>;
+  forgetVoiceWord(word: VoiceWord): Promise<VoiceWord[]>;
   forgetVoiceWords(): Promise<void>;
   /** What Ember remembers (newest first), and changes to it. */
   memory(): Promise<MemoryItem[]>;

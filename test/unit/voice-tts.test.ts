@@ -121,6 +121,20 @@ describe("SpeechStream", () => {
     expect(said.join(" ")).toBe("Done. See the guide.");
   });
 
+  it.each([
+    ["Open [Build notes. ", "Read the guide](https://example.com/a(b)c). Next.", "Open Build notes. Read the guide."],
+    ["Run `npm test. ", "npm run lint` first. Next.", "Run npm test. npm run lint first."],
+  ])("keeps sentences inside unfinished inline markup together (%s)", (first, rest, expected) => {
+    const s = new SpeechStream();
+    expect(s.push(`Ready. ${first}`)).toEqual(["Ready."]);
+    expect(s.push(rest)).toEqual([expected]);
+    expect(s.finish()).toEqual(["Next."]);
+  });
+
+  it("keeps streaming after a closed code span with literal backslashes", () => {
+    expect(new SpeechStream().push("Open `C:\\`. Next.")).toEqual(["Open C:\\."]);
+  });
+
   it("starts speaking at the first clause of a long first sentence, before Copilot has written the rest", () => {
     const s = new SpeechStream();
     expect(s.push("I opened the quarterly report")).toEqual([]);

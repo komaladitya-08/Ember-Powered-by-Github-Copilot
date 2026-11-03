@@ -5,6 +5,64 @@
 
 const CODE = "(code shown in the bubble)";
 const TABLE = "(table shown in the bubble)";
+const FENCED_CODE = /(^|\n)[ \t]*(```|~~~)[^\n]*\n[\s\S]*?(\n[ \t]*\2[ \t]*(?=\n|$)|$)/g;
+
+/** End of a link target, allowing balanced or escaped parentheses and quoted titles. */
+function linkEnd(text: string, from: number): number {
+  let depth = 1;
+  let closer = text[from] === "<" ? ">" : "";
+  for (let i = from; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\\") { i++; continue; }
+    if (closer) { if (c === closer) closer = ""; continue; }
+    if (depth === 1 && (c === '"' || c === "'") && /\s/.test(text[i - 1])) closer = c;
+    else if (c === "(") depth++;
+    else if (c === ")") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
+/** Scan the same inline boundaries for streaming cuts and for removing finished link targets. */
+function inlineComplete(text: string, link?: (start: number, label: string, end: number) => void): boolean {
+  let ticks = 0, brackets = 0, labelStart = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (!ticks && c === "\\") { i++; continue; }
+    if (c === "`") {
+      const start = i;
+      while (text[i + 1] === "`") i++;
+      const count = i - start + 1;
+      if (ticks === count) ticks = 0;
+      else if (!ticks) ticks = count;
+    } else if (!ticks && c === "[") {
+      if (!brackets) labelStart = i;
+      brackets++;
+    } else if (!ticks && c === "]" && brackets) {
+      brackets--;
+      if (brackets || text[i + 1] !== "(") continue;
+      const end = linkEnd(text, i + 2);
+      if (end < 0) return false;
+      link?.(text[labelStart - 1] === "!" ? labelStart - 1 : labelStart, text.slice(labelStart + 1, i), end);
+      i = end - 1;
+    }
+  }
+  return !ticks && !brackets;
+}
+
+/** A streamed prefix can be said only after its fences and inline markup close. */
+export function speechMarkupOpen(markdown: string): boolean {
+  const fences = (markdown.match(/(^|\n)[ \t]*(```|~~~)/g) ?? []).length;
+  return fences % 2 !== 0 || !inlineComplete(markdown.replace(FENCED_CODE, "$1"));
+}
+
+function linkLabels(text: string): string {
+  let words = "", from = 0;
+  inlineComplete(text, (start, label, end) => { words += text.slice(from, start) + label; from = end; });
+  return words + text.slice(from);
+}
 
 /**
  * A key chord as written ("Ctrl+Alt+Y", "Win + Shift + S", "Cmd+Space"): modifiers joined by "+" to a key, standing on
@@ -18,15 +76,14 @@ const KEY_SAID: Readonly<Record<string, string>> = {
 };
 
 export function spokenText(markdown: string): string {
-  return markdown
+  const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
-    .replace(/(^|\n)[ \t]*(```|~~~)[^\n]*\n[\s\S]*?(\n[ \t]*\2[ \t]*(?=\n|$)|$)/g, `$1${CODE}`)
+    .replace(FENCED_CODE, `$1${CODE}`)
     // Tables: a header row and its |---| line, and the rows after it.
-    .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`)
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
+  return linkLabels(prose)
     .replace(/<?\b(?:https?:\/\/|www\.)([^\s/<>()]+?)(?:[/?#][^\s<>()]*?)?>?(?=[.,;:!?)]*(?:\s|$))/gi, (_m, host: string) => host.replace(/^www\./i, ""))
-    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/(?<![\\`])(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)/g, "$2")
     // Emphasis as CommonMark sees it: no space just inside a marker ("6 * 7 * 1" and "*.tmp and *.log" are said with their
     // stars), and underscores only around whole words ("__init__.py" keeps them).
     .replace(/\*\*(?=[^\s*])([^*\n]*[^\s*])\*\*/g, "$1")

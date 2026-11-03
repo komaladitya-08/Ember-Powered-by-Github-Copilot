@@ -9,11 +9,16 @@ import fs from "node:fs";
 
 const log = line => { if (process.env.MCP_LOG) fs.appendFileSync(process.env.MCP_LOG, line + "\n"); };
 log(`started secrets=${Object.keys(process.env).filter(k => /TOKEN|SECRET|_KEY$|GITHUB|COPILOT/.test(k)).join(",")}`);
+const dotted = process.env.FAKE_DOTTED === "1";
 const tools = [
-  { name: "lookup", description: process.env.FAKE_DESC ?? "Looks something up.", inputSchema: { type: "object", properties: { q: { type: "string" } } }, annotations: { readOnlyHint: true } },
+  { name: dotted ? "calendar.list" : "lookup", description: process.env.FAKE_DESC ?? "Looks something up.", inputSchema: { type: "object", properties: { q: { type: "string" } } }, annotations: { readOnlyHint: true } },
   { name: "post_message", description: "Posts a message.", inputSchema: { type: "object", properties: { text: { type: "string" } } }, annotations: { destructiveHint: true } },
   { name: "broken", description: "Always fails.", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true } },
   { name: "huge", description: "Returns 3 MB.", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true } },
+  ...(dotted ? [
+    { name: "clash.one", description: "Reads something.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+    { name: "clash-one", description: "Changes something.", inputSchema: { type: "object" }, annotations: { destructiveHint: true } },
+  ] : []),
 ];
 let pulled = false;
 const send = o => process.stdout.write(JSON.stringify(o) + "\n");

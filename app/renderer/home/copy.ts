@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, NaturalVoiceStatus, SpeechModelId, StatusPlatform } from "../../shared/ipc";
+import type { ActivityEntry, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -70,6 +70,15 @@ export function tokens(n: number): string {
 export function usageLine(u: { calls: number; inputTokens: number; outputTokens: number }): string {
   if (!u.calls) return "";
   return `This session: ${u.calls} model ${u.calls === 1 ? "call" : "calls"}, ${tokens(u.inputTokens)} tokens in, ${tokens(u.outputTokens)} tokens out.`;
+}
+
+export function conversationContextLine(context: ConversationContext | undefined): string {
+  if (!context) return "";
+  if (context.kind === "compacting") return "Making room in the conversation…";
+  const used = tokens(context.currentTokens);
+  return context.tokenLimit === undefined
+    ? `The current conversation context uses ${used} tokens. Its limit is unknown.`
+    : `The current conversation context uses ${used} of ${tokens(context.tokenLimit)} tokens.`;
 }
 
 /** Where "Check again" found a sign-in. */
@@ -289,7 +298,11 @@ export const ABOUT_YOU = {
 export function introFromForm(f: { name: string; work: string; apps: string; length: string; spoken: string; hours: string }): {
   name?: string; work?: string; apps?: string; length?: "short" | "detailed"; spoken?: boolean; hours?: string;
 } {
-  const t = (s: string, n: number) => s.replace(/\s+/g, " ").trim().slice(0, n);
+  const t = (s: string, n: number) => {
+    const value = s.replace(/\s+/g, " ").trim().slice(0, n).trimEnd();
+    // The memory service skips an answer made only of trailing punctuation.
+    return /^[.!]+$/.test(value) ? "" : value;
+  };
   return {
     ...(t(f.name, 80) ? { name: t(f.name, 80) } : {}),
     ...(t(f.work, 240) ? { work: t(f.work, 240) } : {}),

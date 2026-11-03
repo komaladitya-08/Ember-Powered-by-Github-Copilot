@@ -42,6 +42,7 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   const id = (s: string) => `${o.id}-${s}`;
   let settings: Settings | null = null;
   let managed = false;
+  let saving = false;
   const ready = () => !managed && !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= FEATURE_CONSENT_VERSION.memory;
 
   const group = el("div", { className: "group about-you" });
@@ -99,8 +100,8 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
   const saveRow = el("div", { className: "agent-actions about-field" });
-  if (o.ownSave) {
-    const save = el("button", { type: "button", className: "btn", textContent: ABOUT_YOU.save });
+  const save = o.ownSave ? el("button", { type: "button", className: "btn", textContent: ABOUT_YOU.save }) : null;
+  if (save) {
     save.setAttribute("aria-describedby", status.id);
     save.addEventListener("click", () => { void submit(); });
     saveRow.append(save);
@@ -116,14 +117,23 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   });
 
   async function submit(): Promise<number | null> {
+    if (saving) return null;
     if (!ready()) { status.textContent = aboutYouSaved(null); return null; }
     const a = answers();
     if (!Object.keys(a).length) { status.textContent = aboutYouSaved(0); return 0; }
-    // A failed call is said as not saved (the form keeps the answers).
-    const kept = await window.ember.introduceMe(a).catch(() => null);
-    status.textContent = aboutYouSaved(kept);
-    if (kept) for (const f of [name.input, work.input, apps.input, hours.input]) f.value = "";
-    if (kept) { length.select.value = ""; spoken.select.value = ""; }
+    const controls = [name.input, work.input, apps.input, hours.input, length.select, spoken.select];
+    const submitted = controls.map(f => f.value);
+    saving = true;
+    save?.setAttribute("aria-disabled", "true");
+    status.textContent = "Saving…";
+    let kept: number | null;
+    try { kept = await window.ember.introduceMe(a); }
+    catch { kept = null; }
+    finally { saving = false; save?.removeAttribute("aria-disabled"); }
+    const count = Object.keys(a).length;
+    status.textContent = !kept ? "Couldn't save your answers. Try again."
+      : kept < count ? `Saved ${kept} of ${count} answers. Your answers are still here to review.` : aboutYouSaved(kept);
+    if (kept === count) controls.forEach((f, i) => { if (f.value === submitted[i]) f.value = ""; });
     o.changed?.();
     return kept;
   }

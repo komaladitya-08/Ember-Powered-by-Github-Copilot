@@ -9,7 +9,7 @@
  * read somewhere, which is context and never more. Plain Node: no Electron.
  */
 
-import { consolidate } from "./consolidate";
+import { consolidateInSlices } from "./consolidate";
 import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
 import { ENTITY_KINDS, type AddResult, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
@@ -41,6 +41,8 @@ export interface MemoryServiceOptions {
   onChange?: () => void;
   /** Better recall's vectors (./embed.ts): kept up to date with the graph, and asked for a question's matches. */
   semantic?: SemanticMemory;
+  /** Whether automatic upkeep may read and change the user's memory now. */
+  inForce?: () => boolean;
 }
 
 /** What a fact the model saves is about: names, with an optional kind ("person", "project"…). */
@@ -69,6 +71,7 @@ export class MemoryService {
   private file: MemoryFile;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private upkeepTimer: ReturnType<typeof setInterval> | null = null;
+  private upkeepRun: { controller: AbortController; done: Promise<boolean> } | null = null;
   /** Changed since the last sleep-time pass. */
   private changed = false;
 
@@ -87,13 +90,16 @@ export class MemoryService {
   /** Starts the sleep-time pass (every UPKEEP_EVERY_MS, when something changed). */
   start(): void {
     if (this.upkeepTimer) return;
-    this.upkeepTimer = setInterval(() => { if (this.changed) this.upkeep(); }, UPKEEP_EVERY_MS);
+    this.upkeepTimer = setInterval(() => {
+      if (this.changed) void this.upkeep().catch(err => this.o.log.warn("memory.upkeep_failed", { err }));
+    }, UPKEEP_EVERY_MS);
     this.upkeepTimer.unref?.();
   }
 
   /** Writes what is pending and stops the timers (quit). */
   stop(): void {
     if (this.upkeepTimer) { clearInterval(this.upkeepTimer); this.upkeepTimer = null; }
+    this.cancelUpkeep();
     this.flush();
     this.o.semantic?.flush();
     this.o.semantic?.stop();
@@ -164,6 +170,7 @@ export class MemoryService {
       throw new Error("Ember couldn't finish deleting this memory. It is still listed; try Forget again.", { cause: err });
     }
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    this.cancelUpkeep();
     this.graph = next;
     this.changed = true;
     this.o.semantic?.changed(next);
@@ -174,6 +181,7 @@ export class MemoryService {
 
   /** Forgets everything only after both persistent stores have been erased successfully. */
   forgetAll(): void {
+    this.cancelUpkeep();
     try {
       this.o.semantic?.forgetAll();
       this.file.erase();
@@ -197,12 +205,31 @@ export class MemoryService {
       .map((f: Fact) => ({ id: f.id, text: f.text, source: f.source, at: f.validAt }));
   }
 
-  /** The sleep-time pass now (merge, dedupe, forget what went stale). */
-  upkeep(): void {
-    const report = consolidate(this.g, { now: this.now() });
+  /** Joins the current sleep-time pass. False if it was cancelled or no longer allowed. */
+  upkeep(): Promise<boolean> {
+    if (this.upkeepRun) return this.upkeepRun.done;
+    if (this.o.inForce?.() === false) return Promise.resolve(false);
+    const controller = new AbortController();
+    const done = this.runUpkeep(controller.signal).finally(() => { this.upkeepRun = null; });
+    this.upkeepRun = { controller, done };
+    return done;
+  }
+
+  /** Stop, consent changes and graph changes retire a detached pass before it can publish. */
+  cancelUpkeep(): void { this.upkeepRun?.controller.abort(); }
+
+  private async runUpkeep(signal: AbortSignal): Promise<boolean> {
+    const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
+    const report = await consolidateInSlices(next, { now: this.now() }, signal);
+    if (!report || signal.aborted || this.o.inForce?.() === false) return false;
     this.changed = false;
-    this.o.log.info("memory.upkeep", { ...report, ...this.g.size });
-    if (report.mergedEntities || report.mergedFacts || report.forgotten || report.orphans) { this.dirty(); this.o.semantic?.changed(this.g); }
+    this.o.log.info("memory.upkeep", { ...report, ...next.size });
+    if (report.mergedEntities || report.mergedFacts || report.forgotten || report.orphans) {
+      this.graph = next;
+      this.dirty();
+      this.o.semantic?.changed(next);
+    }
+    return true;
   }
 
   /** Writes memory.json now, if a write is pending. */
@@ -249,6 +276,7 @@ export class MemoryService {
 
   /** Something changed: saved soon; `shown`: Settings' list changed too. */
   private dirty(shown = true): void {
+    this.cancelUpkeep();
     this.changed = true;
     if (!this.saveTimer) {
       this.saveTimer = setTimeout(() => { this.saveTimer = null; this.save(); }, SAVE_DELAY_MS);

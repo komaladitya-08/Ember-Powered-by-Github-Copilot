@@ -69,8 +69,11 @@ export function samePolarity(fact: string, said: string): boolean {
 
 /** How alike two texts are, 0 to 1 (Jaccard on their terms): near-duplicate facts score 0.8 and up. */
 export function similarity(a: string, b: string): number {
-  const x = new Set(terms(a));
-  const y = new Set(terms(b));
+  return termSimilarity(new Set(terms(a)), new Set(terms(b)));
+}
+
+/** The same comparison when several facts are compared against already-tokenized words. */
+export function termSimilarity(x: ReadonlySet<string>, y: ReadonlySet<string>): number {
   if (!x.size && !y.size) return 1;
   let both = 0;
   for (const t of x) if (y.has(t)) both++;

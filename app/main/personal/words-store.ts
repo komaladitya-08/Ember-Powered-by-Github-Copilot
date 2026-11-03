@@ -22,8 +22,8 @@ export interface WordsStore {
   list(): LearnedWord[];
   /** Keeps a correction (the same words heard replace the older one). */
   add(c: LearnedCorrection, now?: Date): LearnedWord[];
-  /** Removes the one at `index` (as list() gave them). */
-  forget(index: number): LearnedWord[];
+  /** Removes the exact entry the user saw, if it still exists. */
+  forget(expected: unknown): LearnedWord[];
   forgetAll(): void;
 }
 
@@ -51,9 +51,13 @@ export function wordsStore(dir: string): WordsStore {
       write(words);
       return words;
     },
-    forget(index) {
+    forget(expected) {
       const words = read();
-      if (!Number.isInteger(index) || index < 0 || index >= words.length) return words;
+      const parsed = WordSchema.safeParse(expected);
+      if (!parsed.success) return words;
+      const { heard, meant, at } = parsed.data;
+      const index = words.findIndex(w => w.heard === heard && w.meant === meant && w.at === at);
+      if (index < 0) return words;
       words.splice(index, 1);
       if (words.length) write(words); else fs.rmSync(file, { force: true });
       return words;

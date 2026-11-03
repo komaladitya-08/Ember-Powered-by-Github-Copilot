@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  NEVER_LOOK_DEFAULTS, dayLabel, describeEntry, forUser, friendlyApp, keyLabel, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
+  NEVER_LOOK_DEFAULTS, conversationContextLine, dayLabel, describeEntry, forUser, friendlyApp, keyLabel, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
@@ -32,6 +32,15 @@ describe("settings window words", () => {
     expect(tokens(2000)).toBe("2k");
     expect(tokens(48_400)).toBe("48k");
     expect(usageLine({ calls: 3, inputTokens: 40, outputTokens: 12 })).not.toMatch(/0\.0k/);
+  });
+
+  it("labels conversation context separately from usage and leaves an unknown limit unknown", () => {
+    expect(conversationContextLine(undefined)).toBe("");
+    expect(conversationContextLine({ kind: "usage", currentTokens: 18_000, tokenLimit: 128_000 }))
+      .toBe("The current conversation context uses 18k of 128k tokens.");
+    expect(conversationContextLine({ kind: "usage", currentTokens: 500 }))
+      .toBe("The current conversation context uses 500 tokens. Its limit is unknown.");
+    expect(conversationContextLine({ kind: "compacting" })).toBe("Making room in the conversation…");
   });
 
   it("says what Check again found", () => {

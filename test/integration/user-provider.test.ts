@@ -88,8 +88,12 @@ describe("the user's own model provider on the real Copilot runtime", () => {
       // Turned off once the turn has ended (its answer shows a moment before the runtime says the turn is over, and the
       // switch never cuts a turn off): back to Copilot at once, which has no sign-in here.
       expect(await until(() => turnsEnded > 0), `turns ended: ${turnsEnded}`).toBe(true);
+      // The real SDK reports the live conversation context even for this custom model. Its default limit is only a guess.
+      expect(host.getStatus().conversationContext).toMatchObject({ kind: "usage", currentTokens: expect.any(Number) });
+      expect(host.getStatus().conversationContext).not.toHaveProperty("tokenLimit");
       settings.update({ provider: { ...settings.get().provider, on: false } });
       expect(await host.providerChanged(), phases.join("\n")).toBe("signed-out");
+      expect(host.getStatus().conversationContext).toBeUndefined();
     } finally {
       await host.stop();
     }

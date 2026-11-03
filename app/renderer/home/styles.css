@@ -322,6 +322,7 @@ progress[hidden] { display: none; }
 .conversation form.teach { order: 4; flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 6px; }
 .conversation form.teach input { flex: 1 1 240px; max-width: 86%; min-width: 0; }
 .conversation .teach-note { order: 0; max-width: 86%; margin: 0; padding: 0; background: none; color: var(--muted); font: var(--type-footnote); text-align: right; }
+.conversation .teach-note:empty { position: absolute; }
 /* "Ember learned: …" and its Undo: one quiet line of its own, not a message. */
 .conversation li.learned { flex-wrap: nowrap; align-items: center; }
 .conversation li.learned::before { content: none; }

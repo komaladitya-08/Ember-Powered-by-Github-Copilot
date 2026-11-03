@@ -79,10 +79,12 @@ export function askSize(scale = 1): { width: number; height: number } {
   return { width: Math.round(SIZE.width * s), height: Math.round(SIZE.height + GROWS * (s - 1)) };
 }
 
-/** The box's size at `scale` on work area `wa`: no wider than it (with its gaps), never narrower than the usual box. */
+/** Keep the box inside the display, even if its work area is smaller than the usual box. */
+const roomWithGaps = (length: number) => Math.max(1, length - 2 * GAP);
+const gapIn = (room: number, size: number) => Math.min(GAP, Math.floor((room - size) / 2));
 function sizeIn(wa: Box, scale: number): { width: number; height: number } {
   const size = askSize(scale);
-  return { ...size, width: Math.max(SIZE.width, Math.min(size.width, wa.width - 2 * GAP)) };
+  return { width: Math.min(size.width, roomWithGaps(wa.width)), height: Math.min(size.height, roomWithGaps(wa.height)) };
 }
 
 const overlap = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
@@ -96,8 +98,9 @@ const overlap = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x &
 export function askBounds(near: { x: number; y: number; size?: number } | null, wa: Box, keepOff?: Box | null, scale = 1): Box {
   const box = sizeIn(wa, scale);
   const size = near?.size ?? EMBER_SIZE;
-  const top = wa.y + GAP, bottom = wa.y + wa.height - box.height - GAP;
-  const left = wa.x + GAP, right = wa.x + wa.width - box.width - GAP;
+  const gapY = gapIn(wa.height, box.height), gapX = gapIn(wa.width, box.width);
+  const top = wa.y + gapY, bottom = wa.y + wa.height - box.height - gapY;
+  const left = wa.x + gapX, right = wa.x + wa.width - box.width - gapX;
   let y = wa.y + wa.height - box.height - 90;
   if (near) {
     const above = near.y - box.height - Math.max(18, size * 0.5 - 8);
@@ -125,8 +128,9 @@ function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
  */
 export function grownBounds(b: Box, rows: number, wa: Box, up: boolean, keepOff?: Box | null, scale = 1): Box {
   const extra = Math.min(MAX_ROWS, Math.max(1, Math.round(rows))) - 1;
-  const height = askSize(scale).height + Math.round(extra * LINE * scaleOf(scale));
-  const top = wa.y + GAP, bottom = wa.y + wa.height - height - GAP;
+  const height = Math.min(askSize(scale).height + Math.round(extra * LINE * scaleOf(scale)), roomWithGaps(wa.height));
+  const gap = gapIn(wa.height, height);
+  const top = wa.y + gap, bottom = wa.y + wa.height - height - gap;
   const y = up ? b.y + b.height - height : b.y;
   return clearOf({ ...b, height, y: Math.round(Math.max(top, Math.min(y, bottom))) }, wa, keepOff);
 }

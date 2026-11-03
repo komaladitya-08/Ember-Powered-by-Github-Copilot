@@ -145,9 +145,21 @@ const watch = speechWatch({
   timeoutMs: 8000,
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: t => clearTimeout(t as ReturnType<typeof setTimeout>),
-  report: reportSpeech,
+  report: ok => {
+    if (!ok) { synthStarted = false; update(); }
+    reportSpeech(ok);
+  },
 });
-let watching: WatchedUtterance | null = null;
+let watching: { utterance: SpeechSynthesisUtterance; watch: WatchedUtterance } | null = null;
+
+/** Chromium starts a queued utterance only after its predecessor ends. Watch only that eligible utterance. */
+function watchHead(): void {
+  const utterance = synthQueued.values().next().value;
+  if (utterance === watching?.utterance) return;
+  watching?.watch.cancelled();
+  watching = utterance ? { utterance, watch: watch.utterance() } : null;
+  if (!utterance) synthStarted = false;
+}
 
 /** Local fallback waits for neural audio to finish, and briefly for voices to load. */
 const localSpeech = new LocalSpeech({
@@ -165,13 +177,24 @@ function speakLocal(text: string, voice: SpeechSynthesisVoice): void {
   u.lang = navigator.language || "en-US";
   u.voice = voice;
   u.rate = 1.05;
-  const w = watching = watch.utterance();
   const queued = synthQueued;
   queued.add(u);
-  u.onstart = () => { if (queued !== synthQueued) return; w.started(); reportSpeech(true); synthStarted = true; update(); };
+  watchHead();
+  u.onstart = () => {
+    if (queued !== synthQueued || !queued.has(u)) return;
+    if (watching?.utterance === u) watching.watch.started();
+    reportSpeech(true);
+    synthStarted = true;
+    update();
+  };
   // A reply replaced by the next one ends after the next has started: only the current queue counts.
-  u.onend = () => { if (queued !== synthQueued) return; queued.delete(u); update(); };
-  u.onerror = e => { if (queued !== synthQueued) return; w.failed(e.error); queued.delete(u); update(); };
+  u.onend = () => { if (queued !== synthQueued || !queued.delete(u)) return; watchHead(); update(); };
+  u.onerror = e => {
+    if (queued !== synthQueued || !queued.delete(u)) return;
+    if (watching?.utterance === u) watching.watch.failed(e.error);
+    watchHead();
+    update();
+  };
   speechSynthesis.speak(u);
 }
 
@@ -181,10 +204,11 @@ api.onSpeak(({ text, append }) => {
 });
 function hush(): void {
   localSpeech.cancel();
-  watching?.cancelled();
-  speechSynthesis.cancel();
+  watching?.watch.cancelled();
+  watching = null;
   synthQueued = new Set();
   synthStarted = false;
+  speechSynthesis.cancel();
   player.stop();
   update();
 }

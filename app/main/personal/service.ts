@@ -172,8 +172,8 @@ export class PersonalVoice {
     return this.o.words.list();
   }
 
-  forgetWord(index: number): LearnedWord[] {
-    return this.o.words.forget(index);
+  forgetWord(expected: unknown): LearnedWord[] {
+    return this.o.words.forget(expected);
   }
 
   forgetWords(): void {

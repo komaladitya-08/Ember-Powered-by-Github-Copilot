@@ -178,16 +178,27 @@ describe("hardened sessions with extensions", () => {
 
   it("never admit an extension tool named as one of Ember's, or without its server prefix, or the SDK's management tools", () => {
     const admitted = admittedExtensionTools(["set_appearance"], fakeExt());
-    expect(admitted).not.toContain("set_appearance");
-    expect(admitted).not.toContain("extensions_manage");
-    expect(admitted).not.toContain("ghost-tool");
+    expect(admitted.has("set_appearance")).toBe(false);
+    expect(admitted.has("extensions_manage")).toBe(false);
+    expect(admitted.has("ghost-tool")).toBe(false);
   });
 
   it("admits agreed dotted tool names with the same names discovery and the runtime use", () => {
-    const extensions = fakeExt({ tools: ["fake-calendar.list"], mcpServers: { fake: { type: "stdio", command: "node", args: [], tools: ["calendar.list"] } } });
+    const extensions = fakeExt({ tools: ["fake-calendar-list"], mcpServers: { fake: { type: "stdio", command: "node", args: [], tools: ["calendar.list"] } } });
     const c = hardenedSessionConfig({ ...base, tools: [], extensions });
-    expect(c.availableTools).toEqual(["mcp:fake-calendar.list"]);
+    expect(c.availableTools).toEqual(["mcp:fake-calendar-list"]);
     expect(c.mcpServers?.fake.tools).toEqual(["calendar.list"]);
+  });
+
+  it("omits both tools when punctuation or truncation gives them the same model-facing name", () => {
+    const long = "a".repeat(59);
+    const extensions = fakeExt({
+      tools: ["fake-calendar-list", `fake-${long}`, "fake-lookup"],
+      mcpServers: { fake: { type: "stdio", command: "node", args: [], tools: ["calendar.list", "calendar-list", long + "1", long + "2", "lookup"] } },
+    });
+    const c = hardenedSessionConfig({ ...base, tools: [], extensions });
+    expect(c.availableTools).toEqual(["mcp:fake-lookup"]);
+    expect(c.mcpServers?.fake.tools).toEqual(["lookup"]);
   });
 
   it("route an extension tool's failures to the gate's failure note, and nothing else's (audit B2)", async () => {
@@ -246,6 +257,19 @@ describe("hardened sessions with extensions", () => {
   it("refuse a session whose tool has an admitted name but isn't that MCP tool (an extension.mjs tool)", async () => {
     await expect(verifySessionTools(session([{ name: "fake-lookup" }]), [], 1000, fakeExt())).rejects.toThrow(/did not grant: fake-lookup/);
     await expect(verifySessionTools(session([{ name: "fake-lookup", mcpServerName: "fake", mcpToolName: "lookup" }]), [])).rejects.toThrow(/did not grant/);
+  });
+
+  it.each([
+    { name: "set_appearance", mcpServerName: "fake", mcpToolName: "set_appearance" },
+    { name: "fake-db-read", mcpServerName: "fake-db", mcpToolName: "read" },
+    { name: "fake-undefined", mcpServerName: "fake" },
+    { name: "fake-calendar-list", mcpServerName: "fake", mcpToolName: "calendar-list" },
+  ])("rejects a tool with the wrong or missing MCP origin for $name", async shown => {
+    const ext = fakeExt({
+      tools: ["fake-db-read", "fake-undefined", "fake-calendar-list"],
+      mcpServers: { fake: { type: "stdio", command: "node", args: [], tools: ["db-read", "undefined", "calendar.list"] } },
+    });
+    await expect(verifySessionTools(session([shown]), ["set_appearance"], 1000, ext)).rejects.toThrow(/did not grant/);
   });
 });
 

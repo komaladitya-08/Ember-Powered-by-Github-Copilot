@@ -257,12 +257,15 @@ describe("the sleep-time pass, as it runs", () => {
   it("runs consolidate and one model pass once idle, within its daily budget, and stops on the kill switch", async () => {
     let calls = 0;
     let release: (v: string | null) => void = () => undefined;
-    const model: OneShot = () => { calls++; return new Promise(r => { release = r; }); };
+    let started!: () => void;
+    const modelStarted = new Promise<void>(r => { started = r; });
+    const model: OneShot = () => { calls++; started(); return new Promise(r => { release = r; }); };
     const { l, s, advance } = learning({ model });
     s.learn({ text: "Works on Atlas", about: [{ name: "User" }, { name: "Atlas" }], source: "user" });
     s.learn({ text: "Atlas ships in March", about: [{ name: "Atlas" }], source: "task" });
     advance(IDLE_MS);
     const pass = l.tick();
+    await modelStarted;
     expect(calls).toBe(1);
     l.stopNow();
     release(JSON.stringify({ summaries: [{ entity: "Atlas", summary: "A project shipping in March" }] }));
@@ -272,6 +275,22 @@ describe("the sleep-time pass, as it runs", () => {
     await l.tick();
     expect(calls).toBe(1);
     expect(l.usage.refine).toBe(1);
+  });
+
+  it.each(["Stop", "revocation followed by regrant"])("does not begin model refinement when upkeep is interrupted by %s", async event => {
+    let inForce = true;
+    const model = vi.fn(async () => null);
+    const { l, s } = learning({ model, inForce: () => inForce });
+    s.learn({ text: "Works on Atlas", about: [{ name: "User" }], source: "user" });
+    s.learn({ text: "Likes tea", about: [{ name: "User" }], source: "user" });
+    const pending = l.refine();
+    if (event !== "Stop") inForce = false;
+    l.stopNow();
+    inForce = true;
+    expect(await pending).toBe(0);
+    expect(model).not.toHaveBeenCalled();
+    expect(s.list()).toHaveLength(2);
+    s.stop();
   });
 });
 
@@ -386,7 +405,7 @@ describe("Home's words for memory", () => {
     expect(undoLearnedLabel("Prefers short answers")).toBe("Undo: forget “Prefers short answers”");
     expect([null, 0, 1, 3].map(aboutYouSaved)).toEqual(["Not saved: memory is off.", "Nothing to save yet: answer any question you like.", "Saved 1 answer.", "Saved 3 answers."]);
     expect(ABOUT_YOU.title).toBe("Tell Ember about you");
-    expect(introFromForm({ name: "  Ram ", work: "", apps: "Mail", length: "", spoken: "no", hours: " " })).toEqual({ name: "Ram", apps: "Mail", spoken: false });
+    expect(introFromForm({ name: "  Ram ", work: "...", apps: "Mail", length: "", spoken: "no", hours: " " })).toEqual({ name: "Ram", apps: "Mail", spoken: false });
   });
 
   it("says memory is paused for someone who agreed to the first note, until they agree to the new one", () => {
@@ -554,7 +573,7 @@ describe("the re-review of PR #142", () => {
     expect(s.list()).toEqual([]);
     // Main registers it as one kill-switch part.
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
-    expect(main).toContain('{ name: "memory", stop: () => { betterRecallRef?.semantic.stop(); learningRef?.stopNow(); } },');
+    expect(main).toContain('{ name: "memory", stop: () => { learningRef?.stopNow(); betterRecallRef?.semantic.stop(); } },');
     expect(main.match(/\{ name: "memory"/g)).toHaveLength(1);
     expect(main).toContain("learningRef = learning;");
   });
@@ -753,11 +772,14 @@ describe("the second re-review of PR #142", () => {
 it("discards a refinement that finishes after an individual Forget", async () => {
   let resolve!: (value: string) => void;
   let signal: AbortSignal | undefined;
-  const { l, s } = learning({ model: async (_sys, _prompt, abort) => { signal = abort; return new Promise<string>(r => { resolve = r; }); } });
+  let started!: () => void;
+  const modelStarted = new Promise<void>(r => { started = r; });
+  const { l, s } = learning({ model: async (_sys, _prompt, abort) => { signal = abort; started(); return new Promise<string>(r => { resolve = r; }); } });
   s.learn({ text: "Works on Atlas", about: [{ name: "User" }, { name: "Atlas" }], source: "user" });
   s.learn({ text: "Likes tea", about: [{ name: "User" }], source: "user" });
   const id = s.list().find(f => f.text === "Works on Atlas")!.id;
   const run = l.refine();
+  await modelStarted;
   expect(l.forget(id)).toBe(true);
   expect(signal?.aborted).toBe(true);
   resolve(JSON.stringify({ summaries: [{ entity: "User", summary: "Works on Atlas and likes tea" }] }));

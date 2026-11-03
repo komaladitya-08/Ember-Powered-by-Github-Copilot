@@ -35,15 +35,21 @@ export class Capture {
   private since = 0;
   private failures = 0;
   private attempt = 0;
+  private stopped = false;
   private retry: ReturnType<typeof setTimeout> | undefined;
+  private settle: ReturnType<typeof setTimeout> | undefined;
   private timers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(private d: CaptureDeps) {
-    let settle: ReturnType<typeof setTimeout> | undefined;
-    d.onDeviceChange(() => { clearTimeout(settle); settle = setTimeout(() => void this.devicesChanged(), SETTLE_MS); });
+    d.onDeviceChange(() => {
+      if (this.stopped) return;
+      clearTimeout(this.settle);
+      this.settle = setTimeout(() => void this.devicesChanged(), SETTLE_MS);
+    });
   }
 
   async start(): Promise<void> {
+    if (this.stopped) return;
     clearTimeout(this.retry);
     this.retry = undefined;
     const attempt = ++this.attempt;
@@ -51,6 +57,7 @@ export class Capture {
     let stream: MediaStream | null = null;
     try {
       stream = await this.d.getUserMedia();
+      if (attempt !== this.attempt) { stopTracks(stream); return; }
       const ctx = await this.d.graph(stream);
       if (attempt !== this.attempt) { stopTracks(stream); void ctx.close().catch(() => undefined); return; } // superseded meanwhile
       this.stream = stream;
@@ -63,7 +70,9 @@ export class Capture {
         track.onunmute = () => clearTimeout(muted);
       }
       ctx.onstatechange = () => this.contextChanged(ctx);
-      this.device = await this.defaultInput();
+      const device = await this.defaultInput();
+      if (attempt !== this.attempt || stream !== this.stream) return;
+      this.device = device;
       this.worked = true;
       this.since = Date.now();
       this.d.status({ state: "capturing", device: track?.label ?? "", rate: ctx.sampleRate, context: ctx.state });
@@ -78,9 +87,13 @@ export class Capture {
 
   /** Releases the microphone for good (the page is closing). */
   stop(): void {
+    this.stopped = true;
     this.attempt++;
     clearTimeout(this.retry);
+    this.retry = undefined;
+    clearTimeout(this.settle);
     for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
     this.release();
   }
 
@@ -105,9 +118,11 @@ export class Capture {
   private async devicesChanged(): Promise<void> {
     // Waiting to try again after a loss: a device just appeared, so try now.
     if (this.retry) { void this.start(); return; }
-    if (!this.ctx) return;
+    const ctx = this.ctx;
+    if (!ctx) return;
     // A new default device (a headset plugged in): follow it. Other changes don't interrupt.
-    if ((await this.defaultInput()) !== this.device) void this.start();
+    const device = await this.defaultInput();
+    if (ctx === this.ctx && device !== this.device) void this.start();
   }
 
   /** Which device "default" is now. */

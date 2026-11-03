@@ -125,6 +125,7 @@ export class MemoryLearning {
   /** The kill switch: every model call under way is abandoned, nothing waiting is learned, the interview ends. */
   stopNow(): void {
     ++this.recallRevision;
+    this.d.memory.cancelUpkeep();
     this.learner.stop();
     this.refining?.abort();
     this.refining = null;
@@ -298,19 +299,20 @@ export class MemoryLearning {
   /** The sleep-time pass: consolidate(), then one model pass over what changed lately. What it changed. */
   async refine(): Promise<number> {
     const m = this.d.memory;
-    m.upkeep();
-    const model = this.model;
-    if (!model || !this.d.inForce()) return 0;
-    let shown: Fact[] = [];
-    let prompt = "";
-    m.refine(g => { shown = recentFacts(g, this.refinedAt); prompt = shown.length ? refinePrompt(g, shown) : ""; return 0; });
-    if (shown.length < 2) return 0;
-    const now = this.now();
-    this.refines.spend(now);
-    this.refinedAt = new Date(now).toISOString();
+    if (this.refining || !this.d.inForce()) return 0;
     const run = new AbortController();
     this.refining = run;
     try {
+      if (!await m.upkeep() || run.signal.aborted || !this.d.inForce()) return 0;
+      const model = this.model;
+      if (!model) return 0;
+      let shown: Fact[] = [];
+      let prompt = "";
+      m.refine(g => { shown = recentFacts(g, this.refinedAt); prompt = shown.length ? refinePrompt(g, shown) : ""; return 0; });
+      if (shown.length < 2) return 0;
+      const now = this.now();
+      this.refines.spend(now);
+      this.refinedAt = new Date(now).toISOString();
       const raw = await model(REFINE_SYSTEM, prompt, run.signal);
       if (run.signal.aborted || !this.d.inForce()) return 0;
       const r = parseRefinement(raw);

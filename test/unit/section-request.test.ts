@@ -17,6 +17,7 @@ describe("a section request from main", () => {
     // Opened from the keyboard while another app holds the ask or stop shortcut: at that button (review #45).
     expect(sectionRequest("access:ask")).toEqual({ section: "home", control: "p-ask" });
     expect(sectionRequest("access:stop")).toEqual({ section: "home", control: "p-stop" });
+    expect(sectionRequest("memory:memory-yes")).toEqual({ section: "memory", control: "memory-yes" });
   });
 
   it("waits while its section is hidden, and is taken once it shows", () => {

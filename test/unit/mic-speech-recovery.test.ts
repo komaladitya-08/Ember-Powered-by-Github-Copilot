@@ -112,6 +112,35 @@ describe("mic renderer speech recovery", () => {
     r.hush();
   });
 
+  it("starts watching a queued system reply only when the previous one ends", async () => {
+    const r = await renderer();
+    r.speak({ text: "A long first reply." });
+    const first = r.synth.speak.mock.calls[0][0];
+    first.onstart();
+    r.speak({ text: "The queued second reply.", append: true });
+    const second = r.synth.speak.mock.calls[1][0];
+    vi.advanceTimersByTime(10_000);
+    expect(r.api.speech).not.toHaveBeenCalledWith(false);
+    first.onend();
+    vi.advanceTimersByTime(7900);
+    expect(r.api.speech).not.toHaveBeenCalledWith(false);
+    vi.advanceTimersByTime(200);
+    expect(r.api.speech).toHaveBeenLastCalledWith(false);
+    expect(r.api.speaking).toHaveBeenLastCalledWith(false, 0);
+    second.onstart();
+    expect(r.api.speech).toHaveBeenLastCalledWith(true);
+    r.hush();
+  });
+
+  it("cancels a head reply's startup watch when the system queue is hushed", async () => {
+    const r = await renderer();
+    r.speak({ text: "First cancelled reply." });
+    r.speak({ text: "Second cancelled reply.", append: true });
+    r.hush(1);
+    vi.advanceTimersByTime(10_000);
+    expect(r.api.speech).not.toHaveBeenCalled();
+  });
+
   it("reports unavailable rather than submitting an unrestricted utterance", async () => {
     const r = await renderer(); r.synth.getVoices.mockReturnValue([]);
     r.speak({ text: "Private words." });

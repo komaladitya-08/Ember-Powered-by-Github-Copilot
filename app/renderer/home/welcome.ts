@@ -58,6 +58,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let agent: AgentStatus | null = null;
   let voice: VoiceStatus | null = null;
   let signingIn = false;
+  let signInMessage: { text: string; tone: string } | null = null;
+  let saving = false;
+  let navigation = 0;
   /** The page main offers while it waits for a sign-in made elsewhere ("Open cli.github.com"), or null. */
   let waitLink: string | null = null;
   let declined = false;
@@ -97,6 +100,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   }
   function finish(): void {
     active = false;
+    navigation++;
     wantLevel(false);
     const [bp, bn] = home.buddy; bp?.insertBefore(deps.buddy, bn);
     const [cp, cn] = home.cards; cp?.insertBefore(deps.cards, cn);
@@ -109,6 +113,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // The step comes in from the side it lies on (motion only; focus moves at once, as the motion starts).
     root.dataset.dir = WELCOME_STEPS.indexOf(to) < WELCOME_STEPS.indexOf(step) ? "back" : "next";
     step = gated(to, consented());
+    navigation++;
     if (step === "try") heardBefore = -1;
     render();
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -128,6 +133,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
     back.hidden = !stepBefore(step);
     back.textContent = NAV.back;
+    if (saving && step === "done") {
+      back.setAttribute("aria-disabled", "true");
+      back.setAttribute("aria-describedby", "w-why");
+    } else {
+      back.removeAttribute("aria-disabled");
+      back.removeAttribute("aria-describedby");
+    }
     next.className = "btn";
     alt.hidden = true;
     let label: string = NAV.next;
@@ -139,6 +151,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "try") renderTry();
     if (step === "about") label = aboutNext(about);
     if (step === "done") { renderSummary(); label = START_LABEL; next.className = "start"; }
+    if (saving) why = "Saving…";
     wantLevel(step === "try" && voiceState() === "listening");
     next.textContent = label;
     // Can't be pressed yet: said beside it (and to screen readers through its description), never only greyed.
@@ -175,8 +188,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     });
     const line = $("w-signin-line");
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
-    const detail = agent?.phase === "error" && !signingIn ? agent.detail : v.line;
-    if (!signingIn || !line.textContent) { line.textContent = detail; line.className = `w-status ${agent?.phase === "error" ? "error" : v.tone}`; }
+    const detail = signInMessage?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : v.line);
+    if (line.textContent !== detail) line.textContent = detail;
+    line.className = `w-status ${signInMessage?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
     $("w-signin-later").hidden = v.primary === "continue" && !v.why;
     $("w-signin-later").textContent = SKIP_SIGN_IN;
     if (v.cancel || v.skip) {
@@ -320,12 +334,26 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   }
 
   // ───── The buttons ─────
+  async function saveStep(write: () => Promise<boolean>, to?: WelcomeStep): Promise<void> {
+    const from = navigation;
+    saving = true;
+    render();
+    let ok: boolean;
+    try { ok = await write(); }
+    catch { ok = false; }
+    finally { saving = false; render(); }
+    // The user may go back while a save is pending, even returning to this same step.
+    if (!active || navigation !== from) return;
+    if (ok && to) go(to);
+    else if (!ok && step !== "about") window.scrollTo({ top: 0 });
+  }
+
   next.addEventListener("click", () => {
     if (next.getAttribute("aria-disabled") === "true") return;
     if (step === "consent" && !consented()) {
       declined = false;
       // Not saved: the notice at the top says why (review #84), so it is brought into view.
-      void deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }).then(ok => { if (ok) go("sign-in"); else window.scrollTo({ top: 0 }); });
+      void saveStep(() => deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), "sign-in");
       return;
     }
     // Sign in is the step's button only while signing in can help (not with the organisation's own service, nor locked).
@@ -333,15 +361,19 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // Start that couldn't be saved says why in the notice at the top (review #84).
     // What was answered is saved, then on (nothing answered, or memory left off: nothing is kept).
     if (step === "about") {
-      if (about.ready && about.filled) void about.submit().then(() => go("done"));
+      if (about.ready && about.filled) void saveStep(async () => (await about.submit() ?? 0) > 0 && !about.filled, "done");
       else go("done");
       return;
     }
-    if (step === "done") { void deps.save({ onboarded: true }).then(ok => { if (!ok) window.scrollTo({ top: 0 }); }); return; }
+    if (step === "done") { void saveStep(() => deps.save({ onboarded: true })); return; }
     const to = stepAfter(step);
     if (to) go(to);
   });
-  back.addEventListener("click", () => { const to = stepBefore(step); if (to) go(to); });
+  back.addEventListener("click", () => {
+    if (back.getAttribute("aria-disabled") === "true") return;
+    const to = stepBefore(step);
+    if (to) go(to);
+  });
   alt.addEventListener("click", () => {
     if (step === "consent") {
       if (declined) { void window.ember.quit(); return; }
@@ -356,13 +388,17 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   });
   $("w-open-page").addEventListener("click", () => { void window.ember.openSignInPage(); });
   $("w-check-again").addEventListener("click", () => {
-    const line = $("w-signin-line");
-    line.textContent = "Checking…";
-    line.className = "w-status";
-    window.ember.retrySignIn().then(r => {
-      line.textContent = retryMessage(r, r.found && agent?.phase === "ready");
-      line.className = `w-status ${r.found ? "" : "error"}`;
-    }, err => { line.textContent = ipcErrorText(err); line.className = "w-status error"; });
+    if (signInMessage?.text === "Checking…") return;
+    const checking = { text: "Checking…", tone: "" };
+    signInMessage = checking;
+    render();
+    const show = (text: string, tone: string) => {
+      if (signInMessage !== checking) return;
+      signInMessage = { text, tone };
+      render();
+    };
+    window.ember.retrySignIn().then(r => show(retryMessage(r, r.found && agent?.phase === "ready"), r.found ? "" : "error"),
+      err => show(ipcErrorText(err), "error"));
   });
   $("w-ask").addEventListener("click", () => {
     if ($("w-ask").getAttribute("aria-disabled") === "true") return;
@@ -372,24 +408,23 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   // ───── Sign-in (GitHub's device flow, main's own) ─────
   function signIn(): void {
     signingIn = true;
+    signInMessage = null;
     render();
     alt.focus();
     window.ember.signIn().catch(err => {
       signingIn = false;
-      $("w-signin-line").textContent = ipcErrorText(err);
-      $("w-signin-line").className = "w-status error";
+      signInMessage = { text: ipcErrorText(err), tone: "error" };
       render();
     });
   }
   window.ember.onSignInProgress(p => {
     if (!active) return;
-    if (p.state === "code") { showCode(p.userCode ?? "", p.verificationUri ?? ""); return; }
-    if (p.state === "waiting") { signingIn = true; waitLink = p.link ?? null; $("w-signin-line").textContent = p.message ?? ""; render(); return; }
+    if (p.state === "code") { signingIn = true; showCode(p.userCode ?? "", p.verificationUri ?? ""); return; }
+    if (p.state === "waiting") { signingIn = true; waitLink = p.link ?? null; signInMessage = p.message ? { text: p.message, tone: "" } : null; render(); return; }
     signingIn = false;
     waitLink = null;
     $("w-code").hidden = true;
-    $("w-signin-line").textContent = p.state === "error" ? p.message ?? "" : "";
-    $("w-signin-line").className = `w-status ${p.state === "error" ? "error" : ""}`;
+    signInMessage = p.message ? { text: p.message, tone: p.state === "error" || p.state === "unavailable" ? "error" : "warn" } : null;
     render();
     // Signed in: Continue takes focus, so the next step is one key away.
     if (p.state === "done" && step === "sign-in") next.focus();
@@ -409,7 +444,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const at = el("p", { className: "w-code-row" });
     at.append(el("span", { textContent: `Enter it at ${where}. Your browser should have opened it.` }), open);
     box.replaceChildren(code, at);
-    $("w-signin-line").textContent = "";
+    signInMessage = { text: "", tone: "" };
+    render();
   }
 
   // ───── What the tries hear ─────

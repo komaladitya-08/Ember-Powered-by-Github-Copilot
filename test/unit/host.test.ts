@@ -54,7 +54,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     rpc = { tools: { initializeAndValidate: async () => { if (sim.toolsHang) await hang(); return {}; }, getCurrentMetadata: async () => ({ tools: (this.config.tools ?? []).map((t: any) => ({ name: t.name })) }) } };
     constructor(public sessionId: string, public config: any) {}
     on(fn: (e: any) => void) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
-    emit(type: string, data: Record<string, unknown> = {}) { for (const l of [...this.listeners]) l({ type, data }); }
+    emit(type: string, data: Record<string, unknown> = {}, agentId?: string) { for (const l of [...this.listeners]) l({ type, data, agentId }); }
     /** Requests the runtime holds until the running turn ends. */
     waiting: string[] = [];
     // Like the runtime: a request's turn starts with its message (at once when nothing runs).
@@ -502,11 +502,13 @@ describe("the conversation lasts one run of Ember", () => {
     const { host, dir, agentJson } = makeHost();
     await host.start(TOKEN, "stored");
     const first = conductorSession().sessionId;
+    expect(conductorSession().config).toMatchObject({ enableSessionTelemetry: false, enableConfigDiscovery: false, availableTools: [] });
     expect(agentJson().conductorSessionId).toBe(first);
     // Reconnecting within the run (the runtime restarted, Check again): the same conversation.
     await host.start(TOKEN, "stored");
     expect(sim.resumed).toEqual([first]);
     expect(conductorSession().sessionId).toBe(first);
+    expect(conductorSession().config).toMatchObject({ enableSessionTelemetry: false, enableConfigDiscovery: false, availableTools: [] });
     // Quit: deleted, and nothing saved.
     await host.stop();
     expect(sim.deleted).toEqual([first]);
@@ -2782,6 +2784,92 @@ describe("the models' cost in the status (review #144)", () => {
       { id: "delta-mini", name: "Delta Mini", vision: true },
     ]);
     expect(host.getStatus()).toMatchObject({ conductorModel: "delta-mini", workerModel: "delta-pro" });
+    await host.stop();
+  });
+});
+
+describe("the live conversation context in model settings", () => {
+  it("uses only the main conversation's numeric context snapshot and leaves cumulative model usage separate", async () => {
+    const { host, statuses } = makeHost();
+    await host.start(TOKEN, "stored");
+    const session = conductorSession();
+    expect(host.getStatus().conversationContext).toBeUndefined();
+    session.emit("assistant.usage", { inputTokens: 312, outputTokens: 40 });
+    session.emit("session.usage_info", { currentTokens: 24_000, tokenLimit: 128_000 });
+    expect(host.getStatus()).toMatchObject({
+      usage: { calls: 1, inputTokens: 312, outputTokens: 40 },
+      conversationContext: { kind: "usage", currentTokens: 24_000, tokenLimit: 128_000 },
+    });
+    const before = statuses.length;
+    session.emit("session.usage_info", { currentTokens: 24_000, tokenLimit: 128_000 });
+    session.emit("session.usage_info", { currentTokens: 42, tokenLimit: 64 }, "subagent");
+    expect(statuses).toHaveLength(before);
+    session.emit("session.usage_info", { currentTokens: "invalid", tokenLimit: 128_000 });
+    expect(host.getStatus().conversationContext).toBeUndefined();
+    session.emit("session.usage_info", { currentTokens: 0, tokenLimit: 0 });
+    expect(host.getStatus().conversationContext).toEqual({ kind: "usage", currentTokens: 0 });
+    await host.stop();
+    expect(host.getStatus().conversationContext).toBeUndefined();
+  });
+
+  it("keeps a background compaction visible through idle and waits for a new reading after it ends", async () => {
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    const session = conductorSession();
+    session.emit("session.usage_info", { currentTokens: 120_000, tokenLimit: 128_000 });
+    session.emit("session.compaction_start");
+    session.emit("session.idle");
+    session.emit("session.usage_info", { currentTokens: 121_000, tokenLimit: 128_000 });
+    expect(host.getStatus().conversationContext).toEqual({ kind: "compacting" });
+    session.emit("session.compaction_complete", { success: true });
+    expect(host.getStatus().conversationContext).toBeUndefined();
+    session.emit("session.usage_info", { currentTokens: 18_000, tokenLimit: 128_000 });
+    expect(host.getStatus().conversationContext).toEqual({ kind: "usage", currentTokens: 18_000, tokenLimit: 128_000 });
+    session.emit("session.compaction_start");
+    await host.stopAnswer();
+    expect(host.getStatus().conversationContext).toBeUndefined();
+    session.emit("session.compaction_start");
+    expect(host.getStatus().conversationContext).toBeUndefined();
+    await host.stop();
+  });
+
+  it("drops readings from the old turn after a model switch and from old sessions after reconnecting", async () => {
+    sim.models = [{ id: "small" }, { id: "large" }];
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    const old = conductorSession();
+    await host.ask("First request");
+    old.emit("session.usage_info", { currentTokens: 32, tokenLimit: 64 });
+    let resolveModel!: () => void;
+    old.setModel = () => new Promise<void>(resolve => { resolveModel = resolve; });
+    const switchModel = host.setModels({ conductor: "large" });
+    old.emit("session.usage_info", { currentTokens: 48, tokenLimit: 64 });
+    expect(host.getStatus().conversationContext).toBeUndefined();
+    resolveModel();
+    await switchModel;
+    old.emit("session.usage_info", { currentTokens: 50, tokenLimit: 64 });
+    expect(host.getStatus().conversationContext).toBeUndefined();
+    old.emit("session.idle");
+    await host.ask("Next request");
+    old.emit("session.usage_info", { currentTokens: 55, tokenLimit: 128 });
+    expect(host.getStatus()).toMatchObject({ conductorModel: "large", conversationContext: { currentTokens: 55, tokenLimit: 128 } });
+    await host.start(TOKEN, "stored");
+    const next = conductorSession();
+    expect(next).not.toBe(old);
+    old.emit("session.usage_info", { currentTokens: 62, tokenLimit: 128 });
+    expect(host.getStatus().conversationContext).toBeUndefined();
+    next.emit("session.usage_info", { currentTokens: 70, tokenLimit: 128 });
+    expect(host.getStatus().conversationContext).toEqual({ kind: "usage", currentTokens: 70, tokenLimit: 128 });
+    await host.stop();
+  });
+
+  it("shows a custom provider's observed count without guessing its model's limit", async () => {
+    const { host } = makeHost({
+      provider: () => ({ kind: "test", config: { baseUrl: "http://127.0.0.1:9/v1" }, conductor: "local-model" }),
+    });
+    expect(await host.start(null)).toBe("ready");
+    conductorSession().emit("session.usage_info", { currentTokens: 500, tokenLimit: 128_000 });
+    expect(host.getStatus().conversationContext).toEqual({ kind: "usage", currentTokens: 500 });
     await host.stop();
   });
 });

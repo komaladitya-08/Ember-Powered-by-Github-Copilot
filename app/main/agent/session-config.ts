@@ -7,6 +7,7 @@
  */
 
 import type { CopilotSession, MCPServerConfig, PermissionHandler, ProviderConfig, SessionConfig, SessionHooks, SystemMessageConfig, Tool } from "@github/copilot-sdk";
+import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "../extensions/tool-name";
 
 // The hook types, as SessionHooks names them (the SDK doesn't export them by name).
 export type PreToolUseHookInput = Parameters<NonNullable<SessionHooks["onPreToolUse"]>>[0];
@@ -70,21 +71,30 @@ export interface SessionExtensions {
   newTurn?(): void;
 }
 
-/** Model-facing tool names: an extension's must carry its server prefix (letters and digits) and a plain tool name. */
-const EXT_NAME = /^[a-z0-9]{1,24}-[A-Za-z0-9_.-]{1,64}$/;
-
 /** The extension tools a session admits beside Ember's own tools `granted`. */
-export function admittedExtensionTools(granted: Iterable<string>, ext: SessionExtensions | undefined): string[] {
-  if (!ext) return [];
+export function admittedExtensionTools(granted: Iterable<string>, ext: SessionExtensions | undefined): Map<string, { server: string; tool: string }> {
+  const admitted = new Map<string, { server: string; tool: string }>();
+  if (!ext) return admitted;
   const own = new Set(granted);
-  return [...new Set(ext.tools)].filter(n => EXT_NAME.test(n) && !own.has(n) && ext.mcpServers[n.slice(0, n.indexOf("-"))] !== undefined);
+  const requested = new Set(ext.tools);
+  for (const [server, cfg] of Object.entries(ext.mcpServers)) {
+    if (!/^[a-z0-9]{1,24}$/.test(server)) continue;
+    const tools = cfg.tools ?? [];
+    const clashes = clashingToolNames(server, tools);
+    for (const tool of tools) {
+      if (!MCP_TOOL_NAME.test(tool)) continue;
+      const name = modelToolName(server, tool);
+      if (requested.has(name) && !own.has(name) && !clashes.has(name)) admitted.set(name, { server, tool });
+    }
+  }
+  return admitted;
 }
 
 export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
   // Defence in depth: even if the runtime offered a tool Ember didn't grant, it is refused before it runs.
   const granted = new Set(o.tools.map(t => t.name));
   const ext = o.extensions;
-  const admitted = new Set(admittedExtensionTools(granted, ext));
+  const admitted = admittedExtensionTools(granted, ext);
   const onPreToolUse: NonNullable<SessionHooks["onPreToolUse"]> = async (input, invocation) => {
     if (granted.has(input.toolName)) return o.hooks?.onPreToolUse?.(input, invocation);
     // An extension tool: Ember's gate decides (allow, ask the user, or deny), never the SDK.
@@ -103,7 +113,10 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
   const servers: Record<string, MCPServerConfig> = {};
   if (ext) {
     for (const [key, cfg] of Object.entries(ext.mcpServers)) {
-      const tools = (cfg.tools ?? []).filter(t => admitted.has(`${key}-${t}`));
+      const tools = (cfg.tools ?? []).filter(t => {
+        const origin = admitted.get(modelToolName(key, t));
+        return origin?.server === key && origin.tool === t;
+      });
       if (tools.length) servers[key] = { ...cfg, tools };
     }
   }
@@ -114,8 +127,10 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
     ...(o.provider ? { provider: o.provider } : {}),
     streaming: true,
     tools: o.tools,
+    enableSessionTelemetry: false,
+    enableConfigDiscovery: false,
     // Never a builtin: only the exact extension tools the user agreed to, by their source-qualified names.
-    availableTools: withExt ? [...admitted].map(n => `mcp:${n}`) : [],
+    availableTools: [...admitted.keys()].map(n => `mcp:${n}`),
     ...(withExt ? { mcpServers: servers } : {}),
     excludedBuiltinAgents: BUILTIN_AGENTS,
     systemMessage: o.systemMessage,
@@ -159,11 +174,16 @@ export async function verifySessionTools(session: CopilotSession, granted: strin
     const meta = await session.rpc.tools.getCurrentMetadata();
     // No list means it can't be checked: fail closed.
     if (!Array.isArray(meta.tools)) throw new UngrantedToolsError(["(the runtime did not report its tools)"]);
-    const admitted = new Set(admittedExtensionTools(granted, ext));
+    const own = new Set(granted);
+    const admitted = admittedExtensionTools(own, ext);
     const names = meta.tools.map(t => t.name);
     // An extension tool counts only as the MCP tool it was admitted as (not an extension.mjs tool of the same name).
-    const isAdmitted = (t: ShownTool) => admitted.has(t.name) && !!t.mcpServerName && t.name === `${t.mcpServerName}-${t.mcpToolName}`;
-    const extra = meta.tools.filter(t => !granted.includes(t.name) && !isAdmitted(t)).map(t => t.name);
+    const isAdmitted = (t: ShownTool) => {
+      const origin = admitted.get(t.name);
+      return origin !== undefined && t.mcpServerName === origin.server && t.mcpToolName === origin.tool;
+    };
+    const isOwn = (t: ShownTool) => own.has(t.name) && t.mcpServerName === undefined && t.mcpToolName === undefined;
+    const extra = meta.tools.filter(t => !isOwn(t) && !isAdmitted(t)).map(t => t.name);
     if (extra.length) throw new UngrantedToolsError(extra);
     if (ext && admitted.size) {
       ext.verify(meta.tools.filter(isAdmitted));
