@@ -153,6 +153,9 @@ cache (test/temp-folder.ts).
     settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
 - Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
+- When a task closes its window with keys (Ctrl+W or Ctrl+Q, Command+W or Command+Q on macOS), the next read tells it
+  the window closed, as a click on Close does. Closing a tab leaves a live window alone; denied or failed keys never
+  claim a close. A task never carries on in an unrelated window in the closed window's place.
 - **Memory** (Settings › Memory › **Remember what I tell you**, off until you turn it on and agree to its note):
   Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
   - It keeps this in `memory.json` in its data folder (mode 0600).
