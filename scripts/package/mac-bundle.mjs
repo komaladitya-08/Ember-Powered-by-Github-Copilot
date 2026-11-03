@@ -35,7 +35,7 @@ export function infoPlistValues(version) {
     ["LSMinimumSystemVersion", "string", "13.0"],
     ["NSHighResolutionCapable", "bool", true],
     // Without it, macOS refuses the microphone silently.
-    ["NSMicrophoneUsageDescription", "string", "Ember listens for “Hey Ember” on this Mac only when you turn it on. Audio never leaves your Mac."],
+    ["NSMicrophoneUsageDescription", "string", "Ember uses the microphone when you turn on wake listening or choose Listen once. Audio never leaves your Mac."],
     // Changing dark mode goes through System Events (osascript).
     ["NSAppleEventsUsageDescription", "string", "Ember changes appearance settings, such as dark mode, when you ask it to."],
     // macOS 15 asks before an app reaches the local network: an organisation's model service or proxy can be there, and

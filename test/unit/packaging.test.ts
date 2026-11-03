@@ -495,7 +495,7 @@ describe("the macOS app bundle", () => {
     expect(values).toMatchObject({
       CFBundleName: "Ember", CFBundleDisplayName: "Ember", CFBundleIdentifier: BUNDLE_ID, CFBundleShortVersionString: "1.2.3", CFBundleVersion: "1.2.3",
       CFBundleIconFile: "ember.icns", LSApplicationCategoryType: "public.app-category.productivity", LSMinimumSystemVersion: "13.0", NSHighResolutionCapable: true,
-      NSMicrophoneUsageDescription: "Ember listens for “Hey Ember” on this Mac only when you turn it on. Audio never leaves your Mac.",
+      NSMicrophoneUsageDescription: "Ember uses the microphone when you turn on wake listening or choose Listen once. Audio never leaves your Mac.",
     });
     expect(values.NSAppleEventsUsageDescription).toMatch(/appearance settings.*when you ask/);
     // macOS 15's Local Network prompt names SSH too: Ember's ssh reaches computers on the local network (§5.1.8).
