@@ -69,10 +69,13 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   "Forget everything", sign-out and Remove delete the file. A question's 8 nearest facts by brute-force cosine
   (3 ms over 5,000 facts on a busy 4-vCPU machine) at 0.2 or above go to recall as `semantic`.
 - `recall.ts`: semantic matches seed the walk beside the lexical ones and add a score of their own (`SEMANTIC_WEIGHTS`:
-  0.6 for meaning, the rest in the lexical mix's proportions). Without them recall is byte for byte what it was.
+  0.6 for meaning, the rest in the lexical mix's proportions). Facts the question's words or names also reach count
+  from the floor; of the rest, only the best one (`SEMANTIC_ALONE`), so a request about nothing remembered brings
+  little. Without them recall is byte for byte what it was.
 - `better-recall.ts`: the download prompt in Settings › Memory (the click is the agreement, as for the speech models;
-  nothing is fetched while memory is off, and `features.memory: false` turns it off with memory), Remove, and the
-  wiring. The kill switch stops indexing and ends the process.
+  nothing is fetched while memory is off, turning it off cancels a download under way, and `features.memory: false`
+  turns it off with memory), Remove, and the wiring. The model comes from Hugging Face (`huggingface.co`, redirected
+  to `*.hf.co`), pinned by SHA-256; re-hosting it on the project's GitHub release would change only its URLs. The kill switch stops indexing and ends the process.
 
 Measured on `test/fixtures/memory-bench.json` (80 facts; 80 questions in other words, 30 in the facts' own words, 12
 about nothing remembered), by `node scripts/memory/bench.mjs`, which `memory.test.ts` scores from the model's recorded
@@ -81,10 +84,15 @@ matches:
 | Recall | Other words @1 | Other words @5 | Own words @1 | Own words @5 | Facts given when nothing bears on it |
 |---|---|---|---|---|---|
 | Lexical (no model) | 9% | 11% | 100% | 100% | 0.5 |
-| With the model | 84% | 96% | 100% | 100% | 3.2 |
+| With the model | 83% | 86% | 100% | 100% | 1.3 |
+| With the model, every match counted (first version) | 84% | 96% | 100% | 100% | 3.2 |
 
-The facts given for questions about nothing remembered are on a nearby subject ("Make the text bigger" brings the
-preferred terminal font size), and stay untrusted context.
+Counting every match by meaning gave unrelated requests three facts, so only the best match by meaning alone counts.
+No cosine floor separates the two kinds of question with this model: unrelated requests' best matches score 0.18 to
+0.49, and the right answers to questions in other words 0.2 to 0.3. Floors for facts matched by meaning alone, as
+measured: 0.25 gave 81% and 89% with 2.2 facts, 0.3 gave 76% and 83% with 1.2, 0.35 gave 59% and 61% with 0.9. The
+one fact that remains is on a nearby subject ("Make the text bigger" brings the preferred terminal font size), and
+is untrusted context.
 
 The candidates, each int8 on one WebAssembly thread on a 4-vCPU machine under load (quickest of three runs; vector
 search alone, before the mix):

@@ -333,10 +333,20 @@ describe("recall by meaning (Better recall's benchmark, docs/MEMORY.md §2)", ()
   it("finds far more paraphrased facts with the model than without (recall@1 and @5)", () => {
     const lexical = score(false).paraphrase;
     const semantic = score(true).paraphrase;
-    // Measured: 9% and 11% without; 84% and 96% with.
+    // Measured: 9% and 11% without; 83% and 86% with (one fact by meaning alone: SEMANTIC_ALONE).
     expect(lexical.at1).toBeLessThan(0.15);
     expect(semantic.at1).toBeGreaterThanOrEqual(0.8);
-    expect(semantic.at5).toBeGreaterThanOrEqual(0.95);
+    expect(semantic.at5).toBeGreaterThanOrEqual(0.85);
+  });
+
+  it("gives a request about nothing remembered at most one fact more than its words do (review of PR #141)", () => {
+    const g = benchGraph();
+    bench.questions.forEach((q, i) => {
+      if (q.kind !== "none") return;
+      const lexical = recall(g, q.q, { k: 6, now }).length;
+      const semantic = recall(g, q.q, { k: 6, now, semantic: semanticFor(i) }).length;
+      expect(semantic - lexical, q.q).toBeLessThanOrEqual(1);
+    });
   });
 
   it("loses nothing on questions in the facts' own words", () => {

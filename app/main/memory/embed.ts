@@ -252,9 +252,12 @@ export class SemanticMemory {
     try { this.file.erase(); } catch (err) { this.o.log.warn("memory.vectors_erase_failed", { err: err instanceof Error ? err.message : String(err) }); }
   }
 
-  /** A request may come soon: the model starts loading if it isn't (nothing while there is none to use). */
+  /**
+   * A request may come soon: the model starts loading if it isn't. Not while there is none to use, nor while no fact
+   * has a vector yet (a question would be compared with nothing; a change starts the model when it has work).
+   */
   warm(): void {
-    if (this.o.model()) this.o.embedder.warm?.();
+    if (this.current()?.size) this.o.embedder.warm?.();
   }
 
   /**
@@ -283,6 +286,8 @@ export class SemanticMemory {
   /** The kill switch: indexing stops, and the model process with it (the next change or question starts it again). */
   stop(): void {
     this.generation++;
+    // What is pending is written first: a fact forgotten just before the stop must not keep its vector on disk.
+    this.flush();
     this.clearTimers();
     this.o.embedder.stop();
   }

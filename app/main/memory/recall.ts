@@ -63,6 +63,14 @@ export const SEMANTIC_FLOOR = 0.2;
  * the middle of that plateau; the rest keeps the lexical mix's proportions.
  */
 export const SEMANTIC_WEIGHTS = { walk: 0.18, lexical: 0.14, semantic: 0.6, recency: 0.04, confidence: 0.04 };
+/**
+ * How many facts may count by meaning alone (none of the question's words reach them, and it names nothing they are
+ * about): the best match only, so a request about nothing remembered brings at most one fact more than the words do.
+ * Measured on the benchmark (docs/MEMORY.md §2): unrelated requests got 3.2 facts with no limit and get 1.3 with one
+ * (0.5 by words alone); other-words questions found first 84% → 83%, in the first five 96% → 86%. No cosine floor
+ * does as well: unrelated requests' best matches (0.18–0.49) overlap the right answers' (0.2–0.3).
+ */
+export const SEMANTIC_ALONE = 1;
 /** A semantic match seeds the walk this strongly at best (a lexical match's best is 1). */
 export const SEMANTIC_SEED = 1;
 
@@ -166,10 +174,17 @@ export function recall(graph: MemoryGraph, query: string, o: RecallOptions = {})
   const now = (o.now ?? new Date()).getTime();
   const facts = graph.allFacts(!o.history);
   const q = terms(query);
-  const semantic = o.semantic?.size ? o.semantic : undefined;
-  if (!facts.length || (!q.length && !o.extraSeeds?.size && !semantic)) return [];
+  if (!facts.length) return [];
   const lexical = bm25(graph, facts, q);
   const named = namedEntities(graph, query);
+  // Facts the question's words or names also reach count from the floor; of the rest, only the best SEMANTIC_ALONE.
+  const about = (id: string) => lexical.has(id) || graph.fact(id)?.entities.some(e => named.has(e)) === true;
+  let alone = 0;
+  const kept = o.semantic?.size
+    ? new Map([...o.semantic].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).filter(([id]) => about(id) || alone++ < SEMANTIC_ALONE))
+    : undefined;
+  const semantic = kept?.size ? kept : undefined;
+  if (!q.length && !o.extraSeeds?.size && !semantic) return [];
   if (!lexical.size && !named.size && !o.extraSeeds?.size && !semantic) return [];
 
   const seeds = new Map<string, number>();

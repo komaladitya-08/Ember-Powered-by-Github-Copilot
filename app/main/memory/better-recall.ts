@@ -22,8 +22,8 @@ export interface MemoryModelStatus {
   bytes: number;
   /** While downloading: bytes so far. */
   done?: number;
-  /** The last download failed (plain words). */
-  failed?: string;
+  /** Why the last download failed: it didn't match its pin, or it didn't finish (Home's copy.ts words it). */
+  failed?: "checksum" | "network";
 }
 
 export interface BetterRecallOptions {
@@ -48,7 +48,9 @@ export class BetterRecall {
   private present: boolean;
   private fetching: Promise<void> | null = null;
   private done = 0;
-  private failed: string | undefined;
+  private failed: MemoryModelStatus["failed"];
+  /** Cancels the download under way (memory turned off). */
+  private cancel: AbortController | null = null;
   /** Memory was on at the last settings change. */
   private wasOn: boolean;
 
@@ -74,20 +76,23 @@ export class BetterRecall {
     this.done = 0;
     this.failed = undefined;
     let shown = -1;
+    const cancel = new AbortController();
+    this.cancel = cancel;
     this.o.log.info("memory.model_fetching", { bytes: MEMORY_MODEL_BYTES });
     const run = ensureMemoryModel(this.o.modelsRoot, this.o.download, done => {
       this.done = done;
       // Settings hears of it every 5% (a download's every chunk would flood it).
       const step = Math.floor((done / MEMORY_MODEL_BYTES) * 20);
       if (step !== shown) { shown = step; this.changed(); }
-    }).then(() => {
+    }, cancel.signal).then(() => {
       this.present = true;
       this.o.log.info("memory.model_ready", { bytes: MEMORY_MODEL_BYTES });
       this.o.onReady?.();
     }, (err: unknown) => {
-      this.failed = /checksum/.test(String(err)) ? "The download didn't match what Ember expects, so it wasn't used." : "The download didn't finish. Check the network and try again.";
+      if (cancel.signal.aborted) { this.o.log.info("memory.model_download_cancelled"); return; }
+      this.failed = /checksum/.test(String(err)) ? "checksum" : "network";
       this.o.log.warn("memory.model_download_failed", { err: err instanceof Error ? err.message : String(err) });
-    }).finally(() => { this.fetching = null; this.changed(); });
+    }).finally(() => { this.fetching = null; this.cancel = null; this.changed(); });
     this.fetching = run;
     this.changed();
     return run;
@@ -113,7 +118,8 @@ export class BetterRecall {
     const on = this.o.memoryOn();
     if (on === this.wasOn) return;
     this.wasOn = on;
-    if (!on) this.semantic.stop();
+    // Off: the model stops, and a download under way is cancelled (nothing is fetched while memory is off).
+    if (!on) { this.semantic.stop(); this.cancel?.abort(); }
     else if (this.present) this.o.onReady?.();
     this.changed();
   }

@@ -93,8 +93,12 @@ export class MemoryService {
 
   /** Better recall's model came (or changed): the vectors catch up with what is remembered, in the background. */
   index(): void {
-    this.o.semantic?.changed(this.g);
+    // Not loaded yet (Ember starting): memory.json is read when something first needs it, and the index catches up then.
+    if (!this.graph) { this.indexPending = true; return; }
+    this.o.semantic?.changed(this.graph);
   }
+  /** index() came before memory.json was read: the first request catches the index up. */
+  private indexPending = false;
 
   /**
    * The model saves a fact. `said`: what the user said in this turn (whose words make it theirs). The answer is for the
@@ -124,6 +128,7 @@ export class MemoryService {
    * model is there (otherwise, or if they don't come in time, exactly the lexical recall).
    */
   async context(request: string): Promise<string> {
+    if (this.indexPending) { this.indexPending = false; this.o.semantic?.changed(this.g); }
     const semantic = await this.o.semantic?.seeds(request);
     return memoryBlock(this.recall(request, CONTEXT_FACTS, false, semantic));
   }

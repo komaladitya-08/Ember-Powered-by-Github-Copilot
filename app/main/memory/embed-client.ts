@@ -16,6 +16,11 @@ import type { EmbedIn, EmbedOut } from "./embed-process";
 export const IDLE_MS = 5 * 60_000;
 /** Load failures or crashes a session before the model is given up on. */
 export const MAX_FAILURES = 3;
+/**
+ * The longest one request may take (ms), loading the model included: a batch of 16 facts took under a second and a
+ * cold load under 2 s on a busy 4-vCPU machine, so this is only for a process that hangs.
+ */
+export const REQUEST_MS = 30_000;
 
 /** The process, as main started it. */
 export interface EmbedChild {
@@ -31,6 +36,8 @@ export interface EmbedClientOptions {
   paths: () => { model: string; vocab: string } | null;
   log: SemanticLog;
   idleMs?: number;
+  /** How long one request may take (ms; default REQUEST_MS). */
+  requestMs?: number;
 }
 
 interface Pending { resolve: (v: Float32Array[]) => void; reject: (e: Error) => void }
@@ -54,6 +61,16 @@ export class EmbedClient implements Embedder {
     if (!child) return Promise.reject(new Error("the memory model isn't available"));
     const id = this.nextId++;
     const done = new Promise<Float32Array[]>((resolve, reject) => this.pending.set(id, { resolve, reject }));
+    // A process that stops answering (hung in the model) is ended, as one that died: the next request starts another.
+    const timer = setTimeout(() => {
+      if (!this.pending.has(id) || this.child !== child) return;
+      this.failures++;
+      this.o.log.warn("memory.process_timeout", { ms: this.o.requestMs ?? REQUEST_MS, failures: this.failures });
+      this.end(new Error("the memory process didn't answer"));
+    }, this.o.requestMs ?? REQUEST_MS);
+    timer.unref?.();
+    const clear = () => clearTimeout(timer);
+    done.then(clear, clear);
     child.postMessage({ type: "embed", id, texts: [...texts] });
     this.rest();
     return done;

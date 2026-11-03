@@ -9,7 +9,7 @@
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
-import { AUTONOMY_CONSENT_TEXT, autonomyHint, betterRecallDownloadLabel, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
+import { AUTONOMY_CONSENT_TEXT, autonomyHint, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -878,7 +878,7 @@ function renderRecall(s: BetterRecallState): void {
     const fraction = (s.done ?? 0) / (s.bytes || 1);
     bar.value = fraction;
     const step = progressStep(fraction);
-    if (step !== recallShown) { recallShown = step; $("recall-live").textContent = `Language model ${step}% downloaded`; }
+    if (step !== recallShown) { recallShown = step; $("recall-live").textContent = betterRecallProgress(fraction); }
   } else recallShown = -1;
 }
 $("recall-download").addEventListener("click", () => { void window.ember.downloadMemoryModel(); });

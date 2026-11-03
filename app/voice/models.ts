@@ -152,11 +152,11 @@ export function memoryModelReady(root: string): boolean {
 }
 
 /** Fetches the memory model's files into `root` (those not already in place and verified); progress in bytes of both. */
-export async function ensureMemoryModel(root: string, download: Downloader, progress: (done: number, total: number) => void = () => undefined): Promise<{ model: string; vocab: string }> {
+export async function ensureMemoryModel(root: string, download: Downloader, progress: (done: number, total: number) => void = () => undefined, signal?: AbortSignal): Promise<{ model: string; vocab: string }> {
   let done = 0;
   for (const m of MEMORY_MODEL) {
     const base = done;
-    await ensureModel(root, m, download, bytes => progress(base + Math.min(bytes, m.bytes), MEMORY_MODEL_BYTES));
+    await ensureModel(root, m, download, bytes => progress(base + Math.min(bytes, m.bytes), MEMORY_MODEL_BYTES), signal);
     done += m.bytes;
     progress(done, MEMORY_MODEL_BYTES);
   }
@@ -169,7 +169,8 @@ export function removeMemoryModel(root: string): void {
 }
 
 /** Downloads `url` to `dest`, reporting bytes so far. */
-export type Downloader = (url: string, dest: string, progress: (bytes: number) => void) => Promise<void>;
+/** `signal`: cancels the download (Better recall's, when memory turns off); a downloader that takes none just finishes. */
+export type Downloader = (url: string, dest: string, progress: (bytes: number) => void, signal?: AbortSignal) => Promise<void>;
 
 /**
  * Progress of getting the models: bytes of the whole (`total`) done so far. `phase` "unpacking": the last download is
@@ -301,10 +302,11 @@ async function unpackArchive(archive: string, root: string, m: ModelDownload, un
  * archive). Whatever happens, no partial download or half-unpacked model is left behind. `unpacking`: the
  * download is in and is being checked, then unpacked (the share of the archive read so far, 0 to 1).
  */
-export async function fetchModel(root: string, m: ModelDownload, download: Downloader, progress: (bytes: number) => void = () => undefined, unpacking?: (fraction: number) => void): Promise<void> {
+export async function fetchModel(root: string, m: ModelDownload, download: Downloader, progress: (bytes: number) => void = () => undefined, unpacking?: (fraction: number) => void, signal?: AbortSignal): Promise<void> {
   const tmp = path.join(root, `.download-${path.basename(m.url)}`);
   try {
-    await download(m.url, tmp, progress);
+    await download(m.url, tmp, progress, signal);
+    if (signal?.aborted) throw new Error("cancelled");
     unpacking?.(0);
     const got = await sha256File(tmp);
     if (got !== m.sha256) throw new Error(`${m.name}: checksum mismatch (got ${got.slice(0, 12)}…). The download was not used.`);
@@ -340,11 +342,11 @@ export async function ensureModels(root: string, download: Downloader, progress:
 }
 
 /** Fetches one optional model (NATURAL_VOICE, the memory model's files) into `root` unless it is in place and verified; its path. */
-export async function ensureModel(root: string, m: ModelDownload, download: Downloader, progress: (bytes: number) => void = () => undefined): Promise<string> {
+export async function ensureModel(root: string, m: ModelDownload, download: Downloader, progress: (bytes: number) => void = () => undefined, signal?: AbortSignal): Promise<string> {
   fs.mkdirSync(root, { recursive: true });
   if (!verified(root, m)) {
     fs.rmSync(marker(root, m), { force: true });
-    await fetchModel(root, m, download, progress);
+    await fetchModel(root, m, download, progress, undefined, signal);
     fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
   }
   return path.join(root, m.target);

@@ -162,14 +162,16 @@ cache (test/temp-folder.ts).
     signing out forgets it all.
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
-    (all-MiniLM-L6-v2, int8, pinned by SHA-256 in `app/voice/models.ts`, from huggingface.co) that runs on this
-    computer, so Ember finds a fact when you ask in other words ("Who is my manager?" finds "Priya leads the platform
-    team"). The click is the agreement, as for the speech models; nothing is fetched while memory is off. Each fact is
-    turned into numbers in the background in the "Ember memory" process (onnxruntime-web's WebAssembly, one thread),
-    which holds 300–400 MB while it runs and ends after 5 idle minutes; opening Ask or saying "Hey Ember" starts it
-    early. The numbers stay in `memory-vectors.json` beside `memory.json` (0600), go with a fact you forget, and
-    **Forget everything**, signing out and **Remove** delete them. Without the model, or when it is slow (1.5 s) or
-    fails, recall works as before. `node scripts/memory/bench.mjs` measures it (docs/MEMORY.md §2).
+    (all-MiniLM-L6-v2, int8, pinned by SHA-256 in `app/voice/models.ts`) that runs on this computer, so Ember finds a
+    fact when you ask in other words ("Who is my manager?" finds "Priya leads the platform team"). It comes from
+    `huggingface.co`, which redirects to its CDN, `*.hf.co` (`us.aws.cdn.hf.co`): a firewall must allow both. The
+    click is the agreement, as for the speech models; nothing is fetched while memory is off, and turning memory off
+    cancels a download under way. Each fact is turned into numbers in the background in the "Ember memory" process
+    (onnxruntime-web's WebAssembly, one thread), which holds 300–400 MB while it runs and ends after 5 idle minutes;
+    opening Ask or saying "Hey Ember" starts it early. The numbers stay in `memory-vectors.json` beside `memory.json`
+    (0600), go with a fact you forget, and **Forget everything**, signing out and **Remove** delete them. At most one
+    fact found by meaning alone goes with a request. Without the model, or when it is slow (1.5 s) or fails, recall
+    works as before. `node scripts/memory/bench.mjs` measures it (docs/MEMORY.md §2).
 - **Extensions** (Settings › **Extensions**): plugins and extensions from marketplaces the user adds, and connectors
   (GitHub-hosted services such as Slack or Notion). Only the user adds, turns off, removes, connects or disconnects,
   and only here.

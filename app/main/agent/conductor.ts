@@ -646,6 +646,8 @@ export class Conductor {
   private stopping = false;
   /** A turn is in flight (sent, and no idle or error yet). */
   private busy = false;
+  /** Bumped by every Stop (abort()): a request still waiting for its memory before it is sent is dropped. */
+  private stops = 0;
   /** Watches that each request sent gets its turn. */
   private watch: TurnWatch | null = null;
   /**
@@ -850,9 +852,18 @@ export class Conductor {
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
     this.unstarted.push(text);
-    // What Ember remembers that bears on the request (while memory is on): before it, as information.
+    // What Ember remembers that bears on the request (while memory is on): before it, as information. Better recall
+    // may take up to its wait for this (memory/embed.ts), so a Stop meanwhile drops the request.
+    const stops = this.stops;
     let remembered = "";
     try { remembered = (await this.deps.memory?.context(text)) ?? ""; } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    if (this.stops !== stops || this.session !== session) {
+      // Stopped (or the connection was replaced) while memory was read: nothing is sent, and no turn is owed for it.
+      this.unstarted = this.unstarted.filter(t => t !== text);
+      if (reports.length) this.deps.returnReports?.(reports);
+      this.deps.log.info("conductor.ask_dropped", { stopped: this.stops !== stops });
+      return;
+    }
     const routines = this.routinesLine(text);
     const parts = [
       ...(reports.length ? [`<task_results untrusted="true">\n${reports.map(r => r.replace(/</g, "‹")).join("\n")}\n</task_results>`] : []),
@@ -911,6 +922,7 @@ export class Conductor {
 
   /** Stops the turn in flight. With nothing running there is no turn to end, so nothing is refused afterwards. */
   async abort(): Promise<void> {
+    this.stops++;
     if (this.session && this.busy) this.stopping = true;
     // The runtime drops the requests waiting behind the turn: no turn is owed for them.
     this.watch?.clear();

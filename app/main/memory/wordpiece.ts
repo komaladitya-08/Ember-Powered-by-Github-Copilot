@@ -13,6 +13,8 @@ export interface Encoded { ids: number[]; mask: number[]; types: number[] }
 
 /** How long a word may be before it is [UNK] (BERT's max_input_chars_per_word). */
 const MAX_WORD_CHARS = 100;
+/** Characters of input read per token the model takes (encode's cut): eight times English's average. */
+const CHARS_PER_TOKEN = 32;
 
 /** Unicode's punctuation, plus ASCII's symbols (BERT treats "$", "+", "^" … as punctuation too). */
 const PUNCTUATION = /[\p{P}!-/:-@[-`{-~]/u;
@@ -102,7 +104,11 @@ export class WordPiece {
   /** The ids of `text` between [CLS] and [SEP], at most `maxTokens` in all (the rest is cut off, as truncation does). */
   encode(text: string, maxTokens = 128): Encoded {
     const ids = [this.cls];
-    for (const w of preTokenize(normalise(text))) {
+    // Only the start can reach the model: a long request pasted in is cut before it is normalised, at CHARS_PER_TOKEN
+    // characters a token (English takes about 4), and not inside a surrogate pair.
+    let cut = text.length > maxTokens * CHARS_PER_TOKEN ? text.slice(0, maxTokens * CHARS_PER_TOKEN) : text;
+    if (cut !== text && /[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+    for (const w of preTokenize(normalise(cut))) {
       for (const id of this.pieces(w)) {
         if (ids.length >= maxTokens - 1) break;
         ids.push(id);

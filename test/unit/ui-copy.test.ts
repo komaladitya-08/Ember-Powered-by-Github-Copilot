@@ -22,7 +22,7 @@ import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallText, providerConsentText, providerHint, providerTestText } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, providerConsentText, providerHint, providerTestText } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -855,6 +855,13 @@ describe("Better recall's download prompt (Settings › Memory, docs/MEMORY.md �
   it("says how it is going, that it is on, and why a download failed, in one plain sentence", () => {
     expect(betterRecallText({ state: "downloading", bytes, done: 1000 })).toBe("Downloading the language model…");
     expect(betterRecallText({ state: "ready", bytes })).toBe("On: a language model on this computer matches what you ask with what Ember remembers, even in other words.");
-    expect(betterRecallText({ state: "absent", bytes, failed: "The download didn't finish. Check the network and try again." })).toBe("The download didn't finish. Check the network and try again.");
+    expect(betterRecallText({ state: "absent", bytes, failed: "network" })).toBe("The download didn't finish. Check the network and try again.");
+    expect(betterRecallText({ state: "absent", bytes, failed: "checksum" })).toBe("The download didn't match what Ember expects, so it wasn't used.");
+  });
+
+  it("announces the download to screen readers only every quarter", () => {
+    expect(betterRecallProgress(0)).toBe("Language model 0% downloaded");
+    expect(betterRecallProgress(0.49)).toBe("Language model 25% downloaded");
+    expect(betterRecallProgress(1)).toBe("Language model 100% downloaded");
   });
 });

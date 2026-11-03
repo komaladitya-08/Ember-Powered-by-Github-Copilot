@@ -325,6 +325,21 @@ allows them.
   turns the user's off (managed); `models.allowed` still holds. An older Ember reads a policy with this key as broken
   and locks down, so update Ember before adding it.
 
+### Better recall
+
+- **Ember finds what you told it when you ask in other words** (Settings › **Memory** › **Better recall**, shown while
+  memory is on): "Who is my manager?" finds "Priya leads the platform team". **Download (23 MB)** fetches a small
+  language model (all-MiniLM-L6-v2) from Hugging Face (`huggingface.co`, served from `*.hf.co`), checked against its
+  pinned SHA-256; nothing is fetched until you click it, and turning memory off cancels a download under way. It runs
+  only on this computer, in a process of its own that ends after 5 idle minutes. On 80 questions asked in other words
+  it found the right fact first 83% of the time, against 9% by words alone; questions in a fact's own words find it as
+  before.
+- What it makes of each fact is kept beside what Ember remembers, readable by you alone, and goes when you forget the
+  fact, **Forget everything**, sign out or click **Remove**. With a request, at most one fact more goes to Copilot by
+  meaning alone. Without the model, or if it is slow, memory works as it did.
+- For administrators: `features.memory: false` turns it off with memory. A firewall must allow `huggingface.co` and
+  `*.hf.co` for the download.
+
 ### In detail
 
 #### Signing in and Copilot

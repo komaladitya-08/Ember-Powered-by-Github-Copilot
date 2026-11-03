@@ -16,6 +16,7 @@ import { SemanticMemory, VectorIndex, documentText, vectorFile, type Embedder } 
 import type { EmbedIn, EmbedOut } from "../../app/main/memory/embed-process";
 import { MemoryGraph, type GraphClock } from "../../app/main/memory/graph";
 import { MemoryService } from "../../app/main/memory/service";
+import { memoryFile } from "../../app/main/memory/store";
 import { MEMORY_MODEL, MEMORY_MODEL_BYTES } from "../../app/voice/models";
 
 const MODEL = "a".repeat(64);
@@ -148,6 +149,17 @@ describe("Better recall's index, as memory changes", () => {
     expect(JSON.parse(fs.readFileSync(path.join(dir, "memory-vectors.json"), "utf8")).rows.map((r: { id: string }) => r.id)).toEqual(["f2"]);
   });
 
+  it("writes a forgotten fact's removal on the kill switch, not only when its save comes due (review of PR #141)", async () => {
+    vi.useFakeTimers();
+    const { memory, semantic, file } = setup();
+    memory.remember("Priya leads the platform team", [{ name: "Priya" }], "Priya leads the platform team");
+    memory.remember("Walks the dog at 7am", [{ name: "User" }], "I walk the dog at 7am");
+    await settle();
+    expect(memory.forget("f1")).toBe(true);
+    semantic.stop();
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).rows.map((r: { id: string }) => r.id)).toEqual(["f2"]);
+  });
+
   it("stops embedding on the kill switch, and keeps nothing it was working on", async () => {
     vi.useFakeTimers();
     const { memory, semantic, embedder } = setup();
@@ -174,6 +186,41 @@ describe("Better recall's index, as memory changes", () => {
     expect(off.embedder.calls).toEqual([]);
     for (const q of ["Who is my boss?", "Which browser does Priya use?", "Firefox"]) expect(await off.memory.context(q)).toBe(await plain.context(q));
     expect(fs.existsSync(off.file)).toBe(false);
+  });
+
+  it("starts the model early only once some fact has a vector to compare with (review of PR #141)", async () => {
+    vi.useFakeTimers();
+    const { memory, semantic, embedder } = setup();
+    const warmed = vi.fn();
+    embedder.warm = warmed;
+    semantic.warm();
+    expect(warmed).not.toHaveBeenCalled();
+    memory.remember("Priya leads the platform team", [{ name: "Priya" }], "Priya leads the platform team");
+    await settle();
+    semantic.warm();
+    expect(warmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't read memory.json when Ember starts, only when a request first needs it (review of PR #141)", async () => {
+    vi.useFakeTimers();
+    const dir = tmp();
+    const real = new MemoryService({ dir, log: quiet, clock: clock() });
+    real.remember("Priya leads the platform team", [{ name: "Priya" }], "Priya leads the platform team");
+    real.flush();
+    let loads = 0;
+    const inner = memoryFile(dir);
+    const file = { ...inner, path: inner.path, load: (c?: GraphClock) => { loads++; return inner.load(c); } };
+    const embedder = fakeEmbedder();
+    const semantic = new SemanticMemory({ dir, log: quiet, embedder, model: () => MODEL, indexDelayMs: 10 });
+    const memory = new MemoryService({ dir, log: quiet, clock: clock(), semantic, file });
+    memory.index();
+    await settle();
+    expect(loads).toBe(0);
+    expect(embedder.calls).toEqual([]);
+    await memory.context("Who is my boss?");
+    expect(loads).toBe(1);
+    await settle();
+    expect(semantic.size).toBe(1);
   });
 
   it("goes on without the model's match when it doesn't come in time", async () => {
@@ -233,6 +280,18 @@ describe("Ember's memory process, from main", () => {
     expect(c.child.killed).toBe(true);
   });
 
+  it("ends a process that stops answering, and fails what it was asked (review of PR #141)", async () => {
+    vi.useFakeTimers();
+    const c = fakeChild();
+    c.child.postMessage = m => { c.sent.push(m); };
+    const client = new EmbedClient({ spawn: () => c.child, paths: () => ({ model: "m", vocab: "v" }), log: quiet, requestMs: 1000 });
+    const pending = client.embed(["a"]);
+    const failed = expect(pending).rejects.toThrow(/didn't answer/);
+    await vi.advanceTimersByTimeAsync(1100);
+    await failed;
+    expect(c.child.killed).toBe(true);
+  });
+
   it("starts nothing without the model, and gives up after repeated failures", async () => {
     let spawned = 0;
     const none = new EmbedClient({ spawn: () => { spawned++; return fakeChild().child; }, paths: () => null, log: quiet });
@@ -281,8 +340,31 @@ describe("Better recall's download", () => {
     expect(r.status()).toEqual({ state: "absent", bytes: MEMORY_MODEL_BYTES });
     await r.download();
     expect(statuses).toContain("downloading");
-    expect(r.status()).toEqual({ state: "absent", bytes: MEMORY_MODEL_BYTES, failed: "The download didn't match what Ember expects, so it wasn't used." });
+    expect(r.status()).toEqual({ state: "absent", bytes: MEMORY_MODEL_BYTES, failed: "checksum" });
     expect(fs.readdirSync(path.join(dir, "models"))).toEqual([]);
     expect(r.ready).toBe(false);
+  });
+
+  it("cancels a download under way when memory is turned off, and keeps nothing of it (review of PR #141)", async () => {
+    const dir = tmp();
+    let on = true;
+    let cancelled = false;
+    const r = new BetterRecall({
+      dir, modelsRoot: path.join(dir, "models"), log: quiet, memoryOn: () => on,
+      fork: () => { throw new Error("not in this test"); },
+      download: (_url, dest, _progress, signal) => new Promise((_resolve, reject) => {
+        fs.writeFileSync(dest, "part of it");
+        signal?.addEventListener("abort", () => { cancelled = true; reject(new Error("cancelled")); });
+      }),
+    });
+    const fetching = r.download();
+    expect(r.status().state).toBe("downloading");
+    on = false;
+    r.settingsChanged();
+    await fetching;
+    expect(cancelled).toBe(true);
+    on = true;
+    expect(r.status()).toEqual({ state: "absent", bytes: MEMORY_MODEL_BYTES });
+    expect(fs.readdirSync(path.join(dir, "models"))).toEqual([]);
   });
 });
