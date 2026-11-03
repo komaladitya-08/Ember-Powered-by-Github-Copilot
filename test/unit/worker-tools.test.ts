@@ -219,13 +219,48 @@ describe("a task whose own step closes its window (the owner's report of 2026-11
     expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
   });
 
-  it("goes back to the dialog's own app when it only ever read the dialog, never to list_windows (review of PR #139)", async () => {
+  it("finishes, never naming a window it wasn't shown, when it only ever read the dialog (review of PR #139)", async () => {
     const { call } = makeWorker({ name: "Save", closes: true, wins: [{ name: "Save As", role: "file chooser", path: "/w/2" }, { name: "notes.txt", path: "/w/1" }, { name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/9" }] });
     await call("perceive_window", {});
     await call("click", { id: 1 });
     const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("goes back to the dialog's app's window it listed, never to list_windows", async () => {
+    const { call } = makeWorker({ name: "Save", closes: true, wins: [{ name: "Save As", role: "file chooser", path: "/w/2" }, { name: "notes.txt", path: "/w/1" }, { name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/9" }] });
+    await call("perceive_window", {});
+    await call("list_windows", {});
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
     expect(look.textResultForLlm).toBe(dialogClosedNote({ app: "gedit", title: "notes.txt" }));
     expect(look.textResultForLlm).not.toContain("list_windows");
+  });
+
+  it("never sends it back to the user's window of another app after another app's dialog closes (Properties over Firefox, review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/1" }, { name: "Properties", role: "dialog", app: "explorer", pid: 10, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("switch_window", { title: "Properties" });
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("Inbox");
+  });
+
+  it("never names another app's window that shares the dialog's process (UWP frames under ApplicationFrameHost)", async () => {
+    const { call } = makeWorker({ name: "Don't save", closes: true, wins: [{ name: "Unsaved changes", role: "dialog", app: "Calculator", pid: 20, path: "/w/1" }, { name: "Settings", app: "SystemSettings", pid: 20, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("never sends it into the user's own Explorer window it never read after Explorer's Run dialog closes", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Run", role: "dialog", app: "explorer", pid: 10, path: "/w/1" }, { name: "Downloads - File Explorer", app: "explorer", pid: 10, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("Downloads");
   });
 
   it("finishes when the only dialog it read closes with its app", async () => {

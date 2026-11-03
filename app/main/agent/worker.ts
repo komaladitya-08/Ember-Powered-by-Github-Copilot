@@ -977,7 +977,9 @@ export class Worker {
    * windows open just before the task's latest click in it, so a window the app opens in its place is told apart from
    * one already there. Cleared when the app replaces it: the next window read is its own.
    */
-  private home: { pid: number | null; path?: string; title: string; app: string; others: AxWindow[] } | null = null;
+  private home: { pid: number | null; path?: string; title: string; app: string; others: AxWindow[]; listed: boolean } | null = null;
+  /** The latest window listing before a click (anchorHome), reused for a second: a full UIA/AX listing each time is not free. */
+  private lastListing: { at: number; wins: AxWindow[] } | null = null;
   /** Labels borrowed by unnamed controls (a switch takes the label beside it). */
   private labels = new Map<number, string>();
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
@@ -1987,44 +1989,58 @@ export class Worker {
     const w = this.window;
     if (DIALOG_ROLES.has(w.role ?? "")) return;
     if (!this.home || this.home.app !== w.app) {
-      this.home = { pid: this.target.pid ?? null, path: this.target.path, title: this.target.title ?? w.name, app: w.app, others: [] };
+      this.home = { pid: this.target.pid ?? null, path: this.target.path, title: this.target.title ?? w.name, app: w.app, others: [], listed: false };
     }
     const home = this.home;
     if (kind !== "click" || !sameWindow(this.target, home)) return;
-    const all = await this.perception.windows().catch(() => [] as AxWindow[]);
+    // (It runs during act()'s 350 ms pause for Ember to arrive, so a click takes no longer for it.)
+    const fresh = this.lastListing && Date.now() - this.lastListing.at < 1000 ? this.lastListing.wins : null;
+    const all = fresh ?? await this.perception.windows().catch(() => null);
+    // A listing that failed knows nothing: no window can then be told apart as one the click opened.
+    if (!all) { home.others = []; home.listed = false; return; }
+    if (!fresh) this.lastListing = { at: Date.now(), wins: all };
     home.others = all.filter(o => o.app === home.app && !sameWindow(o, home));
+    home.listed = true;
+  }
+
+  /** The task read or listed this window itself (a window it was never shown is never named to it as the way on). */
+  private knows(w: { app: string; pid: number | null; path?: string; name: string }): boolean {
+    for (const r of this.read.values()) {
+      if (r.described || r.app !== w.app || (r.pid ?? null) !== (w.pid ?? null)) continue;
+      if (r.path && w.path ? r.path === w.path : r.window === w.name) return true;
+    }
+    return false;
   }
 
   /**
-   * The window the task read last is gone after its own step. The task's own window, with nothing of its app opened in
-   * its place: WINDOW_CLOSED_BY_TASK. A dialog (or any window it switched into): go back to its own window. Its own
-   * window replaced by a new one of its app: that one may be where the task goes on.
+   * The window the task read last is gone after its own step. One rule for every way on (review of PR #139): a note
+   * that sends the task back names only a window of the closed window's own app that the task itself read or listed and
+   * that is still open (its own window first). Its own window replaced by a window its app opened at that click (told
+   * apart by the listing just before it) names that one. Anything else: WINDOW_CLOSED_BY_TASK.
    */
   private async closedUnder(): Promise<ToolResultObject> {
     const home = this.home;
+    const app = this.window.app;
     const dialog = DIALOG_ROLES.has(this.window.role ?? "");
     const wasHome = home !== null && !dialog && sameWindow(this.target, home);
-    if (!wasHome && home) return done(dialog ? dialogClosedNote(home) : otherWindowClosedNote(home));
-    if (!home) {
-      // Only dialogs were read (every other window read is its own): back to the dialog's own app, by its process, never
-      // to the user's other windows. With none of its windows left, its app closed with it.
-      const pid = this.target.pid;
-      const left = !dialog || pid === undefined ? [] : (await this.perception.windows().catch(() => [] as AxWindow[]))
-        .filter(w => w.pid === pid && !isEmberWindow(w) && !DIALOG_ROLES.has(w.role));
-      if (this.isOver) return STOPPED();
-      const back = left.find(w => w.active) ?? left[0];
-      if (!back) return fail(WINDOW_CLOSED_BY_TASK);
-      this.remember(back, [back.name], true);
-      return done(dialogClosedNote({ app: back.app, title: back.name }));
-    }
-    const now = await this.perception.windows().catch(() => [] as AxWindow[]);
+    const now = await this.perception.windows().catch(() => null);
     if (this.isOver) return STOPPED();
-    const opened = now.filter(w => w.app === home.app && !isEmberWindow(w) && !sameWindow(w, home) && !home.others.some(o => sameWindow(o, w)));
-    if (opened.length === 0) return fail(WINDOW_CLOSED_BY_TASK);
-    for (const w of opened) this.remember(w, [w.name], true);
-    // The next window the task reads is its own from now on.
-    this.home = null;
-    return done(windowReplacedNote(home.app, opened.map(w => w.name)));
+    if (!now) return fail(WINDOW_CLOSED_BY_TASK);
+    if (wasHome) {
+      const opened = home.listed ? now.filter(w => w.app === home.app && !isEmberWindow(w) && !sameWindow(w, home) && !home.others.some(o => sameWindow(o, w))) : [];
+      if (opened.length === 0) return fail(WINDOW_CLOSED_BY_TASK);
+      for (const w of opened) this.remember(w, [w.name], true);
+      // The next window the task reads is its own from now on.
+      this.home = null;
+      return done(windowReplacedNote(home.app, opened.map(w => w.name)));
+    }
+    const ok = (w: AxWindow) => w.app === app && !isEmberWindow(w) && !DIALOG_ROLES.has(w.role) && !sameWindow(w, this.target) && this.knows(w);
+    const open = now.filter(ok);
+    const own = home && home.app === app ? open.find(w => sameWindow(w, home)) : undefined;
+    const back = own ?? open.find(w => w.active) ?? open[0];
+    if (!back) return fail(WINDOW_CLOSED_BY_TASK);
+    const to = { app: back.app, title: back.name };
+    return done(dialog ? dialogClosedNote(to) : otherWindowClosedNote(to));
   }
 
   /** `expectTitle`: switch_window's request; nothing changes unless a window with that title is found. */
@@ -2061,7 +2077,7 @@ export class Worker {
     this.axScale = p.axScale ?? 1;
     // The window's own key (process and accessible path): later reads stay on exactly this window.
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
-    if (!this.home && !DIALOG_ROLES.has(p.window.role ?? "")) this.home = { pid: p.window.pid ?? null, path: p.window.path, title: p.window.name, app: p.window.app, others: [] };
+    if (!this.home && !DIALOG_ROLES.has(p.window.role ?? "")) this.home = { pid: p.window.pid ?? null, path: p.window.path, title: p.window.name, app: p.window.app, others: [], listed: false };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
@@ -2333,11 +2349,13 @@ export class Worker {
     try {
       if (this.isOver) return STOPPED();
       if (node.bounds) this.fly(node.bounds);
+      // The task's own window, and before a click in it the app's windows (it never throws), while Ember flies there.
+      const anchored = this.anchorHome(kind);
       await new Promise(r => setTimeout(r, 350)); // let Ember arrive, so the user sees where it acts
       if (this.isOver) return STOPPED();
       // The user may have taken over the desk while Ember waited for the question, the window or its turn.
       if (this.place?.userInControl()) return this.deskTaken(kind, element);
-      await this.anchorHome(kind);
+      await anchored;
       if (this.isOver) return STOPPED();
       this.authorized(req, { role: node.role, name: node.name });
       const res = await run();
