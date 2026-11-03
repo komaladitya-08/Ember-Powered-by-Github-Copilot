@@ -102,6 +102,8 @@ import { Presenter, expandedBubble } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { MemoryOwner } from "../../app/main/memory/owner";
 import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -3189,7 +3191,7 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
 describe("memory hears whose words a request was (review of PR #142, B2)", () => {
   function remembering() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-mem-"));
-    fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ version: 1, memory: { on: true, consent: { version: 2, at: "2026-11-03T00:00:00Z" } } }));
+    fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ version: 1, memory: { on: true, consent: { version: FEATURE_CONSENT_VERSION.memory, at: "2026-11-03T00:00:00Z" } } }));
     const calls = { intent: [] as boolean[], forRequest: [] as boolean[], heard: [] as boolean[] };
     const memory = {
       remember: () => "Remembered [f1].", context: () => "", forget: () => true, forgetAll: () => undefined,
@@ -3221,6 +3223,43 @@ describe("memory erasure at account boundaries", () => {
   function failingMemory() {
     return { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => { throw new Error("EROFS"); }) };
   }
+  it("does not give saved memory to a different GitHub account after restart", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-owned-host-"));
+    const previous = new MemoryOwner(dir);
+    previous.verify(100, true);
+    fs.writeFileSync(path.join(dir, "memory.json"), "previous account");
+    const restarted = new MemoryOwner(dir);
+    const memory = {
+      ...failingMemory(),
+      resolveAccountId: async () => 200,
+      verifyAccount: (id: number | null) => restarted.verify(id, true),
+      pauseAccount: () => restarted.pause(),
+      accountReady: () => restarted.ready,
+    };
+    const { host, settings } = makeHost({ userData: dir, memory });
+    settings.update({ memory: { ...settings.get().memory, on: true, consent: { version: FEATURE_CONSENT_VERSION.memory, at: "2026-11-04T00:00:00Z" } } });
+    try {
+      sim.auth = async () => ({ isAuthenticated: true, login: "octo" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      await host.ask("What do you remember?");
+      expect(memory.context).not.toHaveBeenCalled();
+      expect(restarted.state).toBe("locked");
+      expect(fs.readFileSync(path.join(dir, "memory.json"), "utf8")).toBe("previous account");
+    } finally {
+      await host.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("keeps memory when a verified account changes its login", async () => {
+    const memory = { ...failingMemory(), resolveAccountId: async () => 100 };
+    const { host } = makeHost({ memory });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      sim.auth = async () => ({ isAuthenticated: true, login: "renamed" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(memory.forgetAll).not.toHaveBeenCalled();
+    } finally { await host.stop(); }
+  });
   it("blocks another account and retries deletion even after its old conversation was cleared", async () => {
     const memory = failingMemory();
     const { host } = makeHost({ memory });

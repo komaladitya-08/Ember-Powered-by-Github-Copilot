@@ -125,13 +125,16 @@ download, so English-only MiniLM is the trade-off for now.
   or password fields, and audio. The perception layer withholds these already. Memory takes only what reached the
   conductor or a worker legitimately.
 - **The user's to see and change.** Settings gets a Memory section: what Ember knows, grouped by entity, with
-  per-fact forget and "Forget everything". Saying "forget that" in conversation works too. Sign-out erases memory
-  along with the conversation.
+  per-fact forget and "Forget everything". Saying "forget that" in conversation works too. Sign-out erases the
+  verified account's memory along with the conversation.
 - **Deletion failures.** Forget and Forget everything acknowledge deletion only after the memory and vector writes
   succeed. A filesystem failure leaves the facts listed with a retryable error; some derived files may already have
   been removed. Sign-out still disconnects credentials and reports the deletion failure. A failed account-boundary
-  deletion blocks new sessions in the current run until it succeeds. Memory does not yet carry durable account
-  ownership: this guard alone cannot isolate retained facts across a process restart after failed deletion.
+  deletion blocks new sessions in the current run until it succeeds.
+- **Account ownership.** Ember checks the authenticated account ID with GitHub and records its digest before saving a new graph. On restart,
+  the graph and its vectors stay hidden until the same account is verified. Older data without an owner and data
+  left after a failed deletion stay on disk. Use Forget everything to clear them before binding a fresh graph.
+  Memory pauses while the model connection lacks a verified GitHub account.
 - **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off.
 
 ## 4. Plan

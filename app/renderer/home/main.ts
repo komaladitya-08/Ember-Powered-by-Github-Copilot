@@ -7,12 +7,12 @@
  */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
-import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
+import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, modelsDownloadLabel, naturalVoiceView, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, LEARNED_UNDONE, MEMORY_CONSENT_TEXT,
-  MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
+  MEMORY_OWNER_LOCKED, MEMORY_OWNER_WAITING, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, undoLearnedLabel,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -132,7 +132,7 @@ function sizeLabel(v: number): void {
 
 let settings: Settings | null = null;
 /** Memory (Settings › Conversation): see the Memory part below. Declared here: applySettings shows its switch. */
-type MemoryRow = Awaited<ReturnType<EmberHomeApi["memory"]>>[number];
+type MemoryRow = MemoryView["rows"][number];
 const MEMORY_VERSION = FEATURE_CONSENT_VERSION.memory;
 const ROUTINES_VERSION = FEATURE_CONSENT_VERSION.routines;
 const AUTONOMY_VERSION = FEATURE_CONSENT_VERSION.autonomy;
@@ -893,6 +893,7 @@ window.ember.onConversation(renderConversation);
 // ───── Memory (docs/MEMORY.md): kept between runs, only once the user turns it on and agrees to its note ─────
 $("memory-consent-text").textContent = MEMORY_CONSENT_TEXT;
 const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION;
+let memoryOwner: MemoryView["ownership"] = "waiting";
 function renderMemory(rows: MemoryRow[]): void {
   memoryRows = rows;
   const list = $("memory-list");
@@ -910,13 +911,17 @@ function renderMemory(rows: MemoryRow[]): void {
       return li;
     })
     : [Object.assign(document.createElement("li"), { className: "empty", textContent: memoryEmptyText(memoryOn()) })]));
-  ($("memory-forget-all") as HTMLButtonElement).hidden = !rows.length;
+  const owner = $("memory-owner");
+  owner.hidden = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn());
+  owner.textContent = memoryOwner === "locked" ? MEMORY_OWNER_LOCKED : MEMORY_OWNER_WAITING;
+  ($("memory-forget-all") as HTMLButtonElement).hidden = !rows.length && memoryOwner !== "locked";
   if (memoryFocus !== null) {
     const buttons = list.querySelectorAll("button");
     (buttons[Math.min(memoryFocus, buttons.length - 1)] ?? $("memory-on")).focus();
     memoryFocus = null;
   }
 }
+const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; renderMemory(view.rows); };
 /** Memory's settings as they are, so a change to one of its fields keeps the others (the patch replaces it whole). */
 const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, at: null }, questions: true, askedAt: null };
 /** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */
@@ -971,7 +976,8 @@ $("memory-forget-all").addEventListener("click", () => {
   void deleteMemory($("memory-forget-all") as HTMLButtonElement, () => window.ember.forgetAllMemory(), 0);
 });
 window.ember.onSettingsChanged(applyMemorySettings);
-void window.ember.memory().then(renderMemory);
+let receivedMemory = false;
+void window.ember.memory().then(view => { if (!receivedMemory) showMemory(view); });
 
 // Better recall (docs/MEMORY.md §2): a one-line download prompt while memory is on; the click is the agreement.
 let recallShown = -1;
@@ -997,7 +1003,7 @@ $("recall-download").addEventListener("click", () => { void window.ember.downloa
 $("recall-remove").addEventListener("click", () => { void window.ember.removeMemoryModel().then(() => $("recall-download").focus(), err => { $("memory-error").textContent = memoryDeleteFailedText(err); }); });
 window.ember.onMemoryModel(renderRecall);
 void window.ember.memoryModel().then(renderRecall);
-window.ember.onMemory(renderMemory);
+window.ember.onMemory(view => { receivedMemory = true; showMemory(view); });
 
 // ───── Routines and lasting reminders (app/main/agent/routines.ts): kept only once the user turns them on and agrees ─────
 $("routines-consent-text").textContent = ROUTINES_CONSENT_TEXT;
