@@ -628,7 +628,9 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   headless Mac, and a second Ember handing over to a blocked first one hangs. Where the keyring is `basic_text` (no GNOME Keyring or KWallet), Ember refuses to keep a key and
   says why; a local server that needs no key still works. The key is never logged, audited, shown again (Home says
   "Key saved", with **Replace** and **Remove**) or put in any process's environment: it reaches only the Copilot
-  runtime's provider config. **Remove** and **Sign out** delete it.
+  runtime's provider config. **Remove** and **Sign out** delete it. Another GitHub account signing in leaves it in
+  place: the key belongs to the user's model service, not to a GitHub account, so an account change has nothing to do
+  with it (Sign out deletes it only because signing out forgets everything the user set up).
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
   started with. A request asked while a turn or a task is still under way on the service before is held, with a bubble
   saying so ("Switching model service"), and sent to the new one once they are done; it never goes to the one before,
