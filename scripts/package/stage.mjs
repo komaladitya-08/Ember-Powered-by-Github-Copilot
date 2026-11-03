@@ -1,10 +1,12 @@
 // Stages Ember as a self-contained app folder for the OS this runs on (layout.mjs describes each target):
-//   Linux (the input for the RPM and the AppImage; unchanged):
+//   Linux (the input for the RPM and the AppImage):
 //     dist/package/ember/            Electron, renamed to "ember", with chrome-sandbox
 //       THIRD_PARTY_NOTICES          the licences of everything bundled (beside Electron's LICENSE
 //                                    and LICENSES.chromium.html)
 //       resources/app/               package.json, LICENSE, dist/app (the built app), production node_modules
 //       resources/sidecar/atspi/     the accessibility sidecar (run by the system Python)
+//       resources/voice-native/      sherpa-onnx's C API for native speech (libsherpa-onnx-c-api.so, libonnxruntime.so),
+//                                    from scripts/voice/fetch-capi.mjs, each checked against its SHA-256 (CAPI_RELEASE)
 //     dist/package/voice-models/     the speech models, trimmed to the files Ember loads (if downloaded and verified)
 //   Windows: dist/package/Ember/      Ember.exe (electron.exe renamed, with Ember's version resource and icon and no
 //                                     certificate table: exe-resources.mjs), the same notices and resources/app, the
@@ -105,13 +107,25 @@ if (noLicenceText.length) throw new Error(noLicenceText.join("\n"));
 // The speech models to bundle. Linux: a sub-package beside the app; Windows and macOS: inside the app with
 // --with-models (otherwise Ember downloads them when "Hey Ember" is turned on).
 const models = path.join(root, ".cache/voice/models");
-const VOICE_MODELS = await voiceModels();
+const { VOICE_MODELS, CAPI_RELEASE } = await voiceModels();
 const verified = m => {
   try { return fs.readFileSync(path.join(models, `.${m.target}.ok`), "utf8").trim() === m.sha256 && fs.existsSync(path.join(models, m.target)); } catch { return false; }
 };
 const unverified = VOICE_MODELS.filter(m => !verified(m));
 const modelsDest = layout.voiceModels === "beside" ? path.join(out, "voice-models") : withModels ? path.join(resources, "voice-models") : null;
 if (withModels && unverified.length) throw new Error(`--with-models: ${unverified.map(m => m.target).join(", ")} missing or not verified (run node scripts/voice/prepare.mjs)`);
+
+// Linux's native speech: sherpa-onnx's C API libraries, each the very file pinned in CAPI_RELEASE (app/voice/models.ts),
+// read once here and written from those bytes. Nothing is downloaded: fetch-capi.mjs fetched and checked the archive.
+const capiSrc = path.join(root, ".cache/voice/capi", CAPI_RELEASE.target, "lib");
+const capiLibs = layout.voiceNative ? Object.entries(CAPI_RELEASE.libs).map(([file, sha256]) => {
+  const p = path.join(capiSrc, file);
+  const bytes = fs.existsSync(p) ? fs.readFileSync(p) : null;
+  if (!bytes) throw new Error(`${rel(p)} is missing: run node scripts/voice/fetch-capi.mjs (sherpa-onnx's C API, for native speech)`);
+  const got = crypto.createHash("sha256").update(bytes).digest("hex");
+  if (got !== sha256) throw new Error(`${rel(p)} isn't the library pinned in app/voice/models.ts (SHA-256 ${got.slice(0, 12)}…): run node scripts/voice/fetch-capi.mjs`);
+  return { file, bytes };
+}) : [];
 
 // Only this script's folders are replaced; built packages beside them stay until rebuilt.
 for (const d of [layout.appDir, "voice-models"]) fs.rmSync(path.join(out, d), { recursive: true, force: true });
@@ -198,6 +212,14 @@ for (const s of sidecars) {
   fs.copyFileSync(path.join(root, s.from), path.join(resources, s.to));
 }
 
+// 3a. Linux: sherpa-onnx's C API for native speech, the bytes checked above (loaded with koffi: not Node addons, so
+//     nothing is rebuilt and ember.nativeModules stays []). check-symvers.sh checks them with the rest of the folder.
+if (layout.voiceNative) {
+  const dest = path.join(resources, layout.voiceNative);
+  fs.mkdirSync(dest, { recursive: true });
+  for (const l of capiLibs) fs.writeFileSync(path.join(dest, l.file), l.bytes, { mode: 0o755 });
+}
+
 // 3b. The remote agent's parts (design §5.2.2): every archive remote-parts.json names, checked against its size and
 //     SHA-256 as the PC will check it before sending, then remote-parts.json and the Node runtime policy
 //     (remote-runtime.json, which a packaged Ember reads beside them before it sends a remote its runtime).
@@ -269,6 +291,7 @@ fs.writeFileSync(path.join(app, layout.noticesDir, "THIRD_PARTY_NOTICES"), [
   `--- Ember's LICENSE ---\n${fs.readFileSync(path.join(root, "LICENSE"), "utf8").trim()}`,
   `Electron ${electronVersion}: MIT (LICENSE beside this file). Chromium and the libraries in it, among them FFmpeg\n(LGPL-2.1-or-later): LICENSES.chromium.html beside this file.`,
   `Inter 4.1 (the typeface of Ember's windows, ${fonts}): OFL-1.1\n\n--- LICENSE.txt ---\n${fs.readFileSync(path.join(root, "assets/fonts/LICENSE.txt"), "utf8").trim()}`,
+  ...(layout.voiceNative ? [capiNotice(path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/${layout.voiceNative}`))] : []),
   ...sections,
 ].join(`\n\n${"=".repeat(78)}\n\n`) + "\n");
 
@@ -282,13 +305,24 @@ if (layout.signing === "adhoc") {
   }
 }
 
-/** The pinned speech models (app/voice/models.ts), bundled for Node. */
+/**
+ * THIRD_PARTY_NOTICES' section for sherpa-onnx's C API libraries in `dir` (relative to the notices): sherpa-onnx's
+ * Apache-2.0 licence with what the library is built from, ONNX Runtime's MIT licence and notices, and eSpeak NG's.
+ */
+function capiNotice(dir) {
+  const texts = ["packaging/licences/sherpa-onnx-native.txt", "packaging/licences/onnxruntime-1.28.2-ThirdPartyNotices.txt", "packaging/licences/espeak-ng-COPYING.txt"];
+  return [`${CAPI_RELEASE.name} (${dir}: ${Object.keys(CAPI_RELEASE.libs).join(", ")}, ONNX Runtime ${CAPI_RELEASE.onnxruntime}): ${CAPI_RELEASE.license}`,
+    ...texts.map(t => `--- ${path.posix.basename(t)} ---\n${fs.readFileSync(path.join(root, ...t.split("/")), "utf8").trim()}`)].join("\n\n");
+}
+
+/** The pinned speech models and C API libraries (app/voice/models.ts), bundled for Node. */
 async function voiceModels() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-stage-"));
   try {
     const outfile = path.join(tmp, "models.cjs");
     await build({ entryPoints: [path.join(root, "app/voice/models.ts")], outfile, bundle: true, platform: "node", format: "cjs", logLevel: "error" });
-    return createRequire(import.meta.url)(outfile).VOICE_MODELS;
+    const { VOICE_MODELS, CAPI_RELEASE } = createRequire(import.meta.url)(outfile);
+    return { VOICE_MODELS, CAPI_RELEASE };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -325,6 +359,7 @@ console.log(`staged ${rel(app)} (${size(app)}): Ember ${version}, Electron ${ele
 if (exeIdentity) console.log(`  ${exeIdentity}`);
 console.log(`  fuses: ${Object.entries(fuses).map(([k, v]) => `${k} ${v === true ? "on" : v === false ? "off" : v}`).join(", ")}`);
 console.log(`  production modules: ${prod.map(p => path.relative(path.join(root, "node_modules"), p)).join(", ")}`);
+if (layout.voiceNative) console.log(`  native speech: ${layout.resourcesDir}/${layout.voiceNative} (${CAPI_RELEASE.name}: ${capiLibs.map(l => l.file).join(", ")}, SHA-256 checked)`);
 if (modelsDest && fs.existsSync(modelsDest)) console.log(`staged ${rel(modelsDest)} (${size(modelsDest)})`);
 else if (layout.voiceModels === "beside" && !fs.existsSync(models)) console.log("no speech models in .cache/voice (run scripts/voice/prepare.mjs to include them)");
 else if (layout.voiceModels === "inside" && !withModels) console.log("speech models not bundled (Ember downloads them when “Hey Ember” is turned on; --with-models bundles them)");

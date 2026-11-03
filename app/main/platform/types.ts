@@ -470,6 +470,16 @@ export interface VoicePlatform {
   readonly speakerMonitor: boolean;
   /** Folders a bundled copy of the models may be in, in order (linux: /usr/share/ember/voice-models, then resources/voice-models). */
   bundledModelDirs(resourcesPath: string): string[];
+  /**
+   * Where a packaged Ember keeps sherpa-onnx's C API libraries for native speech (app/voice/capi.ts). linux:
+   * resources/voice-native; win32/darwin: null (speech runs on the Node addon there).
+   */
+  nativeSpeechDir(resourcesPath: string): string | null;
+  /**
+   * Whether the natural voice (Kokoro, voice.natural) may be fetched and used: win32/darwin true; linux false (no
+   * setting for it there, so a settings file that turns it on fetches nothing).
+   */
+  readonly naturalVoice: boolean;
 }
 
 /** This OS's privacy vocabulary: never-look defaults and security windows. */
