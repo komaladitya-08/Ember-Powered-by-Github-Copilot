@@ -50,6 +50,8 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: Kill switch real-time deadline (isolated from parallel unit tests)
+        run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - name: The npm launcher's package files (packages/npm, published by npm.yml)
         working-directory: packages/npm
         run: npm pack --dry-run
@@ -487,6 +489,8 @@ jobs:
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm test
+      - name: Kill switch real-time deadline (isolated from parallel unit tests)
+        run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - run: npm run build
       - name: The UI Automation bridge compiles and starts as Ember starts it, and stops when its input closes
         # Ember's accessibility host runs this command line: Windows PowerShell 5.1 (not pwsh), whose Add-Type compiles
@@ -707,6 +711,8 @@ jobs:
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm test
+      - name: Kill switch real-time deadline (isolated from parallel unit tests)
+        run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - id: build
         if: ${{ !cancelled() }}
         run: npm run build
