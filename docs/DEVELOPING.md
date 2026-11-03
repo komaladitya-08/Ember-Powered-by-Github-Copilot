@@ -37,7 +37,9 @@ sudo dnf install -y metacity   # optional: a window manager for Ember's desk (Xv
 ```
 
 Ember notices the screen locking through logind, with `gdbus monitor` (glib2, which GNOME brings); without `gdbus` it
-reads `loginctl` every 5 s.
+reads `loginctl` every 5 s. If logind cannot find a graphical session at startup, Ember retries discovery
+5 s after each attempt finishes, then starts one monitor and reads the recovered session immediately. A terminal-only
+session stays unlocked and is never monitored; discovery continues at that bounded cadence. Quitting cancels retries.
 
 ## 3. Install Node 22 and npm 11
 

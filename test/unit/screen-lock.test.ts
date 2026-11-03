@@ -72,13 +72,16 @@ describe("logind's session state", () => {
 describe("logind's session, watched", () => {
   type Child = EventEmitter & { stdout: EventEmitter; kill: ReturnType<typeof vi.fn> };
   /** `gdbus` is each gdbus monitor started; loginctl says session 2 is graphical, and `say` what it says of its lock. */
-  function setup(o: { session?: boolean } = {}) {
+  function setup(o: { session?: boolean; unavailable?: boolean } = {}) {
     const gdbus: { args: string[]; lc: string | undefined; p: Child }[] = [];
     let answer: string | null = "LockedHint=no\nActive=yes\n";
     const reads: string[][] = [];
+    const discoveries: string[][] = [];
     const run: RunText = async (_cmd, args) => {
+      if (args.includes("Type") || args[0] === "show-user") discoveries.push(args);
+      if (o.unavailable) return null;
       if (args[0] === "show-user") return o.session === false ? "Display=\n" : "Display=2\n";
-      if (args.includes("Type")) return o.session === false ? null : "Type=x11\n";
+      if (args.includes("Type")) return o.session === false ? "Type=tty\n" : "Type=x11\n";
       reads.push(args);
       return answer;
     };
@@ -89,7 +92,7 @@ describe("logind's session, watched", () => {
     };
     const changes: boolean[] = [];
     const lock = new ScreenLock({ ...logindLock({ sessionId: "2", uid: 1000, run, spawn }), initial: () => true, onChange: on => changes.push(on) });
-    return { lock, gdbus, reads, changes, say: (text: string | null) => { answer = text; } };
+    return { lock, gdbus, reads, discoveries, changes, say: (text: string | null) => { answer = text; } };
   }
 
   it("watches the session with one gdbus monitor, read again only when its properties change: no program every 2 s (review #81)", async () => {
@@ -139,12 +142,125 @@ describe("logind's session, watched", () => {
     expect(s.reads).toHaveLength(4);
   });
 
-  it("watches and reads nothing without a graphical session, and stays unlocked", async () => {
+  it("retries absent graphical sessions at a bounded cadence, without watching a tty or marking it locked", async () => {
     const s = setup({ session: false });
     s.lock.start();
     await after(60_000);
     expect(s.gdbus).toHaveLength(0);
+    expect(s.discoveries).toHaveLength(26); // two commands initially and once per 5 s
+    expect(s.reads).toHaveLength(0);
     expect(s.lock.locked).toBe(false);
+    s.lock.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("recovers temporary discovery failure into a locked session and then keeps one idle monitor", async () => {
+    const options = { unavailable: true };
+    const s = setup(options);
+    s.lock.start();
+    s.lock.start(); // repeated startup cannot create another discovery loop
+    await after(0);
+    expect(s.discoveries).toHaveLength(2);
+    expect(s.gdbus).toHaveLength(0);
+    options.unavailable = false;
+    s.say("LockedHint=yes\nActive=yes\n");
+    await after(4999);
+    expect(s.gdbus).toHaveLength(0);
+    await after(1);
+    expect(s.lock.locked).toBe(true);
+    expect(s.changes).toEqual([true]);
+    expect(s.gdbus).toHaveLength(1);
+    expect(s.reads).toHaveLength(1);
+    await after(60_000);
+    expect(s.gdbus).toHaveLength(1);
+    expect(s.reads).toHaveLength(1);
+    s.lock.stop();
+    expect(s.gdbus[0].p.kill).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("recovers through polling if the monitor fails after rediscovery", async () => {
+    const options = { unavailable: true };
+    const s = setup(options);
+    s.lock.start();
+    await after(0);
+    options.unavailable = false;
+    await after(5000);
+    s.gdbus[0].p.emit("error", new Error("unavailable"));
+    s.gdbus[0].p.emit("exit", 1, null); // one fallback, not two
+    s.say("LockedHint=yes\nActive=yes\n");
+    await after(5000);
+    expect(s.changes).toEqual([true]);
+    expect(s.reads).toHaveLength(2);
+    expect(s.gdbus).toHaveLength(1);
+    s.lock.stop();
+    await after(60_000);
+    expect(s.reads).toHaveLength(2);
+  });
+
+  it("cancels discovery before retry and ignores a late discovery after stop", async () => {
+    const options = { unavailable: true };
+    const s = setup(options);
+    s.lock.start();
+    await after(0);
+    s.lock.stop();
+    options.unavailable = false;
+    await after(60_000);
+    expect(s.discoveries).toHaveLength(2);
+    expect(s.gdbus).toHaveLength(0);
+    expect(s.changes).toEqual([]);
+    const spawn = vi.fn();
+    let resolve!: (text: string) => void;
+    const lock = new ScreenLock({ ...logindLock({ sessionId: "2", uid: 1000,
+      run: () => new Promise(r => { resolve = r; }), spawn }), onChange: vi.fn() });
+    lock.start();
+    lock.stop();
+    resolve("Type=x11\n");
+    await after(0);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retries rejected discovery and falls back to polling for synchronous monitor failure", async () => {
+    let unavailable = true;
+    const run = vi.fn(async (_cmd: string, args: string[]) => {
+      if (unavailable) throw new Error("logind unavailable");
+      return args.includes("Type") ? "Type=x11\n" : "LockedHint=yes\nActive=yes\n";
+    });
+    const spawn = vi.fn(() => { throw new Error("spawn failed"); });
+    const changed = vi.fn();
+    const lock = new ScreenLock({ ...logindLock({ sessionId: "2", uid: 1000, run, spawn }), onChange: changed });
+    lock.start();
+    await after(0);
+    unavailable = false;
+    await after(5000);
+    expect(changed).toHaveBeenCalledWith(true);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const calls = run.mock.calls.length;
+    await after(5000);
+    expect(run).toHaveBeenCalledTimes(calls + 1);
+    lock.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("waits until slow discovery finishes before scheduling another attempt", async () => {
+    let resolve!: (text: string | null) => void;
+    const run = vi.fn(() => new Promise<string | null>(r => { resolve = r; }));
+    const lock = new ScreenLock({ ...logindLock({ sessionId: undefined, uid: 1000, run, spawn: vi.fn() }), onChange: vi.fn() });
+    lock.start();
+    await after(60_000);
+    expect(run).toHaveBeenCalledTimes(1); // watch and initial read share discovery
+    resolve(null);
+    await after(0);
+    await after(4999);
+    expect(run).toHaveBeenCalledTimes(1);
+    await after(1);
+    expect(run).toHaveBeenCalledTimes(2);
+    lock.stop();
+    resolve(null);
+    await after(10_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("starts unlocked, whatever Electron says, and a first read that can't tell leaves it so (review #81)", async () => {
