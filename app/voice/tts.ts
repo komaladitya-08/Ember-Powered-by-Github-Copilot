@@ -115,6 +115,8 @@ export class SpeechStream {
   /** How many characters of speech were given out, and whether the rest was left to the bubble (SPOKEN_MAX). */
   private spokenChars = 0;
   private capped = false;
+  /** Past the cap, the last of the answer left unsaid (its closing question may still be said). */
+  private dropped = "";
 
   /** `maxChars`: the most of an answer said aloud (SPOKEN_MAX); the rest is left to the bubble, which shows it all. */
   constructor(private maxChars = SPOKEN_MAX) {}
@@ -134,14 +136,28 @@ export class SpeechStream {
    * fits, then "The rest is in the bubble." once, and nothing after (a long answer isn't read out whole).
    */
   private budget(spoken: string): string[] {
-    if (this.capped) return [];
+    if (this.capped) { this.dropped = spoken; return []; }
     const room = this.maxChars - this.spokenChars;
     if (spoken.length <= room) { this.spokenChars += spoken.length; return [spoken]; }
     this.capped = true;
     const ends = sentenceEnds(`${spoken} `).filter(e => e <= room);
     // Nothing said yet and not one sentence fits: the words that do, then the note.
-    const head = ends.length ? spoken.slice(0, ends[ends.length - 1]).trim() : this.spokenChars ? "" : `${spoken.slice(0, room).replace(/\s+\S*$/, "")}…`;
+    const at = ends.length ? ends[ends.length - 1] : 0;
+    const head = ends.length ? spoken.slice(0, at).trim() : this.spokenChars ? "" : `${spoken.slice(0, room).replace(/\s+\S*$/, "")}…`;
+    this.dropped = spoken.slice(at);
     return [head ? `${head} ${REST_IN_BUBBLE}` : REST_IN_BUBBLE];
+  }
+
+  /**
+   * The answer's closing question, when the cap left it unsaid ("Which one shall I open?"): it is still said, after the
+   * note, since the follow-up window that opens after it waits for the reply (review of #143). Null otherwise.
+   */
+  private closingQuestion(): string | null {
+    const text = this.dropped.trim();
+    if (!this.capped || !/\?["”’')\]]*$/.test(text)) return null;
+    const ends = sentenceEnds(`${text} `).filter(e => e < text.length);
+    const last = text.slice(ends.length ? ends[ends.length - 1] : 0).trim();
+    return last.length <= 300 ? last : null;
   }
 
   /**
@@ -156,6 +172,8 @@ export class SpeechStream {
     else rest = full === undefined ? this.raw.slice(this.said) : "";
     const spoken = spokenText(rest);
     const out = spoken.trim() ? this.budget(spoken) : [];
+    const question = this.closingQuestion();
+    if (question) out.push(question);
     this.reset();
     return out;
   }
@@ -170,6 +188,7 @@ export class SpeechStream {
     this.said = 0;
     this.spokenChars = 0;
     this.capped = false;
+    this.dropped = "";
   }
 
   /**

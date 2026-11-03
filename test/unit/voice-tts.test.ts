@@ -28,6 +28,18 @@ describe("SpeechStream with a long answer", () => {
     expect(said.length).toBeLessThanOrEqual(SPOKEN_MAX + REST_IN_BUBBLE.length + 1);
   });
 
+  it("still says the answer's closing question past the cap, as the follow-up window waits for its reply (review of #143)", () => {
+    const body = Array.from({ length: 30 }, (_, i) => sentence(i)).join(" ");
+    const s = new SpeechStream();
+    const said = [...s.push(`${body} `), ...s.push("Which of them shall I open? ")];
+    const all = [...said, ...s.finish(`${body} Which of them shall I open?`)];
+    expect(all.at(-1)).toBe("Which of them shall I open?");
+    expect(all.filter(x => x.includes(REST_IN_BUBBLE))).toHaveLength(1);
+    // Given whole, too; and an answer that ends without a question says only the note at the end.
+    expect(new SpeechStream().finish(`${body} Shall I go on?`).at(-1)).toBe("Shall I go on?");
+    expect(new SpeechStream().finish(`${body} Is that it? That's all.`).at(-1)).toMatch(/The rest is in the bubble\.$/);
+  });
+
   it("says a short answer whole, and starts afresh for the next answer", () => {
     const s = new SpeechStream(60);
     expect(s.finish("Night Light is on.")).toEqual(["Night Light is on."]);

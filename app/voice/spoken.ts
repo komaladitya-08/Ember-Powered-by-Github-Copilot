@@ -6,8 +6,11 @@
 const CODE = "(code shown in the bubble)";
 const TABLE = "(table shown in the bubble)";
 
-/** A key chord as written ("Ctrl+Alt+Y", "Win + Shift + S", "Cmd+Space"): modifiers joined by "+" to a key. */
-const CHORD = /\b(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)\b/gi;
+/**
+ * A key chord as written ("Ctrl+Alt+Y", "Win + Shift + S", "Cmd+Space"): modifiers joined by "+" to a key, standing on
+ * its own: never inside a word, an address or a path ("me.alt+s@example.com", "build/ctrl+c"; review of #143).
+ */
+const CHORD = /(?<![\w.@+/\\-])(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)(?![\w@+/\\-]|\.\w)/gi;
 /** How a key in a chord is said (keyLabel's names, for the ear): the rest are said as they are written. */
 const KEY_SAID: Readonly<Record<string, string>> = {
   ctrl: "Control", win: "Windows key", cmd: "Command", opt: "Option", esc: "Escape", del: "Delete", return: "Enter",
@@ -39,7 +42,8 @@ export function spokenText(markdown: string): string {
     .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
     .replace(/\s*›\s*(?=\S)/g, ", then ")
     .replace(/\s+(?:→|->)\s+/g, " to ")
-    .replace(/(\w)\s+&\s+(?=\w)/g, "$1 and ")
+    // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
+    .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ")
     .replace(/\n{2,}/g, "\n")
     .trim();
 }

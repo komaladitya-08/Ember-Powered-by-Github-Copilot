@@ -14,7 +14,15 @@ describe("spokenText says keys, menu paths and symbols as people say them", () =
     ["Tom & Jerry", "Tom and Jerry"],
     // Not chords, not paths: left as they are.
     ["C++ and a+b are fine, and so is 3 + 4.", "C++ and a+b are fine, and so is 3 + 4."],
+    ["Rows 1 & 2, and a && b.", "Rows 1 & 2, and a && b."],
   ])("%j is said %j", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it("reads a chord only where it stands on its own, never inside a word, an address or a path (review of #143)", () => {
+    for (const text of ["Write to ops.alt+s@example.com today.", "Open build/ctrl+c.log now.", "The file is shift+x.txt."]) {
+      expect(spokenText(text), text).not.toMatch(/\b(?:alt s|Control c|shift x)\b/);
+    }
+    expect(spokenText("Then press Ctrl+S.")).toBe("Then press Control S.");
+  });
 });
 
 describe("spokenText", () => {
