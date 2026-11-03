@@ -68,12 +68,17 @@ describe("withoutRepeats", () => {
   it("takes out the recognizer's repeat loop, with its cut-off end", () => {
     expect(withoutRepeats("pay embers pay embers pay embers pay em")).toBe("pay embers");
     expect(withoutRepeats("Stop stop stop stop stop")).toBe("Stop");
+    expect(withoutRepeats("Open settings. Open settings.")).toBe("Open settings.");
   });
 
   it("keeps what people say twice, and ordinary sentences", () => {
     expect(withoutRepeats("very, very good")).toBe("very, very good");
     expect(withoutRepeats("Turn on Night Light and turn on Do Not Disturb too.")).toBe("Turn on Night Light and turn on Do Not Disturb too.");
   });
+
+  it.each(["Find the New York, New York office.", "Find the New York New York office.", "Write go team go team in the note."])(
+    "keeps an intentional phrase repeated inside a request: %s", text => expect(withoutRepeats(text)).toBe(text),
+  );
 });
 
 describe("recognizerPieces", () => {

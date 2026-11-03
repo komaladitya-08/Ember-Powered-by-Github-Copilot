@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Ring, VoiceEngine, heardOtherStop, heardStopWord, holdsWake, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
+import { withoutRepeats } from "../../app/voice/sherpa";
 
 /** A scripted backend: frames are tagged by their first sample. */
 const KW = { 1: "hey_ember", 2: "ember_stop" } as Record<number, string>;
@@ -948,8 +949,11 @@ describe("'Ember, stop' is checked", () => {
   });
 
   it("decides on 'Amber, stop…' said mid-sentence at the speaker's pause: a stop said on its own stops, a sentence doesn't", () => {
-    for (const [first, then, stops] of [["Amber, stop", "Amber, stop it.", true], ["Amber, stop that", "Amber, stop that right now!", false]] as const) {
+    for (const [first, then, stops] of [["Amber, stop", "Amber, stop it.", true], ["Amber, stop that", "Amber, stop that right now!", false],
+      ["Amber, stop", "Um, Amber stop it Amber stop it", true]] as const) {
       const b = fake([first, then]);
+      const transcribe = b.transcribe;
+      b.transcribe = (samples, purpose) => withoutRepeats(transcribe(samples), purpose);
       const events: VoiceEvent[] = [];
       const c = { t: 0 };
       const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });

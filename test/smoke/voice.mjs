@@ -371,9 +371,12 @@ const scenarios = {
       const hushAt = cutIn >= 0 && cutIn < stopAt ? cutIn : stopAt, by = hushAt === stopAt ? "the stop" : "\"Hey Ember\"";
       const offIdx = index(inst, "voice.self_speaking", e => !e.on, on);
       expect(offIdx < 0 || offIdx > hushAt, `Ember had already finished speaking (#${offIdx}) before "Hey Ember, stop" (#${hushAt}): the reply was too short for the test`);
-      const off = await waitFor(inst, e => e.msg === "voice.self_speaking" && !e.on, 3_000, `Ember to go quiet after ${by}`, hushAt);
+      const off = await waitFor(inst, e => e.msg === "voice.self_speaking" && !e.on, 3_000, `Ember to report speech stopped after ${by}`, hushAt);
       const quietMs = ms(inst, hushAt, off);
-      expect(quietMs < 1500, `Ember took ${quietMs} ms to go quiet after ${by}`);
+      expect(quietMs < 1500, `Ember took ${quietMs} ms to report speech stopped after ${by}`);
+      const ack = await waitFor(inst, e => e.msg === "voice.hush_ack" && e.page === "mic", 3_000, "the speaking page to acknowledge hush", hushAt);
+      const ackMs = inst.log[ack].ms;
+      expect(Number.isFinite(ackMs) && ackMs >= 0 && ackMs < 1500, `Invalid or slow renderer hush acknowledgement (${ackMs} ms)`);
       const played = all(inst, "voice.audio_played").reduce((n, e) => n + e.seconds, 0);
       // Nothing more is said, and no follow-up window opens, for a hushed reply.
       await sleep(4000);
@@ -381,7 +384,7 @@ const scenarios = {
       expect(!resumed, "Ember started speaking again after it was stopped");
       expect(index(inst, "voice.follow_up") < 0, "a follow-up window opened after Ember was stopped");
       expect(index(inst, "voice.utterance", () => true, hushAt) < 0, "\"Hey Ember, stop\" was taken as a request");
-      console.log(`ok   stop: "Hey Ember, stop" during the reply pulled the kill switch and hushed it (${quietMs} ms after ${by}, ${played.toFixed(1)} s of audio had been queued); no follow-up opened`);
+      console.log(`ok   stop: "Hey Ember, stop" during the reply pulled the kill switch and hushed it (${quietMs} ms after ${by}, renderer confirmed in ${ackMs} ms, ${played.toFixed(1)} s of audio had been queued); no follow-up opened`);
     } finally { await finish(inst); }
   },
 

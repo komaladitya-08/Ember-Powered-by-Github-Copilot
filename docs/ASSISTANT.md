@@ -162,9 +162,9 @@ reported in every PR that touches it.
 - `scripts/perf/footprint.mjs` launches the built app headless with a temporary data folder, voice on and silence
   fed in. It prints PSS and CPU per process, and per page through DevTools, as this plan's numbers were taken. It
   also writes JSON for CI's `el8` job to keep as an artifact. It fails only on a large regression, never on noise.
-- A latency trace: `EMBER_LATENCY_LOG=1` logs, for each spoken request, the time from end of speech to transcript,
-  to the request being sent, to the first answer token, to the first sentence, to first audio. Times only, never
-  words (CLAUDE.md privacy).
+- `voice.latency` logs transcription time and the steps from transcript arrival to the first speaking report. `voice.hush_ack`
+  logs how long the speaking renderer took to acknowledge cancellation. The logs contain no words (CLAUDE.md privacy).
+  See the [timing fields in the development guide](DEVELOPING.md#how-speech-runs-natively-or-on-webassembly).
 - A recognition set: the user can record 20 of their own phrases, kept only on their machine, to measure word error
   rate before and after each change. CI keeps using the synthesized clips.
 

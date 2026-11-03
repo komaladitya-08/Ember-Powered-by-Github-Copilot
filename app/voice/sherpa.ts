@@ -98,11 +98,11 @@ export function recognizerPieces(samples: Float32Array): Float32Array[] {
 
 /**
  * The recognizer's words with a looping repeat taken out: on a short clip Moonshine v2 can repeat what it heard until
- * its token limit ("pay embers pay embers pay embers pay em"), or say a whole sentence twice. A word said three times or
- * more in a row, or a phrase of two words or more said twice or more, is kept once, along with a cut-off repeat at the
- * very end. A word said twice ("very, very") stays.
+ * its token limit ("pay embers pay embers pay embers pay em"), or say a whole sentence twice. Keep one copy of a run
+ * of three or more repeats, including a cut-off repeat at the very end. Keep a doubled phrase inside a request
+ * ("Find the New York, New York office").
  */
-export function withoutRepeats(text: string): string {
+export function withoutRepeats(text: string, purpose?: "keyword"): string {
   const words = text.split(/\s+/).filter(Boolean);
   const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
   const same = (a: number, b: number, k: number) => { for (let j = 0; j < k; j++) if (norm(words[a + j]) !== norm(words[b + j])) return false; return true; };
@@ -115,6 +115,7 @@ export function withoutRepeats(text: string): string {
       let end = i + n * k, j = 0;
       while (end + j < words.length && j < k && norm(words[i + j]).startsWith(norm(words[end + j])) && (norm(words[end + j]) === norm(words[i + j]) || end + j === words.length - 1)) j++;
       if (end + j === words.length) end += j;
+      if (purpose !== "keyword" && n === 2 && (i !== 0 || end !== words.length)) continue;
       words.splice(i + k, end - (i + k));
     }
   }
@@ -362,7 +363,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     fed: () => fed,
     speechEnd: seg => ends.get(seg) ?? null,
     resetVad: () => reset(),
-    transcribe(samples) {
+    transcribe(samples, purpose) {
       if (samples.length < MIN_TRANSCRIBE_SAMPLES) return "";
       const words: string[] = [];
       for (const piece of recognizerPieces(samples)) {
@@ -372,7 +373,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
           s = asr.createStream();
           s.acceptWaveform(SAMPLE_RATE, piece);
           asr.decode(s);
-          const text = withoutRepeats(String(asr.getResult(s).text ?? "").trim());
+          const text = withoutRepeats(String(asr.getResult(s).text ?? "").trim(), purpose);
           if (text) words.push(text);
         } catch (err) {
           opts.onError?.(err);
