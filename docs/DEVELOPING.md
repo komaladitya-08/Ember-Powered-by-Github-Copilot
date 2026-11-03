@@ -262,9 +262,16 @@ Say “Ember, work without asking” (Voice Match must recognise you, and the ca
 Ember opens the switch or its card here) or “Ember, ask me first again” (anyone) to switch it by voice.
 
 **Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “go ahead”) answers it, and “Ember, not now”
-(or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you, from at least 1.5 s of your
-voice (say “Ember, yes, go ahead and allow it”; a bare “allow” is too short to be sure); otherwise the bubble says
-how, and the question stays. It counts only for the question that was up, and armed, when you started speaking, and
+(or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you
+in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is enough). A shorter
+yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
+10 minutes of asking, unless that short yes sounds clearly unlike you, Voice Match has turned another voice away since,
+or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
+another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
+question (“Proceed?”) or a bare “okay” isn't one. Otherwise the bubble says how, and the question stays. Measured on
+LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time; the task trust takes a
+short yes from someone else who can also play your recorded “Hey Ember” and sounds close to you (PLAN.md §2
+“Approvals” has the figures). It counts only for the question that was up, and armed, when you started speaking, and
 once Voice Match turned another voice away during a question, that question takes a click or the keys only. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
 own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts), never says
 “Always” by voice, and never takes a spoken yes for a consent card. A command card or a long typed text is allowed by
@@ -708,7 +715,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 
 | Key | Effect |
 |---|---|
-| `features.voice` / `speak` | No "Hey Ember" / no spoken replies |
+| `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the natural voice (Kokoro) off and its 350 MB download from starting, shown as managed |
 | `features.actions` | Ember answers and guides ("show me") but never acts in apps |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model |

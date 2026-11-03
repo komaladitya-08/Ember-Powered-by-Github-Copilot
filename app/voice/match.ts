@@ -20,11 +20,20 @@ export type EnrolState =
   | { state: "cancelled"; got: number; of: number };
 
 /**
- * The least voice a request needs for Voice Match to vouch for it (`verified`, what a spoken yes and turning "Work
- * without asking" on need): VOICE_MATCH_THRESHOLD was tuned on requests of about 2.5 s (voiceprint.ts), and a bare
- * "allow" (0.4 s) is too short to tell voices apart (security review of #127).
+ * The least voice what follows the wake phrase needs for Voice Match to vouch for it (`verified`, what a spoken yes and
+ * turning "Work without asking" on need), checked on its own at VOICE_MATCH_THRESHOLD (owner decision of 2026-11-03;
+ * it was 1.5 s, which almost no natural yes reached). Measured on LibriSpeech dev-clean (33 speakers, enrolled from four
+ * 3 s phrases, pieces cut by voiced length): at 0.5 s another voice passes 0.5 % of the time and the owner's is turned
+ * away 52 %; at 1.5 s, 1.9 % and 6.5 %. A shorter piece makes another voice no easier to pass, only the owner's harder.
+ * A shorter or weaker match is `short`, which only a task the owner asked for by voice may still take (TaskVoiceTrust).
+ * Never the whole request with the wake phrase in it: the owner's recorded "Hey Ember" then another voice passed 65 %.
  */
-export const APPROVAL_MIN_SECONDS = 1.5;
+export const APPROVAL_MIN_SECONDS = 0.5;
+/**
+ * What follows the wake phrase is scored on its own (`restScore`) when it holds this much voice: under it, too few
+ * frames for the voiceprint to say anything.
+ */
+export const SCORE_MIN_SECONDS = 0.25;
 
 /** The voice process's frames (32 ms at 16 kHz): voice is counted frame by frame. */
 const FRAME = 512;
@@ -124,9 +133,8 @@ export class VoiceGate {
       // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
-      // own: the threshold was tuned on 2.5 s requests, a bare "allow" is too short to tell voices apart, and a recording
-      // of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
-      if (score >= this.threshold) { this.send(await this.vouched(e, audio, owner, withWake)); return; }
+      // own: a recording of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
+      if (score >= this.threshold) { this.send(await this.vouched(e, audio, owner, withWake, score)); return; }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
       this.send({ type: "listening", on: false, reason: "rejected", window: e.window });
     });
@@ -134,19 +142,24 @@ export class VoiceGate {
 
   /**
    * The owner's request (it matched as a whole) as main gets it: `verified` when what follows the wake phrase holds at
-   * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`. A check that fails says
-   * neither (heard, but it can't approve anything).
+   * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`, with that part's own score
+   * (`restScore`) when it held SCORE_MIN_SECONDS of voice or more (`whole`: the score of all of it, which is that part's
+   * when there was no wake phrase). A check that fails says neither (heard, but it can't approve anything).
    */
-  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean): Promise<VoiceEvent> {
+  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, whole: number): Promise<VoiceEvent> {
     const rest = afterWakePhrase(audio, withWake);
-    if (voicedSeconds(rest) < APPROVAL_MIN_SECONDS) return { ...e, short: true };
-    if (rest === audio) return { ...e, verified: true };
+    const voiced = voicedSeconds(rest);
+    const round = (x: number) => Math.round(x * 1000) / 1000;
+    if (rest === audio) return voiced >= APPROVAL_MIN_SECONDS ? { ...e, verified: true } : { ...e, short: true, ...(voiced >= SCORE_MIN_SECONDS ? { restScore: round(whole) } : {}) };
+    if (voiced < SCORE_MIN_SECONDS) return { ...e, short: true };
+    let score: number;
     try {
-      return similarity(await this.printer().print(rest), owner) >= this.threshold ? { ...e, verified: true } : { ...e, short: true };
+      score = similarity(await this.printer().print(rest), owner);
     } catch (err) {
       this.onError(err);
       return e;
     }
+    return voiced >= APPROVAL_MIN_SECONDS && score >= this.threshold ? { ...e, verified: true } : { ...e, short: true, restScore: round(score) };
   }
 
   private lookAtWake(e: Extract<VoiceEvent, { type: "wake" }>, audio: Float32Array, owner: Float32Array): void {

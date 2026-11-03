@@ -96,36 +96,49 @@ describe("VoiceGate", () => {
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
     g.setOwner(owner);
     g.event(utterance("Allow."), ownerAudio(0.4));
+    // Too little of it even to score: short, with no score of its own.
+    g.event(utterance("Yes."), ownerAudio(0.2));
     await flush();
-    expect(sent).toEqual([{ ...utterance("Allow."), short: true }]);
+    // (No wake phrase in it: the whole was scored, and that is its own score.)
+    expect(sent).toEqual([{ ...utterance("Allow."), short: true, restScore: 0.995 }, { ...utterance("Yes."), short: true }]);
+    expect(APPROVAL_MIN_SECONDS).toBe(0.5); // owner decision of 2026-11-03 (was 1.5 s)
   });
 
   it("counts voiced frames, not samples: half a second of the owner's voice padded with silence is short (security review of #127)", async () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
     g.setOwner(owner);
-    g.event(utterance("Allow."), joined(ownerAudio(0.5), new Float32Array(16_000 * 1.1)));
+    g.event(utterance("Allow."), joined(ownerAudio(0.4), new Float32Array(16_000 * 1.1)));
     await flush();
-    expect(sent).toEqual([{ ...utterance("Allow."), short: true }]);
-    expect(voicedSeconds(joined(ownerAudio(0.5), new Float32Array(16_000 * 1.1)))).toBeLessThan(0.6);
-    expect(voicedSeconds(ownerAudio(1.6))).toBeGreaterThanOrEqual(APPROVAL_MIN_SECONDS);
+    expect(sent).toEqual([{ ...utterance("Allow."), short: true, restScore: 0.995 }]);
+    expect(voicedSeconds(joined(ownerAudio(0.4), new Float32Array(16_000 * 1.1)))).toBeLessThan(APPROVAL_MIN_SECONDS);
+    expect(voicedSeconds(ownerAudio(0.6))).toBeGreaterThanOrEqual(APPROVAL_MIN_SECONDS);
   });
 
   it("vouches only for what follows the wake phrase, on its own: a recorded “Hey Ember” can't make up the voice (security review of #127)", async () => {
-    // The owner's "Hey Ember" (0.8 s) then a short "allow": what follows isn't enough.
+    // The owner's "Hey Ember" (0.8 s) then a short "allow": what follows isn't enough, and says its own score.
     const short: VoiceEvent[] = [];
     const g1 = new VoiceGate(() => fakePrinter(), e => short.push(e), () => undefined);
     g1.setOwner(owner);
-    g1.event(utterance("Allow."), joined(ownerAudio(0.8), ownerAudio(0.6)), true);
+    g1.event(utterance("Allow."), joined(ownerAudio(0.8), ownerAudio(0.35)), true);
     await flush();
-    expect(short).toEqual([{ ...utterance("Allow."), short: true }]);
-    // The owner's "Hey Ember", then another voice at length: heard (the clip starts as the owner's), never verified.
+    expect(short).toEqual([{ ...utterance("Allow."), short: true, restScore: 0.995 }]);
+    // The owner's "Hey Ember", then another voice: heard (the clip starts as the owner's), never verified, and its own
+    // score says it is another voice (what task-voice trust refuses: voice-answer.ts SHORT_YES_FLOOR).
     const other: VoiceEvent[] = [];
     const g2 = new VoiceGate(() => fakePrinter(), e => other.push(e), () => undefined);
     g2.setOwner(owner);
     g2.event(utterance("Yes, go ahead and allow it."), joined(ownerAudio(0.8), voice(1.8, [0, 1])), true);
+    g2.event(utterance("Allow."), joined(ownerAudio(0.8), voice(0.4, [0, 1])), true);
     await flush();
-    expect(other).toEqual([{ ...utterance("Yes, go ahead and allow it."), short: true }]);
+    expect(other).toEqual([{ ...utterance("Yes, go ahead and allow it."), short: true, restScore: 0 }, { ...utterance("Allow."), short: true, restScore: 0 }]);
+    // The owner's "Hey Ember", then the owner's own half-second "go ahead": verified now (APPROVAL_MIN_SECONDS).
+    const half: VoiceEvent[] = [];
+    const g4 = new VoiceGate(() => fakePrinter(), e => half.push(e), () => undefined);
+    g4.setOwner(owner);
+    g4.event(utterance("Go ahead."), joined(ownerAudio(0.8), ownerAudio(0.6)), true);
+    await flush();
+    expect(half).toEqual([{ ...utterance("Go ahead."), verified: true }]);
     // The owner throughout, at length: verified.
     const own: VoiceEvent[] = [];
     const g3 = new VoiceGate(() => fakePrinter(), e => own.push(e), () => undefined);

@@ -82,8 +82,11 @@ export type VoiceEvent =
   | { type: "speech"; on: boolean }
   /** `window`: a wake's request or a follow-up (which gets no follow-up of its own); `cut`: the speaker was still talking when the request reached its length limit. */
   /** `verified`: Voice Match compared it with the owner's voiceprint and it matched (match.ts); absent otherwise. */
-  /** `short`: it matched, but was too short for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts). */
-  | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean; verified?: true; short?: true }
+  /**
+   * `short`: it matched as a whole, but what follows the wake phrase was too short, or too unlike the owner on its own,
+   * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score, when it had one.
+   */
+  | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean; verified?: true; short?: true; restScore?: number }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number };
 
