@@ -1012,6 +1012,11 @@ PowerShell, set the variables first (`$env:EMBER_WIN32_TEST = "1"`, and so on), 
 The suites drive the real desktop: they open windows, click, type, use the clipboard, switch dark mode for apps (and
 put it back) and add and remove Ember's login item. Leave the computer alone while they run.
 
+An Electron child that a suite starts leaves Electron from the main message loop (`setImmediate(() => app.exit(0))`),
+never with `app.exit()` straight from `ready` or `app.whenReady()`: "ready" comes before that loop runs, and an exit
+there goes through the C runtime's `exit()` while Chromium is still launching its GPU process, which on Windows crashes
+with 0xC0000005 now and then, more often during a theme change (electron/electron#55011).
+
 ### 10.4 The accessibility helper (UI Automation)
 
 Ember reads and operates apps through Windows UI Automation, in two processes. Ember starts its accessibility host,
