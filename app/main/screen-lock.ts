@@ -96,7 +96,8 @@ export function sessionPath(id: string): string {
 /**
  * Linux: logind's view of Ember's screen, for ScreenLock. Read with loginctl when Ember starts and whenever `gdbus monitor`
  * (one process for the whole session, from glib2) says the session's properties changed; where gdbus is missing, or it
- * stops, read every few seconds instead. With no graphical session it can't tell, and nothing is watched.
+ * stops, read every few seconds instead. While no graphical session can be found, retry discovery every 5 s
+ * after the previous attempt finishes: a temporary logind failure must not disable lock detection until restart.
  */
 export function logindLock(o: { sessionId: string | undefined; uid: number; run?: RunText; spawn?: SpawnLines; log?: { info(event: string, fields?: object): void } }): Pick<ScreenLockOptions, "poll" | "watch"> {
   const run = o.run ?? execText;
@@ -104,7 +105,7 @@ export function logindLock(o: { sessionId: string | undefined; uid: number; run?
   /** The session, once found (looked for again while it isn't). */
   let session: Promise<string | null> | null = null;
   const sessionOf = (): Promise<string | null> => {
-    const p = session ??= graphicalSession(run, o);
+    const p = session ??= graphicalSession(run, o).catch(() => null);
     void p.then(id => { if (id === null && session === p) session = null; });
     return p;
   };
@@ -116,18 +117,29 @@ export function logindLock(o: { sessionId: string | undefined; uid: number; run?
     watch: (changed, ended) => {
       let child: ChildProcess | null = null;
       let over = false;
+      let retry: NodeJS.Timeout | null = null;
       const end = (pollInstead: boolean, why: string) => {
         if (over) return;
         over = true;
+        child?.kill();
         o.log?.info("screen.lock_watch_ended", { why, pollInstead });
         ended(pollInstead);
       };
-      void sessionOf().then(id => {
+      const discover = async (retried = false): Promise<void> => {
+        const id = await sessionOf();
         if (over) return;
-        if (!id) { end(false, "no graphical session"); return; }
+        if (!id) {
+          retry = setTimeout(() => { retry = null; void discover(true).catch(failed); }, 5000);
+          retry.unref?.();
+          return;
+        }
+        // The initial read already covers startup. A recovered session needs a fresh read even if the monitor
+        // never emits its ready line (or fails to start).
+        if (retried) changed();
         const p = child = spawn("gdbus", ["monitor", "--system", "--dest", "org.freedesktop.login1", "--object-path", sessionPath(id)], { stdio: ["ignore", "pipe", "ignore"], env: C_LOCALE() });
         let rest = "";
         p.stdout?.on("data", (chunk: Buffer) => {
+          if (over) return;
           const lines = (rest + chunk.toString("utf8")).split("\n");
           rest = lines.pop() ?? "";
           // The session's properties changed (LockedHint, Active), or the watch began (logind found, or back after a
@@ -136,8 +148,11 @@ export function logindLock(o: { sessionId: string | undefined; uid: number; run?
         });
         p.once("error", (err: NodeJS.ErrnoException) => end(true, err.code === "ENOENT" ? "gdbus isn't installed" : err.message));
         p.once("exit", (code, signal) => end(true, `gdbus stopped (${signal ?? `exit ${code}`})`));
-      });
-      return () => { over = true; child?.kill(); };
+      };
+      // A synchronous spawn failure also falls back to polling, just like the child's error event.
+      const failed = () => end(true, "session watch failed");
+      void discover().catch(failed);
+      return () => { over = true; if (retry) clearTimeout(retry); child?.kill(); };
     },
   };
 }
@@ -146,6 +161,7 @@ export class ScreenLock {
   private state = false;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private started = false;
   private unwatch: (() => void) | null = null;
   /** Reads started: only the latest one's answer counts. */
   private reads = 0;
@@ -157,6 +173,8 @@ export class ScreenLock {
   }
 
   start(): void {
+    if (this.started) return;
+    this.started = true;
     this.stopped = false;
     if (this.o.poll) {
       // Unlocked until a read says otherwise (one that can't tell leaves it so): see ScreenLockOptions.poll.
@@ -178,6 +196,8 @@ export class ScreenLock {
 
   stop(): void {
     this.stopped = true;
+    this.started = false;
+    this.reads++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.unwatch?.();
