@@ -46,6 +46,7 @@ import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
+import { capiChoice, type BackendChoice } from "../voice/runtime";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
 import { AuditLog } from "./policy/audit";
 import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
@@ -257,6 +258,18 @@ function voiceModelsRoot(): { root: string; bundled: boolean; userRoot: string }
   return bundled ? { root: bundled, bundled: true, userRoot } : { root: userRoot, bundled: false, userRoot };
 }
 
+/**
+ * Where speech runs natively from sherpa-onnx's C API (app/voice/capi.ts), and whether it does (runtime.ts capiChoice):
+ * EMBER_SHERPA_CAPI's folder in a development build, else a packaged Ember's own (sys.voice.nativeSpeechDir: Linux's
+ * resources/voice-native). `choice` is null where there is no such folder (Windows and macOS run the addon).
+ */
+function nativeSpeech(): { capiDir: string | null; choice: BackendChoice | null } {
+  const own = sys.voice.nativeSpeechDir(process.resourcesPath ?? "");
+  const capiDir = devEnv("EMBER_SHERPA_CAPI") || (app.isPackaged ? own : null);
+  if (own === null && !capiDir) return { capiDir: null, choice: null };
+  return { capiDir, choice: capiChoice({ capiDir }) };
+}
+
 /** How gh is run to find a GitHub CLI sign-in on this OS (its path, no console window on Windows). */
 const ghOptions = () => ({ path: sys.ghCliPath() ?? undefined, spawn: sys.spawnDefaults });
 /** Whether the GitHub CLI is installed (the platform's own path for it, else on PATH): sign-in messages say how to get it. */
@@ -348,6 +361,8 @@ async function runDoctor(): Promise<void> {
       speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
       voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
       voiceModelsMissing: missingModels([models.root, models.userRoot]).map(m => m.id),
+      // Linux: native speech (the C API Ember carries) or WebAssembly; left out where the addon runs speech.
+      speechBackend: nativeSpeech().choice,
       runtime: runtime.exists, auth, signIn, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
       // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
       extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
@@ -1643,7 +1658,7 @@ function start(): void {
   }));
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
   // Only while the setting, with the organisation's policy applied, wants it (off where voice or speech is: admin.ts).
-  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => { if (settings.get().voice.natural) voice?.retryNaturalVoice(); }));
+  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => { if (sys.voice.naturalVoice && settings.get().voice.natural) voice?.retryNaturalVoice(); }));
   const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay });
   presenceChanged = () => broadcast(IPC.presenceChanged, presence());
   ipcMain.handle(IPC.presence, guard(presence));
@@ -2464,10 +2479,13 @@ function start(): void {
     // ───── Voice ─────
     const speechModels = voiceModelsRoot();
     if (speechModels.bundled) log.info("voice.models_bundled", { root: speechModels.root });
+    // Native speech through sherpa-onnx's C API on Linux (resources/voice-native), WebAssembly where it can't run.
+    const speech = nativeSpeech();
+    if (speech.choice) log.info("voice.backend", { backend: speech.choice.backend, why: speech.choice.why });
     voice = new VoiceService({
       log: log.child("voice"),
-      // Native speech through sherpa-onnx's C API (app/voice/capi.ts): a development switch until it ships with Ember.
-      ...(devEnv("EMBER_SHERPA_CAPI") ? { capiDir: devEnv("EMBER_SHERPA_CAPI") } : {}),
+      // A process that dies loading it starts again on WebAssembly (voice.native_failed).
+      ...(speech.choice?.backend === "native" && speech.capiDir ? { capiDir: speech.capiDir } : {}),
       // How Ember's voice is played (VoiceOptions.playback): a development switch until echo-check.mjs has measured it.
       ...(devEnv("EMBER_TTS_OUTPUT") === "element" ? { playback: "element" as const } : {}),
       modelsRoot: speechModels.root,
@@ -2488,7 +2506,8 @@ function start(): void {
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
       // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
-      naturalVoice: settings.get().voice.natural,
+      // Never on Linux, where settings has no switch for it: native speech there fetches nothing more.
+      naturalVoice: sys.voice.naturalVoice && settings.get().voice.natural,
       // Whatever became of turning it on shows under its switch (never only in the log).
       onNatural: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       voiceprint: ownerPrint,
@@ -2544,7 +2563,7 @@ function start(): void {
       voice?.setVoiceprint(ownerPrint());
       broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
     });
-    settings.onChange(next => voice?.setNaturalVoice(next.voice.natural));
+    settings.onChange(next => voice?.setNaturalVoice(sys.voice.naturalVoice && next.voice.natural));
     settings.onChange(next => {
       // macOS asks for the microphone once listening is agreed to, so its prompt comes with that context.
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));
