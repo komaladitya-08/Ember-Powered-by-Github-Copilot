@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { PLATFORM_FAMILIES, TARGETS, artifactNames, layoutFor, npmInvocation, packageNameOf, prodPackageDirs, selectPackages } from "../../scripts/package/layout.mjs";
+import { PLATFORM_FAMILIES, TARGETS, VOICE_NATIVE_DIR, artifactNames, layoutFor, npmInvocation, packageNameOf, prodPackageDirs, selectPackages } from "../../scripts/package/layout.mjs";
 import { archivePlan } from "../../scripts/package/archive.mjs";
 import { askpassSourceCandidates } from "../../app/main/remote/askpass-win";
 
@@ -36,6 +36,14 @@ describe("the Linux layout", () => {
       const pruned = new Set(layoutFor(platform, arch).prune.filter(p => p.startsWith("onnxruntime-web/dist/")).map(p => p.slice("onnxruntime-web/dist/".length)));
       expect(installed.filter(f => !pruned.has(f)).sort(), platform).toEqual(["ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm", "ort.node.min.js"]);
     }
+  });
+
+  it("carries sherpa-onnx's C API for native speech where the platform layer looks for it, and only on Linux", () => {
+    expect(linux.voiceNative).toBe(VOICE_NATIVE_DIR);
+    expect(VOICE_NATIVE_DIR).toBe("voice-native");
+    for (const [platform, arch] of [["win32", "x64"], ["win32", "arm64"], ["darwin", "arm64"], ["darwin", "x64"]] as const) expect(layoutFor(platform, arch).voiceNative, platform).toBeNull();
+    const linuxSystem = fs.readFileSync(path.resolve("app/main/platform/linux/system.ts"), "utf8");
+    expect(linuxSystem).toContain('nativeSpeechDir: resourcesPath => path.join(resourcesPath, "voice-native"),');
   });
 
   it("never ships sherpa-onnx's native addon (it needs glibc 2.32; RHEL 8 has 2.28): speech runs on its WebAssembly", () => {

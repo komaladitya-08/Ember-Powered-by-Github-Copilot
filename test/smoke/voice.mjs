@@ -16,7 +16,9 @@
 // Needs an X display (in CI: xvfb-run -a), the speech models (node scripts/voice/prepare.mjs) and the other voice's
 // clips (node scripts/voice/prepare.mjs --voice ryan --clips); a development build (npm run build).
 // EMBER_VOICE_E2E_MODELS and EMBER_VOICE_E2E_OTHER override where those are (.cache/voice/models,
-// .cache/voice/clips-ryan); EMBER_VOICE_E2E_VERBOSE=1 shows Ember's log as it comes.
+// .cache/voice/clips-ryan); EMBER_VOICE_E2E_VERBOSE=1 shows Ember's log as it comes. EMBER_VOICE_E2E_BACKEND (native or
+// wasm) makes the reply scenario check that listening (voice.ready) and Ember's voice (voice.tts_ready) loaded on that
+// build: voice.backend is only the choice, logged before anything loads.
 // usage: node test/smoke/voice.mjs [scenario...]   (default: all of reply, name, stop, match)
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -31,6 +33,8 @@ const fixtures = path.join(root, "test/fixtures/voice");
 const models = path.resolve(process.env.EMBER_VOICE_E2E_MODELS ?? path.join(root, ".cache/voice/models"));
 const otherVoice = path.resolve(process.env.EMBER_VOICE_E2E_OTHER ?? path.join(root, ".cache/voice/clips-ryan"));
 const verbose = process.env.EMBER_VOICE_E2E_VERBOSE === "1";
+const wantBackend = process.env.EMBER_VOICE_E2E_BACKEND || null;
+if (wantBackend && wantBackend !== "native" && wantBackend !== "wasm") { console.error("EMBER_VOICE_E2E_BACKEND is native or wasm"); process.exit(2); }
 const SCENARIOS = ["reply", "name", "stop", "match"];
 const wanted = process.argv.slice(2);
 if (wanted.some(s => !SCENARIOS.includes(s))) { console.error(`usage: node test/smoke/voice.mjs [${SCENARIOS.join(" | ")}]...`); process.exit(2); }
@@ -270,6 +274,10 @@ const scenarios = {
       expect(ready < wake, "voice.ready came after the wake");
       expect(asked(sent, /night ?light/i), `the model wasn't asked about night light (it was asked ${askedText(sent)})`);
       console.log(`ok   reply: voice.ready → voice.wake → voice.utterance (${askedText(sent)}) → voice.tts_ready → audio on the page`);
+      if (wantBackend) {
+        for (const k of [ready, tts]) expect(inst.log[k].backend === wantBackend, `${inst.log[k].msg} ran on ${inst.log[k].backend ?? "an unnamed build"} (${inst.log[k].detail ?? "no detail"}), not ${wantBackend}`);
+        console.log(`ok   reply: listening and Ember's voice both loaded on ${wantBackend} (${inst.log[ready].detail})`);
+      }
       // Both sentences were played, and the voice process was told while they were.
       const played = all(inst, "voice.audio_played");
       const seconds = played.reduce((n, e) => n + e.seconds, 0);

@@ -4,9 +4,12 @@
  * - "native": sherpa-onnx's Node addon (the binaries sherpa-onnx-node 1.13.8 loads, from its per-platform packages
  *   sherpa-onnx-win-<arch> and sherpa-onnx-darwin-<arch>), on Windows and macOS only. It runs onnxruntime's own CPU
  *   build with several threads, and CoreML on macOS.
- * - "wasm": sherpa-onnx's WebAssembly build (sherpa-onnx 1.13.8), everywhere else, and wherever the addon doesn't load.
- *   It is single-threaded and has no GPU, but runs on RHEL 8's glibc 2.28 (the Linux addon needs 2.32, so it never
- *   ships for Linux: layout.mjs leaves the packages out and npm installs none there).
+ * - "native" on Linux: sherpa-onnx's C API (libsherpa-onnx-c-api.so and libonnxruntime.so, 1.13.8) through koffi
+ *   (capi.ts), which the Linux packages carry in resources/voice-native. Its prebuilt libraries need only glibc 2.17,
+ *   where the Linux addon needs 2.32, so the addon never ships for Linux (layout.mjs leaves the packages out and npm
+ *   installs none there). capiChoice() says whether it is used.
+ * - "wasm": sherpa-onnx's WebAssembly build (sherpa-onnx 1.13.8), wherever the native build is missing, can't run or
+ *   doesn't load. It is single-threaded and has no GPU, but runs everywhere.
  * Ember depends on the platform packages themselves, not on sherpa-onnx-node's JavaScript, whose optional
  * dependencies would install the Linux addon too (check-symvers.sh would then fail on node_modules); the few calls
  * here are what that JavaScript makes.
@@ -18,7 +21,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { capiSherpa, hasCapi } from "./capi";
+import { CAPI_CPU_NEEDS, capiSherpa, cpuLacks, hasCapi } from "./capi";
 
 export type SherpaBackend = "native" | "wasm";
 
@@ -268,6 +271,45 @@ function loadAddon(pkg: string, file?: string): any {
   }
 }
 
+/** Which build speech uses where a C API folder may be (Linux), and why. */
+export interface BackendChoice { backend: SherpaBackend; why: string }
+
+/** How capiChoice looks at this computer (tests pass their own). */
+export interface CapiChoiceOptions {
+  /** The C API's folder: Ember's own (resources/voice-native), or EMBER_SHERPA_CAPI's in development; null: none. */
+  capiDir?: string | null;
+  env?: NodeJS.ProcessEnv;
+  /** /proc/cpuinfo's text, or null when it can't be read (read only when the libraries need a feature). */
+  cpuinfo?: () => string | null;
+  /** The processor features the libraries need (default: CAPI_CPU_NEEDS). */
+  cpuNeeds?: readonly string[];
+  /** Whether the folder holds the libraries (default: hasCapi). */
+  has?: (dir: string) => boolean;
+}
+
+/** /proc/cpuinfo, or null. */
+function readCpuinfo(): string | null {
+  try { return fs.readFileSync("/proc/cpuinfo", "utf8"); } catch { return null; }
+}
+
+/**
+ * Whether speech runs on the C API's libraries (native) or on WebAssembly, decided before any library loads:
+ * WebAssembly when EMBER_VOICE_BACKEND=wasm, when there is no folder or the libraries aren't in it, and when the
+ * processor lacks a feature they need (CAPI_CPU_NEEDS; an unreadable /proc/cpuinfo counts as lacking it). Native means
+ * they are tried: sherpaRuntime still runs WebAssembly if they don't load, and main starts a process that dies loading
+ * them again on WebAssembly (voice.native_failed). Main logs the choice (voice.backend) and the setup check shows it.
+ */
+export function capiChoice(o: CapiChoiceOptions = {}): BackendChoice {
+  const env = o.env ?? process.env;
+  if (env.EMBER_VOICE_BACKEND === "wasm") return { backend: "wasm", why: "EMBER_VOICE_BACKEND=wasm" };
+  if (!o.capiDir) return { backend: "wasm", why: "no native build here" };
+  if (!(o.has ?? hasCapi)(o.capiDir)) return { backend: "wasm", why: `no C API libraries in ${o.capiDir}` };
+  const needs = o.cpuNeeds ?? CAPI_CPU_NEEDS;
+  const lacks = needs.length ? cpuLacks(needs, (o.cpuinfo ?? readCpuinfo)()) : [];
+  if (lacks.length) return { backend: "wasm", why: `this processor lacks ${lacks.join(", ")}` };
+  return { backend: "native", why: "sherpa-onnx's C API" };
+}
+
 export interface RuntimeOptions {
   /** "wasm": the WebAssembly build; "native": the addon wherever it loads; "auto" (default): native on Windows and macOS. */
   prefer?: "auto" | "native" | "wasm";
@@ -277,24 +319,31 @@ export interface RuntimeOptions {
   addonFile?: string;
   /**
    * A folder holding sherpa-onnx's C API libraries (capi.ts): native speech without the addon, on Linux. Main gives it
-   * only from Ember's own files, or from EMBER_SHERPA_CAPI in development builds.
+   * only from Ember's own files (resources/voice-native), or from EMBER_SHERPA_CAPI in development builds.
    */
   capiDir?: string;
+  /** /proc/cpuinfo's text, for the C API's processor check (tests). */
+  cpuinfo?: () => string | null;
+  /** The processor features the C API needs (tests; default CAPI_CPU_NEEDS). */
+  cpuNeeds?: readonly string[];
   env?: NodeJS.ProcessEnv;
 }
 
 /**
- * The build that runs speech in this process: the addon on Windows and macOS when it loads, otherwise WebAssembly
- * (`detail` then says why). Never throws for the addon: whatever goes wrong loading it, WebAssembly runs.
+ * The build that runs speech in this process: the C API's libraries where `capiDir` is given (Linux) and capiChoice
+ * allows them, the addon on Windows and macOS when it loads, otherwise WebAssembly (`detail` then says why). Never
+ * throws for a native build: whatever goes wrong loading it, WebAssembly runs.
  */
 export function sherpaRuntime(o: RuntimeOptions = {}): Sherpa {
   const env = o.env ?? process.env;
   const prefer = o.prefer && o.prefer !== "auto" ? o.prefer : env.EMBER_VOICE_BACKEND === "wasm" ? "wasm" : o.prefer ?? "auto";
   if (prefer === "wasm") return wasmSherpa("WebAssembly asked for");
-  // The C API's libraries, where main gave them (Linux): native speech through koffi, else WebAssembly as before.
+  // The C API's libraries, where main gave them (Linux): native speech through koffi when capiChoice allows (they are
+  // there and this processor can run them), else WebAssembly.
   if (o.capiDir) {
     try {
-      if (!hasCapi(o.capiDir)) return wasmSherpa(`no C API libraries in ${o.capiDir}`);
+      const choice = capiChoice({ capiDir: o.capiDir, env, ...(o.cpuinfo ? { cpuinfo: o.cpuinfo } : {}), ...(o.cpuNeeds ? { cpuNeeds: o.cpuNeeds } : {}) });
+      if (choice.backend === "wasm") return wasmSherpa(choice.why);
       return capiSherpa(o.capiDir);
     } catch (err) {
       return wasmSherpa(`the C API didn't load: ${String((err as Error)?.message ?? err).split("\n")[0]}`);

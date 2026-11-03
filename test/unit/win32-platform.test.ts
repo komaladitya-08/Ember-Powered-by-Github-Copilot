@@ -200,6 +200,9 @@ describe("the Windows SystemPlatform", () => {
     expect(s.auditSink(() => undefined)).toBeUndefined();
     expect(s.auditCopy()).toBeNull();
     expect(s.voice.speakerMonitor).toBe(false);
+    // Speech runs on the Node addon, as before: no C API folder; the natural voice may be turned on.
+    expect(s.voice.nativeSpeechDir("C:\\Ember\\resources")).toBeNull();
+    expect(s.voice.naturalVoice).toBe(true);
     expect(s.lifecycle.appUserModelId).toBe("io.github.komaladitya08.ember");
     expect(s.lifecycle.sessionEnd).toBe("window-session-end");
     expect(s.settings.available).toEqual({ dark_style: "Dark mode for apps" });
