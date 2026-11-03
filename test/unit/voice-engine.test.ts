@@ -847,12 +847,21 @@ describe("VoiceEngine with other people talking", () => {
       expect(tries.slice(-2)).toEqual([(8 + 19) * 512, (8 + 19) * 512 + 1600]);
     });
 
-    it("opens only after a wake's request: an answer to a follow-up gets none", () => {
-      const { events, e } = followUp([...n(30, () => level(0.1)), ...n(40, room)]);
+    it("opens after a follow-up's answer too, three in a row at most: then the next request needs \"Hey Ember\" (a third request went unheard)", () => {
+      const { events, e, b } = followUp([...n(30, () => level(0.1)), ...n(40, room)]);
+      const reply = () => { e.followUp(8000); for (const f of [...n(30, room), ...n(30, () => level(0.1)), ...n(40, room)]) e.feed(f); };
+      reply();
+      reply();
+      expect(events.filter(ev => ev.type === "utterance").map(ev => ev.type === "utterance" && ev.window)).toEqual(["wake", "follow-up", "follow-up", "follow-up"]);
       const before = events.length;
       e.followUp(8000);
       expect(events.length).toBe(before);
       expect(e.listening).toBe(false);
+      // A wake starts the count again.
+      for (const f of [...n(30, room), level(0, 9), ...n(47, () => level(0.1)), ...n(40, room)]) e.feed(f);
+      e.followUp(8000);
+      expect(e.listening).toBe(true);
+      expect(b.heard.length).toBe(5);
     });
   });
 });
@@ -1066,8 +1075,10 @@ describe("after Ember speaks", () => {
 });
 
 describe("'Hey Ember' while Ember speaks", () => {
-  function heardWhileSpeaking(heard: string, o: { speakersSaidIt?: boolean } = {}) {
-    const b = fake([heard]);
+  /** `name`: the spotter takes the bare name (without the speakers' stream "Hey Ember" cuts in: see "cutting in on Ember"). */
+  function heardWhileSpeaking(heard: string, o: { speakersSaidIt?: boolean; name?: boolean } = {}) {
+    const b = fake([heard, heard]); // (the cut-in check may hear it first: see bargeIn)
+    if (o.name) b.spot = f => (f[0] === 1 ? ["ember"] : []);
     let checkedAt = -1, length = 0;
     const transcribe = b.transcribe;
     b.transcribe = s => { checkedAt = c.t; length = s.length; return transcribe(s); };
@@ -1086,7 +1097,7 @@ describe("'Hey Ember' while Ember speaks", () => {
   }
 
   it("stops on 'Hey Ember, stop' (the spotter takes the name, so 'Ember, stop' isn't spotted after it), checked once 'stop' has been said", () => {
-    const { events, checked } = heardWhileSpeaking("the screen warmer. Hey Ember, stop. Which is");
+    const { events, checked } = heardWhileSpeaking("the screen warmer. Hey Ember, stop. Which is", { name: true });
     expect(events).toEqual([{ type: "stop" }]);
     expect(checked).toBe((10 + 5) * 32); // at the pause after it
     // With the speakers' stream (which didn't say it), the check runs as soon as they can't have said it.
@@ -1097,14 +1108,16 @@ describe("'Hey Ember' while Ember speaks", () => {
 
   it("hears the phrase from just before its first sound (the recognizer returns nothing for a phrase after near-silence)", () => {
     // 1.5 s before the spotter fired were silent but for the last frame: what's transcribed starts 10 frames before it.
-    expect(heardWhileSpeaking("Hey Ember, stop.").length).toBe((10 + 1 + 10 + 5) * 512);
+    expect(heardWhileSpeaking("Hey Ember, stop.", { name: true }).length).toBe((10 + 1 + 10 + 5) * 512);
   });
 
   it.each(["A. Ember stopped.", "A. Ember Stuff.", "\"pay ember\" stopped talking.", "Hey Ember, step.", "Hey, Emma, stopped it now."])(
-    "stops on %j (how the recognizer writes a lone 'stop')", heard => expect(heardWhileSpeaking(heard).events).toEqual([{ type: "stop" }]));
+    "stops on %j (how the recognizer writes a lone 'stop')", heard => expect(heardWhileSpeaking(heard, { name: true }).events).toEqual([{ type: "stop" }]));
 
   it("takes anything else as Ember's own voice (no wake while it speaks)", () => {
     expect(heardWhileSpeaking("It makes the screen warmer in the evening.").events).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "self", heard: "It makes the screen warmer in the evening." }]);
+    // The bare name never cuts in without the speakers' stream (Ember's own words have it).
+    expect(heardWhileSpeaking("Hey Ember, what time is it?", { name: true }).events).toEqual([{ type: "rejected", keyword: "ember", reason: "self", heard: "Hey Ember, what time is it?" }]);
   });
 
   it("doesn't stop when the speakers said it", () => {
@@ -1158,6 +1171,25 @@ describe("cutting in on Ember (VO9-2)", () => {
       { type: "utterance", text: "What time is it?", ms: 0, window: "wake" }, { type: "listening", on: false, reason: "done", window: "wake" }]);
   });
 
+  it("holds what it heard over Ember's voice once, then sends the next request, with the speakers' stream (Linux: as on main)", () => {
+    // Ember's speakers go on sounding (the hush hasn't taken yet): the first request after cutting in is held, the next is sent.
+    const b = fake(["Literally. Hey Ember, what", "Hey Ember, what time is it", "What time is it?"]);
+    b.spotMonitor = () => [];
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+    const step = (f: Float32Array) => { c.t += 32; e.feedMonitor(new Float32Array(512).fill(0.05)); e.feed(f); };
+    e.selfSpeaking(true);
+    for (let i = 0; i < 30; i++) step(frame(0));
+    step(frame(1, true));
+    for (let i = 0; i < 10; i++) step(frame(0, true));
+    for (let i = 0; i < 80; i++) step(frame(0));
+    expect(events.filter(ev => ev.type === "utterance")).toEqual([]);
+    for (let i = 0; i < 20; i++) step(frame(0, true));
+    for (let i = 0; i < 80; i++) step(frame(0));
+    expect(events.filter(ev => ev.type === "utterance")).toMatchObject([{ text: "What time is it?", window: "wake" }]);
+  });
+
   it("still stops on a stop said over Ember's voice", () => {
     for (const heard of ["Hey Ember, stop.", "Stop.", "Be quiet.", "Ever be quiet."]) {
       expect(plain(cutIn(["Literally. Hey Ember.", heard]).events).filter(ev => ev.type !== "listening"), heard).toEqual([{ type: "wake", keyword: "hey_ember" }, { type: "stop" }]);
@@ -1183,9 +1215,122 @@ describe("cutting in on Ember (VO9-2)", () => {
     }
   });
 
-  it("without the speakers' stream, can't tell its own voice from the user's: only 'Hey Ember, stop' counts", () => {
-    expect(plain(cutIn(["Hey Ember, what's the weather tomorrow?"], { speakers: false }).events)).toEqual([
-      { type: "rejected", keyword: "hey_ember", reason: "self", heard: "Hey Ember, what's the weather tomorrow?" }]);
+  describe("without the speakers' stream (Windows, macOS: Ember never says its wake phrase there)", () => {
+    /** As cutIn, and main hushes Ember on a wake: the page says it stopped speaking `hushAfter` frames later (default 1). */
+    function cutInPlain(transcripts: string[], o: { keyword?: string; again?: boolean; hushAfter?: number } = {}) {
+      const b = fake(transcripts);
+      if (o.keyword) b.spot = f => (f[0] === 1 ? [o.keyword!] : []);
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+      let since = -1;
+      const step = (f: Float32Array) => {
+        c.t += 32;
+        if (since < 0 && events.some(ev => ev.type === "wake")) since = 0;
+        if (since >= 0 && since++ === (o.hushAfter ?? 1) - 1) e.selfSpeaking(false);
+        e.feed(f);
+      };
+      e.selfSpeaking(true);
+      for (let i = 0; i < 30; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      for (let i = 0; i < 80; i++) step(frame(0));
+      if (o.again) { for (let i = 0; i < 20; i++) step(frame(0, true)); for (let i = 0; i < 80; i++) step(frame(0)); }
+      return events.filter(ev => ev.type !== "speech");
+    }
+
+    it("cuts in on Ember's answer on \"Hey Ember\" (the request was thrown away while Ember read its answer out), and takes the request said once Ember is quiet", () => {
+      expect(cutInPlain(["…in the evening. Hey Ember", "Hey Ember, what's the weather tomorrow?"])).toEqual([
+        { type: "wake", keyword: "hey_ember" }, { type: "listening", on: true, reason: "wake", window: "wake" },
+        { type: "utterance", text: "What's the weather tomorrow?", ms: 0, window: "wake" }, { type: "listening", on: false, reason: "done", window: "wake" }]);
+    });
+
+    it("doesn't send what was said over Ember's voice, before it went quiet (its own words may be in it), and hears it said again", () => {
+      // Ember went quiet only as the request ended (SELF_LAG_MS after it said so).
+      expect(cutInPlain(["…in the evening. Hey Ember", "Hey Ember, what's the weather tomorrow?"], { hushAfter: 10 }).filter(ev => ev.type === "utterance")).toEqual([]);
+      expect(cutInPlain(["…in the evening. Hey Ember", "Hey Ember, what's the", "What's the weather tomorrow?"], { hushAfter: 10, again: true }).filter(ev => ev.type === "utterance"))
+        .toMatchObject([{ text: "What's the weather tomorrow?", window: "wake" }]);
+    });
+
+    it("never sends what it heard while waiting for Ember to stop speaking, however long the page takes to say so (review of PR #144: B1)", () => {
+      // The page never says Ember stopped: Ember's next sentence was sent as the request ("'s own next sentence.").
+      expect(cutInPlain(["…in the evening. Hey Ember", "Hey Ember, what's the", "Ember's own next sentence."], { hushAfter: 100000, again: true }).filter(ev => ev.type === "utterance")).toEqual([]);
+    });
+
+    /** Ember speaks, the page says it stopped; "Hey Ember" `after` frames into the tail, a request, and the request again. */
+    function cutInTail(after: number) {
+      const b = fake(["…in the evening. Hey Ember", "Hey Ember, what's the weather tomorrow?", "What's the weather tomorrow?"]);
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+      const step = (f: Float32Array) => { c.t += 32; e.feed(f); };
+      e.selfSpeaking(true);
+      for (let i = 0; i < 30; i++) step(frame(0));
+      e.selfSpeaking(false);
+      for (let i = 0; i < after; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      for (let i = 0; i < 80; i++) step(frame(0));
+      for (let i = 0; i < 20; i++) step(frame(0, true));
+      for (let i = 0; i < 80; i++) step(frame(0));
+      return { events, e, step };
+    }
+
+    it.each([1, 5, 11])("sends a request after a cut-in %i frames into the tail, once the page has said Ember stopped (no word comes after it: every request was held)", after => {
+      const { events } = cutInTail(after);
+      expect(events.filter(ev => ev.type === "wake")).toHaveLength(1);
+      expect(events.filter(ev => ev.type === "utterance")).toMatchObject([{ text: "What's the weather tomorrow?", window: "wake" }]);
+    });
+
+    it("doesn't carry a cut-in's wait for the page into the next window", () => {
+      // The page said Ember speaks and never that it stopped: the cut-in's window holds what it hears, and runs out.
+      const b = fake(["…in the evening. Hey Ember", "Hey Ember, what's the", "Hey Ember", "Hey Ember, what time is it?"]);
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+      const step = (f: Float32Array) => { c.t += 32; e.feed(f); };
+      e.selfSpeaking(true);
+      for (let i = 0; i < 30; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      for (let i = 0; i < 400; i++) step(frame(0));
+      expect(e.listening).toBe(false);
+      expect(events.filter(ev => ev.type === "utterance")).toEqual([]);
+      // The next "Hey Ember, what time is it?" is an ordinary wake, and its request is sent.
+      for (let i = 0; i < 30; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      for (let i = 0; i < 80; i++) step(frame(0));
+      expect(events.filter(ev => ev.type === "utterance")).toMatchObject([{ text: "What time is it?", window: "wake" }]);
+    });
+
+    it("gives a later wake its pre-roll when the page never says Ember stopped after a cut-in (Voice Match's first look)", () => {
+      const b = fake(["…in the evening. Hey Ember", "Hey Ember, what's the", "Hey Ember", "Hey Ember, what time is it?"]);
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+      const step = (f: Float32Array) => { c.t += 32; e.feed(f); };
+      e.selfSpeaking(true);
+      for (let i = 0; i < 30; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      // The window runs out (6 s, and 4 s more once held); then "Hey Ember" again.
+      for (let i = 0; i < 400; i++) step(frame(0));
+      expect(e.listening).toBe(false);
+      for (let i = 0; i < 60; i++) step(frame(0, true));
+      step(frame(1, true));
+      expect(e.wakeAudio?.length).toBeGreaterThan(40 * 512);
+    });
+
+    it("doesn't cut in where the check didn't hear \"Hey Ember\" (the spotter fired on Ember's own words), nor on the bare name", () => {
+      expect(cutInPlain(["It makes the screen warmer in the evening.", "It makes the screen warmer in the evening."])).toEqual([
+        { type: "rejected", keyword: "hey_ember", reason: "self", heard: "It makes the screen warmer in the evening." }]);
+      expect(cutInPlain(["I remember. Hey Ember", "I remember. Hey Ember"], { keyword: "ember" }).filter(ev => ev.type === "wake")).toEqual([]);
+    });
+
+    it("still stops on \"Hey Ember, stop\" said over Ember's voice", () => {
+      expect(cutInPlain(["the screen warmer. Hey Ember, stop. Which is"]).filter(ev => ev.type !== "listening")).toEqual([{ type: "stop" }]);
+    });
   });
 
   it("doesn't cut in when the check heard someone else's name (Ember goes on speaking), and still stops on 'Hey Amber, stop'", () => {
@@ -1605,5 +1750,171 @@ describe("a request transcribed ahead of the VAD, at its pause (SPECULATE_FRAMES
     delete without.b.speechSoFar;
     hear(without.b, [...n(47, loud), ...n(60, quiet)]);
     expect(without.calls).toEqual(off.calls);
+  });
+});
+
+describe("a conversation without the speakers' stream (Windows, macOS: Ember's own voice can't be told apart)", () => {
+  const n = (count: number, f: () => Float32Array) => Array.from({ length: count }, f);
+  /** The recognizer makes "Hey Ember." of the wake phrase with a moment of sound around it (as in VO9-3's tests). */
+  const lenient = (b: ReturnType<typeof talking>) => { const t = b.transcribe; b.transcribe = s => { const r = t(s); return /^U12 b(1\d|2[0-2]|\d)$/.test(r) ? "Hey Ember." : r; }; return b; };
+  /** "Hey Ember." (0.4 s, said up close), a pause, then the request 10 dB softer (0.03), as people say it. */
+  const wakeThenRequest = (pause: number) => [level(0, 9), ...n(12, () => level(0.1)), ...n(pause, room), ...n(60, () => level(0.03)), ...n(300, room)];
+  function converse(script: (feed: (frames: Float32Array[]) => void, e: VoiceEngine) => void, b: VoiceBackend = lenient(talking({ wake: 9 }))) {
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t, verifyWake: false });
+    script(fs => { for (const f of fs) { e.feed(f); c.t += 32; } }, e);
+    return { events, e, utterances: events.flatMap(ev => (ev.type === "utterance" ? [ev.text] : [])) };
+  }
+  /** Ember answers for 3 s, which the microphone hears at `echo` (the echo canceller doesn't take out Web Audio's playback). */
+  const emberSays = (feed: (frames: Float32Array[]) => void, e: VoiceEngine, echo: number) => { e.selfSpeaking(true); feed(n(94, () => level(echo))); e.selfSpeaking(false); };
+
+  it("hears a request said softer than \"Hey Ember\" after a pause, when \"Hey Ember\" comes right after Ember's answer (Windows: said again and again)", () => {
+    for (const echo of [0.004, 0.02]) {
+      // Ember's voice 28 dB (and 14 dB) under the user's: the room before the wake phrase wasn't busy with others' talk.
+      const { utterances, events } = converse((feed, e) => { feed(n(100, room)); emberSays(feed, e, echo); feed(n(30, room)); feed(wakeThenRequest(40)); });
+      expect(utterances, `echo ${echo}`).toEqual(["U0 b60"]);
+      expect(events.at(-1), `echo ${echo}`).toMatchObject({ type: "listening", on: false, reason: "done" });
+    }
+  });
+
+  it("doesn't end a request said softer than \"Hey Ember\", after a pause, at its softer words (a quiet room: the request was cut short)", () => {
+    // "Hey Ember." … "And make the text" (10 dB softer), a breath, "a bit bigger" (14 dB softer): its own loudness, not the
+    // wake phrase's, says when it's over.
+    const { utterances } = converse(feed => feed([...n(100, room), level(0, 9), ...n(12, () => level(0.1)), ...n(40, room), ...n(20, () => level(0.03)), ...n(8, room), ...n(40, () => level(0.02)), ...n(300, room)]), lenient(talking({ wake: 9, hangover: 19 })));
+    expect(utterances).toEqual(["U0 b60"]);
+  });
+
+  it("doesn't send Ember's own last words, heard just before \"Hey Ember\", as the request (nor give them to Voice Match)", () => {
+    // Ember's voice loud enough for the VAD (14 dB under the user), ending 1 s before the wake: the 1.6 s pre-roll heard it.
+    const { utterances, e } = converse((feed, eng) => {
+      feed(n(100, room));
+      emberSays(feed, eng, 0.02);
+      feed(n(30, room));
+      feed([level(0, 9)]);
+      // The pre-roll from 96 ms after Ember said it stopped (SELF_LAG_MS).
+      expect(eng.wakeAudio?.length).toBe(27 * 512);
+      feed(wakeThenRequest(40).slice(1));
+    });
+    expect(utterances).toEqual(["U0 b60"]);
+    expect(e.listening).toBe(false);
+  });
+
+  it("measures a follow-up against the wake phrase, not a softer request after it (three follow-ups can't creep down to the room's talk)", () => {
+    // "Hey Ember." (0.1), a pause, the request at 0.03 (sent); then, in the follow-up window, talk at that same 0.03.
+    const { utterances } = converse((feed, e) => {
+      feed([...n(100, room), ...wakeThenRequest(40)]);
+      e.followUp(8000);
+      feed([...n(30, room), ...n(60, () => level(0.03)), ...n(300, room)]);
+    });
+    expect(utterances).toEqual(["U0 b60"]);
+  });
+
+  describe("with the speakers' stream (Linux with parec): as before this change", () => {
+    // What main's engine did on each (pinned against it: the self-voice handling is for Windows and macOS only).
+    const PRE_ROLL_LINUX = 50 * 512, BUSY_LINUX: string[] = [], OVER_LINUX: string[] = [];
+    /** As converse, with the speakers' stream fed: Ember's voice in it while Ember speaks, silence otherwise. */
+    function converseLinux(script: (feed: (frames: Float32Array[]) => void, e: VoiceEngine, speaking: (on: boolean) => void) => void) {
+      const b = lenient(talking({ wake: 9 }));
+      b.spotMonitor = () => [];
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t, verifyWake: false });
+      let on = false;
+      script(fs => { for (const f of fs) { e.feedMonitor(on ? f : new Float32Array(512)); e.feed(f); c.t += 32; } }, e, v => { on = v; e.selfSpeaking(v); });
+      return { events, e, utterances: events.flatMap(ev => (ev.type === "utterance" ? [ev.text] : [])) };
+    }
+
+    it("keeps the whole pre-roll before a wake that follows Ember's answer", () => {
+      converseLinux((feed, e, speaking) => {
+        feed(n(100, room));
+        speaking(true); feed(n(94, () => level(0.02))); speaking(false);
+        feed(n(30, room));
+        feed([level(0, 9), ...n(14, () => level(0.1))]); // (the wake shows once the speakers can't have said it)
+        expect(e.wakeAudio?.length).toBe(PRE_ROLL_LINUX);
+      });
+    });
+
+    it("counts Ember's answer just before \"Hey Ember\" as the room's sound (VO9-3's busyRoom), as before", () => {
+      const { utterances } = converseLinux((feed, _e, speaking) => { feed(n(100, room)); speaking(true); feed(n(94, () => level(0.02))); speaking(false); feed(n(10, room)); feed(wakeThenRequest(40)); });
+      expect(utterances).toEqual(BUSY_LINUX);
+    });
+
+    it("forgets a request under way when Ember starts speaking over it, as before", () => {
+      const { utterances } = converseLinux((feed, _e, speaking) => {
+        feed([...n(100, room), level(0, 9), ...n(12, () => level(0.1)), ...n(40, room), ...n(20, () => level(0.03))]);
+        speaking(true); feed(n(94, () => level(0.004))); speaking(false);
+        feed(n(300, room));
+      });
+      expect(utterances).toEqual(OVER_LINUX);
+    });
+  });
+
+  it("still finds the room busy when people talked between Ember's answer and \"Hey Ember\" (VO9-3)", () => {
+    const near = () => level(++said % 5 ? 0.03 : 0.006);
+    const { utterances } = converse((feed, e) => { feed(n(100, room)); emberSays(feed, e, 0.004); feed(n(100, near)); feed([level(0.03, 9), ...n(12, () => level(0.1)), ...n(400, near)]); });
+    expect(utterances).toEqual([]);
+  });
+
+  it("takes \"Hey Ember\" said in a follow-up window as a wake: a request said softer than the first one is heard", () => {
+    for (const oneBreath of [false, true]) {
+      const { events } = converse((feed, e) => {
+        feed([...n(100, room), level(0, 9), ...n(47, () => level(0.1)), ...n(40, room)]);
+        emberSays(feed, e, 0.004);
+        e.followUp(8000);
+        feed(n(30, room));
+        feed(oneBreath ? [...n(12, () => level(0.1)), level(0.03, 9), ...n(40, () => level(0.03)), ...n(300, room)] : [...n(12, () => level(0.1)), level(0.001, 9), ...n(40, room), ...n(60, () => level(0.03)), ...n(300, room)]);
+      });
+      const second = events.slice(events.findIndex(ev => ev.type === "listening" && ev.reason === "follow-up"));
+      expect(second.filter(ev => ev.type !== "speech"), `one breath: ${oneBreath}`).toEqual([
+        { type: "listening", on: true, reason: "follow-up", window: "follow-up" },
+        { type: "wake", keyword: "hey_ember" },
+        { type: "listening", on: true, reason: "wake", window: "wake" },
+        // A wake's request: its answer gets a follow-up window of its own.
+        { type: "utterance", text: oneBreath ? "U12 b41" : "U0 b60", ms: 0, window: "wake" },
+        { type: "listening", on: false, reason: "done", window: "wake" },
+      ]);
+    }
+  });
+
+  it("takes back a wake spotted in a follow-up window where the recognizer heard another word, unless the follow-up would have taken it", () => {
+    const amber = (loud: number) => {
+      const b = talking({ wake: 9 });
+      const t = b.transcribe;
+      b.transcribe = s => (t(s).startsWith("U47") ? "U47" : "Hey Amber, dinner is ready.");
+      return converse((feed, e) => {
+        feed([...n(100, room), level(0, 9), ...n(47, () => level(0.1)), ...n(40, room)]);
+        e.followUp(8000);
+        feed([...n(30, room), ...n(12, () => level(loud)), level(loud, 9), ...n(30, () => level(loud)), ...n(300, room)]);
+      }, b);
+    };
+    // Someone else, softer than the voice that woke Ember: nothing is sent (the follow-up wouldn't have taken it either).
+    const soft = amber(0.03);
+    expect(soft.utterances).toEqual(["U47"]);
+    expect(soft.events.at(-1)).toMatchObject({ type: "listening", on: false, reason: "rejected" });
+    // As loud as the user: sent as the follow-up it was (it gets no follow-up of its own).
+    const loud = amber(0.1);
+    expect(loud.events.filter(ev => ev.type === "utterance")).toMatchObject([{ window: "wake" }, { text: "Dinner is ready.", window: "follow-up" }]);
+  });
+
+  it("keeps a request under way when Ember starts speaking over it (a reminder, an answer's next sentence), and hears it once Ember is done", () => {
+    const { utterances } = converse((feed, e) => {
+      feed([...n(100, room), level(0, 9), ...n(12, () => level(0.1)), ...n(40, room), ...n(20, () => level(0.03))]);
+      emberSays(feed, e, 0.004);
+      feed(n(300, room));
+    });
+    expect(utterances).toEqual(["U0 b20"]);
+  });
+
+  it("doesn't take the bare name in a follow-up window for a wake (a follow-up needs no name, and \"remember\" has it)", () => {
+    const b = lenient(talking({ wake: 9 }));
+    b.spot = f => (f[0] === 9 ? ["hey_ember"] : f[0] === 8 ? ["ember"] : []);
+    const { events } = converse((feed, e) => {
+      feed([...n(100, room), level(0, 9), ...n(47, () => level(0.1)), ...n(40, room)]);
+      e.followUp(8000);
+      feed([...n(30, room), level(0.1, 8), ...n(20, () => level(0.1)), ...n(60, room)]);
+    }, b);
+    expect(events.filter(ev => ev.type === "wake")).toHaveLength(1);
+    expect(events.filter(ev => ev.type === "utterance").map(ev => ev.type === "utterance" && ev.window)).toEqual(["wake", "follow-up"]);
   });
 });
