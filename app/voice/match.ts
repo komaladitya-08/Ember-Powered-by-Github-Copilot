@@ -77,6 +77,17 @@ export function afterWakePhrase(audio: Float32Array, withWake: boolean): Float32
 }
 
 export class VoiceGate {
+  private revision = 0;
+  /** Pending work belongs to this cancellation/identity revision, including asynchronous learning checks. */
+  get generation(): number { return this.revision; }
+
+  /** Drop held events and detach old promises, so a fresh request never waits for cancelled inference. */
+  cancel(): void {
+    this.revision++;
+    this.held = null;
+    this.queue = Promise.resolve();
+  }
+
   private owner: Float32Array | null = null;
   /**
    * What Voice Match learnt (adapt.ts): the enrolment's own print, which a request must match by ADAPT.anchorFloor too,
@@ -110,8 +121,10 @@ export class VoiceGate {
   /**
    * The owner's voiceprint (null: Voice Match off, every voice is heard). `learnt`: it learnt from the owner's requests
    * since enrolment (adapt.ts), so the enrolment is checked too and the threshold is the learnt print's.
+   * Only a routine adaptation refresh preserves pending work; replacement, removal and toggles revoke it.
    */
-  setOwner(print: Float32Array | null, learnt?: { anchor: Float32Array; threshold: number } | null): void {
+  setOwner(print: Float32Array | null, learnt?: { anchor: Float32Array; threshold: number } | null, refresh = false): void {
+    if (!refresh) this.cancel();
     this.owner = print;
     this.anchor = print && learnt ? learnt.anchor : null;
     this.learntThreshold = print && learnt ? Math.max(this.threshold, learnt.threshold) : null;
@@ -140,23 +153,31 @@ export class VoiceGate {
    * window as main knows it for a wake taken back ("rejected"), so the bubble goes back to what it showed.
    */
   event(e: VoiceEvent, audio: Float32Array | null, withWake = false): void {
-    if (this.dropping) { if (e.type === "stop") this.send(e); return; }
-    if (this.held) { if (e.type === "stop") this.send(e); else this.held.push({ e, audio, withWake }); return; }
+    if (e.type === "stop") { this.cancel(); this.send(e); return; }
+    const generation = this.revision;
+    if (this.dropping) return;
+    if (this.held) { this.held.push({ e, audio, withWake }); return; }
     const owner = this.owner;
     // First look, at the wake phrase: a clearly other voice is turned away before main shows Ember listening. (The bare
     // name shows with its request, which is checked as it comes.)
     if (e.type === "wake" && owner && audio?.length && e.keyword !== BARE_NAME) { this.lookAtWake(e, audio, owner); return; }
     if (e.type !== "utterance" || !owner || !audio?.length) { this.send(e); return; }
+    // Capture one immutable configuration for the whole request, including its post-wake check.
+    const anchor = this.anchor;
+    const threshold = this.learntThreshold ?? this.threshold;
+    const matches = (p: Float32Array, strict = false) => gateMatches(p, owner, threshold, anchor, strict);
     const check = this.printer().print(audio);
     // It is awaited only when the requests before it are done: a failure meanwhile would be an unhandled rejection,
     // which ends the voice process. The await below still sees it.
     check.catch(() => undefined);
     this.queue = this.queue.then(async () => {
+      if (generation !== this.revision) return;
       let score: number, print: Float32Array;
       try {
         print = await check;
         score = similarity(print, owner);
       } catch (err) {
+        if (generation !== this.revision) return;
         // The model failed: the request is heard (Voice Match failing must not leave Ember deaf), and main is told.
         this.onError(err);
         this.send(e);
@@ -166,10 +187,12 @@ export class VoiceGate {
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
       // own: a recording of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
-      if (this.matches(print, owner)) {
-        const heard = await this.vouched(e, audio, owner, withWake, print);
+      if (generation !== this.revision) return;
+      if (matches(print)) {
+        const heard = await this.vouched(e, audio, owner, withWake, print, anchor, matches, generation);
+        if (generation !== this.revision) return;
         this.send(heard);
-        if (heard.type === "utterance" && heard.verified) this.onSample?.(print, score, afterWakePhrase(audio, withWake));
+        if (generation === this.revision && heard.type === "utterance" && heard.verified) this.onSample?.(print, score, afterWakePhrase(audio, withWake));
         return;
       }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
@@ -189,40 +212,45 @@ export class VoiceGate {
    * or, once the print learnt, the lower of that and the cosine to the print in use: what was learnt never makes a short
    * yes score higher (voice-answer.ts SHORT_YES_FLOOR is compared with exactly this number).
    */
-  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, print: Float32Array): Promise<VoiceEvent> {
-    const enrolled = this.anchor ?? owner;
+  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, print: Float32Array, anchor: Float32Array | null, matches: (p: Float32Array, strict?: boolean) => boolean, generation: number): Promise<VoiceEvent> {
+    const enrolled = anchor ?? owner;
     const scored = (p: Float32Array) => Math.min(similarity(p, owner), similarity(p, enrolled));
     const rest = afterWakePhrase(audio, withWake);
     const voiced = voicedSeconds(rest);
     if (rest === audio) {
       if (voiced < APPROVAL_MIN_SECONDS) return { ...e, short: true, ...(voiced >= SCORE_MIN_SECONDS ? { restScore: scored(print) } : {}) };
-      return this.matches(print, owner, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(print) };
+      return matches(print, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(print) };
     }
     if (voiced < SCORE_MIN_SECONDS) return { ...e, short: true };
     let restPrint: Float32Array;
     try {
       restPrint = await this.printer().print(rest);
     } catch (err) {
-      this.onError(err);
+      if (generation === this.revision) this.onError(err);
       return e;
     }
-    return voiced >= APPROVAL_MIN_SECONDS && this.matches(restPrint, owner, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(restPrint) };
+    return voiced >= APPROVAL_MIN_SECONDS && matches(restPrint, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(restPrint) };
   }
 
   private lookAtWake(e: Extract<VoiceEvent, { type: "wake" }>, audio: Float32Array, owner: Float32Array): void {
+    const generation = this.revision;
     this.held = [];
     const look = this.printer().print(audio).then(p => similarity(p, owner), (err: unknown) => {
       // The model failed: the wake stands (its request is checked as it comes), and main is told.
-      this.onError(err);
+      if (generation === this.revision) this.onError(err);
       return 1;
     });
     this.queue = this.queue.then(async () => {
       const score = await look;
+      if (generation !== this.revision) return;
       const held = this.held ?? [];
       this.held = null;
       if (score >= this.wakeThreshold) {
         this.send(e);
-        for (const h of held) this.event(h.e, h.audio, h.withWake);
+        for (const h of held) {
+          if (generation !== this.revision) break;
+          this.event(h.e, h.audio, h.withWake);
+        }
         return;
       }
       // Main never saw this wake: nothing it held is sent, and the engine's window ends unseen.

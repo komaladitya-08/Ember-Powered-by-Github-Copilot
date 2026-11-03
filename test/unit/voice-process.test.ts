@@ -5,10 +5,22 @@
 
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { encodePrint } from "../../app/voice/voiceprint";
 import type { VoiceBackend } from "../../app/voice/engine";
 
 const sherpa = vi.hoisted(() => ({ make: null as null | ((o: { onError?: (err: unknown) => void; runtime?: { prefer?: string } }) => VoiceBackend), ModelLoadError: class extends Error {} }));
 vi.mock("../../app/voice/sherpa", () => ({ sherpaBackend: (_models: unknown, o: { onError?: (err: unknown) => void }) => sherpa.make!(o), ModelLoadError: sherpa.ModelLoadError }));
+
+const workers = vi.hoisted(() => ({ instances: [] as { emit: (event: string, value: unknown) => boolean; postMessage: ReturnType<typeof vi.fn> }[] }));
+vi.mock("node:worker_threads", async () => {
+  const { EventEmitter } = await import("node:events");
+  return { Worker: class extends EventEmitter {
+    postMessage = vi.fn();
+    constructor() { super(); workers.instances.push(this); }
+    terminate() { return Promise.resolve(0); }
+  } };
+});
+const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
 /** A backend that hears nothing, unless `spot` is told otherwise. */
 function quiet(over: Partial<VoiceBackend> = {}): VoiceBackend {
@@ -18,13 +30,15 @@ function quiet(over: Partial<VoiceBackend> = {}): VoiceBackend {
 /** A fresh voice process on a fake parent port; `backend` stands in for the recognizers (it may throw, as loading can). */
 async function voiceProcess(backend: (o: { onError?: (err: unknown) => void; runtime?: { prefer?: string } }) => VoiceBackend) {
   vi.resetModules();
+  workers.instances.length = 0;
   const parent = Object.assign(new EventEmitter(), { postMessage: vi.fn() });
   (process as unknown as { parentPort: unknown }).parentPort = parent;
   sherpa.make = backend;
   await import("../../app/voice/process");
   const port = Object.assign(new EventEmitter(), { start: vi.fn() });
   return {
-    init: (o: { wasm?: boolean } = {}) => parent.emit("message", { data: { type: "init", models: { kws: "k", vad: "v", asr: "a" }, monitor: false, dev: false, ...o }, ports: [port] }),
+    init: (o: { wasm?: boolean; voiceprint?: string } = {}) => parent.emit("message", { data: { type: "init", generation: 0, models: { kws: "k", vad: "v", asr: "a" }, monitor: false, dev: false, ...o }, ports: [port] }),
+    message: (data: unknown) => parent.emit("message", { data }),
     frame: (f = new Float32Array(512).fill(0.01)) => port.emit("message", { data: f }),
     sent: () => parent.postMessage.mock.calls.map(c => c[0] as { type: string }),
   };
@@ -33,6 +47,49 @@ async function voiceProcess(backend: (o: { onError?: (err: unknown) => void; run
 afterEach(() => { vi.useRealTimers(); });
 
 describe("the voice process", () => {
+  for (const change of ["cancel", "voiceprint", "enrol"] as const) {
+    it(`revokes in-flight inference when main sends ${change} (SR-1, SR-2)`, async () => {
+      vi.useFakeTimers();
+      const owner = new Float32Array(256); owner[0] = 1;
+      let next = true;
+      const p = await voiceProcess(() => quiet({ vad: () => next ? (next = false, [new Float32Array(32_000).fill(0.1)]) : [], transcribe: () => "Open the calendar." }));
+      p.init({ voiceprint: encodePrint(owner) });
+      p.message({ type: "follow-up", ms: 8000 });
+      p.frame();
+      const worker = workers.instances[0];
+      expect(worker).toBeDefined();
+      const print = worker.postMessage.mock.calls.find(c => c[0].type === "print")![0];
+      p.message({ type: change, generation: 1, print: null });
+      vi.advanceTimersByTime(1100);
+      worker.emit("message", { id: print.id, print: owner });
+      await flush();
+      expect(p.sent().filter(m => m.type === "utterance" || m.type === "voice-sample")).toEqual([]);
+    });
+  }
+
+  it("revokes an asynchronous learning sample when Stop arrives after the request was sent (SR-1)", async () => {
+    vi.useFakeTimers();
+    const owner = new Float32Array(256); owner[0] = 1;
+    let next = true;
+    const p = await voiceProcess(() => quiet({ vad: () => next ? (next = false, [new Float32Array(64_000).fill(0.1)]) : [], transcribe: () => "Open the calendar." }));
+    p.init({ voiceprint: encodePrint(owner) });
+    p.message({ type: "learning", on: true });
+    p.message({ type: "follow-up", ms: 8000 });
+    p.frame();
+    const worker = workers.instances[0];
+    const prints = () => worker.postMessage.mock.calls.filter(c => c[0].type === "print").map(c => c[0] as { id: number });
+    worker.emit("message", { id: prints()[0].id, print: owner });
+    await flush();
+    expect(p.sent().filter(m => m.type === "utterance")).toHaveLength(1);
+    expect(prints()).toHaveLength(2); // first half of the learning sample is still being checked
+    p.message({ type: "cancel", generation: 1 });
+    worker.emit("message", { id: prints()[1].id, print: owner });
+    await flush();
+    worker.emit("message", { id: prints()[2].id, print: owner });
+    await flush();
+    expect(p.sent().filter(m => m.type === "voice-sample")).toEqual([]);
+  });
+
   it("carries on when the recognizers fail on some audio, and tells main (at most once a minute) (review #253)", async () => {
     vi.useFakeTimers();
     let fail = true;

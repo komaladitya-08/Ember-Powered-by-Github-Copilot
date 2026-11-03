@@ -2703,7 +2703,7 @@ function start(): void {
         const r = lastHeard && lastHeard.utterance === s.utterance ? lastHeard : null;
         lastHeard = null;
         const print = personal.sample(s, r ? { verified: r.verified, cut: r.cut, selfSpoke: r.selfSpoke, locked: confirmer?.voiceLocked ?? false } : null);
-        if (print && settings.get().voice.match) { voice?.setVoiceprint(print); broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }
+        if (print && settings.get().voice.match) { voice?.setVoiceprint(print, true); broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }
       },
       onEnrol: p => {
         if (p.state === "done") {
