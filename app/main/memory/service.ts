@@ -10,6 +10,7 @@
  */
 
 import { consolidate } from "./consolidate";
+import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
 import { ENTITY_KINDS, type EntityKind, type Fact, type GraphClock, type MemoryGraph, type Source } from "./graph";
 import { recall, type Recalled } from "./recall";
@@ -38,6 +39,8 @@ export interface MemoryServiceOptions {
   file?: MemoryFile;
   /** Something Settings shows changed. */
   onChange?: () => void;
+  /** Better recall's vectors (./embed.ts): kept up to date with the graph, and asked for a question's matches. */
+  semantic?: SemanticMemory;
 }
 
 /** What a fact the model saves is about: names, with an optional kind ("person", "project"…). */
@@ -84,7 +87,18 @@ export class MemoryService {
   stop(): void {
     if (this.upkeepTimer) { clearInterval(this.upkeepTimer); this.upkeepTimer = null; }
     this.flush();
+    this.o.semantic?.flush();
+    this.o.semantic?.stop();
   }
+
+  /** Better recall's model came (or changed): the vectors catch up with what is remembered, in the background. */
+  index(): void {
+    // Not loaded yet (Ember starting): memory.json is read when something first needs it, and the index catches up then.
+    if (!this.graph) { this.indexPending = true; return; }
+    this.o.semantic?.changed(this.graph);
+  }
+  /** index() came before memory.json was read: the first request catches the index up. */
+  private indexPending = false;
 
   /**
    * The model saves a fact. `said`: what the user said in this turn (whose words make it theirs). The answer is for the
@@ -96,27 +110,33 @@ export class MemoryService {
     const r = this.g.add({ text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
     this.dirty();
+    this.o.semantic?.changed(this.g);
     this.o.log.info("memory.remembered", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
     if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].`;
     return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.`;
   }
 
-  /** The facts that bear on `query` (each counts as used). */
-  recall(query: string, k = CONTEXT_FACTS, history = false): Recalled[] {
-    const found = recall(this.g, query, { k, history, now: this.now() });
+  /** The facts that bear on `query` (each counts as used); `semantic`: its matches by meaning (./embed.ts), if any. */
+  recall(query: string, k = CONTEXT_FACTS, history = false, semantic?: Map<string, number>): Recalled[] {
+    const found = recall(this.g, query, { k, history, now: this.now(), ...(semantic ? { semantic } : {}) });
     if (found.length) { this.g.touch(found.map(r => r.fact.id)); this.dirty(false); }
     return found;
   }
 
-  /** The `<memory>` block for a request ("" when nothing bears on it). */
-  context(request: string): string {
-    return memoryBlock(this.recall(request));
+  /**
+   * The `<memory>` block for a request ("" when nothing bears on it), with Better recall's matches by meaning when its
+   * model is there (otherwise, or if they don't come in time, exactly the lexical recall).
+   */
+  async context(request: string): Promise<string> {
+    if (this.indexPending) { this.indexPending = false; this.o.semantic?.changed(this.g); }
+    const semantic = await this.o.semantic?.seeds(request);
+    return memoryBlock(this.recall(request, CONTEXT_FACTS, false, semantic));
   }
 
   /** Forgets one fact by id. True if it was there. */
   forget(id: string): boolean {
     const had = this.g.forgetFact(id);
-    if (had) { this.dirty(); this.o.log.info("memory.forgot", { count: 1 }); }
+    if (had) { this.o.semantic?.forget(id); this.dirty(); this.o.log.info("memory.forgot", { count: 1 }); }
     return had;
   }
 
@@ -125,6 +145,7 @@ export class MemoryService {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     this.graph?.clear();
     try { this.file.erase(); } catch (err) { this.o.log.warn("memory.erase_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    this.o.semantic?.forgetAll();
     this.changed = false;
     this.o.log.info("memory.forgot_all");
     this.o.onChange?.();
@@ -142,7 +163,7 @@ export class MemoryService {
     const report = consolidate(this.g, { now: this.now() });
     this.changed = false;
     this.o.log.info("memory.upkeep", { ...report, ...this.g.size });
-    if (report.mergedEntities || report.mergedFacts || report.forgotten || report.orphans) this.dirty();
+    if (report.mergedEntities || report.mergedFacts || report.forgotten || report.orphans) { this.dirty(); this.o.semantic?.changed(this.g); }
   }
 
   /** Writes memory.json now, if a write is pending. */
