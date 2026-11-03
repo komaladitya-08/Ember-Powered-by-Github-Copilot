@@ -359,6 +359,16 @@ describe("voice, privacy, clipboard and lifecycle", () => {
     expect(s.voice.bundledModelDirs("/opt/ember/resources")).toEqual(["/usr/share/ember/voice-models", path.join("/opt/ember/resources", "voice-models")]);
     expect(s.voice.bundledModelDirs("")).toEqual(["/usr/share/ember/voice-models", "voice-models"]);
     expect(s.privacy.neverLookDefaults).toBe(NEVER_LOOK_DEFAULTS.linux);
+  });
+
+  it("finds native speech in the package's resources/voice-native, and never fetches the natural voice", () => {
+    const s = linuxSystem(deps());
+    expect(s.voice.nativeSpeechDir("/opt/ember/resources")).toBe(path.join("/opt/ember/resources", "voice-native"));
+    expect(s.voice.naturalVoice).toBe(false);
+  });
+
+  it("keeps today's security windows", () => {
+    const s = linuxSystem(deps());
     for (const w of [{ app: "polkit-gnome-authentication-agent-1" }, { title: "Authentication Required" }, { app: "gedit", title: "notes" }]) {
       expect(s.privacy.isSecurityWindow(w), JSON.stringify(w)).toBe(isSecurityWindow(w));
     }

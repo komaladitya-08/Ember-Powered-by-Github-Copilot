@@ -12,6 +12,7 @@ release=${EMBER_RPM_RELEASE:-1}
 [[ "$release" =~ ^[1-9][0-9]*$ ]] || { echo "EMBER_RPM_RELEASE must be a whole number from 1: $release" >&2; exit 2; }
 stage="$root/dist/package"
 [ -x "$stage/ember/ember" ] || { echo "stage first: node scripts/package/stage.mjs" >&2; exit 1; }
+[ -f "$stage/ember/resources/voice-native/libsherpa-onnx-c-api.so" ] || { echo "no native speech staged: node scripts/voice/fetch-capi.mjs, then stage again" >&2; exit 1; }
 
 top=$(mktemp -d)
 trap 'rm -rf "$top"' EXIT

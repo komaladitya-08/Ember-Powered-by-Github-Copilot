@@ -1,13 +1,15 @@
 #!/bin/bash
 # Builds dist/package/Ember-<version>-x86_64.AppImage from the folder stage.mjs made, with
 # pinned (SHA-256 checked) appimagetool and runtime. The speech models go inside it when they were staged (in
-# ember/resources/voice-models, where Ember looks before downloading anything). usage: scripts/package/appimage.sh
+# ember/resources/voice-models, where Ember looks before downloading anything), and so does sherpa-onnx's C API for
+# native speech (ember/resources/voice-native, which stage.mjs always stages). usage: scripts/package/appimage.sh
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 version=$(node -p "require('$root/package.json').version")
 stage="$root/dist/package"
 cache="$root/.cache/appimage"
 [ -x "$stage/ember/ember" ] || { echo "stage first: node scripts/package/stage.mjs" >&2; exit 1; }
+[ -f "$stage/ember/resources/voice-native/libsherpa-onnx-c-api.so" ] || { echo "no native speech staged: node scripts/voice/fetch-capi.mjs, then stage again" >&2; exit 1; }
 
 TOOL_URL=https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
 TOOL_SHA=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0

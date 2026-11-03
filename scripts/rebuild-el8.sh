@@ -1,6 +1,6 @@
 #!/bin/bash
 # Rebuilds Ember's native Node addons against RHEL 8 (glibc 2.28, GCC 8), then runs
-# the glibc/libstdc++ symbol check over node_modules.
+# the glibc/libstdc++ symbol check over node_modules and sherpa-onnx's C API libraries.
 #
 # The modules to rebuild are listed in package.json under "ember.nativeModules".
 # On an EL8 machine (or with --here) it works in place. Anywhere else it re-runs
@@ -38,8 +38,10 @@ else
   echo "No native modules listed in package.json \"ember.nativeModules\"; nothing to rebuild."
 fi
 
-echo "Checking every binary under node_modules against RHEL 8.4 (GLIBC_2.28 / GLIBCXX_3.4.25):"
-if scripts/check-symvers.sh node_modules > /tmp/ember-symvers.txt; then
+echo "Checking every binary under node_modules, and sherpa-onnx's C API the Linux packages carry, against RHEL 8.4 (GLIBC_2.28 / GLIBCXX_3.4.25):"
+# The C API's libraries (pinned by SHA-256: fetch-capi.mjs fetches and checks them once, then reuses them).
+capi=$(node scripts/voice/fetch-capi.mjs)
+if scripts/check-symvers.sh node_modules "$capi" > /tmp/ember-symvers.txt; then
   echo "All $(wc -l < /tmp/ember-symvers.txt) binaries are compatible."
 else
   grep '^FAIL' /tmp/ember-symvers.txt >&2

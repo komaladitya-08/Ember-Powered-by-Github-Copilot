@@ -40,6 +40,11 @@ export interface DoctorProbes {
   voiceModels: "bundled" | "downloaded" | "missing";
   /** The models in none of Ember's folders (default: all of them while `voiceModels` is "missing", else none). */
   voiceModelsMissing?: ModelId[];
+  /**
+   * Linux: which build runs speech (runtime.ts capiChoice), native (the C API Ember carries) or WebAssembly, and why.
+   * null or absent where the addon runs it (Windows, macOS): the row is left out.
+   */
+  speechBackend?: { backend: "native" | "wasm"; why: string } | null;
   runtime: boolean;
   /** How Ember will reach a model: an organisation endpoint, a GitHub sign-in, or nothing yet. */
   /**
@@ -227,6 +232,10 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   out.push(p.voiceModels === "missing"
     ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${mb(modelsBytes(missing.length ? missing : VOICE_MODELS))}, once)${linux ? ", or unzip the release's Ember-voice-models zip into /usr/share/ember" : ""}.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: `${p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded."}${optional.length ? ` Without ${without} until ${optional.length > 1 ? "they're" : "it's"} downloaded in Ember's settings (${mb(modelsBytes(optional))}).` : ""}` });
+  // Both run on this computer; WebAssembly is slower (Piper's first audio takes about four times as long), so it says why.
+  if (p.speechBackend) out.push(p.speechBackend.backend === "native"
+    ? { id: "speech-engine", status: "ok", label: "Speech", detail: "On this computer (native)." }
+    : { id: "speech-engine", status: "ok", label: "Speech", detail: `On this computer (WebAssembly: ${p.speechBackend.why}).` });
   out.push(off
     ? p.speechDispatcher
       ? { id: "speech", status: "ok", label: "Speaking", detail: off.voices }

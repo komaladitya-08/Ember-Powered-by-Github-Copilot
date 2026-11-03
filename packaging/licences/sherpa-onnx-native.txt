@@ -1,7 +1,9 @@
 sherpa-onnx's native Node addon (sherpa-onnx-win-x64, sherpa-onnx-win-arm64, sherpa-onnx-darwin-arm64 and
-sherpa-onnx-darwin-x64 1.13.8, the per-platform packages of sherpa-onnx-node) ships no licence file. Its package.json
-says Apache-2.0; this is the licence as published in its repository (https://github.com/k2-fsa/sherpa-onnx, LICENSE),
-followed by what the addon contains besides sherpa-onnx itself.
+sherpa-onnx-darwin-x64 1.13.8, the per-platform packages of sherpa-onnx-node) and its prebuilt C API for Linux x64
+(sherpa-onnx-v1.13.8-linux-x64-shared: libsherpa-onnx-c-api.so and libonnxruntime.so) ship no licence file. The
+addon's package.json says Apache-2.0, and the C API's archive, which has no package.json, comes from the same
+repository and tag. This is the licence as published there (https://github.com/k2-fsa/sherpa-onnx, LICENSE),
+followed by what the addon and the libraries contain besides sherpa-onnx itself.
 
 
                                  Apache License
@@ -206,19 +208,34 @@ followed by what the addon contains besides sherpa-onnx itself.
    See the License for the specific language governing permissions and
    limitations under the License.
 
-What sherpa-onnx.node and the sherpa-onnx C API library beside it (sherpa-onnx-c-api.dll, libsherpa-onnx-c-api.dylib)
-also contain, as the names and messages in them show. This is not a complete list:
+What sherpa-onnx.node and the sherpa-onnx C API library beside it (sherpa-onnx-c-api.dll, libsherpa-onnx-c-api.dylib;
+libsherpa-onnx-c-api.so on Linux) also contain, as the names and messages in them show. This is not a complete list:
 - kaldi-native-fbank, kaldi-decoder, kaldifst and OpenFst: Apache-2.0
 - simple-sentencepiece: Apache-2.0
 - piper-phonemize: MIT
 - nlohmann/json: MIT
 - Eigen (https://eigen.tuxfamily.org): MPL-2.0; its source is available there
 - KISS FFT: BSD-3-Clause
-- eSpeak NG (https://github.com/espeak-ng/espeak-ng), with its ucd-tools: GPL-3.0-or-later (its COPYING follows these
-  notices). It is part of sherpa-onnx's text-to-speech, which speaks Ember's voice (it turns text into phonemes).
+- eSpeak NG with its ucd-tools: GPL-3.0-or-later (its COPYING follows these notices). It is part of sherpa-onnx's
+  text-to-speech, which speaks Ember's voice (it turns text into phonemes), and is linked statically into the
+  library above.
 The packages also carry ONNX Runtime 1.28.2 (https://github.com/microsoft/onnxruntime) as a library of its own
-(onnxruntime.dll, onnxruntime_providers_shared.dll; libonnxruntime.dylib): MIT, Copyright (c) Microsoft Corporation
-(its licence follows), with the third-party software its notices list (they follow, from its v1.28.2 tag).
+(onnxruntime.dll, onnxruntime_providers_shared.dll; libonnxruntime.dylib; libonnxruntime.so): MIT, Copyright (c)
+Microsoft Corporation (its licence follows), with the third-party software its notices list (they follow, from its
+v1.28.2 tag).
+
+Corresponding Source for eSpeak NG (GNU GPL version 3, section 6). Ember ships these libraries unmodified, as
+sherpa-onnx's project built and published them. Their source, and the scripts that build them, are:
+- sherpa-onnx v1.13.8: https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.8 (the build scripts are its CMakeLists.txt
+  and cmake/; cmake/espeak-ng-for-piper.cmake names the eSpeak NG source below)
+- eSpeak NG, as sherpa-onnx builds it (a fork of https://github.com/espeak-ng/espeak-ng, with its ucd-tools in
+  src/ucd-tools): https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip
+  (SHA-256 e4e262cbe34f7fe21f91f1ba3397f2728e1f30eafbae7853f2b753a9ed13f0dd)
+- piper-phonemize, which calls it:
+  https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip
+  (SHA-256 d9cca4e2bdc7d6dd8dffb96a4668283dbd3f77a9c194a3e530c1e8eba9406a5d)
+If any of these can't be reached, ask for the source in an issue at
+https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues and it will be sent to you.
 
 --- ONNX Runtime's LICENSE ---
 MIT License
