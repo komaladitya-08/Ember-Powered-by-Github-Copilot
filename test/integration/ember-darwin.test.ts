@@ -42,6 +42,7 @@ import {
 } from "./darwin-support";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 import { askWant, closeAsk, openAskAt, setTextSize } from "./ask-size";
+import { closeTestElectron, ELECTRON_CLEANUP_TIMEOUT_MS } from "./close-electron";
 
 const required = process.env.EMBER_DARWIN_TEST === "1";
 const onMac = process.platform === "darwin";
@@ -153,11 +154,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
   }, 240_000);
 
   afterAll(async () => {
-    if (ember) {
-      const proc = ember.process();
-      await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
-      if (proc.exitCode === null) proc.kill("SIGKILL");
-    }
+    if (ember && await closeTestElectron(ember)) console.warn("ember-darwin: graceful close did not stop this test's Electron process; terminated it");
     bench?.stop();
     if (textEditPid) {
       try {
@@ -170,7 +167,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     input?.close();
     ws?.close();
     if (dir) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  });
+  }, ELECTRON_CLEANUP_TIMEOUT_MS);
 
   it("starts beside the user's app: it stays the active app, and Ember keeps its Dock icon and its app menu (M1)", async () => {
     // A start that activated Ember would have done so by now.

@@ -585,6 +585,10 @@ organisation has them off. "Status?" says a task waits for the user's answer or 
 
 ## 10. Progress
 
+Task orchestration review (2026-11-03, M2/M4.1): retries retain accepted steering and restrictions with the original
+target binding; concurrent memory recall cannot reorder dispatched requests. Turns correlate against the exact sent
+prompt, retaining their user/command words and voice provenance; unmatched messages cannot start or steer tasks.
+
 Privacy review (2026-11-03): provider keyring operations are invalidated on removal, sign-out and settings changes;
 live memory consent and pending-recall invalidation apply within existing turns, with speech provenance retained.
 

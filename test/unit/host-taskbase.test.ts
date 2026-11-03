@@ -132,6 +132,7 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     const { host, cards } = makeHost({ targets: t.agent, taskBase: base.base });
     await host.start(TOKEN, "stored");
     expect(host.tasks).not.toBeNull();
+    await host.ask("run the tests in ~/project");
     const said = await tool(conductor(), "start_task").handler({ goal: "run the tests in ~/project" }, {});
     expect(said).toMatch(/^Task \S+ started: "run the tests in ~\/project"/);
     await until(() => taskSessions()[0]?.sent.length > 0);
@@ -160,6 +161,7 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     const base = taskBase();
     const { host } = makeHost({ targets: t.agent, taskBase: base.base });
     await host.start(TOKEN, "stored");
+    await host.ask("tidy my desktop");
     // §2.6: the computer's hands are asked for when the task is bound; one that can't take it refuses it there.
     expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toBe(why);
     expect(host.tasks!.list()).toEqual([]);
@@ -194,6 +196,7 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     expect(host.tasks).toBeNull();
     expect(conductor().config.tools.map((x: any) => x.name)).toEqual(["set_appearance", "describe_screen", "start_task", "show_me", "set_reminder", "list_reminders", "cancel_reminder"]);
     expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toMatch(/cannot operate applications in this session \(no desktop access\)/);
+    await host.ask("how do I change the wallpaper");
     expect(await tool(conductor(), "show_me").handler({ goal: "how do I change the wallpaper" }, {})).toBe("Ember can't point at things in this session (no desktop access). Explain the steps in words instead.");
     expect(taskSessions()).toEqual([]);
     await host.stop();
@@ -221,6 +224,7 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     const t = targets(() => ({ ok: true, hands: commandsOnly() }));
     const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
     await host.start(TOKEN, "stored");
+    await host.ask("how do I change the wallpaper");
     expect(await tool(conductor(), "show_me").handler({ goal: "how do I change the wallpaper" }, {})).toBe("Ember can't point at things in this session (no desktop access). Explain the steps in words instead.");
     expect(host.tasks!.list()).toEqual([]);
     expect(taskSessions()).toEqual([]);
@@ -233,9 +237,14 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     const t = targets(() => ({ ok: true, hands }));
     const { host, bubbles } = makeHost({ targets: t.agent, taskBase: taskBase().base });
     await host.start(TOKEN, "stored");
+    await host.ask("run the tests in Ubuntu");
     await tool(conductor(), "start_task").handler({ goal: "run the tests in Ubuntu" }, {});
     await until(() => taskSessions()[0]?.sent.length > 0);
     expect(wsl.listeners()).toBe(1);
+    // The SDK reports the completed hand-off; the conductor's thinking bubble no longer owns the stage.
+    conductor().emit("tool.execution_start", { toolName: "start_task" });
+    conductor().emit("tool.execution_complete", { success: true });
+    conductor().emit("session.idle", {});
     wsl.say("Starting Ubuntu…");
     expect(bubbles.at(-1)).toMatchObject({ thought: "Starting Ubuntu…", task: host.tasks!.list()[0].id });
     wsl.say(null);
@@ -253,6 +262,7 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     };
     const { host } = makeHost({ hands, taskBase: taskBase().base });
     await host.start(TOKEN, "stored");
+    await host.ask("save my document");
     await tool(conductor(), "start_task").handler({ goal: "save my document" }, {});
     await until(() => taskSessions()[0]?.sent.length > 0);
     expect(taskSessions()).toHaveLength(1);

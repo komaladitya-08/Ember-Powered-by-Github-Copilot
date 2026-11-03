@@ -612,6 +612,8 @@ const FINISHED_KEPT = 20;
  * read on the screen in its turn (the context sent with it, describe_screen's answers).
  */
 interface UserRequest {
+  /** The exact prompt prepared for this request; unset until dispatch, never matched by user-text suffix. */
+  prompt?: string;
   target: (WindowTarget & { app?: string }) | null;
   words: string;
   screen: string[];
@@ -876,18 +878,17 @@ export class AgentHost {
   /**
    * A turn of the conversation starts with its request's message (the runtime holds a request sent during a
    * turn until that turn ends): what that turn does belongs to that request. The message is the prompt
-   * conductor.ask sent, which ends with the user's words; the oldest request it matches is the one (those
-   * before it never ran: Stop drops what is waiting). A message that is none of them (nothing the user asked)
-   * takes none of their context.
+   * conductor.ask sent. Match it whole and consume only that request; identical prompts take the oldest one.
+   * A message that is none of them (nothing the user asked) takes none of their context or authority.
    */
   private conversationEvent(e: PresenterEvent): void {
     // Copilot refused the sign-in mid-session (revoked, expired, the seat removed): it is asked whether it still holds.
     if (e.type === "session.error" && (e.data?.errorType === "authentication" || e.data?.statusCode === 401)) void this.checkSignIn(this.gen);
     if (e.type !== "user.message" || (e as { agentId?: string }).agentId) return;
-    const said = typeof e.data?.content === "string" ? e.data.content.trimEnd() : "";
-    const i = this.queued.findIndex(r => said.endsWith(r.words.trim()));
+    const said = typeof e.data?.content === "string" ? e.data.content : undefined;
+    const i = said === undefined ? -1 : this.queued.findIndex(r => r.prompt === said);
     this.turn = i < 0 ? null : this.queued[i];
-    this.queued.splice(0, i + 1);
+    if (i >= 0) this.queued.splice(i, 1);
     // Its reply announces the tasks it starts ("On it…"), not the ones an earlier turn did.
     this.announced.clear();
   }
@@ -1487,6 +1488,7 @@ export class AgentHost {
           // goal (the conductor may have read it off the screen). A request sent meanwhile waits for its own turn: none of
           // it goes with this task.
           const r = this.turn;
+          if (!r) return "No user request belongs to this turn. Ask the user to repeat their request before starting a task.";
           const said = this.userWordsOf(r);
           // The task's computer (§2.3): the one the user's own words name, the model's choice only when their words name it
           // too, else the one Ember is set to. Its hands are asked for now: a computer that can't take the task refuses it
@@ -1532,6 +1534,7 @@ export class AgentHost {
           return `Task ${t.id} started${where ? ` ${where}` : ""}: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
         showMe: tasks ? async goal => {
+          if (!this.turn) return "No user request belongs to this turn. Ask the user to repeat their request before starting a guide.";
           // Ember points only on this screen, never at another computer's (§2.6), and only where it can see this screen:
           // a computer that can't take the guide refuses it here, before anything is queued.
           if (targets) {
@@ -1567,6 +1570,7 @@ export class AgentHost {
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
           // (A change of plan is the user's own words: a routine run this turn doesn't steer a task.)
           steer: (id, text) => {
+            if (!this.turn) return Promise.resolve(false);
             const said = this.userWordsOf(this.turn, { routine: false });
             // Changed by a request Voice Match didn't verify (typed, or another voice's): its short yeses are no longer trusted.
             if (this.turn?.verifiedAt === undefined) this.o.voiceTrust?.end(id, "steered");
@@ -2229,7 +2233,7 @@ export class AgentHost {
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
       if (first) how.onSent?.();
-      await this.conductor.ask(text, context?.text, this.trustedLine(), !how.voiceUnchecked);
+      await this.conductor.ask(text, context?.text, this.trustedLine(), !how.voiceUnchecked, prompt => { request.prompt = prompt; });
     } catch (err) {
       // Never sent: no turn of its own will come (nor its hint).
       this.hintOwed = false;
