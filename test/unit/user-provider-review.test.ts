@@ -361,3 +361,87 @@ describe("the card's I agree, armed as Ember's questions are (third review #136)
   });
 });
 
+
+describe("provider key lifecycle races", () => {
+  it.each(["remove", "forget", "endpoint", "off"])("does not restore a pending read after %s", async action => {
+    const { s, keys, settings, changed } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    await keys.save(KEY, "a.example");
+    let release!: (key: { key: string; host: string }) => void;
+    keys.load = () => new Promise(r => { release = r; });
+    const pending = s.ensureKey();
+    if (action === "remove") s.api.removeKey();
+    if (action === "forget") s.forget();
+    if (action === "endpoint") { settings.update({ provider: provider({ baseUrl: "https://b.example/v1" }) }); s.settingsChanged(); }
+    if (action === "off") { settings.update({ provider: provider({ baseUrl: "https://a.example/v1", on: false }) }); s.settingsChanged(); }
+    changed.mockClear();
+    release({ key: KEY, host: "a.example" });
+    await pending;
+    expect(s.key()).toBeNull();
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it.each(["remove", "forget", "endpoint"])("does not restore a pending save after %s", async action => {
+    const { s, keys, settings, changed } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    const save = keys.save.bind(keys);
+    let release!: () => void;
+    keys.save = async (key, host) => { await new Promise<void>(r => { release = r; }); return save(key, host); };
+    const pending = s.api.saveKey(KEY);
+    await Promise.resolve();
+    if (action === "remove") s.api.removeKey();
+    if (action === "forget") s.forget();
+    if (action === "endpoint") { settings.update({ provider: provider({ baseUrl: "https://b.example/v1" }) }); s.settingsChanged(); }
+    changed.mockClear();
+    release();
+    expect((await pending).ok).toBe(false);
+    expect(s.key()).toBeNull();
+    expect(keys.savedHost()).toBeNull();
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("does not write sealed bytes after clearing a keyring save", async () => {
+    let release!: (bytes: Buffer) => void;
+    const kr = box({ encryptStringAsync: () => new Promise(r => { release = r; }) });
+    const keys = new ProviderKeyStore(path.join(tmp(), "provider-key.bin"), kr.box, { asyncKeyring: true });
+    const pending = keys.save(KEY, "a.example");
+    await Promise.resolve();
+    keys.clear();
+    release(Buffer.from("sealed"));
+    expect((await pending).ok).toBe(false);
+    expect(keys.savedHost()).toBeNull();
+  });
+});
+
+describe("overlapping provider operations", () => {
+  it("keeps the newer save when an older save finishes after Remove", async () => {
+    const { s, keys } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    const save = keys.save.bind(keys);
+    let release!: () => void;
+    let first = true;
+    keys.save = async (key, host) => {
+      if (first) { first = false; await new Promise<void>(r => { release = r; }); }
+      return save(key, host);
+    };
+    const old = s.api.saveKey(KEY);
+    await Promise.resolve();
+    s.api.removeKey();
+    const newer = s.api.saveKey(KEY + "new");
+    release();
+    expect((await old).ok).toBe(false);
+    expect((await newer).ok).toBe(true);
+    expect(s.key()?.key).toBe(KEY + "new");
+    expect((await keys.load())?.key).toBe(KEY + "new");
+  });
+
+  it("sends no connection test after consent is revoked during its key read", async () => {
+    const { s, keys, settings, fetch } = service({ settings: { baseUrl: "https://a.example/v1", consent: agreedFor("a.example") } });
+    await keys.save(KEY, "a.example");
+    let release!: (key: null) => void;
+    keys.load = () => new Promise(r => { release = r; });
+    const pending = s.api.test();
+    settings.update({ provider: provider({ baseUrl: "https://b.example/v1" }) });
+    s.settingsChanged();
+    release(null);
+    expect((await pending).ok).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});

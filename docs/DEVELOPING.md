@@ -155,6 +155,8 @@ cache (test/temp-folder.ts).
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
 - **Memory** (Settings › Memory › **Remember what I tell you**, off until you turn it on and agree to its note):
   Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
+  - Switching memory off stops remembering and recall during existing turns too. Pending recall is dropped on
+    Stop or Forget; unchecked speech never counts as your own words when a fact is saved.
   - It keeps this in `memory.json` in its data folder (mode 0600).
   - While it is in force, the names in what you told it (its `user` facts) also help Ember hear them right
     (app/main/personal/correct.ts); nothing more is kept for that.
@@ -717,6 +719,9 @@ and window title, ignoring characters that show nothing, such as a soft hyphen, 
 managers and polkit are listed by default).
 
 ### Your own model provider ("bring your own key")
+
+Removing a key, signing out, or changing the provider settings invalidates keyring work already in progress.
+A late keyring answer cannot restore a removed key or reconnect an old endpoint.
 
 Home › Copilot › **Model provider** lets a user point Ember at a model service of their own instead of GitHub Copilot
 (`settings.provider`, off by default; app/main/provider.ts): **Provider** (OpenAI-compatible, Azure OpenAI or
