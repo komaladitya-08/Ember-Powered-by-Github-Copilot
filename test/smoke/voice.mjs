@@ -9,7 +9,9 @@
 //              audio reaching the page, in that order; the voice process is told Ember speaks (self-speaking) while it
 //              does, and the follow-up window opens only once it has finished.
 //   name       "Ember, turn on night light." (the bare name) wakes Ember the same way.
-//   stop       "Hey Ember, stop" said while Ember speaks a long reply hushes it at once, and no follow-up opens.
+//   multi      three requests with Ember speaking in between; the second and third need no wake word.
+//   stop       "Hey Ember, stop" said while Ember speaks a long reply pulls the app-wide kill switch, hushes it at
+//              once, and no follow-up opens.
 //   match      Voice Match: enrolled from 4 clips through the settings page's own IPC (window.ember.enrolVoice, on
 //              Chromium's debugging port), then a request in another synthetic voice is turned away (voice.rejected,
 //              reason "voice") and one in the owner's is heard.
@@ -19,7 +21,7 @@
 // .cache/voice/clips-ryan); EMBER_VOICE_E2E_VERBOSE=1 shows Ember's log as it comes. EMBER_VOICE_E2E_BACKEND (native or
 // wasm) makes the reply scenario check that listening (voice.ready) and Ember's voice (voice.tts_ready) loaded on that
 // build: voice.backend is only the choice, logged before anything loads.
-// usage: node test/smoke/voice.mjs [scenario...]   (default: all of reply, name, stop, match)
+// usage: node test/smoke/voice.mjs [scenario...]   (default: all of reply, name, multi, stop, match)
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { startMockLlm } from "../mock-llm/server.mjs";
+import { voiceConversation, voiceStop } from "./voice-checks.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const fixtures = path.join(root, "test/fixtures/voice");
@@ -35,7 +38,7 @@ const otherVoice = path.resolve(process.env.EMBER_VOICE_E2E_OTHER ?? path.join(r
 const verbose = process.env.EMBER_VOICE_E2E_VERBOSE === "1";
 const wantBackend = process.env.EMBER_VOICE_E2E_BACKEND || null;
 if (wantBackend && wantBackend !== "native" && wantBackend !== "wasm") { console.error("EMBER_VOICE_E2E_BACKEND is native or wasm"); process.exit(2); }
-const SCENARIOS = ["reply", "name", "stop", "match"];
+const SCENARIOS = ["reply", "name", "multi", "stop", "match"];
 const wanted = process.argv.slice(2);
 if (wanted.some(s => !SCENARIOS.includes(s))) { console.error(`usage: node test/smoke/voice.mjs [${SCENARIOS.join(" | ")}]...`); process.exit(2); }
 const run = wanted.length ? wanted : SCENARIOS;
@@ -317,6 +320,8 @@ const scenarios = {
     try {
       const on = await waitFor(inst, e => e.msg === "voice.self_speaking" && e.on, 40_000, "Ember to start speaking");
       const stopAt = await waitFor(inst, e => e.msg === "voice.stop", 30_000, "\"Hey Ember, stop\" to stop Ember (voice.stop)", on);
+      await waitFor(inst, e => e.msg === "killswitch.pulled" && e.source === "voice", 3_000, "the voice stop to reach the app-wide kill switch", stopAt + 1);
+      voiceStop(inst.log, stopAt);
       // "Hey Ember" cuts in while Ember speaks (with parec, and since PR #144 without it too), so main may hush Ember at
       // the wake, before "stop" is heard: the hush is timed from whichever came first.
       const cutIn = index(inst, "voice.wake", () => true, on);
@@ -333,7 +338,31 @@ const scenarios = {
       expect(!resumed, "Ember started speaking again after it was stopped");
       expect(index(inst, "voice.follow_up") < 0, "a follow-up window opened after Ember was stopped");
       expect(index(inst, "voice.utterance", () => true, hushAt) < 0, "\"Hey Ember, stop\" was taken as a request");
-      console.log(`ok   stop: "Hey Ember, stop" during the reply hushed it (${quietMs} ms after ${by}, ${played.toFixed(1)} s of audio had been queued); no follow-up opened`);
+      console.log(`ok   stop: "Hey Ember, stop" during the reply pulled the kill switch and hushed it (${quietMs} ms after ${by}, ${played.toFixed(1)} s of audio had been queued); no follow-up opened`);
+    } finally { await finish(inst); }
+  },
+
+  async multi() {
+    // A short answer leaves time for playback and its echo tail before the next clip, still within the 8 s follow-up
+    // window. Unlike feeding several clips straight to VoiceEngine, this exercises the mic page's self-speaking
+    // messages, main's deferred follow-up, and the same engine carrying its wake across all three requests.
+    reply = "Done.";
+    const sent = mock.requests.length;
+    const inst = startEmber("multi", cat(silence(LEAD_S), clip("wake"), silence(6), clip("followup"), silence(6), clip("bigger"), silence(25)));
+    try {
+      let from = 0;
+      for (let turn = 0; turn < 3; turn++) {
+        const request = await waitFor(inst, e => e.msg === "voice.utterance", 40_000, `request ${turn + 1} of the conversation`, from);
+        const { off } = await spoken(inst, request + 1);
+        const followUp = await waitFor(inst, e => e.msg === "voice.follow_up", 10_000, `the follow-up window after reply ${turn + 1}`, off + 1);
+        await waitFor(inst, e => e.msg === "voice.event" && e.type === "listening", 5_000, "the follow-up window to listen", followUp + 1);
+        from = followUp + 1;
+      }
+      const turns = voiceConversation(inst.log, ["wake", "follow-up", "follow-up"]);
+      const requests = mock.requests.slice(sent).map(lastUser);
+      expect(requests.length === 3 && [/night ?light/i, /do not disturb/i, /text.*bigger/i].every((words, i) => words.test(requests[i])),
+        `the model did not receive the three requests in order (it was asked ${askedText(sent)})`);
+      console.log(`ok   multi: ${turns.length} requests reached the model in order, each answered aloud; two follow-ups without another wake`);
     } finally { await finish(inst); }
   },
 
