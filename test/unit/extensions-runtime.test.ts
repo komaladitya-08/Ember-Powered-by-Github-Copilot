@@ -490,6 +490,30 @@ describe("ExtensionsService", () => {
     await expect(agreeing).rejects.toThrow(/stopped/);
   });
 
+  it("does not start queued discovery or agreement after Stop", async () => {
+    const s = await installed();
+    const [review] = await s.list();
+    const refresh = s.refresh();
+    const agree = s.reagree(review.id, review.reviewToken!);
+    s.stopPart().stop();
+    await expect(refresh).rejects.toThrow(/stopped/);
+    await expect(agree).rejects.toThrow(/stopped/);
+  });
+
+  it("serialises discovery and approval so an older probe cannot overwrite the reviewed metadata", async () => {
+    let running = 0, most = 0;
+    const s = await installed({ probe: async () => {
+      running++;
+      most = Math.max(most, running);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      running--;
+      return { ok: true, tools: served };
+    } });
+    const [review] = await s.list();
+    await Promise.all([s.refresh(), s.reagree(review.id, review.reviewToken!)]);
+    expect(most).toBe(1);
+  });
+
   it("revokes only a removed item's leases immediately, including delayed launches", async () => {
     const s = await installed();
     const ext = s.forSession()!;

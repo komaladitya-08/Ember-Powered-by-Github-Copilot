@@ -137,6 +137,7 @@ async function agree(): Promise<void> {
   if (done) {
     await refresh();
     const item = state?.installed.find(i => i.source === `${e.name}@${e.marketplace}`);
+    if (browsing?.name === e.marketplace && browsing.entries) browsing = { ...browsing, entries: browsing.entries.map(entry => entry.name === e.name ? { ...entry, installed: true } : entry) };
     if (item && browsing?.name === e.marketplace && !asking) { asking = { kind: "reagree", item }; draw(); focusKey("consent-yes"); }
   }
 }

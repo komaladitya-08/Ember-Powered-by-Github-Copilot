@@ -151,7 +151,12 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   private serial<T>(run: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(run, run);
+    const epoch = this.epoch;
+    const current = () => {
+      if (epoch !== this.epoch) throw new Error("It was stopped. Review its tools before trying again.");
+      return run();
+    };
+    const next = this.queue.then(current, current);
     this.queue = next.catch(() => undefined);
     return next;
   }
@@ -456,7 +461,7 @@ export class ExtensionsService implements ExtensionsApi {
     if (on && (!this.allowed() || !this.consented())) return;
     item.enabled = on;
     if (!on) this.stopServers(id);
-    if (on) await this.check(item);
+    if (on) await this.serial(() => this.check(item));
     this.save();
     this.changed();
   }
@@ -510,7 +515,11 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /** At start (and when extensions are turned on): every enabled item's tools are checked against their pins. */
-  async refresh(): Promise<void> {
+  refresh(): Promise<void> {
+    return this.serial(() => this.refreshNow());
+  }
+
+  private async refreshNow(): Promise<void> {
     if (!this.active()) return;
     for (const item of this.items.filter(i => i.enabled)) {
       this.busy.add(item.id);
