@@ -597,6 +597,13 @@ export function atSpot(chain: PointElement[], spot: { x: number; y: number }): P
   return end === chain.length ? chain : chain.slice(0, end);
 }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/**
+ * perceive_window after Ember's own last step made its element go and the task's window can't be found any more: the step
+ * closed it (the owner's report of 2026-11-03: "close Microsoft Edge"). Closing it may be the whole task; nothing else
+ * stands in its place (the read never falls back to the window the user is in now).
+ */
+export const WINDOW_CLOSED_BY_TASK = "The window this task was working in has closed: your last step closed it. If closing it was what the user asked for, the task is done: call finish_task with success true now. Otherwise call finish_task with success false saying the window closed. Don't carry on in another window in its place.";
+
 /** The accessibility helper's word for an app that didn't answer in time (busy), as opposed to an element that is gone. */
 const isBusy = (err: unknown) => /\bbusy\b|did not (receive a reply|answer)|timeout was reached/i.test(err instanceof Error ? err.message : String(err));
 const BUSY = "The app is busy (it didn't answer in time). Wait a moment, then call perceive_window.";
@@ -926,6 +933,11 @@ export class Worker {
   private result: WorkerResult | null = null;
   /** Elements from this worker's latest perceive_window, by id. */
   private known = new Map<number, AxNode>();
+  /**
+   * Ember's last step here worked and left nothing to read back (its element went: a Close, Quit or OK that closed its
+   * own window, perhaps). A read that then finds the task's window gone says the task closed it (WINDOW_CLOSED_BY_TASK).
+   */
+  private stepClosedIt = false;
   /** Labels borrowed by unnamed controls (a switch takes the label beside it). */
   private labels = new Map<number, string>();
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
@@ -1933,8 +1945,12 @@ export class Worker {
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
       return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
     }
+    // The window this task worked in closed under its own last step ("close Microsoft Edge"): that is the end of the
+    // task when closing it was the goal, and never a reason to carry on in whatever window is there now.
+    if (!p.window && !p.busy && this.stepClosedIt && !expectTitle) return fail(WINDOW_CLOSED_BY_TASK);
     // A busy app (a file dialog listing a big folder) isn't a closed one: the model is told to try again.
     if (!p.window) return fail(p.busy ? p.text : "That window can't be read (it is closed or exposes no accessibility information). Use list_windows.");
+    this.stepClosedIt = false;
     // Never fall back to whatever the user is looking at: a title that matches nothing is an error.
     if (expectTitle && !p.window.name.toLowerCase().includes(expectTitle.toLowerCase())) {
       return fail(`No open window has ${q(expectTitle, 100)} in its title. Use list_windows and pick one of those titles.`);
@@ -2249,6 +2265,7 @@ export class Worker {
       const selected = res.action === "select row" ? "Selected its row" : res.action === "select item" ? "Selected it" : "";
       const outcome = !res.ok ? "The app reported it did not work"
         : selected ? `${selected}, as a single click does; it wasn't opened: press Enter (press_keys) to open it if that's what the task needs` : "Done";
+      this.stepClosedIt = res.ok && !after && !busyAfter;
       if (!after) return done(`${outcome}. ${busyAfter ? "The app is busy, so the result can't be read yet: call perceive_window in a moment." : "The element is gone now (its dialog or window most likely closed). Call perceive_window."}`);
       return done(`${outcome}. Now: ${describeAfter(after)}`);
     } catch (err) {

@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, afterKeys, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
+import { WINDOW_CLOSED_BY_TASK, Worker, afterKeys, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
 import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -40,7 +40,10 @@ function makeWorker(o: {
   screenText?: string;
   /** The window's title, and what the conversation read on the screen before the task (TaskSpec.screen). */
   windowName?: string; specScreen?: string;
+  /** The click closes the window it is in (a Close button): nothing is left to read back, and the window is gone. */
+  closes?: boolean;
 } = {}) {
+  let closed = false;
   const flown: unknown[] = [];
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
@@ -58,10 +61,14 @@ function makeWorker(o: {
   presenter.guide = (say, step) => { guided.push(say); show(say, step); };
   const w = new Worker({
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
-    perception: { perceive: async () => ({ ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
+    perception: {
+      perceive: async () => (closed ? { ...seen, window: null, nodes: [], text: "", capture: null } : { ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: null }),
+      read: async () => seen, windows: async () => (closed ? [] : [window]),
+    } as never,
     sidecar: {
       readElement: async (id: number) => {
         if (o.readMs) await sleep(o.readMs);
+        if (closed) return null;
         const extra = o.live?.(id);
         if (extra === null) return null;
         const base = id === node.id ? node : extras.find(n => n.id === id);
@@ -70,7 +77,11 @@ function makeWorker(o: {
         if (states === null) return null;
         return { role: base.role, name: base.name, states, bounds: base.bounds, ...(id === node.id ? o.extra?.() : {}), ...extra };
       },
-      doAction: async () => { events.push("start"); await sleep(80); events.push("end"); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } }; },
+      doAction: async () => {
+        events.push("start"); await sleep(80); events.push("end");
+        if (o.closes) { closed = true; return { ok: true, after: null }; }
+        return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } };
+      },
       setText: async (_id: number, text: string) => {
         events.push("set_text");
         if (!o.setTextOk) throw new Error("background_unavailable: this element's text can't be edited directly");
@@ -95,6 +106,36 @@ function makeWorker(o: {
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
   return { w, audit, events, asked, questions, call, flown, guided, activity };
 }
+
+describe("a task whose own step closes its window (the owner's report of 2026-11-03)", () => {
+  it("is told the window closed under its step and that closing it may be the task, and finishes", async () => {
+    const { call, audit, events } = makeWorker({ name: "Close", closes: true });
+    await call("perceive_window", {});
+    const click = await call("click", { id: 1 });
+    expect(click.resultType).toBe("success");
+    expect(click.textResultForLlm).toContain("The element is gone now");
+    const look = await call("perceive_window", {});
+    expect(look.resultType).toBe("failure");
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("list_windows");
+    // Nothing more is done in the window that went (an id from it acts on nothing), and the task ends with its result.
+    const again = await call("click", { id: 1 });
+    expect(again.resultType).not.toBe("success");
+    expect(events.filter(e => e === "start")).toHaveLength(1);
+    const done = await call("finish_task", { success: true, summary: "Closed it." });
+    expect(done.textResultForLlm).toMatch(/^Task closed/);
+    expect(audit.filter(e => e.event === "action" && e.ok)).toHaveLength(1);
+  });
+
+  it("never says a step closed the window when its element is still there", async () => {
+    const { call } = makeWorker();
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.resultType).toBe("success");
+    expect(look.textResultForLlm).not.toContain("has closed");
+  });
+});
 
 describe("what a worker tells its card (app/main/agent/activity.ts)", () => {
   it("passes report_progress's note and its short intent on as the worker's own words, markdown stripped", async () => {
