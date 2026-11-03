@@ -90,6 +90,44 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(rtf).toBeLessThan(1);
   });
 
+  it("hears a request ahead of the VAD's end of it, in the same words and at the same moment, and doesn't wait for Moonshine then (docs/ASSISTANT.md phase 1.5)", () => {
+    // (Not a bare "Ember, …": what it says decides whether it was a wake at all, on the VAD's own segment.)
+    for (const [clip, said] of [["wake", /^turn on night ?light$/], ["dnd", /^turn(ed)? on do not disturb$/]] as const) {
+      const samples = read(clip);
+      /** The request, when it came, and how many transcriptions ran on the frame that sent it. */
+      const hear = (transcribeAhead: boolean) => {
+        let t = 0, calls = 0, onSend = -1;
+        const transcribe = backend.transcribe;
+        backend.transcribe = s => { calls++; return transcribe(s); };
+        try {
+          let sent: (Extract<VoiceEvent, { type: "utterance" }> & { at: number }) | undefined;
+          const engine = new VoiceEngine(backend, e => { if (e.type === "utterance") sent = { ...e, at: t }; }, { now: () => t, transcribeAhead });
+          const all = new Float32Array(samples.length + 32_000);
+          all.set(samples);
+          for (let i = 0; i + 512 <= all.length; i += 512) {
+            const before = calls;
+            engine.feed(all.subarray(i, i + 512));
+            if (sent && onSend < 0) onSend = calls - before;
+            t += 32;
+          }
+          return { sent, onSend };
+        } finally {
+          backend.transcribe = transcribe;
+          backend.resetVad();
+        }
+      };
+      const on = hear(true), off = hear(false);
+      // The words heard right either way (the recognizer writes "Night Light" or "turned on" now and then, with a moment
+      // more or less of quiet around the speech), at the same moment.
+      const words = (t: string) => t.toLowerCase().replace(/[^a-z0-9' ]/g, "").trim();
+      expect(on.sent?.at, clip).toBe(off.sent!.at);
+      expect(words(on.sent!.text), clip).toMatch(said);
+      expect(words(off.sent!.text), clip).toMatch(said);
+      expect(off.onSend, clip).toBeGreaterThan(0);
+      expect(on.onSend, clip).toBe(0);
+    }
+  });
+
   it("wakes on the bare name, 'Ember', and hears the request in the same breath", () => {
     const { events } = play("name_wake");
     expect(events.map(e => e.type)).toEqual(["wake", "listening", "utterance", "listening"]);
