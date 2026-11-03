@@ -23,7 +23,7 @@ import type { SecretBox } from "../../app/main/agent/auth";
 import type { Logger } from "../../app/main/logger";
 import { friendlyError } from "../../app/main/agent/presenter";
 import { settingsFromHome } from "../../app/main/windows";
-import { agreeAction } from "../../app/shared/provider";
+import { AGREE_ARM_MS, AgreeGuard, agreeAction } from "../../app/shared/provider";
 
 const KEY = "sk-" + "r".repeat(40); // not a real key
 const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -120,7 +120,6 @@ describe("the card's yes (S1, S4)", () => {
     expect(agreeAction("a.example", "http://far.example/v1")).toEqual({ problem: "Use an https:// address. Only a model server on this computer (localhost) may use http://." });
     expect(agreeAction(null, "https://a.example/v1")).toBeNull();
     const page = readFileSync("app/renderer/home/provider.ts", "utf8");
-    expect(page).toContain('const next = agreeAction(cardHost, input("byok-url").value);');
     expect(page).toContain("a.agree(next.agree)");
     expect(page).toContain("cardHost = asking ? host : null;");
   });
@@ -291,3 +290,62 @@ describe("the re-review's nits (#136)", () => {
     expect(main).toContain('if (!provider && providers.needsRead()) {\n        setStatus("keychain", "Reading your saved API key…");');
   });
 });
+
+describe("the card's I agree, armed as Ember's questions are (third review #136)", () => {
+  const clock = () => { let t = 0; return { now: () => t, go: (ms: number) => { t += ms; } }; };
+
+  it("agrees to nothing when the card is redrawn for another host between the press and the release", () => {
+    const c = clock();
+    const g = new AgreeGuard(c.now);
+    g.drawn("a.example");
+    c.go(AGREE_ARM_MS + 100);
+    g.press();
+    // Pressing blurred the address field: its save redrew the card for b.example before the click landed.
+    g.drawn("b.example");
+    c.go(AGREE_ARM_MS + 100);
+    expect(g.activate()).toBeNull();
+    // Read and pressed again for b.example: that one agrees.
+    g.press();
+    expect(g.activate()).toBe("b.example");
+  });
+
+  it("ignores an agree within 500 ms of a redraw for another host, as confirm.ts's arm delay does", () => {
+    const c = clock();
+    const g = new AgreeGuard(c.now);
+    g.drawn("a.example");
+    c.go(1000);
+    g.drawn("b.example");
+    c.go(AGREE_ARM_MS - 1);
+    g.press();
+    expect(g.activate()).toBeNull();
+    c.go(1);
+    g.press();
+    expect(g.activate()).toBe("b.example");
+    // Drawn again for the same host: no new delay.
+    g.drawn("b.example");
+    g.press();
+    expect(g.activate()).toBe("b.example");
+    expect(AGREE_ARM_MS).toBe(500);
+  });
+
+  it("takes an activation with no press (a screen reader's) as pressed now, and nothing with no card up", () => {
+    const c = clock();
+    const g = new AgreeGuard(c.now);
+    expect(g.activate()).toBeNull();
+    g.drawn("a.example");
+    expect(g.activate()).toBeNull();
+    c.go(AGREE_ARM_MS);
+    expect(g.activate()).toBe("a.example");
+    g.drawn(null);
+    expect(g.activate()).toBeNull();
+  });
+
+  it("is wired to the button: the host taken at the press, the card's draws, and the agree only for the pressed host", () => {
+    const page = readFileSync("app/renderer/home/provider.ts", "utf8");
+    expect(page).toContain('$("byok-yes").addEventListener("pointerdown", () => agreeGuard.press());');
+    expect(page).toContain("agreeGuard.drawn(cardHost);");
+    expect(page).toContain("const pressedFor = agreeGuard.activate();");
+    expect(page).toContain("const next = agreeAction(pressedFor, input(\"byok-url\").value);");
+  });
+});
+

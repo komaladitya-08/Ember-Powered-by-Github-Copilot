@@ -9,7 +9,7 @@
 import type { EmberProviderApi, ProviderState } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { AZURE_API_VERSION, agreeAction, endpointHost, endpointProblem, MODEL_ID, type ProviderType } from "../../shared/provider";
+import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerConsentText, providerHint, providerTestText } from "./copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -29,6 +29,8 @@ let replacing = false;
 let declinedFor: string | null = null;
 /** The host the card was last drawn for (null: no card up). */
 let cardHost: string | null = null;
+/** "I agree" is armed as Ember's questions are: not for 500 ms after a redraw for another host, and only for the host pressed. */
+const agreeGuard = new AgreeGuard();
 
 /** One line under the group: how the last action went (`error`: in red). */
 function say(text: string, error = false): void {
@@ -65,6 +67,7 @@ function draw(): void {
   $("byok-consent").hidden = !asking;
   // The host the card names, remembered: "I agree" is for it, whatever the field says by the time it is clicked.
   cardHost = asking ? host : null;
+  agreeGuard.drawn(cardHost);
   if (asking) $("byok-consent-text").textContent = providerConsentText(host);
   // Nothing goes to a host the card isn't agreed for, Test connection included: it waits for the yes.
   const test = $("byok-test") as HTMLButtonElement;
@@ -117,10 +120,16 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     void change({ on });
     if (on && own && endpointHost(own.baseUrl) && !agreedFor(own, endpointHost(own.baseUrl))) queueMicrotask(() => $("byok-yes").focus());
   });
+  // The host is taken as "I agree" is pressed: pressing blurs the address field, whose save can redraw the card for
+  // another host before the click lands, and then nothing is agreed.
+  $("byok-yes").addEventListener("pointerdown", () => agreeGuard.press());
+  $("byok-yes").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") agreeGuard.press(); });
   $("byok-yes").addEventListener("click", () => {
+    const pressedFor = agreeGuard.activate();
+    if (!pressedFor) return;
     // The yes is for the host the card named. The field naming another one now (an edit whose save hasn't come back
     // yet): that address is saved and the card is drawn again for its host, to be read and agreed to; nothing is agreed.
-    const next = agreeAction(cardHost, input("byok-url").value);
+    const next = agreeAction(pressedFor, input("byok-url").value);
     if (!next) return;
     if ("problem" in next) { say(next.problem, true); input("byok-url").focus(); return; }
     if ("save" in next) {

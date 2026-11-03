@@ -47,6 +47,49 @@ export function endpointProblem(url: string): string | null {
   return "Enter the service's full address, starting with https://.";
 }
 
+/** How long "I agree" ignores activation after the card is drawn for a new host: confirm.ts's own arm delay. */
+export const AGREE_ARM_MS = 500;
+
+/**
+ * The card's "I agree" as Ember's questions are (confirm.ts): drawn or redrawn for another host, it ignores activation
+ * for AGREE_ARM_MS; and the host is taken when it is pressed (pointer down, or the key), so a card redrawn between the
+ * press and the click (pressing blurs the address field, which saves it and redraws the card) agrees to nothing.
+ */
+export class AgreeGuard {
+  private host: string | null = null;
+  private drawnAt = -Infinity;
+  private pressed: { host: string | null; armed: boolean } | null = null;
+
+  constructor(private readonly now: () => number = () => Date.now(), private readonly armMs = AGREE_ARM_MS) {}
+
+  /** The card is drawn for `host` (null: no card up). A different host starts the arm delay again. */
+  drawn(host: string | null): void {
+    if (host === this.host) return;
+    this.host = host;
+    this.drawnAt = this.now();
+  }
+
+  private armed(): boolean {
+    return this.host !== null && this.now() - this.drawnAt >= this.armMs;
+  }
+
+  /** "I agree" was pressed: the host the card names now, and whether it was armed then. */
+  press(): void {
+    this.pressed = { host: this.host, armed: this.armed() };
+  }
+
+  /**
+   * "I agree" was activated: the host to agree to, or null (pressed too soon, or the card redrawn since the press). An
+   * activation with no press before it (a screen reader's) counts as pressed now.
+   */
+  activate(): string | null {
+    const p = this.pressed ?? { host: this.host, armed: this.armed() };
+    this.pressed = null;
+    if (!p.armed || !this.armed() || p.host !== this.host) return null;
+    return this.host;
+  }
+}
+
 /**
  * What Home's "I agree" does: agree for the host the card was drawn for (`cardHost`), and only for it. When the address
  * field (`typed`) names another host by the time it is clicked, that address is saved and the card drawn again for it

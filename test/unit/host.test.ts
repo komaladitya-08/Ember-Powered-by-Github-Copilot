@@ -2725,4 +2725,67 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     for (const s of sim.sessions) expect((s.sent as string[]).join("\n")).not.toContain("held question");
     await host.stop();
   });
+
+  for (const how of ["stopAnswer", "abortAll"] as const) {
+    it(`sends a request after ${how} to the new service, though the runtime never confirms the stop (third review #136)`, async () => {
+      sim.abortEnds = false;
+      let now: ActiveProvider | null = at("a.example");
+      const { host } = makeHost({ hands: hands(), provider: () => now });
+      expect(await host.start(null)).toBe("ready");
+      const before = conductorSession();
+      await host.ask("first question");
+      await vi.waitFor(() => expect(before.sent.join("\n")).toContain("first question"));
+      now = at("b.example");
+      await host[how]();
+      await host.ask("after stop");
+      await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 2000 });
+      const after = conductorSession();
+      expect(after.config.provider.baseUrl).toBe("https://b.example/v1");
+      await vi.waitFor(() => expect(after.sent.join("\n")).toContain("after stop"), { timeout: 2000 });
+      expect(before.sent.join("\n")).not.toContain("after stop");
+      await host.stop();
+    });
+  }
+
+  it("queues a request asked while the switch connects behind the held ones (third review #136)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    await host.ask("held question");
+    // The new session's creation waits: the switch is under way when the next question comes.
+    let open = () => {};
+    sim.createGate = new Promise<void>(r => { open = r; });
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(before.disconnected).toBe(true), { timeout: 3000 });
+    void host.ask("asked while switching");
+    await new Promise(r => setTimeout(r, 50));
+    sim.createGate = null;
+    open();
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    const after = conductorSession();
+    await vi.waitFor(() => expect(after.sent.join("\n")).toContain("asked while switching"), { timeout: 3000 });
+    const joined = after.sent.join("\n");
+    expect(joined.indexOf("held question")).toBeGreaterThanOrEqual(0);
+    expect(joined.indexOf("held question")).toBeLessThan(joined.indexOf("asked while switching"));
+    await host.stop();
+  });
+
+  it("drops the held requests when Ember quits: nothing reconnects afterwards", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    await host.ask("held question");
+    const clients = sim.clients.length;
+    await host.stop();
+    await new Promise(r => setTimeout(r, 400));
+    expect(sim.clients.length).toBe(clients);
+    for (const s of sim.sessions) expect((s.sent as string[]).join("\n")).not.toContain("held question");
+  });
 });

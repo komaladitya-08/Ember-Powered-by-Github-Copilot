@@ -529,8 +529,11 @@ export class TurnWatch {
   sent(): void { this.check(); }
   /** session.send failed: no turn comes for it. */
   unsent(): void { this.owed = Math.max(0, this.owed - 1); this.check(); }
-  /** Stop: the runtime ends the turn under way and drops the requests waiting. */
-  clear(): void { this.owed = 0; this.taken = false; this.working = false; this.tools.clear(); this.check(); }
+  /**
+   * Stop: the runtime ends the turn under way and drops the requests waiting. From Ember's side the turn is over at once,
+   * whether or not the runtime confirms it (a request held for a new model service mustn't wait for that for ever).
+   */
+  clear(): void { this.owed = 0; this.taken = false; this.inTurn = false; this.working = false; this.tools.clear(); this.check(); }
   /** The session is let go: nothing fires any more. */
   dispose(): void { this.over = true; this.disarm(); }
   /** The turn it gave up on has ended and the session goes on: it watches again (from what the events since say). */
