@@ -2018,9 +2018,13 @@ export class AgentHost {
    * Answers `text` with Ember's own `reply`, without a Copilot turn: kept in the conversation, shown and spoken as an
    * answer, and (asked by voice) followed by the usual follow-up window.
    */
-  private answerLocally(text: string, reply: string, voiceUnchecked?: boolean): void {
-    const asked = this.remember("you", text);
-    if (voiceUnchecked) this.voiceUnchecked.add(asked);
+  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number }): void {
+    // The request is kept as it was asked: heard unchecked, a chosen suggestion and a heard one keep what they were (a later
+    // "yes please" that reads back over this line must not take Ember's suggested words, or words heard from the speakers,
+    // for the user's own: review of #145).
+    const asked = this.remember("you", text, how.heardId);
+    if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
+    if (how.suggested) this.suggested.add(asked);
     this.presenter.say(reply);
     this.o.onAnswer?.(reply);
     this.o.onTurnEnd?.(false);
@@ -2083,7 +2087,7 @@ export class AgentHost {
       } catch (err) { saved = false; this.o.log.warn("agent.autonomy_not_saved", { err }); }
       this.o.log.info("agent.autonomy_switch", { intent: mode, set: plan.set ?? null, saved, opened: !!plan.open, verified: how.verified === true });
       // Said only once it is so: a change that couldn't be saved or recorded says that instead (review of #127).
-      this.answerLocally(text, saved ? plan.reply : AUTONOMY_NOT_SAVED, how.voiceUnchecked);
+      this.answerLocally(text, saved ? plan.reply : AUTONOMY_NOT_SAVED, how);
       return true;
     }
     // Memory's own words (app/main/memory/learning.ts): "get to know me" and its answers, the answer to Ember's own
@@ -2091,7 +2095,7 @@ export class AgentHost {
     const remembered = this.betweenTurns() ? this.o.memory?.intent?.(text, { own: !how.voiceUnchecked }) ?? null : null;
     if (remembered) {
       this.o.log.info("agent.memory_local");
-      this.answerLocally(text, remembered, how.voiceUnchecked);
+      this.answerLocally(text, remembered, how);
       return true;
     }
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
@@ -2106,7 +2110,7 @@ export class AgentHost {
       try { on = this.o.settings.get().speakResults; } catch { /* unread: said as not read out */ }
       const speaks = this.o.health?.().speaks ?? false;
       this.o.log.info("agent.results_switch", { on, saved, speaks });
-      this.answerLocally(text, resultsReply(results, { saved, on, speaks }), how.voiceUnchecked);
+      this.answerLocally(text, resultsReply(results, { saved, on, speaks }), how);
       return true;
     }
     // "Systems check": Ember's report on itself, which works when Copilot doesn't.
@@ -2116,20 +2120,20 @@ export class AgentHost {
         mic: "off", speaks: false, ...this.o.health?.(), tasks: this.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0,
       };
       this.o.log.info("agent.health_local", { phase: health.phase, mic: health.mic });
-      this.answerLocally(text, healthReply(health), how.voiceUnchecked);
+      this.answerLocally(text, healthReply(health), how);
       return true;
     }
     // "What did I miss?": the tasks that finished lately, from Ember's own record.
     if (catchUpQuestion(text) && this.betweenTurns()) {
       this.o.log.info("agent.catch_up_local");
-      this.answerLocally(text, catchUpReply(this.tasksLately(), Date.now()), how.voiceUnchecked);
+      this.answerLocally(text, catchUpReply(this.tasksLately(), Date.now()), how);
       return true;
     }
     const status = statusQuestion(text);
     if (status && this.betweenTurns()) {
       const tasks = this.tasksLately();
       this.o.log.info("agent.status_local", { kind: status, running: tasks.filter(t => t.status === "running").length });
-      this.answerLocally(text, statusReply(status, tasks, Date.now(), id => this.tasks?.holdUp(id)), how.voiceUnchecked);
+      this.answerLocally(text, statusReply(status, tasks, Date.now(), id => this.tasks?.holdUp(id)), how);
       return true;
     }
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the

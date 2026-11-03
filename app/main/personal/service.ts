@@ -196,7 +196,8 @@ export class PersonalVoice {
    */
   asked(text: string, o: { unchecked?: boolean; suggested?: boolean } = {}): void {
     if (!o.unchecked && !o.suggested) this.history = [...this.history, text].slice(-HISTORY_KEPT);
-    this.last = { lastRequest: text, lastReply: "", spoken: false, task: null };
+    // Where the words came from travels with them: only the user's own words may authorise a risky suggestion (predict.ts).
+    this.last = { lastRequest: text, lastRequestOwn: !o.unchecked && !o.suggested, lastReply: "", spoken: false, task: null };
     this.suggestions = [];
   }
 

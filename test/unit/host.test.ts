@@ -1271,6 +1271,22 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
     await stop(host);
   });
 
+  it("a request answered on the spot keeps its provenance: heard unchecked, a chosen suggestion, the row it was heard as (review of #145)", async () => {
+    const { host } = await resultUp();
+    const entry = () => host.getTranscript().filter(e => e.who === "you").at(-1)!;
+    const sets = host as unknown as { voiceUnchecked: WeakSet<object>; suggested: WeakSet<object> };
+    await host.ask("status?", undefined, undefined, { suggested: true });
+    expect(sets.suggested.has(entry())).toBe(true);
+    expect(sets.voiceUnchecked.has(entry())).toBe(false);
+    await host.ask("what did I miss?", undefined, undefined, { voiceUnchecked: true, heardId: 5 });
+    expect(sets.voiceUnchecked.has(entry())).toBe(true);
+    expect(sets.suggested.has(entry())).toBe(false);
+    expect(entry().heardId).toBe(5);
+    await host.ask("status?");
+    expect(sets.voiceUnchecked.has(entry()) || sets.suggested.has(entry())).toBe(false);
+    await stop(host);
+  });
+
   it("signed in as another account from the error state: the first account's conversation is deleted, not resumed", async () => {
     const transcripts: unknown[][] = [];
     // (Main clears the ask box's history then, as at sign-out.)

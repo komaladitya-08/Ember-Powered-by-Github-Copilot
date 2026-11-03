@@ -1104,7 +1104,7 @@ function start(): void {
    * The latest requests asked, and how, for a problem's Try again (presenter TRY_AGAIN): the request the problem offers
    * (AgentHost.takeRetry, its own turn's, not a newer one) goes again in the same words, with the same caution.
    */
-  let recentAsks: { text: string; voiceUnchecked?: boolean }[] = [];
+  let recentAsks: { text: string; voiceUnchecked?: boolean; suggested?: boolean }[] = [];
   /**
    * Voice personalisation (app/main/personal/service.ts): Voice Match learning, the transcript corrected against the
    * user's own words, and what they might say next. Made once the stores it reads are (below).
@@ -1127,7 +1127,7 @@ function start(): void {
    */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number } = {}) => {
     if (!consented()) { showHome(); return; }
-    recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) }].slice(-4);
+    recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
     personalRef?.asked(text, { unchecked: how.voiceUnchecked, suggested: how.suggested });
     askedAt = Date.now();
@@ -1931,9 +1931,10 @@ function start(): void {
     if (id === "ui:retry") {
       // Taken on the first press: a second one, while this request waits for the screen's context, asks nothing.
       const again = agent?.takeRetry() ?? null;
-      // Its caution as it was asked; one no longer remembered here is treated as heard unchecked (never the user's words for commands).
+      // Its caution as it was asked (heard unchecked, or one of Ember's suggestions: never the user's own words for
+      // commands, however often it is retried); one no longer remembered here is treated as heard unchecked.
       const how = again === null ? undefined : [...recentAsks].reverse().find(a => a.text === again);
-      if (again !== null) { captureContext(); void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true }); }
+      if (again !== null) { captureContext(); void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true, ...(how?.suggested ? { suggested: true } : {}) }); }
       return;
     }
     // One of Ember's suggestions (what the user might say next): sent as the user's click on Ember's words, so the usual

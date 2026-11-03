@@ -377,7 +377,9 @@ describe("what the user might say next (predict.ts)", () => {
   it("never suggests a risky step unless the user's own last words were about it", () => {
     const people = ["Priya"];
     expect(predictNext({ ...base, lastRequest: "Draft a reply to Sam", people }, risky).some(s => risky(s.text))).toBe(false);
-    expect(predictNext({ ...base, lastRequest: "Send the report to Sam", people }, risky).map(s => s.text)).toContain("Send it to Priya");
+    expect(predictNext({ ...base, lastRequest: "Send the report to Sam", people, lastRequestOwn: true }, risky).map(s => s.text)).toContain("Send it to Priya");
+    // The same words that weren't the user's own (heard unchecked, a chosen suggestion, or unsaid) authorise nothing risky.
+    for (const own of [false, undefined]) expect(predictNext({ ...base, lastRequest: "Send the report to Sam", people, lastRequestOwn: own }, risky).map(s => s.text)).not.toContain("Send it to Priya");
   });
 
   it("keeps the follow-up window open longer only when Ember asked something, as the consent text says (review of #145)", () => {
@@ -434,6 +436,25 @@ describe("PersonalVoice", () => {
       expect(fs.existsSync(path.join(dir, "words.json"))).toBe(false);
       expect(p.words()).toEqual([]);
       expect(p.heardItems()).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("never lets a request heard unchecked, or a suggestion the user chose, authorise a risky suggestion (review of #145)", () => {
+    const { dir } = make();
+    // Memory knows Priya: a request to send something, then "Send it to Priya" if it were the user's own.
+    try {
+      const people = new PersonalVoice({
+        log: { info: () => undefined, warn: () => undefined }, settings: () => ({ learnVoice: true, matchOn: true, learnWords: true, suggest: true }),
+        voiceprints: voiceprintStore(dir, "m.onnx"), words: wordsStore(dir), apps: () => [], risky,
+        memory: () => [{ text: "Priya Raman is my manager", source: "user" }],
+      });
+      for (const how of [{}, { unchecked: true }, { suggested: true }] as const) {
+        people.asked("Send it to Alice", how);
+        const offered = people.answered("Sent.", { spoken: true }).suggestions.map(s => s.text);
+        expect(offered.some(t => t.startsWith("Send it to Priya")), JSON.stringify(how)).toBe(Object.keys(how).length === 0);
+      }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -655,6 +676,11 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
   });
   it("takes an Ask box suggestion only if it offers it now, and sends it as Ember's words the user chose (review of #145)", () => {
     expect(MAIN).toContain('if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;\n    askWindow.hide();\n    lastAskByVoice = false;\n    log.info("ask.suggestion");\n    void askEmber(text, { suggested: true });');
+  });
+  it("keeps a retried suggestion (or one heard unchecked) what it was: Try again resubmits it with its provenance (review of #145)", () => {
+    expect(MAIN).toContain("let recentAsks: { text: string; voiceUnchecked?: boolean; suggested?: boolean }[] = [];");
+    expect(MAIN).toContain("recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);");
+    expect(MAIN).toContain("void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true, ...(how?.suggested ? { suggested: true } : {}) });");
   });
   it("pairs a Voice Match sample with the utterance it came from by its number, not the latest one heard", () => {
     expect(MAIN).toContain("const r = lastHeard && lastHeard.utterance === s.utterance ? lastHeard : null;");

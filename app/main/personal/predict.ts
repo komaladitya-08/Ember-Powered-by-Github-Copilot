@@ -14,6 +14,12 @@
 export interface PredictInput {
   /** The user's last request, in their own words (typed or heard). */
   lastRequest: string;
+  /**
+   * `lastRequest` is the user's own words (typed, or heard where Ember can tell the speakers from the user). False for
+   * one heard where it can't tell, or a suggestion the user chose: that request is Ember's or the room's, and never
+   * authorises a risky suggestion ("Send it to Priya" after a heard "Send it to Alice"). Absent counts as not own.
+   */
+  lastRequestOwn?: boolean;
   /** Ember's reply to it (plain text), "" while none came. */
   lastReply: string;
   /** The reply was spoken aloud. */
@@ -68,7 +74,8 @@ export function predictNext(p: PredictInput, risky: (words: string) => boolean):
   // An answer with something to it that wasn't said aloud.
   if (!p.spoken && p.lastReply.trim().length > 60 && !asked) add("Read it out");
   // Sending, only after the user's own words were about sending: to someone they told Ember about.
-  if (/\b(send|email|mail|message|forward|share)\b/.test(req) && risky(p.lastRequest)) {
+  const own = p.lastRequestOwn === true;
+  if (own && /\b(send|email|mail|message|forward|share)\b/.test(req) && risky(p.lastRequest)) {
     const who = p.people.find(n => !req.includes(said(n)) && /^[\p{Lu}]/u.test(n));
     if (who) add(`Send it to ${who}`, true);
   }
@@ -91,7 +98,7 @@ export function predictNext(p: PredictInput, risky: (words: string) => boolean):
     if (!reply.includes("remind")) add("Remind me in an hour");
   }
   // Never a risky step, but one built from the user's own risky request just now.
-  const userRisky = risky(p.lastRequest);
+  const userRisky = own && risky(p.lastRequest);
   return out.filter(t => !risky(t) || (userRisky && fromRequest.has(t))).slice(0, MAX_SUGGESTIONS).map(text => ({ text }));
 }
 
