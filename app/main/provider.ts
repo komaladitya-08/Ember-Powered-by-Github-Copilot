@@ -192,12 +192,13 @@ export class ProviderKeyStore {
   }
 
   /** Seals and writes `key` for `host`, or says why it wasn't. Never throws. */
-  async save(key: string, host: string): Promise<KeySave> {
+  async save(key: string, host: string, current: () => boolean = () => true): Promise<KeySave> {
     const revision = ++this.revision;
     const problem = apiKeyProblem(key);
     if (problem) return { ok: false, why: problem };
     if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
     if (!(await this.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
+    if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
     const text = JSON.stringify({ v: 1, host, key: key.trim() });
     let sealed: Buffer;
     try {
@@ -205,7 +206,7 @@ export class ProviderKeyStore {
     } catch {
       return { ok: false, why: KEY_NO_KEYRING };
     }
-    if (revision !== this.revision) return { ok: false, why: PROVIDER_HOST_CHANGED };
+    if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
     const r: SaveResult = this.write(this.file, sealed);
     if (r !== "kept" || this.write(hostFile(this.file), Buffer.from(host)) !== "kept") { this.clear(); return { ok: false, why: KEY_WRITE_FAILED }; }
     return { ok: true };
@@ -406,7 +407,7 @@ export function createProviderService(d: ProviderServiceDeps) {
         // Serialise writes so cancelling an old save cannot erase a newer key.
         const operation = saving.then(async (): Promise<KeySave> => {
           if (started !== revision || host !== hostNow() || !allowed()) return { ok: false, why: PROVIDER_HOST_CHANGED };
-          const r = await d.keys.save(key, host);
+          const r = await d.keys.save(key, host, () => started === revision && host === hostNow() && allowed());
           if (started !== revision || host !== hostNow() || !allowed()) {
             d.keys.clear();
             return { ok: false, why: PROVIDER_HOST_CHANGED };

@@ -445,3 +445,20 @@ describe("overlapping provider operations", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+
+describe("the provider keyring write boundary", () => {
+  it("writes nothing when consent changes while encryption waits", async () => {
+    let release!: (bytes: Buffer) => void;
+    let current = true;
+    const kr = box({ encryptStringAsync: () => new Promise(r => { release = r; }) });
+    const file = path.join(tmp(), "provider-key.bin");
+    const keys = new ProviderKeyStore(file, kr.box, { asyncKeyring: true });
+    const pending = keys.save(KEY, "a.example", () => current);
+    await Promise.resolve();
+    current = false;
+    release(Buffer.from("sealed"));
+    expect((await pending).ok).toBe(false);
+    expect(fs.existsSync(file)).toBe(false);
+  });
+});
