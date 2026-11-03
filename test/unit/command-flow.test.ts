@@ -12,6 +12,7 @@ import {
   scriptLanguage,
 } from "../../app/main/commands/flow";
 import { classifyCommand } from "../../app/main/commands/classify";
+import { revokePendingCommands } from "../../app/main/commands/pending";
 import { comparePaths, rootOwned } from "../../app/main/commands/scripts";
 import type {
   Classification, CommandCapability, CommandCard, CommandDecision, CommandMode, CommandService, DecideInput, GitFacts, PathFact, RunExit, RunnerFacts,
@@ -2037,5 +2038,124 @@ describe("AI review of commands that would ask (review.ts)", () => {
       await call(h, { target: "this computer", command });
       expect(r.seen, command).toEqual([]);
     }
+  });
+});
+
+describe("live command permission revocation", () => {
+  it.each([LOCAL, WSL, REMOTE])("rechecks $id after a countdown, using the real classifier", async binding => {
+    let on = true;
+    const h = harness({ binding, words: "delete the build folder", cap: () => ({ state: on ? "on" : "off", askEvery: null }) });
+    h.ctx.state.cwd = "/home/ana/proj";
+    h.ctx.service.window.announce = async () => { on = false; return true; };
+    const r = await call(h, { target: binding.kind === "local" ? "local" : binding.label, command: "rm -r build" });
+    expect(r.resultType).toBe("denied");
+    expect(h.starts).toHaveLength(0);
+  });
+
+  it.each(["facts", "inspect", "git", "review", "approval", "countdown", "remote"])("cannot start after revocation during %s", async stage => {
+    const h = harness({ binding: LOCAL, words: "delete the build folder", run: (_s, n) => stage === "remote" && n === 1
+      ? { exit: exitOk({ ended: "refused-remote", needsConfirm: true }) } : {} });
+    makeJudge({ classify: () => ordinary({ probe: ["/home/ana/build"], needsGit: stage === "git" }), decide: () => decision({
+      verdict: ["approval", "review"].includes(stage) ? "ask" : stage === "countdown" ? "announce" : "run",
+      ...(stage === "countdown" ? { requested: { intent: "delete", announce: "Deleting build." } } : {}),
+    }) });
+    const revoke = () => revokePendingCommands("local");
+    if (stage === "facts") h.ctx.service.runner.facts = async () => { revoke(); return FACTS; };
+    if (stage === "inspect") h.ctx.service.runner.inspect = async p => { revoke(); return p.map(real => ({ real, exists: true })); };
+    if (stage === "git") h.ctx.service.runner.gitFacts = async () => { revoke(); return null; };
+    if (stage === "review") h.ctx.review = async () => { revoke(); return { run: true, why: "routine", does: "Runs tests." }; };
+    if (["approval", "remote"].includes(stage)) h.ctx.confirmer.ask = async () => { revoke(); return "once"; };
+    if (stage === "countdown") h.ctx.service.window.announce = async () => { revoke(); return true; };
+    const result = await call(h, { target: "local" });
+    expect(result.resultType).not.toBe("success");
+    expect(h.starts).toHaveLength(stage === "remote" ? 1 : 0);
+  });
+
+  it("rejects a tightened ask policy and an unreadable live capability", async () => {
+    for (const broken of [false, true]) {
+      let changed = false;
+      const h = harness({ binding: LOCAL, words: "delete the build folder", cap: () => {
+        if (changed && broken) throw new Error("unavailable");
+        return { state: "on", askEvery: changed ? "user" : null };
+      } });
+      h.ctx.state.cwd = "/home/ana/proj";
+      h.ctx.service.window.announce = async () => { changed = true; return true; };
+      expect((await call(h, { target: "local", command: "rm -r build" })).resultType).toBe("denied");
+      expect(h.starts).toHaveLength(0);
+    }
+  });
+
+  it("off then on cancels a pending approval but permits a genuinely new request", async () => {
+    const h = harness({ binding: LOCAL, askEvery: true });
+    h.ctx.confirmer.ask = async (_q, signal) => new Promise(resolve => {
+      signal!.addEventListener("abort", () => resolve(null), { once: true });
+      revokePendingCommands("local");
+    });
+    expect((await call(h, { target: "local" })).resultType).not.toBe("success");
+    expect(h.starts).toHaveLength(0);
+    h.ctx.confirmer.ask = async () => "once";
+    expect((await call(h, { target: "local" })).resultType).toBe("success");
+    expect(h.starts).toHaveLength(1);
+  });
+
+  it("revokes queued runs without stopping running jobs, and Stop still works", async () => {
+    makeJudge();
+    const shared = harness({ binding: LOCAL, run: () => ({ hang: true }) });
+    const busy = Array.from({ length: MAX_RUNS_PER_TARGET }, () => {
+      const h = harness({ binding: LOCAL }); h.ctx.service = shared.ctx.service; return h;
+    });
+    const running = busy.map(h => call(h, { target: "local" }));
+    await vi.waitFor(() => expect(shared.runs).toHaveLength(MAX_RUNS_PER_TARGET));
+    const queued = harness({ binding: LOCAL }); queued.ctx.service = shared.ctx.service;
+    const waiting = call(queued, { target: "local" });
+    await tick();
+    revokePendingCommands("local");
+    expect((await waiting).resultType).not.toBe("success");
+    expect(shared.starts).toHaveLength(MAX_RUNS_PER_TARGET);
+    expect(shared.runs.every(r => r.stops.length === 0)).toBe(true);
+    busy.forEach(h => h.abort.abort());
+    await Promise.all(running);
+    expect(shared.runs.every(r => r.stops.includes("task"))).toBe(true);
+  });
+
+  it("binds revocation to the exact target, with WSL master covering only distros", async () => {
+    for (const [binding, off, cancelled] of [[REMOTE, "ssh:build-0", false], [LOCAL, "wsl", false], [WSL, "wsl", true]] as const) {
+      const h = harness({ binding, askEvery: true });
+      h.ctx.confirmer.ask = async () => { revokePendingCommands(off); return "once"; };
+      const result = await call(h, { target: binding.kind === "local" ? "local" : binding.label });
+      expect(result.resultType === "success").toBe(!cancelled);
+      expect(h.starts).toHaveLength(cancelled ? 0 : 1);
+    }
+  });
+});
+
+describe("revocation during consent and path checks", () => {
+  it("does not save first-use consent from a card invalidated by switching off", async () => {
+    const consent: ConsentPanel = { feature: "commands", target: "local", targetLabel: "This computer", title: "Turn on?", body: ["…"], yes: "Turn on", no: "Not now", sha256: "a".repeat(64) };
+    const h = harness({ binding: LOCAL, consent, cap: () => ({ state: "needs-consent", askEvery: null }) });
+    h.ctx.confirmer.ask = async () => { revokePendingCommands("local"); return "once"; };
+    expect((await call(h, { target: "local" })).resultType).not.toBe("success");
+    expect(h.consented()).toBe(0);
+    expect(h.starts).toHaveLength(0);
+  });
+
+  it.each(["folder", "script"])("does not start after switching off during %s inspection", async stage => {
+    let revoked = false;
+    const off = () => { revoked = true; revokePendingCommands("local"); };
+    const h = harness({ binding: LOCAL,
+      ...(stage === "folder" ? { inspect: async (ps: string[]) => { off(); return ps.map(real => ({ real, exists: true })); } }
+        : { readScript: async () => { off(); return "echo hello"; } }),
+    });
+    const result = await call(h, { target: "local", ...(stage === "folder" ? { cwd: "/home/ana/proj" } : { command: "sh build.sh" }) });
+    expect(revoked).toBe(true);
+    expect(result.resultType).not.toBe("success");
+    expect(h.starts).toHaveLength(0);
+  });
+
+  it("does not start on a replacement target after the card was answered", async () => {
+    const h = harness({ binding: LOCAL, askEvery: true });
+    h.ctx.confirmer.ask = async () => { h.ctx.service.binding = REMOTE; return "once"; };
+    expect((await call(h, { target: "local" })).resultType).toBe("denied");
+    expect(h.starts).toHaveLength(0);
   });
 });

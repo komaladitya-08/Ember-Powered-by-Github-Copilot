@@ -14,6 +14,7 @@
  * didn't name, or approve anything. Plain Node (L13): Electron reaches it only through TargetsDeps.
  */
 
+import { revokePendingCommands } from "../commands/pending";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -1122,7 +1123,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (!wslAllowed(admin())) return { ok: false, message: "Your organisation doesn't allow Ember to work in WSL." };
     if (!wsl) return { ok: false, message: "WSL isn't installed on this computer." };
     const own = settings.own().targets;
-    if (!on) { settings.update({ targets: { ...own, wsl: { ...own.wsl, on: false } } }); refresh(); return { ok: true }; }
+    if (!on) { settings.update({ targets: { ...own, wsl: { ...own.wsl, on: false } } }); revokePendingCommands("wsl"); refresh(); return { ok: true }; }
     if (!consentCurrent("wsl", own.wsl.consent)) {
       await refreshWsl();
       const d = defaultDistro(wslFacts);
@@ -1158,6 +1159,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       }
     }
     setCommandsSwitch(settings, id, on, askEvery);
+    if (!on) revokePendingCommands(id);
     refresh();
     return { ok: true };
   }

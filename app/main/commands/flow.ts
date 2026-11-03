@@ -25,6 +25,7 @@ import type { TargetBinding } from "../targets/types";
 import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
+import { pendingCommand } from "./pending";
 import { carriedText } from "./carried";
 import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
 import { classifyCommand } from "./classify";
@@ -644,15 +645,18 @@ export async function runCommandTool(a: RunCommandArgs, ctx: CommandFlowContext)
   ctx.state.running = true;
   // "Starting Ubuntu…" while the facts boot a stopped distro, before the run has a tab (§3.8.3 step 3).
   const endPending = followPending(ctx.service, ctx.task.id);
+  const pending = pendingCommand(binding.id, ctx.signal);
+  const current = { ...ctx, signal: pending.signal, isOver: () => ctx.isOver() || pending.signal.aborted };
   try {
-    return await flow(a, ctx, endPending);
+    return await flow(a, current, endPending, pending);
   } finally {
+    pending.dispose();
     endPending();
     ctx.state.running = false;
   }
 }
 
-async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () => void): Promise<ToolResultObject> {
+async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () => void, pending: ReturnType<typeof pendingCommand>): Promise<ToolResultObject> {
   const svc = ctx.service;
   const binding = svc.binding;
   const place = placeName(binding);
@@ -889,10 +893,20 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     let rules = d.rules;
     let asked = false;
     for (;;) {
+      // Every await above can outlive consent or a switch change. Fail closed on tightening; a new request
+      // gets a new decision/card rather than treating an old announcement as approval.
+      if (ctx.isOver()) return STOPPED();
+      let live: CommandCapability;
+      try { live = svc.capability(); } catch { return denied("Couldn't check whether commands are still allowed. Finish the task saying so."); }
+      if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
+      if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
+      if (svc.mode() === "off" || (approvedAt === null && (live.askEvery !== null || svc.userAskEvery() || svc.mode() === "ask"))) {
+        return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
+      }
       const run = await runOnce(ctx, j, {
         runId, shell, cwd, command: a.command, timeoutS, card: card("run", d.verdict === "run" ? [] : [...d.says, why]),
         stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt },
-      });
+      }, pending.started);
       if (run === "stopped") { noteDownloads(ctx, cls); return STOPPED(); }
       if (run === "unseen") { noteDownloads(ctx, cls); return fail(UNSEEN); }
       const { exit } = run;
@@ -902,6 +916,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       }
       if (exit.ended === "refused-remote" && exit.needsConfirm && !asked) {
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
+        pending.waiting();
+        if (ctx.isOver()) { reaskEnded(svc, runId, "stopped"); return STOPPED(); }
         asked = true;
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
         // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
@@ -963,7 +979,7 @@ interface RunOutcome { exit: RunExit; out: OutputKeeper; tracker: SecretTracker;
 async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   runId: string; shell: ShellId; cwd: string; command: string; timeoutS: number; card: CommandCard;
   stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null };
-}): Promise<RunOutcome | "stopped" | "unseen"> {
+}, started: () => void): Promise<RunOutcome | "stopped" | "unseen"> {
   if (ctx.isOver()) return "stopped";
   const svc = ctx.service;
   const { cols, rows } = windowSize(svc.window) ?? ctx.size();
@@ -974,6 +990,7 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
       approval: o.stamp.approvedAt === null ? null : { ageMs: Math.max(0, Math.round(performance.now() - o.stamp.approvedAt)) },
     },
   };
+  started();
   const running = svc.runner.start(spec);
   const tracker = j.trackSecretPrompts({ interactive: running.interactive });
   const out = new OutputKeeper(tracker);

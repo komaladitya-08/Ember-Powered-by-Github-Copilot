@@ -75,7 +75,8 @@ nothing changed." (when connecting, in the bubble with **Try again**). If a late
 next command a task runs there shows the new card first. Under each switch, **Ask me before every command** makes every
 command on that computer ask. **Open the command window** shows it.
 
-To turn commands off again, turn the switch off. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
+To turn commands off again, turn the switch off. This cancels commands still waiting for approval, a countdown or a
+free slot. Turning the switch back on does not revive them. Commands already running keep running. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
 Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop every running command at once.
 
 ### 2.2 Ember's command window
