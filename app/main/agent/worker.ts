@@ -978,8 +978,6 @@ export class Worker {
    * one already there. Cleared when the app replaces it: the next window read is its own.
    */
   private home: { pid: number | null; path?: string; title: string; app: string; others: AxWindow[]; listed: boolean } | null = null;
-  /** The latest window listing before a click (anchorHome), reused for a second: a full UIA/AX listing each time is not free. */
-  private lastListing: { at: number; wins: AxWindow[] } | null = null;
   /** Labels borrowed by unnamed controls (a switch takes the label beside it). */
   private labels = new Map<number, string>();
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
@@ -1981,11 +1979,23 @@ export class Worker {
   }
 
   /**
-   * A step is about to run in the window read last: a non-dialog window of another app than the task's own becomes its
-   * own (the task works there now). A click in its own window first notes the app's other windows (`others`), so a
-   * window the click opens in its place is told apart from one already there.
+   * Whether the step about to run is a click in what will then be the task's own window (anchorHome), so the app's
+   * windows are listed first. Changes nothing: act() starts the listing during its pause for Ember to arrive (2.4 ms p50
+   * over AT-SPI) and drops it if the step doesn't run.
    */
-  private async anchorHome(kind: ActionKind): Promise<void> {
+  private listsBefore(kind: ActionKind): boolean {
+    const w = this.window;
+    if (kind !== "click" || DIALOG_ROLES.has(w.role ?? "")) return false;
+    return !this.home || this.home.app !== w.app || sameWindow(this.target, this.home);
+  }
+
+  /**
+   * The step is running now in the window read last: a non-dialog window of another app than the task's own becomes its
+   * own (the task works there now). A click in its own window keeps the app's other windows listed just before
+   * (`listing`; null when the listing failed or none was taken), so a window the click opens in its place is told apart
+   * from one already there.
+   */
+  private anchorHome(kind: ActionKind, listing: AxWindow[] | null): void {
     const w = this.window;
     if (DIALOG_ROLES.has(w.role ?? "")) return;
     if (!this.home || this.home.app !== w.app) {
@@ -1993,20 +2003,18 @@ export class Worker {
     }
     const home = this.home;
     if (kind !== "click" || !sameWindow(this.target, home)) return;
-    // (It runs during act()'s 350 ms pause for Ember to arrive, so a click takes no longer for it.)
-    const fresh = this.lastListing && Date.now() - this.lastListing.at < 1000 ? this.lastListing.wins : null;
-    const all = fresh ?? await this.perception.windows().catch(() => null);
     // A listing that failed knows nothing: no window can then be told apart as one the click opened.
-    if (!all) { home.others = []; home.listed = false; return; }
-    if (!fresh) this.lastListing = { at: Date.now(), wins: all };
-    home.others = all.filter(o => o.app === home.app && !sameWindow(o, home));
-    home.listed = true;
+    home.others = listing ? listing.filter(o => o.app === home.app && !sameWindow(o, home)) : [];
+    home.listed = listing !== null;
   }
 
-  /** The task read or listed this window itself (a window it was never shown is never named to it as the way on). */
+  /**
+   * The task perceived this window itself. A window it only saw named in list_windows doesn't count: that lists the
+   * user's own windows too (the File Explorer beside a Run dialog), and none of those is named to it as the way on.
+   */
   private knows(w: { app: string; pid: number | null; path?: string; name: string }): boolean {
     for (const r of this.read.values()) {
-      if (r.described || r.app !== w.app || (r.pid ?? null) !== (w.pid ?? null)) continue;
+      if (r.described || r.listed || r.app !== w.app || (r.pid ?? null) !== (w.pid ?? null)) continue;
       if (r.path && w.path ? r.path === w.path : r.window === w.name) return true;
     }
     return false;
@@ -2349,14 +2357,16 @@ export class Worker {
     try {
       if (this.isOver) return STOPPED();
       if (node.bounds) this.fly(node.bounds);
-      // The task's own window, and before a click in it the app's windows (it never throws), while Ember flies there.
-      const anchored = this.anchorHome(kind);
+      // Before a click in the task's own window, the app's windows, listed while Ember flies there (it never throws,
+      // and changes nothing until anchorHome takes it, once the step is sure to run).
+      const listing = this.listsBefore(kind) ? this.perception.windows().catch(() => null) : Promise.resolve(null);
       await new Promise(r => setTimeout(r, 350)); // let Ember arrive, so the user sees where it acts
       if (this.isOver) return STOPPED();
       // The user may have taken over the desk while Ember waited for the question, the window or its turn.
       if (this.place?.userInControl()) return this.deskTaken(kind, element);
-      await anchored;
+      const listed = await listing;
       if (this.isOver) return STOPPED();
+      this.anchorHome(kind, listed);
       this.authorized(req, { role: node.role, name: node.name });
       const res = await run();
       if (kind === "text" && res.ok) this.noteTyped(field, prior + (value ?? ""));

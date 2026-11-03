@@ -50,6 +50,8 @@ function makeWorker(o: {
   opens?: { name: string; role?: string; app?: string; pid?: number; path?: string };
   /** The one installed app (its name is the window's app): open_app starts it, and this window appears. */
   launches?: { name: string; role?: string; app: string; pid?: number; path?: string };
+  /** The window listing fails when this says so (called once a listing). */
+  listFails?: () => boolean;
 } = {}) {
   let closed = false;
   const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
@@ -93,7 +95,11 @@ function makeWorker(o: {
         }
         return closed ? { ...seen, window: null, nodes: [], text: "", capture: null } : { ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: null };
       },
-      read: async () => seen, windows: async () => (o.wins ? [...open] : closed ? [] : [window]),
+      read: async () => seen,
+      windows: async () => {
+        if (o.listFails?.()) throw new Error("the accessibility helper didn't answer");
+        return o.wins ? [...open] : closed ? [] : [window];
+      },
     } as never,
     sidecar: {
       readElement: async (id: number) => {
@@ -227,14 +233,44 @@ describe("a task whose own step closes its window (the owner's report of 2026-11
     expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
   });
 
-  it("goes back to the dialog's app's window it listed, never to list_windows", async () => {
+  it("never goes back to a window it only saw in list_windows (the user's own window: review of PR #139)", async () => {
     const { call } = makeWorker({ name: "Save", closes: true, wins: [{ name: "Save As", role: "file chooser", path: "/w/2" }, { name: "notes.txt", path: "/w/1" }, { name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/9" }] });
     await call("perceive_window", {});
     await call("list_windows", {});
     await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("never sends it into the user's Explorer window it only listed after Explorer's Run dialog closes", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Run", role: "dialog", app: "explorer", pid: 10, path: "/w/1" }, { name: "Downloads - File Explorer", app: "explorer", pid: 10, path: "/w/2" }] });
+    await call("perceive_window", {});
+    expect((await call("list_windows", {})).textResultForLlm).toContain("Downloads");
+    await call("click", { id: 1 });
     const look = await call("perceive_window", {});
-    expect(look.textResultForLlm).toBe(dialogClosedNote({ app: "gedit", title: "notes.txt" }));
-    expect(look.textResultForLlm).not.toContain("list_windows");
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("Downloads");
+  });
+
+  it("never sends it to a listed Explorer window after Properties closes over the Firefox window it read", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/1" }, { name: "Properties", role: "dialog", app: "explorer", pid: 10, path: "/w/2" }, { name: "Downloads - File Explorer", app: "explorer", pid: 10, path: "/w/3" }] });
+    await call("perceive_window", {});
+    await call("list_windows", {});
+    await call("switch_window", { title: "Properties" });
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toMatch(/Downloads|Inbox/);
+  });
+
+  it("names no window as its app's replacement when the listing before the click failed", async () => {
+    let n = 0;
+    const { call } = makeWorker({ name: "Open", closes: true, listFails: () => n++ === 0, wins: [{ name: "LibreOffice", app: "soffice", pid: 7, path: "/w/1" }, { name: "notes.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/8" }], opens: { name: "letter.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/9" } });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    // The first listing (the one before the click) failed; the next one works, and still names nothing.
+    expect(n).toBe(1);
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(n).toBe(2);
   });
 
   it("never sends it back to the user's window of another app after another app's dialog closes (Properties over Firefox, review of PR #139)", async () => {
