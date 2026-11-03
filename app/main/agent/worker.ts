@@ -33,7 +33,7 @@ import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { injectionSignals, INJECTION_NOTE } from "../perception/injection";
-import { canonicalKeys, foldLabel, normalizeLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
+import { canonicalKeys, DIALOG_TEXT_MAX, foldLabel, normalizeLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
 import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand, type HandChecks } from "../hands/borrow";
@@ -728,7 +728,7 @@ function intoSheet(n: AxNode | undefined, byId: (id: number) => AxNode | undefin
 }
 /** Is `n` in a web page (inside a "document web": Chromium's, Firefox's, an Electron app's), where Enter in a field can send? */
 /** A dialog as the policy reads it (ActionRequest.dialog): its title, its words, and whether it is a message box or a page's own. */
-type Dialog = { name: string; text: string; alert?: boolean };
+type Dialog = { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean };
 const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
 /** The dialog `start` sits in (see Worker.dialogOf), looked up through `get` among `all` the nodes read. */
 function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>): Dialog | undefined {
@@ -739,8 +739,11 @@ function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | u
       const inside = (n: AxNode) => { let p = n.parent; for (let j = 0; p !== null && j < 40; j++) { if (p === top) return true; p = get(p)?.parent ?? null; } return false; };
       const words = [...all].filter(n => inside(n) && /label|static|heading|paragraph|text/.test(n.role) && !n.secret)
         .map(n => n.name || n.text || "").filter(Boolean).join(" ");
-      const alert = cur.role === "alert" || inWebPage(cur, get);
-      return { name: cur.name, text: words.slice(0, 400), ...(alert ? { alert } : {}) };
+      // A page's own dialog (an alert(), "example.com says") is marked, and so are words cut short: "Work without
+      // asking" never answers either (policy.ts's acknowledgesOnly).
+      const page = inWebPage(cur, get);
+      const alert = cur.role === "alert" || page;
+      return { name: cur.name, text: words.slice(0, DIALOG_TEXT_MAX), ...(alert ? { alert } : {}), ...(page ? { page } : {}), ...(words.length > DIALOG_TEXT_MAX ? { truncated: true } : {}) };
     }
     cur = cur.parent !== null ? get(cur.parent) : undefined;
   }

@@ -192,14 +192,14 @@ describe("autonomyInForce (its switch, its card and the administrator)", () => {
 });
 
 describe("“Work without asking”'s card (FEATURE_CONSENT_VERSION.autonomy)", () => {
-  it("is versioned on its own, at 1", () => {
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(1);
+  it("is versioned on its own, at 2 since it answers simple message boxes too (security review of #140)", () => {
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(2);
   });
 
   it("says plainly what runs without asking, what still asks, that Ember says what it does, and that a stop always works", () => {
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/use your apps, borrow your mouse and keyboard, run ordinary commands and move text between apps/);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/use your apps, borrow your mouse and keyboard, run ordinary commands, move text between apps and answer simple message boxes \(an OK or Close that only says it has read the message\)/);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It says what it is doing as it goes/);
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and dangerous commands/);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question/);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/“Ember, stop”, or Ember's stop shortcut, stops everything at once/);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/that task goes back to asking/);
     // Sentence case, curly quotes, no raw keys (CLAUDE.md "Writing UI copy").

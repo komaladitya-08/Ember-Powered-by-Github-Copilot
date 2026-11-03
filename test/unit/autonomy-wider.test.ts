@@ -174,20 +174,49 @@ describe("an ordinary borrow on Windows with all four scopes on (the owner's rep
   });
 });
 
-describe("typing with the borrowed keyboard on Windows: what goes ahead and what still asks", () => {
+describe("typing line breaks with the borrowed keyboard: only plain text editors go ahead (allow-list, security review of #140)", () => {
   const typed = (o: Partial<ActionRequest>) => winPolicy().decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, ...o }));
+  const on = (os: "linux" | "darwin" | "win32") => new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os, keys: KEYS[os] });
 
-  it("announces line breaks into a multi-line editor outside a web page", () => {
+  it("announces line breaks into Notepad, gedit and TextEdit, never with the text", () => {
     const d = typed({ value: "milk\r\neggs" });
     expect(d).toMatchObject({ verdict: "allow", autonomy: true, remember: false });
     expect(d.announce).toBe(`Using your keyboard to type 10 characters in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
     expect(d.announce).not.toMatch(/milk|eggs/);
+    for (const [os, app] of [["linux", "gedit"], ["linux", "mousepad"], ["darwin", "TextEdit"], ["win32", "notepad++.exe"]] as const) {
+      expect(on(os).decide(notepad({ kind: "cursor_text", app, window: "list.txt", element: { role: "text", name: "" }, mode: "insert", multiLine: true, value: "milk\neggs" })).autonomy, app).toBe(true);
+    }
   });
 
-  it("still asks where Enter or Tab can submit or move on: a tab, a one-line field, a web page, a browser or chat app", () => {
+  it("asks for every app that isn't a known plain editor: chat, mail and meeting apps, Electron apps, Phone Link (B2)", () => {
+    const probes: ["linux" | "darwin" | "win32", string, string][] = [
+      ["linux", "pidgin", "text"], ["linux", "zoom", "text"], ["linux", "quassel", "text"], ["linux", "hexchat", "text"], ["linux", "evolution", "text"],
+      ["linux", "skypeforlinux", "text"], ["linux", "wire", "text"],
+      ["win32", "lync.exe", "document text"], ["win32", "PhoneExperienceHost.exe", "document text"], ["win32", "Zoom.exe", "document text"],
+      ["win32", "CiscoCollabHost.exe", "document text"], ["win32", "Skype.exe", "text"], ["win32", "WINWORD.EXE", "document text"],
+      ["darwin", "zoom.us", "text"], ["darwin", "Messages", "text"],
+    ];
+    for (const [os, app, role] of probes) {
+      const d = on(os).decide(notepad({ kind: "cursor_text", app, window: "Chat", element: { role, name: "" }, mode: "insert", multiLine: true, value: "hi\nsee you" }));
+      expect(d.verdict, app).toBe("confirm");
+      expect(d.autonomy, app).toBeUndefined();
+      expect(d.waivable, app).toBeUndefined();
+    }
+  });
+
+  it("asks in a spreadsheet's cell and Calc's input line, where Enter commits and moves to the next cell (B2)", () => {
+    const calc = (o: Partial<ActionRequest>) => on("linux").decide(notepad({ kind: "cursor_text", app: "soffice.bin", window: "Budget.ods - LibreOffice Calc", mode: "insert", multiLine: true, value: "hi\nsee you", ...o }));
+    expect(calc({ element: { role: "paragraph", name: "" }, formula: "hi\nsee you" }).autonomy).toBeUndefined();
+    expect(calc({ element: { role: "text", name: "Input line" }, formula: "hi\nsee you" }).autonomy).toBeUndefined();
+    // Notepad itself, with a formula set (never a plain editor's text then).
+    expect(typed({ value: "a\nb", formula: "a\nb" }).autonomy).toBeUndefined();
+  });
+
+  it("still asks for a tab, a one-line field, a web page, a browser or a chat app, even in Notepad's place", () => {
     for (const [what, o] of [
       ["a tab", { value: "milk\teggs" }],
       ["a one-line field", { value: "milk\neggs", multiLine: undefined, element: { role: "entry", name: "Search" } }],
+      ["not said to be multi-line", { value: "milk\neggs", multiLine: undefined }],
       ["a web page", { value: "milk\neggs", inPage: true }],
       ["a browser", { value: "milk\neggs", app: "msedge.exe", window: "Compose - Mail" }],
       ["a chat app", { value: "hi\nthere", app: "Teams.exe", window: "Chat | Microsoft Teams" }],
@@ -206,71 +235,121 @@ describe("typing with the borrowed keyboard on Windows: what goes ahead and what
 
   it("asks as before with the mode off: the same question, every time, no Always", () => {
     const d = winPolicy(null).decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, value: "milk\neggs" }));
-    expect(d).toMatchObject({ verdict: "confirm", risky: true, everyTime: true, remember: false, reason: "the text contains line breaks, typed with Enter in a multi-line editor" });
+    expect(d).toMatchObject({ verdict: "confirm", risky: true, everyTime: true, remember: false, reason: "the text contains line breaks, typed with Enter in a text editor" });
   });
 });
 
-describe("dialogs with all four scopes on", () => {
-  const dialog = (name: string, text: string, button = "OK", o: Partial<ActionRequest> = {}) =>
-    notepad({ element: { role: "push button", name: button }, ...o, dialog: { name, text, ...(o.dialog?.alert ? { alert: true } : {}) } });
+describe("dialogs with all four scopes on: only an acknowledgement of a message box goes ahead (allow-list, security review of #140)", () => {
+  type Extra = { alert?: boolean; page?: boolean; truncated?: boolean };
+  const box = (name: string, text: string, button = "OK", o: Partial<ActionRequest> = {}, extra: Extra = { alert: true }) =>
+    notepad({ element: { role: "push button", name: button }, ...o, dialog: { name, text, ...extra } });
+  const mac = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "darwin", keys: KEYS.darwin });
+  const CANNOT_FIND = "Cannot find \"milk\"";
 
-  it("answers a dialog that names nothing risky without a question, and says only that it answered a dialog", () => {
+  it("acknowledges Notepad's “Cannot find” without a question, and says only that it answered a message box", () => {
     const e = winPolicy();
-    const alert = e.decide(dialog("Notepad", "Cannot find \"milk\"", "OK", { dialog: { name: "Notepad", text: "Cannot find \"milk\"", alert: true } }));
-    expect(alert).toMatchObject({ verdict: "allow", autonomy: true });
-    expect(alert.announce).toBe(`Answering a dialog in ${NOTEPAD}, without asking as you let me.`);
-    expect(alert.announce).not.toMatch(/milk|Cannot/);
+    const ok = e.decide(box("Notepad", CANNOT_FIND));
+    expect(ok).toMatchObject({ verdict: "allow", autonomy: true });
+    expect(ok.announce).toBe(`Answering a message box in ${NOTEPAD}, without asking as you let me.`);
+    expect(ok.announce).not.toMatch(/milk|Cannot/);
+    expect(e.decide(box("Notepad", CANNOT_FIND, "Close")).autonomy).toBe(true);
     // With the borrowed mouse, and with Enter on its OK.
-    expect(e.decide(dialog("Notepad", "Cannot find \"milk\"", "OK", { kind: "cursor_click", dialog: { name: "Notepad", text: "Cannot find \"milk\"", alert: true } })).announce)
-      .toBe(`Using your mouse to answer a dialog in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
-    expect(e.decide(dialog("Notepad", "Cannot find \"milk\"", "OK", { kind: "keys", value: "Return", dialog: { name: "Notepad", text: "Cannot find \"milk\"", alert: true } })).announce)
-      .toBe(`Using your keyboard to answer a dialog in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
-    // An app's own options dialog (not about security).
-    expect(e.decide(dialog("Page Setup", "", "OK")).autonomy).toBe(true);
+    expect(e.decide(box("Notepad", CANNOT_FIND, "OK", { kind: "cursor_click" })).announce)
+      .toBe(`Using your mouse to answer a message box in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
+    expect(e.decide(box("Notepad", CANNOT_FIND, "OK", { kind: "keys", value: "Return" })).announce)
+      .toBe(`Using your keyboard to answer a message box in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
   });
 
-  it("still asks, every time, about a dialog that names something risky, a security setting, or a file someone else changed", () => {
+  it("asks for every probe of the security review (B1)", () => {
     const e = winPolicy();
-    for (const [what, r] of [
-      ["deleting", dialog("Delete Multiple Items", "Are you sure you want to permanently delete these 3 items?", "Yes", { goal: "tidy my downloads" })],
-      ["sending", dialog("Outlook", "Send this message without a subject?", "Send anyway", { app: "outlook.exe", goal: "write to Ana" })],
-      ["overwriting", dialog("Confirm Save As", "list.txt already exists. Do you want to replace it?", "Yes")],
-      ["a security dialog", dialog("Internet Options", "Security level for this zone: Medium-high", "OK", { app: "iexplore.exe" })],
-      ["a privacy setting", dialog("Options", "Allow apps to access your camera?", "Allow")],
-      ["signing out", dialog("Account", "Do you want to sign out?", "Yes")],
-      ["installing", dialog("Setup", "Do you want to install this update now?", "Yes")],
-      ["a file conflict", dialog("Document in Use", "list.txt is locked for editing by another user.", "Open anyway")],
-    ] as [string, ActionRequest][]) {
-      const d = e.decide(r);
-      expect(d.verdict, what).not.toBe("allow");
+    const long = `${"Your list has been checked and nothing was found to fix. ".repeat(8)}`.slice(0, 399);
+    const probes: [string, ActionRequest, PolicyEngine?][] = [
+      ["empty", box("", "")],
+      ["only a title", box("Notepad", "")],
+      ["cut short (flagged)", box("Notepad", long, "OK", {}, { alert: true, truncated: true })],
+      ["cut short (400 characters)", box("Notepad", `${long}x`)],
+      ["Turkish", box("Notepad", "Tüm dosyalar silinsin mi?")],
+      ["Turkish, no question mark", box("Notepad", "Tüm dosyalar silinecek mi")],
+      ["Ukrainian", box("Notepad", "Видалити всі файли?")],
+      ["Ukrainian, no question mark", box("Notepad", "Усі файли буде видалено.")],
+      ["Arabic", box("Notepad", "حذف جميع الملفات؟")],
+      ["Arabic, no question mark", box("Notepad", "سيتم حذف جميع الملفات.")],
+      ["Hebrew", box("Notepad", "למחוק את כל הקבצים?")],
+      ["Hebrew, no question mark", box("Notepad", "כל הקבצים יימחקו.")],
+      ["a charge", box("Store", "Your card will be charged $300.")],
+      ["going public", box("GitHub Desktop", "Make this repository public?", "OK", { app: "GitHubDesktop.exe" })],
+      ["mailing", box("Mail merge", "Mail this to 300 recipients?")],
+      ["moving to a server", box("Sync", "Move 300 files to the server?")],
+      ["updating", box("Foo", "Update now? Foo will relaunch.")],
+      ["disconnecting", box("Accounts", "Disconnect your Google account?")],
+      ["a default browser", box("Firefox", "Make Firefox your default browser?")],
+      ["a default browser, in Firefox", box("Firefox", "Make Firefox your default browser", "OK", { app: "firefox.exe", window: "Mozilla Firefox" })],
+      ["an installer", box("Setup - Foo", "Setup is ready to begin installing Foo on your computer.", "Continue", { app: "setup.exe" })],
+      ["an installer's OK", box("Foo", "Foo is ready.", "OK", { app: "FooSetup.exe" })],
+      ["saving changes", box("Notepad", "Save changes to notes.txt before closing?", "Yes")],
+      ["unsaved changes, with OK", box("Notepad", "Your unsaved changes will be lost.")],
+      ["microphone (macOS)", box("", "“zoom.us” would like to access the microphone.", "OK", { app: "zoom.us", window: "" }), mac],
+      ["location (macOS)", box("", "“Maps” would like to use your current location.", "OK", { app: "UserNotificationCenter", window: "" }), mac],
+      ["accessibility (macOS)", box("Accessibility Access (Events)", "“Terminal” would like to control this computer using accessibility features.", "OK", { app: "universalAccessAuthWarn", window: "" }), mac],
+      ["a Cyrillic look-alike", box("Notepad", "Allоw Notepad to keep running in the background.")],
+      ["a Cyrillic look-alike button", box("Notepad", CANNOT_FIND, "ОK")],
+      ["a hidden character", box("Notepad", "Cannot find​ \"milk\"")],
+      ["a web page's dialog", box("example.com says", "example.com says: Continue.", "OK", {}, { alert: true, page: true })],
+      ["a page's dialog in a browser", box("example.com says", "Your session will end soon.", "OK", { app: "chrome.exe", window: "Shop - Google Chrome" })],
+      ["a question by its form", box("Notepad", "Do you really want this")],
+      ["not a message box", box("Notepad", CANNOT_FIND, "OK", {}, {})],
+      ["a Yes", box("Notepad", CANNOT_FIND, "Yes")],
+      ["a Continue", box("Notepad", CANNOT_FIND, "Continue")],
+      ["the system's Settings", box("Confirm", "Done.", "OK", { app: "SystemSettings.exe", window: "Settings" })],
+      ["an administration app", box("Confirm", "Done.", "OK", { app: "mmc.exe", window: "mmc.exe" })],
+      ["a security dialog", box("Internet Options", "Security level for this zone: Medium-high", "OK", { app: "iexplore.exe" })],
+      ["a file conflict", box("Document in Use", "list.txt is locked for editing by another user.", "OK")],
+    ];
+    for (const [what, r, engine] of probes) {
+      const d = (engine ?? e).decide(r);
+      expect(d.verdict, `${what} ${JSON.stringify(d)}`).not.toBe("allow");
       expect(d.autonomy, what).toBeUndefined();
-      expect(d.waivable, what).toBeUndefined();
+      expect(d.answersDialog, what).toBeUndefined();
       // Never "Always in this app".
       expect(d.remember, what).not.toBe(true);
     }
   });
 
-  it("still asks in the system's Settings and in administration apps, even for a plain dialog (security review of #127)", () => {
+  it("still asks, every time, about a dialog that names something risky, and an app's options dialog's OK", () => {
     const e = winPolicy();
-    for (const app of ["SystemSettings.exe", "mmc.exe", "control.exe", "regedit.exe"]) {
-      const d = e.decide(dialog("Confirm", "Do you want to continue?", "OK", { app, window: app }));
-      expect(d.autonomy, app).toBeUndefined();
-      expect(d.verdict, app).not.toBe("allow");
+    for (const [what, r] of [
+      ["deleting", box("Delete Multiple Items", "Are you sure you want to permanently delete these 3 items?", "Yes", { goal: "tidy my downloads" })],
+      ["sending", box("Outlook", "Send this message without a subject?", "Send anyway", { app: "outlook.exe", goal: "write to Ana" })],
+      ["overwriting", box("Confirm Save As", "list.txt already exists. Do you want to replace it?", "Yes")],
+      ["a privacy setting", box("Options", "Allow apps to access your camera?", "Allow")],
+      ["an options dialog", box("Options", "", "OK", {}, {})],
+    ] as [string, ActionRequest][]) {
+      const d = e.decide(r);
+      expect(d.verdict, `${what} ${JSON.stringify(d)}`).not.toBe("allow");
+      expect(d.autonomy, what).toBeUndefined();
+      expect(d.waivable, what).toBeUndefined();
+      expect(d.remember, what).not.toBe(true);
     }
   });
 
-  it("asks about a plain dialog as before with the mode off, and while the administrator wants every action confirmed", () => {
-    const r = dialog("Notepad", "Cannot find \"milk\"", "OK", { dialog: { name: "Notepad", text: "Cannot find \"milk\"", alert: true } });
+  it("asks about a message box as before with the mode off, and while the administrator wants every action confirmed", () => {
+    const r = box("Notepad", CANNOT_FIND);
     expect(winPolicy(null).decide(r)).toMatchObject({ verdict: "confirm", risky: true, remember: false, reason: "this answers a dialog, and Ember can't be sure what it agrees to" });
     const strict = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "win32", keys: KEYS.win32, confirmEveryAction: () => true });
     expect(strict.decide(r).verdict).toBe("confirm");
   });
 
-  it("treats a dialog's words that pass for a plain answer, but carry text read in another window, as moving text too", () => {
+  it("treats an acknowledgement that carries text read in another window as moving text too", () => {
     const e = winPolicy({ ...ALL(), crossWindow: false });
     const firefox = { app: "firefox.exe", window: "Order 1182 - Shop", text: "Ship to 42 Larkspur Avenue, Leeds LS6 2QT" };
     const d = e.decide(notepad({ kind: "keys", value: "ctrl+v", element: { role: "push button", name: "OK" }, dialog: { name: "Notepad", text: "Cannot find", alert: true }, readFrom: [firefox] }));
     expect(d.autonomy).toBeUndefined();
+  });
+
+  it("says “the keyboard” on Ember's desk, never “your” (N1)", () => {
+    const desk = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "linux", keys: KEYS.linux });
+    const d = desk.decide(box("gedit", CANNOT_FIND, "OK", { kind: "keys", value: "Return", app: "gedit", window: "list.txt - gedit", onDesk: true }));
+    expect(d.announce).toBe("Using the keyboard to answer a message box in gedit, without asking as you let me.");
   });
 });
 
@@ -448,11 +527,12 @@ describe("red team: an injected screen tries to make an ordinary-looking command
 });
 
 describe("Home's words for the switch", () => {
-  it("say that answering an app's dialog is one of the steps it no longer asks about, and the card still covers it", () => {
-    expect(autonomyHint(false)).toMatch(/^Off, Ember asks before its first step in an app, before using your mouse and keyboard, before answering an app's dialog and before moving text between apps\. On, it tells you what it's doing instead/);
-    expect(autonomyHint(true)).toMatch(/before answering an app's dialog/);
-    // The card (FEATURE_CONSENT_VERSION.autonomy 1) already says Ember uses your apps and borrows the keyboard without asking.
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/use your apps, borrow your mouse and keyboard, run ordinary commands and move text between apps for what you ask, without asking you first each time/);
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(1);
+  it("say that answering an app's message box is one of the steps it no longer asks about, and the card still covers it", () => {
+    expect(autonomyHint(false)).toMatch(/^Off, Ember asks before its first step in an app, before using your mouse and keyboard, before answering an app's message box and before moving text between apps\. On, it tells you what it's doing instead/);
+    expect(autonomyHint(true)).toMatch(/before answering an app's message box/);
+    // The card names the wider scope, and its version moved so the user agrees to it again (S1).
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/answer simple message boxes \(an OK or Close that only says it has read the message\) for what you ask, without asking you first each time/);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/and any dialog that asks a question\./);
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(2);
   });
 });

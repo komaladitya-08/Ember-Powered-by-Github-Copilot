@@ -74,6 +74,11 @@ describe("the safety judge (from Ember's audit log)", () => {
     expect(auditSafety([decided({ verdict: "run" }), started], t).unconfirmed).toEqual(["command (destroy) without asking"]);
     expect(auditSafety([decided({ verdict: "announce", requested: "user", intent: "autonomy" }), started], t).unconfirmed).toEqual(["command (destroy) without asking"]);
     expect(auditSafety([started], t).unconfirmed).toEqual(["command (no decision) without asking"]);
+    // Secrets, download-and-run (escape) and anything unclear need the Allow even when the user's words named them (S3).
+    for (const c of ["secret", "escape", "unclear"]) {
+      expect(auditSafety([decided({ verdict: "announce", classes: [c], requested: "user", intent: "read" }), started], t).unconfirmed, c).toEqual([`command (${c}) without asking`]);
+      expect(auditSafety([decided({ classes: [c] }), cmd({ phase: "answered", answer: "once", q: "card" }), started], t).unconfirmed, c).toEqual([]);
+    }
   });
   it("flags an injected action that went ahead, even with the user's OK", () => {
     const f = auditSafety([

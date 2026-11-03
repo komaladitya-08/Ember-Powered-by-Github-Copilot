@@ -20,7 +20,7 @@ import { friendlyApp } from "../../shared/apps";
 import { roleWord } from "../../shared/role-words";
 import { visibleText } from "../../shared/visible-text";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
+import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, PLAIN_EDITOR, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
 import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
@@ -94,7 +94,11 @@ export interface ActionRequest {
    * The dialog the element sits in (its title and text, and whether it is a message box: `alert`): "OK" there agrees
    * to what the dialog says.
    */
-  dialog?: { name: string; text: string; alert?: boolean };
+  /**
+   * `alert`: a message box (an alert's role) or a web page's own dialog; `page`: drawn by a web page (an `alert()`, a
+   * site's "example.com says"); `truncated`: its words were cut to DIALOG_TEXT_MAX, so not all of them were read.
+   */
+  dialog?: { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean };
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
   /**
@@ -170,14 +174,14 @@ export interface Decision {
   /**
    * The scopes of "Work without asking" that would let this question go unasked (autonomy.ts): set only where the step
    * asks for no reason but being the first in an app ("apps"), using the borrowed mouse or keyboard ("cursor"), carrying
-   * text from another window ("crossWindow"), or Ember's doubt about an ordinary step (Risk.plain: an answer to a dialog
-   * that names nothing risky, line breaks typed into a multi-line editor; owner decision of 2026-11-02, widened
-   * 2026-11-03). Never on a step that is risky by what it does (sending, deleting, overwriting, security settings…).
+   * text from another window ("crossWindow"), or Ember's doubt about an ordinary step (Risk.plain: an OK, Close or
+   * Dismiss that only acknowledges a message box, acknowledgesOnly; line breaks typed into a plain text editor,
+   * plainEditorLines; owner decision of 2026-11-02, widened 2026-11-03, both allow-lists). Never on a step that is risky by what it does (sending, deleting, overwriting, security settings…).
    */
   waivable?: AutonomyScope[];
   /** For a step that carries text from elsewhere: the apps it comes from, as people name them (none: another window of this app). */
   carriedFrom?: string[];
-  /** The step answers a dialog that names nothing risky (Risk.dialog): its announcement says so. */
+  /** The step only acknowledges a message box (Risk.dialog, acknowledgesOnly): its announcement says so. */
   answersDialog?: true;
   /** It would have asked, and goes ahead because the user lets Ember work without asking: Ember says `announce` instead. */
   autonomy?: true;
@@ -1728,17 +1732,72 @@ function waiverOf(risk: Risk, also: AutonomyScope[]): Pick<Decision, "waivable" 
   return risk.carried ? { waivable: [...also, "crossWindow"], carriedFrom: risk.carried } : {};
 }
 
+/** The most of a dialog's words the worker passes (ActionRequest.dialog.text): text this long may have been cut. */
+export const DIALOG_TEXT_MAX = 400;
+/** The only answers "Work without asking" gives a dialog (normalised): those that acknowledge a message box. */
+const ACKNOWLEDGES = /^(ok|okay|close|dismiss)$/;
 /**
- * Words of a dialog that grants something (a permission prompt: "Allow Notepad to access your camera?", "Trust this
- * site?", "Stay signed in?"): never a plain dialog, so "Work without asking" never answers one (it asks as before).
+ * Programs and titles of permission prompts, system windows and installers on any OS (folded): never a message box
+ * "Work without asking" answers, whatever it says.
  */
-const GRANTS_ACCESS = /\b(allow|allowed|grant|granted|permit|permission|permissions|trust|trusted|access|signed in|sign in|log in|remember (me|this|my)|keep me)\b/;
+const PROMPT_WINDOW = /setup|install|uninstall|update|upgrade|msiexec|wizard|consent|credential|logonui|usernotificationcenter|coreservicesuiagent|universalaccess|securityagent|tccd|coreauth|polkit|gcr-prompter|pinentry|packagekit|gnome-software|softwareupdate|systemsettings|system preferences|system settings|control panel|authenticat|permission|privacy|keychain|keyring/;
+/**
+ * Words in a message box's text that may mean its OK agrees to something (paying, publishing, sending, moving, updating,
+ * an account, a default, a permission: macOS's "would like to access the microphone"), beyond RISKY's: whole words,
+ * matched folded and normalised (saysWord). Any of them, and "Work without asking" asks as before.
+ */
+const ACK_RISK = /(^|[^\p{L}\p{N}])(charge[ds]?|charging|card|payment|pay|paid|purchase[ds]?|price|cost|bill|billing|invoice|money|bank|transfer(red)?|public|private|publish(ed)?|visible|send|sent|mail(ed)?|e-?mail|recipients?|upload(ed)?|server|cloud|sync(ed)?|move[ds]?|update[ds]?|upgrade[ds]?|relaunch(es)?|restart(s|ed)?|reboot|install(s|ed)?|setup|connect(ed)?|disconnect(ed)?|account|default|delete[ds]?|remove[ds]?|erase[ds]?|permanent(ly)?|overwrite|replace[ds]?|lost|lose|discard(ed)?|password|sign(ed)?|log(ged)?|allow(ed)?|access|permit|permission|trust(ed)?|grant(ed)?|share[ds]?|microphone|camera|location|contacts|calendar|photos|accessibility|control|monitor|record(ing)?|screen|keychain|certificate|admin(istrator)?|unsaved|saved?|saves|changes|remember|would like|wants? to)(?![\p{L}\p{N}])|[$€£¥₹]/u;
+/**
+ * A question in a dialog's words besides a question mark: an English sentence that opens like one ("Do…", "Would…",
+ * "Can…" but not "Cannot" or "Can't"), and the phrases that ask in English and the languages of RISKY_WORDS (folded).
+ */
+const QUESTION_FORM = /(^|[.!:;]\s+)(do|does|did|are|is|was|were|will|would|shall|should|can(?!'t|not)|could|may|might|have|has|had|want|wish)(?![\p{L}])|(^|[^\p{L}])(do you|would you|are you|you sure|want to|wish to|like to|ok to|choose|select|proceed|continue|voulez|souhaitez|veux|mochten|wollen|wirklich|desea|quiere|deseja|quer|vuoi|vuole|desideri|wilt|weet u|czy|chcesz|хотите|уверены|действительно|vill du|vil du|onsker|haluatko|haluatteko|oletko|chcete|opravdu|emin|istiyor|mi|mı|mu|mü)(?![\p{L}])/u;
+/** Letters only Ukrainian and Belarusian write in Cyrillic, which RISKY_WORDS' Russian doesn't cover. */
+const NOT_RUSSIAN = /[іїєґўІЇЄҐЎ]/;
+
+/**
+ * Are all of `s`'s letters in scripts the word lists cover, read whole? Latin and Russian Cyrillic only; no characters
+ * that show nothing, and no word that mixes Latin and Cyrillic letters (a Cyrillic "о" in "Allоw"). Anything else
+ * (Arabic, Hebrew, Greek, Ukrainian, the scripts of East Asia, whose questions need no question mark) fails.
+ */
+function readableScripts(s: string): boolean {
+  const t = s.normalize("NFKC");
+  if (t.replace(INVISIBLE, "") !== t || NOT_RUSSIAN.test(t)) return false;
+  return t.split(/[^\p{L}\p{M}]+/u).every(word => !word || (
+    !/[^\p{Script=Latin}\p{Script=Cyrillic}\p{M}]/u.test(word) && !(/\p{Script=Latin}/u.test(word) && /\p{Script=Cyrillic}/u.test(word))));
+}
+
+/**
+ * Does this step only acknowledge a message box, so that "Work without asking" may answer it (owner decision of
+ * 2026-11-02; security review of #140)? An allow-list that fails closed: OK, Close or Dismiss (`name`, on a control
+ * that activates) in a message box (`alert`) not drawn by a web page, in no browser, web, chat or mail app nor the
+ * system's Settings, security or administration apps, nor a permission, system or installer window (PROMPT_WINDOW),
+ * whose words were read whole (not `truncated`, shorter than DIALOG_TEXT_MAX), say something, are all in scripts the
+ * word lists cover, ask nothing (no question mark, no QUESTION_FORM), and name nothing risky anywhere (button, title,
+ * text or window: RISKY's lists, the acting verbs, security talk, ACK_RISK, a file conflict, a disk's Format).
+ */
+function acknowledgesOnly(r: ActionRequest, name: string, role: string, os: OS): boolean {
+  const d = r.dialog;
+  if (!d || d.alert !== true || d.page === true || d.truncated === true || r.inPage === true) return false;
+  if (!ACTIVATING_ROLES.test(role) || !ACKNOWLEDGES.test(normalizeLabel(name).trim())) return false;
+  const text = d.text.replace(/\s+/g, " ").trim();
+  if (!/\p{L}/u.test(text) || d.text.length >= DIALOG_TEXT_MAX) return false;
+  const app = appNameOf(r.app);
+  const apps = [app, friendlyApp(r.app).trim()];
+  if (apps.some(a => [WEB_APP, TABBED_APP, SETTINGS_APP, SECURITY_APP, ADMIN_APP].some(list => !!list[os]?.test(a)))) return false;
+  const all = [name, d.name, text, r.window];
+  if (!all.every(readableScripts)) return false;
+  if (all.some(t => /[?¿؟⸮]/.test(t.normalize("NFKC")))) return false;
+  if (PROMPT_WINDOW.test(foldLabel(`${apps.join(" ")} ${d.name} ${r.window}`))) return false;
+  return !all.some(t => isRiskyLabel(t, os) || isRiskyActLabel(t) || securityTalk(t) || saysWord(ACK_RISK, t) || saysWord(QUESTION_FORM, t)
+    || FILE_CONFLICT.test(plainText(t)) || formatsDisk(name, t));
+}
 
 /**
  * Why an action needs the user's OK; `about`: the on-screen words that make it so; `note`: added to the question.
- * `plain`: nothing about the step is risky by what it does, only Ember can't be sure (a dialog's answer that names
- * nothing risky, line breaks typed into a multi-line editor): asked as before, but "Work without asking" may cover it
- * (`dialog`: it answers a dialog). `carried`: text from these apps is all that asks (with `plain`: as well).
+ * `plain`: nothing about the step is risky by what it does, only Ember can't be sure (acknowledging a message box,
+ * acknowledgesOnly; line breaks typed into a plain text editor, plainEditorLines): asked as before, but "Work without
+ * asking" may cover it (`dialog`: it acknowledges a message box). `carried`: text from these apps is all that asks (with `plain`: as well).
  */
 type Risk = { reason: string; about?: string; note?: string; carried?: string[]; plain?: true; dialog?: true };
 /** Fields whose own text is all that Ctrl+A selects in them (in a paragraph or a section it selects the whole document or page). */
@@ -1914,6 +1973,20 @@ function enterMaySend(r: ActionRequest, role: string, os: OS): boolean {
   // a page's. An office suite's (OFFICE_APP: LibreOffice) fields and documents' text never send.
   if (r.inPage ?? WEB_APP[os]?.test(r.app) ?? false) return true;
   return tabbed(r.app, os) && !r.multiLine && !(OFFICE_APP[os]?.test(r.app) ?? false);
+}
+/**
+ * Is this typing line breaks (and no tab) into a plain text editor's multi-line text, where Enter only starts a new
+ * line? An allow-list that fails closed (security review of #140): the app is one of PLAIN_EDITOR[os] (Notepad,
+ * gedit, Mousepad, Kate, TextEdit…), the field is multi-line text, and nothing makes it a page's, a chat's or a mail's
+ * (inPage, WEB_APP, TABBED_APP) or a spreadsheet's (a formula, a cell). Anywhere else Enter may send, submit or commit.
+ */
+function plainEditorLines(r: ActionRequest, role: string, os: OS): boolean {
+  const app = appNameOf(r.app);
+  const apps = [app, friendlyApp(r.app).trim()];
+  if (/\t/.test(r.value ?? "") || r.multiLine !== true || !/^(text|paragraph|document text)$/.test(role)) return false;
+  if (r.inPage === true || r.formula !== undefined || (r.element && isSheetCell(r.element))) return false;
+  if (apps.some(a => !!WEB_APP[os]?.test(a) || tabbed(a, os) || !!OFFICE_APP[os]?.test(a))) return false;
+  return PLAIN_EDITOR[os].test(app);
 }
 /**
  * A dialog about a file someone else is using or has changed since it was opened (LibreOffice's "Document in Use",
@@ -2136,14 +2209,16 @@ export class PolicyEngine {
     if (d.carriedFrom) return movingWords(d.carriedFrom, here, chars);
     const n = `${chars ?? 0} ${chars === 1 ? "character" : "characters"}`;
     const key = r.kind === "keys" ? keyLabel(r.value ?? "", this.keys) ?? "a key" : "";
+    // On Ember's desk the mouse and keyboard are its own: "the", never "your".
+    const whose = r.onDesk ? "the" : "your";
     const verb: Record<ActionKind, string> = {
       read: "Reading", click: "Clicking", toggle: "Changing a setting", text: `Typing ${n}`, select: "Choosing an option", value: "Setting a value",
-      setting: "Changing a setting", open_app: "Opening an app", cursor_click: "Using your mouse to click", cursor_text: `Using your keyboard to type ${n}`,
-      keys: `Using your keyboard to press ${key}`, scroll: "Using your mouse to scroll",
+      setting: "Changing a setting", open_app: "Opening an app", cursor_click: `Using ${whose} mouse to click`, cursor_text: `Using ${whose} keyboard to type ${n}`,
+      keys: `Using ${whose} keyboard to press ${key}`, scroll: `Using ${whose} mouse to scroll`,
     };
     const borrowed = !r.onDesk && (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll");
-    // An answer to a dialog that names nothing risky says that much (never the dialog's words, which are the app's).
-    const answering = r.kind === "keys" ? "Using your keyboard to answer a dialog" : borrowed ? "Using your mouse to answer a dialog" : "Answering a dialog";
+    // An answer to a message box says that much (never the dialog's words, which are the app's).
+    const answering = r.kind === "keys" ? `Using ${whose} keyboard to answer a message box` : r.kind === "cursor_click" ? `Using ${whose} mouse to answer a message box` : "Answering a message box";
     return `${d.answersDialog ? answering : verb[r.kind]} in ${here}, without asking as you let me.${borrowed ? " Move the mouse or press a key to take it back." : ""}`;
   }
 
@@ -2203,11 +2278,10 @@ export class PolicyEngine {
     const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     // A dialog asked about only as one that may hold the app's settings: its title says which.
     const settings = !!r.dialog && !questions && !lone && !!r.dialog.name.trim();
-    // A dialog whose button, title, text and window name nothing risky (no risky or acting verb, no security or privacy
-    // words, no file someone else changed): Ember's doubt about its answer is all that asks, which "Work without asking"
-    // may cover (Risk.plain; owner decision of 2026-11-02). "Delete 3 files?", "Post reply?", "Proxy settings" ask.
-    const plainDialog = !!r.dialog && !conflict && !formatsDisk(name, `${r.app} ${told}`)
-      && ![asks, told, r.window].some(t => isRiskyLabel(t, os) || isRiskyActLabel(t) || securityTalk(t) || GRANTS_ACCESS.test(foldLabel(t)));
+    // An OK, Close or Dismiss that only acknowledges a message box read whole (acknowledgesOnly, an allow-list): Ember's
+    // doubt about its answer is all that asks, which "Work without asking" may cover (Risk.plain; owner decision of
+    // 2026-11-02). Any other answer to any other dialog asks as before.
+    const plainDialog = !conflict && acknowledgesOnly(r, name, role, os);
     const doubt = plainDialog ? { plain: true as const, dialog: true as const } : {};
     const answer: Risk | false = (agrees || lone) && (settings ? {
       reason: secureTitle ? "this applies security or privacy settings" : "this applies what is set in a dialog, which may be the app's own settings",
@@ -2241,10 +2315,10 @@ export class PolicyEngine {
         // A formula that fetches from the internet or reads another file runs as it goes into the sheet: asked every time.
         if ((takesFormula(r.element) && reachesOut(r.value ?? "")) || (r.formula !== undefined && reachesOut(r.formula))) return REACHES_OUT;
         // Typed with the keyboard, a line break is Enter and a tab is Tab (by accessibility or a paste neither is a key press).
-        // Line breaks alone (no tab) into a multi-line editor outside a web page, where Enter can't send (enterMaySend:
-        // Notepad, gedit, a document): only Ember's doubt, which "Work without asking" may cover once nothing below asks.
+        // Line breaks alone (no tab) into a plain text editor's multi-line text (plainEditorLines, an allow-list: Notepad,
+        // gedit, TextEdit…): only Ember's doubt, which "Work without asking" may cover once nothing below asks.
         const breaks = r.kind === "cursor_text" && /[\n\r\t]/.test(r.value ?? "");
-        const lines = breaks && !/\t/.test(r.value ?? "") && r.multiLine === true && TEXT_FIELD.test(role) && !enterMaySend(r, role, os);
+        const lines = breaks && plainEditorLines(r, role, os);
         if (breaks && !lines) return { reason: "the text contains a line break or tab, which can submit a form or move to another field" };
         // A field of a security setting (a proxy's address, Macro Security's trusted places).
         if (r.element && secureField) return secure(name);
@@ -2258,7 +2332,7 @@ export class PolicyEngine {
         // With the keyboard, "replace" is Ctrl+A and Delete: in a paragraph that selects the whole document or page.
         // A spreadsheet's cell is typed over once selected: no Ctrl+A there.
         if (r.kind === "cursor_text" && r.mode === "replace" && !HOLDS_ALL_TEXT.test(role) && !(r.element && isSheetCell(r.element))) return KEYS_SELECT_MORE(kc);
-        if (lines) return { reason: "the text contains line breaks, typed with Enter in a multi-line editor", plain: true };
+        if (lines) return { reason: "the text contains line breaks, typed with Enter in a text editor", plain: true };
         return null;
       }
       case "keys": {
