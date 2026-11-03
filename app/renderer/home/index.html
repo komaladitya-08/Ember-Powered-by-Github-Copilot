@@ -231,6 +231,11 @@
         </div>
         <p class="hint" id="project-status" role="status">Connect a model to work with project files.</p>
         <pre id="project-answer" class="project-answer" aria-label="Project answer" tabindex="0" hidden></pre>
+        <details id="project-patch" hidden>
+          <summary>Review changes before applying</summary>
+          <pre id="project-diff" class="project-answer" aria-label="Changes to apply" tabindex="0"></pre>
+          <button type="button" id="project-apply" class="btn">Apply patch…</button>
+        </details>
       </form>
       <h3 class="sub" id="byok-h">Model provider</h3>
       <div class="group byok" id="byok" role="group" aria-labelledby="byok-h">

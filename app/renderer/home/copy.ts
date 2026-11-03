@@ -455,6 +455,7 @@ export function fixFailedText(checkLabel: string, reason: string): string {
 }
 
 const KIND: Record<string, string> = {
+  "project-patch": "Apply a project patch",
   click: "Click", toggle: "Switch", text: "Type into", select: "Choose in", value: "Set", setting: "Change setting", open_app: "Open",
   cursor_click: "Click (your mouse)", cursor_text: "Type (your keyboard)", keys: "Press keys", scroll: "Scroll", point: "Point at", read: "Read",
 };

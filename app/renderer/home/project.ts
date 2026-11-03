@@ -11,11 +11,16 @@ export function mountProject() {
   const question = form.querySelector<HTMLTextAreaElement>("#project-question")!;
   const status = form.querySelector<HTMLElement>("#project-status")!;
   const answer = form.querySelector<HTMLElement>("#project-answer")!;
+  const patch = form.querySelector<HTMLDetailsElement>("#project-patch")!;
+  const diff = form.querySelector<HTMLElement>("#project-diff")!;
+  const apply = form.querySelector<HTMLButtonElement>("#project-apply")!;
+  const clearPatch = () => { patch.hidden = true; patch.open = false; diff.textContent = ""; };
   let ready = false;
-  let busy: "picking" | "running" | null = null;
+  let busy: "picking" | "running" | "applying" | null = null;
   let revision = 0;
   const draw = () => {
     pick.disabled = !ready || !!busy;
+    apply.disabled = !ready || !!busy;
     clear.disabled = !!busy || (!files.childElementCount && !question.value && answer.hidden);
     send.disabled = !ready || !!busy || !files.childElementCount || !question.value.trim();
     cancel.hidden = busy !== "running";
@@ -32,6 +37,7 @@ export function mountProject() {
     revision++;
     busy = null;
     names([]);
+    clearPatch();
     question.value = "";
     answer.textContent = "";
     answer.hidden = true;
@@ -40,6 +46,7 @@ export function mountProject() {
   pick.addEventListener("click", async () => {
     const at = revision;
     busy = "picking";
+    clearPatch();
     draw();
     try {
       const result = await window.ember.projectPick();
@@ -62,11 +69,27 @@ export function mountProject() {
     status.textContent = "Cancelling project request…";
     void window.ember.projectCancel().catch(() => { status.textContent = "Couldn't cancel. Use Stop everything to try again."; });
   });
+  apply.addEventListener("click", async () => {
+    const at = revision;
+    busy = "applying";
+    draw();
+    try {
+      const result = await window.ember.projectApply();
+      if (at !== revision) return;
+      if (result.done) clearPatch();
+      status.textContent = result.message;
+    } catch {
+      if (at === revision) status.textContent = "Couldn't apply the patch.";
+    } finally {
+      if (at === revision) { busy = null; draw(); if (patch.hidden) question.focus(); }
+    }
+  });
   form.addEventListener("submit", async event => {
     event.preventDefault();
     if (send.disabled) return;
     const at = revision;
     busy = "running";
+    clearPatch();
     answer.textContent = "";
     answer.hidden = true;
     status.textContent = "Working on the project request…";
@@ -77,7 +100,12 @@ export function mountProject() {
       if ("answer" in result) {
         answer.textContent = result.answer;
         answer.hidden = false;
-        status.textContent = "Project answer ready.";
+        if (result.patch) {
+          diff.textContent = result.patch.diff;
+          apply.textContent = `Apply patch to ${result.patch.name}…`;
+          patch.hidden = false;
+        }
+        status.textContent = result.patch ? "Patch ready to review." : mode.value === "patch" ? "Draft ready. Ember could not verify an exact patch to apply." : "Project answer ready.";
       } else status.textContent = result.error;
     } catch {
       if (at === revision) status.textContent = "Couldn't finish the project request.";

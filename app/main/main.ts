@@ -61,7 +61,8 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands, type TranscriptEntry } from "./agent/host";
-import { projectNames, projectPrompt, projectRequest, ProjectInputError } from "./agent/project";
+import { projectNames, projectPrompt, projectRequest, ProjectInputError, type ProjectSource } from "./agent/project";
+import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
 import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
@@ -417,7 +418,8 @@ function start(): void {
   let projectFiles: string[] = [];
   let projectPicking = false;
   let projectJob: AbortController | null = null;
-  const clearProject = () => { projectFiles = []; projectJob?.abort(); };
+  let projectPatch: ProjectPatch | null = null;
+  const clearProject = () => { projectFiles = []; projectPatch = null; projectJob?.abort(); };
   /** First run's "Hey Ember" try is showing: the microphone's level goes to the settings window too (IPC.watchLevel). */
   let homeWantsLevel = false;
   /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
@@ -1933,6 +1935,7 @@ function start(): void {
     if (!owner || !projectAvailable() || projectPicking || projectJob) return { names, error: "Project work is unavailable right now." };
     const previous = projectFiles;
     projectPicking = true;
+    projectPatch = null;
     try {
       const selected = await dialog.showOpenDialog(owner, { title: "Choose project files", properties: ["openFile", "multiSelections"] });
       if (home !== owner || projectFiles !== previous || !projectAvailable()) return { names: [] };
@@ -1954,14 +1957,46 @@ function start(): void {
     const run = projectJob = new AbortController();
     const files = projectFiles;
     try {
-      const prompt = await projectPrompt(files, input.data.mode, input.data.question, run.signal, userData);
+      projectPatch = null;
+      const sources: ProjectSource[] = [];
+      const prompt = await projectPrompt(files, input.data.mode, input.data.question, run.signal, userData, input.data.mode === "patch" ? sources : undefined);
       if (run.signal.aborted || projectFiles !== files || host !== agent || !projectAvailable()) return { error: "Project request cancelled." };
       const answer = await host.runProject(prompt, run);
       if (run.signal.aborted || !projectAvailable()) return { error: "Project request cancelled." };
       if (!answer) return { error: "The model didn't finish the project request. Try again." };
-      return { answer: answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer };
+      projectPatch = input.data.mode === "patch" ? draftProjectPatch(answer, sources) : null;
+      return {
+        answer: answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer,
+        ...(projectPatch ? { patch: { name: projectPatch.source.name, diff: projectPatch.diff } } : {}),
+      };
     } catch (err) {
       return { error: run.signal.aborted ? "Project request cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't read the selected files. Choose them again." };
+    } finally {
+      if (projectJob === run) projectJob = null;
+    }
+  }));
+  ipcMain.handle(IPC.projectApply, guard(async () => {
+    const patch = projectPatch;
+    const owner = home;
+    const record = audit;
+    if (!patch || !owner || !record || !projectAvailable() || projectJob || projectPicking) {
+      return { done: false, message: "Draft an applicable patch before trying to apply it." };
+    }
+    const run = projectJob = new AbortController();
+    try {
+      const { response } = await dialog.showMessageBox(owner, {
+        type: "warning", title: "Apply project patch", message: `Apply the reviewed patch to ${patch.source.name}?`,
+        detail: patch.source.file, buttons: ["Cancel", "Apply patch"], cancelId: 0, defaultId: 0, signal: run.signal,
+      });
+      if (response !== 1 || run.signal.aborted || !projectAvailable() || projectPatch !== patch || home !== owner) {
+        return { done: false, message: "Patch application cancelled." };
+      }
+      applyProjectPatch(patch, run.signal, () => record.write({ event: "confirm", kind: "project-patch", answer: "once" }));
+      projectPatch = null;
+      try { record.write({ event: "action", kind: "project-patch", ok: true }); } catch { /* the confirmation was recorded before writing */ }
+      return { done: true, message: `Patch applied to ${patch.source.name}.` };
+    } catch (err) {
+      return { done: false, message: run.signal.aborted ? "Patch application cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't apply the patch. Draft it again after checking the file." };
     } finally {
       if (projectJob === run) projectJob = null;
     }

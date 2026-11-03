@@ -10,7 +10,7 @@ import { memoryFile } from "../../app/main/memory/store";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
 
-it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only the files chosen in the native picker and shows a draft in Home", async () => {
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files and applies the exact diff after confirmation", async () => {
   const requireCjs = createRequire(import.meta.url);
   const root = process.cwd();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-live-"));
@@ -18,7 +18,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only the files chosen 
   fs.mkdirSync(userData);
   const source = path.join(dir, "greeting.ts");
   const neighbour = path.join(dir, "other.ts");
-  fs.writeFileSync(source, "export const greeting = 'chosen-file-marker';");
+  fs.writeFileSync(source, "export const greeting = 'chosen-file-marker';\n");
   fs.writeFileSync(neighbour, "export const secret = 'neighbour-file-marker';");
   fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
     version: 1, onboarded: true, wakeWord: false, consent: { version: CONSENT_VERSION, at: new Date().toISOString() },
@@ -27,7 +27,9 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only the files chosen 
   saved.add({ text: "Previous account memory marker", about: [{ name: "User" }], source: "user" });
   const memory = memoryFile(userData);
   memory.save(saved);
-  const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Draft ready for inspection." }) });
+  const diff = "--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-export const greeting = 'chosen-file-marker';\n+export const greeting = 'updated-file-marker';";
+  const draft = ["```diff", diff, "```"].join("\n");
+  const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: draft }) });
   let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
   try {
     app = await _electron.launch({
@@ -35,7 +37,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only the files chosen 
       args: [root, "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
       env: { ...process.env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: mock.baseUrl },
     });
-    // The only seam is the OS dialog result. The renderer, IPC, local file read and Copilot runtime are real.
+    // Stub the OS dialogs. The renderer, IPC, Copilot runtime and filesystem changes are real.
     await app.evaluate(({ dialog }, selected) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
     }, source);
@@ -52,12 +54,33 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only the files chosen 
     await home.locator("#project-question").fill(request);
     await home.locator("#project-send").click();
     await home.locator("#project-answer").waitFor({ state: "visible", timeout: 30_000 });
-    expect(await home.locator("#project-answer").innerText()).toBe("Draft ready for inspection.");
+    expect(await home.locator("#project-answer").innerText()).toBe(draft);
     const sent = JSON.stringify(mock.requests);
     expect(sent).toContain(request);
     expect(sent).toContain("chosen-file-marker");
     expect(sent).not.toContain("neighbour-file-marker");
     expect(fs.readFileSync(source, "utf8")).toContain("chosen-file-marker");
+    await home.locator("#project-patch summary").focus();
+    await home.keyboard.press("Enter");
+    expect(await home.locator("#project-diff").innerText()).toBe(diff);
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false });
+    });
+    await home.locator("#project-apply").click();
+    await expect.poll(() => home.locator("#project-status").innerText()).toMatch(/cancelled/i);
+    expect(fs.readFileSync(source, "utf8")).toContain("chosen-file-marker");
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+    });
+    await home.locator("#project-apply").click();
+    await expect.poll(() => home.locator("#project-status").innerText()).toBe("Patch applied to greeting.ts.");
+    expect(fs.readFileSync(source, "utf8")).toBe("export const greeting = 'updated-file-marker';\n");
+    expect(fs.readFileSync(neighbour, "utf8")).toContain("neighbour-file-marker");
+    const auditDir = path.join(userData, "audit");
+    const events = fs.readdirSync(auditDir).filter(name => name.endsWith(".jsonl"))
+      .flatMap(name => fs.readFileSync(path.join(auditDir, name), "utf8").trim().split("\n").map(line => JSON.parse(line)));
+    expect(events).toContainEqual(expect.objectContaining({ event: "confirm", kind: "project-patch", answer: "once" }));
+    expect(events).toContainEqual(expect.objectContaining({ event: "action", kind: "project-patch", ok: true }));
     await home.locator("#project-clear").click();
     expect(await home.locator("#project-answer").isHidden()).toBe(true);
     expect(await home.locator("#project-files").isHidden()).toBe(true);

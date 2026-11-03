@@ -23,6 +23,7 @@ const api: EmberHomeApi = {
   projectRun: request => ipcRenderer.invoke(IPC.projectRun, request),
   projectClear: () => ipcRenderer.invoke(IPC.projectClear),
   projectCancel: () => ipcRenderer.invoke(IPC.projectCancel),
+  projectApply: () => ipcRenderer.invoke(IPC.projectApply),
   onAgentStatus: fn => listen<AgentStatus>(IPC.agentStatusChanged, fn),
   signIn: () => ipcRenderer.invoke(IPC.signIn),
   onSignInProgress: fn => listen<SignInProgress>(IPC.signInProgress, fn),
