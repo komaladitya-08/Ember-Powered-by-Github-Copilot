@@ -13,7 +13,7 @@ import {
   BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, EXTENSIONS_FAILED, EXTENSIONS_LOADING, INSTALLED_EMPTY, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
   addedMarketplace, added, addingMarketplace, agreedAgain, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
   consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion, removed,
-  type ConsentCard, type ItemAction,
+  toolBadge, type ConsentCard, type ItemAction,
 } from "./extensions-copy";
 
 declare global { interface Window { emberExtensions?: EmberExtensionsApi } }
@@ -121,20 +121,24 @@ async function agree(): Promise<void> {
   const q = asking;
   if (!a || !q) return;
   asking = null;
-  if (q.kind === "reagree") {
-    await run(`item:${q.item.id}`, () => a.reagree(q.item.id), agreedAgain(q.item.name));
-    return;
-  }
-  const e = q.entry;
-  // The first yes also records extensions' own consent (FEATURE_CONSENT_VERSION.extensions); nothing loads before it.
+  // The first yes also records the current first-use card; existing installs need it after the version changes.
   if (state && state.consented === false) {
     const r = await a.agree();
     if (!r.ok) { say(r.why); return; }
     state = { ...state, consented: true };
   }
+  if (q.kind === "reagree") {
+    await run(`item:${q.item.id}`, () => a.reagree(q.item.id, q.item.reviewToken ?? ""), agreedAgain(q.item.name));
+    return;
+  }
+  const e = q.entry;
   if (e.kind === "connector") { await connect(e.name); return; }
   const done = await run(`entry:${e.marketplace}:${e.name}`, () => a.install(e.marketplace, e.name), added(e.name));
-  if (done && browsing?.name === e.marketplace) void browse(e.marketplace);
+  if (done) {
+    await refresh();
+    const item = state?.installed.find(i => i.source === `${e.name}@${e.marketplace}`);
+    if (item && browsing?.name === e.marketplace && !asking) { asking = { kind: "reagree", item }; draw(); focusKey("consent-yes"); }
+  }
 }
 
 async function connect(name: string): Promise<void> {
@@ -185,6 +189,14 @@ function consentNode(c: ConsentCard): HTMLElement {
   const lines = el("ul", "ext-consent-lines");
   lines.id = "ext-consent-lines";
   for (const l of c.lines) lines.append(el("li", "", l));
+  if (c.tools) {
+    for (const tool of c.tools) {
+      const row = el("li", "ext-consent-tool");
+      row.append(el("b", "", `${tool.server ? `${tool.server}: ` : ""}${tool.name}`), el("span", "", ` · ${toolBadge(tool).label}`));
+      if (tool.description) row.append(el("p", "ext-tool-desc", tool.description));
+      lines.append(row);
+    }
+  }
   const actions = el("div", "agent-actions");
   const yes = button(c.yes, "btn", "consent-yes", () => void agree());
   yes.setAttribute("aria-describedby", lines.id);

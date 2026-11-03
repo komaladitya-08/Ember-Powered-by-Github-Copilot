@@ -452,7 +452,7 @@ export interface EmberExtensionsApi {
   setEnabled(id: string, on: boolean): Promise<ExtensionsDone>;
   connect(name: string): Promise<ExtensionsConnect>;
   disconnect(id: string): Promise<ExtensionsDone>;
-  reagree(id: string): Promise<ExtensionsDone>;
+  reagree(id: string, reviewToken: string): Promise<ExtensionsDone>;
   agree(): Promise<ExtensionsDone>;
 }
 

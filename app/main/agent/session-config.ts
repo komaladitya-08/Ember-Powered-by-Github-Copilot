@@ -60,7 +60,7 @@ export interface SessionExtensions {
    * Gives the gate the session's live tool list (verifySessionTools): a server may change a tool mid-session
    * (notifications/tools/list_changed), so every call is checked against what the model is shown at that moment.
    */
-  bind?(shown: () => Promise<ShownTool[]>): void;
+  bind?(shown: () => Promise<ShownTool[]>, stop?: (servers: string[]) => Promise<void>): void;
   /**
    * A server said its tool list changed (`mcp.tools.list_changed`). The runtime's metadata has no hints, so a change
    * of hints alone can't be checked against the pin: that server's tools ask from then on in this session.
@@ -171,7 +171,7 @@ export async function verifySessionTools(session: CopilotSession, granted: strin
         const now = await session.rpc.tools.getCurrentMetadata();
         if (!Array.isArray(now.tools)) throw new Error("the runtime did not report its tools");
         return now.tools.filter(isAdmitted);
-      });
+      }, async servers => { await Promise.all(servers.map(serverName => session.rpc.mcp.disable({ serverName }))); });
       if (ext.listChanged && typeof session.on === "function") {
         session.on(e => { if (e.type === "mcp.tools.list_changed") ext.listChanged?.(String((e.data as { serverName?: unknown }).serverName ?? "")); });
       }

@@ -40,8 +40,8 @@ describe("an installed item says what state it is in, in words (never colour alo
     expect(row.status).toEqual({ text: "Changed since you agreed", tone: "fail" });
     expect(row.note).toBe("Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again.");
     expect(row.tools[0].badge).toEqual({ label: "Changed", tone: "no" });
-    expect(row.actions.map(a => a.label)).toEqual(["Agree again", "Remove"]);
-    expect(row.actions[0].ariaLabel).toBe("Agree again: Release notes");
+    expect(row.actions.map(a => a.label)).toEqual(["Review and agree", "Remove"]);
+    expect(row.actions[0].ariaLabel).toBe("Review tools: Release notes");
     // Its switch can't turn it on until the user agrees.
     expect(row.toggle).toEqual({ checked: true, disabled: true, ariaLabel: "Use Release notes" });
   });
@@ -108,12 +108,21 @@ describe("the consent card says plainly what Ember will do before anything is ad
     expect(c.title).toBe("Before you add “Release notes”");
     expect(c.lines).toEqual([
       "Only you add, turn off and remove extensions, here in settings. Ember never adds one by itself.",
-      "Once you agree, Ember may use its read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything.",
+      "Adding it runs its servers to find their tools. Ember shows you that list next, and uses none until you review it and agree.",
       "What its tools return is treated as information, never as instructions, and every use is in What Ember did.",
       "If its tools change later, Ember stops using them until you agree again.",
       "It comes from github/copilot-plugins, listed in the marketplace “Copilot plugins” you added. Its tools may run on this computer and reach the internet.",
     ]);
     expect([c.yes, c.no]).toEqual(["Agree and add", "Not now"]);
+  });
+
+  it("shows tool names, server names, descriptions and changing capabilities on the approval card", () => {
+    const tools = [{ server: "calendar", name: "list_events", description: "Lists events.", readOnly: true }, { server: "calendar", name: "create_event", description: "Creates an event.", readOnly: false }];
+    const card = xc.reagreeCard(item({ consented: false, tools: [], reviewTools: tools }));
+    expect(card.tools).toEqual(tools);
+    expect(card.lines[0]).toBe("Tools to review: 1 read-only tool, 1 tool that can change things.");
+    expect(card.yes).toBe("Agree and use tools");
+    expect(card.no).toBe("Not now");
   });
 
   it("says a connector goes through GitHub, signed in on GitHub's page", () => {

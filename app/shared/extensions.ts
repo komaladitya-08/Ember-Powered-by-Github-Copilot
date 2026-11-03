@@ -5,10 +5,12 @@
  */
 
 export type Kind = "plugin" | "connector" | "extension";
-export interface ToolInfo { name: string; description: string; readOnly: boolean; changed?: boolean }
+export interface ToolInfo { server?: string; name: string; description: string; readOnly: boolean; changed?: boolean }
 export interface Installed { id: string; kind: Kind; name: string; publisher?: string; source: string; version?: string;
   enabled: boolean; consented: boolean; status: "ready" | "starting" | "needs-auth" | "failed" | "disabled";
   detail?: string; tools: ToolInfo[];
+  /** The exact discovered tools awaiting review, grouped by server; the token binds Home's click to this list. */
+  reviewTools?: ToolInfo[]; reviewToken?: string; needsReview?: boolean;
   /** Where it reaches: the commands it runs on this computer and the hosts it calls (runtime addition). */
   reaches?: string[] }
 export interface MarketplaceEntry { marketplace: string; name: string; description: string; publisher?: string;
@@ -38,6 +40,6 @@ export interface ExtensionsApi {
   connectors(): Promise<MarketplaceEntry[]>;  // GitHub-hosted catalog
   connect(name: string): Promise<ConnectResult>;
   disconnect(id: string): Promise<void>;
-  reagree(id: string): Promise<void>;         // after a tool changed (rug pull)
+  reagree(id: string, reviewToken: string): Promise<void>;         // after a tool changed (rug pull)
   onChange(fn: () => void): () => void;
 }

@@ -117,7 +117,10 @@ export function registerExtensionsIpc(
   change(EXTENSIONS_IPC.setEnabled, (i, on) => { const id = extensionsName(i); return id && typeof on === "boolean" ? [id, on] as [string, boolean] : null; },
     (id, on) => done(api!.setEnabled(id, on)));
   change(EXTENSIONS_IPC.disconnect, one, id => done(api!.disconnect(id)));
-  change(EXTENSIONS_IPC.reagree, one, id => done(api!.reagree(id)));
+  change(EXTENSIONS_IPC.reagree, (i, token) => {
+    const id = extensionsName(i);
+    return id && typeof token === "string" && /^[0-9a-f]{64}$/.test(token) ? [id, token] as [string, string] : null;
+  }, (id, token) => done(api!.reagree(id, token)));
   change(EXTENSIONS_IPC.agree, () => [] as [], () => done(api!.agree()));
 
   handle(EXTENSIONS_IPC.connect, async (n: unknown): Promise<ExtensionsConnect> => {

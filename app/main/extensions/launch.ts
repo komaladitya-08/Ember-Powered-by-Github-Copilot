@@ -1,16 +1,14 @@
 /**
- * The launcher for an extension's stdio MCP server (bundled as dist/app/mcp-launch.cjs, run by the Copilot runtime as
- * plain Node with ELECTRON_RUN_AS_NODE). The runtime would start the server with its own whole environment, Ember's
- * GitHub sign-in and every key in it (the spike saw GH_TOKEN and cloud keys reach the server), and a server config's
- * `env` only adds to that. So the runtime starts this instead, and this starts the server with exactly the
- * environment Ember built (`EMBER_MCP_SPEC`: appEnv()'s allowlist plus the plugin's own values), no shell, its
- * stdio passed straight through. It records its server's process id in Ember's run folder, so the kill switch can
- * end it, and ends it when it is told to stop.
+ * Starts an extension's stdio server with only Ember's allowlisted environment, never the runtime's credentials.
+ * A private, per-launch lease is checked before spawn and every 25 ms. Removing or disabling an extension, Stop,
+ * or Ember's next start revokes it. No process id read from a file is ever signalled: this launcher owns its child.
+ * On Windows a kill-on-close job contains the whole tree, including when the runtime kills the launcher itself.
  */
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { loadJobApi, type JobApi } from "../commands/run/win32-job";
 
 /** What the launcher is told (JSON in EMBER_MCP_SPEC). */
 export interface LaunchSpec {
@@ -18,13 +16,11 @@ export interface LaunchSpec {
   args: string[];
   env: Record<string, string>;
   cwd: string;
-  /** Ember's run folder (0700): `<launcher pid>.pid` holds the server's process id while it runs. */
   runDir: string;
-  /**
-   * Start the server as the leader of its own process group (Linux and macOS), so the kill switch ends everything it
-   * started, not only its first process. Windows ends the tree with taskkill /T instead.
-   */
-  group?: boolean;
+  /** Unique private lease made by Ember for this launch, never recreated after revocation. */
+  leaseFile: string;
+  /** Linux and macOS use a process group; Windows uses a kill-on-close job. */
+  group: boolean;
 }
 
 /** The spec in `raw`, or null when it isn't one (the launcher then starts nothing). */
@@ -34,40 +30,66 @@ export function parseLaunchSpec(raw: string | undefined): LaunchSpec | null {
     const s = JSON.parse(raw) as Partial<LaunchSpec>;
     if (typeof s.command !== "string" || !s.command || !Array.isArray(s.args) || s.args.some(a => typeof a !== "string")) return null;
     if (!s.env || typeof s.env !== "object" || Object.values(s.env).some(v => typeof v !== "string")) return null;
-    if (typeof s.cwd !== "string" || typeof s.runDir !== "string") return null;
-    if (s.group !== undefined && typeof s.group !== "boolean") return null;
+    if (typeof s.cwd !== "string" || typeof s.runDir !== "string" || typeof s.group !== "boolean") return null;
+    if (typeof s.leaseFile !== "string" || !path.isAbsolute(s.leaseFile) || path.dirname(s.leaseFile) !== path.resolve(s.runDir) || !/^[a-f0-9-]{36}\.lease$/.test(path.basename(s.leaseFile))) return null;
     return s as LaunchSpec;
   } catch {
     return null;
   }
 }
 
+/** Never use a direct process-group signal after Node has observed its child ending (its pid may be reused). */
+export function childIsLive(child: { pid?: number; exitCode: number | null; signalCode: NodeJS.Signals | null }): boolean {
+  return child.pid !== undefined && child.pid > 1 && child.exitCode === null && child.signalCode === null;
+}
+
+/** Windows joins its own job before spawning, so no descendant can escape the kill-on-close lifetime. */
+export function launcherJob(api: JobApi | null): () => void {
+  if (!api) throw new Error("no job objects");
+  const job = api.createKillOnCloseJob();
+  api.assignSelf(job);
+  return () => { api.terminate(job, 1); };
+}
+
 function main(): void {
   const spec = parseLaunchSpec(process.env.EMBER_MCP_SPEC);
-  if (!spec) { process.stderr.write("ember: no server to start\n"); process.exit(2); }
+  if (!spec || !fs.existsSync(spec.leaseFile)) { process.stderr.write("ember: no server to start\n"); process.exit(2); }
+  let stopJob: (() => void) | undefined;
+  if (!spec.group) {
+    try { stopJob = launcherJob(loadJobApi()); } catch { process.stderr.write("ember: the server could not be contained\n"); process.exit(2); }
+  }
   let child: ReturnType<typeof spawn>;
   try {
-    // No shell: a .cmd or .bat (npx on Windows) can't start this way, and says so plainly.
-    child = spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env, stdio: "inherit", shell: false, windowsHide: true, detached: spec.group === true });
+    child = spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env, stdio: "inherit", shell: false, windowsHide: true, detached: spec.group });
   } catch {
     process.stderr.write("ember: the server didn't start (Ember starts programs only, never scripts through a shell)\n");
     process.exit(127);
   }
-  const pidFile = path.join(spec.runDir, `${process.pid}.pid`);
-  const kill = (sig: NodeJS.Signals) => {
-    try {
-      if (spec.group && child.pid) process.kill(-child.pid, sig);
-      else child.kill(sig);
-    } catch { /* gone */ }
+  const kill = (signal: NodeJS.Signals) => {
+    if (!childIsLive(child)) return;
+    if (stopJob) { stopJob(); return; }
+    try { process.kill(-child.pid!, signal); } catch { try { child.kill(signal); } catch { /* already gone */ } }
   };
-  child.on("spawn", () => {
-    try { fs.writeFileSync(pidFile, String(child.pid ?? ""), { mode: 0o600 }); } catch { /* the kill switch then ends the launcher only, which ends the server */ }
-  });
-  const end = (code: number) => { try { fs.rmSync(pidFile, { force: true }); } catch { /* already gone */ } process.exit(code); };
+  const end = (code: number) => {
+    clearInterval(watch);
+    try { fs.rmSync(spec.leaseFile, { force: true }); } catch { /* already revoked */ }
+    process.exit(code);
+  };
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    kill("SIGTERM");
+    // A non-cooperative live child is killed; a child that ended is never signalled by its old pid.
+    setTimeout(() => { kill("SIGKILL"); end(1); }, 200).unref();
+  };
+  const watch = setInterval(() => { if (!fs.existsSync(spec.leaseFile)) stop(); }, 25);
+  watch.unref();
+  // Revocation can race the spawn. It is checked again once Node has a child to stop.
+  child.on("spawn", () => { if (!fs.existsSync(spec.leaseFile)) stop(); });
   child.on("error", err => { process.stderr.write(`ember: the server didn't start (${(err as NodeJS.ErrnoException).code ?? "error"})\n`); end(127); });
   child.on("exit", (code, signal) => end(code ?? (signal ? 1 : 0)));
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(sig, () => { kill("SIGTERM"); setTimeout(() => { kill("SIGKILL"); end(1); }, 2000).unref(); });
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(signal, stop);
 }
 
-// Run only as the bundled launcher (tests import parseLaunchSpec).
 if (process.env.EMBER_MCP_SPEC !== undefined && require.main === module) main();

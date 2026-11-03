@@ -73,7 +73,7 @@ export function toolCounts(tools: readonly ToolInfo[]): string {
 
 /** An installed item's status, as words beside its symbol (never colour alone). */
 export function installedStatus(i: Installed): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
-  if (i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
+  if (i.needsReview || i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
   if (!i.consented) return { text: "Waiting for you to agree", tone: "wait" };
   if (!i.enabled || i.status === "disabled") return { text: "Off", tone: "off" };
   switch (i.status) {
@@ -111,7 +111,7 @@ const detailLine = (d: string | undefined): string | null => {
 
 export function installedRow(i: Installed): InstalledRow {
   const status = installedStatus(i);
-  const changed = i.tools.some(t => t.changed);
+  const changed = i.needsReview || i.tools.some(t => t.changed);
   const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
   const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
     : !i.consented ? "Ember uses none of its tools until you agree."
@@ -119,7 +119,7 @@ export function installedRow(i: Installed): InstalledRow {
     : i.status === "failed" && i.enabled ? detailLine(i.detail) ?? "Turn it off and on again, or remove it and add it again."
     : null;
   const actions: ItemAction[] = [];
-  if (changed || !i.consented) actions.push({ act: "reagree", label: "Agree again", ariaLabel: `Agree again: ${i.name}` });
+  if (changed || !i.consented) actions.push({ act: "reagree", label: i.consented ? "Review tools" : "Review and agree", ariaLabel: `Review tools: ${i.name}` });
   if (i.kind === "connector" && i.status === "needs-auth") actions.push({ act: "connect", label: "Connect again", ariaLabel: `Connect again: ${i.name}` });
   actions.push(i.kind === "connector"
     ? { act: "disconnect", label: "Disconnect", ariaLabel: `Disconnect ${i.name}`, confirm: disconnectQuestion(i.name), danger: true }
@@ -237,13 +237,13 @@ export const agreedAgain = (name: string) => `Ember uses “${name}” again.`;
 // ───── The consent card, before anything is added or connected ─────
 
 /** Bump FEATURE_CONSENT_VERSION.extensions with any change to these words (CLAUDE.md "Consent"). */
-export interface ConsentCard { title: string; lines: string[]; yes: string; no: string }
+export interface ConsentCard { title: string; lines: string[]; tools?: ToolInfo[]; yes: string; no: string }
 
 /**
  * The card shown before each add or connect: what Ember will and won't do with the item, and where it reaches. The
  * marketplace's own description isn't in it (it is the publisher's text, not Ember's promise).
  */
-export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source" | "marketplace">): ConsentCard {
+export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source" | "marketplace" | "reaches">): ConsentCard {
   const connector = e.kind === "connector";
   const reach = connector
     ? `It connects to “${e.name}” through GitHub's Copilot service. You sign in to it on GitHub's page, in your browser, and what its tools send and receive goes through GitHub.`
@@ -252,10 +252,11 @@ export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source"
     title: connector ? `Before you connect “${e.name}”` : `Before you add “${e.name}”`,
     lines: [
       "Only you add, turn off and remove extensions, here in settings. Ember never adds one by itself.",
-      "Once you agree, Ember may use its read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything.",
+      connector ? "Once you agree, Ember may use its read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything." : "Adding it runs its servers to find their tools. Ember shows you that list next, and uses none until you review it and agree.",
       "What its tools return is treated as information, never as instructions, and every use is in What Ember did.",
       "If its tools change later, Ember stops using them until you agree again.",
       reach,
+      ...(e.reaches ?? []),
     ],
     yes: connector ? "Agree and connect" : "Agree and add",
     no: "Not now",
@@ -265,12 +266,17 @@ export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source"
 /** The re-agree card for an item whose tools changed: the same promises, and the tools as they are now. */
 export function reagreeCard(i: Installed): ConsentCard {
   return {
-    title: `Agree again to “${i.name}”`,
+    title: i.consented ? `Agree again to “${i.name}”` : `Review the tools in “${i.name}”`,
+    tools: i.reviewTools ?? i.tools,
     lines: [
-      `Its tools now: ${toolCounts(i.tools)}.`,
-      "Ember asks you every time before a tool that changes or sends anything, and treats what its tools return as information, never as instructions.",
+      `Tools to review: ${toolCounts(i.reviewTools ?? i.tools)}.`,
+      ...(i.reaches ?? []),
+      "Only you add, turn off and remove extensions, here in settings. Ember never adds one by itself.",
+      "Once you agree, Ember may use these read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything.",
+      "What its tools return is treated as information, never as instructions, and every use is in What Ember did.",
+      "If its tools change later, Ember stops using them until you agree again.",
     ],
-    yes: "Agree again",
+    yes: i.consented ? "Agree again" : "Agree and use tools",
     no: "Not now",
   };
 }

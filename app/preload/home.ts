@@ -99,7 +99,7 @@ const extensions: EmberExtensionsApi = {
   setEnabled: (id, on) => ipcRenderer.invoke(EXTENSIONS_IPC.setEnabled, id, on),
   connect: name => ipcRenderer.invoke(EXTENSIONS_IPC.connect, name),
   disconnect: id => ipcRenderer.invoke(EXTENSIONS_IPC.disconnect, id),
-  reagree: id => ipcRenderer.invoke(EXTENSIONS_IPC.reagree, id),
+  reagree: (id, token) => ipcRenderer.invoke(EXTENSIONS_IPC.reagree, id, token),
   agree: () => ipcRenderer.invoke(EXTENSIONS_IPC.agree),
 };
 contextBridge.exposeInMainWorld("emberExtensions", extensions);
