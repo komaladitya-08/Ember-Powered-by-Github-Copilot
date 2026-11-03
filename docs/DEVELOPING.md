@@ -417,28 +417,41 @@ listens. A request ends
 when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
 quiet room); when a longer one is cut, Ember says it only caught the first part.
 
-### How speech runs (WebAssembly, or natively on Windows and macOS)
+### How speech runs (natively, or on WebAssembly)
 
 Listening (the wake word, the two voice detectors and Moonshine) and Ember's voice run on sherpa-onnx 1.13.8, each in a
 utility process of its own (`app/voice/process.ts`, `app/voice/tts-process.ts`), through `app/voice/runtime.ts`:
 
 | | Linux | Windows, macOS |
 |---|---|---|
-| Build | WebAssembly (`sherpa-onnx`): one thread, no GPU, runs on RHEL 8's glibc 2.28 | The native addon (`sherpa-onnx-win-<arch>`, `sherpa-onnx-darwin-<arch>`: the binaries `sherpa-onnx-node` loads), WebAssembly if it doesn't load |
-| Threads | 1 | Moonshine 2, the Piper voice 1 (a second thread made it slower on a busy computer), Kokoro up to 4, leaving a core free; the per-frame models 1 |
+| Build | sherpa-onnx's prebuilt C API (`libsherpa-onnx-c-api.so` and `libonnxruntime.so`, in `resources/voice-native`) through koffi (`app/voice/capi.ts`); WebAssembly (`sherpa-onnx`: one thread, no GPU) where it can't run | The native addon (`sherpa-onnx-win-<arch>`, `sherpa-onnx-darwin-<arch>`: the binaries `sherpa-onnx-node` loads), WebAssembly if it doesn't load |
+| Threads | As on Windows and macOS (WebAssembly: 1) | Moonshine 2, the Piper voice 1 (a second thread made it slower on a busy computer), Kokoro up to 4, leaving a core free; the per-frame models 1 |
 | GPU | — | macOS: CoreML for Kokoro only, kept when it is faster than the CPU on that Mac (both are timed the first time it loads, and the verdict is kept in `ember-voice-providers.json` in the user's temporary folder). Moonshine and Piper run on the CPU: CoreML lost to it on CI's Macs, and compiling for it held up the first load by seconds (`EMBER_VOICE_PROVIDER=coreml` tries it for every model). Windows: none: the prebuilt addon's `onnxruntime.dll` has no DirectML (it imports neither `DirectML.dll` nor `d3d12.dll`, and sherpa-onnx quietly uses the CPU when asked for it) |
 | Voice | Piper "Kristin" | Piper "Kristin", or Kokoro (below) |
+
+**Which build on Linux.** At start, main asks `capiChoice()` (app/voice/runtime.ts) and logs its answer as
+`voice.backend` (`backend`, `why`); `ember doctor` shows it as **Speech**: "On this computer (native)." or "On this
+computer (WebAssembly: <why>).". It is native when the libraries are in `resources/voice-native` (an RPM's
+`/opt/ember/resources/voice-native`, or inside the AppImage) and the processor has every feature they need
+(`CAPI_CPU_NEEDS` in app/voice/capi.ts, read from `/proc/cpuinfo`, which counts as lacking them when unreadable). 1.13.8's
+libraries need none beyond x86-64: disassembled, every AVX, AVX2 and AVX-512 instruction in `libonnxruntime.so` is in
+the MLAS kernels onnxruntime picks from CPUID at run time, and `libsherpa-onnx-c-api.so` has none. Otherwise, and with
+`EMBER_VOICE_BACKEND=wasm`, it is WebAssembly. Natively, a library that doesn't load still gives WebAssembly in that
+process, and a process that dies loading is started again on WebAssembly (below). A development build uses the C API
+only with `EMBER_SHERPA_CAPI` (below). The natural voice stays off on Linux (`VoicePlatform.naturalVoice`), so native
+speech fetches nothing more.
 
 Ember depends on the platform packages directly (`optionalDependencies`, so npm installs only the computer's own):
 `sherpa-onnx-node`'s JavaScript would bring `sherpa-onnx-linux-x64` too, which needs glibc 2.32 and would fail
 `npm run check:symvers`. No Linux package carries the addon (`scripts/package/layout.mjs`; CI checks the staged Linux
-folder has no `sherpa-onnx-*`). The log says which build each process runs: `voice.ready` and `voice.tts_ready`
+folder has no `sherpa-onnx-*`): they carry the C API's libraries, which need only GLIBC_2.17, GLIBCXX_3.4.19 and
+CXXABI_1.3.7. The log says which build each process runs: `voice.ready` and `voice.tts_ready`
 carry `backend` (`native` or `wasm`), `detail` (the addon's and onnxruntime's versions, or why WebAssembly runs),
 `provider`, `threads` and `tried` (each provider's probe time); `voice.tts_ready` also has the voice and its measured
 real-time factor (`rtf`).
 
-**Falling back.** A model the addon can't make throws, and WebAssembly is used as before. A damaged model file aborts
-the addon's onnxruntime instead (an uncaught C++ exception, which ends the process), so a voice or speech process that
+**Falling back.** A model the native build (the addon, or Linux's C API) can't make throws, and WebAssembly is used
+as before. A damaged model file aborts its onnxruntime instead (an uncaught C++ exception, which ends the process), so a voice or speech process that
 dies before it is ready is started again at once on WebAssembly (`voice.native_failed`, `voice.tts_native_failed`),
 which then says the models are damaged and Ember downloads them again; after that, the native build is tried again.
 `EMBER_VOICE_BACKEND=wasm` forces WebAssembly and `EMBER_VOICE_PROVIDER=cpu` turns CoreML off (both honoured by an
@@ -447,7 +460,10 @@ installed Ember: neither loads code). `npx electron test/smoke/voice-backends.mj
 build Ember picks and then on WebAssembly, and prints each one's build, load time and latency; CI runs it on Windows
 and macOS, after `test/integration/voice.test.ts` (which runs on the picked build too; `EMBER_SHERPA_ADDON=<a
 sherpa-onnx.node>` tries an addon where none is installed, such as `sherpa-onnx-linux-x64`'s on a newer Linux, and
-`EMBER_SHERPA_CAPI=<folder>` runs it on the C API, with the folder `scripts/voice/fetch-capi.mjs` prints). A model the
+`EMBER_SHERPA_CAPI=<folder>` runs it on the C API, with the folder `scripts/voice/fetch-capi.mjs` prints). CI's `el8`
+job runs `test/integration/voice.test.ts` on RHEL 8's glibc twice, with `EMBER_VOICE_BACKEND=wasm` and with
+`EMBER_SHERPA_CAPI`; its `package` job checks that the installed RPM and the AppImage log `voice.backend` native and that
+`ember doctor` says "On this computer (native)". A model the
 native build can't make (the C API gives no handle) is tried on WebAssembly before it counts as damaged.
 
 **The natural voice (Kokoro).** Settings › Voice › **Use a more natural voice** (`voice.natural`, off by default;
@@ -488,13 +504,17 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
   - `firstAudioMs`: Ember's first sound (the acknowledgement's, when there was one).
 - A step that didn't happen is left out: a stop, or speaking off.
 
-**Native speech on Linux (development).** `node scripts/voice/fetch-capi.mjs` fetches sherpa-onnx's prebuilt C API
-for Linux x64 (pinned by SHA-256; its libraries need only GLIBC_2.17) and prints its folder; run Ember with
-`EMBER_SHERPA_CAPI=<that folder>` and listening and Ember's voice run natively through koffi (app/voice/capi.ts),
-falling back to WebAssembly if a speech process dies loading, as the addon does on Windows and macOS. The settings
-and logs say `C API through koffi`. `EMBER_SHERPA_CAPI=<folder> node scripts/voice/bench.mjs` times it against
-WebAssembly. When sherpa-onnx's version changes, run `node scripts/voice/capi-structs.mjs <its c-api.h> <version>`
-to regenerate app/voice/capi-structs.ts. An installed Ember doesn't ship the libraries yet.
+**Native speech on Linux.** `node scripts/voice/fetch-capi.mjs` fetches sherpa-onnx's prebuilt C API for Linux x64
+(`CAPI_RELEASE` in app/voice/models.ts: the archive and each library Ember loads pinned by SHA-256; they need only
+GLIBC_2.17) into `.cache/voice/capi` and prints the libraries' folder. `npm run package` runs it, and stage.mjs copies
+the two libraries into `resources/voice-native`, refusing any that doesn't match its pin; nothing is downloaded at run
+time. In development, run Ember with `EMBER_SHERPA_CAPI=<that folder>` (a development switch, ignored by an installed
+Ember) and listening and Ember's voice run natively through koffi (app/voice/capi.ts). The settings and logs say
+`C API through koffi`. `EMBER_SHERPA_CAPI=<folder> node scripts/voice/bench.mjs` and `scripts/perf/latency.mjs` time it
+against WebAssembly. When sherpa-onnx's version changes, run `node scripts/voice/capi-structs.mjs <its c-api.h>
+<version>` to regenerate app/voice/capi-structs.ts, pin the new libraries, and check them again for processor
+features (`CAPI_CPU_NEEDS`). `ELECTRON_RUN_AS_NODE=1 /opt/ember/ember test/smoke/capi-load.mjs
+/opt/ember/resources/voice-native` prints `sherpa-onnx 1.13.8` when an installed Ember's libraries load.
 
 **Does Ember hear itself?** Before Ember can be interrupted without "Hey Ember" (docs/ASSISTANT.md 2.3), its own
 voice must not reach its microphone. Ember plays its voice through Web Audio, which Chromium's echo cancellation is
@@ -749,6 +769,11 @@ A prebuilt binary that can't meet that may still ship for Windows and macOS only
 installs only there, left out of the Linux layout (`scripts/package/layout.mjs`): sherpa-onnx's native addon is one
 (§5, How speech runs). It isn't in `ember.nativeModules` (nothing is rebuilt), and Linux never installs it.
 
+Linux ships no Node addons (`ember.nativeModules` is `[]`), and these libraries loaded with koffi, by name:
+`libsherpa-onnx-c-api.so` and `libonnxruntime.so` (sherpa-onnx 1.13.8's prebuilt C API, in `resources/voice-native`,
+pinned by SHA-256 in `CAPI_RELEASE`). `npm run check:symvers` and `scripts/rebuild-el8.sh` check them with
+node_modules (fetching them first with `scripts/voice/fetch-capi.mjs`), and CI checks them again in the staged folder.
+
 ## 7. Packages
 
 ```bash
@@ -761,7 +786,7 @@ The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `roc
 
 | Output | What it is |
 |---|---|
-| `ember-<v>-1.el8.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, the system voice, microphone list, tray icons). It carries the speech models in `/usr/share/ember/voice-models` (a release must: `EMBER_RPM_MODELS=required`; they come from `node scripts/voice/prepare.mjs`), and replaces 0.1.0's separate `ember-voice-models` RPM on upgrade. `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
+| `ember-<v>-1.el8.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, the system voice, microphone list, tray icons). It carries the speech models in `/usr/share/ember/voice-models` (a release must: `EMBER_RPM_MODELS=required`; they come from `node scripts/voice/prepare.mjs`), and replaces 0.1.0's separate `ember-voice-models` RPM on upgrade. Native speech's libraries are in `/opt/ember/resources/voice-native` (they neither require nor provide anything: `rpm -qpR` lists only the explicit packages). `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
 | `Ember-voice-models-<v>.zip` | The same models for computers that can't download them, unzipped where Ember looks (`scripts/package/models-zip.mjs`; README: Computers without internet access) |
 | `Ember-<v>-x86_64.AppImage` | Runs without installing. Without user namespaces it runs without Chromium's sandbox (an AppImage can't carry a setuid helper); use the RPM on hardened machines |
 
@@ -923,8 +948,8 @@ accessibility helper, which takes a few seconds once per version of the helper (
 
 These work as in §5, from Command Prompt, PowerShell or Git Bash: `npm run dev`, `npm test`, `npm run lint`,
 `npm run typecheck`, `npm run build`, `npm run test:smoke` and `npm run doctor` (the setup check, printed in the
-terminal). CI runs the Copilot-runtime integration suite on Linux only, and the voice suite on Linux (WebAssembly),
-Windows and macOS (the native addon, with `test/smoke/voice-backends.mjs`); on Windows it also runs the suites in
+terminal). CI runs the Copilot-runtime integration suite on Linux only, and the voice suite on Linux (WebAssembly, and
+on `rockylinux:8` the C API too), Windows and macOS (the native addon, with `test/smoke/voice-backends.mjs`); on Windows it also runs the suites in
 §10.3. Linux only: `npm run test:sidecar`, `npm run rebuild:el8`, `npm run check:symvers`, `npm run package`, Ember's
 desk and the eval.
 

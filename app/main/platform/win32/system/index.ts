@@ -75,7 +75,7 @@ export function win32System(deps: PlatformDeps, o: Win32SystemOptions = {}): Sys
       env, api, powershell, helperDir: helper, app: deps.electron.app, systemPreferences: deps.electron.systemPreferences,
     }),
     a11y: win32A11y({ api, systemPreferences: deps.electron.systemPreferences, now: o.now }),
-    voice: { speakerMonitor: false, bundledModelDirs: res => bundledModelDirs(res, folders.programData()) },
+    voice: { speakerMonitor: false, bundledModelDirs: res => bundledModelDirs(res, folders.programData()), nativeSpeechDir: () => null, naturalVoice: true },
     privacy: { neverLookDefaults: NEVER_LOOK_DEFAULTS_WIN32, isSecurityWindow: w => isSecurityWindow(w, "win32") },
     clipboardFormats: CLIPBOARD_FORMATS_WIN32,
     lifecycle: win32Lifecycle({ packaged: deps.packaged, execPath: deps.execPath, programs: folders.programs, shell: deps.electron.shell, log }),

@@ -1,7 +1,9 @@
 sherpa-onnx's native Node addon (sherpa-onnx-win-x64, sherpa-onnx-win-arm64, sherpa-onnx-darwin-arm64 and
-sherpa-onnx-darwin-x64 1.13.8, the per-platform packages of sherpa-onnx-node) ships no licence file. Its package.json
-says Apache-2.0; this is the licence as published in its repository (https://github.com/k2-fsa/sherpa-onnx, LICENSE),
-followed by what the addon contains besides sherpa-onnx itself.
+sherpa-onnx-darwin-x64 1.13.8, the per-platform packages of sherpa-onnx-node) and its prebuilt C API for Linux x64
+(sherpa-onnx-v1.13.8-linux-x64-shared: libsherpa-onnx-c-api.so and libonnxruntime.so) ship no licence file. Its
+package.json says Apache-2.0; this is the licence as published in its repository
+(https://github.com/k2-fsa/sherpa-onnx, LICENSE), followed by what the addon and the libraries contain besides
+sherpa-onnx itself.
 
 
                                  Apache License
@@ -206,8 +208,8 @@ followed by what the addon contains besides sherpa-onnx itself.
    See the License for the specific language governing permissions and
    limitations under the License.
 
-What sherpa-onnx.node and the sherpa-onnx C API library beside it (sherpa-onnx-c-api.dll, libsherpa-onnx-c-api.dylib)
-also contain, as the names and messages in them show. This is not a complete list:
+What sherpa-onnx.node and the sherpa-onnx C API library beside it (sherpa-onnx-c-api.dll, libsherpa-onnx-c-api.dylib;
+libsherpa-onnx-c-api.so on Linux) also contain, as the names and messages in them show. This is not a complete list:
 - kaldi-native-fbank, kaldi-decoder, kaldifst and OpenFst: Apache-2.0
 - simple-sentencepiece: Apache-2.0
 - piper-phonemize: MIT
@@ -217,7 +219,7 @@ also contain, as the names and messages in them show. This is not a complete lis
 - eSpeak NG (https://github.com/espeak-ng/espeak-ng), with its ucd-tools: GPL-3.0-or-later (its COPYING follows these
   notices). It is part of sherpa-onnx's text-to-speech, which speaks Ember's voice (it turns text into phonemes).
 The packages also carry ONNX Runtime 1.28.2 (https://github.com/microsoft/onnxruntime) as a library of its own
-(onnxruntime.dll, onnxruntime_providers_shared.dll; libonnxruntime.dylib): MIT, Copyright (c) Microsoft Corporation
+(onnxruntime.dll, onnxruntime_providers_shared.dll; libonnxruntime.dylib; libonnxruntime.so): MIT, Copyright (c) Microsoft Corporation
 (its licence follows), with the third-party software its notices list (they follow, from its v1.28.2 tag).
 
 --- ONNX Runtime's LICENSE ---

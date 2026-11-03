@@ -88,7 +88,7 @@ jobs:
     name: RHEL 8 compatibility (rockylinux:8)
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 55
     container:
       image: rockylinux:8
       # Lets Chromium use its user-namespace sandbox inside the container.
@@ -112,10 +112,28 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
-      - name: Rebuild native modules on glibc 2.28 and check every binary
+      # sherpa-onnx's C API for native speech, which the Linux packages carry (app/voice/models.ts CAPI_RELEASE).
+      - name: Native speech libraries (cached; each verified by SHA-256)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/voice/capi
+          key: voice-capi-${{ hashFiles('app/voice/models.ts', 'scripts/voice/fetch-capi.mjs') }}
+      - name: Rebuild native modules on glibc 2.28 and check every binary (node_modules and the native speech libraries)
         run: scripts/rebuild-el8.sh --here
       - name: Accessibility sidecar self-test on RHEL 8's platform-python (3.6), which installed Ember runs it with
         run: /usr/libexec/platform-python -B sidecar/atspi/test_ember_atspi.py
+      - name: Speech models (cached; verified by SHA-256)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/voice/models
+          key: voice-models-el8-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - run: node scripts/voice/prepare.mjs
+      - name: Speech on RHEL 8's glibc, on both builds (WebAssembly, then sherpa-onnx's C API, which the packages use)
+        env:
+          EMBER_VOICE_TEST: "1"
+        run: |
+          EMBER_VOICE_BACKEND=wasm npm run test:integration -- test/integration/voice.test.ts
+          EMBER_SHERPA_CAPI="$(node scripts/voice/fetch-capi.mjs)" npm run test:integration -- test/integration/voice.test.ts
       - run: npm run build
       - name: Launch smoke test as a normal user (sandbox on)
         run: |
@@ -151,7 +169,13 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
-      - name: Rebuild native modules on glibc 2.28
+      # sherpa-onnx's C API, which the RPM and the AppImage carry for native speech (resources/voice-native).
+      - name: Native speech libraries (cached; each verified by SHA-256)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/voice/capi
+          key: voice-capi-${{ hashFiles('app/voice/models.ts', 'scripts/voice/fetch-capi.mjs') }}
+      - name: Rebuild native modules on glibc 2.28 (and check them and the native speech libraries)
         run: scripts/rebuild-el8.sh --here
       - run: npm run build
       # The real models, which the RPM and the AppImage carry (a release's must: EMBER_RPM_MODELS=required).
@@ -172,13 +196,21 @@ jobs:
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
+          node scripts/voice/fetch-capi.mjs
           node scripts/package/stage.mjs --with-runtimes
           scripts/check-symvers.sh dist/package/ember | grep -v '^ok' || true
-          scripts/check-symvers.sh dist/package/ember > /dev/null
-          # sherpa-onnx's native addon needs glibc 2.32: never in a Linux package (speech runs on its WebAssembly).
+          scripts/check-symvers.sh dist/package/ember > /tmp/symvers.txt
+          # The native speech libraries were among the binaries checked (GLIBC_2.17 at most: RHEL 8 has 2.28).
+          test "$(grep -cE '^ok +dist/package/ember/resources/voice-native/lib(onnxruntime|sherpa-onnx-c-api)\.so ' /tmp/symvers.txt)" = 2
+          # sherpa-onnx's native addon needs glibc 2.32: never in a Linux package (speech runs on its C API instead).
           if ls -d dist/package/ember/resources/app/node_modules/sherpa-onnx-* 2> /dev/null; then exit 1; fi
       - name: Build the RPM (Ember with its speech models inside)
-        run: EMBER_RPM_MODELS=required scripts/package/rpm.sh
+        run: |
+          EMBER_RPM_MODELS=required scripts/package/rpm.sh
+          # Nothing generated: the libraries Ember carries (the native speech ones too) neither require nor provide.
+          rpm -qpR dist/package/ember-*.x86_64.rpm
+          if rpm -qpR dist/package/ember-*.x86_64.rpm | grep -E '\.so|onnx|sherpa'; then exit 1; fi
+          if rpm -qp --provides dist/package/ember-*.x86_64.rpm | grep -E '\.so|onnx|sherpa'; then exit 1; fi
       # The same verified models as a zip, for Windows, macOS and Linux PCs that can't download them (IT unzips it into
       # the machine-wide folder Ember looks in: README "Computers without internet access").
       - name: Zip the speech models for network-restricted computers
@@ -190,6 +222,14 @@ jobs:
           scripts/package/appimage.sh
           # The models are inside it, where Ember looks first.
           (cd /tmp && "$GITHUB_WORKSPACE"/dist/package/Ember-*-x86_64.AppImage --appimage-extract 'ember/resources/voice-models/*.ok' > /dev/null && ls squashfs-root/ember/resources/voice-models/.*.ok && rm -rf squashfs-root)
+      - name: The AppImage starts on rockylinux:8 and runs speech natively (as a normal user)
+        run: |
+          # No FUSE in a container: the AppImage runs from a copy it unpacks.
+          cp dist/package/Ember-*-x86_64.AppImage /home/ci/Ember.AppImage && chown ci /home/ci/Ember.AppImage
+          sudo -u ci env HOME=/home/ci APPIMAGE_EXTRACT_AND_RUN=1 EMBER_LOG_STDOUT=1 xvfb-run -a sh -c 'timeout 25 /home/ci/Ember.AppImage > /tmp/ember-appimage.log 2>&1; true'
+          grep -q '"msg":"window.home.shown"' /tmp/ember-appimage.log || { cat /tmp/ember-appimage.log; exit 1; }
+          grep '"msg":"voice.backend"' /tmp/ember-appimage.log | grep -q '"backend":"native"' || { grep voice /tmp/ember-appimage.log; exit 1; }
+          rm -f /home/ci/Ember.AppImage
       - name: Install the RPM with dnf (resolves every Requires from the distribution)
         run: |
           dnf -y install ./dist/package/ember-*.x86_64.rpm
@@ -202,6 +242,8 @@ jobs:
           # The desk helper ships beside main.cjs, and the installed binary can run it as plain Node.
           test -f /opt/ember/resources/app/dist/app/desk-agent.cjs
           ELECTRON_RUN_AS_NODE=1 /opt/ember/ember -e 'process.exit(0)'
+          # Native speech: the C API's libraries load from where the RPM put them, on the distribution's own libraries.
+          ELECTRON_RUN_AS_NODE=1 /opt/ember/ember test/smoke/capi-load.mjs /opt/ember/resources/voice-native | grep -x 'sherpa-onnx 1.13.8'
       - name: "The installed Ember's fuses: no debugger, no NODE_OPTIONS; plain Node kept for the desk helper"
         run: |
           node scripts/package/fuses.mjs --check /opt/ember/ember
@@ -224,10 +266,13 @@ jobs:
           if { sudo -u ci env HOME=/home/ci ember doctor 2>&1 || true; } | grep -E 'ANGLE|eglInitialize|GPU process'; then exit 1; fi
           sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor || true
           sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -q 'ok    Window sandbox'
+          sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -qE '^ok +Speech +On this computer \(native\)\.$'
       - name: The installed Ember starts and shows its window (as a normal user)
         run: |
           sudo -u ci env HOME=/home/ci EMBER_LOG_STDOUT=1 xvfb-run -a sh -c 'timeout 25 ember > /tmp/ember.log 2>&1; true'
           grep -q '"msg":"window.home.shown"' /tmp/ember.log || { cat /tmp/ember.log; exit 1; }
+          # It chose native speech (the C API in /opt/ember/resources/voice-native), not WebAssembly.
+          grep '"msg":"voice.backend"' /tmp/ember.log | grep -q '"backend":"native"' || { grep voice /tmp/ember.log; exit 1; }
       - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
