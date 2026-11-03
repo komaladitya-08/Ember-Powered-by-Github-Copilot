@@ -14,7 +14,7 @@ function wiring() {
   const taskCallback = source.slice(source.indexOf("      onTaskFinished: t =>"), source.indexOf("      isOnline:", source.indexOf("      onTaskFinished: t =>")));
   expect(speech.length).toBeGreaterThan(500);
   expect(callbacks.length).toBeGreaterThan(500);
-  const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), micState: "waiting" };
+  const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), micState: "waiting" };
   const agent = { answerOpen: false, tasks: null, pauseAnswer: vi.fn() };
   const confirmer = { waiting: false };
   const personal = { answered: vi.fn(() => null) };
@@ -22,14 +22,19 @@ function wiring() {
     let lastAskByVoice = false, turnAnswer = "", lastReply = "";
     const log = { info() {} }, maySpeak = () => true;
     let askedAt = 0;
+    let manualCall = null;
+    const syncListenOnce = () => {};
     const lastState = { bubble: { visible: false } }, showState = () => {};
     const settings = { get: () => ({ speakResults: true }) }, userAway = () => false, notify = () => {};
     ${speech}
-    return { ${callbacks} ${taskCallback} interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech };
+    return {
+      ${callbacks} ${taskCallback} interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech,
+      manualListening: on => { manualCall = on ? { source: "ask" } : null; },
+    };
   `, { target: ts.ScriptTarget.ES2022 });
   const run = new Function("SpeechStream", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "voice", "personal", "agent", "confirmer", code);
   const callbacksUnderTest = run(SpeechStream, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, voice, personal, agent, confirmer) as {
-    onTurnStart(turn: { text: string; spoken: boolean }): void;
+    onTurnStart(turn: { text: string; spoken: boolean; manual?: true }): void;
     onAnswerDelta(text: string): void;
     onAnswer(text: string): void;
     onAnswerEnd(text: string): void;
@@ -37,6 +42,7 @@ function wiring() {
     onTaskFinished(task: { title: string; status: string; text: string; summary: string }): void;
     interrupt(): void;
     pause(): void;
+    manualListening(on: boolean): void;
   };
   return { ...callbacksUnderTest, voice, personal, agent, confirmer };
 }
@@ -115,6 +121,17 @@ describe("main's answer speech ownership", () => {
     expect(w.voice.speak.mock.calls.map(c => c[0])).toEqual(["Would you like the first report?", "The typed request's answer."]);
   });
 
+  it("cancels pending Listen once at turn start and answers a manual request without a follow-up window", () => {
+    vi.useFakeTimers();
+    const w = wiring();
+    w.onTurnStart({ text: "Which report?", spoken: true, manual: true });
+    expect(w.voice.cancelListenOnce).toHaveBeenCalledOnce();
+    w.onAnswer("Would you like the first report?");
+    w.onTurnEnd(false);
+    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Would you like the first report?", { append: false });
+    expect(w.voice.followUp).not.toHaveBeenCalled();
+  });
+
   it("keeps background results on cards during a foreground request and appends them after playback", () => {
     const w = wiring();
     const task = { title: "A background task", status: "done", text: "The task is done.", summary: "Done" };
@@ -126,6 +143,10 @@ describe("main's answer speech ownership", () => {
     w.onTaskFinished(task);
     expect(w.voice.speak).not.toHaveBeenCalled();
     w.voice.micState = "waiting";
+    w.manualListening(true); // Voice Match is still checking a manually started request.
+    w.onTaskFinished(task);
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    w.manualListening(false);
     w.onTaskFinished(task);
     expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("The task is done.", { append: true });
   });

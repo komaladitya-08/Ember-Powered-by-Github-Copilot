@@ -71,8 +71,7 @@ const form = document.getElementById("form") as HTMLFormElement;
 const field = input.parentElement!;
 const listenRow = document.getElementById("listen-once-row")!;
 /**
- * The rows the window was last sized for: the field's lines, and one each for the note and the tip (main opens it at
- * one, or two with the tip).
+ * The window opens with one field row and one Listen once row, plus the wait tip when present.
  */
 let shownRows = 2;
 /**

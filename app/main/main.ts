@@ -449,18 +449,19 @@ function start(): void {
     }
     home = createHomeWindow(platform.os);
     home.once("ready-to-show", () => log.info("window.home.shown"));
+    const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); };
     // A crashed settings page comes back (it may be the consent page on first run).
-    revive(home, reason => log.warn("window.home.renderer_gone", { reason }));
+    revive(home, reason => { cancelHomeListenOnce(); log.warn("window.home.renderer_gone", { reason }); });
     // While the user works in settings, Ember waits beside the window instead of over it.
     for (const e of ["focus", "blur", "move", "resize", "minimize", "restore", "hide", "show"] as const) home.on(e as "focus", stepAside);
     // Minimised or hidden, the page stops drawing its characters (X11 still reports it visible).
     const win = home;
     win.once("show", () => bringToFront(win));
     const shown = (on: boolean) => () => { if (!win.isDestroyed()) win.webContents.send(IPC.homeVisibility, on); };
-    const hidden = () => { shown(false)(); if (manualCall?.source === "home") voice?.cancelListenOnce(); };
+    const hidden = () => { shown(false)(); cancelHomeListenOnce(); };
     win.on("minimize", hidden); win.on("hide", hidden); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
-      if (manualCall?.source === "home") voice?.cancelListenOnce();
+      cancelHomeListenOnce();
       home = null;
       homeWantsLevel = false;
       stepAside();
@@ -1365,7 +1366,8 @@ function start(): void {
     if (key === lastListenStatus) return;
     lastListenStatus = key;
     askWindow.setListenOnce(ask);
-    sendToHome(IPC.voiceStatus, voiceStatus(voiceDetail));
+    // A reloaded Home reads the current status when it starts.
+    if (home && !home.isDestroyed() && !home.webContents.isCrashed()) sendToHome(IPC.voiceStatus, voiceStatus(voiceDetail));
   };
   const requestListenOnce = (source: "ask" | "home", on: boolean): ListenOnceStatus => {
     if (!on) {

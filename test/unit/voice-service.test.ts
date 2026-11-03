@@ -158,6 +158,36 @@ describe("VoiceService", () => {
     expect(v.listenOnceStatus.phase).not.toBe("checking");
   });
 
+  it.each(["cancel", "stop", "speak", "none"])("handles %s after recognition while the Ask context is pending", async why => {
+    const { v, events } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    expect(v.listenOnce()).toBe(true);
+    const generation = (posted(proc, "listen-once")[0] as { generation?: number }).generation;
+    const stillCurrent = v.listenOnceStillCurrent();
+    const request = { type: "utterance", window: "manual", text: "One request.", ms: 0 } as const;
+    proc.emit("message", { ...request, generation });
+    expect(events).toContainEqual(request);
+    expect(v.listenOnceStatus.phase).toBe("ready");
+
+    let finishRead!: (context: string) => void;
+    const pendingContext = new Promise<string>(resolve => { finishRead = resolve; });
+    const submit = vi.fn();
+    const dispatch = pendingContext.then(context => { if (stillCurrent()) submit(request.text, context); });
+    // A competing turn, an approval prompt, and suspend cancel only the manual request.
+    if (why === "cancel") v.cancelListenOnce();
+    if (why === "stop") v.cancelListening();
+    if (why === "speak") v.speak("A background task finished.");
+    const context = "The desktop view before Ask opened";
+    finishRead(context);
+    await dispatch;
+    if (why === "cancel" || why === "stop") expect(submit).not.toHaveBeenCalled();
+    else expect(submit).toHaveBeenCalledExactlyOnceWith(request.text, context);
+    expect(posted(proc, "cancel")).toHaveLength(why === "stop" ? 1 : 0);
+  });
+
   it.each([[false, true, "1"], [false, false, null], [true, true, null]] as const)("sets raw WAV capture only for a synthetic mic in development (packaged %s, WAV %s)", async (packaged, testMicWav, value) => {
     electron.app.isPackaged = packaged;
     const { v } = service(true, { testMicWav });

@@ -206,6 +206,7 @@ export class VoiceService {
   private capturing = false;
   private captureGeneration = 0;
   private manual: { phase: "starting" | "listening" | "checking"; timer: NodeJS.Timeout } | null = null;
+  private manualGeneration = 0;
   private manualDetail = "";
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
   private micLost = false;
@@ -351,15 +352,18 @@ export class VoiceService {
   }
 
   cancelListenOnce(detail = "Listening cancelled."): void {
+    // Recognition can be done while the request still waits for its desktop context.
+    this.manualGeneration++;
     if (!this.manual) return;
     this.cancelListening(detail);
   }
 
   /** A manual request may be waiting for its pre-focus context after Voice Match let it through. */
   listenOnceStillCurrent(): () => boolean {
+    const manual = this.manualGeneration;
     const generation = this.listeningGeneration;
     const capture = this.captureGeneration;
-    return () => generation === this.listeningGeneration && capture === this.captureGeneration && this.capturing && this.wanted && !this.muted && !this.locked;
+    return () => manual === this.manualGeneration && generation === this.listeningGeneration && capture === this.captureGeneration && this.capturing && this.wanted && !this.muted && !this.locked;
   }
 
   private finishListenOnce(detail: string): void {
@@ -595,7 +599,7 @@ export class VoiceService {
    */
   speak(text: string, o: { append?: boolean } = {}): void {
     if (this.locked || !text.trim()) return;
-    this.cancelListenOnce();
+    if (this.manual) this.cancelListenOnce();
     // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
     if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
     const neural = this.neuralVoice;

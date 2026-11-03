@@ -22,8 +22,7 @@ const SIZE = { width: 560, height: 92 };
 const GROWS = 46 + 17;
 /**
  * The field grows a line at a time (its line height, at the text size), up to MAX_LINES, as the user types or pastes
- * several lines; the note that a paste was cut, the tip to wait for the box and Ember's suggestions of what to ask next
- * take one more row of the same height each (MAX_ROWS).
+ * several lines; the cut note, wait tip and suggestions each take another row. Listen once can take two rows.
  */
 const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 5;
 /** The openings that say to wait for the box before typing, where Ember can't hold the letters typed meanwhile (review #78). */
