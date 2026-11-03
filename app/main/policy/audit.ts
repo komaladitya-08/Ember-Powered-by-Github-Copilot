@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { typesCharacter } from "./policy";
+import { writeAllSync } from "../write-all";
 
 export interface AuditEntry {
   task?: string;
@@ -169,7 +170,7 @@ export class AuditLog {
       try {
         const out = fs.openSync(tmp, "w", 0o600);
         try {
-          fs.writeSync(out, Buffer.concat([Buffer.from(keep.map(l => l + "\n").join("")), head.subarray(whole)]));
+          writeAllSync(out, Buffer.concat([Buffer.from(keep.map(l => l + "\n").join("")), head.subarray(whole)]));
           copied = copyAdded(src, out, copied);
         } finally {
           fs.closeSync(out);
@@ -233,7 +234,7 @@ function copyAdded(src: number, out: number, from: number): number {
     const buf = Buffer.alloc(size - from);
     const n = fs.readSync(src, buf, 0, buf.length, from);
     if (n <= 0) break;
-    fs.writeSync(out, buf, 0, n);
+    writeAllSync(out, buf.subarray(0, n));
     from += n;
   }
   return from;
