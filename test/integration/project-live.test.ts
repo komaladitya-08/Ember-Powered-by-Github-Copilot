@@ -4,7 +4,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { _electron } from "playwright-core";
 import { expect, it } from "vitest";
-import { CONSENT_VERSION } from "../../app/shared/consent";
+import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { MemoryGraph } from "../../app/main/memory/graph";
 import { memoryFile } from "../../app/main/memory/store";
 // @ts-expect-error -- plain JS test helper
@@ -89,6 +89,85 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
     expect(await home.locator("#memory-list").innerText()).not.toContain("Previous account memory marker");
     expect(fs.readFileSync(memory.path, "utf8")).toContain("Previous account memory marker");
     expect(JSON.stringify(mock.requests)).not.toContain("Previous account memory marker");
+  } finally {
+    await app?.close();
+    await mock.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, 120_000);
+
+
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("reviews, declines, and runs project commands in the selected folder", async () => {
+  const requireCjs = createRequire(import.meta.url);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-command-"));
+  const userData = path.join(dir, "profile");
+  const folder = path.join(dir, "project");
+  fs.mkdirSync(userData);
+  fs.mkdirSync(folder);
+  const at = new Date().toISOString();
+  fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
+    version: 1, onboarded: true, wakeWord: false, consent: { version: CONSENT_VERSION, at },
+    commands: { local: { on: true, askEvery: false, consent: { version: FEATURE_CONSENT_VERSION.commands, at } } },
+  }));
+  const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Ready." }) });
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  try {
+    app = await _electron.launch({
+      executablePath: requireCjs("electron") as string,
+      args: [process.cwd(), "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
+      env: { ...process.env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: mock.baseUrl },
+    });
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, folder);
+    const page = (name: string) => app?.windows().find(win => win.url().includes("/renderer/" + name + "/index.html"));
+    await expect.poll(() => !!page("home"), { timeout: 20_000 }).toBe(true);
+    const home = page("home")!;
+    await home.locator('a[href="#copilot-h"]').click({ timeout: 15_000 });
+    await home.locator("#project-commands summary").click();
+    await home.locator("#project-folder-pick").click({ timeout: 30_000 });
+    await expect.poll(() => home.locator("#project-folder").innerText()).toBe(fs.realpathSync(folder));
+    const command = "mkdir project-command-approved";
+    const marker = path.join(folder, "project-command-approved");
+    await home.locator("#project-command-text").fill(command);
+    const review = async () => {
+      await home.locator("#project-command-send").click();
+      await expect.poll(() => !!page("command"), { timeout: 15_000 }).toBe(true);
+      const panel = page("command")!;
+      const allow = panel.getByRole("button", { name: "Allow", exact: true });
+      await expect.poll(() => allow.isEnabled(), { timeout: 15_000 }).toBe(true);
+      expect(await panel.locator("#ask-cmd").innerText()).toContain(command);
+      expect(await panel.locator("body").innerText()).toContain(fs.realpathSync(folder));
+      expect(fs.existsSync(marker)).toBe(false);
+      return { panel, allow };
+    };
+    const denied = await review();
+    await denied.panel.getByRole("button", { name: "Not now", exact: true }).click();
+    await expect.poll(() => home.locator("#project-command-status").innerText()).toMatch(/said no/i);
+    expect(fs.existsSync(marker)).toBe(false);
+
+    const stale = await review();
+    fs.renameSync(folder, folder + "-old");
+    fs.mkdirSync(folder);
+    await stale.allow.click();
+    await expect.poll(() => home.locator("#project-command-status").innerText()).toMatch(/folder changed/i);
+    expect(fs.existsSync(marker)).toBe(false);
+
+    await home.locator("#project-folder-pick").click();
+    const approved = await review();
+    await approved.allow.click();
+    await expect.poll(() => home.locator("#project-command-status").innerText(), { timeout: 20_000 }).toMatch(/finished/i);
+    expect(fs.statSync(marker).isDirectory()).toBe(true);
+
+    const slow = process.platform === "win32" ? "Start-Sleep -Seconds 10" : "sleep 10";
+    await home.locator("#project-command-text").fill(slow + "; mkdir project-command-stopped");
+    await home.locator("#project-command-send").click();
+    await approved.allow.click();
+    await approved.panel.getByRole("button", { name: /^Stop:/ }).waitFor({ state: "visible" });
+    await home.locator("#project-command-stop").click();
+    await expect.poll(() => home.locator("#project-command-status").innerText(), { timeout: 15_000 }).toMatch(/stopped/i);
+    expect(fs.existsSync(path.join(folder, "project-command-stopped"))).toBe(false);
+    expect(JSON.stringify(mock.requests)).not.toContain(command);
   } finally {
     await app?.close();
     await mock.close();

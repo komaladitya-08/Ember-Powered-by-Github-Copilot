@@ -96,6 +96,8 @@ export interface CommandFlowContext {
    * that no hard rule makes ask, is reviewed first, and runs with its announcement when the reviewer finds it routine.
    */
   review?: CommandReviewer;
+  /** Home project commands always need the exact command card, with the chosen folder still present at launch. */
+  projectFolderCurrent?: () => boolean;
 }
 
 export type { SecretTracker, ShapeOptions };
@@ -720,6 +722,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   };
   let cls = j.classifyCommand(a.command, shell, cctx);
   if (cls.cdOnly !== undefined && !cls.refuse) {
+    if (ctx.projectFolderCurrent) return fail("Use Choose command folder to change the starting folder.");
     const to = j.resolveTargetPath(cls.cdOnly, { os: facts.os, home, cwd });
     const [f] = await inspect(svc.runner, [to], cwd);
     if (ctx.isOver()) return STOPPED();
@@ -763,7 +766,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const tainted = ctx.task.tainted();
   const carried = carriedText(a.command, ctx.task.readFrom(), words, binding.shellOs);
   const mode = svc.mode();
-  const userAskEvery = svc.userAskEvery();
+  const userAskEvery = !!ctx.projectFolderCurrent || svc.userAskEvery();
   const decided = j.decideCommand({ cls, paths, git, binding, facts, mode, userAskEvery, userWords: words, agreed: ctx.task.agreed(), tainted, carried });
   const held = heldDecision(decided, { words, privileged: facts.privileged, os: facts.os, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, cls, paths }, binding.kind);
   // Taint that came from a command's own output says so on the card (§3.8.4's output-taint wording).
@@ -840,6 +843,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       task, ...(where ? { where } : {}), armMs: d.armMs, panel: { kind: "command", card: card("ask", [...says, why]) },
       // A dangerous command (deleting, publishing, secrets, system changes…: the classifier's classes) looks risky.
       ...(d.classes.length > 0 ? { risky: true } : {}),
+      ...(ctx.projectFolderCurrent ? { clickOnly: true } : {}),
     };
     const answer = await ctx.confirmer.ask(question, ctx.signal);
     const how = ctx.confirmer.howAnswered?.(question);
@@ -903,6 +907,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       if (svc.mode() === "off" || (approvedAt === null && (live.askEvery !== null || svc.userAskEvery() || svc.mode() === "ask"))) {
         return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
       }
+      if (ctx.projectFolderCurrent && !ctx.projectFolderCurrent()) return denied("The chosen command folder changed. Choose it again.");
       const run = await runOnce(ctx, j, {
         runId, shell, cwd, command: a.command, timeoutS, card: card("run", d.verdict === "run" ? [] : [...d.says, why]),
         stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt },

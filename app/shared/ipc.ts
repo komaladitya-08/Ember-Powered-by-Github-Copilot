@@ -67,6 +67,8 @@ export const IPC = {
   projectClear: "project:clear",
   projectCancel: "project:cancel",
   projectApply: "project:apply",
+  projectChooseFolder: "project:choose-folder",
+  projectRunCommand: "project:run-command",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -295,6 +297,8 @@ export interface EmberHomeApi {
   projectClear(): Promise<void>;
   projectCancel(): Promise<void>;
   projectApply(): Promise<{ message: string; done: boolean }>;
+  projectChooseFolder(): Promise<{ folder: string | null; message?: string }>;
+  projectRunCommand(command: string): Promise<string>;
   onAgentStatus(fn: (s: AgentStatus) => void): () => void;
   signIn(): Promise<void>;
   onSignInProgress(fn: (p: SignInProgress) => void): () => void;

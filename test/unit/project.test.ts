@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { projectNames, projectPrompt, projectRequest, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { projectCommandFolder, projectCommandText, projectNames, projectPrompt, projectRequest, PROJECT_SYSTEM } from "../../app/main/agent/project";
 import { applyProjectPatch, draftProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
 import { copilotOneShot } from "../../app/main/agent/one-shot";
@@ -120,6 +120,20 @@ it("binds a selected path through a directory alias to its original destination"
   await fs.symlink(original, alias, "junction");
   applyProjectPatch(patch, signal, () => undefined);
   expect(await fs.readFile(source, "utf8")).toBe("after\n");
+});
+
+it("accepts a single command and binds it to the chosen local folder", async () => {
+  const folder = path.join(dir, "project");
+  await fs.mkdir(folder);
+  const selected = projectCommandFolder(folder, privateDir);
+  expect(selected.current()).toBe(true);
+  expect(() => projectCommandFolder(privateDir, privateDir)).toThrow("outside");
+  expect(projectCommandText.safeParse("npm test").success).toBe(true);
+  expect(projectCommandText.safeParse("npm test\necho next").success).toBe(false);
+  expect(projectCommandText.safeParse("echo \u202ereversed").success).toBe(false);
+  await fs.rename(folder, folder + "-old");
+  await fs.mkdir(folder);
+  expect(selected.current()).toBe(false);
 });
 
 it("verifies the temporary Copilot session before sending and deletes it after an answer", async () => {

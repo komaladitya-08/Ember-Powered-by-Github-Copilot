@@ -14,16 +14,29 @@ export function mountProject() {
   const patch = form.querySelector<HTMLDetailsElement>("#project-patch")!;
   const diff = form.querySelector<HTMLElement>("#project-diff")!;
   const apply = form.querySelector<HTMLButtonElement>("#project-apply")!;
+  const commands = document.querySelector<HTMLFormElement>("#project-command-form")!;
+  const folderPick = commands.querySelector<HTMLButtonElement>("#project-folder-pick")!;
+  const folder = commands.querySelector<HTMLElement>("#project-folder")!;
+  const command = commands.querySelector<HTMLInputElement>("#project-command-text")!;
+  const review = commands.querySelector<HTMLButtonElement>("#project-command-send")!;
+  const stopCommand = commands.querySelector<HTMLButtonElement>("#project-command-stop")!;
+  const commandStatus = commands.querySelector<HTMLElement>("#project-command-status")!;
+  let commandFolder: string | null = null;
   const clearPatch = () => { patch.hidden = true; patch.open = false; diff.textContent = ""; };
   let ready = false;
-  let busy: "picking" | "running" | "applying" | null = null;
+  let busy: "picking" | "running" | "applying" | "command" | null = null;
   let revision = 0;
   const draw = () => {
     pick.disabled = !ready || !!busy;
     apply.disabled = !ready || !!busy;
-    clear.disabled = !!busy || (!files.childElementCount && !question.value && answer.hidden);
+    folderPick.disabled = !ready || !!busy;
+    command.disabled = !ready || !!busy;
+    review.disabled = !ready || !!busy || !commandFolder || !command.value.trim();
+    stopCommand.hidden = busy !== "command";
+    clear.disabled = !!busy || (!files.childElementCount && !question.value && answer.hidden && !commandFolder && !command.value);
     send.disabled = !ready || !!busy || !files.childElementCount || !question.value.trim();
     cancel.hidden = busy !== "running";
+    folder.textContent = commandFolder ?? "No command folder selected.";
   };
   const names = (selected: string[]) => {
     files.replaceChildren(...selected.map(name => {
@@ -39,6 +52,9 @@ export function mountProject() {
     names([]);
     clearPatch();
     question.value = "";
+    commandFolder = null;
+    command.value = "";
+    commandStatus.textContent = "";
     answer.textContent = "";
     answer.hidden = true;
     draw();
@@ -63,6 +79,42 @@ export function mountProject() {
     reset();
     status.textContent = "Project work cleared.";
     void window.ember.projectClear().catch(() => { status.textContent = "Couldn't clear the selection. Choose your files again."; });
+  });
+  folderPick.addEventListener("click", async () => {
+    const at = revision;
+    busy = "picking";
+    draw();
+    try {
+      const result = await window.ember.projectChooseFolder();
+      if (at !== revision) return;
+      commandFolder = result.folder;
+      commandStatus.textContent = result.message ?? "";
+    } catch {
+      if (at === revision) commandStatus.textContent = "Couldn't choose the command folder.";
+    } finally {
+      if (at === revision) { busy = null; draw(); }
+    }
+  });
+  command.addEventListener("input", draw);
+  stopCommand.addEventListener("click", () => {
+    commandStatus.textContent = "Stopping project command…";
+    void window.ember.projectCancel().catch(() => { commandStatus.textContent = "Use Stop everything to stop the command."; });
+  });
+  commands.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (review.disabled) return;
+    const at = revision;
+    busy = "command";
+    commandStatus.textContent = "Checking the project command…";
+    draw();
+    try {
+      const message = await window.ember.projectRunCommand(command.value);
+      if (at === revision) commandStatus.textContent = message;
+    } catch {
+      if (at === revision) commandStatus.textContent = "Couldn't run the project command.";
+    } finally {
+      if (at === revision) { busy = null; draw(); }
+    }
   });
   question.addEventListener("input", draw);
   cancel.addEventListener("click", () => {

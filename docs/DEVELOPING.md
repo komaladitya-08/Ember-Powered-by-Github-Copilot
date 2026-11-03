@@ -1859,6 +1859,10 @@ confirm the destination. If the source has changed since you sent it, draft the 
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
 unsupported diff formats remain available as text.
 
+Open **Run a project command** to choose a local starting folder and enter a command. Ember applies the
+same settings, classifier and stop controls as its command window. Each run waits for approval of the
+exact command and folder. Output stays in the command window. The connected model does not receive it.
+
 With a build ready, run `EMBER_PROJECT_TEST=1 npm run test:integration -- test/integration/project-live.test.ts`
 to exercise the Home workflow through Electron and the Copilot runtime against an offline mock model.
 
