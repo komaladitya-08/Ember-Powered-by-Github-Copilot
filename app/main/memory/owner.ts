@@ -4,6 +4,24 @@ import path from "node:path";
 
 export type MemoryOwnership = "waiting" | "ready" | "locked";
 
+/** Check the account behind the same credential that Copilot authenticated. Logins can be reassigned. */
+export async function githubMemoryAccount(
+  fetch: (url: string, init: RequestInit) => Promise<{ ok: boolean; json(): Promise<unknown> }>,
+  token: string,
+  login: string,
+): Promise<number | null> {
+  try {
+    const response = await fetch("https://api.github.com/user", {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+      redirect: "error", signal: AbortSignal.timeout(3500),
+    });
+    if (!response.ok) return null;
+    const account = await response.json() as { id?: unknown; login?: unknown } | null;
+    if (!account || typeof account.login !== "string" || account.login.toLowerCase() !== login.toLowerCase()) return null;
+    return typeof account.id === "number" && Number.isSafeInteger(account.id) && account.id > 0 ? account.id : null;
+  } catch { return null; }
+}
+
 /** One local graph, bound to a verified GitHub account before it can be read or changed. */
 export class MemoryOwner {
   private account: string | null = null;
@@ -27,8 +45,8 @@ export class MemoryOwner {
     this.verifiedOwner = false;
   }
 
-  verify(login: string | null, create: boolean): void {
-    this.account = login ? crypto.createHash("sha256").update(`github:${login.toLowerCase()}`).digest("hex") : null;
+  verify(id: number | null, create: boolean): void {
+    this.account = id === null ? null : crypto.createHash("sha256").update(`github-account:${id}`).digest("hex");
     this.verifiedOwner = false;
     this.refresh(create);
   }

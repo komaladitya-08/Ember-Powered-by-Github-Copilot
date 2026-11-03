@@ -131,7 +131,7 @@ download, so English-only MiniLM is the trade-off for now.
   succeed. A filesystem failure leaves the facts listed with a retryable error; some derived files may already have
   been removed. Sign-out still disconnects credentials and reports the deletion failure. A failed account-boundary
   deletion blocks new sessions in the current run until it succeeds.
-- **Account ownership.** Ember records a digest of the verified GitHub login before saving a new graph. On restart,
+- **Account ownership.** Ember checks the authenticated account ID with GitHub and records its digest before saving a new graph. On restart,
   the graph and its vectors stay hidden until the same account is verified. Older data without an owner and data
   left after a failed deletion stay on disk. Use Forget everything to clear them before binding a fresh graph.
   Memory pauses while the model connection lacks a verified GitHub account.

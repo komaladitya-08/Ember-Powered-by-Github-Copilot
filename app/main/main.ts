@@ -95,7 +95,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
-import { MemoryOwner } from "./memory/owner";
+import { githubMemoryAccount, MemoryOwner } from "./memory/owner";
 import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
@@ -1489,7 +1489,8 @@ function start(): void {
       memoryOwner.pause();
       publishMemoryOwner();
     },
-    verifyAccount: (login: string | null) => { memoryOwner.verify(login, memoryConfigured()); publishMemoryOwner(); },
+    resolveAccountId: (token: string, login: string) => githubMemoryAccount((url, init) => net.fetch(url, init), token, login),
+    verifyAccount: (id: number | null) => { memoryOwner.verify(id, memoryConfigured()); publishMemoryOwner(); },
     pauseAccount: () => { memoryOwner.pause(); publishMemoryOwner(); },
     accountReady: memoryOn,
     useModel: (model: OneShot | null) => learning.setModel(model),

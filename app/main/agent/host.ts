@@ -157,7 +157,8 @@ export interface HostOptions {
    */
   memory?: ConductorMemory & {
     forgetAll(): void;
-    verifyAccount?(login: string | null): void;
+    resolveAccountId?(token: string, login: string): Promise<number | null>;
+    verifyAccount?(id: number | null): void;
     pauseAccount?(): void;
     accountReady?(): boolean;
     useModel?(model: OneShot | null): void;
@@ -709,6 +710,7 @@ export class AgentHost {
   private conversationLogin: string | undefined;
   /** The GitHub account Ember last connected to Copilot with (kept across connections to another model service). */
   private githubLogin: string | undefined;
+  private githubAccountId: number | null = null;
   /** A failed account-boundary deletion must be retried before any new session in this run. */
   private memoryDeletionPending = false;
   /**
@@ -1275,11 +1277,22 @@ export class AgentHost {
         await this.forgetCurrent(RUNTIME_WAIT_MS);
         this.carried = [];
       }
-      if (!provider && ((this.conversation && login !== this.conversationLogin) || (this.githubLogin !== undefined && login !== this.githubLogin))) await this.accountChanged();
+      const accountId = !provider && token && login
+        ? await this.o.memory?.resolveAccountId?.(token, login) ?? null
+        : null;
+      if (gen !== this.gen) return;
+      const sameAccount = accountId !== null && accountId === this.githubAccountId;
+      const changedId = accountId !== null && this.githubAccountId !== null && !sameAccount;
+      const changedLogin = (this.conversation && login !== this.conversationLogin) || (this.githubLogin !== undefined && login !== this.githubLogin);
+      if (!provider && (changedId || (changedLogin && this.githubAccountId === null))) await this.accountChanged();
+      else if (!provider && this.githubAccountId !== null && accountId === null) {
+        // A reconnect whose owner could not be verified must not resume a session that used saved memory.
+        await this.accountChanged(false);
+      }
       if (gen !== this.gen) return;
       if (this.memoryDeletionPending) this.forgetKept();
-      if (!provider) this.githubLogin = login;
-      this.o.memory?.verifyAccount?.(provider ? null : login ?? null);
+      if (!provider) { this.githubLogin = login; this.githubAccountId = accountId; }
+      this.o.memory?.verifyAccount?.(accountId);
 
       let models: ModelLike[] = [];
       const admin = this.o.admin?.();
@@ -2441,6 +2454,7 @@ export class AgentHost {
     finally {
       // The next account to sign in is nobody's successor: no account change is told for it.
       this.githubLogin = undefined;
+      this.githubAccountId = null;
       // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
       this.tasks?.takeReports();
       this.finishedLately = [];
@@ -2456,7 +2470,7 @@ export class AgentHost {
    * Another account than the conversation's signed in: the conversation is deleted, as at sign-out, and what it said,
    * how its tasks ended and what Ember kept about its person go with it.
    */
-  private async accountChanged(): Promise<void> {
+  private async accountChanged(eraseKept = true): Promise<void> {
     this.o.log.info("agent.account_changed");
     await this.forgetCurrent(RUNTIME_WAIT_MS);
     this.carried = [];
@@ -2464,7 +2478,7 @@ export class AgentHost {
     this.terminalRefused.clear();
     this.o.onTranscript?.([]);
     // What Ember remembered was about the account before, its person: none of it carries over.
-    this.forgetKept();
+    if (eraseKept) this.forgetKept();
     // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one.
     this.finishedLately = [];
     this.o.onAccountChanged?.();

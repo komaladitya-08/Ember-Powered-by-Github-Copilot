@@ -3226,19 +3226,20 @@ describe("memory erasure at account boundaries", () => {
   it("does not give saved memory to a different GitHub account after restart", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-owned-host-"));
     const previous = new MemoryOwner(dir);
-    previous.verify("octo", true);
+    previous.verify(100, true);
     fs.writeFileSync(path.join(dir, "memory.json"), "previous account");
     const restarted = new MemoryOwner(dir);
     const memory = {
       ...failingMemory(),
-      verifyAccount: (login: string | null) => restarted.verify(login, true),
+      resolveAccountId: async () => 200,
+      verifyAccount: (id: number | null) => restarted.verify(id, true),
       pauseAccount: () => restarted.pause(),
       accountReady: () => restarted.ready,
     };
     const { host, settings } = makeHost({ userData: dir, memory });
     settings.update({ memory: { ...settings.get().memory, on: true, consent: { version: FEATURE_CONSENT_VERSION.memory, at: "2026-11-04T00:00:00Z" } } });
     try {
-      sim.auth = async () => ({ isAuthenticated: true, login: "other" });
+      sim.auth = async () => ({ isAuthenticated: true, login: "octo" });
       expect(await host.start(TOKEN, "stored")).toBe("ready");
       await host.ask("What do you remember?");
       expect(memory.context).not.toHaveBeenCalled();
@@ -3248,6 +3249,16 @@ describe("memory erasure at account boundaries", () => {
       await host.stop();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+  it("keeps memory when a verified account changes its login", async () => {
+    const memory = { ...failingMemory(), resolveAccountId: async () => 100 };
+    const { host } = makeHost({ memory });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      sim.auth = async () => ({ isAuthenticated: true, login: "renamed" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(memory.forgetAll).not.toHaveBeenCalled();
+    } finally { await host.stop(); }
   });
   it("blocks another account and retries deletion even after its old conversation was cleared", async () => {
     const memory = failingMemory();
