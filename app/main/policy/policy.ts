@@ -34,6 +34,9 @@ export type ActionKind = "read" | "click" | "toggle" | "text" | "select" | "valu
 
 export type TextMode = "replace" | "insert" | "append";
 
+/** A control in a dialog (ActionRequest.dialog.controls): its role and name, as the screen reader gives them. */
+export interface DialogControl { role: string; name: string }
+
 export interface ActionRequest {
   taskId: string;
   kind: ActionKind;
@@ -97,10 +100,17 @@ export interface ActionRequest {
   /**
    * `alert`: a message box (an alert's role) or a web page's own dialog; `page`: drawn by a web page (an `alert()`, a
    * site's "example.com says"); `truncated`: its words were cut to DIALOG_TEXT_MAX, so not all of them were read.
+   * `controls`: every control the dialog holds (buttons, check boxes, radio buttons, fields, links…, but not its title
+   * bar's), by role and name, set only from a read of the whole window: absent, it isn't known (acknowledgesOnly).
    */
-  dialog?: { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean };
+  dialog?: { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[] };
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
+  /**
+   * For text: the field's labels and the names of the panes and tabs around it, up to its window (a "Python Console"
+   * tab, an "Output" pane), as the worker read them: plainEditorLines refuses a console's field by them.
+   */
+  around?: string[];
   /**
    * For text and keys: what the field holds now is only what this task typed there (replacing it, however long, takes
    * nothing of the user's).
@@ -1734,8 +1744,13 @@ function waiverOf(risk: Risk, also: AutonomyScope[]): Pick<Decision, "waivable" 
 
 /** The most of a dialog's words the worker passes (ActionRequest.dialog.text): text this long may have been cut. */
 export const DIALOG_TEXT_MAX = 400;
-/** The only answers "Work without asking" gives a dialog (normalised): those that acknowledge a message box. */
-const ACKNOWLEDGES = /^(ok|okay|close|dismiss)$/;
+/**
+ * The only answer "Work without asking" gives a dialog (normalised): an OK that acknowledges a message box. (Close and
+ * Dismiss back off a dialog and were never asked about.)
+ */
+const ACKNOWLEDGES = /^(ok|okay)$/;
+/** A push button, as each OS's screen reader names one (never a check box, radio button, toggle or tab named "OK"). */
+const PUSH_BUTTON = /^(push button|button)$/;
 /**
  * Programs and titles of permission prompts, system windows and installers on any OS (folded): never a message box
  * "Work without asking" answers, whatever it says.
@@ -1746,7 +1761,7 @@ const PROMPT_WINDOW = /setup|install|uninstall|update|upgrade|msiexec|wizard|con
  * an account, a default, a permission: macOS's "would like to access the microphone"), beyond RISKY's: whole words,
  * matched folded and normalised (saysWord). Any of them, and "Work without asking" asks as before.
  */
-const ACK_RISK = /(^|[^\p{L}\p{N}])(charge[ds]?|charging|card|payment|pay|paid|purchase[ds]?|price|cost|bill|billing|invoice|money|bank|transfer(red)?|public|private|publish(ed)?|visible|send|sent|mail(ed)?|e-?mail|recipients?|upload(ed)?|server|cloud|sync(ed)?|move[ds]?|update[ds]?|upgrade[ds]?|relaunch(es)?|restart(s|ed)?|reboot|install(s|ed)?|setup|connect(ed)?|disconnect(ed)?|account|default|delete[ds]?|remove[ds]?|erase[ds]?|permanent(ly)?|overwrite|replace[ds]?|lost|lose|discard(ed)?|password|sign(ed)?|log(ged)?|allow(ed)?|access|permit|permission|trust(ed)?|grant(ed)?|share[ds]?|microphone|camera|location|contacts|calendar|photos|accessibility|control|monitor|record(ing)?|screen|keychain|certificate|admin(istrator)?|unsaved|saved?|saves|changes|remember|would like|wants? to)(?![\p{L}\p{N}])|[$€£¥₹]/u;
+const ACK_RISK = /(^|[^\p{L}\p{N}])(charge[ds]?|charging|card|payment|pay|paid|purchase[ds]?|price|cost|bill|billing|invoice|money|bank|transfer(red)?|public|private|publish(ed)?|visible|send|sent|mail(ed)?|e-?mail|recipients?|upload(ed)?|server|cloud|sync(ed)?|move[ds]?|update[ds]?|upgrade[ds]?|relaunch(es)?|restart(s|ed)?|reboot|install(s|ed)?|setup|connect(ed)?|disconnect(ed)?|account|default|delete[ds]?|remove[ds]?|erase[ds]?|permanent(ly)?|overwrite|replace[ds]?|lost|lose|discard(ed)?|password|sign(ed)?|log(ged)?|allow(ed)?|access|permit|permission|trust(ed)?|grant(ed)?|share[ds]?|microphone|camera|location|contacts|calendar|photos|accessibility|control|monitor|record(ing)?|screen|keychain|certificate|admin(istrator)?|unsaved|saved?|saves|changes|remember|clear(s|ed)?|wipe[ds]?|gone|empt(y|ied)|agree[ds]?|licen[cs]e|terms|would like|wants? to)(?![\p{L}\p{N}])|[$€£¥₹]/u;
 /**
  * A question in a dialog's words besides a question mark: an English sentence that opens like one ("Do…", "Would…",
  * "Can…" but not "Cannot" or "Can't"), and the phrases that ask in English and the languages of RISKY_WORDS (folded).
@@ -1769,19 +1784,24 @@ function readableScripts(s: string): boolean {
 
 /**
  * Does this step only acknowledge a message box, so that "Work without asking" may answer it (owner decision of
- * 2026-11-02; security review of #140)? An allow-list that fails closed: OK, Close or Dismiss (`name`, on a control
- * that activates) in a message box (`alert`) not drawn by a web page, in no browser, web, chat or mail app nor the
- * system's Settings, security or administration apps, nor a permission, system or installer window (PROMPT_WINDOW),
- * whose words were read whole (not `truncated`, shorter than DIALOG_TEXT_MAX), say something, are all in scripts the
- * word lists cover, ask nothing (no question mark, no QUESTION_FORM), and name nothing risky anywhere (button, title,
- * text or window: RISKY's lists, the acting verbs, security talk, ACK_RISK, a file conflict, a disk's Format).
+ * 2026-11-02; security reviews of #140)? By its structure first: the dialog's whole list of controls is known and is
+ * one push button, the one pressed, named OK, with no other button, check box, radio button, toggle, field, list or
+ * link (so nothing can be chosen and the press only acknowledges), and the dialog is a native app's (not a web page's,
+ * `page`; nor in a browser, web, chat or mail app). Then, as defence in depth: not the system's Settings, security or
+ * administration apps nor a permission, system or installer window (PROMPT_WINDOW); its words read whole (not
+ * `truncated`) and saying something, all in scripts the word lists cover, asking nothing (no question mark, no
+ * QUESTION_FORM) and naming nothing risky anywhere (button, title, text or window: RISKY's lists, the acting verbs,
+ * security talk, ACK_RISK, a file conflict, a disk's Format). Any of these fails, and it asks as before. Not keyed on
+ * the "alert" role, which only Linux reports (a Windows MessageBox and a macOS sheet are a "dialog").
  */
 function acknowledgesOnly(r: ActionRequest, name: string, role: string, os: OS): boolean {
   const d = r.dialog;
-  if (!d || d.alert !== true || d.page === true || d.truncated === true || r.inPage === true) return false;
-  if (!ACTIVATING_ROLES.test(role) || !ACKNOWLEDGES.test(normalizeLabel(name).trim())) return false;
+  if (!d || d.page === true || d.truncated === true || r.inPage === true || !Array.isArray(d.controls) || d.controls.length !== 1) return false;
+  const only = d.controls[0];
+  const ok = (s: string) => ACKNOWLEDGES.test(normalizeLabel(s).trim());
+  if (!PUSH_BUTTON.test(role) || !ok(name) || !PUSH_BUTTON.test(only.role) || !ok(only.name) || normalizeLabel(only.name).trim() !== normalizeLabel(name).trim()) return false;
   const text = d.text.replace(/\s+/g, " ").trim();
-  if (!/\p{L}/u.test(text) || d.text.length >= DIALOG_TEXT_MAX) return false;
+  if (!/\p{L}/u.test(text)) return false;
   const app = appNameOf(r.app);
   const apps = [app, friendlyApp(r.app).trim()];
   if (apps.some(a => [WEB_APP, TABBED_APP, SETTINGS_APP, SECURITY_APP, ADMIN_APP].some(list => !!list[os]?.test(a)))) return false;
@@ -1975,18 +1995,23 @@ function enterMaySend(r: ActionRequest, role: string, os: OS): boolean {
   return tabbed(r.app, os) && !r.multiLine && !(OFFICE_APP[os]?.test(r.app) ?? false);
 }
 /**
- * Is this typing line breaks (and no tab) into a plain text editor's multi-line text, where Enter only starts a new
- * line? An allow-list that fails closed (security review of #140): the app is one of PLAIN_EDITOR[os] (Notepad,
- * gedit, Mousepad, Kate, TextEdit…), the field is multi-line text, and nothing makes it a page's, a chat's or a mail's
- * (inPage, WEB_APP, TABBED_APP) or a spreadsheet's (a formula, a cell). Anywhere else Enter may send, submit or commit.
+ * Fields where Enter runs what was typed (folded): a console, a terminal, a shell, a REPL, a command or output pane, a
+ * script's interpreter (gedit's, Pluma's and xed's Python Console; Notepad++'s NppExec).
+ */
+const RUNS_LINES = /(^|[^\p{L}\p{N}])(console|terminal|shell|command|commands|cmd|repl|python|interpreter|output|nppexec|run|execute|script|prompt)(?![\p{L}\p{N}])/u;
+/**
+ * Is this typing line breaks (and no tab) into a plain text editor's document, where Enter only starts a new line? An
+ * allow-list that fails closed (security reviews of #140): the app is one of PLAIN_EDITOR[os] (Notepad, gedit,
+ * Mousepad, Kate, TextEdit…; whole names only, so no browser, chat, mail or office app), the field is its multi-line
+ * text outside a page, a formula or a cell, and the field's name, labels and the panes around it (`around`, which the
+ * worker always sends: absent, it isn't known) say nothing of a console, terminal, shell or output (RUNS_LINES), where
+ * Enter would run code. Anywhere else Enter may send, submit, commit or run.
  */
 function plainEditorLines(r: ActionRequest, role: string, os: OS): boolean {
-  const app = appNameOf(r.app);
-  const apps = [app, friendlyApp(r.app).trim()];
-  if (/\t/.test(r.value ?? "") || r.multiLine !== true || !/^(text|paragraph|document text)$/.test(role)) return false;
+  if (/\t/.test(r.value ?? "") || r.multiLine !== true || !/^(text|document text)$/.test(role)) return false;
   if (r.inPage === true || r.formula !== undefined || (r.element && isSheetCell(r.element))) return false;
-  if (apps.some(a => !!WEB_APP[os]?.test(a) || tabbed(a, os) || !!OFFICE_APP[os]?.test(a))) return false;
-  return PLAIN_EDITOR[os].test(app);
+  if (!Array.isArray(r.around) || [r.element?.name ?? "", ...r.around].some(n => saysWord(RUNS_LINES, n))) return false;
+  return PLAIN_EDITOR[os].test(appNameOf(r.app));
 }
 /**
  * A dialog about a file someone else is using or has changed since it was opened (LibreOffice's "Document in Use",

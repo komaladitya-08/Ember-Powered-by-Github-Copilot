@@ -197,7 +197,7 @@ describe("“Work without asking”'s card (FEATURE_CONSENT_VERSION.autonomy)", 
   });
 
   it("says plainly what runs without asking, what still asks, that Ember says what it does, and that a stop always works", () => {
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/use your apps, borrow your mouse and keyboard, run ordinary commands, move text between apps and answer simple message boxes \(an OK or Close that only says it has read the message\)/);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/use your apps, borrow your mouse and keyboard, run ordinary commands, move text between apps and press OK on a simple message box \(one whose only button is OK, with nothing to choose or tick\)/);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It says what it is doing as it goes/);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question/);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/“Ember, stop”, or Ember's stop shortcut, stops everything at once/);

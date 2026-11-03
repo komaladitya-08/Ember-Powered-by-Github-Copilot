@@ -28,7 +28,7 @@ import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
-import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
+import type { PolicyEngine, ActionKind, ActionRequest, Agreement, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
@@ -727,27 +727,72 @@ function intoSheet(n: AxNode | undefined, byId: (id: number) => AxNode | undefin
   return false;
 }
 /** Is `n` in a web page (inside a "document web": Chromium's, Firefox's, an Electron app's), where Enter in a field can send? */
-/** A dialog as the policy reads it (ActionRequest.dialog): its title, its words, and whether it is a message box or a page's own. */
-type Dialog = { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean };
+/**
+ * A dialog as the policy reads it (ActionRequest.dialog): its title, its words, whether it is a message box or a page's
+ * own, whether its words were cut, and (from a whole read only) every control in it.
+ */
+type Dialog = { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[] };
 const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
-/** The dialog `start` sits in (see Worker.dialogOf), looked up through `get` among `all` the nodes read. */
-function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>): Dialog | undefined {
+/**
+ * Roles that are something to press, choose, tick or type into (on every OS's screen reader): anything with one of
+ * these in a dialog is a control of it. An element that is editable or has an action of its own counts too, whatever
+ * its role says.
+ */
+const CONTROL_ROLE = /button|check|radio|toggle|switch|combo|entry|^text$|password|spin|slider|link|menu|tab|list|tree|icon|table|cell|scroll bar|terminal|document|calendar|chooser|editbar|split/;
+/**
+ * The dialog `start` sits in (see Worker.dialogOf), looked up through `get` among `all` the nodes read. `whole`: `all`
+ * is a whole read of the window (not cut short, not busy): only then does it say every control the dialog holds
+ * (`controls`, without its title bar's own buttons: a Windows MessageBox's Close), which policy.ts's acknowledgesOnly
+ * needs before "Work without asking" presses its one OK. Exported for its tests.
+ */
+export function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>, whole = false): Dialog | undefined {
   let cur = start;
   for (let i = 0; cur && i < 40; i++) {
     if (DIALOG_ROLE.test(cur.role)) {
       const top = cur.id;
-      const inside = (n: AxNode) => { let p = n.parent; for (let j = 0; p !== null && j < 40; j++) { if (p === top) return true; p = get(p)?.parent ?? null; } return false; };
-      const words = [...all].filter(n => inside(n) && /label|static|heading|paragraph|text/.test(n.role) && !n.secret)
+      // Its parents up to the dialog, or null when it isn't in it (or its chain can't be followed).
+      const chain = (n: AxNode): AxNode[] | null => {
+        const up: AxNode[] = [];
+        let p = n.parent;
+        for (let j = 0; p !== null && j < 40; j++) { if (p === top) return up; const a = get(p); if (!a) return null; up.push(a); p = a.parent; }
+        return null;
+      };
+      const nodes = [...all];
+      const words = nodes.filter(n => chain(n) && /label|static|heading|paragraph|text/.test(n.role) && !n.secret)
         .map(n => n.name || n.text || "").filter(Boolean).join(" ");
       // A page's own dialog (an alert(), "example.com says") is marked, and so are words cut short: "Work without
       // asking" never answers either (policy.ts's acknowledgesOnly).
       const page = inWebPage(cur, get);
       const alert = cur.role === "alert" || page;
-      return { name: cur.name, text: words.slice(0, DIALOG_TEXT_MAX), ...(alert ? { alert } : {}), ...(page ? { page } : {}), ...(words.length > DIALOG_TEXT_MAX ? { truncated: true } : {}) };
+      const controls = whole ? nodes.flatMap(n => {
+        const up = chain(n);
+        if (!up || up.some(a => a.role === "title bar") || n.role === "title bar") return [];
+        const control = CONTROL_ROLE.test(n.role) || n.editable === true || n.states.includes("editable") || (n.actions?.length ?? 0) > 0;
+        return control ? [{ role: n.role, name: n.name }] : [];
+      }) : undefined;
+      return {
+        name: cur.name, text: words.slice(0, DIALOG_TEXT_MAX), ...(alert ? { alert } : {}), ...(page ? { page } : {}),
+        ...(words.length > DIALOG_TEXT_MAX ? { truncated: true } : {}), ...(controls ? { controls } : {}),
+      };
     }
     cur = cur.parent !== null ? get(cur.parent) : undefined;
   }
   return undefined;
+}
+
+/**
+ * A field's label (`label`, inferred where it has no name) and the names of the elements around it, up to its window
+ * (not the window's own title, which names the file): ActionRequest.around. Exported for its tests.
+ */
+export function fieldAround(n: AxNode, label: string | undefined, byId: (id: number) => AxNode | undefined): string[] {
+  const out = label ? [label] : [];
+  for (let p = n.parent, i = 0; p !== null && i < 80; i++) {
+    const a = byId(p);
+    if (!a || /^(frame|window|application)$/.test(a.role)) break;
+    if (a.name) out.push(a.name);
+    p = a.parent;
+  }
+  return out;
 }
 
 function inWebPage(n: AxNode | undefined, byId: (id: number) => AxNode | undefined): boolean {
@@ -931,6 +976,8 @@ export class Worker {
   private known = new Map<number, AxNode>();
   /** Labels borrowed by unnamed controls (a switch takes the label beside it). */
   private labels = new Map<number, string>();
+  /** The latest perceive_window read the whole window (not cut short, not busy): see dialogAround. */
+  private knownWhole = false;
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
   private target: WindowTarget;
   /** Apps the user allowed for this task only ("Allow once"). */
@@ -1954,6 +2001,8 @@ export class Worker {
     // The window's own key (process and accessible path): later reads stay on exactly this window.
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
+    // Only a whole read says every control a dialog holds (dialogAround's `whole`).
+    this.knownWhole = !p.truncated && !p.busy;
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
     // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped. Each
@@ -2000,7 +2049,7 @@ export class Worker {
    * own dialog (whatever its OK agrees to is asked about).
    */
   private dialogOf(id: number): Dialog | undefined {
-    return dialogAround(this.known.get(id), p => this.known.get(p), this.known.values());
+    return dialogAround(this.known.get(id), p => this.known.get(p), this.known.values(), this.knownWhole);
   }
 
   /**
@@ -2401,7 +2450,9 @@ export class Worker {
       ...(kind === "cursor_text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + text } : {}), ...this.formulaOf(node, text, judged), ...this.ownText(field, node.text),
         // Where line breaks typed with Enter can't send (a multi-line editor outside a web page): policy's enterMaySend.
         // (Only a page found is said: unknown, a browser's or a web app's field counts as a page's, WEB_APP.)
-        ...(node.states.includes("multi line") ? { multiLine: true } : {}), ...(node.role === "document web" || inWebPage(node, i => this.known.get(i)) ? { inPage: true } : {}) } : {}),
+        ...(node.states.includes("multi line") ? { multiLine: true } : {}), ...(node.role === "document web" || inWebPage(node, i => this.known.get(i)) ? { inPage: true } : {}),
+        // Its label and the panes and tabs around it (a "Python Console" tab), up to the window: plainEditorLines.
+        around: fieldAround(node, this.labels.get(node.id), i => this.known.get(i)) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
@@ -3177,7 +3228,7 @@ export class Worker {
       this.focusFormula = !f || f.secret ? undefined : editing ? editing.text ?? "" : isSheetCell(f) ? "" : intoSheet(f, byId) ? f.text ?? "" : undefined;
       this.focusMultiLine = !!f && f.states.includes("multi line");
       this.focusInPage = !!f && (f.role === "document web" || inWebPage(f, byId));
-      this.focusDialog = f ? dialogAround(f, byId, nodes) : undefined;
+      this.focusDialog = f ? dialogAround(f, byId, nodes, !!seen && !seen.truncated && !seen.busy) : undefined;
       if (seen?.window && f) {
         const name = f.name || inferLabels(seen.nodes).get(f.id) || "";
         return { role: f.role, name, ...(f.secret ? { secret: true } : {}), ...(nameWithheld(f, name, nodes, byId) ? { withheld: true } : {}), ...cellOf(f, byId) };

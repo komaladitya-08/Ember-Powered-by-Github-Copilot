@@ -307,13 +307,15 @@ allows them.
   time before anything risky (sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing
   out, security settings, dangerous commands), and a task that a page tried to steer goes back to asking. Say “Ember,
   work without asking” (Voice Match must recognise you) or “Ember, ask me first again”.
-- **Work without asking covers more everyday steps**: it also presses OK or Close on a message box that only tells
-  you something (it says "Answering a message box in …"), types a list or a letter with line breaks into Notepad,
-  gedit, TextEdit or another plain text editor with the borrowed keyboard, and fills spreadsheet cells, all announced.
-  Any dialog that asks a question, is cut short, is a web page's, an installer's or a permission prompt, or is in a
-  language Ember doesn't know still asks, and so do line breaks in any other app, keys Ember can't be sure of
-  (Alt+letter, unknown shortcuts), dangerous commands, and every command while Ember runs as an administrator. Its card
-  says so, and asks you to agree again. Filling cells after you said no in a task now asks again, as every other step
+- **Work without asking covers more everyday steps**: it also presses OK on a message box whose only button is OK,
+  with nothing to choose or tick (it says "Answering a message box in …"), types a list or a letter with line breaks
+  into Notepad, gedit, TextEdit or another plain text editor with the borrowed keyboard, and fills spreadsheet cells,
+  all announced. A dialog with a Cancel, a check box or any other control, or one that asks a question, is cut short,
+  is a web page's, an installer's or a permission prompt, or is in a language Ember doesn't know still asks, and so do
+  line breaks in an editor's console or any other app, keys Ember can't be sure of
+  (Alt+letter, unknown shortcuts) and dangerous commands. Its card
+  says so, and asks you to agree again. While Ember runs as an administrator (or as root) every command asks, and the
+  switch's hint now says so. Filling cells after you said no in a task now asks again, as every other step
   does.
 - **Answer questions by voice**: while Ember asks, “Ember, allow” (with Voice Match on and recognising you) or “Ember,
   not now” (anyone) answers it. Never “Always”, never Ember's own voice, and a command card or a long text only once

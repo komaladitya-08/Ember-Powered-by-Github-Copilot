@@ -8,9 +8,9 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { PolicyEngine, type ActionRequest } from "../../app/main/policy/policy";
+import { DIALOG_TEXT_MAX, PolicyEngine, type ActionRequest, type DialogControl } from "../../app/main/policy/policy";
 import { ALL_SCOPES, type AutonomyScopes } from "../../app/main/policy/autonomy";
-import { Worker, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
+import { Worker, dialogAround, fieldAround, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
 import { Presenter } from "../../app/main/agent/presenter";
 import { KEYS, SHORTCUTS } from "../../app/shared/shortcuts";
 import { PLATFORM_WORDS } from "../../app/shared/words";
@@ -23,7 +23,7 @@ import type { AxNode, Bounds } from "../../app/main/perception/sidecar";
 import type { Hand } from "../../app/main/hands/borrow";
 import type { Logger } from "../../app/main/logger";
 import { friendlyApp } from "../../app/shared/apps";
-import { AUTONOMY_CONSENT_TEXT, autonomyHint } from "../../app/renderer/home/copy";
+import { AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf } from "../../app/renderer/home/copy";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -175,7 +175,7 @@ describe("an ordinary borrow on Windows with all four scopes on (the owner's rep
 });
 
 describe("typing line breaks with the borrowed keyboard: only plain text editors go ahead (allow-list, security review of #140)", () => {
-  const typed = (o: Partial<ActionRequest>) => winPolicy().decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, ...o }));
+  const typed = (o: Partial<ActionRequest>) => winPolicy().decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, around: [], ...o }));
   const on = (os: "linux" | "darwin" | "win32") => new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os, keys: KEYS[os] });
 
   it("announces line breaks into Notepad, gedit and TextEdit, never with the text", () => {
@@ -184,7 +184,7 @@ describe("typing line breaks with the borrowed keyboard: only plain text editors
     expect(d.announce).toBe(`Using your keyboard to type 10 characters in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
     expect(d.announce).not.toMatch(/milk|eggs/);
     for (const [os, app] of [["linux", "gedit"], ["linux", "mousepad"], ["darwin", "TextEdit"], ["win32", "notepad++.exe"]] as const) {
-      expect(on(os).decide(notepad({ kind: "cursor_text", app, window: "list.txt", element: { role: "text", name: "" }, mode: "insert", multiLine: true, value: "milk\neggs" })).autonomy, app).toBe(true);
+      expect(on(os).decide(notepad({ kind: "cursor_text", app, window: "list.txt", element: { role: "text", name: "" }, mode: "insert", multiLine: true, around: [], value: "milk\neggs" })).autonomy, app).toBe(true);
     }
   });
 
@@ -197,7 +197,7 @@ describe("typing line breaks with the borrowed keyboard: only plain text editors
       ["darwin", "zoom.us", "text"], ["darwin", "Messages", "text"],
     ];
     for (const [os, app, role] of probes) {
-      const d = on(os).decide(notepad({ kind: "cursor_text", app, window: "Chat", element: { role, name: "" }, mode: "insert", multiLine: true, value: "hi\nsee you" }));
+      const d = on(os).decide(notepad({ kind: "cursor_text", app, window: "Chat", element: { role, name: "" }, mode: "insert", multiLine: true, around: [], value: "hi\nsee you" }));
       expect(d.verdict, app).toBe("confirm");
       expect(d.autonomy, app).toBeUndefined();
       expect(d.waivable, app).toBeUndefined();
@@ -205,7 +205,7 @@ describe("typing line breaks with the borrowed keyboard: only plain text editors
   });
 
   it("asks in a spreadsheet's cell and Calc's input line, where Enter commits and moves to the next cell (B2)", () => {
-    const calc = (o: Partial<ActionRequest>) => on("linux").decide(notepad({ kind: "cursor_text", app: "soffice.bin", window: "Budget.ods - LibreOffice Calc", mode: "insert", multiLine: true, value: "hi\nsee you", ...o }));
+    const calc = (o: Partial<ActionRequest>) => on("linux").decide(notepad({ kind: "cursor_text", app: "soffice.bin", window: "Budget.ods - LibreOffice Calc", mode: "insert", multiLine: true, around: [], value: "hi\nsee you", ...o }));
     expect(calc({ element: { role: "paragraph", name: "" }, formula: "hi\nsee you" }).autonomy).toBeUndefined();
     expect(calc({ element: { role: "text", name: "Input line" }, formula: "hi\nsee you" }).autonomy).toBeUndefined();
     // Notepad itself, with a formula set (never a plain editor's text then).
@@ -234,15 +234,16 @@ describe("typing line breaks with the borrowed keyboard: only plain text editors
   });
 
   it("asks as before with the mode off: the same question, every time, no Always", () => {
-    const d = winPolicy(null).decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, value: "milk\neggs" }));
+    const d = winPolicy(null).decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, around: [], value: "milk\neggs" }));
     expect(d).toMatchObject({ verdict: "confirm", risky: true, everyTime: true, remember: false, reason: "the text contains line breaks, typed with Enter in a text editor" });
   });
 });
 
 describe("dialogs with all four scopes on: only an acknowledgement of a message box goes ahead (allow-list, security review of #140)", () => {
-  type Extra = { alert?: boolean; page?: boolean; truncated?: boolean };
-  const box = (name: string, text: string, button = "OK", o: Partial<ActionRequest> = {}, extra: Extra = { alert: true }) =>
-    notepad({ element: { role: "push button", name: button }, ...o, dialog: { name, text, ...extra } });
+  type Extra = { alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[] };
+  /** A dialog whose only control is the button pressed (as the worker reads it whole), unless `extra` says otherwise. */
+  const box = (name: string, text: string, button = "OK", o: Partial<ActionRequest> = {}, extra: Extra = {}) =>
+    notepad({ element: { role: "push button", name: button }, ...o, dialog: { name, text, alert: true, controls: [{ role: "push button", name: button }], ...extra } });
   const mac = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "darwin", keys: KEYS.darwin });
   const CANNOT_FIND = "Cannot find \"milk\"";
 
@@ -267,7 +268,6 @@ describe("dialogs with all four scopes on: only an acknowledgement of a message 
       ["empty", box("", "")],
       ["only a title", box("Notepad", "")],
       ["cut short (flagged)", box("Notepad", long, "OK", {}, { alert: true, truncated: true })],
-      ["cut short (400 characters)", box("Notepad", `${long}x`)],
       ["Turkish", box("Notepad", "Tüm dosyalar silinsin mi?")],
       ["Turkish, no question mark", box("Notepad", "Tüm dosyalar silinecek mi")],
       ["Ukrainian", box("Notepad", "Видалити всі файли?")],
@@ -297,7 +297,12 @@ describe("dialogs with all four scopes on: only an acknowledgement of a message 
       ["a web page's dialog", box("example.com says", "example.com says: Continue.", "OK", {}, { alert: true, page: true })],
       ["a page's dialog in a browser", box("example.com says", "Your session will end soon.", "OK", { app: "chrome.exe", window: "Shop - Google Chrome" })],
       ["a question by its form", box("Notepad", "Do you really want this")],
-      ["not a message box", box("Notepad", CANNOT_FIND, "OK", {}, {})],
+      ["its controls unknown (a read cut short)", box("Notepad", CANNOT_FIND, "OK", {}, { controls: undefined })],
+      ["an OK on a check box", box("Notepad", CANNOT_FIND, "OK", { element: { role: "check box", name: "OK" } }, { controls: [{ role: "check box", name: "OK" }] })],
+      ["an OK on a toggle", box("Notepad", CANNOT_FIND, "OK", { element: { role: "toggle button", name: "OK" } }, { controls: [{ role: "toggle button", name: "OK" }] })],
+      ["an OK on a tab", box("Notepad", CANNOT_FIND, "OK", { element: { role: "page tab", name: "OK" } }, { controls: [{ role: "page tab", name: "OK" }] })],
+      ["the only control isn't the one pressed", box("Notepad", CANNOT_FIND, "OK", {}, { controls: [{ role: "push button", name: "Delete" }] })],
+      ["no controls at all", box("Notepad", CANNOT_FIND, "OK", {}, { controls: [] })],
       ["a Yes", box("Notepad", CANNOT_FIND, "Yes")],
       ["a Continue", box("Notepad", CANNOT_FIND, "Continue")],
       ["the system's Settings", box("Confirm", "Done.", "OK", { app: "SystemSettings.exe", window: "Settings" })],
@@ -322,7 +327,7 @@ describe("dialogs with all four scopes on: only an acknowledgement of a message 
       ["sending", box("Outlook", "Send this message without a subject?", "Send anyway", { app: "outlook.exe", goal: "write to Ana" })],
       ["overwriting", box("Confirm Save As", "list.txt already exists. Do you want to replace it?", "Yes")],
       ["a privacy setting", box("Options", "Allow apps to access your camera?", "Allow")],
-      ["an options dialog", box("Options", "", "OK", {}, {})],
+      ["an options dialog", box("Options", "", "OK")],
     ] as [string, ActionRequest][]) {
       const d = e.decide(r);
       expect(d.verdict, `${what} ${JSON.stringify(d)}`).not.toBe("allow");
@@ -350,6 +355,151 @@ describe("dialogs with all four scopes on: only an acknowledgement of a message 
     const desk = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "linux", keys: KEYS.linux });
     const d = desk.decide(box("gedit", CANNOT_FIND, "OK", { kind: "keys", value: "Return", app: "gedit", window: "list.txt - gedit", onDesk: true }));
     expect(d.announce).toBe("Using the keyboard to answer a message box in gedit, without asking as you let me.");
+  });
+});
+
+describe("a message box goes ahead only by its structure: one OK and nothing else to choose (security re-review of #140)", () => {
+  const engine = (os: "linux" | "darwin" | "win32") => new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os, keys: KEYS[os] });
+  const where = [["linux", "gedit", "list.txt - gedit"], ["win32", "notepad.exe", "list.txt - Notepad"]] as const;
+  const ask = (os: "linux" | "darwin" | "win32", app: string, window: string, text: string, controls: DialogControl[], name = "Notepad") =>
+    engine(os).decide(notepad({ app, window, element: { role: "push button", name: "OK" }, dialog: { name, text, controls } }));
+  const OK = { role: "push button", name: "OK" };
+  const DECLARATIVE = [
+    "Your history will be cleared.", "All items will be wiped.", "Press OK and the document is gone", "By pressing OK you agree to the licence",
+    "Ihr Verlauf wird gelöscht.", "Tous les fichiers seront supprimés.", "Su historial se borrará.", "Il cestino verrà svuotato.",
+    "Wszystkie pliki zostaną usunięte.", "Alle bestanden worden verwijderd.", "Все файлы будут удалены.", "Ваш платёж будет отправлен.", "Tüm dosyalar silinecek.",
+  ];
+
+  it("asks about every declarative probe whenever OK has a Cancel beside it, or any check box, radio button, toggle, field or link", () => {
+    for (const [os, app, window] of where) {
+      for (const text of DECLARATIVE) {
+        for (const [what, controls] of [
+          ["OK and Cancel", [OK, { role: "push button", name: "Cancel" }]],
+          ["a check box", [OK, { role: "check box", name: "Also delete the files on disk" }]],
+          ["a radio button", [OK, { role: "radio button", name: "Everything" }]],
+          ["a toggle", [OK, { role: "toggle button", name: "Details" }]],
+          ["a switch", [OK, { role: "switch", name: "Keep a copy" }]],
+          ["a combo box", [OK, { role: "combo box", name: "Time range" }]],
+          ["an entry", [OK, { role: "entry", name: "Name" }]],
+          ["a link", [OK, { role: "link", name: "Learn more" }]],
+        ] as [string, DialogControl[]][]) {
+          const d = ask(os, app, window, text, controls);
+          expect(d.verdict, `${app} ${what}: ${text}`).not.toBe("allow");
+          expect(d.autonomy, `${app} ${what}: ${text}`).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it("asks about the English declarative probes even with a lone OK (the words, as defence in depth)", () => {
+    for (const [os, app, window] of where) {
+      for (const text of DECLARATIVE.slice(0, 4)) expect(ask(os, app, window, text, [OK]).autonomy, `${app}: ${text}`).toBeUndefined();
+    }
+  });
+
+  it("acknowledges a Windows MessageBox as the host reads it: a “dialog” (#32770, not an alert) with its title bar's Close left out", () => {
+    const nodes: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "dialog", name: "Notepad", states: ["active"], bounds: FRAME },
+      { id: 2, parent: 1, depth: 1, role: "title bar", name: "Notepad", states: [], bounds: null },
+      { id: 3, parent: 2, depth: 2, role: "push button", name: "Close", states: ["enabled", "sensitive"], bounds: null, actions: ["click"] },
+      { id: 4, parent: 1, depth: 1, role: "label", name: "Cannot find \"milk\"", states: [], bounds: null },
+      { id: 5, parent: 1, depth: 1, role: "push button", name: "OK", states: ["enabled", "sensitive", "focused"], bounds: null, actions: ["click"] },
+    ];
+    const byId = (id: number) => nodes.find(n => n.id === id);
+    const dialog = dialogAround(nodes[4], byId, nodes, true)!;
+    expect(dialog).toEqual({ name: "Notepad", text: "Cannot find \"milk\"", controls: [OK] });
+    const d = engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog }));
+    expect(d).toMatchObject({ verdict: "allow", autonomy: true, answersDialog: true });
+    // With a Cancel, it asks.
+    const two = dialogAround(nodes[4], byId, [...nodes, { id: 6, parent: 1, depth: 1, role: "push button", name: "Cancel", states: [], bounds: null }], true)!;
+    expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog: two })).autonomy).toBeUndefined();
+  });
+
+  it("acknowledges a macOS sheet as the host reads it (AXSheet: a “dialog”) in TextEdit", () => {
+    const nodes: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "frame", name: "list.txt", states: ["active"], bounds: FRAME },
+      { id: 2, parent: 1, depth: 1, role: "dialog", name: "", states: [], bounds: null },
+      { id: 3, parent: 2, depth: 2, role: "label", name: "The document could not be autosaved.", states: [], bounds: null },
+      { id: 4, parent: 2, depth: 2, role: "push button", name: "OK", states: ["enabled", "sensitive"], bounds: null, actions: ["click"] },
+    ];
+    const dialog = dialogAround(nodes[3], id => nodes.find(n => n.id === id), nodes, true)!;
+    expect(dialog.controls).toEqual([OK]);
+    expect(dialog.alert).toBeUndefined();
+    const d = engine("darwin").decide(notepad({ app: "TextEdit", window: "list.txt", element: { role: "push button", name: "OK" }, dialog }));
+    expect(d.autonomy).toBe(true);
+  });
+});
+
+describe("the worker's reading of a dialog (dialogAround)", () => {
+  const dialogNodes = (extra: AxNode[] = []): AxNode[] => [
+    { id: 1, parent: null, depth: 0, role: "alert", name: "gedit", states: [], bounds: FRAME },
+    { id: 2, parent: 1, depth: 1, role: "label", name: "Cannot find \"milk\"", states: [], bounds: null },
+    { id: 3, parent: 1, depth: 1, role: "push button", name: "OK", states: [], bounds: null },
+    ...extra,
+  ];
+  const read = (nodes: AxNode[], whole = true) => dialogAround(nodes.find(n => n.id === 3), id => nodes.find(n => n.id === id), nodes, whole)!;
+
+  it("marks a dialog drawn by a web page (page), and words cut at DIALOG_TEXT_MAX (truncated)", () => {
+    expect(read(dialogNodes())).toEqual({ name: "gedit", text: "Cannot find \"milk\"", alert: true, controls: [{ role: "push button", name: "OK" }] });
+    const inPage: AxNode[] = [{ id: 0, parent: null, depth: 0, role: "document web", name: "Shop", states: [], bounds: FRAME }, ...dialogNodes().map(n => (n.id === 1 ? { ...n, parent: 0 } : n))];
+    expect(read(inPage).page).toBe(true);
+    const long: AxNode[] = dialogNodes([{ id: 4, parent: 1, depth: 1, role: "label", name: "x".repeat(DIALOG_TEXT_MAX), states: [], bounds: null }]);
+    const cut = read(long);
+    expect(cut.truncated).toBe(true);
+    expect(cut.text).toHaveLength(DIALOG_TEXT_MAX);
+    expect(read(dialogNodes()).truncated).toBeUndefined();
+  });
+
+  it("lists every control in it, check boxes and links included, but only from a whole read", () => {
+    const more = dialogNodes([
+      { id: 4, parent: 1, depth: 1, role: "check box", name: "Also delete the files on disk", states: [], bounds: null },
+      { id: 5, parent: 1, depth: 1, role: "panel", name: "", states: [], bounds: null },
+      { id: 6, parent: 5, depth: 2, role: "link", name: "Learn more", states: [], bounds: null },
+      { id: 7, parent: 5, depth: 2, role: "label", name: "clickable", states: [], bounds: null, actions: ["click"] },
+    ]);
+    expect(read(more).controls).toEqual([
+      { role: "push button", name: "OK" }, { role: "check box", name: "Also delete the files on disk" }, { role: "link", name: "Learn more" }, { role: "label", name: "clickable" },
+    ]);
+    expect(read(more, false).controls).toBeUndefined();
+  });
+});
+
+describe("a plain editor's console still asks (security re-review of #140)", () => {
+  const linux = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "linux", keys: KEYS.linux });
+  const typedIn = (app: string, name: string, around: string[] | undefined, engine = linux) =>
+    engine.decide(notepad({ kind: "cursor_text", app, window: "list.txt - gedit", element: { role: "text", name }, mode: "insert", multiLine: true, value: "print(1)\nprint(2)", ...(around ? { around } : {}) }));
+
+  it("asks in gedit's, Pluma's and xed's Python Console and in Notepad++'s NppExec, by the field's name or the panes around it", () => {
+    for (const app of ["gedit", "pluma", "xed"]) expect(typedIn(app, "", ["Python Console", "Bottom panel"]).autonomy, app).toBeUndefined();
+    expect(typedIn("notepad++.exe", "", ["NppExec Console"], winPolicy()).autonomy).toBeUndefined();
+    for (const name of ["Console", "Terminal", "Shell", "Command", "REPL", "Python", "Output"]) expect(typedIn("gedit", name, []).autonomy, name).toBeUndefined();
+    // Not said where the field is: asks.
+    expect(typedIn("gedit", "", undefined).autonomy).toBeUndefined();
+    // The document itself: goes ahead.
+    expect(typedIn("gedit", "", ["list.txt", "Documents"]).autonomy).toBe(true);
+  });
+
+  it("reads the field's label and the names of the panes around it, up to its window (fieldAround)", () => {
+    const nodes: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "frame", name: "list.txt - gedit", states: [], bounds: FRAME },
+      { id: 2, parent: 1, depth: 1, role: "page tab", name: "Python Console", states: [], bounds: null },
+      { id: 3, parent: 2, depth: 2, role: "scroll pane", name: "", states: [], bounds: null },
+      { id: 4, parent: 3, depth: 3, role: "text", name: "", states: ["multi line"], bounds: null },
+    ];
+    expect(fieldAround(nodes[3], ">>>", id => nodes.find(n => n.id === id))).toEqual([">>>", "Python Console"]);
+  });
+});
+
+describe("Home's line while Ember runs elevated (the owner's complaint)", () => {
+  it("says every command asks while Ember runs as an administrator or as root, and nothing more otherwise", () => {
+    expect(autonomyHint(false, "administrator")).toMatch(/ Ember is running as an administrator, so it asks before every command\. Start it normally to change that\.$/);
+    expect(autonomyHint(false, "root")).toMatch(/ Ember is running as root, so it asks before every command\. Start it as yourself to change that\.$/);
+    expect(autonomyHint(false)).not.toMatch(/every command/);
+    expect(elevationOf([{ id: "elevated", label: "Administrator", status: "warn" }])).toBe("administrator");
+    expect(elevationOf([{ id: "elevated", label: "Root", status: "warn" }])).toBe("root");
+    expect(elevationOf([{ id: "root", label: "Root", status: "warn" }])).toBe("root");
+    expect(elevationOf([{ id: "elevated", label: "Administrator", status: "ok" }])).toBeNull();
+    expect(elevationOf([])).toBeNull();
   });
 });
 
@@ -528,10 +678,10 @@ describe("red team: an injected screen tries to make an ordinary-looking command
 
 describe("Home's words for the switch", () => {
   it("say that answering an app's message box is one of the steps it no longer asks about, and the card still covers it", () => {
-    expect(autonomyHint(false)).toMatch(/^Off, Ember asks before its first step in an app, before using your mouse and keyboard, before answering an app's message box and before moving text between apps\. On, it tells you what it's doing instead/);
-    expect(autonomyHint(true)).toMatch(/before answering an app's message box/);
+    expect(autonomyHint(false)).toMatch(/^Off, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps\. On, it tells you what it's doing instead/);
+    expect(autonomyHint(true)).toMatch(/before pressing OK on an app's message box/);
     // The card names the wider scope, and its version moved so the user agrees to it again (S1).
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/answer simple message boxes \(an OK or Close that only says it has read the message\) for what you ask, without asking you first each time/);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/press OK on a simple message box \(one whose only button is OK, with nothing to choose or tick\) for what you ask, without asking you first each time/);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/and any dialog that asks a question\./);
     expect(FEATURE_CONSENT_VERSION.autonomy).toBe(2);
   });
