@@ -98,6 +98,25 @@ export function afterAnswerPatch(onScreen: BubbleState, shown: BubbleState, resh
   return { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE };
 }
 
+/**
+ * Ember was hidden and showed itself for an answer the user asked for (main's `shownForAnswer`): it hides again once
+ * the bubble goes, the empty bubble after a question's answer (afterAnswerPatch) included.
+ */
+export function hidesAgainAfter(shownForAnswer: boolean, next: Partial<EmberState>): boolean {
+  return shownForAnswer && !!next.bubble && !next.bubble.visible;
+}
+
+/**
+ * The Confirmer's afterAnswer as main wires it: `onScreen` reads main's last state's bubble, `reshow` is the shared
+ * bubble's afterAnswer (AgentHost.afterAnswer) and `set` main's guarded setState.
+ */
+export function answerSettler(d: { onScreen: () => BubbleState; reshow: () => boolean; set: (patch: Partial<EmberState>) => void }): (shown: BubbleState) => void {
+  return shown => {
+    const patch = afterAnswerPatch(d.onScreen(), shown, d.reshow);
+    if (patch) d.set(patch);
+  };
+}
+
 /** The hash a panel question's yes must carry back: the command card's, or the consent card's. */
 const panelSha256 = (panel: QuestionPanel): string => (panel.kind === "command" ? panel.card.sha256 : panel.consent.sha256);
 /** A SHA-256 as sha256Hex writes it: a card whose hash isn't one (empty, cut short) can't be allowed (fail closed). */

@@ -3,13 +3,14 @@
  * allowed and done, yet the bubble kept "Working · Thanks! Carrying on.", the handle kept the task's name and the
  * presence ring kept its busy pulse). The shared bubble, the conversation's and the task's presenters, the Confirmer and
  * main's state sink are wired as main and AgentHost wire them (guardWhileAsking, the Confirmer's afterAnswer through
- * afterAnswerPatch, BubbleOwner's question hook); a task that does the work is cornered, as in the app. After each end
+ * answerSettler, BubbleOwner's question hook, hidesAgainAfter); a task that does the work is cornered, as in the app. After each end
  * the bubble is empty or shows the result, the ring isn't busy, Ember's face rests and the handle's line is "Ready".
  */
 
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BubbleOwner, Presenter } from "../../app/main/agent/presenter";
-import { Confirmer, afterAnswerPatch, guardWhileAsking, type Question } from "../../app/main/agent/confirm";
+import { Confirmer, answerSettler, guardWhileAsking, hidesAgainAfter, type Question } from "../../app/main/agent/confirm";
 import { IDLE_BUBBLE, type EmberState, type TaskCard } from "../../app/shared/overlay";
 import { presenceOf } from "../../app/shared/presence";
 import { handleLine, pillLine } from "../../app/renderer/handle/line";
@@ -19,7 +20,12 @@ const GOAL = "Close the Microsoft Edge browser";
 /** Ember as main and the host put it together, with one task (cornered unless `corner` is false). */
 function ember(o: { corner?: boolean; wired?: boolean } = {}) {
   let state: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null, idle: "Ready" };
-  const showState = (next: Partial<EmberState>) => { state = { ...state, ...next }; };
+  // Main's "shown just for an answer while hidden" (main.ts showState).
+  const seenBy = { hidden: false, shownForAnswer: false };
+  const showState = (next: Partial<EmberState>) => {
+    state = { ...state, ...next };
+    if (hidesAgainAfter(seenBy.shownForAnswer, next)) { seenBy.shownForAnswer = false; seenBy.hidden = true; }
+  };
   const box: { confirmer: Confirmer | null } = { confirmer: null };
   const setState = guardWhileAsking(() => box.confirmer?.waiting ?? false, showState);
   // AgentHost's dropAnnouncement: once a question is answered, the conversation's reply announcing the task is stale.
@@ -28,16 +34,19 @@ function ember(o: { corner?: boolean; wired?: boolean } = {}) {
   const owner: BubbleOwner = new BubbleOwner({ up: () => box.confirmer?.waiting ?? false, answered: () => box.confirmer!.settled().then(dropAnnouncement) });
   const confirmer = box.confirmer = new Confirmer(showState, {
     armMs: 0, gapMs: 700, timeoutMs: 120_000,
-    ...(o.wired === false ? {} : { afterAnswer: shown => { const p = afterAnswerPatch(state.bubble, shown, () => owner.afterAnswer()); if (p) setState(p); } }),
+    // main.ts's own wiring (pinned below), with AgentHost.afterAnswer's owner.afterAnswer().
+    ...(o.wired === false ? {} : { afterAnswer: answerSettler({ onScreen: () => state.bubble, reshow: () => owner.afterAnswer(), set: setState }) }),
   });
   const conversation = new Presenter(setState, undefined, () => "Ember", owner);
   const task = new Presenter(setState, undefined, () => GOAL, owner, undefined, false, { task: "t1", corner: o.corner !== false });
   const card = (status: TaskCard["status"]) => setState({ tasks: [{ id: "t1", title: GOAL, status, detail: "" }] });
   return {
-    owner, confirmer, conversation, task, card, showState,
+    owner, confirmer, conversation, task, card, showState, seenBy,
     get state() { return state; },
     /** The conversation's turn that starts the task ("I'll close it."), as Copilot plays it, and the task's first step. */
     asked() {
+      // A hidden Ember shows itself for the answer to what the user just asked (main.ts askEmber).
+      if (seenBy.hidden) { seenBy.hidden = false; seenBy.shownForAnswer = true; }
       conversation.userPrompt("close Microsoft Edge");
       conversation.event({ type: "user.message", data: { content: "close Microsoft Edge" } });
       conversation.event({ type: "tool.execution_start", data: { toolName: "start_task" } });
@@ -220,6 +229,28 @@ describe("Ember after a task ends, every way it can end (the owner's report of 2
     expect(e.state.bubble.thought).toBe("Okay, I won't.");
     await vi.advanceTimersByTimeAsync(1600);
     expect(e.state.bubble).toMatchObject({ visible: true, thought: "It's ten past three." });
+  });
+
+  it("hides again when it was hidden and showed itself for the request, once the answer has gone", async () => {
+    const e = ember();
+    e.seenBy.hidden = true;
+    e.asked();
+    expect(e.seenBy).toEqual({ hidden: false, shownForAnswer: true });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await allowed(e);
+    await vi.advanceTimersByTimeAsync(300);
+    e.ended("done", "Closed Microsoft Edge.");
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(e.state.bubble.visible).toBe(false);
+    expect(e.seenBy).toEqual({ hidden: true, shownForAnswer: false });
+  });
+
+  it("is wired in main as the test wires it (answerSettler, hidesAgainAfter)", () => {
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("afterAnswer: answerSettler({ onScreen: () => lastState.bubble, reshow: () => agent?.afterAnswer() ?? false, set: setState }),");
+    expect(main).toContain("if (hidesAgainAfter(shownForAnswer, next)) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }");
+    const host = readFileSync("app/main/agent/host.ts", "utf8");
+    expect(host).toMatch(/afterAnswer\(\): boolean \{\s*return this\.owner\.afterAnswer\(\);/);
   });
 
   it("never takes down the next question in place of the answer before it", async () => {
