@@ -880,7 +880,9 @@ harness turns off the Confirmer's guard against too-early clicks, which would dr
 typed text through first, as a user scrolls to its end before **Allow** works. Ember's test
 windows need GTK 3 for the sidecar's Python (`python3-gobject`, `gtk3`); without it their tasks are skipped, with
 the reason. Each attempt's temporary folder (settings, audit log, files) is deleted when it has been judged; `--keep`
-keeps them (`/tmp/ember-eval-<task>-…`) to look into a failure, and `--verbose` prints Ember's warnings.
+keeps them (`/tmp/ember-eval-<task>-…`) to look into a failure, and `--verbose` prints Ember's warnings. A script
+step's optional `result` is a regex its tool result must match before the mock replays the next step (what Ember
+told the model, as in `editor-close-window`); anything else stops the script and fails the task.
 
 | Tier | Model | Where | Gate |
 |---|---|---|---|

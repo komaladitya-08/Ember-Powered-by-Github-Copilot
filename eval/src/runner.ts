@@ -142,6 +142,12 @@ export function simulatedUser(task: Task, questions: string[]): Confirmer {
 /** The mock model's side of a scripted task: replays the script, resolving {find} against the latest screen read. */
 export function scriptedReply(task: Task, messages: Msg[]): { tool?: { name: string; args: Record<string, unknown> }; text?: string } {
   const step = messages.filter(m => m.role === "tool").length;
+  // The step before was to be told something exact (a closed window, a refusal): anything else stops the script.
+  const before = step > 0 ? task.script[step - 1] : undefined;
+  if (before?.result !== undefined) {
+    const told = [...messages].reverse().find(m => m.role === "tool");
+    if (!told || !new RegExp(before.result).test(textOf(told))) throw new Error(`step ${step - 1}: ${before.tool}'s result doesn't match ${before.result}`);
+  }
   const call = task.script[step];
   if (!call) return { text: "Done." };
   const args: Record<string, unknown> = {};

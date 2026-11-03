@@ -53,7 +53,7 @@ import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
-import { Confirmer, guardWhileAsking } from "./agent/confirm";
+import { Confirmer, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
@@ -606,7 +606,7 @@ function start(): void {
     lastState = { ...lastState, ...next };
     if (next.tasks) tasksShown();
     // Shown just for an answer the user asked for while Ember was hidden: hidden again once it's read.
-    if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
+    if (hidesAgainAfter(shownForAnswer, next)) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
     handle?.sendState(lastState);
     syncHandle();
@@ -2194,6 +2194,9 @@ function start(): void {
       panelReady: n => targets?.panelReady(n) ?? false,
       // And how to reach that window from the keyboard (the bubble's buttons are mouse-only).
       panelHint: p => targets?.panelHint(p),
+      // An answer nobody replaces (a task in the corner ends on its card) goes after its moment, or what the question
+      // covered shows again: never "Thanks! Carrying on." for good after the task is done.
+      afterAnswer: answerSettler({ onScreen: () => lastState.bubble, reshow: () => agent?.afterAnswer() ?? false, set: setState }),
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);

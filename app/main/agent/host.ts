@@ -983,6 +983,14 @@ export class AgentHost {
   }
 
   /**
+   * A question's answer ("Thanks! Carrying on.") has had its moment (the Confirmer's afterAnswer): what the question held
+   * off or covered shows again. False when nothing is left to show: main empties the bubble (afterAnswerPatch).
+   */
+  afterAnswer(): boolean {
+    return this.owner.afterAnswer();
+  }
+
+  /**
    * The expanded answer went without its Close button (main cleared it for settings, or a question replaced it): a pinned
    * hold has nothing left to keep, and no timer would end it, so it ends now as Close ends it. Any other hold of main's
    * ("Listening…") keeps its own time. `showing`: what is on screen now.

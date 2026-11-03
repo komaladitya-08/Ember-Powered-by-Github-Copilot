@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, afterKeys, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
+import { LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
 import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -40,7 +40,26 @@ function makeWorker(o: {
   screenText?: string;
   /** The window's title, and what the conversation read on the screen before the task (TaskSpec.screen). */
   windowName?: string; specScreen?: string;
+  /** The click closes the window it is in (a Close button): nothing is left to read back, and the window is gone. */
+  closes?: boolean;
+  /**
+   * Several windows (the first is the task's): reads find one by its key (path, else a title it contains), and a
+   * closing click removes the window last read, then opens `opens` if given (an app that replaces its window).
+   */
+  wins?: { name: string; role?: string; app?: string; pid?: number; path?: string }[];
+  opens?: { name: string; role?: string; app?: string; pid?: number; path?: string };
+  /** The one installed app (its name is the window's app): open_app starts it, and this window appears. */
+  launches?: { name: string; role?: string; app: string; pid?: number; path?: string };
+  /** The window listing fails when this says so (called once a listing). */
+  listFails?: () => boolean;
 } = {}) {
+  let closed = false;
+  const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
+    ({ app: x.app ?? "gedit", pid: x.pid ?? 1, name: x.name, role: x.role ?? "frame", active: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(x.path ? { path: x.path } : {}) });
+  const open = (o.wins ?? []).map(asWin);
+  let current: ReturnType<typeof asWin> | null = null;
+  const pick = (t?: { title?: string; path?: string }) =>
+    (t?.path ? open.find(x => x.path === t.path) : t?.title ? open.find(x => x.name.toLowerCase().includes(t.title!.toLowerCase())) : open[0]) ?? null;
   const flown: unknown[] = [];
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
@@ -56,12 +75,36 @@ function makeWorker(o: {
   const presenter = new Presenter(() => undefined);
   const show = presenter.guide.bind(presenter);
   presenter.guide = (say, step) => { guided.push(say); show(say, step); };
+  const launched = o.launches;
+  const system = launched ? {
+    ...LINUX_WORKER_SYSTEM,
+    apps: {
+      list: () => [{ id: launched.app, name: launched.app }],
+      find: (list: { name: string }[], n: string) => list.find(a => a.name.toLowerCase().includes(n.toLowerCase())) ?? null,
+      isTerminalApp: () => false, programsOf: (a: { name: string }) => new Set([a.name.toLowerCase()]), appKey: (n: string) => n.toLowerCase(),
+      launch: () => { open.push(asWin(launched)); },
+    },
+  } : undefined;
   const w = new Worker({
-    client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
-    perception: { perceive: async () => ({ ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
+    client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp", ...(system ? { system } : {}),
+    perception: {
+      perceive: async (r: { target?: { title?: string; path?: string } }) => {
+        if (o.wins) {
+          current = pick(r.target);
+          return current ? { ...seen, window: current, text: o.screenText ?? "[1] push button \"Bold\"", capture: null } : { ...seen, window: null, nodes: [], text: "", capture: null };
+        }
+        return closed ? { ...seen, window: null, nodes: [], text: "", capture: null } : { ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: null };
+      },
+      read: async () => seen,
+      windows: async () => {
+        if (o.listFails?.()) throw new Error("the accessibility helper didn't answer");
+        return o.wins ? [...open] : closed ? [] : [window];
+      },
+    } as never,
     sidecar: {
       readElement: async (id: number) => {
         if (o.readMs) await sleep(o.readMs);
+        if (closed) return null;
         const extra = o.live?.(id);
         if (extra === null) return null;
         const base = id === node.id ? node : extras.find(n => n.id === id);
@@ -70,7 +113,16 @@ function makeWorker(o: {
         if (states === null) return null;
         return { role: base.role, name: base.name, states, bounds: base.bounds, ...(id === node.id ? o.extra?.() : {}), ...extra };
       },
-      doAction: async () => { events.push("start"); await sleep(80); events.push("end"); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } }; },
+      doAction: async () => {
+        events.push("start"); await sleep(80); events.push("end");
+        if (o.closes && o.wins) {
+          if (current) open.splice(open.indexOf(current), 1);
+          if (o.opens) open.push(asWin(o.opens));
+          return { ok: true, after: null };
+        }
+        if (o.closes) { closed = true; return { ok: true, after: null }; }
+        return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } };
+      },
       setText: async (_id: number, text: string) => {
         events.push("set_text");
         if (!o.setTextOk) throw new Error("background_unavailable: this element's text can't be edited directly");
@@ -90,11 +142,214 @@ function makeWorker(o: {
       findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}),
     },
     pointer: o.pointer, activationKey: o.activationKey,
-  } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode, ...(o.specScreen ? { screen: o.specScreen } : {}) });
+  } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: o.wins?.[0]?.name ?? "notes.txt" }, mode: o.mode, ...(o.specScreen ? { screen: o.specScreen } : {}) });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
-  return { w, audit, events, asked, questions, call, flown, guided, activity };
+  /** A window the user opens meanwhile (with `wins`). */
+  const openWindow = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) => { open.push(asWin(x)); };
+  return { w, audit, events, asked, questions, call, flown, guided, activity, openWindow };
 }
+
+describe("a task whose own step closes its window (the owner's report of 2026-11-03)", () => {
+  it("is told the window closed under its step and that closing it may be the task, and finishes", async () => {
+    const { call, audit, events } = makeWorker({ name: "Close", closes: true });
+    await call("perceive_window", {});
+    const click = await call("click", { id: 1 });
+    expect(click.resultType).toBe("success");
+    expect(click.textResultForLlm).toContain("The element is gone now");
+    const look = await call("perceive_window", {});
+    expect(look.resultType).toBe("failure");
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("list_windows");
+    // Nothing more is done in the window that went (an id from it acts on nothing), and the task ends with its result.
+    const again = await call("click", { id: 1 });
+    expect(again.resultType).not.toBe("success");
+    expect(events.filter(e => e === "start")).toHaveLength(1);
+    const done = await call("finish_task", { success: true, summary: "Closed it." });
+    expect(done.textResultForLlm).toMatch(/^Task closed/);
+    expect(audit.filter(e => e.event === "action" && e.ok)).toHaveLength(1);
+  });
+
+  it("goes back to its own window when its click closes a dialog it switched into (Save As, review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "Save", closes: true, wins: [{ name: "notes.txt", path: "/w/1" }, { name: "Save As", role: "file chooser", path: "/w/2" }] });
+    expect((await call("perceive_window", {})).resultType).toBe("success");
+    expect((await call("switch_window", { title: "Save As" })).resultType).toBe("success");
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).not.toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.resultType).toBe("success");
+    expect(look.textResultForLlm).toBe(dialogClosedNote({ app: "gedit", title: "notes.txt" }));
+    // And the task carries on there.
+    const back = await call("switch_window", { title: "notes.txt" });
+    expect(back.resultType).toBe("success");
+    expect((await call("finish_task", { success: true, summary: "Saved it." })).textResultForLlm).toMatch(/^Task closed/);
+  });
+
+  it("keeps its own window when another window of its app closes under it, and doesn't urge it on (Preferences, then OK)", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "notes.txt", path: "/w/1" }, { name: "Preferences", path: "/w/3" }] });
+    await call("perceive_window", {});
+    await call("switch_window", { title: "Preferences" });
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(otherWindowClosedNote({ app: "gedit", title: "notes.txt" }));
+    expect(look.textResultForLlm).not.toMatch(/carry on|dialog/i);
+  });
+
+  it("calls a second window of its app that closed a window, not a dialog (Mail after News in Edge, review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "Close", closes: true, wins: [{ name: "News - Microsoft Edge", app: "msedge", pid: 4, path: "/w/1" }, { name: "Mail - Microsoft Edge", app: "msedge", pid: 4, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("switch_window", { title: "Mail" });
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(otherWindowClosedNote({ app: "msedge", title: "News - Microsoft Edge" }));
+    expect(look.textResultForLlm).not.toMatch(/carry on|dialog/i);
+  });
+
+  it("finishes when it closes the app it switched to from the user's window (Firefox, then Calculator: review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "Close", closes: true, wins: [{ name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/1" }, { name: "Calculator", app: "gnome-calculator", pid: 3, path: "/w/2" }] });
+    await call("perceive_window", {});
+    expect((await call("switch_window", { title: "Calculator" })).resultType).toBe("success");
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("Inbox");
+  });
+
+  it("finishes when it closes the app it opened from the user's window (Firefox, then open_app Calculator)", async () => {
+    const { call } = makeWorker({ name: "Close", closes: true, wins: [{ name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/1" }], launches: { name: "Calculator", app: "gnome-calculator", pid: 3, path: "/w/2" } });
+    await call("perceive_window", {});
+    const opened = await call("open_app", { name: "calculator" });
+    expect(opened.textResultForLlm).toMatch(/now working in its window "Calculator"/);
+    expect((await call("perceive_window", {})).resultType).toBe("success");
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("finishes, never naming a window it wasn't shown, when it only ever read the dialog (review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "Save", closes: true, wins: [{ name: "Save As", role: "file chooser", path: "/w/2" }, { name: "notes.txt", path: "/w/1" }, { name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/9" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("never goes back to a window it only saw in list_windows (the user's own window: review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "Save", closes: true, wins: [{ name: "Save As", role: "file chooser", path: "/w/2" }, { name: "notes.txt", path: "/w/1" }, { name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/9" }] });
+    await call("perceive_window", {});
+    await call("list_windows", {});
+    await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("never sends it into the user's Explorer window it only listed after Explorer's Run dialog closes", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Run", role: "dialog", app: "explorer", pid: 10, path: "/w/1" }, { name: "Downloads - File Explorer", app: "explorer", pid: 10, path: "/w/2" }] });
+    await call("perceive_window", {});
+    expect((await call("list_windows", {})).textResultForLlm).toContain("Downloads");
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("Downloads");
+  });
+
+  it("never sends it to a listed Explorer window after Properties closes over the Firefox window it read", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/1" }, { name: "Properties", role: "dialog", app: "explorer", pid: 10, path: "/w/2" }, { name: "Downloads - File Explorer", app: "explorer", pid: 10, path: "/w/3" }] });
+    await call("perceive_window", {});
+    await call("list_windows", {});
+    await call("switch_window", { title: "Properties" });
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toMatch(/Downloads|Inbox/);
+  });
+
+  it("names no window as its app's replacement when the listing before the click failed", async () => {
+    let n = 0;
+    const { call } = makeWorker({ name: "Open", closes: true, listFails: () => n++ === 0, wins: [{ name: "LibreOffice", app: "soffice", pid: 7, path: "/w/1" }, { name: "notes.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/8" }], opens: { name: "letter.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/9" } });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    // The first listing (the one before the click) failed; the next one works, and still names nothing.
+    expect(n).toBe(1);
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(n).toBe(2);
+  });
+
+  it("never sends it back to the user's window of another app after another app's dialog closes (Properties over Firefox, review of PR #139)", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/1" }, { name: "Properties", role: "dialog", app: "explorer", pid: 10, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("switch_window", { title: "Properties" });
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("Inbox");
+  });
+
+  it("never names another app's window that shares the dialog's process (UWP frames under ApplicationFrameHost)", async () => {
+    const { call } = makeWorker({ name: "Don't save", closes: true, wins: [{ name: "Unsaved changes", role: "dialog", app: "Calculator", pid: 20, path: "/w/1" }, { name: "Settings", app: "SystemSettings", pid: 20, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("never sends it into the user's own Explorer window it never read after Explorer's Run dialog closes", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Run", role: "dialog", app: "explorer", pid: 10, path: "/w/1" }, { name: "Downloads - File Explorer", app: "explorer", pid: 10, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).not.toContain("Downloads");
+  });
+
+  it("finishes when the only dialog it read closes with its app", async () => {
+    const { call } = makeWorker({ name: "OK", closes: true, wins: [{ name: "Done", role: "alert", app: "zenity", pid: 5, path: "/w/5" }, { name: "Inbox - Firefox", app: "firefox", pid: 2, path: "/w/9" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("never offers a window the user opened meanwhile as the one its app opened in its place (review of PR #139)", async () => {
+    const { call, openWindow } = makeWorker({ name: "Open", closes: true, wins: [{ name: "LibreOffice", app: "soffice", pid: 7, path: "/w/1" }], opens: { name: "letter.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/9" } });
+    await call("perceive_window", {});
+    openWindow({ name: "notes.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/8" });
+    await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(windowReplacedNote("soffice", ["letter.odt - LibreOffice Writer"]));
+  });
+
+  it("is told where to go on when its app replaces its window (Start Center opens the document)", async () => {
+    const { call } = makeWorker({ name: "Open", closes: true, wins: [{ name: "LibreOffice", app: "soffice", pid: 7, path: "/w/1" }], opens: { name: "letter.odt - LibreOffice Writer", app: "soffice", pid: 7, path: "/w/9" } });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.resultType).toBe("success");
+    expect(look.textResultForLlm).toBe(windowReplacedNote("soffice", ["letter.odt - LibreOffice Writer"]));
+    expect((await call("switch_window", { title: "letter.odt" })).resultType).toBe("success");
+  });
+
+  it("still finishes when its own window closes and only a window the user already had open is left (a second Edge window)", async () => {
+    const { call } = makeWorker({ name: "Close", closes: true, wins: [{ name: "News - Microsoft Edge", app: "msedge", pid: 4, path: "/w/1" }, { name: "Mail - Microsoft Edge", app: "msedge", pid: 4, path: "/w/2" }] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    expect((await call("perceive_window", {})).textResultForLlm).toBe(WINDOW_CLOSED_BY_TASK);
+  });
+
+  it("forgets that a step closed its window once another call comes between (list_windows, then a read)", async () => {
+    const { call } = makeWorker({ name: "Close", closes: true });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    await call("list_windows", {});
+    const look = await call("perceive_window", {});
+    expect(look.textResultForLlm).not.toBe(WINDOW_CLOSED_BY_TASK);
+    expect(look.textResultForLlm).toMatch(/can't be read/);
+  });
+
+  it("never says a step closed the window when its element is still there", async () => {
+    const { call } = makeWorker();
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const look = await call("perceive_window", {});
+    expect(look.resultType).toBe("success");
+    expect(look.textResultForLlm).not.toContain("has closed");
+  });
+});
 
 describe("what a worker tells its card (app/main/agent/activity.ts)", () => {
   it("passes report_progress's note and its short intent on as the worker's own words, markdown stripped", async () => {
