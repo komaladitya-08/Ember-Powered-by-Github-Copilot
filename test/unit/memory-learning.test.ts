@@ -749,3 +749,19 @@ describe("the second re-review of PR #142", () => {
     }
   });
 });
+
+it("discards a refinement that finishes after an individual Forget", async () => {
+  let resolve!: (value: string) => void;
+  let signal: AbortSignal | undefined;
+  const { l, s } = learning({ model: async (_sys, _prompt, abort) => { signal = abort; return new Promise<string>(r => { resolve = r; }); } });
+  s.learn({ text: "Works on Atlas", about: [{ name: "User" }, { name: "Atlas" }], source: "user" });
+  s.learn({ text: "Likes tea", about: [{ name: "User" }], source: "user" });
+  const id = s.list().find(f => f.text === "Works on Atlas")!.id;
+  const run = l.refine();
+  expect(l.forget(id)).toBe(true);
+  expect(signal?.aborted).toBe(true);
+  resolve(JSON.stringify({ summaries: [{ entity: "User", summary: "Works on Atlas and likes tea" }] }));
+  expect(await run).toBe(0);
+  expect(s.list().map(f => f.text)).toEqual(["Likes tea"]);
+  s.stop(); l.stopNow();
+});

@@ -2919,3 +2919,38 @@ describe("memory hears whose words a request was (review of PR #142, B2)", () =>
     await host.stop();
   });
 });
+
+
+describe("memory erasure at account boundaries", () => {
+  function failingMemory() {
+    return { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => { throw new Error("EROFS"); }) };
+  }
+  it("blocks another account and retries deletion even after its old conversation was cleared", async () => {
+    const memory = failingMemory();
+    const { host } = makeHost({ memory });
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    const count = sim.sessions.length;
+    sim.auth = async () => ({ isAuthenticated: true, login: "other" });
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    expect(host.getStatus().detail).toContain("couldn't finish deleting memory");
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    expect(sim.sessions.length).toBe(count);
+    expect(memory.context).not.toHaveBeenCalled();
+    memory.forgetAll.mockImplementation(() => undefined);
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    await host.stop();
+  });
+  it("reports a failed sign-out erasure and prevents automatic sign-in or an explicit new session", async () => {
+    const memory = failingMemory();
+    const { host } = makeHost({ memory });
+    await host.start(TOKEN, "stored");
+    await expect(host.forgetConversation()).rejects.toThrow(/couldn't finish deleting memory/);
+    // Main's finally disconnects even when forgetConversation rejects.
+    expect(await host.start(null)).toBe("signed-out");
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("signed-out");
+    const count = sim.sessions.length;
+    expect(await host.start(TOKEN, "stored", "user")).toBe("error");
+    expect(sim.sessions.length).toBe(count);
+    await host.stop();
+  });
+});

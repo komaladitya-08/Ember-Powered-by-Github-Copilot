@@ -530,7 +530,7 @@ describe("main's sign-in wiring", () => {
     expect(MAIN).toContain("keeper.use(token, grant);");
     // Every connect says which sign-in is in use; signing out keeps none alive.
     expect(MAIN).toContain("currentToken = f?.token ?? null; keeper.use(currentToken);");
-    expect(MAIN).toMatch(/ipcMain\.handle\(IPC\.signOut, guard\(async \(\) => \{[^}]*currentToken = null; keeper\.use\(null\);/);
+    expect(MAIN).toMatch(/ipcMain\.handle\(IPC\.signOut, guard\(async \(\) => \{.*?finally \{.*?currentToken = null; keeper\.use\(null\);/);
     // A stored sign-in that ran out while Ember was off is renewed before it is looked at.
     expect(MAIN).toContain("const findToken = async () => { await keeper.freshen(); return resolveToken(");
     expect(MAIN).toContain("if (!provider) await keeper.freshen();");

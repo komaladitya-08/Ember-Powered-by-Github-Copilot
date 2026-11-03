@@ -692,6 +692,8 @@ export class AgentHost {
   private conversationLogin: string | undefined;
   /** The GitHub account Ember last connected to Copilot with (kept across connections to another model service). */
   private githubLogin: string | undefined;
+  /** A failed account-boundary deletion must be retried before any new session in this run. */
+  private memoryDeletionPending = false;
   /**
    * The model service the conversation was held with ("copilot", or a provider's kind and address): on another, it isn't
    * resumed (its history isn't sent to a service it wasn't held with); a new conversation starts, and memory stays.
@@ -1257,6 +1259,7 @@ export class AgentHost {
         this.carried = [];
       }
       if (!provider && ((this.conversation && login !== this.conversationLogin) || (this.githubLogin !== undefined && login !== this.githubLogin))) await this.accountChanged();
+      if (this.memoryDeletionPending) this.forgetKept();
       if (!provider) this.githubLogin = login;
 
       let models: ModelLike[] = [];
@@ -2348,18 +2351,20 @@ export class AgentHost {
     // The runtime's saved tool output goes with the conversation.
     try { clearRuntimeTemp(runtimeTempDir(this.o.userData)); } catch (err) { this.o.log.warn("agent.runtime_temp_not_cleared", { err }); }
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
-    this.forgetKept();
     this.setSignedOut(true);
-    // The next account to sign in is nobody's successor: no account change is told for it.
-    this.githubLogin = undefined;
-    // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
-    this.tasks?.takeReports();
-    this.finishedLately = [];
-    this.carried = [];
-    this.transcript.length = 0;
-    this.terminalRefused.clear();
-    this.o.onTranscript?.([]);
-    this.o.log.info("agent.conversation_forgotten");
+    try { this.forgetKept(); }
+    finally {
+      // The next account to sign in is nobody's successor: no account change is told for it.
+      this.githubLogin = undefined;
+      // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
+      this.tasks?.takeReports();
+      this.finishedLately = [];
+      this.carried = [];
+      this.transcript.length = 0;
+      this.terminalRefused.clear();
+      this.o.onTranscript?.([]);
+      this.o.log.info("agent.conversation_forgotten");
+    }
   }
 
   /**
@@ -2381,13 +2386,21 @@ export class AgentHost {
   }
 
   /**
-   * Forgets what Ember kept about the person (memory, reminders, routines). A file that can't be erased is logged, never
-   * thrown: sign-out and an account change always finish.
+   * Forgets personal memory before another account may use it. Main still disconnects credentials on failure.
    */
   private forgetKept(): void {
-    try { this.o.memory?.forgetAll(); } catch (err) { this.o.log.warn("agent.memory_not_forgotten", { err: err instanceof Error ? err.message : String(err) }); }
+    let failure: Error | undefined;
+    try {
+      this.o.memory?.forgetAll();
+      this.memoryDeletionPending = false;
+    } catch (err) {
+      this.memoryDeletionPending = true;
+      this.o.log.warn("agent.memory_not_forgotten", { err: err instanceof Error ? err.message : String(err) });
+      failure = new Error("Ember couldn't finish deleting memory from this computer. Use Forget everything in Memory before connecting again.", { cause: err });
+    }
     this.reminders.clear();
     try { this.o.routines?.forgetAll(); } catch (err) { this.o.log.warn("agent.routines_not_forgotten", { err: err instanceof Error ? err.message : String(err) }); }
+    if (failure) throw failure;
   }
 
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
