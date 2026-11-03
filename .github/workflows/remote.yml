@@ -239,6 +239,12 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
+      # sherpa-onnx's C API, which rebuild-el8.sh fetches and checks (app/voice/models.ts CAPI_RELEASE).
+      - name: Native speech libraries (cached; each verified by SHA-256)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/voice/capi
+          key: voice-capi-${{ hashFiles('app/voice/models.ts', 'scripts/voice/fetch-capi.mjs') }}
       - name: Rebuild native modules on glibc 2.28 and check every binary (as ci.yml's el8 job does)
         run: scripts/rebuild-el8.sh --here
       - run: npm run build
@@ -407,6 +413,12 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
+      # sherpa-onnx's C API, which rebuild-el8.sh fetches and checks (app/voice/models.ts CAPI_RELEASE).
+      - name: Native speech libraries (cached; each verified by SHA-256)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/voice/capi
+          key: voice-capi-${{ hashFiles('app/voice/models.ts', 'scripts/voice/fetch-capi.mjs') }}
       - name: Rebuild native modules on glibc 2.28 and check every binary (as ci.yml's el8 job does)
         run: scripts/rebuild-el8.sh --here
       - run: npm run build

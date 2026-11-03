@@ -88,7 +88,7 @@ jobs:
     name: RHEL 8 compatibility (rockylinux:8)
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 25
     container:
       image: rockylinux:8
       # Lets Chromium use its user-namespace sandbox inside the container.
@@ -263,7 +263,10 @@ jobs:
         run: |
           sudo -u ci env HOME=/home/ci EMBER_LOG_STDOUT=1 xvfb-run -a sh -c 'timeout 25 ember > /tmp/ember.log 2>&1; true'
           grep -q '"msg":"window.home.shown"' /tmp/ember.log || { cat /tmp/ember.log; exit 1; }
-          # It chose native speech (the C API in /opt/ember/resources/voice-native), not WebAssembly.
+          # It chose native speech (the C API in /opt/ember/resources/voice-native), not WebAssembly. Only the choice:
+          # with a new profile there is no consent and no "Hey Ember", so its voice processes don't start here. The
+          # libraries loading is checked above (capi-load.mjs), and the voice-e2e job checks that both voice processes
+          # load and run on them in the Electron app.
           grep '"msg":"voice.backend"' /tmp/ember.log | grep -q '"backend":"native"' || { grep voice /tmp/ember.log; exit 1; }
       - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
@@ -349,6 +352,12 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
+      # sherpa-onnx's C API, which rebuild-el8.sh fetches and checks (app/voice/models.ts CAPI_RELEASE).
+      - name: Native speech libraries (cached; each verified by SHA-256)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/voice/capi
+          key: voice-capi-${{ hashFiles('app/voice/models.ts', 'scripts/voice/fetch-capi.mjs') }}
       - name: Rebuild native modules on glibc 2.28
         run: scripts/rebuild-el8.sh --here
       - run: npm run build
@@ -364,8 +373,11 @@ jobs:
           node scripts/voice/prepare.mjs --voice ryan --clips
       - name: "Wake word, request, spoken reply, follow-up, \"Hey Ember, stop\" and Voice Match, heard through Chromium's fake microphone, as a normal user (sandbox on)"
         run: |
+          # On sherpa-onnx's C API, as the Linux packages run speech: the reply scenario checks that listening and
+          # Ember's voice loaded on it (voice.ready and voice.tts_ready say native), not just that it was chosen.
+          capi="$(node scripts/voice/fetch-capi.mjs)"
           chown -R ci .
-          sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:voice
+          sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_SHERPA_CAPI="$capi" EMBER_VOICE_E2E_BACKEND=native xvfb-run -a npm run test:voice
 
   eval:
     name: Evaluation (task suite and release gates, rockylinux:8)
@@ -394,6 +406,12 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
+      # sherpa-onnx's C API, which rebuild-el8.sh fetches and checks (app/voice/models.ts CAPI_RELEASE).
+      - name: Native speech libraries (cached; each verified by SHA-256)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/voice/capi
+          key: voice-capi-${{ hashFiles('app/voice/models.ts', 'scripts/voice/fetch-capi.mjs') }}
       - name: Rebuild native modules on glibc 2.28
         run: scripts/rebuild-el8.sh --here
       - name: Speech models (cached; verified by SHA-256)

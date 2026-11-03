@@ -92,7 +92,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `node test/smoke/launch.mjs --folder '<name>'` | The smoke test from a copy of the app in a folder of that name; checks the settings page loaded there (CI uses one with %, #, &, brackets and non-ASCII) |
 | `npm run build:lab` | Builds the character lab demo into `dist/ember-character-lab.html` |
 | `npm run rebuild:el8` | Rebuilds native modules for RHEL 8 and checks every binary (§6) |
-| `npm run check:symvers` | Only the binary check |
+| `npm run check:symvers` | Only the binary check: node_modules and the native speech libraries, which it fetches first (a 28 MB download the first time, then reused from `.cache/voice/capi`; §6) |
 | `scripts/install-desktop-entry.sh [--autostart]` | Adds "Ember (dev)" to the GNOME app menu, with its **Ask Ember** action as the RPM's entry has (and to login) |
 | `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
