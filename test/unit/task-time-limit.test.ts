@@ -13,6 +13,7 @@ import type { Question } from "../../app/main/agent/confirm";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine, type ActionRequest } from "../../app/main/policy/policy";
 import type { Logger } from "../../app/main/logger";
+import { TaskManager } from "../../app/main/agent/tasks";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const MIN = 60_000;
@@ -34,8 +35,9 @@ function makeTask(answerMs: number) {
     // The turn begins, and goes on until the test ends it.
     async send({ prompt }: { prompt: string }) { emit("user.message", { content: prompt }); emit("assistant.turn_start", { turnId: "0" }); return "m"; },
     async abort() { emit("abort", { reason: "user initiated" }); emit("session.idle", { aborted: true }); },
+    disconnect: vi.fn(async () => undefined),
   };
-  const client = { createSession: async (cfg: any) => { tools = (cfg.tools ?? []).map((t: any) => t.name); return session; } };
+  const client = { createSession: async (cfg: any) => { tools = (cfg.tools ?? []).map((t: any) => t.name); return session; }, deleteSession: vi.fn(async (_id: string) => undefined) };
   /* eslint-enable @typescript-eslint/no-explicit-any */
   const deps = {
     client: client as never, log: quiet, model: "m", vision: false, workDir: fs.mkdtempSync(path.join(os.tmpdir(), "ember-limit-")),
@@ -70,7 +72,7 @@ function makeTask(answerMs: number) {
     try { return await fn(); } finally { emit("tool.execution_complete", { toolCallId }); }
   };
   return {
-    w, asked, inner,
+    w, asked, inner, client, session, deps,
     perceive: () => w.tools().find(t => t.name === "perceive_window")!.handler!({}, {} as never),
     typeStep: (value: string) => step(() => inner.authorize({ taskId: "t1", kind: "text", app: "gedit", window: "notes.txt", element: { role: "entry", name: "Message" }, mode: "replace", currentText: "", value } as ActionRequest)),
     commandQuestion: () => step(() => { const ctx = inner.commandContext(); return ctx.confirmer.ask({ title: "May I?", prompt: "Run ls?", options: [{ id: "once", label: "Allow" }, { id: "deny", label: "Not now" }], task: "t1" }, ctx.signal); }),
@@ -81,6 +83,71 @@ function makeTask(answerMs: number) {
 afterEach(() => { vi.useRealTimers(); });
 
 describe("a task's time limit", () => {
+  it.each(["Stop", "deadline"] as const)("%s settles a pending session start, releases its task slot and cleans a late session without sending", async why => {
+    vi.useFakeTimers();
+    const task = makeTask(0);
+    task.deps.limits = { maxMs: 10_000 };
+    let created!: (session: typeof task.session) => void;
+    const pending = new Promise<typeof task.session>(resolve => { created = resolve; });
+    vi.spyOn(task.client, "createSession").mockImplementationOnce(() => pending);
+    const sent = vi.spyOn(task.session, "send");
+    const aborted = vi.spyOn(task.session, "abort");
+    let made = 0;
+    const manager = new TaskManager({ log: quiet, maxRunning: 1, currentWindow: () => ({}), setCards: () => undefined, deleteSession: async () => undefined,
+      makeWorker: () => made++ === 0 ? task.w : { run: async () => ({ success: true, summary: "Done." }), steer: async () => false, dispose: async () => undefined, sessionId: null },
+    });
+    const first = manager.start("first");
+    const next = manager.start("next");
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      if (why === "Stop") manager.cancel(first.id);
+      else await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(first.status).toBe(why === "Stop" ? "cancelled" : "failed");
+      expect(next.status).toBe("done");
+      expect(sent).not.toHaveBeenCalled();
+      created(task.session);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(aborted).toHaveBeenCalled();
+      expect(task.session.disconnect).toHaveBeenCalled();
+      expect(task.client.deleteSession).toHaveBeenCalledWith("ember-task-t1");
+      expect(sent).not.toHaveBeenCalled();
+      const late = await task.w.tools().find(t => t.name === "report_progress")!.handler!({ text: "Late progress" }, {} as never) as { textResultForLlm: string };
+      expect(late.textResultForLlm).toMatch(/Stopped/);
+    } finally {
+      manager.cancelAll();
+      created(task.session);
+      await vi.advanceTimersByTimeAsync(5000);
+    }
+  });
+
+  it.each(["tool validation", "request submission"] as const)("Stop also settles stalled %s", async stage => {
+    vi.useFakeTimers();
+    const task = makeTask(0);
+    if (stage === "tool validation") vi.spyOn(task.session.rpc.tools, "initializeAndValidate").mockImplementationOnce(() => new Promise(() => undefined));
+    else vi.spyOn(task.session, "send").mockImplementationOnce(() => new Promise(() => undefined));
+    const stop = new AbortController();
+    let result: WorkerResult | undefined;
+    const running = task.w.run(stop.signal).then(r => { result = r; });
+    await vi.advanceTimersByTimeAsync(0);
+    stop.abort();
+    await vi.advanceTimersByTimeAsync(2001);
+    expect(result).toEqual({ success: false, summary: "Stopped.", stopped: true });
+    await running;
+    await task.w.dispose();
+    expect(task.session.disconnect).toHaveBeenCalled();
+  });
+
+  it("still starts a session and returns a successful task result", async () => {
+    vi.useFakeTimers();
+    const task = makeTask(0);
+    const running = task.w.run(new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(0);
+    await task.w.tools().find(t => t.name === "finish_task")!.handler!({ success: true, summary: "Done." }, {} as never);
+    task.endTurn();
+    await expect(running).resolves.toEqual({ success: true, summary: "Done." });
+  });
+
   it("doesn't count the time a question waits for the user's answer: its steps' questions or its commands' (final review U1)", async () => {
     // More time to read and answer: a question waits up to 20 minutes, here answered after 18.
     const task = makeTask(18 * MIN);

@@ -111,6 +111,8 @@ export interface VoiceOptions {
    * scripts/voice/echo-check.mjs measures both on a real computer. Development builds only, for now (EMBER_TTS_OUTPUT).
    */
   playback?: "context" | "element";
+  /** Synthetic WAV input has no acoustic echo. Chromium's processing can distort it (development builds only). */
+  testMicWav?: boolean;
   /**
    * Speech can run on sherpa-onnx's native addon here (default: Windows and macOS, runtime.ts). A voice or speech
    * process that dies before it is ready is then started again on WebAssembly: a damaged model aborts the addon's
@@ -190,6 +192,9 @@ export class VoiceService {
   private downloading: Promise<void> | null = null;
   /** Until when Ember is speaking, or about to: a follow-up window waits until it's done. */
   private speakingUntil = 0;
+  private speechGeneration = 0;
+  private awaitingSpeechStart = false;
+  private readonly pageGenerations = new WeakMap<Electron.WebContents, number>();
   /** A follow-up window (ms) waiting for Ember to finish speaking, its timer, and whether the answer asked something. */
   private followUpMs = 0;
   private followUpAsked = false;
@@ -277,15 +282,18 @@ export class VoiceService {
       if (l.mic !== undefined && l.mic !== null && this.state !== "active") delete l.mic;
       if (Object.keys(l).length) this.o.onLevel?.(l);
     });
-    ipcMain.on(VOICE.speaking, (e, on: boolean) => {
+    ipcMain.on(VOICE.speaking, (e, on: unknown, generation: unknown) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
+      if (typeof on !== "boolean" || generation !== this.speechGeneration) return;
+      if (on && !this.saidSpeaking) this.awaitingSpeechStart = false;
       this.speakingPage = !on ? null : this.mic && e.sender === this.mic.webContents ? "mic" : "speaker";
       // (Repeated every 20 s while it lasts: the voice process is told each time, the log only when it changes.)
       if (!!on !== this.saidSpeaking) { this.saidSpeaking = !!on; this.o.log.info("voice.self_speaking", { on: !!on, listening: !!this.proc }); this.o.onSelfSpeaking?.(!!on); }
       if (on && !this.saidSpeakingBefore) this.lastSelfSpeech = Date.now();
       this.saidSpeakingBefore = !!on;
       this.proc?.postMessage({ type: "self-speaking", on: !!on });
-      this.speakingUntil = on ? Date.now() + SPEAKING_MAX_MS : 0;
+      if (on) this.speakingUntil = Date.now() + SPEAKING_MAX_MS;
+      else this.speakingUntil = this.awaitingSpeechStart ? Date.now() + SPEECH_START_MS : 0;
       if (this.speaker && e.sender === this.speaker.wc) {
         this.speaker.saying = !!on;
         // Listening started while it spoke: the mic window speaks from now on. Otherwise it goes once it stays quiet.
@@ -459,7 +467,7 @@ export class VoiceService {
   private openFollowUp(): void {
     if (this.followUpTimer) clearTimeout(this.followUpTimer);
     this.followUpTimer = null;
-    if (!this.followUpMs) return;
+    if (!this.followUpMs || this.ttsPending.size) return;
     const wait = this.speakingUntil - Date.now();
     if (wait > 0) { this.followUpTimer = setTimeout(() => this.openFollowUp(), wait); return; }
     if (this.proc) this.o.log.info("voice.follow_up", { ms: this.followUpMs, afterQuestion: this.followUpAsked });
@@ -521,7 +529,8 @@ export class VoiceService {
     // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
     if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
     const neural = this.neuralVoice;
-    if (neural && !o.append) this.hush();
+    if (!o.append) this.hush();
+    if (!o.append || !this.saidSpeaking) this.awaitingSpeechStart = true;
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + (neural && !this.tts?.ready ? VOICE_START_MS : SPEECH_START_MS));
     const send = this.pageSend();
     if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}) } satisfies SpeakRequest); return; }
@@ -598,7 +607,9 @@ export class VoiceService {
   }
 
   hush(): void {
+    this.dropFollowUp();
     this.speakingUntil = 0;
+    this.awaitingSpeechStart = false;
     if (this.ttsId > this.ttsHushed) {
       this.ttsHushed = this.ttsId;
       // Each reply on its way is over for its page too (its Player would otherwise wait for it, "speaking", for good).
@@ -606,11 +617,12 @@ export class VoiceService {
       this.ttsPending.clear();
       this.tts?.proc.postMessage({ type: "hush", id: this.ttsHushed });
     }
-    if (this.mic && !this.mic.isDestroyed()) this.mic.webContents.send(VOICE.hush);
-    // The speech-only window may still be loading, with speech queued behind its load: the hush goes after that speech
-    // (sent straight away it would arrive first and be lost, and the page would then say the reply anyway).
+    const generation = ++this.speechGeneration;
+    const hushPage = (wc: Electron.WebContents) => { this.pageGenerations.set(wc, generation); wc.send(VOICE.hush, generation); };
+    if (this.mic && !this.mic.isDestroyed()) hushPage(this.mic.webContents);
+    // A page still loading receives the current hush once ready; old queued sends check their captured generation.
     const s = this.speaker;
-    if (s && !s.win.isDestroyed()) s.loaded.then(() => { if (!s.win.isDestroyed()) s.win.webContents.send(VOICE.hush); }, () => { /* it never loaded: it says nothing */ });
+    if (s && !s.win.isDestroyed()) s.loaded.then(() => { if (!s.win.isDestroyed() && generation === this.speechGeneration) hushPage(s.win.webContents); }, () => { /* it never loaded: it says nothing */ });
   }
 
   /**
@@ -628,12 +640,18 @@ export class VoiceService {
 
   /** The page that speaks now: the mic window while listening, otherwise one that only speaks (listening is off). */
   private pageSend(): PageSend {
+    const generation = this.speechGeneration;
+    const send = (wc: Electron.WebContents, channel: string, payload: unknown) => {
+      if (generation !== this.speechGeneration) return;
+      if (this.pageGenerations.get(wc) !== generation) { wc.send(VOICE.hush, generation); this.pageGenerations.set(wc, generation); }
+      wc.send(channel, payload);
+    };
     const mic = this.mic;
-    if (mic && !mic.isDestroyed()) return (channel, payload) => { if (!mic.isDestroyed()) mic.webContents.send(channel, payload); };
+    if (mic && !mic.isDestroyed()) return (channel, payload) => { if (!mic.isDestroyed()) send(mic.webContents, channel, payload); };
     const s = this.speakerWindow();
     return (channel, payload) => {
       if (this.speaker === s) this.idleSpeaker();
-      s.loaded.then(() => { if (!s.win.isDestroyed()) s.win.webContents.send(channel, payload); }, (err: unknown) => this.o.log.warn("voice.speaker_failed", { message: String(err) }));
+      s.loaded.then(() => { if (!s.win.isDestroyed()) send(s.win.webContents, channel, payload); }, (err: unknown) => this.o.log.warn("voice.speaker_failed", { message: String(err) }));
     };
   }
 
@@ -675,6 +693,8 @@ export class VoiceService {
       if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); this.voiceFailed(); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
+      if (!this.saidSpeaking) { this.awaitingSpeechStart = true; this.speakingUntil = Date.now() + SPEECH_START_MS; }
+      this.openFollowUp();
       this.switchWhenIdle();
     });
     const natural = this.naturalWanted && this.native && !this.naturalOff && this.rootOf("natural") !== null ? this.paths().natural : null;
@@ -777,16 +797,24 @@ export class VoiceService {
     if (tts) { tts.proc.removeAllListeners("exit"); tts.proc.kill(); }
     const pending = [...this.ttsPending.entries()];
     this.ttsPending.clear();
+    if (pending.some(([, p]) => p.remaining.trim())) {
+      this.awaitingSpeechStart = true;
+      if (!this.saidSpeaking) this.speakingUntil = Date.now() + SPEECH_START_MS;
+    }
     for (const [id, p] of pending) {
       p.send(VOICE.audioDone, id);
       const text = p.remaining;
       if (text) p.send(VOICE.speak, { text, append: true } satisfies SpeakRequest);
     }
+    this.openFollowUp();
   }
 
-  /** The mic page's address, saying how it plays Ember's voice (VoiceOptions.playback). */
+  /** The mic page's address and its development audio options. */
   private micPage(): string {
-    return pageUrl(path.join(appDir, "renderer", "mic", "index.html"), this.o.playback === "element" ? { playback: "element" } : {});
+    return pageUrl(path.join(appDir, "renderer", "mic", "index.html"), {
+      ...(this.o.playback === "element" ? { playback: "element" } : {}),
+      ...(!app.isPackaged && this.o.testMicWav ? { testMicWav: "1" } : {}),
+    });
   }
 
   private speakerWindow(): Speaker {

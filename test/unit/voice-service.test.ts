@@ -12,13 +12,14 @@ const electron = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- hoisted above the imports
   const { EventEmitter: Emitter } = require("node:events") as typeof import("node:events");
   const procs: (InstanceType<typeof Emitter> & { postMessage: ReturnType<typeof vi.fn>; kill: ReturnType<typeof vi.fn>; stderr: null })[] = [];
-  const windows: { title: string; webContents: InstanceType<typeof Emitter> & { send: ReturnType<typeof vi.fn>; postMessage: ReturnType<typeof vi.fn> }; destroyed: boolean }[] = [];
+  const windows: { title: string; webContents: InstanceType<typeof Emitter> & { send: ReturnType<typeof vi.fn>; postMessage: ReturnType<typeof vi.fn> }; destroyed: boolean; url: string }[] = [];
   class BrowserWindow {
     title: string;
+    url = "";
     webContents = Object.assign(new Emitter(), { send: vi.fn(), postMessage: vi.fn() });
     destroyed = false;
     constructor(o: { title: string }) { this.title = o.title; windows.push(this); }
-    loadURL() { return Promise.resolve(); }
+    loadURL(url: string) { this.url = url; return Promise.resolve(); }
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; }
   }
@@ -64,7 +65,7 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample">> & { onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
@@ -77,12 +78,23 @@ function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<Voi
 const posted = (p: { postMessage: ReturnType<typeof vi.fn> }, type: string) => p.postMessage.mock.calls.map(c => c[0] as { type: string }).filter(m => m.type === type);
 const flush = () => new Promise<void>(r => setImmediate(r));
 /** Speaking events, as the mic (or speech) window sends them. */
-const speaking = (win: { webContents: object }, on: boolean) => electron.ipcMain.emit(VOICE.speaking, { sender: win.webContents }, on);
+const speaking = (win: { webContents: { send: ReturnType<typeof vi.fn> } }, on: boolean) => {
+  const generation = win.webContents.send.mock.calls.filter(c => c[0] === VOICE.hush).at(-1)?.[1] ?? 0;
+  electron.ipcMain.emit(VOICE.speaking, { sender: win.webContents }, on, generation);
+};
 
-beforeEach(() => { electron.procs.length = 0; electron.windows.length = 0; electron.ipcMain.removeAllListeners(); electron.net.fetch.mockReset(); services = []; });
+beforeEach(() => { electron.app.isPackaged = false; electron.procs.length = 0; electron.windows.length = 0; electron.ipcMain.removeAllListeners(); electron.net.fetch.mockReset(); services = []; });
 afterEach(() => { vi.useRealTimers(); for (const s of services) s.stop(); fs.rmSync(root, { recursive: true, force: true }); });
 
 describe("VoiceService", () => {
+  it.each([[false, true, "1"], [false, false, null], [true, true, null]] as const)("sets raw WAV capture only for a synthetic mic in development (packaged %s, WAV %s)", async (packaged, testMicWav, value) => {
+    electron.app.isPackaged = packaged;
+    const { v } = service(true, { testMicWav });
+    await v.setWanted(true);
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    expect(new URL(mic.url).searchParams.get("testMicWav")).toBe(value);
+  });
+
   it("says it can tell the user from the speakers only while the voice process hears the speakers' stream (review #252)", async () => {
     const { v } = service();
     expect(v.rejectsSpeakers).toBe(false);
@@ -123,6 +135,45 @@ describe("VoiceService", () => {
     expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000, afterQuestion: true }]);
     v.followUp(8000);
     expect(posted(proc, "follow-up").at(-1)).toEqual({ type: "follow-up", ms: 8000 });
+  });
+
+  it("does not open an old answer's waiting follow-up after speech is interrupted (review turn ownership)", async () => {
+    vi.useFakeTimers();
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    v.speak("The old answer.");
+    speaking(mic, true);
+    v.followUp(8000, { afterQuestion: true });
+    v.hush();
+    speaking(mic, false);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(posted(proc, "follow-up")).toEqual([]);
+    v.followUp(8000);
+    expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000 }]);
+  });
+
+  it("ignores an old playback's delayed end before and after new playback starts (review turn ownership)", async () => {
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    v.speak("Old answer.");
+    speaking(mic, true);
+    const oldGeneration = mic.webContents.send.mock.calls.filter(c => c[0] === VOICE.hush).at(-1)?.[1] ?? 0;
+    v.hush();
+    v.speak("New answer.");
+    v.followUp(8000);
+    electron.ipcMain.emit(VOICE.speaking, { sender: mic.webContents }, false, oldGeneration);
+    expect(posted(proc, "follow-up")).toEqual([]);
+    speaking(mic, false); // The current hush acknowledges quiet before new synthesis has started.
+    expect(posted(proc, "follow-up")).toEqual([]);
+    speaking(mic, true);
+    electron.ipcMain.emit(VOICE.speaking, { sender: mic.webContents }, false, oldGeneration);
+    expect(posted(proc, "follow-up")).toEqual([]);
+    speaking(mic, false);
+    expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000 }]);
   });
 
   it("doesn't wait for speech that never starts (no voices installed)", async () => {
@@ -261,7 +312,7 @@ describe("VoiceService", () => {
     const mic = electron.windows.find(w => w.title === "Ember microphone")!;
     proc.emit("message", { type: "ready", loadMs: 900 });
     v.setLocked(true);
-    expect(mic.webContents.send).toHaveBeenCalledWith(VOICE.hush);
+    expect(mic.webContents.send).toHaveBeenCalledWith(VOICE.hush, expect.any(Number));
     expect(proc.kill).toHaveBeenCalled();
     expect(mic.destroyed).toBe(true);
     expect(states.at(-1)).toEqual({ s: "off", detail: "Not listening while the screen is locked." });
@@ -317,16 +368,16 @@ describe("VoiceService", () => {
     expect(electron.windows).toHaveLength(1);
     v.hush();
     await flush();
-    expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.hush);
+    expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.hush, expect.any(Number));
   });
 
-  it("hushes speech queued while the speech-only window still loads after it, not before (the kill switch, voice audit V1)", async () => {
+  it("drops speech queued while the speech-only window still loads (the kill switch, voice audit V1)", async () => {
     const { v } = service();
     v.speak("A long answer.");
     v.hush(); // the window hasn't loaded yet
     await flush();
     const speech = electron.windows.find(w => w.title === "Ember speech")!;
-    expect(speech.webContents.send.mock.calls.map(c => c[0])).toEqual([VOICE.speak, VOICE.hush]);
+    expect(speech.webContents.send.mock.calls.map(c => c[0])).toEqual([VOICE.hush]);
   });
 
   it("ends Ember's speaking when the page it spoke from goes: the meter stops and the wake word counts again (UI audit 4, voice audit V2)", async () => {
@@ -735,6 +786,7 @@ describe("the speech-only window", () => {
     const { v } = service();
     v.speak("Night Light is on.");
     const first = speechWindow();
+    await Promise.resolve(); // A real page receives its generation before it can report playback.
     speaking(first, true);
     vi.advanceTimersByTime(90_000);
     expect(first.destroyed).toBe(false); // still speaking
@@ -777,6 +829,57 @@ describe("speech models", () => {
   describe("Ember's own voice", () => {
     const audio = (id: number, remaining = "") => ({ type: "audio", id, samples: new Float32Array(4), rate: 22_050, remaining });
 
+    it("keeps follow-up listening closed between appended neural replies (review same-generation speech gap)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true });
+      await v.setWanted(true);
+      const [proc] = electron.procs;
+      const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+      v.speak("First sentence.");
+      const tts = electron.procs[1];
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      tts.emit("message", audio(1));
+      tts.emit("message", { type: "done", id: 1 });
+      speaking(mic, true);
+      v.speak("Second sentence.", { append: true });
+      v.followUp(8000);
+      speaking(mic, false);
+      await vi.advanceTimersByTimeAsync(4000); // Longer than the old start grace, while synthesis still owns the reply.
+      expect(posted(proc, "follow-up")).toEqual([]);
+      tts.emit("message", audio(2));
+      tts.emit("message", { type: "done", id: 2 });
+      expect(posted(proc, "follow-up")).toEqual([]);
+      speaking(mic, true);
+      speaking(mic, false);
+      expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000 }]);
+    });
+
+    it.each(["before", "after"])("releases a waiting follow-up when appended synthesis fails %s playback drains and no fallback voice starts (review same-generation speech gap)", async when => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true });
+      await v.setWanted(true);
+      const [proc] = electron.procs;
+      const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+      v.speak("First sentence.");
+      const tts = electron.procs[1];
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      tts.emit("message", audio(1));
+      tts.emit("message", { type: "done", id: 1 });
+      speaking(mic, true);
+      v.speak("Second sentence.", { append: true });
+      v.followUp(8000);
+      if (when === "before") {
+        tts.emit("message", { type: "failed", id: 2, message: "failed" });
+        speaking(mic, true); // The old playback's heartbeat cannot stand for the fallback starting.
+      }
+      speaking(mic, false);
+      expect(posted(proc, "follow-up")).toEqual([]);
+      if (when === "after") tts.emit("message", { type: "failed", id: 2, message: "failed" });
+      await vi.advanceTimersByTimeAsync(3001);
+      expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000 }]);
+      expect(mic.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Second sentence.", append: true });
+    });
+
     it("says replies in it once its model is in: numbered, chunk by chunk, to the page that plays them", async () => {
       const { v } = service(true, { neuralVoice: true });
       v.speak("Night Light is on.");
@@ -810,16 +913,16 @@ describe("speech models", () => {
       expect(sent).toEqual([3]);
     });
 
-    it("ends each reply on its way for its page when hushed, before the hush, so the page never waits for it speaking (voice audit V1)", async () => {
+    it("hushes delivered audio and retires queued completion callbacks (voice audit V1)", async () => {
       const { v } = service(true, { neuralVoice: true });
       v.speak("A long answer.");
       const [tts] = electron.procs;
       tts.emit("message", audio(1));
+      await flush();
       v.hush();
       await flush();
       const speech = electron.windows.find(w => w.title === "Ember speech")!;
-      expect(speech.webContents.send.mock.calls.map(c => c[0])).toEqual([VOICE.audio, VOICE.audioDone, VOICE.hush]);
-      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.audioDone, 1);
+      expect(speech.webContents.send.mock.calls.map(c => c[0])).toEqual([VOICE.hush, VOICE.audio, VOICE.hush]);
     });
 
     it("lets the system's voice say what it hadn't, when it can't load, and from then on", async () => {

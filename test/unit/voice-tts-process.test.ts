@@ -136,6 +136,41 @@ describe("Ember's voice process", () => {
     expect(p.sent().find(m => m.type === "ready")).toMatchObject({ voice: { voice: "piper", natural: "it couldn't be loaded: Kokoro failed" } });
   });
 
+  it("skips loading slow Kokoro on the next start and tries it again after a week", async () => {
+    fake.cost.kokoro = 0.9;
+    const kokoro = folder("kokoro-multi-lang-v1_0", ["model.onnx", "voices.bin", "tokens.txt"]);
+    let p = await speechProcess();
+    p.init({ natural: kokoro });
+    expect(fake.made.map(m => m.kind)).toEqual(["kokoro", "vits"]);
+    fake.made = [];
+    p = await speechProcess();
+    p.init({ natural: kokoro });
+    expect(fake.made.map(m => m.kind)).toEqual(["vits"]);
+    expect(p.sent().find(m => m.type === "ready")).toMatchObject({ voice: { voice: "piper", naturalWhy: "slow", natural: "too slow here: 0.9 of real time (at most 0.5; timed before)" } });
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 7 * 24 * 3_600_000);
+    fake.made = [];
+    fake.cost.kokoro = 0.3;
+    p = await speechProcess();
+    p.init({ natural: kokoro });
+    expect(fake.made.map(m => m.kind)).toEqual(["kokoro"]);
+    expect(p.sent().find(m => m.type === "ready")).toMatchObject({ voice: { voice: "kokoro", rtf: 0.3 } });
+  });
+
+  it("retries a slow natural voice immediately when its model file changes", async () => {
+    fake.cost.kokoro = 0.9;
+    const kokoro = folder("kokoro-multi-lang-v1_0", ["model.onnx", "voices.bin", "tokens.txt"]);
+    let p = await speechProcess();
+    p.init({ natural: kokoro });
+    fs.writeFileSync(path.join(kokoro, "model.onnx"), "replacement");
+    fake.made = [];
+    fake.cost.kokoro = 0.3;
+    p = await speechProcess();
+    p.init({ natural: kokoro });
+    expect(fake.made.map(m => m.kind)).toEqual(["kokoro"]);
+    expect(p.sent().find(m => m.type === "ready")).toMatchObject({ voice: { voice: "kokoro" } });
+  });
+
   it("runs the Piper voice in WebAssembly when told to (a process before died loading natively), untimed", async () => {
     const p = await speechProcess();
     p.init({ wasm: true, natural: folder("kokoro-en-v0_19", ["model.onnx", "voices.bin", "tokens.txt"]) });

@@ -196,7 +196,7 @@ describe("the Windows security vocabulary", () => {
 
   it("knows the security titles as whole titles, curly apostrophes and spacing aside", () => {
     for (const title of ["Windows Security", "User Account Control", "User Account Control Settings", "Enter network credentials", "Windows Hello",
-      "Making sure it's you", "Making sure it’s you", "Credential Manager", "Stored User Names and Passwords", "BitLocker Drive Encryption",
+      "Making sure it's you", "Making sure it’s you", "Credential Manager", "Stored User Names and Passwords", "Stored Usernames and Passwords", "BitLocker Drive Encryption",
       "Windows Defender Firewall", "Windows Defender Firewall with Advanced Security", "  windows   security  "]) {
       expect(isSecurityWindow({ app: "someapp", title }, W), title).toBe(true);
     }
@@ -272,7 +272,7 @@ describe("typing into Windows' command boxes", () => {
       "shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", "shell:startup", "ms-msdt:/id", "file:///C:/x/y", "search-ms:query=x"]) {
       expect(refusesTyping(rules, into("Address", value)), value).toBe(true);
     }
-    for (const field of ["Address: Documents", "Adresse", "Dirección", "アドレス"]) expect(refusesTyping(rules, into(field, "cmd")), field).toBe(true);
+    for (const field of ["Address: Documents", "Address Bar", "Adresse", "Dirección", "アドレス"]) expect(refusesTyping(rules, into(field, "cmd")), field).toBe(true);
   });
 
   it("refuses a command line there too: the box passes what follows the program to it", () => {
@@ -306,6 +306,7 @@ describe("typing into Windows' command boxes", () => {
     const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ explorer: "act" }), keys: KEYS.win32, os: W });
     const type = (name: string, value: string) => e.decide({ taskId: "t", kind: "text", app: "explorer", window: "Downloads", element: { role: "text", name }, value, mode: "replace" });
     expect(type("Address", "cmd")).toMatchObject({ verdict: "deny", tier: "never", reason: "Ember doesn't run programs, so it never types a program's name where it would start" });
+    expect(type("Address Bar", "cmd")).toMatchObject({ verdict: "deny", tier: "never" });
     expect(type("Address", "C:\\Users\\ada\\Documents").verdict).toBe("allow");
   });
 });

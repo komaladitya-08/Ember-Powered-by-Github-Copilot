@@ -9,7 +9,7 @@
 import type { Installed, Kind, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 
 export const EXTENSIONS_HEADING = "Extensions";
-export const EXTENSIONS_INTRO = "Extensions give Ember more tools: plugins from marketplaces you add, and connectors to services such as Slack or Notion, through GitHub. Only you can add them, here.";
+export const EXTENSIONS_INTRO = "Extensions give Ember more tools through plugins from marketplaces you add. Only you can add them, here.";
 
 /** Why the section shows nothing to use. */
 export const EXTENSIONS_UNAVAILABLE = "Extensions aren't available in this version of Ember yet.";
@@ -115,7 +115,8 @@ export function installedRow(i: Installed): InstalledRow {
   const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
   const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
     : !i.consented ? "Ember uses none of its tools until you agree."
-    : i.status === "needs-auth" ? `Connect “${i.name}” again to sign in on GitHub's page.`
+    : i.status === "needs-auth" ? i.kind === "connector" ? `Connect “${i.name}” again to sign in on GitHub's page.`
+      : "Check this plugin's authentication setup with its provider, then remove it and add it again."
     : i.status === "failed" && i.enabled ? detailLine(i.detail) ?? "Turn it off and on again, or remove it and add it again."
     : null;
   const actions: ItemAction[] = [];
@@ -197,8 +198,8 @@ export const INSTALLED_TAG = "Added";
 // ───── Connectors ─────
 
 export const CONNECTORS_HEADING = "Connectors";
-export const CONNECTORS_EMPTY = "GitHub lists no connectors for your account yet.";
-export const CONNECTORS_HINT = "Connectors go through GitHub's Copilot service: you sign in to each service on GitHub's page, in your browser.";
+export const CONNECTORS_EMPTY = "GitHub-hosted connectors aren't available in Ember yet.";
+export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.";
 
 /** A connector's row: its state and its one button. */
 export interface ConnectorRow {

@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MicApi, SpeakRequest, SpeechAudio } from "../../app/shared/voice";
 import type { PlayerSource } from "../../app/renderer/mic/player";
 
-async function renderer() {
+async function renderer(search = "") {
   vi.useFakeTimers();
   vi.resetModules();
-  let speak!: (r: SpeakRequest) => void, hush!: () => void;
+  let speak!: (r: SpeakRequest) => void, hush!: (generation: number) => void;
   let audio!: (a: SpeechAudio) => void, done!: (id: number) => void;
   let changed!: () => void;
   const api: MicApi = {
@@ -17,9 +17,10 @@ async function renderer() {
   const local = { name: "Local", lang: "en-US", localService: true, default: false };
   const synth = { getVoices: vi.fn(() => [local]), speak: vi.fn(), cancel: vi.fn(), addEventListener: (_name: string, fn: () => void) => { changed = fn; } };
   const sources: PlayerSource[] = [];
-  vi.stubGlobal("window", { emberMic: api, addEventListener: vi.fn() });
-  vi.stubGlobal("navigator", { language: "en-US" });
-  vi.stubGlobal("location", { search: "" });
+  const addEventListener = vi.fn(), getUserMedia = vi.fn().mockRejectedValue(new Error("No audio source in this test"));
+  vi.stubGlobal("window", { emberMic: api, addEventListener });
+  vi.stubGlobal("navigator", { language: "en-US", mediaDevices: { getUserMedia, addEventListener: vi.fn() } });
+  vi.stubGlobal("location", { search });
   vi.stubGlobal("speechSynthesis", synth);
   vi.stubGlobal("SpeechSynthesisUtterance", class { constructor(public text: string) {} });
   vi.stubGlobal("AudioContext", class {
@@ -31,11 +32,36 @@ async function renderer() {
     }
   });
   await import("../../app/renderer/mic/main");
-  return { api, synth, local, sources, speak, hush, audio, done, changed };
+  const startCapture = () => addEventListener.mock.calls.find(([name]) => name === "message")![1]({ data: "ember-voice-port", ports: [{}] });
+  return { api, synth, local, sources, speak, hush: (generation = 0) => hush(generation), audio, done, changed, startCapture, getUserMedia };
 }
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("mic renderer speech recovery", () => {
+  it.each([["", true], ["?testMicWav=1", false]] as const)("keeps echo cancellation on except for synthetic WAV capture (%s)", async (search, echoCancellation) => {
+    const r = await renderer(search);
+    r.startCapture();
+    expect(r.getUserMedia).toHaveBeenCalledExactlyOnceWith({ audio: { echoCancellation, noiseSuppression: false, autoGainControl: false, channelCount: 1 }, video: false });
+  });
+
+  it("tags playback and ignores a retired system utterance's late completion (review turn ownership)", async () => {
+    const r = await renderer();
+    r.hush(1);
+    r.speak({ text: "Old answer." });
+    const old = r.synth.speak.mock.calls[0][0];
+    old.onstart();
+    expect(r.api.speaking).toHaveBeenLastCalledWith(true, 1);
+    r.hush(2);
+    r.speak({ text: "New answer." });
+    const current = r.synth.speak.mock.calls[1][0];
+    current.onstart();
+    old.onend();
+    old.onerror({ error: "cancelled" });
+    expect(r.api.speaking).toHaveBeenLastCalledWith(true, 2);
+    current.onend();
+    expect(r.api.speaking).toHaveBeenLastCalledWith(false, 2);
+  });
+
   it("drains PCM before submitting suffix and next reply to explicitly local synthesis", async () => {
     const r = await renderer();
     r.audio({ id: 1, samples: new Float32Array(10), rate: 10 });

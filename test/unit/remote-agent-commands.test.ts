@@ -10,11 +10,11 @@ import type { Logger } from "../../app/main/logger";
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const START = "\x1b]777;ember-start\x07";
 
-const facts = (pty: boolean): RunnerFacts => ({
-  os: "linux",
+const facts = (pty: boolean, os: "linux" | "darwin" = "linux"): RunnerFacts => ({
+  os,
   shells: ["bash", "sh"],
   shellPaths: { bash: "/usr/bin/bash", sh: "/usr/bin/sh" },
-  script: pty ? { path: "/usr/bin/script", kind: "util-linux" } : null,
+  script: pty ? { path: "/usr/bin/script", kind: os === "darwin" ? "bsd" : "util-linux" } : null,
   home: "/home/deploy",
   user: "deploy",
   privileged: false,
@@ -59,7 +59,7 @@ class FakeChild extends EventEmitter {
 }
 
 /** RemoteRuns over fakes, with everything it does recorded. */
-function harness(o: Partial<Pick<RunsDeps, "backlog" | "drop" | "baseEnv">> = {}) {
+function harness(o: Partial<Pick<RunsDeps, "backlog" | "drop" | "baseEnv" | "os">> = {}) {
   const log: string[] = [];
   const spawned: { command: string; args: string[]; options: SpawnOptions; child: FakeChild }[] = [];
   const sent: { channel: number; bytes: string }[] = [];
@@ -140,6 +140,29 @@ describe("a command on the remote", () => {
     expect(h.watched.size).toBe(0);
     expect(h.runs.running).toBe(0);
     expect(h.runs.knows("0123456789abcdef")).toBe(true);
+  });
+
+  describe.each([
+    { name: "pipes", pty: false, os: "linux" },
+    { name: "util-linux PTY", pty: true, os: "linux" },
+    { name: "BSD PTY", pty: true, os: "darwin" },
+  ] as const)("$name exit metadata", ({ pty, os }) => {
+    it.each([
+      { name: "failure", code: 7, signal: null, marker: 0, stream: "out", split: false },
+      { name: "success", code: 0, signal: null, marker: 7, stream: "err", split: true },
+      { name: "signal termination", code: null, signal: "SIGTERM", marker: 0, stream: "out", split: true },
+    ] as const)("keeps the process's $name despite an output exit marker", ({ code, signal, marker, stream, split }) => {
+      const h = harness({ os });
+      h.runs.start(spec(), 7, facts(pty, os));
+      const c = h.spawned[0].child;
+      c.out(`${START}output\n`);
+      const spoof = `\x1b]777;ember-exit;${marker}\x07`;
+      for (const chunk of split ? [spoof.slice(0, 10), spoof.slice(10)] : [spoof]) c[stream](chunk);
+      c.close(code, signal);
+      expect(h.exits[0].exit).toMatchObject({ code, signal, ended: "exit" });
+      expect(h.sent.map(s => s.bytes).join("")).toBe(`${START}output\n${spoof}`);
+      expect(h.exits[0].outBytes).toBe(START.length + 7 + spoof.length);
+    });
   });
 
   it("finds the start marker split across chunks", () => {

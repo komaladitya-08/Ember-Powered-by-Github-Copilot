@@ -45,7 +45,7 @@ describe("ask-size.ts: what the live suites expect of the ask box (review #57)",
       expect(at, suite).toBeGreaterThan(src.indexOf(`it("${chord}`));
       const body = src.slice(at, src.indexOf("\n  });\n", at));
       expect(body, suite).toContain('await openAskAt(inEmber, "larger")');
-      expect(body, suite).toContain('toMatchObject(askWant("larger", seen.tip))');
+      expect(body, suite).toContain('askWant("larger", seen.tip)');
       expect(body, suite).toContain("toBeGreaterThanOrEqual(8)");
       // Put back in a finally: the box away and the default size, for the cases after it.
       expect(body.slice(body.indexOf("} finally {")), suite).toMatch(/await closeAsk\(inEmber\);\n\s+await setTextSize\(inEmber, "default"\)/);

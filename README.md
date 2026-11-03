@@ -13,14 +13,16 @@ Ember's desk, a private display where Ember can work out of your way, is Linux-o
 
 ## Download
 
+This checkout prepares 0.1.1. Until it is published, [0.1.0 remains the downloadable beta](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases/tag/v0.1.0); use that release's version in the example filenames below.
+
 Each release's files are on this repository's
 [Releases page](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases), with `SHA256SUMS`, the
 SHA-256 checksum of each file. Check what you downloaded before you open it:
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing                  # Linux: "OK" after each file you have
-shasum -a 256 Ember-0.1.0-mac-arm64.dmg                   # macOS: the same as its line in SHA256SUMS
-(Get-FileHash .\Ember-0.1.0-win-x64.zip).Hash.ToLower()    # Windows PowerShell: the same as its line in SHA256SUMS
+shasum -a 256 Ember-0.1.1-mac-arm64.dmg                   # macOS: the same as its line in SHA256SUMS
+(Get-FileHash .\Ember-0.1.1-win-x64.zip).Hash.ToLower()    # Windows PowerShell: the same as its line in SHA256SUMS
 ```
 
 To build them yourself, see [docs/DEVELOPING.md](docs/DEVELOPING.md) (§7 Linux, §10.5 Windows, §11.5 macOS). A
@@ -36,10 +38,10 @@ your user account and starts it. The builds are unsigned betas, as below; see
 
 ## Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)
 
-Download `ember-0.1.0-1.el8.x86_64.rpm` from the Releases page, then:
+Download `ember-0.1.1-1.el8.x86_64.rpm` from the Releases page, then:
 
 ```bash
-sudo dnf install ./ember-0.1.0-1.el8.x86_64.rpm
+sudo dnf install ./ember-0.1.1-1.el8.x86_64.rpm
 ember doctor               # checks this computer and explains anything to fix
 ```
 
@@ -58,15 +60,15 @@ RPM and the AppImage also carry the libraries that run speech natively on this c
 processor or system where they can't run, speech runs on the slower WebAssembly build instead (`ember doctor` shows
 which, under **Speech**).
 
-Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
+Or run `Ember-0.1.1-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
 system packages the RPM would bring for reading apps:
 
 ```bash
 sudo dnf install python3-pyatspi python3-gobject at-spi2-core
 # Optional, for “Hey Ember”, speaking and Ember's desk:
 sudo dnf install pulseaudio-utils speech-dispatcher speech-dispatcher-espeak-ng xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon
-chmod +x Ember-0.1.0-x86_64.AppImage
-./Ember-0.1.0-x86_64.AppImage doctor    # checks this computer, as ember doctor does
+chmod +x Ember-0.1.1-x86_64.AppImage
+./Ember-0.1.1-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
 
 The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): 142 MB, of which
@@ -86,7 +88,7 @@ settings, logs, audit log, speech models, Voice Match voiceprint, sign-in and th
 
 ## Install on Windows
 
-1. Download `Ember-0.1.0-win-x64.zip` from the Releases page.
+1. Download `Ember-0.1.1-win-x64.zip` from the Releases page.
 2. Extract it into a folder of your own, for example `%LOCALAPPDATA%\Programs` (the zip holds an `Ember` folder), and
    start `Ember\Ember.exe`. The first start adds Ember to the Start menu.
 3. Ember isn't signed yet, so Windows checks with you first:
@@ -125,7 +127,7 @@ models, Voice Match voiceprint, sign-in and the Node.js it downloaded for other 
 
 ## Install on macOS
 
-1. Download `Ember-0.1.0-mac-arm64.dmg` (or the `.zip`; `mac-x64` for an Intel Mac) from the Releases page.
+1. Download `Ember-0.1.1-mac-arm64.dmg` (or the `.zip`; `mac-x64` for an Intel Mac) from the Releases page.
 2. Open the dmg, drag Ember into **Applications** and open it from there. Run from the dmg or from Downloads, macOS
    starts Ember from a temporary copy, and its permissions and login item don't stick.
 3. Ember is signed ad hoc and not notarised, so macOS stops its first start:
@@ -188,12 +190,12 @@ What to install so nothing is downloaded:
 
 | Computer | Install |
 |---|---|
-| Windows | `Ember-0.1.0-win-x64.zip`: the speech models are inside it |
-| macOS | `Ember-0.1.0-mac-arm64.dmg` (or the .zip; mac-x64 for Intel): the speech models are inside it |
-| RHEL 8 | `ember-0.1.0-1.el8.x86_64.rpm`: the speech models are inside it; `dnf` takes the RPM's system packages (speech-dispatcher, AT-SPI…) from your distribution's repositories, so point it at your organisation's mirror |
-| AppImage | `Ember-0.1.0-x86_64.AppImage`: the speech models are inside it (it still needs the system packages above for reading apps) |
+| Windows | `Ember-0.1.1-win-x64.zip`: the speech models are inside it |
+| macOS | `Ember-0.1.1-mac-arm64.dmg` (or the .zip; mac-x64 for Intel): the speech models are inside it |
+| RHEL 8 | `ember-0.1.1-1.el8.x86_64.rpm`: the speech models are inside it; `dnf` takes the RPM's system packages (speech-dispatcher, AT-SPI…) from your distribution's repositories, so point it at your organisation's mirror |
+| AppImage | `Ember-0.1.1-x86_64.AppImage`: the speech models are inside it (it still needs the system packages above for reading apps) |
 
-`Ember-voice-models-0.1.0.zip` (check it against `SHA256SUMS`) also serves IT that installs the models once per
+`Ember-voice-models-0.1.1.zip` (check it against `SHA256SUMS`) also serves IT that installs the models once per
 computer for every copy of Ember: unzip it so its `voice-models` folder lands in `%ProgramData%\Ember\voice-models`
 (Windows) or `/Library/Application Support/Ember/voice-models` (macOS).
 

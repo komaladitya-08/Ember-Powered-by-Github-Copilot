@@ -70,7 +70,7 @@ export const SECURITY_APP: Readonly<Record<OS, RegExp | null>> = {
 export const SECURITY_TITLE: Readonly<Record<OS, RegExp | null>> = {
   linux: /^\s*(authenticat(e|ion)\b.*\b(required|request)\b|authenticate\s*$|(password|passphrase|pin) (required|request(ed)?)\b|enter (the |your |a )?(password|passphrase|pin)\b|unlock\b.*\b(keyring|private key|password|passphrase)\b|\[sudo\]|sudo password\b)/,
   win32: new RegExp(String.raw`^\s*(windows\s+security|user\s+account\s+control(\s+settings)?|enter\s+network\s+credentials|windows\s+hello|making\s+sure\s+it's\s+you`
-    + String.raw`|credential\s+manager|stored\s+user\s+names\s+and\s+passwords|bitlocker\s+drive\s+encryption`
+    + String.raw`|credential\s+manager|stored\s+user\s*names\s+and\s+passwords|bitlocker\s+drive\s+encryption`
     + String.raw`|windows\s+defender\s+firewall(\s+with\s+advanced\s+security)?)\s*$`),
   darwin: new RegExp(String.raw`^\s*(privacy\s+&\s+security|passwords|touch\s+id\s+&\s+password|users\s+&\s+groups|login\s+password`
     + String.raw`|accessibility|screen\s+recording|screen\s+&\s+system\s+audio\s+recording|input\s+monitoring|full\s+disk\s+access|automation`
@@ -270,11 +270,11 @@ const STARTS_PROGRAM = new RegExp(String.raw`^"?[^\\/:*?"<>|\s]+"?(\s|$)`
   + String.raw`|^"?[a-z][\w+.-]+:`, "i");
 
 /**
- * File Explorer's address box ("Address", or "Address: <folder>" while it shows the path), in Windows' display languages;
+ * File Explorer's address box ("Address", "Address Bar", or "Address: <folder>" while it shows the path), in Windows' display languages;
  * and, whatever the language, the box while it shows a folder's path ("<one or two words>: C:\…", "…: \\server\…",
  * "…: %USERPROFILE%\…", "…: shell:…"), the shape no other box of Explorer's has.
  */
-const ADDRESS_BOX = new RegExp(String.raw`^(address|adresse|dirección|indirizzo|endereço|adres|アドレス|地址|位址|주소|адрес|адреса|adress|adresa|adresas|adrese|`
+const ADDRESS_BOX = new RegExp(String.raw`^(address(\s+bar)?|adresse|dirección|indirizzo|endereço|adres|アドレス|地址|位址|주소|адрес|адреса|adress|adresa|adresas|adrese|`
   + String.raw`adresă|aadress|osoite|cím|naslov|διεύθυνση|כתובת|العنوان|ที่อยู่)(\s*[:：].*)?$`
   + String.raw`|^[^\s:：\\/]+(\s[^\s:：\\/]+)?\s*[:：]\s*([a-z]:\\|\\\\|%[\w()]+%|shell:)`, "iu");
 /** The Run dialog's "Open:" box, in Windows' display languages (an access key may follow: "打开(O):", "名前(O):"). */

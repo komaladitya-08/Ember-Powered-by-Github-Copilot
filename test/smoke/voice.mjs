@@ -135,7 +135,8 @@ function startEmber(name, wav, { debugPort = false } = {}) {
     // What the voice process received (development builds only), to tell a dropout of the fake microphone (dropouts()).
     EMBER_VOICE_DUMP: path.join(userData, "heard.f32"),
   };
-  const child = spawn(electron, [root, ...noSandbox, ...(debugPort ? ["--remote-debugging-port=0"] : [])], { env, stdio: ["ignore", "pipe", "pipe"] });
+  // A set-up Ember can start with Home closed; Voice Match needs its settings preload.
+  const child = spawn(electron, [root, ...noSandbox, ...(debugPort ? ["--show-settings", "--remote-debugging-port=0"] : [])], { env, stdio: ["ignore", "pipe", "pipe"] });
   const inst = { name, child, userData, log: [], stdout: "", stderr: "", failed: null };
   let buf = "";
   child.stdout.on("data", d => {

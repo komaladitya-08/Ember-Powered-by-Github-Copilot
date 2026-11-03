@@ -176,8 +176,10 @@ describe("follow-up closers and fillers", () => {
       expect(isCloser(t)).toBe(true);
       expect(isCloser(t, true)).toBe(false);
     });
-  it.each(["No.", "Nope.", "No, thanks.", "No thanks.", "No, that's all.", "Not now.", "Nothing else.", "I'm good, thanks.", "That's all.", "That's it, thanks.", "Okay, no.", "Okay, bye.", "Bye."])(
+  it.each(["No, that's all.", "Nothing else.", "I'm good, thanks.", "That's all.", "That's it, thanks.", "Okay, bye.", "Bye."])(
     "%j still ends the conversation after a question", t => expect(isCloser(t, true)).toBe(true));
+  it.each(["No.", "Nope.", "No, thanks.", "No thanks.", "Not now.", "Okay, no."])(
+    "%j answers an ordinary clarification (review conversation repair)", t => expect(isCloser(t, true)).toBe(false));
   it.each(["Um.", "Hmm.", "Uh...", "Mm-hmm", "Ah.", "Erm,"])("%j is a filler", t => expect(isFiller(t)).toBe(true));
   it.each(["Um, open the terminal.", "Mute.", "Ahead."])("%j isn't a filler", t => expect(isFiller(t)).toBe(false));
 });
@@ -1395,12 +1397,11 @@ describe("cutting in while a listening window is open (review #253)", () => {
 });
 
 describe("follow-up windows", () => {
-  it("send 'Okay.' when Ember's answer asked something, and still end on 'No, thanks.'", () => {
+  it("sends affirmative and negative answers to ordinary clarifications (review conversation repair)", () => {
     const okay = run(fake(["Okay."]), (e, c) => { e.followUp(8000, { afterQuestion: true }); c.t += 32; e.feed(frame(0, true)); c.t += 32; e.feed(frame(0)); });
     expect(okay.filter(e => e.type === "utterance")).toEqual([{ type: "utterance", text: "Okay.", ms: 0, window: "follow-up" }]);
     const no = run(fake(["No, thanks."]), (e, c) => { e.followUp(8000, { afterQuestion: true }); c.t += 32; e.feed(frame(0, true)); c.t += 32; e.feed(frame(0)); });
-    expect(no.filter(e => e.type === "utterance")).toEqual([]);
-    expect(no.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "follow-up" });
+    expect(no.filter(e => e.type === "utterance")).toEqual([{ type: "utterance", text: "No, thanks.", ms: 0, window: "follow-up" }]);
     // Without a question, "Okay." ends it.
     const closed = run(fake(["Okay."]), (e, c) => { e.followUp(8000); c.t += 32; e.feed(frame(0, true)); c.t += 32; e.feed(frame(0)); });
     expect(closed.filter(e => e.type === "utterance")).toEqual([]);

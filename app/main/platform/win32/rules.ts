@@ -112,6 +112,20 @@ export function walkZOrder(first: number, next: (hwnd: number) => number, max = 
   return out;
 }
 
+/**
+ * Retries the live z-order until two consecutive walks agree, at most four walks. A window raised from below the
+ * walk's place to above it can be missed (ci 41361281638); the limit keeps a busy desktop from holding up main.
+ */
+export function steadyZOrder(walk: () => number[]): number[] {
+  let last = walk();
+  for (let i = 1; i < 4; i++) {
+    const again = walk();
+    if (again.length === last.length && again.every((h, j) => h === last[j])) return again;
+    last = again;
+  }
+  return last;
+}
+
 /** A window findWindow may pick: its id, title, process, and the names it can be asked for by (program, class). */
 export interface FindCandidate { id: number; title: string; pid: number | null; names: readonly string[] }
 

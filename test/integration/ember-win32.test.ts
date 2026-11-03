@@ -22,7 +22,7 @@
  * printed as "not testable on this runner: <reason>" from the facts CI exports, never passed vacuously.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildSync } from "esbuild";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
@@ -36,6 +36,7 @@ import sharp from "sharp";
 import type { ElectronParts, Input, Platform, PlatformDeps, Rect, ScreenLike, SidecarLaunch, WindowSystem } from "../../app/main/platform/types";
 import type { Logger } from "../../app/main/logger";
 import { loadPlatform } from "../../app/main/platform";
+import { loadWin32 } from "../../app/main/platform/win32/ffi";
 import { AtspiSidecar, type SidecarStatus } from "../../app/main/perception/sidecar";
 import { Perception } from "../../app/main/perception";
 import { matchFrame } from "../../app/main/perception/windows";
@@ -135,6 +136,13 @@ const decode = async (c: Capture) => {
 const inner = (r: Rect, fx = 0.6, fy = 0.4): Rect => ({ x: r.x + r.width * (1 - fx) / 2, y: r.y + r.height * (1 - fy) / 2, width: r.width * fx, height: r.height * fy });
 const dark = (r: number, g: number, b: number) => r < 40 && g < 40 && b < 40;
 const red = (r: number, g: number, b: number) => r >= 200 && g <= 60 && b <= 60;
+
+interface AskMenuProbe {
+  editable: boolean | null;
+  popup: boolean;
+  shown: boolean;
+  closed: boolean;
+}
 /** A raw BGRA capture's share of red pixels. */
 function redShareBgra(bgra: Buffer): number {
   let n = 0;
@@ -213,8 +221,15 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     console.log(`runner facts: elevated=${process.env.EMBER_CI_ELEVATED ?? "?"} lua=${process.env.EMBER_CI_LUA ?? "?"} server=${process.env.EMBER_CI_SERVER ?? "?"} os=${os.release()}; host ${JSON.stringify(started)}`);
   }, 360_000);
 
+  afterEach(async () => {
+    if (!overlay) return;
+    const child = overlay;
+    overlay = null;
+    hideOverlay = async () => () => undefined;
+    await child.close();
+  });
+
   afterAll(() => {
-    overlay?.close();
     sidecar?.stop();
     input?.releaseAll();
     input?.close();
@@ -416,26 +431,67 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       // A fresh profile: this is the box's first opening, where Ember can't hold the letters typed meanwhile.
       expect(tip, "the box's tip to wait for it on its first openings").toBe("Wait for this box before you type: letters typed sooner go to the app underneath.");
 
-      // Review #77: right-click in the box's field (its Cut, Copy, Paste menu comes up), then click the bench's Name
-      // field. If that click activates the bench, the box goes away and leaves it the keyboard; if the menu's loop
-      // swallowed the click, the box keeps the keyboard. Never: the box shown while the bench is active, or the box
-      // taking the keyboard back from it.
-      const box = await ember.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!.getBounds());
-      x.move(box.x + 200, box.y + 33);
+      // Review #77: open the field's edit menu, then click a point on the bench outside the Ask window.
+      // If the native menu swallows the first click, Ask keeps the keyboard until the next click reaches the bench.
+      const { at, askId } = await ember.evaluate(async ({ BrowserWindow, Menu, screen }) => {
+        const w = BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!;
+        // Observe the real menu in this test's disposable Electron process. Its HWND varies across Windows versions.
+        const probe: AskMenuProbe = { editable: null, popup: false, shown: false, closed: false };
+        (globalThis as { __askMenuProbe?: AskMenuProbe }).__askMenuProbe = probe;
+        w.webContents.once("context-menu", (_event, params) => { probe.editable = params.isEditable; });
+        const popup = Menu.prototype.popup;
+        Menu.prototype.popup = function (options) {
+          if (options?.window !== w) return popup.call(this, options);
+          Menu.prototype.popup = popup;
+          probe.popup = true;
+          this.once("menu-will-show", () => { probe.shown = true; });
+          return popup.call(this, {
+            ...options,
+            callback: () => { probe.closed = true; options.callback?.(); },
+          });
+        };
+        const box = w.getBounds();
+        const field = await w.webContents.executeJavaScript(`(() => {
+          const { x, y, width, height } = document.getElementById("q").getBoundingClientRect();
+          return { x: x + width / 2, y: y + height / 2 };
+        })()`) as { x: number; y: number };
+        // Electron bounds are DIP; SendInput positions are physical pixels.
+        return { at: screen.dipToScreenPoint({ x: Math.round(box.x + field.x), y: Math.round(box.y + field.y) }), askId: w.getNativeWindowHandle().readUInt32LE(0) };
+      });
+      const menuState = () => ember.evaluate(() => (globalThis as { __askMenuProbe?: AskMenuProbe }).__askMenuProbe);
+      const api = loadWin32()!;
+      const hit = (x: number, y: number) => api.root(api.windowFromPoint(x, y));
+      x.move(at.x, at.y);
       await sleep(150);
+      expect(hit(at.x, at.y), "the right-click reaches the Ask field").toBe(askId);
       x.button(3, true);
       x.button(3, false);
-      await sleep(800);
-      x.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
+      await waitFor("the Ask edit menu to appear", async () => {
+        const state = await menuState();
+        if (state?.closed) throw new Error("the Ask edit menu closed before the bench click");
+        return state?.editable === true && state.shown;
+      }, 3_000).catch(async (err: Error) => {
+        throw new Error(`${err.message}: ${JSON.stringify({ menu: await menuState(), ask: await askWindow() })}`, { cause: err });
+      });
+      expect((await askWindow())?.visible, "Ask stays open while its menu is up").toBe(true);
+      const benchX = ready.window.x + ready.window.width - 40, benchY = ready.window.y + ready.window.height - 40;
+      expect(hit(benchX, benchY), "the dismissing click reaches the bench, not Ask or its menu").toBe(ready.hwnd);
+      x.move(benchX, benchY);
       await sleep(150);
       x.button(1, true);
       x.button(1, false);
+      await waitFor("the Ask edit menu to close", async () => (await menuState())?.closed, 3_000);
       await sleep(1500);
       const after = await askWindow();
       const benchActive = ws.activeWindow()?.id === ready.hwnd;
       console.log(`right-click menu dismissed by a click on the bench (review #77): bench active ${benchActive}, ask box ${JSON.stringify(after)}`);
-      if (benchActive) expect(after?.visible, "the box after the click activated the bench").toBe(false);
-      else expect(after?.visible && after.focused, "the box kept the keyboard (the menu swallowed the click)").toBe(true);
+      if (!benchActive) {
+        expect(after?.visible && after.focused, "the box kept the keyboard (the menu swallowed the click)").toBe(true);
+        x.button(1, true);
+        x.button(1, false);
+        await waitFor("the bench to have the keyboard", () => ws.activeWindow()?.id === ready.hwnd, 3_000);
+      }
+      expect((await askWindow())?.visible, "the box after a click activated the bench").toBe(false);
     } finally {
       const proc = ember.process();
       await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
@@ -463,7 +519,12 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const seen = await openAskAt(inEmber, "larger");
       console.log(`the ask box at Larger text (review #57): ${JSON.stringify(seen)}`);
       // 728 × 111 DIP, and a row of round(24 × 1.3) = 31 more while it says to wait for it (its first openings here).
-      expect(seen, JSON.stringify(seen)).toMatchObject(askWant("larger", seen.tip));
+      // Electron rounds the pixel rectangle's edges out on readback, so check the HWND's actual pixel dimensions.
+      const hwnd = await ember.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!.getNativeWindowHandle().readUInt32LE(0));
+      const native = loadWin32()!.windowRect(hwnd);
+      const { width, height, ...page } = askWant("larger", seen.tip);
+      expect(native, JSON.stringify({ native, seen })).toMatchObject({ width: Math.round(width * seen.scaleFactor), height: Math.round(height * seen.scaleFactor) });
+      expect(seen, JSON.stringify(seen)).toMatchObject(page);
       expect(seen.room, JSON.stringify(seen)).toBeGreaterThanOrEqual(8);
     } finally {
       await closeAsk(inEmber);

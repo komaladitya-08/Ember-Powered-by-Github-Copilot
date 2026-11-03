@@ -890,6 +890,22 @@ describe("Windows input: windows", () => {
     expect(x.findWindow("Program Manager")).toBe(0);
   });
 
+  it("still finds a window raised above the current position during the z-order walk", () => {
+    const d = desktop();
+    const next = d.nextWindow.bind(d);
+    let raised = false;
+    d.nextWindow = hwnd => {
+      if (!raised && hwnd === 0x30) {
+        raised = true;
+        const at = d.windows.findIndex(w => w.hwnd === 0x40);
+        d.windows.unshift(...d.windows.splice(at, 1));
+      }
+      return next(hwnd);
+    };
+    expect(inputOn(d).findWindow("Untitled - Notepad", 200)).toBe(0x40);
+    expect(raised).toBe(true);
+  });
+
   it("gives one of Ember's own windows the keyboard, and only Ember's", () => {
     const d = desktop();
     const x = inputOn(d);

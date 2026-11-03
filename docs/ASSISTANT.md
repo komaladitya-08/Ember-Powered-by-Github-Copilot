@@ -219,8 +219,8 @@ reported in every PR that touches it.
    speaker rejection where `parec` exists) stops it within about 200 ms, and what you say becomes the next request.
    Where Ember can't tell its own voice from yours (`rejectsSpeakers` false), keep needing "Hey Ember": since
    2026-11-03 "Hey Ember" cuts in there too (Ember never says the phrase there, the bare name doesn't cut in, and
-   nothing said over Ember's voice is sent; PLAN.md §10 "Voice on Windows"). Safety is unchanged: no voice ever
-   approves an action.
+   nothing said over Ember's voice is sent; PLAN.md §10 "Voice on Windows"). Spoken approvals retain the existing
+   question-bound Voice Match and task-voice rules in PLAN.md §2 and CLAUDE.md; interruption never grants approval.
 4. **Longer conversation.** The follow-up window grows from 8 s to "until a natural pause of about 20 s", with the
    mic dot showing it. You can turn it off. Done so far (2026-11-03): up to three follow-ups in a row, each in the
    voice that woke Ember, and "Hey Ember" said in a follow-up window starts a wake's; the window is still 8 s.
@@ -290,7 +290,8 @@ Built on docs/MEMORY.md:
 Every phase keeps CLAUDE.md's hard limits:
 - audio stays on the machine and is never written to disk;
 - no new network destinations beyond pinned model downloads the user agrees to;
-- approvals come only from a click or the allow and deny shortcuts, never from voice;
+- approvals use the existing click, shortcut and question-bound spoken-answer rules in PLAN.md §2; neither a model
+  reply nor an interruption grants approval, and “Always” and click-only cards remain unavailable by voice;
 - the kill switch stops speech, listening and every task within 300 ms;
 - Ember's own speech never triggers it.
 

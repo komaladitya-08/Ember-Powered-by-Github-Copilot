@@ -283,9 +283,10 @@ export function heardStopWord(text: string): boolean {
 /**
  * "Thanks." "No, that's all." "Okay, great." "Sounds good.": said in a follow-up window, the conversation is over
  * (nothing is sent). After Ember asked something ("Should I close that one too?"), "Okay.", "Fine." or "Sounds good."
- * is how people say yes: only a reply that starts with no ("No, thanks.", "Nope.", "I'm good.", "That's all.") ends it.
+ * is how people say yes; a short no answers it too. Explicit closers ("I'm good.", "That's all.") still end it.
  */
 export function isCloser(text: string, afterQuestion = false): boolean {
+  if (afterQuestion && isAnswerWord(text)) return false;
   const word = String.raw`(thanks(\s+(a\s+lot|so\s+much|a\s+bunch|again))?|thank\s+you(\s+(very|so)\s+much)?|cheers|much\s+appreciated|appreciate\s+it|great|perfect|cool|nice|awesome|wonderful|excellent|good|fine|okay|ok|alright|all\s+right|sounds\s+(good|great|fine)|that\s+works|works\s+for\s+me|got\s+it|that'?s\s+(all|it|everything|fine|great|good|perfect)|that\s+is\s+all|nothing(\s+else)?|no|nope|no\s+thanks|not\s+now|i'?m\s+(good|done|fine|all\s+set)|all\s+(good|set)|bye|goodbye)`;
   if (!new RegExp(String.raw`^((okay|ok|alright|all\s+right|oh|so|yeah|um|uh)[\s,.!]+)*${word}([\s,.!]+(${word}|ember|for\s+now|then|anyway))*[\s.!,]*$`, "i").test(text)) return false;
   return !afterQuestion || /^((okay|ok|alright|all\s+right|oh|so|um|uh|well)[\s,.!]+)*(no|nope|nah|not\s+now|nothing|that'?s\s+(all|it|everything)|that\s+is\s+all|i'?m\s+(good|done|fine|all\s+set)|all\s+set|bye|goodbye)\b/i.test(text);

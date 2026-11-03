@@ -9,7 +9,7 @@ import path from "node:path";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { AgentHost } from "../../app/main/agent/host";
-import { locateRuntime } from "../../app/main/agent/runtime";
+import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { SettingsStore } from "../../app/main/settings";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
 import { ProviderKeyStore, activeProvider, testConnection, type FetchLike } from "../../app/main/provider";
@@ -18,6 +18,9 @@ import { endpointHost } from "../../app/shared/provider";
 import { createLogger } from "../../app/main/logger";
 import type { SecretBox } from "../../app/main/agent/auth";
 import type { EmberState } from "../../app/shared/overlay";
+import type { OS } from "../../app/shared/shortcuts";
+
+const { id: runtimeId, exe } = runtimeFor(process.platform as OS, process.arch);
 
 const KEY = "sk-" + "m".repeat(40); // not a real key
 const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -63,7 +66,7 @@ describe("the user's own model provider on the real Copilot runtime", () => {
     const phases: string[] = [];
     let turnsEnded = 0;
     const host = new AgentHost({
-      userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
+      userData, runtimePath: locateRuntime({ appPath: process.cwd(), runtimeId, exe }).path, settings,
       log: createLogger({ dir: path.join(userData, "logs") }),
       setState: p => states.push(p), onStatus: st => phases.push(`${st.phase}${st.reason ? `/${st.reason}` : ""}: ${st.detail}`),
       onTurnEnd: () => { turnsEnded++; },

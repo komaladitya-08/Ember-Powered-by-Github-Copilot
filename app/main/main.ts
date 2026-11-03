@@ -970,6 +970,7 @@ function start(): void {
     // On another computer it says which (§2.4), aloud and in the notification as the bubble's badge does.
     // A question with a whole text to read (review #116): the approve key shows its next part until all of it has been shown.
     const aloud = questionAloud(q.question, { keys: (q.question.detail ? readKeyWords(heldKeys()) : heldKeys()).map(k => k.say), spoken: spokenText });
+    pauseAnswerSpeech();
     if (maySpeak()) voice?.speak(words ?? aloud.say);
     if (userAway()) notify("Ember needs your OK", words ?? aloud.notify);
   };
@@ -990,19 +991,20 @@ function start(): void {
    */
   const answerSpeech = new SpeechStream();
   let answerSpoken = false;
+  let answerInterrupted = false;
+  let answerEpoch = 0;
   /** How long each spoken request takes to be answered aloud, step by step: one `voice.latency` line, times only. */
   const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
   /** The acknowledgement said for the answer now streaming (its first words don't say it again: afterAck). */
   let ackSaid: string | null = null;
   const sayStreamed = (chunks: string[]) => {
-    if (!maySpeak()) return;
+    if (answerInterrupted || confirmer?.waiting || !maySpeak()) return;
     for (const chunk of chunks) {
       const c = afterAck(chunk, ackSaid);
       ackSaid = null;
       if (!c.trim()) continue;
       turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken }); answerSpoken = true;
     }
-    if (!answerSpeech.started) answerSpoken = false;
   };
   /**
    * The acknowledgement waiting for the spoken request in flight (acknowledge.ts): said if Copilot hasn't started
@@ -1012,11 +1014,12 @@ function start(): void {
   const cancelAck = () => { if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; } };
   const ackLater = (request: string) => {
     cancelAck();
+    const epoch = answerEpoch;
     const ack = acknowledgement(request);
     if (!ack || !maySpeak()) return;
     ackTimer = setTimeout(() => {
       ackTimer = null;
-      if (!maySpeak() || answerSpoken) return;
+      if (epoch !== answerEpoch || answerInterrupted || confirmer?.waiting || !maySpeak() || answerSpoken) return;
       turnLatency.mark("ack");
       // After whatever Ember is saying (a reminder, a task's result), not cutting it off.
       voice?.speak(ack, { append: true });
@@ -1024,6 +1027,27 @@ function start(): void {
       ackSaid = ack;
     }, ACK_MS);
     ackTimer.unref?.();
+  };
+  /** Interruption retires the stream and its delayed acknowledgement, not only audio already queued for playback. */
+  const resetAnswerSpeech = () => {
+    answerEpoch++;
+    answerInterrupted = true;
+    cancelAck();
+    answerSpeech.reset();
+    answerSpoken = false;
+    ackSaid = null;
+    lastAskByVoice = false;
+    turnAnswer = "";
+    lastReply = "";
+    voice?.hush();
+  };
+  /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
+  const pauseAnswerSpeech = () => {
+    const spoken = lastAskByVoice, interrupted = answerInterrupted;
+    resetAnswerSpeech();
+    lastAskByVoice = spoken;
+    answerInterrupted = interrupted;
+    agent?.pauseAnswer();
   };
 
   // ───── Copilot brain ─────
@@ -1131,7 +1155,6 @@ function start(): void {
     recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
     personalRef?.asked(text, { unchecked: how.voiceUnchecked, suggested: how.suggested });
-    askedAt = Date.now();
     if (lastState.suggest) showState({ suggest: null });
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
@@ -1144,14 +1167,8 @@ function start(): void {
     // Ember starts also starts the accessibility helper).
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
     if (how.spoken) turnLatency.mark("sent");
-    // The acknowledgement is armed only once the request goes to Copilot (onSent): not while it waits for a silent turn
-    // to end or for Copilot to connect, nor for one answered here. Unanswered after all (never sent): it isn't said ("On
-    // it." after "Connect your GitHub account" would promise what won't happen). A later request's is left alone.
-    let ack: ReturnType<typeof setTimeout> | null = null;
-    const sent = how.spoken ? () => { ackLater(text); ack = ackTimer; } : undefined;
-    const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
     if (!agent) return;
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}), ...(sent ? { onSent: sent } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}) }).catch(err => { log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1227,7 +1244,7 @@ function start(): void {
   /** Ctrl+Alt+X, "Ember, stop", Stop in the handle's menu or in settings: everything stops at once. */
   const stopEverything = (source: "hotkey" | "voice" | "menu" | "settings") => {
     // An acknowledgement still waiting isn't said after a stop.
-    cancelAck();
+    resetAnswerSpeech();
     const pulled = killSwitch.pull(source);
     // Voice Match learns nothing for a while after a stop, and the suggestions go.
     personalRef?.stopped();
@@ -1504,7 +1521,8 @@ function start(): void {
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
         captureContext();
         betterRecallRef?.semantic.warm();
-        voice?.hush();
+        if (agent) agent.interruptAnswer();
+        else resetAnswerSpeech();
         // The bubble is main's now: an answer's leftover hide timer mustn't blank "Listening…".
         agent?.claimBubble();
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
@@ -1542,7 +1560,6 @@ function start(): void {
         break;
       case "utterance": {
         // A spoken request's answer opens a follow-up window; the engine refuses one after MAX_FOLLOW_UPS in a row.
-        lastAskByVoice = true;
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
         lastHeard = { utterance: heard?.utterance ?? -1, verified: e.verified === true, cut: !!e.cut, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true };
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
@@ -1897,7 +1914,6 @@ function start(): void {
   ipcMain.on(IPC.ask, (event, text: unknown) => {
     if (!askWindow.owns(event.sender) || typeof text !== "string") return;
     askWindow.hide();
-    lastAskByVoice = false;
     const t = text.slice(0, 2000);
     askHistory = [...askHistory.filter(h => h !== t), t].slice(-20);
     void askEmber(t);
@@ -1907,7 +1923,6 @@ function start(): void {
   ipcMain.on(IPC.askSuggestion, (event, text: unknown) => {
     if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;
     askWindow.hide();
-    lastAskByVoice = false;
     log.info("ask.suggestion");
     void askEmber(text, { suggested: true });
   });
@@ -1940,7 +1955,7 @@ function start(): void {
     if (borrowRef?.driving && !(task && task[2] === "stop") && !id.startsWith("ui:cmdstop:") && id !== "ui:stop") { log.warn("bubble.action_while_borrowing", { id }); return; }
     // The conversation's Stop while Copilot keeps it waiting (its turn ends; tasks go on), and a problem's Try again
     // (the same request, as it was asked: offered only where its turn ran no tool).
-    if (id === "ui:stop") { void agent?.stopAnswer(); return; }
+    if (id === "ui:stop") { resetAnswerSpeech(); void agent?.stopAnswer(); return; }
     if (id === "ui:retry") {
       // Taken on the first press: a second one, while this request waits for the screen's context, asks nothing.
       const again = agent?.takeRetry() ?? null;
@@ -1956,7 +1971,7 @@ function start(): void {
     const suggested = suggestOf(id);
     if (suggested !== null) {
       const text = suggestionsShown(lastState)[suggested];
-      if (text && personal.isSuggestion(text)) { log.info("bubble.suggestion", { n: suggested }); lastAskByVoice = false; captureContext(); void askEmber(text, { suggested: true }); }
+      if (text && personal.isSuggestion(text)) { log.info("bubble.suggestion", { n: suggested }); captureContext(); void askEmber(text, { suggested: true }); }
       return;
     }
     if (id === "ui:settings") { openSettings(); return; }
@@ -2535,11 +2550,20 @@ function start(): void {
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
-      onAnswerDelta: delta => { cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
-      onAnswerEnd: text => { cancelAck(); lastReply = text; sayStreamed(answerSpeech.finish(text)); },
-      onAnswer: text => { cancelAck(); turnAnswer = text; lastReply = text; sayStreamed(answerSpeech.finish(text)); },
+      onTurnStart: turn => {
+        resetAnswerSpeech();
+        askedAt = Date.now();
+        answerInterrupted = false;
+        lastAskByVoice = turn.spoken;
+        if (turn.spoken) ackLater(turn.text);
+      },
+      onAnswerInterrupted: resetAnswerSpeech,
+      onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
+      onAnswerEnd: text => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); lastReply = text; sayStreamed(answerSpeech.finish(text)); },
+      onAnswer: text => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; sayStreamed(answerSpeech.finish(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
+        aborted ||= answerInterrupted || !!confirmer?.waiting;
         cancelAck();
         // Nothing will be heard of a turn that was stopped, or not spoken: it is logged as it stands.
         if (aborted || !answerSpoken) turnLatency.end();
@@ -2555,6 +2579,7 @@ function start(): void {
         if (lastAskByVoice && !aborted) voice?.followUp(next?.followUpMs ?? 8000, { afterQuestion: endsWithQuestion(turnAnswer) });
         lastAskByVoice = false;
         turnAnswer = "";
+        answerInterrupted = true;
       },
       onStatus: status => {
         // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.
@@ -2575,7 +2600,7 @@ function start(): void {
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.
-        if (maySpeak()) voice?.speak(spokenText(`Reminder: ${r.text}`), { append: true });
+        if (maySpeak() && !agent?.answerOpen && voice?.micState !== "active") voice?.speak(spokenText(`Reminder: ${r.text}`), { append: true });
         // A notification shows on the lock screen: while it is locked, it says only that one is due.
         if (userAway()) notify("Ember: reminder", reminderNotification(r, screenLock?.locked ?? false));
       },
@@ -2596,7 +2621,7 @@ function start(): void {
       },
       onTaskFinished: t => {
         // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
-        if (maySpeak() && settings.get().speakResults) voice?.speak(spokenText(t.text));
+        if (maySpeak() && settings.get().speakResults && !agent?.answerOpen && voice?.micState !== "active") voice?.speak(spokenText(t.text), { append: true });
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
       },
       isOnline: () => net.isOnline(),
@@ -2680,6 +2705,7 @@ function start(): void {
       ...(speech.choice?.backend === "native" && speech.capiDir ? { capiDir: speech.capiDir } : {}),
       // How Ember's voice is played (VoiceOptions.playback): a development switch until echo-check.mjs has measured it.
       ...(devEnv("EMBER_TTS_OUTPUT") === "element" ? { playback: "element" as const } : {}),
+      ...(testMicWav ? { testMicWav: true } : {}),
       modelsRoot: speechModels.root,
       // Models that came with Ember are never changed: damaged, the user's own folder replaces them (review #254).
       ...(speechModels.bundled ? { bundled: { userRoot: speechModels.userRoot } } : {}),

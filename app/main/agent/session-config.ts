@@ -71,7 +71,7 @@ export interface SessionExtensions {
 }
 
 /** Model-facing tool names: an extension's must carry its server prefix (letters and digits) and a plain tool name. */
-const EXT_NAME = /^[a-z0-9]{1,24}-[A-Za-z0-9_-]{1,64}$/;
+const EXT_NAME = /^[a-z0-9]{1,24}-[A-Za-z0-9_.-]{1,64}$/;
 
 /** The extension tools a session admits beside Ember's own tools `granted`. */
 export function admittedExtensionTools(granted: Iterable<string>, ext: SessionExtensions | undefined): string[] {

@@ -43,8 +43,9 @@ api.onLevelOn(on => {
 window.addEventListener("message", e => {
   if (e.data === "ember-voice-port" && e.ports[0] && !capture) {
     port = e.ports[0];
+    const echoCancellation = new URLSearchParams(location.search).get("testMicWav") !== "1";
     capture = new Capture({
-      getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, channelCount: 1 }, video: false }),
+      getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation, noiseSuppression: false, autoGainControl: false, channelCount: 1 }, video: false }),
       enumerateDevices: () => navigator.mediaDevices.enumerateDevices(),
       onDeviceChange: fn => navigator.mediaDevices.addEventListener("devicechange", fn),
       graph,
@@ -87,14 +88,16 @@ let synthQueued = new Set<SpeechSynthesisUtterance>();
  */
 let synthStarted = false;
 let told = false;
+let speechGeneration = 0;
 let stillSpeaking: ReturnType<typeof setInterval> | undefined;
 function update(): void {
   const on = player.active || (synthStarted && synthQueued.size > 0);
   if (on === told) return;
   told = on;
   clearInterval(stillSpeaking);
-  if (on) stillSpeaking = setInterval(() => api.speaking(true), 20_000);
-  api.speaking(on);
+  const generation = speechGeneration;
+  if (on) stillSpeaking = setInterval(() => api.speaking(true, generation), 20_000);
+  api.speaking(on, generation);
 }
 
 /**
@@ -167,8 +170,8 @@ function speakLocal(text: string, voice: SpeechSynthesisVoice): void {
   queued.add(u);
   u.onstart = () => { if (queued !== synthQueued) return; w.started(); reportSpeech(true); synthStarted = true; update(); };
   // A reply replaced by the next one ends after the next has started: only the current queue counts.
-  u.onend = () => { queued.delete(u); update(); };
-  u.onerror = e => { w.failed(e.error); queued.delete(u); update(); };
+  u.onend = () => { if (queued !== synthQueued) return; queued.delete(u); update(); };
+  u.onerror = e => { if (queued !== synthQueued) return; w.failed(e.error); queued.delete(u); update(); };
   speechSynthesis.speak(u);
 }
 
@@ -185,6 +188,6 @@ function hush(): void {
   player.stop();
   update();
 }
-api.onHush(hush);
+api.onHush(generation => { hush(); speechGeneration = generation; api.speaking(false, speechGeneration); });
 
 window.addEventListener("beforeunload", () => capture?.stop());

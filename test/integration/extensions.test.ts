@@ -11,7 +11,7 @@ import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { Conductor } from "../../app/main/agent/conductor";
 import { Presenter } from "../../app/main/agent/presenter";
-import { locateRuntime } from "../../app/main/agent/runtime";
+import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { SettingsStore } from "../../app/main/settings";
 import { createLogger } from "../../app/main/logger";
 import { ExtensionsService } from "../../app/main/extensions/service";
@@ -19,6 +19,9 @@ import { AdminPolicySchema } from "../../app/main/admin";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 import type { EmberState } from "../../app/shared/overlay";
+import type { OS } from "../../app/shared/shortcuts";
+
+const { id: runtimeId, exe } = runtimeFor(process.platform as OS, process.arch);
 
 let mock: { baseUrl: string; requests: { tools: string[]; messages: { role: string; content: unknown }[] }[]; close(): Promise<void> };
 let dir: string;
@@ -53,7 +56,7 @@ beforeAll(async () => {
     mcpServers: { fake: { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/server.mjs"], env: { MCP_LOG: path.join(dir, "mcp.log") } } },
   }));
   fs.writeFileSync(path.join(plugin, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: `touch ${path.join(dir, "hook-ran")}` }] }] } }));
-  const runtime = locateRuntime({ appPath: process.cwd() });
+  const runtime = locateRuntime({ appPath: process.cwd(), runtimeId, exe });
   expect(runtime.exists).toBe(true);
   client = new CopilotClient({
     mode: "empty", baseDirectory: path.join(dir, "copilot"), useLoggedInUser: false,

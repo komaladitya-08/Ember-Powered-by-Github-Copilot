@@ -45,11 +45,11 @@ export type MicStatus = { state: "capturing"; device: string; rate: number; cont
 
 export interface MicApi {
   status(s: MicStatus): void;
-  speaking(on: boolean): void;
+  speaking(on: boolean, generation: number): void;
   /** A reply started (true), or none did: the computer has no voice (false). Sent only when it changes. */
   speech(ok: boolean): void;
   onSpeak(fn: (r: SpeakRequest) => void): void;
-  onHush(fn: () => void): void;
+  onHush(fn: (generation: number) => void): void;
   onAudio(fn: (a: SpeechAudio) => void): void;
   onAudioDone(fn: (id: number) => void): void;
   /** A chunk of Ember's own voice was scheduled to play (said in main's log). */

@@ -633,3 +633,16 @@ Removed menu-label approval carryover, which could reuse a risky approval in ano
 ### Voice cancellation and identity revocation (2026-11-03)
 
 M8 Voice Match review SR-1/SR-2: Stop and owner replacement now revoke pending wake, whole-request and post-wake verification. A main-owned generation also rejects already-queued IPC requests and learning samples, with no time-based grace period. Routine adaptation refreshes preserve the identity and finish each pending request against its captured verification configuration. Thresholds, enrolment anchors and voice trust rules are unchanged. Regression tests cover cancellation, replacement/removal, off/on, late completions and fresh requests.
+
+### Remote command completion status (2026-11-03)
+
+M12 review: removed the obsolete terminal exit-marker parser, which let command output replace the real process's exit code. Remote completion now uses only the child process's exit code and signal, as the shared launchers already do. Regression tests cover forged stdout/stderr markers, split chunks and pipe/Linux PTY/macOS PTY launches. Real Linux loopback SSH reproduced both false codes before the fix and passed after it (13 passed, one system-policy case skipped); native macOS SSH is unverified.
+
+### Reliability follow-up and beta preparation (2026-11-03)
+
+- Worker state and lifecycle: hold the existing re-entrant window lease around a toggle's fresh context/desired-state read and action; Stop/deadlines bound pending session creation, tool verification and sending. Late sessions are disposed without receiving work, and queued tasks regain their slots. Approval, context-change and cancellation checks remain enforced.
+- Conversation: match spoken ownership to the request that actually starts; retire interrupted answer callbacks, buffered chunks and acknowledgements. Playback events carry the hush generation so an old completion cannot open a newer follow-up. Ordinary short negative clarification replies are preserved; formal approvals still go through the same question-bound rules. Background task results keep their cards without cutting a foreground answer. Physical playback and actually-heard-content measurement remain native gates.
+- Existing PRs: reapplied #106's bounded stable window walk and #98's one-week too-slow Kokoro verdict in the current code; reconciled #99/#114 in [docs/PR-RECONCILIATION.md](docs/PR-RECONCILIATION.md) without adding a second MCP runtime or enabling unverified hosted connectors.
+- Windows safety vocabulary: native testing found “Stored Usernames and Passwords” and “Address Bar” outside the old patterns. Both names now receive the same protection as the older variants. Test fixtures own their classic console, Notepad and Explorer windows and do not depend on the user's default console or environment.
+- Extensions: align admitted dotted tool names, retain complete descriptions for consent pins/live checks, and give provider-appropriate authentication advice. Home accurately distinguishes supported MCP plugins from unavailable hosted connectors.
+- Release preparation: app and npm launcher are 0.1.1 with matching notes. Publishing remains separate from local implementation and validation; no release claim is made by this entry.

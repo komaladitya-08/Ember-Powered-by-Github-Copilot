@@ -216,6 +216,10 @@ export interface HostOptions {
   onAnswerDelta?: (delta: string) => void;
   onAnswerEnd?: (text: string) => void;
   onTurnEnd?: (aborted: boolean) => void;
+  /** The matched request whose reply is starting, including queued and locally answered requests. */
+  onTurnStart?: (turn: { text: string; spoken: boolean }) => void;
+  /** The current answer was interrupted: buffered audio and delayed acknowledgements must go too. */
+  onAnswerInterrupted?: () => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; summary: string; text: string }) => void;
   /** The conversation changed (the settings window shows it). */
@@ -616,6 +620,8 @@ interface UserRequest {
   prompt?: string;
   target: (WindowTarget & { app?: string }) | null;
   words: string;
+  /** Follow-up listening belongs to this request, not whichever request arrived most recently. */
+  spoken?: boolean;
   screen: string[];
   /** The target the context was read on (QuickContext.targetId; absent: this computer). */
   targetId?: TargetId;
@@ -889,6 +895,7 @@ export class AgentHost {
     const i = said === undefined ? -1 : this.queued.findIndex(r => r.prompt === said);
     this.turn = i < 0 ? null : this.queued[i];
     if (i >= 0) this.queued.splice(i, 1);
+    if (this.turn) this.o.onTurnStart?.({ text: this.turn.words, spoken: !!this.turn.spoken });
     // Its reply announces the tasks it starts ("On it…"), not the ones an earlier turn did.
     this.announced.clear();
   }
@@ -1441,6 +1448,7 @@ export class AgentHost {
         onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
         onAnswerDelta: delta => this.o.onAnswerDelta?.(delta),
         onAnswerEnd: text => this.o.onAnswerEnd?.(text),
+        onAnswerInterrupted: () => this.o.onAnswerInterrupted?.(),
         onTurnEnd: aborted => {
           // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
@@ -2011,6 +2019,11 @@ export class AgentHost {
     return this.starting === 0 && !this.presenter.atWork && !this.queued.length && !this.tasksAtWork();
   }
 
+  /** A foreground conversation is generating or waiting; background results keep their cards meanwhile. */
+  get answerOpen(): boolean {
+    return !!this.queued.length || (this.conductor?.turnOpen ?? false);
+  }
+
   /** Tasks running or waiting to run. */
   private tasksAtWork(): boolean {
     return this.tasks?.list().some(t => t.status === "running" || t.status === "queued") ?? false;
@@ -2025,13 +2038,15 @@ export class AgentHost {
    * Answers `text` with Ember's own `reply`, without a Copilot turn: kept in the conversation, shown and spoken as an
    * answer, and (asked by voice) followed by the usual follow-up window.
    */
-  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number }): void {
+  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number; spoken?: boolean }): void {
     // The request is kept as it was asked: heard unchecked, a chosen suggestion and a heard one keep what they were (a later
     // "yes please" that reads back over this line must not take Ember's suggested words, or words heard from the speakers,
     // for the user's own: review of #145).
     const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
+    this.interruptAnswer();
+    this.o.onTurnStart?.({ text, spoken: !!how.spoken });
     this.presenter.say(reply);
     this.o.onAnswer?.(reply);
     this.o.onTurnEnd?.(false);
@@ -2044,6 +2059,7 @@ export class AgentHost {
   sayFromMemory(text: string): boolean {
     if (!this.idle || !this.betweenTurns() || this.status.phase !== "ready") return false;
     this.remember("ember", text);
+    this.o.onTurnStart?.({ text: "", spoken: false });
     this.presenter.say(text);
     this.o.onAnswer?.(text);
     return true;
@@ -2221,6 +2237,7 @@ export class AgentHost {
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
+      ...(how.spoken ? { spoken: true } : {}),
       ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
     };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
@@ -2256,6 +2273,17 @@ export class AgentHost {
     this.presenter.stopped();
     this.o.log.info("agent.answer_stopped");
     await this.conductor?.abort();
+  }
+
+  /** A wake interrupts the spoken reply while its independently scheduled tasks keep running. */
+  interruptAnswer(): void {
+    if (this.conductor) this.conductor.interruptAnswer();
+    else this.o.onAnswerInterrupted?.();
+  }
+
+  /** Formal permission pauses speech without cancelling the request whose tool is waiting for that permission. */
+  pauseAnswer(): void {
+    this.conductor?.pauseAnswer();
   }
 
   /**

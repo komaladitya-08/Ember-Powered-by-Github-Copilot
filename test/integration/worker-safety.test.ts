@@ -27,8 +27,11 @@ import type { XInput } from "../../app/main/hands/input";
 import { PolicyEngine, type Agreement, type Grant } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
 import { SettingsStore } from "../../app/main/settings";
-import { locateRuntime } from "../../app/main/agent/runtime";
+import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import type { Logger } from "../../app/main/logger";
+import type { OS } from "../../app/shared/shortcuts";
+
+const { id: runtimeId, exe } = runtimeFor(process.platform as OS, process.arch);
 
 type Msg = { role: string; content: unknown };
 type Reply = { text?: string; reasoning?: string; tool?: { name: string; args: Record<string, unknown> } };
@@ -55,7 +58,7 @@ beforeAll(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-worker-safety-"));
   client = new CopilotClient({
     mode: "empty", baseDirectory: path.join(dir, "copilot"), useLoggedInUser: false,
-    connection: RuntimeConnection.forStdio({ path: locateRuntime({ appPath: process.cwd() }).path }),
+    connection: RuntimeConnection.forStdio({ path: locateRuntime({ appPath: process.cwd(), runtimeId, exe }).path }),
     env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" },
   });
   await client.start();

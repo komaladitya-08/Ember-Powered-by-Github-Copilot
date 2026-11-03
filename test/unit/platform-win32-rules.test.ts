@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  coversScreen, isAppWindow, isFindable, isPopup, pickWindow, pointerLandsOn, walkZOrder, WS, WS_EX, type FindCandidate,
+  coversScreen, isAppWindow, isFindable, isPopup, pickWindow, pointerLandsOn, steadyZOrder, walkZOrder, WS, WS_EX, type FindCandidate,
   type WindowFacts,
 } from "../../app/main/platform/win32/rules";
 
@@ -121,6 +121,23 @@ describe("walking the z-order", () => {
     const next = new Map([[3, 2], [2, 1], [1, 3]]);
     expect(walkZOrder(3, h => next.get(h) ?? 0)).toEqual([3, 2, 1]);
     expect(walkZOrder(1, h => h + 1, 5)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("walks again when a raise hid a window during the first walk (ci 41361281638)", () => {
+    const walks = [[9, 5, 1], [7, 9, 5, 1], [7, 9, 5, 1]];
+    let n = 0;
+    expect(steadyZOrder(() => walks[n++])).toEqual([7, 9, 5, 1]);
+    expect(n).toBe(3);
+  });
+
+  it("walks twice when steady, and returns the fourth walk while windows keep moving", () => {
+    let n = 0;
+    expect(steadyZOrder(() => (n++, [3, 2, 1]))).toEqual([3, 2, 1]);
+    expect(n).toBe(2);
+    const swapping = [[2, 1], [1, 2], [2, 1], [1, 2], [2, 1]];
+    n = 0;
+    expect(steadyZOrder(() => swapping[n++])).toEqual([1, 2]);
+    expect(n).toBe(4);
   });
 });
 
