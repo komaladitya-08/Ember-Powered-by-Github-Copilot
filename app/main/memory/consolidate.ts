@@ -10,7 +10,7 @@
 
 import { setImmediate } from "node:timers/promises";
 import { DUPLICATE, MAX_FACTS, type Fact, type MemoryGraph } from "./graph";
-import { nameKey, terms, termSimilarity } from "./text";
+import { nameKey, negated, terms, termSimilarity } from "./text";
 
 /** Closed facts older than this are forgotten (days). */
 export const HISTORY_DAYS = 180;
@@ -77,8 +77,10 @@ function* consolidationSteps(graph: MemoryGraph, o: ConsolidateOptions): Generat
   // Near-duplicate open facts about the same entities: the stronger one stays and takes the other's uses.
   const open = graph.allFacts(true).sort((a, b) => b.confidence - a.confidence || b.uses - a.uses || a.createdAt.localeCompare(b.createdAt));
   const wordSets: Set<string>[] = [];
+  const polarity: boolean[] = [];
   for (const f of open) {
     wordSets.push(new Set(terms(f.text)));
+    polarity.push(negated(f.text));
     yield;
   }
   const gone = new Set<string>();
@@ -91,7 +93,7 @@ function* consolidationSteps(graph: MemoryGraph, o: ConsolidateOptions): Generat
       if (j % 64 === 0) yield;
       const b = open[j];
       if (gone.has(b.id) || b.entities.length !== keep.entities.length || !b.entities.every(id => keep.entities.includes(id))) continue;
-      if (termSimilarity(wordSets[i], wordSets[j]) < DUPLICATE) continue;
+      if (polarity[i] !== polarity[j] || termSimilarity(wordSets[i], wordSets[j]) < DUPLICATE) continue;
       keep = { ...keep, uses: keep.uses + b.uses, source: keep.source === "user" || b.source !== "user" ? keep.source : "user" };
       graph.forgetFact(b.id);
       gone.add(b.id);

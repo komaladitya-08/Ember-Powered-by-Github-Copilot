@@ -277,6 +277,76 @@ describe("VoiceService", () => {
     expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000 }]);
   });
 
+  it("times only the current hush acknowledged by the original speaking page", async () => {
+    vi.useFakeTimers({ toFake: ["performance"] });
+    const info = vi.fn();
+    const { v } = service(true, { log: { ...log, info } });
+    const measurements = () => info.mock.calls.filter(([message]) => message === "voice.hush_ack");
+    v.speak("The speech-only window is still speaking.");
+    await flush();
+    const speaker = electron.windows.find(w => w.title === "Ember speech")!;
+    speaking(speaker, true);
+    await v.setWanted(true);
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+
+    v.hush();
+    await flush();
+    const firstHush = speaker.webContents.send.mock.calls.filter(([channel]) => channel === VOICE.hush).at(-1)?.[1];
+    speaking(mic, false);
+    expect(measurements()).toEqual([]);
+    vi.advanceTimersByTime(12);
+    v.hush();
+    await flush();
+    electron.ipcMain.emit(VOICE.speaking, { sender: speaker.webContents }, false, firstHush);
+    speaking(mic, false);
+    expect(measurements()).toEqual([]);
+
+    vi.advanceTimersByTime(8);
+    speaking(speaker, false);
+    speaking(speaker, false);
+    expect(measurements()).toEqual([["voice.hush_ack", { page: "speaker", ms: 20 }]]);
+  });
+
+  it("discards a lost playback page's hush and leaves idle hushes untimed", async () => {
+    vi.useFakeTimers({ toFake: ["performance"] });
+    const info = vi.fn();
+    const { v } = service(true, { log: { ...log, info } });
+    const measurements = () => info.mock.calls.filter(([message]) => message === "voice.hush_ack");
+    await v.setWanted(true);
+    const oldMic = electron.windows.find(w => w.title === "Ember microphone")!;
+    speaking(oldMic, true);
+    v.hush();
+    v.setMuted(true);
+    speaking(oldMic, false);
+    vi.advanceTimersByTime(500);
+    v.setMuted(false);
+    await flush();
+    const mic = electron.windows.findLast(w => w.title === "Ember microphone")!;
+    v.hush();
+    speaking(mic, false);
+    expect(measurements()).toEqual([]);
+
+    speaking(mic, true);
+    v.hush();
+    vi.advanceTimersByTime(7);
+    speaking(mic, false);
+    expect(measurements()).toEqual([["voice.hush_ack", { page: "mic", ms: 7 }]]);
+  });
+
+  it("drops a pending hush measurement when the speech-only renderer crashes", async () => {
+    const info = vi.fn();
+    const { v } = service(true, { log: { ...log, info } });
+    v.speak("A reply from the speech-only window.");
+    await flush();
+    const speaker = electron.windows.find(w => w.title === "Ember speech")!;
+    speaking(speaker, true);
+    v.hush();
+    await flush();
+    speaker.webContents.emit("render-process-gone", {}, { reason: "crashed" });
+    speaking(speaker, false);
+    expect(info.mock.calls.filter(([message]) => message === "voice.hush_ack")).toEqual([]);
+  });
+
   it("doesn't wait for speech that never starts (no voices installed)", async () => {
     vi.useFakeTimers();
     const { v } = service();

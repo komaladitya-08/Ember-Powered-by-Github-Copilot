@@ -12,7 +12,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { handClipboardToManager } from "../../app/main/hands/clipboard-handoff";
 
 const requireCjs = createRequire(import.meta.url);
-const xvfb = spawnSync("sh", ["-c", "command -v Xvfb"], { stdio: "ignore" }).status === 0;
+const xvfb = process.platform === "linux" && spawnSync("sh", ["-c", "command -v Xvfb"], { stdio: "ignore" }).status === 0;
 
 function xlib() {
   const koffi = requireCjs("koffi") as typeof import("koffi");
@@ -38,11 +38,12 @@ function xlib() {
 }
 
 describe.skipIf(!xvfb)("the clipboard goes to the clipboard manager when Ember quits", () => {
-  const x = xlib();
+  let x: ReturnType<typeof xlib>;
   const open: unknown[] = [];
   let server: ChildProcess;
   let display = "";
   beforeAll(async () => {
+    x = xlib();
     // -noreset: the server would reset when the last client of a test closes, and the next test's connection could
     // come during the reset.
     server = spawn("Xvfb", ["-displayfd", "3", "-noreset", "-screen", "0", "640x480x24", "-nolisten", "tcp"], { stdio: ["ignore", "ignore", "ignore", "pipe"] });

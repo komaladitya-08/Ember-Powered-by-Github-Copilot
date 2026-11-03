@@ -119,6 +119,16 @@ describe("the memory graph", () => {
     expect(g.allFacts(true).map(f => f.text).sort()).toEqual(["Lives in Leeds", "Lives in Paris"]);
   });
 
+  it("records an explicit preference reversal with nearly identical wording", () => {
+    const g = new MemoryGraph(undefined, clock());
+    const preference = { about: [{ name: "User" }], predicate: "voice_reply_style", single: true, source: "user" as const };
+    const before = "Prefers concise spoken replies during busy weekday mornings";
+    const after = "Does not prefer concise spoken replies during busy weekday mornings";
+    g.add({ ...preference, text: before });
+    expect(g.add({ ...preference, text: after })).toMatchObject({ kind: "added", closed: [{ text: before }] });
+    expect(g.allFacts(true).map(f => f.text)).toEqual([after]);
+  });
+
   it("forgets a fact and the entities only it mentioned", () => {
     const g = new MemoryGraph(undefined, clock());
     const r = g.add({ text: "Dentist is Dr Rao", about: [{ name: "Dr Rao", kind: "person" }], source: "user" });
@@ -226,6 +236,20 @@ describe("sleep-time consolidation", () => {
     expect(report.mergedEntities).toBe(1);
     expect(g.allEntities().map(e => e.name)).toEqual(["Priya Sharma"]);
     expect(g.factsAbout("e1").map(f => f.id).sort()).toEqual(["f1", "f2"]);
+  });
+
+  it("keeps conflicting preferences found in existing memory during consolidation", () => {
+    const c = clock();
+    const g = new MemoryGraph(undefined, c);
+    const preference = { about: [{ name: "User" }], source: "user" as const };
+    const before = "Prefers concise spoken replies during busy weekday mornings";
+    const after = "Does not prefer concise spoken replies during busy weekday mornings";
+    g.add({ ...preference, text: before });
+    const existing = g.add({ ...preference, text: "Reads the weather before breakfast" });
+    if (existing.kind !== "added") throw new Error("expected a second fact");
+    g.replaceFact({ ...existing.fact, text: after });
+    expect(consolidate(g, { now: c.now() }).mergedFacts).toBe(0);
+    expect(g.allFacts(true).map(f => f.text)).toEqual([before, after]);
   });
 
   it("forgets old history and unused guesses, but never what the user said", () => {

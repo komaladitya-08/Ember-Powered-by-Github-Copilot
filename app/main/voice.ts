@@ -196,6 +196,7 @@ export class VoiceService {
   /** Until when Ember is speaking, or about to: a follow-up window waits until it's done. */
   private speakingUntil = 0;
   private speechGeneration = 0;
+  private hushMeasure: { owner: Electron.WebContents; page: "mic" | "speaker"; at: number } | null = null;
   private awaitingSpeechStart = false;
   private readonly pageGenerations = new WeakMap<Electron.WebContents, number>();
   /** A follow-up window (ms) waiting for Ember to finish speaking, its timer, and whether the answer asked something. */
@@ -298,6 +299,11 @@ export class VoiceService {
     ipcMain.on(VOICE.speaking, (e, on: unknown, generation: unknown) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
       if (typeof on !== "boolean" || generation !== this.speechGeneration) return;
+      const measure = this.hushMeasure;
+      if (!on && measure?.owner === e.sender) {
+        this.hushMeasure = null;
+        this.o.log.info("voice.hush_ack", { page: measure.page, ms: Math.round(performance.now() - measure.at) });
+      }
       if (on && !this.saidSpeaking) this.awaitingSpeechStart = false;
       this.speakingPage = !on ? null : this.mic && e.sender === this.mic.webContents ? "mic" : "speaker";
       // (Repeated every 20 s while it lasts: the voice process is told each time, the log only when it changes.)
@@ -681,6 +687,11 @@ export class VoiceService {
   }
 
   hush(): void {
+    // Only the speaking page can confirm this cancellation. Repeated hushes retain the first request time.
+    if (!this.hushMeasure && this.speakingPage) {
+      const win = this.speakingPage === "mic" ? this.mic : this.speaker?.win;
+      if (win && !win.isDestroyed()) this.hushMeasure = { owner: win.webContents, page: this.speakingPage, at: performance.now() };
+    }
     this.dropFollowUp();
     this.speakingUntil = 0;
     this.awaitingSpeechStart = false;
@@ -895,7 +906,9 @@ export class VoiceService {
     if (this.speaker && !this.speaker.win.isDestroyed()) return this.speaker;
     // The mic page without its audio port: it speaks, and never asks for the microphone.
     const win = hiddenWindow("Ember speech");
-    this.speaker = { win, wc: win.webContents, loaded: win.loadURL(this.micPage()), saying: false };
+    const wc = win.webContents;
+    wc.on("render-process-gone", () => { if (this.hushMeasure?.owner === wc) this.hushMeasure = null; });
+    this.speaker = { win, wc, loaded: win.loadURL(this.micPage()), saying: false };
     this.idleSpeaker();
     return this.speaker;
   }
@@ -1098,6 +1111,7 @@ export class VoiceService {
   private closeMic(): void {
     const mic = this.mic;
     this.mic = null;
+    if (this.hushMeasure?.page === "mic") this.hushMeasure = null;
     if (mic && !mic.isDestroyed()) mic.destroy();
     // Its meter goes with it (the page that sends the levels is gone, so no null would ever come), and its speech.
     this.o.onLevel?.({ mic: null });
@@ -1150,6 +1164,7 @@ export class VoiceService {
   private closeSpeaker(): void {
     const s = this.speaker;
     this.speaker = null;
+    if (this.hushMeasure?.page === "speaker") this.hushMeasure = null;
     if (this.speakerIdle) { clearTimeout(this.speakerIdle); this.speakerIdle = null; }
     if (s && !s.win.isDestroyed()) s.win.destroy();
     if (s && (s.saying || this.speakingPage === "speaker")) this.speakingEnded();

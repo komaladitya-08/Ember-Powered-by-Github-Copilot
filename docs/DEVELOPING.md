@@ -595,8 +595,13 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
   - `ackMs`: Ember's acknowledgement handed to the voice (below), when it gave one;
   - `firstTokenMs`: the answer's first words;
   - `firstChunkMs`: its first piece handed to the voice;
-  - `firstAudioMs`: Ember's first sound (the acknowledgement's, when there was one).
+  - `firstAudioMs` marks the first speaking report during the trace. The neural player reports when it schedules audio,
+    and the system voice reports synthesis start. The first report may come from an acknowledgement or other local speech.
 - A step that didn't happen is left out: a stop, or speaking off.
+
+When speech is interrupted, `voice.hush_ack` records the time from main requesting cancellation to the speaking renderer
+confirming it. It contains only the renderer kind (`mic` or `speaker`) and milliseconds (`ms`). It measures renderer
+response. Check audible silence separately on real devices.
 
 **Native speech on Linux.** `node scripts/voice/fetch-capi.mjs` fetches sherpa-onnx's prebuilt C API for Linux x64
 (`CAPI_RELEASE` in app/voice/models.ts: the archive and each library Ember loads pinned by SHA-256; they need only

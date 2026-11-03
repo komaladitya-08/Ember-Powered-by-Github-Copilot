@@ -20,6 +20,7 @@ export interface AuditEntry {
 }
 
 const MONTH_FILE = /^audit-(\d{4})-(\d{2})\.jsonl$/;
+const TAIL_BLOCK_BYTES = 64 * 1024;
 
 /** How a rename says the file it would replace is open (Windows). */
 const REPLACE_REFUSED = new Set(["EPERM", "EACCES", "EBUSY"]);
@@ -98,11 +99,11 @@ export class AuditLog {
     const files = fs.readdirSync(this.dir).filter(f => MONTH_FILE.test(f)).sort().reverse();
     const out: (AuditEntry & { t: string })[] = [];
     for (const f of files) {
-      const lines = fs.readFileSync(path.join(this.dir, f), "utf8").split("\n").filter(Boolean).reverse();
-      for (const l of lines) {
-        try { out.push(JSON.parse(l)); } catch { /* a torn last line */ }
-        if (out.length >= limit) return out;
-      }
+      const enough = readTail(path.join(this.dir, f), line => {
+        try { out.push(JSON.parse(line.toString("utf8"))); } catch { /* a torn line */ }
+        return out.length >= limit;
+      });
+      if (enough) break;
     }
     return out;
   }
@@ -226,6 +227,46 @@ export class AuditLog {
     this.pruneTimer = timer;
     return () => { clearInterval(timer); if (this.pruneTimer === timer) this.pruneTimer = null; };
   }
+}
+
+/** Visits lines from the end of one month, reading older blocks only while the caller needs more. */
+function readTail(file: string, visit: (line: Buffer) => boolean): boolean {
+  const fd = fs.openSync(file, "r");
+  try {
+    const block = Buffer.allocUnsafe(TAIL_BLOCK_BYTES);
+    // Keep an unfinished line as bytes so a multi-byte character can cross a block boundary.
+    let pieces: Buffer[] = [];
+    const visitLine = (head: Buffer): boolean => {
+      if (pieces.length) {
+        pieces.push(head);
+        head = Buffer.concat(pieces.reverse());
+        pieces = [];
+      }
+      return head.length > 0 && visit(head);
+    };
+    for (let end = fs.fstatSync(fd).size; end > 0;) {
+      const start = Math.max(0, end - block.length);
+      const length = end - start;
+      let read = 0;
+      while (read < length) {
+        const n = fs.readSync(fd, block, read, length - read, start + read);
+        if (n === 0) break;
+        read += n;
+      }
+      // An external truncate can leave a gap. Do not join pieces from opposite sides of it.
+      if (read < length) pieces = [];
+      let stop = read;
+      while (stop > 0) {
+        const newline = block.lastIndexOf(0x0a, stop - 1);
+        if (newline < 0) break;
+        if (visitLine(block.subarray(newline + 1, stop))) return true;
+        stop = newline;
+      }
+      if (stop > 0) pieces.push(Buffer.from(block.subarray(0, stop)));
+      end = start;
+    }
+    return pieces.length > 0 && visitLine(Buffer.alloc(0));
+  } finally { fs.closeSync(fd); }
 }
 
 /** Copies what another process added to `src` past `from` to `out`, until it stops growing; returns where `src` ends. */

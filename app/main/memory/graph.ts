@@ -12,7 +12,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import { memoryRefusal } from "./guard";
-import { nameKey, similarity } from "./text";
+import { nameKey, negated, similarity } from "./text";
 
 export const ENTITY_KINDS = ["person", "organisation", "project", "app", "place", "topic", "thing"] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
@@ -29,7 +29,7 @@ export type Source = (typeof SOURCES)[number];
 export const MAX_FACT_CHARS = 400;
 /** The most facts kept (open and closed together); consolidation prunes below it. */
 export const MAX_FACTS = 5000;
-/** Facts at least this alike (./text.ts similarity) about the same entities are one fact. */
+/** Facts with the same polarity at least this alike (./text.ts similarity) about the same entities are one fact. */
 export const DUPLICATE = 0.8;
 
 const Iso = z.string().min(10).max(40);
@@ -193,7 +193,8 @@ export class MemoryGraph {
     const predicate = predicateOf(input.predicate);
     const confidence = Math.min(1, Math.max(0, input.confidence ?? START_CONFIDENCE[input.source]));
 
-    const same = this.allFacts(true).find(f => sameEntities(f.entities, entities) && similarity(f.text, text) >= DUPLICATE);
+    const polarity = negated(text);
+    const same = this.allFacts(true).find(f => sameEntities(f.entities, entities) && similarity(f.text, text) >= DUPLICATE && negated(f.text) === polarity);
     if (same) {
       // Said again: surer (the stronger source wins), and fresh.
       const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source) };
