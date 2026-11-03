@@ -48,6 +48,62 @@ counted:
 compositing make up most of the CPU. The biggest single latency on Linux is the voice running in WebAssembly. Both
 are fixable without new models.
 
+### 1.1 Every latency, measured (2026-11-02)
+
+`scripts/perf/latency.mjs` times each step over many runs and prints the median and p95 (docs/DEVELOPING.md "Timing
+the latencies"). Measured on a 2.8 GHz Xeon with 4 vCPUs in a container that other work kept busy (load average 2–3),
+on Linux's WebAssembly speech, `main` and then the branch `ember-improve/20261102-perf`, one after the other. Voice
+clips are synthesized with Piper's "Ryan" voice (not Ember's), in a quiet room's noise, and fed frame by frame on a
+real-time clock (a frame waits for the one before it, so a slow transcription delays what follows). The answer streams
+at the mock model's 30 ms a word.
+
+| Step (median / p95, ms) | n | Before | After |
+|---|---|---|---|
+| "Hey Ember." ends → listening | 17–18 | 154 / 795 | 155 / 880 |
+| End of speech → transcript, request after a pause | 17–18 | 833 / 923 | **713 / 771** |
+| … of which the VAD's silence (audio time) | | 700 / 780 | 712 / 770 |
+| … of which work after it (Moonshine) | | 125 / 229 | **1 / 30** |
+| End of speech → transcript, "Hey Ember, …" in one breath | 13–14 | 902 / 928 | **737 / 1,008** |
+| First answer token → first chunk ready to speak | 24 | 180 / 540 | **150 / 300** |
+| First chunk → its audio (Piper "Kristin", warm) | 24 | 818 / 1,925 | 865 / **1,218** |
+| First answer token → first spoken audio | 24 | 994 / 2,465 | 1,015 / **1,473** |
+| Ember's voice cold start (load and warm-up) | 5 | 2,196 / 2,474 | 2,115 / 2,211 |
+| Typed question → first answer token (Copilot runtime, mock model) | 24 | 18 / 21 | 18 / 29 |
+| Task start → first tool call | 24 | 112 / 146 | 112 / 156 |
+| Task start → first action in the app | 24 | 637 / 713 | 642 / 692 |
+| A worker tool call (any) | 96 | 112 / 1,941 | 79 / 1,947 |
+| … `perceive_window` (AT-SPI read, marks, masking) | 24 | 49 / 80 | 47 / 79 |
+| … `click`, `toggle`, `type_text`, `choose_option` | 6–18 | 461–478 / 468–648 | 458–475 / 463–648 |
+| … `press_keys` (borrows the cursor) | 6 | 1,958 / 2,013 | 1,950 / 1,974 |
+| Kill switch → `pull()` returned (answer streaming, mouse mid-glide) | 24 | 6 / 10 | 8 / 12 |
+| Kill switch → everything stopped | 24 | 8 / 20 | 9 / 12 |
+
+Requests said with a pause in the middle (four requests, two speeds, the same audio both ways) were cut short exactly
+as often before and after: none at pauses of 0.3, 0.45 and 0.6 s, and 2–3 of 8 at 0.7 s, where the VAD's 0.6 s ends
+them. Idle, after 35 s, over 20 s (`scripts/perf/footprint.mjs`, Xvfb, no sign-in so the setup page is open): 648 MB
+and 29 % of one core before, 647 MB and 28.3 % after. Main 104 MB at 0.5 %; the speech process 202 MB at 1 %; the
+renderers' main threads: setup page 5.3 %, handle 6.3 %, mic page 0.9 %, ask box 0 %; the GPU process 65 MB at 4.3 %
+and the audio service 28 MB at 4.5 %. Xvfb has no compositor, so there are no overlay windows to measure (the handle
+card stands in for them).
+
+**What the numbers say.**
+- The request's end was the VAD's 0.6 s (0.7 s after the voice, with Silero's own lag) plus Moonshine's 0.13 s. The
+  transcription is now made at the pause, ahead of the VAD (`SPECULATE_FRAMES`, app/voice/engine.ts): when the VAD
+  ends the request with no sound since, that transcript is sent at once. When a request ends is unchanged. A first
+  try that ended requests at a 0.45–0.51 s pause when they read as finished saved another 0.2 s, but cut "Turn on do
+  not… disturb" at a 0.5 s pause (the voice tests) and most requests at 0.6–0.7 s pauses: it isn't in.
+- Ember's voice in WebAssembly takes about 18 ms a character plus 0.2 s, so the first chunk's length is its first
+  sound's delay. A first clause now counts from 18 characters (it was 25: "I can't do that one," was held for the whole
+  94-character sentence, 1.7 s), and a first sentence said whole is cut at its first clause from 48 characters (it
+  was 90). The median is unchanged (most first clauses were short already); the p95 fell by a second.
+- A typed question reaches the runtime in 2 ms and its first token in 18 ms: Ember adds nothing worth cutting.
+- A worker tool call is mostly deliberate waiting: 350 ms for Ember to fly to the control before acting (so the user
+  sees where it acts), and the 1.5 s stillness before Ember borrows the cursor (a §10 departure). Perception itself
+  is 47 ms. Neither wait changed.
+- The kill switch returns in under 15 ms, far inside its 300 ms.
+- One synthesized "Hey Ember." in 18 woke Ember about 0.8 s late in every run, before and after (the spotter heard
+  it only with the request): a wake-word question, not a compute one.
+
 ## 2. What the research says
 
 - **Cascaded beats speech-to-speech here.** Full-duplex speech models (Kyutai's Moshi: about 200 ms on an L4 GPU)
@@ -121,9 +177,9 @@ reported in every PR that touches it.
    with 4 threads (bench.mjs), Piper's first audio was 137 ms against WebAssembly's 551, listening ran at a real-time
    factor of 0.075 against 0.136, and Kokoro ran at 0.565 on 4 threads (just over the 0.5 Ember needs). Shipping it in
    the RPM and AppImage is the next step.
-2. **Speak the first clause, not the first sentence.** `SpeechStream` lets the first chunk end at a comma or dash
-   once it has at least about 4 words, and keeps whole sentences after that. This saves the time Copilot spends
-   writing the rest of a long first sentence.
+2. **Speak the first clause, not the first sentence.** (Built; from 18 characters since 2026-11-02, §1.1.)
+   `SpeechStream` lets the first chunk end at a comma or dash once it has at least about 4 words, and keeps whole
+   sentences after that. This saves the time Copilot spends writing the rest of a long first sentence.
 3. **Acknowledge at once.** When the request ends, Ember reacts within about 150 ms, before Copilot answers: a short
    sound from the bubble and the character's "listening → thinking" motion. Optionally a spoken "Mm-hm" or "One
    moment", only when Copilot hasn't started answering after about 700 ms. It is never spoken over the start of an
@@ -131,10 +187,12 @@ reported in every PR that touches it.
 4. **Warm what's needed.** Load Ember's voice when listening starts, not at the first reply (its memory cost is
    measured in phase 0 first). Keep the Copilot session warm. Ask Copilot for a fast conductor model by default for voice
    turns: the model choice already exists, and the default becomes latency-aware.
-5. **Shorter silence, safely.** Lower `MIN_SILENCE` to 450 ms only when the transcript so far ends like a finished
-   request ("?", a verb's object, a known command shape). Keep 600–900 ms when it trails off ("and…", "the…").
-   This is a rule-based first step, and it needs streaming partials (phase 2). Measured against the false cut-off
-   rate on the clip set.
+5. **Shorter silence, safely.** (2026-11-02, §1.1: tried, and not built. Ending a request that reads as finished at a
+   0.45–0.51 s pause cut requests the voice tests keep whole; the transcript is made at the pause instead, which takes
+   Moonshine's 0.13 s off the wait without changing when a request ends.) Lower `MIN_SILENCE` to 450 ms only when the
+   transcript so far ends like a finished request ("?", a verb's object, a known command shape). Keep 600–900 ms when
+   it trails off ("and…", "the…"). This is a rule-based first step, and it needs streaming partials (phase 2).
+   Measured against the false cut-off rate on the clip set.
 
 ### Phase 2: listen like a person
 

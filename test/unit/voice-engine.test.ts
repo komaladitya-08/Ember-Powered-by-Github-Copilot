@@ -1390,3 +1390,77 @@ describe("a pause after speech", () => {
     expect(pads).toBe(1);
   });
 });
+
+describe("a request transcribed ahead of the VAD, at its pause (SPECULATE_FRAMES, docs/ASSISTANT.md phase 1.5)", () => {
+  /**
+   * The energy fake with a VAD that waits 19 quiet frames (0.6 s), speechSoFar, and transcripts that say how long the
+   * audio was (after the wake phrase, unless `wake` is false: the recognizer didn't hear it).
+   */
+  function ahead(wake = true) {
+    const b = talking({ wake: 9, hangover: 19 });
+    let seg: Float32Array[] = [];
+    const vad = b.vad.bind(b), reset = b.resetVad.bind(b), flush = b.flushVad.bind(b);
+    const calls: number[] = [];
+    b.vad = f => { const out = vad(f); seg = out.length ? [] : b.speaking() ? [...seg, f] : []; return out; };
+    b.resetVad = () => { seg = []; reset(); };
+    b.flushVad = () => { seg = []; return flush(); };
+    b.speechSoFar = () => {
+      if (!seg.length) return null;
+      const o = new Float32Array(seg.length * 512);
+      seg.forEach((f, i) => o.set(f, i * 512));
+      return o;
+    };
+    b.transcribe = s => { calls.push(s.length / 512); return `${wake ? "Hey Ember, h" : "H"}eard ${s.length / 512} frames.`; };
+    return { b, calls };
+  }
+  const n = (count: number, f: () => Float32Array) => Array.from({ length: count }, f);
+  const loud = () => level(0.1), quiet = () => level(0);
+  function hear(b: VoiceBackend, frames: Float32Array[], o: { transcribeAhead?: boolean } = {}) {
+    const events: (VoiceEvent & { at: number })[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push({ ...ev, at: c.t }), { now: () => c.t, verifyWake: false, ...o });
+    for (const f of [...n(20, quiet), level(0, 9), ...frames]) { e.feed(f); c.t += 32; }
+    return events.filter(x => x.type === "utterance");
+  }
+
+  it("sends the request when the VAD ends it, as before, with the transcript made at the pause (Moonshine isn't waited for again)", () => {
+    const { b, calls } = ahead();
+    const sent = hear(b, [...n(47, loud), ...n(60, quiet)]);
+    expect(sent).toHaveLength(1);
+    // Made at the pause, of the speech and 11 quiet frames; the VAD's own segment (with its 19) is never transcribed.
+    expect(calls).toHaveLength(1);
+    expect(sent[0].text).toBe(`Heard ${calls[0]} frames.`);
+  });
+
+  it("ends the request no sooner than without it (when a request ends is the VAD's, as before)", () => {
+    const on = hear(ahead().b, [...n(47, loud), ...n(60, quiet)]);
+    const off = hear(ahead().b, [...n(47, loud), ...n(60, quiet)], { transcribeAhead: false });
+    expect(on[0].at).toBe(off[0].at);
+  });
+
+  it("throws that transcript away when the speaker goes on after the pause, and sends what they said in full", () => {
+    const { b, calls } = ahead();
+    const sent = hear(b, [...n(30, loud), ...n(14, quiet), ...n(20, loud), ...n(60, quiet)]);
+    expect(sent).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toBeGreaterThan(calls[0] + 20);
+    expect(sent[0].text).toBe(`Heard ${calls[1]} frames.`);
+  });
+
+  it("doesn't take a transcript made ahead right after a wake that doesn't show the wake phrase (\"A. emperor.\" for \"Hey Ember.\")", () => {
+    const { b, calls } = ahead(false);
+    hear(b, [...n(47, loud), ...n(60, quiet)]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("transcribes the VAD's segment itself when turned off, or with a backend that can't give the speech so far", () => {
+    const off = ahead();
+    const a = hear(off.b, [...n(47, loud), ...n(60, quiet)], { transcribeAhead: false });
+    expect(off.calls).toHaveLength(1);
+    expect(a[0].text).toBe(`Heard ${off.calls[0]} frames.`);
+    const without = ahead();
+    delete without.b.speechSoFar;
+    hear(without.b, [...n(47, loud), ...n(60, quiet)]);
+    expect(without.calls).toEqual(off.calls);
+  });
+});

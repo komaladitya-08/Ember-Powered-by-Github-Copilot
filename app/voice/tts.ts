@@ -20,9 +20,15 @@ export const NATURAL_MAX_RTF = 0.5;
  */
 export const NATURAL_COST = 3.5;
 
-/** A first chunk longer than this is cut at its first comma (or semicolon, or dash) past FIRST_MIN: its sound comes sooner. */
+/**
+ * A first chunk longer than FIRST_SOON is cut at its first comma (or semicolon, colon or dash) between FIRST_MIN and
+ * FIRST_MAX characters: its sound comes sooner. The voice makes about 18 ms of work a character in WebAssembly (Piper
+ * Kristin, scripts/perf/latency.mjs), so a 90-character first sentence held the first sound back by 1.7 s, and its
+ * first clause ("I can't do that one,") came 1.2 s sooner.
+ */
+const FIRST_SOON = 48;
 const FIRST_MAX = 90;
-const FIRST_MIN = 25;
+const FIRST_MIN = 18;
 /** A streamed answer's first clause is said on its own only with at least this many words ("Sure, …" waits). */
 const FIRST_WORDS = 4;
 /** Longer chunks are cut at a comma: the voice's pace and pitch hold better over a clause than over a paragraph. */
@@ -76,7 +82,7 @@ export function speechChunks(text: string): string[] {
     let rest = s;
     for (;;) {
       const first = out.length === 0, max = first ? FIRST_MAX : CHUNK_MAX;
-      const cut = rest.length > max ? cutAtClause(rest, first ? FIRST_MIN : CHUNK_MAX / 2, max) : null;
+      const cut = rest.length > (first ? FIRST_SOON : max) ? cutAtClause(rest, first ? FIRST_MIN : CHUNK_MAX / 2, max) : null;
       if (!cut) break;
       out.push(cut[0]);
       rest = cut[1];

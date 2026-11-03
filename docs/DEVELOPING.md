@@ -511,8 +511,27 @@ questions, "Let me show you." for "show me how", "Got it." for something to reme
 request that fits none of these (or isn't in English) gets no acknowledgement: a generic filler helps no one
 (app/main/acknowledge.ts).
 
-A streamed answer is spoken from its first clause once that has at least 25 characters and 4 words ("I opened the
-report,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts).
+A streamed answer is spoken from its first clause once that has at least 18 characters and 4 words ("I can't do that
+one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
+first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
+character in WebAssembly.
+
+**When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
+lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,
+app/voice/engine.ts): if the VAD then ends the request with no sound since, that transcript is the request's, and it
+is sent without waiting for Moonshine again. When a request ends doesn't change: a request that goes on after the
+pause throws that transcript away. A bare "Ember, …" not shown yet, a cut-in over Ember's voice, a wake still being
+checked and a room where others talk are transcribed from the VAD's own segment, as before.
+
+**Timing the latencies.** `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/latency.mjs`
+(after `node scripts/voice/prepare.mjs --tts-voice --voice ryan`, its test voice; `--only voice,tts,ask,task,kill`,
+`--runs N`, `--json out.json`) prints the median and p95 of each step: wake word → listening and end of speech →
+transcript on the real models (clips synthesized with another voice, fed frame by frame on a real-time clock, and
+requests said with a pause in the middle, to count those cut short), the first spoken audio of an answer streamed at
+the mock model's pace, a typed question → the first token through the real Copilot runtime and the mock model, a
+task's start → its first tool call and each tool's time (the eval's scripted tasks; set `EMBER_PYTHON` to a Python
+with GTK 3), and the kill switch with a turn streaming and the mouse borrowed. Run it on `main` and on a change, on
+the same computer, one after the other.
 
 **What Ember costs at rest.** On Linux, after `npm run build` and `node scripts/voice/prepare.mjs`, run
 `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs`.

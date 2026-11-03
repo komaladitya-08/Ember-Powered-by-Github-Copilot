@@ -20,6 +20,14 @@ describe("speechChunks", () => {
     expect(rest.join(" ")).toBe("ran the tests and the linter, and everything passed on the first try.");
   });
 
+  it("cuts a first sentence of more than 48 characters at its first clause of 18 or more, where the voice takes about 18 ms a character (scripts/perf/latency.mjs)", () => {
+    expect(speechChunks("I can't do that one, because it would delete files from your home folder without a way back.")[0]).toBe("I can't do that one,");
+    expect(speechChunks("It's 3:40 in the afternoon, and your next meeting is at 4.")).toEqual(["It's 3:40 in the afternoon,", "and your next meeting is at 4."]);
+    // Short enough to say whole, and a clause too short to say alone: as before.
+    expect(speechChunks("Night Light is on now, until sunrise.")).toEqual(["Night Light is on now, until sunrise."]);
+    expect(speechChunks("Sure, I've made the text bigger in Settings for you.")).toEqual(["Sure, I've made the text bigger in Settings for you."]);
+  });
+
   it("doesn't end a sentence at an abbreviation, a decimal or a list's number", () => {
     expect(speechChunks("Use a short name, e.g. notes. Version 3.5 is out.")).toEqual(["Use a short name, e.g. notes.", "Version 3.5 is out."]);
   });
@@ -63,6 +71,11 @@ describe("SpeechStream", () => {
     expect(s.push(", checked the totals and")).toEqual(["I opened the quarterly report,"]);
     expect(s.push(" fixed two cells. Anything else?")).toEqual(["checked the totals and fixed two cells."]);
     expect(s.finish()).toEqual(["Anything else?"]);
+  });
+
+  it("starts at a first clause of 18 characters and four words, not only at 25 (“I can't do that one,”)", () => {
+    expect(new SpeechStream().push("I can't do that one, because")).toEqual(["I can't do that one,"]);
+    expect(new SpeechStream().push("Here's what I found: the project")).toEqual(["Here's what I found:"]);
   });
 
   it("waits for the sentence when the first clause is too short to say alone", () => {

@@ -55,6 +55,11 @@ export interface VoiceBackend {
   speaking(): boolean;
   /** Ends any segment in progress and returns it (it ends with the last frame fed); the VAD starts afresh. */
   flushVad(): Float32Array[];
+  /**
+   * The speech the VAD is in the middle of, from a little before it began up to the last frame fed, without ending
+   * it (null: it hears no speech); optional. The engine transcribes it at a pause, ahead of the VAD (SPECULATE_FRAMES).
+   */
+  speechSoFar?(): Float32Array | null;
   resetVad(): void;
   /** What was said in `samples`; "" for nothing heard (less than MIN_TRANSCRIBE_SAMPLES of audio, or the recognizer failed). */
   transcribe(samples: Float32Array): string;
@@ -96,6 +101,8 @@ export interface EngineOptions {
    * word cut at its very end ("Hey Amber" came out as nothing).
    */
   checkAfterMs?: number;
+  /** Transcribe a request at a pause, ahead of the VAD's end of it (SPECULATE_FRAMES). Default on. */
+  transcribeAhead?: boolean;
   now?: () => number;
 }
 
@@ -398,6 +405,19 @@ const STILL_TALKING_FRAMES = 32;
 const BREATH_FRAMES = 3;
 const BREATH_WINDOW_FRAMES = 156;
 const MAX_TRANSCRIBE = 21 * SAMPLE_RATE;
+/**
+ * At a quiet pause of this many frames (0.35 s) in a request, what was said so far is transcribed ahead of the VAD,
+ * which ends the request only after 0.6 s of silence (and Silero's own lag: about 0.72 s after the voice). If the VAD
+ * then ends it with no sound since, that transcript is the request's: it is sent at once, without waiting for
+ * Moonshine (0.13 s in WebAssembly, scripts/perf/latency.mjs). When a request ends is unchanged (a request that goes
+ * on after the pause throws the transcript away). The audio is the speech so far, whole, as the VAD's segment of it is
+ * (with a little more of the quiet before it): on 18 synthesized requests the words came out as right as the VAD's
+ * (scripts/perf/latency.mjs; the voice tests). Only in a quiet pause (the room's own noise, see SILENCE_RATIO), once
+ * per pause, and never for a bare name not shown yet, a cut-in over Ember's voice, a wake still being checked or a
+ * room where others talk (each is decided on the VAD's own segment, as before). It costs one more transcription for
+ * each pause of 0.35 s to 0.6 s a request has in it.
+ */
+const SPECULATE_FRAMES = 11;
 /** A segment of up to 3 s that the recognizer heard nothing in is tried again with 0.1 s of what came before it. */
 const RETRY_MAX = 3 * SAMPLE_RATE;
 const RETRY_LEAD = Math.round(0.1 * SAMPLE_RATE);
@@ -493,6 +513,10 @@ export class VoiceEngine {
   private hushed = 0;
   /** Frames of silence (the room's own noise) in a row, and where in the segment the last tenth of a second of it was. */
   private silentRun = 0;
+  /** The request so far, transcribed at its pause (transcribeAhead): null once sound comes back. */
+  private ahead: string | null = null;
+  /** A segment the VAD ended after that pause, and the transcript made ahead for it (handleSegment's first look). */
+  private early: { audio: Float32Array; text: string } | null = null;
   private silentAt = -1;
   /** After cutting in: frames of the speaker's own voice in the segment under way since Ember's voice stopped reaching the microphone. */
   private afterHush = 0;
@@ -991,6 +1015,7 @@ export class VoiceEngine {
       // A gap between syllables: a moment of the room's own noise (shorter than a pause), and sound again.
       const gap = !silent && this.silentRun >= GAP_FRAMES && this.silentRun < SILENT_FRAMES;
       this.silentRun = silent ? this.silentRun + 1 : 0;
+      if (!silent) this.ahead = null;
       if (this.silentRun >= BREATH_FRAMES) this.silentAt = n;
       this.hushRun = silent && this.hushed < PAUSE_HOLD_FRAMES ? this.hushRun + 1 : 0;
       // The count starts over when the speaker's voice is back, or at their softer words before any pause (and at a gap
@@ -1003,9 +1028,17 @@ export class VoiceEngine {
       // After cutting in, the speaker's voice once Ember's no longer reaches the microphone (it starts over if Ember's does again).
       if (this.mode.kind === "listening" && this.mode.bargeIn) this.afterHush = this.fedAt - this.monitorSoundAt <= this.micLag + OVER_EMBER_MS ? 0 : this.afterHush + (voice ? 1 : 0);
     }
-    for (const seg of segments) this.handleSegment(this.trim(seg, false));
+    // The VAD ended the request in the quiet that followed a transcript made ahead: that transcript is its.
+    const ahead = segments.length === 1 ? this.ahead : null;
+    if (segments.length) this.ahead = null;
+    for (const seg of segments) {
+      const clip = this.trim(seg, false);
+      this.early = ahead !== null && clip ? { audio: clip.audio, text: ahead } : null;
+      try { this.handleSegment(clip); } finally { this.early = null; }
+    }
     if (segments.length && !speaking) this.endSegment();
     if (this.mode.kind !== "listening" || !speaking) return;
+    if (this.silentRun === SPECULATE_FRAMES) this.transcribeAhead();
     const n = this.segment.length;
     // At 10 s, a request goes on (to 20 s) while the speaker's own voice does, in a room quiet when they breathe.
     const goesOn = this.voiceIn(n - 2 * STILL_TALKING_FRAMES) && n - this.silentAt <= BREATH_WINDOW_FRAMES;
@@ -1018,6 +1051,19 @@ export class VoiceEngine {
     }
   }
 
+  /** At a quiet pause in a request (SPECULATE_FRAMES): what was said so far, transcribed for the VAD's end of it. */
+  private transcribeAhead(): void {
+    const m = this.mode;
+    if (this.o.transcribeAhead === false || m.kind !== "listening" || m.bargeIn || m.announced === false || m.checkAt !== null || this.busyRoom || !this.backend.speechSoFar) return;
+    const so = this.backend.speechSoFar();
+    const clip = so ? this.trim(so, false) : null;
+    if (!clip?.audio.length) return;
+    const heard = this.transcribe(clip.audio);
+    // Nothing heard in it, or right after a wake no wake phrase in it ("A. emperor." for "Hey Ember."): the VAD's segment
+    // gets its own look (and its second try, see handleSegment).
+    this.ahead = /[a-z0-9]/i.test(heard) && !(m.first && stripWake(heard, true).trim() === heard.trim()) ? heard : null;
+  }
+
   /** Was the speaker's own voice (within 12 dB of the request's loudness) heard in the segment since frame `from`? */
   private voiceIn(from: number): boolean {
     const e = this.segment, half = LOUD_FRAMES >> 1;
@@ -1027,6 +1073,7 @@ export class VoiceEngine {
 
   private endSegment(): void {
     this.segment = [];
+    this.ahead = null;
     this.quietFor = 0;
     this.pauseAt = Number.NEGATIVE_INFINITY;
     this.pausedSinceVoice = false;
@@ -1212,6 +1259,7 @@ export class VoiceEngine {
 
   /** At most 12 s at a time goes to the recognizer, split where it's quietest (between 6 and 12 s in). */
   private transcribe(seg: Float32Array): string {
+    if (this.early?.audio === seg) return this.early.text;
     const parts: string[] = [];
     let at = 0;
     while (seg.length - at > TRANSCRIBE_CHUNK) {

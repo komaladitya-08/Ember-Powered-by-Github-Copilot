@@ -61,6 +61,12 @@ const BEFORE_SEGMENT = Math.round(0.1 * SAMPLE_RATE);
 const VAD_MAX_SAMPLES = 25 * SAMPLE_RATE;
 const VAD_MAX_SPEECH_SECONDS = 30;
 const CHECK_MAX_SAMPLES = 10 * SAMPLE_RATE;
+/**
+ * What speechSoFar() gives before the audio Silero said speech began in: its minimum speech (0.2 s), a window and a
+ * little more, about where its own segment would start (more quiet before a phrase makes Moonshine hear it worse:
+ * with 0.5 s, "Hey Ember." came out as "A. emperor." where the VAD's segment of it didn't).
+ */
+const SO_FAR_LEAD = Math.round(0.3 * SAMPLE_RATE);
 
 /**
  * Moonshine v2 in the WebAssembly build throws on audio past about 9 s (measured: 9 s of fast talk transcribed, 9.5 s
@@ -261,7 +267,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
    */
   const recent = new Ring(VAD_MAX_SAMPLES / SAMPLE_RATE + 1);
   const before = new WeakMap<Float32Array, Float32Array>();
-  let fed = 0, speechFrom = -1, checkSpeech = 0;
+  let fed = 0, speechFrom = -1, speechStart = -1, checkSpeech = 0;
   const drain = (): Float32Array[] => {
     if (vad.isEmpty()) return [];
     const out: Float32Array[] = [];
@@ -288,6 +294,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     recent.clear();
     fed = 0;
     speechFrom = -1;
+    speechStart = -1;
   };
   // Flushed mid-speech, Silero would carry on as if speaking, and its next end of speech comes out garbled (a
   // negative length): it starts afresh instead (the next words are heard as they begin).
@@ -332,13 +339,23 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
       recent.push(frame);
       fed += frame.length;
       const out = drain();
-      if (!vad.isDetected()) speechFrom = -1;
+      // speechSoFar's start: that of what this call was given (the pre-roll comes in one piece after a wake, and the
+      // speech may have begun anywhere in it).
+      if (vad.isDetected() && speechStart < 0) speechStart = fed - frame.length;
+      if (!vad.isDetected()) speechFrom = speechStart = -1;
       else if (speechFrom < 0) speechFrom = fed;
       else if (fed - speechFrom > VAD_MAX_SAMPLES) out.push(...flush());
       return out;
     },
     speaking: () => vad.isDetected(),
     flushVad: () => flush(),
+    // From SO_FAR_LEAD before the audio Silero said speech began in (it says so 0.2 s or more into it) to the last frame:
+    // the engine trims it to the speaker's voice, as it does a flushed segment.
+    speechSoFar() {
+      if (speechStart < 0) return null;
+      const heard = recent.read();
+      return heard.slice(Math.max(0, heard.length - (fed - speechStart) - SO_FAR_LEAD));
+    },
     resetVad: () => reset(),
     transcribe(samples) {
       if (samples.length < MIN_TRANSCRIBE_SAMPLES) return "";
