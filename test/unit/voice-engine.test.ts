@@ -1611,6 +1611,13 @@ describe("a conversation without the speakers' stream (Windows, macOS: Ember's o
     }
   });
 
+  it("doesn't end a request said softer than \"Hey Ember\", after a pause, at its softer words (a quiet room: the request was cut short)", () => {
+    // "Hey Ember." … "And make the text" (10 dB softer), a breath, "a bit bigger" (14 dB softer): its own loudness, not the
+    // wake phrase's, says when it's over.
+    const { utterances } = converse(feed => feed([...n(100, room), level(0, 9), ...n(12, () => level(0.1)), ...n(40, room), ...n(20, () => level(0.03)), ...n(8, room), ...n(40, () => level(0.02)), ...n(300, room)]), lenient(talking({ wake: 9, hangover: 19 })));
+    expect(utterances).toEqual(["U0 b60"]);
+  });
+
   it("doesn't send Ember's own last words, heard just before \"Hey Ember\", as the request (nor give them to Voice Match)", () => {
     // Ember's voice loud enough for the VAD (14 dB under the user), ending 1 s before the wake: the 1.6 s pre-roll heard it.
     const { utterances, e } = converse((feed, eng) => {

@@ -1124,7 +1124,7 @@ export class VoiceEngine {
       const clip = this.trim(seg, false);
       const end = ahead ? this.backend.speechEnd?.(seg) ?? null : null;
       this.early = ahead !== null && clip && end !== null && end <= ahead.at ? { audio: clip.audio, text: ahead.text } : null;
-      try { this.handleSegment(clip); } finally { this.early = null; }
+      try { this.handleSegment(clip, false, true); } finally { this.early = null; }
     }
     if (segments.length && !speaking) this.endSegment();
     if (this.mode.kind !== "listening" || !speaking) return;
@@ -1256,7 +1256,8 @@ export class VoiceEngine {
     return { audio, before: from ? seg.subarray(Math.max(0, from - RETRY_LEAD), from) : this.backend.before?.(seg) ?? null, own };
   }
 
-  private handleSegment(clip: Clip | null, cut = false): void {
+  /** `paused`: the VAD ended the segment in silence (not flushed: the speaker's voice left while sound went on, or time ran out). */
+  private handleSegment(clip: Clip | null, cut = false, paused = false): void {
     if (this.mode.kind !== "listening" || !clip?.audio.length) return;
     const t0 = this.now();
     const withBefore = (before: Float32Array) => {
@@ -1316,6 +1317,7 @@ export class VoiceEngine {
     // The clip holds the wake phrase before the request ("Hey Ember, allow" in one breath): Voice Match then vouches only
     // for what follows it (match.ts afterWakePhrase).
     const withWake = text.trim() !== heard.trim();
+    const wakePhrase = this.mode.first && this.mode.reason === "wake";
     this.mode.first = false;
     if (clip.own && saysSomething(text) && !saysSomething(stripWake(this.transcribe(clip.own), true).replace(LONE_GREETING, ""))) {
       // "Hey Ember." and then only others' talk (a TV, colleagues: under the wake phrase's loudness): the user hasn't
@@ -1325,6 +1327,12 @@ export class VoiceEngine {
     if (!saysSomething(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
       this.mode.until = Math.max(this.mode.until, this.now() + 4000);
+      // The request said after it is measured on its own loudness, not the wake phrase's (said up close, and louder: the
+      // microphone has no gain control). Against the wake phrase's, its softer words counted as others' talk and ended it
+      // early ("Hey Ember." … "And make the text a bit bigger." 6 dB softer was sent as "And make the text."). Only after
+      // a pause the VAD heard, in a room that wasn't busy: where sound went on after the wake phrase, or others talked
+      // before it, the request must still come as loud as the wake phrase (VO9-3).
+      if (wakePhrase && paused && !this.busyRoom) this.peak = 0;
       return;
     }
     if (stopped(text)) {
