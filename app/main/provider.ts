@@ -166,6 +166,7 @@ const hostFile = (file: string) => file.replace(/\.bin$/, "") + ".host";
  * decryptStringAsync): never isEncryptionAvailable, which fetches the Keychain's key on it.
  */
 export class ProviderKeyStore {
+  private revision = 0;
   constructor(private file: string, private box: SecretBox, private opts: { asyncKeyring?: boolean } = {}) {}
 
   /** Can a key be kept on this machine (a real keyring, not basic_text)? Asks the keyring: only when it is needed. */
@@ -191,11 +192,13 @@ export class ProviderKeyStore {
   }
 
   /** Seals and writes `key` for `host`, or says why it wasn't. Never throws. */
-  async save(key: string, host: string): Promise<KeySave> {
+  async save(key: string, host: string, current: () => boolean = () => true): Promise<KeySave> {
+    const revision = ++this.revision;
     const problem = apiKeyProblem(key);
     if (problem) return { ok: false, why: problem };
     if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
     if (!(await this.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
+    if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
     const text = JSON.stringify({ v: 1, host, key: key.trim() });
     let sealed: Buffer;
     try {
@@ -203,6 +206,7 @@ export class ProviderKeyStore {
     } catch {
       return { ok: false, why: KEY_NO_KEYRING };
     }
+    if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
     const r: SaveResult = this.write(this.file, sealed);
     if (r !== "kept" || this.write(hostFile(this.file), Buffer.from(host)) !== "kept") { this.clear(); return { ok: false, why: KEY_WRITE_FAILED }; }
     return { ok: true };
@@ -210,10 +214,12 @@ export class ProviderKeyStore {
 
   /** The saved key and its host, or null (none saved, unreadable, or the keyring wouldn't open it). Never throws. */
   async load(): Promise<StoredKey | null> {
+    const revision = this.revision;
     let raw: Buffer;
     try { raw = fs.readFileSync(this.file); } catch { return null; /* none saved */ }
     try {
       const text = this.opts.asyncKeyring && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
+      if (revision !== this.revision) return null;
       const v = JSON.parse(text) as { host?: unknown; key?: unknown };
       if (typeof v.host !== "string" || !v.host || typeof v.key !== "string" || apiKeyProblem(v.key) !== null) return null;
       return { key: v.key, host: v.host };
@@ -224,6 +230,7 @@ export class ProviderKeyStore {
 
   /** Deletes the saved key and its host. */
   clear(): void {
+    ++this.revision;
     for (const f of [this.file, hostFile(this.file)]) {
       try { fs.rmSync(f, { force: true }); } catch { /* already gone */ }
     }
@@ -331,6 +338,9 @@ export const PROVIDER_HOST_CHANGED = "The address changed: check it, then agree 
 export function createProviderService(d: ProviderServiceDeps) {
   let stored: StoredKey | null = null;
   let reading: Promise<void> | null = null;
+  let revision = 0;
+  let saving: Promise<unknown> = Promise.resolve();
+  const invalidate = () => { ++revision; reading = null; };
   /**
    * Keys replaced or removed this run: still redacted from the log, since a task may still run on one (tasks keep the
    * config they started with). In memory only, like the key in use.
@@ -345,11 +355,13 @@ export function createProviderService(d: ProviderServiceDeps) {
   const readKey = (always = false): Promise<void> => {
     const host = hostNow();
     if (stored || !host || !allowed() || (!always && !d.settings.get().provider.on) || d.keys.savedHost() !== host) return Promise.resolve();
-    reading ??= d.keys.load().then(k => {
+    const started = revision;
+    const pending = reading ?? d.keys.load().then(k => {
       // A key sealed for another host than the one beside it is no key at all.
-      if (k && k.host === hostNow()) { stored = k; d.log.info("provider.key_read", {}); d.changed(); }
-    }).finally(() => { reading = null; });
-    return reading;
+      if (started === revision && allowed() && (always || d.settings.get().provider.on) && k && k.host === host && host === hostNow()) { stored = k; d.log.info("provider.key_read", {}); d.changed(); }
+    }).finally(() => { if (reading === pending) reading = null; });
+    reading = pending;
+    return pending;
   };
 
   return {
@@ -366,6 +378,8 @@ export function createProviderService(d: ProviderServiceDeps) {
     },
     /** The settings changed: a key saved for another host than the endpoint now is deleted, and one now needed is read. */
     settingsChanged(): void {
+      invalidate();
+      if (!allowed() || !d.settings.get().provider.on) retire();
       const saved = d.keys.savedHost();
       const host = endpointHost(d.settings.own().provider.baseUrl);
       if (saved && saved !== host) {
@@ -378,6 +392,7 @@ export function createProviderService(d: ProviderServiceDeps) {
     },
     /** Signing out: the key goes. */
     forget(): void {
+      invalidate();
       d.keys.clear();
       retire();
     },
@@ -387,15 +402,29 @@ export function createProviderService(d: ProviderServiceDeps) {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const host = hostNow();
         if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
-        const r = await d.keys.save(key, host);
-        if (!r.ok) return r;
-        retire();
-        stored = { key: key.trim(), host };
-        d.log.info("provider.key_saved", {});
-        d.changed();
-        return { ok: true };
+        invalidate();
+        const started = revision;
+        // Serialise writes so cancelling an old save cannot erase a newer key.
+        const operation = saving.then(async (): Promise<KeySave> => {
+          if (started !== revision || host !== hostNow() || !allowed()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+          const r = await d.keys.save(key, host, () => started === revision && host === hostNow() && allowed());
+          if (started !== revision || host !== hostNow() || !allowed()) {
+            d.keys.clear();
+            return { ok: false, why: PROVIDER_HOST_CHANGED };
+          }
+          if (!r.ok) return r;
+          invalidate();
+          retire();
+          stored = { key: key.trim(), host };
+          d.log.info("provider.key_saved", {});
+          d.changed();
+          return { ok: true };
+        });
+        saving = operation.catch(() => undefined);
+        return operation;
       },
       removeKey: (): KeySave => {
+        invalidate();
         d.keys.clear();
         retire();
         d.log.info("provider.key_removed", {});
@@ -413,9 +442,11 @@ export function createProviderService(d: ProviderServiceDeps) {
       test: async (): Promise<TestResult> => {
         if (!d.consented()) return { ok: false, why: PROVIDER_NO_CONSENT };
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
+        const started = revision;
         const p = d.settings.get().provider;
         // Checked before the keyring is asked: nothing at all for a host whose card isn't agreed.
         if (providerAgreed(p)) await readKey(true);
+        if (started !== revision || !d.consented() || !allowed() || p !== d.settings.get().provider) return { ok: false, why: PROVIDER_HOST_CHANGED };
         const r = await testConnection(p, stored, d.fetch);
         d.log.info("provider.tested", { ok: r.ok });
         return r;
