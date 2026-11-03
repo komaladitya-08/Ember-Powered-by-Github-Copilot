@@ -12,9 +12,17 @@ export const TARGETS = ["linux-x64", "win32-x64", "win32-arm64", "darwin-arm64",
  * Packages published once per platform (npm installs only the host's). Every one of them that isn't the target's
  * own build is left out of the package: another OS's binaries, musl builds, sharp's wasm fallback. sherpa-onnx-*:
  * sherpa-onnx's native addon (app/voice/runtime.ts), for Windows and macOS only; Linux has none (it needs glibc 2.32,
- * RHEL 8 has 2.28: Linux packages run speech on sherpa-onnx's WebAssembly, which isn't in this family).
+ * RHEL 8 has 2.28: Linux packages carry sherpa-onnx's C API libraries instead, VOICE_NATIVE_DIR, and its WebAssembly,
+ * which isn't in this family).
  */
 export const PLATFORM_FAMILIES = ["@github/copilot-sdk-", "@img/sharp-", "@koromix/koffi-", "sherpa-onnx-"];
+
+/**
+ * The folder under the Linux resources folder holding sherpa-onnx's C API (libsherpa-onnx-c-api.so and
+ * libonnxruntime.so, CAPI_RELEASE in app/voice/models.ts), loaded with koffi for native speech: libraries, not Node
+ * addons, so ember.nativeModules stays []. The platform layer looks for it there (linux/system.ts nativeSpeechDir).
+ */
+export const VOICE_NATIVE_DIR = "voice-native";
 
 /** sherpa-onnx's native addon package for a Windows or macOS target (npm calls Windows "win"). */
 const sherpaNative = (platform, arch) => `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}`;
@@ -87,7 +95,7 @@ export function layoutFor(platform, arch) {
       sidecarDist: [],
       // The Windows/macOS accessibility host never runs here (the Python AT-SPI sidecar does).
       excludeDist: ["ax-sidecar.cjs"],
-      icon: null, exeResources: false, signing: null, voiceModels: "beside",
+      icon: null, exeResources: false, signing: null, voiceModels: "beside", voiceNative: VOICE_NATIVE_DIR,
     };
   }
   if (platform === "win32") {
@@ -120,7 +128,7 @@ export function layoutFor(platform, arch) {
       excludeDist: ["desk-agent.cjs"],
       // For shortcuts and windows, and written into Ember.exe with its version resource (exe-resources.mjs).
       icon: { kind: "ico", file: "resources/ember.ico" },
-      exeResources: true, signing: null, voiceModels: "inside",
+      exeResources: true, signing: null, voiceModels: "inside", voiceNative: null,
     };
   }
   return {
@@ -151,7 +159,7 @@ export function layoutFor(platform, arch) {
     // Info.plist names the bundle (mac-bundle.mjs); there is no PE resource to rewrite.
     exeResources: false,
     // Flipping the fuses breaks Electron's signature, and arm64 macOS kills unsigned code: re-signed ad hoc.
-    signing: "adhoc", voiceModels: "inside",
+    signing: "adhoc", voiceModels: "inside", voiceNative: null,
   };
 }
 

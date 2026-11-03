@@ -47,7 +47,8 @@ export const BUNDLED_LIBRARIES = [
   {
     // sherpa-onnx's native addon 1.13.8 (Windows, macOS): sherpa-onnx's C API with what it is built from, as the
     // names in sherpa-onnx-c-api show, and onnxruntime 1.28.2 as a library of its own (packaging/licences/
-    // sherpa-onnx-native.txt). Its text-to-speech, which speaks Ember's voice, includes eSpeak NG. Never on Linux.
+    // sherpa-onnx-native.txt). Its text-to-speech, which speaks Ember's voice, includes eSpeak NG. Never on Linux, which
+    // carries the same C API's prebuilt libraries instead (not a package: stage.mjs adds their notices itself).
     package: /^sherpa-onnx-(win|darwin)-(x64|arm64)$/,
     embedded: {
       "ONNX Runtime": ["MIT"], "kaldi-native-fbank": ["Apache-2.0"], "kaldi-decoder": ["Apache-2.0"], kaldifst: ["Apache-2.0"],
