@@ -264,6 +264,29 @@ export function memoryEmptyText(on: boolean): string {
   return on ? "Nothing yet. Tell Ember about yourself, or say “Remember that…”." : "Nothing remembered.";
 }
 
+/** Better recall's model in Settings › Memory (docs/MEMORY.md §2), as main reports it (memory/better-recall.ts). */
+export interface BetterRecallState { state: "absent" | "downloading" | "ready" | "off"; bytes: number; done?: number; failed?: "checksum" | "network" }
+
+/** Better recall's line: what the download is and does, how it is going, or that it is on. */
+export function betterRecallText(s: BetterRecallState): string {
+  const mb = `${Math.max(1, Math.round(s.bytes / 1e6))} MB`;
+  if (s.state === "ready") return "On: a language model on this computer matches what you ask with what Ember remembers, even in other words.";
+  if (s.state === "downloading") return "Downloading the language model…";
+  if (s.failed === "checksum") return "The download didn't match what Ember expects, so it wasn't used.";
+  if (s.failed) return "The download didn't finish. Check the network and try again.";
+  return `Download a ${mb} language model that runs on this computer, so Ember finds what you told it when you ask in other words.`;
+}
+
+/** Better recall's download button: what it fetches and its size. */
+export function betterRecallDownloadLabel(bytes: number): string {
+  return `Download (${Math.max(1, Math.round(bytes / 1e6))} MB)`;
+}
+
+/** Better recall's download for screen readers: only at 0, 25, 50, 75 and 100 % (progressStep). */
+export function betterRecallProgress(fraction: number): string {
+  return `Language model ${progressStep(fraction)}% downloaded`;
+}
+
 /** A remembered fact's Forget button, for screen readers. */
 export function forgetMemoryLabel(text: string): string {
   return `Forget: ${text}`;

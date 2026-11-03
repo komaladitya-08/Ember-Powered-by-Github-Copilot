@@ -1,6 +1,6 @@
 # Ember's long-term memory
 
-Status: steps 1 and 2 are built. The core (`app/main/memory/`) is done, and memory is wired into the conversation
+Status: steps 1, 2 and 8 (Better recall) are built. The core (`app/main/memory/`) is done, and memory is wired into the conversation
 behind Settings › Conversation › **Remember what I tell you**, which is off until the user turns it on and agrees to
 its note. The conversation itself is still deleted at quit (docs/DEVELOPING.md, "Conversation"). Memory keeps only
 facts.
@@ -57,9 +57,58 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten.
 
-Embeddings are left out on purpose for now. Linux ships no native modules, and Ember has no text-embedding model
-yet. `RecallOptions.extraSeeds` is where a vector index's matches plug in (a small ONNX model in WebAssembly,
-SHA-256 pinned and downloaded only with consent, like the speech models).
+**Better recall** (step 8) adds matching by meaning, once the user downloads its model:
+- `embed-model.ts`: all-MiniLM-L6-v2 (int8, 23 MB, Apache-2.0) on onnxruntime-web's WebAssembly with one thread, the
+  same build Voice Match uses, so Linux still ships no native module. `wordpiece.ts` is BERT's tokenizer in
+  TypeScript, checked id for id against Hugging Face's (`wordpiece.test.ts`).
+- `embed-process.ts` runs it in the "Ember memory" utility process; `embed-client.ts` starts it on the first vector
+  needed and ends it after 5 idle minutes (it holds 300–400 MB while loaded).
+- `embed.ts`: each fact's sentence and names (not the user's own) become a unit vector, in the background after a
+  change. Vectors are kept in `memory-vectors.json` (0600, atomic, a broken file moved aside), keyed by fact id, a
+  hash of the text and the model's SHA-256 (a new model rebuilds them). A forgotten fact's vector goes with it;
+  "Forget everything", sign-out and Remove delete the file. A question's 8 nearest facts by brute-force cosine
+  (3 ms over 5,000 facts on a busy 4-vCPU machine) at 0.2 or above go to recall as `semantic`.
+- `recall.ts`: semantic matches seed the walk beside the lexical ones and add a score of their own (`SEMANTIC_WEIGHTS`:
+  0.6 for meaning, the rest in the lexical mix's proportions). Facts the question's words or names also reach count
+  from the floor; of the rest, only the best one (`SEMANTIC_ALONE`), so a request about nothing remembered brings
+  little. Without them recall is byte for byte what it was.
+- `better-recall.ts`: the download prompt in Settings › Memory (the click is the agreement, as for the speech models;
+  nothing is fetched while memory is off, turning it off cancels a download under way, and `features.memory: false`
+  turns it off with memory), Remove, and the wiring. The model comes from Hugging Face (`huggingface.co`, redirected
+  to `*.hf.co`), pinned by SHA-256; re-hosting it on the project's GitHub release would change only its URLs. The kill switch stops indexing and ends the process.
+
+Measured on `test/fixtures/memory-bench.json` (80 facts; 80 questions in other words, 30 in the facts' own words, 12
+about nothing remembered), by `node scripts/memory/bench.mjs`, which `memory.test.ts` scores from the model's recorded
+matches:
+
+| Recall | Other words @1 | Other words @5 | Own words @1 | Own words @5 | Facts given when nothing bears on it |
+|---|---|---|---|---|---|
+| Lexical (no model) | 9% | 11% | 100% | 100% | 0.5 |
+| With the model | 83% | 86% | 100% | 100% | 1.3 |
+| With the model, every match counted (first version) | 84% | 96% | 100% | 100% | 3.2 |
+
+Counting every match by meaning gave unrelated requests three facts, so only the best match by meaning alone counts.
+No cosine floor separates the two kinds of question with this model: unrelated requests' best matches score 0.18 to
+0.49, and the right answers to questions in other words 0.2 to 0.3. Floors for facts matched by meaning alone, as
+measured: 0.25 gave 81% and 89% with 2.2 facts, 0.3 gave 76% and 83% with 1.2, 0.35 gave 59% and 61% with 0.9. The
+one fact that remains is on a nearby subject ("Make the text bigger" brings the preferred terminal font size), and
+is untrusted context.
+
+The candidates, each int8 on one WebAssembly thread on a 4-vCPU machine under load (quickest of three runs; vector
+search alone, before the mix):
+
+| Model | Download | First @1 | First @5 | A question | Loaded |
+|---|---|---|---|---|---|
+| all-MiniLM-L6-v2 (chosen) | 23 MB | 83% | 96% | 7 ms | 260–380 MB |
+| gte-small | 34 MB | 88% | 96% | 19 ms | 345–430 MB |
+| bge-small-en-v1.5 | 34 MB | 80% | 98% | 31 ms | 345–430 MB |
+| snowflake-arctic-embed-xs | 23 MB | 69% | 94% | 24 ms | 360–380 MB |
+| e5-small-v2 | 34 MB | 68% | 90% | 21 ms | 360–370 MB |
+| multilingual-e5-small | 118 MB | not run | | | |
+
+gte-small was a little better first, but half as big again and about three times slower; with recall's mix it found
+79% first against MiniLM's 84%. multilingual-e5-small needs a SentencePiece tokenizer (17 MB) and five times the
+download, so English-only MiniLM is the trade-off for now.
 
 ## 3. What stays true (CLAUDE.md "Safety and privacy")
 
@@ -123,7 +172,8 @@ SHA-256 pinned and downloaded only with consent, like the speech models).
 7. **Connectors.** Ember has no MCP client today, and its network rule allows only Copilot, GitHub sign-in and the
    pinned downloads. Reading from MCP servers the user connects means widening that rule (PLAN.md §2 changes in its
    own PR) and adding a per-connector card. Connector content is `connector`-sourced and untrusted.
-8. **Embeddings** as `extraSeeds`, once a model is pinned and measured on the eval.
+8. **Embeddings** (done: Better recall, §2). As built, the matches arrive as `RecallOptions.semantic` (seeds and a
+   score of their own) rather than plain `extraSeeds`, whose weights can't say how alike a fact is.
 
 Each step ships with its tests and docs, and the eval gains memory tasks: recall a fact across a restart, never act
 on an injected "memory", forget on request.

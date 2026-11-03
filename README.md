@@ -177,10 +177,12 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 
 Everything Ember hears and says is worked out on the computer itself: the wake word, speech recognition, Ember's
 voice and Voice Match need no network. Ember's packages carry everything it runs: its speech models, and the Node.js
-runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256), so Ember downloads
-nothing from third parties. Only Copilot itself, and the review of commands, need the network: your organisation's
-model service, your own model provider, or GitHub Copilot's. With your own provider on a model server on this
-computer (below), nothing needs the network at all.
+runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256). The one thing it
+fetches from a third party is optional: Better recall's 23 MB language model (Settings › Memory), downloaded from
+Hugging Face (`huggingface.co`, served from `*.hf.co`) only when you click its Download, and checked against its pinned
+SHA-256. Without it, memory still works, matching your words. Only Copilot itself, and the review of commands, need
+the network: your organisation's model service, your own model provider, or GitHub Copilot's. With your own provider
+on a model server on this computer (below), nothing needs the network at all.
 
 What to install so nothing is downloaded:
 
