@@ -24,23 +24,34 @@ const voiceWith = (change: Partial<Settings["voice"]>): Settings["voice"] => ({
 
 function renderWords(list: VoiceWord[]): void {
   const ul = $("words-list");
+  const restoreFocus = ul.contains(document.activeElement) || document.activeElement === $("words-forget-all");
   ul.replaceChildren(...(list.length
     ? list.map((w, i) => {
       const li = document.createElement("li");
       li.append(Object.assign(document.createElement("span"), { textContent: wordRowText(w) }));
       const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
       btn.setAttribute("aria-label", forgetWordLabel(w));
-      btn.addEventListener("click", () => { wordsFocus = i; void window.ember.forgetVoiceWord(i).then(renderWords); });
+      btn.addEventListener("click", () => {
+        if (btn.getAttribute("aria-disabled") === "true") return;
+        btn.setAttribute("aria-disabled", "true");
+        $("words-note").textContent = "";
+        wordsFocus = i;
+        void window.ember.forgetVoiceWord(w).then(renderWords, () => {
+          wordsFocus = null;
+          btn.removeAttribute("aria-disabled");
+          $("words-note").textContent = "Couldn't forget that correction. Try again.";
+        });
+      });
       li.append(btn);
       return li;
     })
     : [Object.assign(document.createElement("li"), { className: "empty", textContent: PERSONAL_TEXT.wordsEmpty })]));
   ($("words-forget-all") as HTMLButtonElement).hidden = !list.length;
-  if (wordsFocus !== null) {
+  if (wordsFocus !== null && restoreFocus) {
     const buttons = ul.querySelectorAll("button");
     (buttons[Math.min(wordsFocus, buttons.length - 1)] ?? $("words-on")).focus();
-    wordsFocus = null;
   }
+  wordsFocus = null;
 }
 
 /** The rows as the settings say (the learning row only once Voice Match knows the voice). */
@@ -100,14 +111,27 @@ function teachForm(li: HTMLLIElement, heardId: number, shown: string, opener: HT
   form.addEventListener("submit", e => {
     e.preventDefault();
     const meant = input.value.trim();
-    if (!meant) return;
+    if (!meant || ok.getAttribute("aria-disabled") === "true") return;
+    ok.setAttribute("aria-disabled", "true");
+    input.readOnly = true;
+    note.textContent = "Saving…";
     void window.ember.teachWords(heardId, meant).then(r => {
-      form.replaceChildren(note);
+      if (!form.isConnected) return;
       note.textContent = teachOutcomeText(r.outcome, r.word?.meant ?? meant);
-      if (r.outcome === "learnt") opener.remove(); else opener.hidden = false;
+      if (r.outcome === "learnt") {
+        const focused = form.contains(document.activeElement);
+        form.replaceChildren(note);
+        opener.remove();
+        if (focused) { note.tabIndex = -1; note.focus({ preventScroll: true }); }
+      } else { input.readOnly = false; ok.removeAttribute("aria-disabled"); }
+    }, () => {
+      if (!form.isConnected) return;
+      note.textContent = "Couldn't save the correction. Try again.";
+      input.readOnly = false;
+      ok.removeAttribute("aria-disabled");
     });
   });
-  form.append(label, input, ok, no);
+  form.append(label, input, ok, no, note);
   li.append(form);
   input.focus();
   input.select();

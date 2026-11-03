@@ -603,6 +603,22 @@ describe("words.json", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("a repeated or stale forget request cannot delete the next or replacement correction", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-word-forget-"));
+    try {
+      const store = wordsStore(dir);
+      const [first] = store.add({ heard: "jeera", meant: "Jira" }, new Date("2026-11-03T09:00:00Z"));
+      store.add({ heard: "shivan", meant: "Siobhan" });
+      expect(store.forget(first).map(w => w.meant)).toEqual(["Siobhan"]);
+      expect(store.forget(first).map(w => w.meant)).toEqual(["Siobhan"]);
+      const replacement = store.add({ heard: "jeera", meant: "Jira" }, new Date("2026-11-03T10:00:00Z"));
+      expect(store.forget(first)).toEqual(replacement);
+      expect(store.forget(0)).toEqual(replacement);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("what the voice process offers main as a sample (adapt-sample.ts)", () => {

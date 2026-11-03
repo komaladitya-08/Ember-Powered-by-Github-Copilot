@@ -8,6 +8,7 @@
 
 import { spawn } from "node:child_process";
 import type { ServedTool, ToolHints } from "./pin";
+import { MCP_TOOL_NAME } from "./tool-name";
 
 /** What a probe found: the tools, or that the server needs the user to sign in, or why it failed. */
 export type ProbeResult = { ok: true; tools: ServedTool[] } | { ok: false; needsAuth?: boolean; why: string };
@@ -26,7 +27,7 @@ export function servedTools(pages: unknown[]): ServedTool[] {
     if (!Array.isArray(tools)) continue;
     for (const t of tools) {
       const o = t as { name?: unknown; description?: unknown; inputSchema?: unknown; annotations?: unknown };
-      if (typeof o.name !== "string" || !/^[A-Za-z0-9_.-]{1,64}$/.test(o.name)) continue;
+      if (typeof o.name !== "string" || !MCP_TOOL_NAME.test(o.name)) continue;
       const a = (o.annotations && typeof o.annotations === "object" ? o.annotations : {}) as Record<string, unknown>;
       const hints: ToolHints = {};
       for (const k of ["readOnlyHint", "destructiveHint", "openWorldHint", "idempotentHint"] as const) if (typeof a[k] === "boolean") hints[k] = a[k] as boolean;

@@ -125,6 +125,7 @@ export class MemoryLearning {
   /** The kill switch: every model call under way is abandoned, nothing waiting is learned, the interview ends. */
   stopNow(): void {
     ++this.recallRevision;
+    this.d.memory.cancelUpkeep();
     this.learner.stop();
     this.refining?.abort();
     this.refining = null;
@@ -284,33 +285,34 @@ export class MemoryLearning {
 
   /** One idle check: the sleep-time pass first, else a question. */
   async tick(): Promise<void> {
-    if (!this.d.inForce() || this.d.locked() || !this.d.idle()) return;
+    const stillIdle = () => !this.d.locked() && this.d.idle() && this.now() - this.lastActive >= IDLE_MS;
+    if (!this.d.inForce() || !stillIdle()) return;
     const now = this.now();
-    if (now - this.lastActive < IDLE_MS) return;
     if (!this.refinedThisIdle && this.model && !this.refining && this.refines.allows(now)) {
       this.refinedThisIdle = true;
-      await this.refine();
+      await this.refine(stillIdle);
       return;
     }
     this.maybeAsk();
   }
 
   /** The sleep-time pass: consolidate(), then one model pass over what changed lately. What it changed. */
-  async refine(): Promise<number> {
+  async refine(mayStart = () => true): Promise<number> {
     const m = this.d.memory;
-    m.upkeep();
-    const model = this.model;
-    if (!model || !this.d.inForce()) return 0;
-    let shown: Fact[] = [];
-    let prompt = "";
-    m.refine(g => { shown = recentFacts(g, this.refinedAt); prompt = shown.length ? refinePrompt(g, shown) : ""; return 0; });
-    if (shown.length < 2) return 0;
-    const now = this.now();
-    this.refines.spend(now);
-    this.refinedAt = new Date(now).toISOString();
+    if (this.refining || !this.d.inForce()) return 0;
     const run = new AbortController();
     this.refining = run;
     try {
+      if (!await m.upkeep() || run.signal.aborted || !this.d.inForce() || !mayStart()) return 0;
+      const model = this.model;
+      if (!model) return 0;
+      let shown: Fact[] = [];
+      let prompt = "";
+      m.refine(g => { shown = recentFacts(g, this.refinedAt); prompt = shown.length ? refinePrompt(g, shown) : ""; return 0; });
+      if (shown.length < 2) return 0;
+      const now = this.now();
+      this.refines.spend(now);
+      this.refinedAt = new Date(now).toISOString();
       const raw = await model(REFINE_SYSTEM, prompt, run.signal);
       if (run.signal.aborted || !this.d.inForce()) return 0;
       const r = parseRefinement(raw);

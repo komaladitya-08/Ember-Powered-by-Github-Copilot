@@ -53,7 +53,7 @@ beforeAll(async () => {
   fs.copyFileSync(path.resolve("test/fixtures/mcp-fake.mjs"), path.join(plugin, "server.mjs"));
   fs.writeFileSync(path.join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({
     name: "fake", version: "1.0.0",
-    mcpServers: { fake: { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/server.mjs"], env: { MCP_LOG: path.join(dir, "mcp.log") } } },
+    mcpServers: { fake: { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/server.mjs"], env: { MCP_LOG: path.join(dir, "mcp.log"), FAKE_DOTTED: "1" } } },
   }));
   fs.writeFileSync(path.join(plugin, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: `touch ${path.join(dir, "hook-ran")}` }] }] } }));
   const runtime = locateRuntime({ appPath: process.cwd(), runtimeId, exe });
@@ -104,7 +104,11 @@ describe("extensions on the real Copilot runtime", () => {
     const [review] = await service.list();
     expect(service.forSession()).toBeUndefined();
     await service.reagree(review.id, review.reviewToken!);
-    expect((await service.list())[0]).toMatchObject({ status: "ready", tools: [{ name: "lookup", readOnly: true }, { name: "post_message", readOnly: false }, { name: "broken", readOnly: true }, { name: "huge", readOnly: true }] });
+    expect((await service.list())[0]).toMatchObject({ status: "ready", tools: [
+      { name: "calendar.list", readOnly: true }, { name: "post_message", readOnly: false },
+      { name: "broken", readOnly: true }, { name: "huge", readOnly: true },
+      { name: "clash.one", readOnly: true, nameConflict: true }, { name: "clash-one", readOnly: false, nameConflict: true },
+    ] });
 
     const states: Partial<EmberState>[] = [];
     const extensions = service.forSession()!;
@@ -115,17 +119,18 @@ describe("extensions on the real Copilot runtime", () => {
     });
     await conductor.start();
 
-    // A read-only tool runs without asking; its result reaches the model wrapped as untrusted.
+    // The runtime changes dots to hyphens for the model, but sends the original name to the server.
     let before = mock.requests.length;
     let from = states.length;
-    await conductor.ask('CALLTOOL:fake-lookup{"q":"weather"}');
+    await conductor.ask('CALLTOOL:fake-calendar-list{"q":"weather"}');
     await idle(states, from);
-    expect(mock.requests[before].tools).toEqual(expect.arrayContaining(["fake-lookup", "fake-post_message", "set_appearance"]));
+    expect(mock.requests[before].tools).toEqual(expect.arrayContaining(["fake-calendar-list", "fake-post_message", "set_appearance"]));
+    expect(mock.requests[before].tools).not.toContain("fake-clash-one");
     expect(mock.requests[before].tools.some(t => /extension|manage|install|reload/.test(t))).toBe(false);
     const results = mock.requests.slice(before).flatMap(r => r.messages).filter(m => m.role === "tool").map(m => String(m.content));
-    expect(results.some(r => r.startsWith('<extension_result untrusted="true" extension="fake" tool="lookup">') && r.includes("‹screen>"))).toBe(true);
+    expect(results.some(r => r.startsWith('<extension_result untrusted="true" extension="fake" tool="calendar.list">') && r.includes("‹screen>"))).toBe(true);
     expect(asked).toEqual([]);
-    expect(mcpLog()).toContain("CALL lookup");
+    expect(mcpLog()).toContain("CALL calendar.list");
     // The server got neither the sign-in nor the key, and the plugin's hook never ran.
     expect(mcpLog()).toMatch(/started secrets=\n/);
     expect(mcpLog()).not.toMatch(/GH_TOKEN|EXAMPLE_API_KEY/);
@@ -141,14 +146,14 @@ describe("extensions on the real Copilot runtime", () => {
     expect(mcpLog()).not.toContain("CALL post_message");
     const denied = mock.requests.slice(before).flatMap(r => r.messages).filter(m => m.role === "tool").map(m => String(m.content));
     expect(denied.some(r => r.includes("The user said no."))).toBe(true);
-    expect(audit.filter(e => e.phase === "decision").map(e => [e.tool, e.verdict])).toEqual([["fake-lookup", "allow"], ["fake-post_message", "ask"]]);
+    expect(audit.filter(e => e.phase === "decision").map(e => [e.tool, e.verdict])).toEqual([["fake-calendar-list", "allow"], ["fake-post_message", "ask"]]);
 
     // The kill switch ends the server and refuses every later call in this conversation.
     service.stopPart().stop();
     from = states.length;
-    await conductor.ask('CALLTOOL:fake-lookup{"q":"again"}');
+    await conductor.ask('CALLTOOL:fake-calendar-list{"q":"again"}');
     await idle(states, from);
-    expect(mcpLog().match(/CALL lookup/g)?.length).toBe(1);
+    expect(mcpLog().match(/CALL calendar\.list/g)?.length).toBe(1);
     await conductor.stop();
   }, 120_000);
 

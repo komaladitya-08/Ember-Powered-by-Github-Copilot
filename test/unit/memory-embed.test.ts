@@ -9,7 +9,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { KillSwitch } from "../../app/main/agent/killswitch";
 import { BetterRecall } from "../../app/main/memory/better-recall";
 import { EmbedClient, MAX_FAILURES, type EmbedChild } from "../../app/main/memory/embed-client";
 import { SemanticMemory, VectorIndex, documentText, vectorFile, type Embedder } from "../../app/main/memory/embed";
@@ -78,6 +80,20 @@ describe("the vector index", () => {
     expect(fs.existsSync(file.path) || fs.existsSync(`${file.path}.broken`)).toBe(false);
   });
 
+  it("keeps the stored vector bytes and scale for signed, rounded and zero coordinates", () => {
+    const index = new VectorIndex(MODEL);
+    const h = "0123456789abcdef";
+    index.set("signed", h, Float32Array.of(-127, -64, -0.5, 0, 0.5, 64, 127));
+    index.set("zero", h, new Float32Array(7));
+    expect(index.toJSON()).toEqual({
+      version: 1, model: MODEL, dim: 7,
+      rows: [
+        { id: "signed", h, s: 1, v: Buffer.from([129, 192, 0, 0, 1, 64, 127]).toString("base64") },
+        { id: "zero", h, s: 1, v: Buffer.alloc(7).toString("base64") },
+      ],
+    });
+  });
+
   it("embeds a fact with the names it is about, but not the user's own", () => {
     const g = new MemoryGraph(undefined, clock());
     const r = g.add({ text: "Leads the platform team", about: [{ name: "Priya", kind: "person" }, { name: "User", kind: "person" }], source: "user" });
@@ -94,6 +110,35 @@ describe("Better recall's index, as memory changes", () => {
     return { dir, embedder, semantic, memory, file: path.join(dir, "memory-vectors.json") };
   }
   const settle = async () => { await vi.advanceTimersByTimeAsync(2000); };
+
+  it("dispatches input, speech and task Stop before the pending vector cache is flushed", async () => {
+    const calls: string[] = [];
+    const file = {
+      path: "", load: () => new VectorIndex(MODEL), save: () => { calls.push("vector flush"); },
+      drop() {}, erase() {},
+    };
+    const semantic = new SemanticMemory({ dir: "", log: quiet, model: () => MODEL, embedder: fakeEmbedder(), file });
+    const graph = new MemoryGraph(undefined, clock());
+    graph.add({ text: "Likes green tea", about: [{ name: "User" }], source: "user" });
+    semantic.changed(graph);
+    await semantic.catchUp();
+    expect(calls).toEqual([]);
+
+    // Execute main's real registration with substitutes at the OS and disk boundaries.
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    const registration = main.match(/const killSwitch = new KillSwitch\(\(\) => \[[\s\S]*?\], log\.child\("killswitch"\), \(\) => audit\);/)?.[0];
+    if (!registration) throw new Error("missing main's Stop registration");
+    const record = (name: string) => () => { calls.push(name); };
+    await vm.runInNewContext(`${registration}\nkillSwitch.pull("hotkey");`, {
+      KillSwitch, log: { child: () => quiet }, audit: null,
+      borrowRef: { stop: record("input") },
+      voice: { hush: record("speech"), cancelListening: record("listening") },
+      agent: { abortAll: record("tasks") },
+      targets: null, extensionsRef: null, deskViewRef: null, overlay: null, showState() {},
+      learningRef: { stopNow: record("learning") }, betterRecallRef: { semantic },
+    });
+    expect(calls).toEqual(["input", "speech", "listening", "tasks", "learning", "vector flush"]);
+  });
 
   it("embeds what is remembered in the background, and finds it by meaning", async () => {
     vi.useFakeTimers();

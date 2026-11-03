@@ -12,6 +12,7 @@ import { conductorTools, type ConductorMemory } from "../../app/main/agent/condu
 import { NO_CAPS, TOOL_RULES, toolRules } from "../../app/main/agent/persona";
 import { AdminPolicySchema, applyAdminPolicy, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, SettingsStore } from "../../app/main/settings";
+import { MemoryGraph } from "../../app/main/memory/graph";
 import { MemoryService, SAVE_DELAY_MS, ownWords } from "../../app/main/memory/service";
 import { memoryFile } from "../../app/main/memory/store";
 import { PLATFORM_WORDS } from "../../app/shared/words";
@@ -19,11 +20,11 @@ import { PLATFORM_WORDS } from "../../app/shared/words";
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-memconv-"));
 const quiet = { info: () => undefined, warn: () => undefined };
 
-function service(dir = tmp()) {
+function service(dir = tmp(), inForce?: () => boolean) {
   const n = { e: 0, f: 0 };
   const changes = vi.fn();
   const s = new MemoryService({
-    dir, log: quiet, onChange: changes,
+    dir, log: quiet, onChange: changes, inForce,
     clock: { now: () => new Date("2026-11-01T10:00:00Z"), id: p => `${p}${++n[p]}` },
   });
   return { s, dir, changes };
@@ -88,6 +89,55 @@ describe("MemoryService", () => {
     expect(s.list()).toEqual([]);
     expect(fs.existsSync(path.join(dir, "memory.json"))).toBe(false);
     expect(changes).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("memory upkeep", () => {
+  function seeded(inForce?: () => boolean) {
+    const dir = tmp();
+    let next = 0;
+    const graph = new MemoryGraph(undefined, { now: () => new Date("2026-01-01"), id: p => `old${p}${++next}` });
+    const stale = "Atlas had a draft outline";
+    const saved = "Likes green tea";
+    graph.add({ text: stale, about: [{ name: "Atlas" }], source: "observed" });
+    const result = graph.add({ text: saved, about: [{ name: "User" }], source: "user" });
+    if (result.kind !== "added") throw new Error("missing test fact");
+    memoryFile(dir).save(graph);
+    return { ...service(dir, inForce), stale, saved, savedId: result.fact.id };
+  }
+
+  it("joins overlapping callers and publishes the completed pass once", async () => {
+    const { s, dir, changes, saved } = seeded();
+    const pending = s.upkeep();
+    expect(s.upkeep()).toBe(pending);
+    expect(s.list()).toHaveLength(2);
+    expect(await pending).toBe(true);
+    expect(s.list().map(f => f.text)).toEqual([saved]);
+    expect(changes).toHaveBeenCalledTimes(1);
+    s.stop();
+    expect(memoryFile(dir).load().allFacts().map(f => f.text)).toEqual([saved]);
+  });
+
+  it.each(["remember", "recall", "forget", "erase", "restart", "revoke"] as const)("discards a pending pass after %s", async action => {
+    let allowed = true;
+    const { s, dir, changes, stale, savedId } = seeded(() => allowed);
+    const pending = s.upkeep();
+    switch (action) {
+      case "remember": s.remember("Prefers short messages", [], "Prefers short messages"); break;
+      case "recall": expect(s.recall("Atlas")[0]?.fact.text).toBe(stale); break;
+      case "forget": expect(s.forget(savedId)).toBe(true); break;
+      case "erase": s.forgetAll(); break;
+      case "restart": s.start(); s.stop(); s.start(); break;
+      case "revoke": allowed = false; break;
+    }
+    const current = s.list();
+    changes.mockClear();
+    expect(await pending).toBe(false);
+    expect(changes).not.toHaveBeenCalled();
+    expect(s.list()).toEqual(current);
+    s.stop();
+    if (action === "erase") expect(fs.existsSync(memoryFile(dir).path)).toBe(false);
+    else expect(memoryFile(dir).load().allFacts().map(f => f.text).sort()).toEqual(current.map(f => f.text).sort());
   });
 });
 

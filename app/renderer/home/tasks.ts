@@ -190,8 +190,15 @@ function render(sent: TaskEntry[]): void {
       return g.node;
     });
     for (const id of [...drawn.keys()]) if (!tasks.some(t => t.id === id)) drawn.delete(id);
-    // Moved into order only where the order changed (focus and a screen reader's place stay put).
-    if (list.children.length !== nodes.length || nodes.some((n, i) => list.children[i] !== n)) list.replaceChildren(...nodes);
+    // Remove changed groups first so adding their replacements leaves the unchanged groups in place.
+    const focused = document.activeElement;
+    const keep = new Set<Element>(nodes);
+    for (const child of [...list.children]) if (!keep.has(child)) child.remove();
+    nodes.forEach((node, i) => {
+      const at = list.children[i] ?? null;
+      if (node !== at) list.insertBefore(node, at);
+    });
+    if (focused instanceof HTMLElement && list.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
   }
   // A task waits for the user's answer: Home says where it is asked, and with which keys, in that task's own group (it
   // never answers itself); otherwise the note waits, hidden, above the list.

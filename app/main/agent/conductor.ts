@@ -18,6 +18,7 @@ import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } fro
 import { NO_CAPS, emberSystemMessage } from "./persona";
 import { friendlyError, type Presenter, type ServiceKind } from "./presenter";
 import type { Logger } from "../logger";
+import type { ConversationContext } from "../../shared/ipc";
 import { CHARACTERS, type SettingsStore } from "../settings";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
@@ -55,6 +56,7 @@ export interface ConductorDeps {
   tasks?: ConductorTasks;
   /** Called for every model call with its token counts (usage meter). */
   onUsage?: (inputTokens: number, outputTokens: number) => void;
+  onConversationContext?: (context: ConversationContext | undefined) => void;
   /** Ember's final answer text for a turn (for speaking it aloud). */
   onAnswer?: (text: string) => void;
   /** The words of Ember's message as the model streams them (for speaking them as they come). */
@@ -533,6 +535,7 @@ export class TurnWatch {
 
   /** A request was sent and its turn hasn't ended (sent, taken, or at work): whatever the bubble shows meanwhile. */
   get open(): boolean { return !this.over && (this.owed > 0 || this.taken || this.working || this.inTurn); }
+  get isCompacting(): boolean { return this.compacting; }
   /** A request is about to be sent (its message may come before session.send returns). */
   sending(): void { this.owed++; }
   /** session.send returned: the turn begins now, or when the one under way ends. */
@@ -650,6 +653,9 @@ export function forgetSavedConversation(file: string, deleted = false): void {
 
 export class Conductor {
   private session: CopilotSession | null = null;
+  private modelSwitches = 0;
+  /** A usage event has no model ID. After a model change, wait for a new turn on this session. */
+  private waitForContextTurn = false;
   readonly toolNames: string[];
 
   /** Stop was pressed during a turn that hasn't ended yet: a start_task already on its way is refused. */
@@ -719,6 +725,7 @@ export class Conductor {
    */
   private turnBegan(content: string): void {
     const i = this.unstarted.findIndex(t => t.prompt === content);
+    if (i >= 0 && this.modelSwitches === 0) this.waitForContextTurn = false;
     for (const id of this.answerMessages) this.retiredMessages.add(id);
     this.answerMessages.clear();
     this.runtimeTurn = undefined;
@@ -837,6 +844,7 @@ export class Conductor {
     const session = this.session;
     session.on(e => {
       if (this.session !== session) return;
+      const wasCompacting = watch.isCompacting;
       watch.event(e);
       const data = e.data as { messageId?: string; turnId?: string };
       if (e.type.startsWith("assistant.message")) {
@@ -851,6 +859,20 @@ export class Conductor {
       if (e.type === "user.message" && !(e as { agentId?: string }).agentId) {
         const content = (e.data as { content?: unknown } | undefined)?.content;
         this.turnBegan(typeof content === "string" ? content : "");
+      }
+      if (!this.waitForContextTurn && !e.agentId && d.onConversationContext) {
+        if (e.type === "session.compaction_start") d.onConversationContext({ kind: "compacting" });
+        else if (e.type === "session.model_change" || e.type === "session.compaction_complete" || (wasCompacting && !watch.isCompacting)) {
+          d.onConversationContext(undefined);
+        } else if (e.type === "session.usage_info" && !watch.isCompacting) {
+          const currentTokens = e.data?.currentTokens;
+          // For a custom provider the runtime can assume a default limit, which the endpoint may not support.
+          const tokenLimit = d.provider ? d.provider.maxPromptTokens : e.data?.tokenLimit;
+          d.onConversationContext(Number.isSafeInteger(currentTokens) && currentTokens >= 0 ? {
+            kind: "usage", currentTokens,
+            ...(tokenLimit !== undefined && Number.isSafeInteger(tokenLimit) && tokenLimit > 0 ? { tokenLimit } : {}),
+          } : undefined);
+        }
       }
       if (e.type === "assistant.turn_start") this.runtimeTurn = data.turnId;
       if (this.stuck) {
@@ -1009,6 +1031,10 @@ export class Conductor {
     this.dispatch = Promise.resolve();
     if (this.session && this.busy) this.stopping = true;
     // The runtime drops the requests waiting behind the turn: no turn is owed for them.
+    if (this.watch?.isCompacting) {
+      this.waitForContextTurn = true;
+      this.deps.onConversationContext?.(undefined);
+    }
     this.watch?.clear();
     this.unstarted = [];
     await this.session?.abort();
@@ -1090,7 +1116,13 @@ export class Conductor {
 
   /** Another model from the next message on (no new session, the conversation stays). */
   async setModel(model: string): Promise<void> {
-    await this.session?.setModel(model);
+    const session = this.session;
+    if (!session) return;
+    this.modelSwitches++;
+    this.waitForContextTurn = true;
+    this.deps.onConversationContext?.(undefined);
+    try { await session.setModel(model); }
+    finally { this.modelSwitches--; }
   }
 
   /** Lets go of the session; a runtime that doesn't answer within a few seconds is left behind. */

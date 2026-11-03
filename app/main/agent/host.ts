@@ -22,6 +22,7 @@ import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
+import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, statusWord, taskOutcome, titleOf, type Task, type WorkerLike } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
@@ -126,6 +127,7 @@ export interface AgentStatus {
   conductorModel: string | null;
   workerModel: string | null;
   usage: { calls: number; inputTokens: number; outputTokens: number };
+  conversationContext?: ConversationContext;
   /** Copilot stopped answering, and Ember reconnects once the tasks that are running finish (reconnecting now would stop them). */
   waitingForTasks?: boolean;
   /**
@@ -1132,7 +1134,7 @@ export class AgentHost {
   private setStatus(patch: Partial<AgentStatus>): void {
     // A reason holds for its error, the default model for its connection.
     const cleared = patch.phase && patch.phase !== this.status.phase
-      ? { ...(patch.phase !== "error" ? { reason: undefined } : {}), ...(patch.phase !== "ready" ? { defaultModel: undefined } : {}) } : {};
+      ? { ...(patch.phase !== "error" ? { reason: undefined } : {}), ...(patch.phase !== "ready" ? { defaultModel: undefined, conversationContext: undefined } : {}) } : {};
     this.status = { ...this.status, ...cleared, ...patch, waitingForTasks: this.reconnectAfterTasks !== null };
     // Connected again: a notice saying why Ember couldn't answer no longer holds (one still up goes).
     if (this.status.phase === "ready" && this.unreachable !== null) { this.presenter.withdraw(this.unreachable); this.unreachable = null; }
@@ -1444,6 +1446,9 @@ export class AgentHost {
           offerConnect: (name: string) => targets.offerConnect(name, this.userWordsOf(this.turn).words ?? ""),
         } : {}),
         onUsage: (i, o) => this.recordUsage(i, o),
+        onConversationContext: context => {
+          if (gen === this.gen && this.status.phase === "ready") this.setConversationContext(context);
+        },
         // An answer that tells the user where to turn commands on gets the button for it (once per run).
         onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
         onAnswerDelta: delta => this.o.onAnswerDelta?.(delta),
@@ -1748,10 +1753,13 @@ export class AgentHost {
 
   /** A different model chosen in settings: the conversation switches now, tasks use it from their next start. No restart. */
   async setModels(prefer: { conductor?: string | null; worker?: string | null }): Promise<void> {
-    if (this.status.phase !== "ready" || !this.conductor) return;
+    const conductor = this.conductor;
+    const gen = this.gen;
+    if (this.status.phase !== "ready" || !conductor) return;
     const choice = chooseModels(this.models, { conductor: prefer.conductor ?? undefined, worker: prefer.worker ?? undefined });
     if (!choice.conductor) return;
-    if (choice.conductor !== this.status.conductorModel) await this.conductor.setModel(choice.conductor);
+    if (choice.conductor !== this.status.conductorModel) await conductor.setModel(choice.conductor);
+    if (gen !== this.gen || conductor !== this.conductor || this.status.phase !== "ready") return;
     this.setStatus({ conductorModel: choice.conductor, workerModel: choice.worker });
     this.o.log.info("agent.models_changed", { conductorModel: choice.conductor, workerModel: choice.worker });
   }
@@ -1759,6 +1767,15 @@ export class AgentHost {
   recordUsage(input: number, output: number): void {
     const u = this.status.usage;
     this.setStatus({ usage: { calls: u.calls + 1, inputTokens: u.inputTokens + input, outputTokens: u.outputTokens + output } });
+  }
+
+  private setConversationContext(context: ConversationContext | undefined): void {
+    const before = this.status.conversationContext;
+    if (context?.kind === before?.kind) {
+      if (context?.kind !== "usage") return;
+      if (before?.kind === "usage" && context.currentTokens === before.currentTokens && context.tokenLimit === before.tokenLimit) return;
+    }
+    this.setStatus({ conversationContext: context });
   }
 
   /** A task's own presenter: its bubble is titled as its card is and names the task, and gives way to an answer being read. */
@@ -2438,6 +2455,7 @@ export class AgentHost {
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
     this.conversation = null;
+    this.setConversationContext(undefined);
     // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.
     this.o.extensions?.conversationEnded?.();
     this.convoCaps = null;
@@ -2451,6 +2469,7 @@ export class AgentHost {
 
   /** `forget`: a clean stop (quit) deletes the conversation; a restart keeps it to resume. */
   private async doStop(forget = false): Promise<void> {
+    this.setConversationContext(undefined);
     if (this.health) { clearInterval(this.health); this.health = null; }
     // (A reconnect put off until the tasks were done: this is it, or something newer.)
     this.reconnectAfterTasks = null;

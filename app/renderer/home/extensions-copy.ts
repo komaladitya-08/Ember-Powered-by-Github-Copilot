@@ -57,6 +57,7 @@ export const kindLabel = (k: Kind): string => KIND[k] ?? "Extension";
 /** A tool's badge: its words and its tint (a class in styles.css). */
 export interface ToolBadge { label: string; tone: "ok" | "ask" | "no" }
 export function toolBadge(t: ToolInfo): ToolBadge {
+  if (t.nameConflict) return { label: "Name conflict", tone: "no" };
   if (t.changed) return { label: "Changed", tone: "no" };
   return t.readOnly ? { label: "Read-only", tone: "ok" } : { label: "Can change things", tone: "ask" };
 }
@@ -118,6 +119,7 @@ export function installedRow(i: Installed): InstalledRow {
     : i.status === "needs-auth" ? i.kind === "connector" ? `Connect “${i.name}” again to sign in on GitHub's page.`
       : "Check this plugin's authentication setup with its provider, then remove it and add it again."
     : i.status === "failed" && i.enabled ? detailLine(i.detail) ?? "Turn it off and on again, or remove it and add it again."
+    : i.enabled && i.tools.some(t => t.nameConflict) ? "Some tool names clash in Copilot. Ember leaves those tools off."
     : null;
   const actions: ItemAction[] = [];
   if (changed || !i.consented) actions.push({ act: "reagree", label: i.consented ? "Review tools" : "Review and agree", ariaLabel: `Review tools: ${i.name}` });

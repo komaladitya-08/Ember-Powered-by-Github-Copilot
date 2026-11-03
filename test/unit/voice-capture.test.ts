@@ -166,4 +166,61 @@ describe("microphone capture", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(c.deps.getUserMedia).toHaveBeenCalledTimes(1);
   });
+
+  it("never reports capturing if the track was lost while its device list was being read", async () => {
+    const c = setup();
+    let list!: (devices: MediaDeviceInfo[]) => void;
+    c.deps.enumerateDevices = () => new Promise(resolve => { list = resolve; });
+    const opening = c.capture.start();
+    await vi.advanceTimersByTimeAsync(0);
+    c.tracks[0].onended!();
+    list([]);
+    await opening;
+    expect(c.statuses).toEqual(["lost"]);
+  });
+
+  it("does not reopen a stopped capture when a queued or late device change arrives", async () => {
+    const c = setup();
+    c.failures.push(notFound());
+    await c.capture.start();
+    c.devicesChanged();
+    c.capture.stop();
+    await vi.advanceTimersByTimeAsync(1000);
+    c.devicesChanged();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(c.deps.getUserMedia).toHaveBeenCalledTimes(1);
+    expect(c.statuses).toEqual(["lost"]);
+  });
+
+  it("ignores a default-device result after its capture has been replaced", async () => {
+    const c = setup();
+    await c.capture.start();
+    const enumerate = c.deps.enumerateDevices;
+    let list!: (devices: MediaDeviceInfo[]) => void;
+    c.deps.enumerateDevices = () => new Promise(resolve => { list = resolve; });
+    c.devicesChanged();
+    await vi.advanceTimersByTimeAsync(500);
+    c.deps.enumerateDevices = enumerate;
+    c.tracks[0].onended!();
+    await vi.advanceTimersByTimeAsync(1000);
+    list([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.deps.getUserMedia).toHaveBeenCalledTimes(2);
+    expect(c.statuses).toEqual(["capturing", "lost", "capturing"]);
+  });
+
+  it("stops a delayed microphone stream before connecting its audio graph", async () => {
+    const c = setup();
+    const opened = c.deps.getUserMedia;
+    let got!: (stream: MediaStream) => void;
+    c.deps.getUserMedia = () => new Promise(resolve => { got = resolve; });
+    const graph = vi.spyOn(c.deps, "graph");
+    const opening = c.capture.start();
+    c.capture.stop();
+    got(await opened());
+    await opening;
+    expect(c.tracks[0].stop).toHaveBeenCalledOnce();
+    expect(graph).not.toHaveBeenCalled();
+    expect(c.statuses).toEqual([]);
+  });
 });

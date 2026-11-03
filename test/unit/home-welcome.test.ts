@@ -37,7 +37,7 @@ describe("first run's steps", () => {
     expect(aboutNext({ ready: true, filled: false })).toBe("Skip for now");
     expect(aboutNext({ ready: true, filled: true })).toBe("Save and continue");
     // Saving waits for main's answer before going on; skipping keeps nothing.
-    expect(SCRIPT).toContain("if (about.ready && about.filled) void about.submit().then(() => go(\"done\"));");
+    expect(SCRIPT).toContain('if (about.ready && about.filled) void saveStep(');
   });
 
   it("can't pass the consent step without agreement, whichever step is asked for (M8.8)", () => {
@@ -50,7 +50,7 @@ describe("first run's steps", () => {
   });
 
   it("goes forward from the consent step only once the agreement is saved", () => {
-    expect(SCRIPT).toContain("void deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }).then(ok => { if (ok) go(\"sign-in\"); else window.scrollTo({ top: 0 }); });");
+    expect(SCRIPT).toContain('void saveStep(() => deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), "sign-in");');
     expect(SCRIPT).toContain("step = gated(to, consented());");
   });
 

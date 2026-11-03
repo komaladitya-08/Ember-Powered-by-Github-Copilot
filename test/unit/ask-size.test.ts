@@ -20,6 +20,17 @@ const SIZES: TextSize[] = ["default", "large", "larger"];
 const wa = { x: 0, y: 0, width: 1024, height: 728 };
 
 describe("ask-size.ts: what the live suites expect of the ask box (review #57)", () => {
+  it("keeps Ask inside a small work area at Larger, including when it grows", () => {
+    const small = { x: -500, y: 50, width: 480, height: 180 };
+    const opened = askBounds({ x: -40, y: 200 }, small, null, textScale("larger"));
+    for (const bounds of [opened, grownBounds(opened, 6, small, true, null, textScale("larger"))]) {
+      expect(bounds.x).toBeGreaterThanOrEqual(small.x);
+      expect(bounds.y).toBeGreaterThanOrEqual(small.y);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(small.x + small.width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(small.y + small.height);
+    }
+  });
+
   it("expects ask.ts's own sizes at each text size: one row, with the tip's, and with four lines and the note", () => {
     for (const size of SIZES) {
       const scale = textScale(size);

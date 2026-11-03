@@ -77,7 +77,7 @@ body { font: var(--type-callout); color: var(--label); }
 @starting-style { .status { opacity: 0; translate: 0 -6px; } }
 .status.low { top: auto; }
 .status[hidden] { display: none; opacity: 0; transition-duration: var(--t-fade-out); transition-timing-function: ease-in; }
-.status i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); animation: pulse 1.2s ease-in-out infinite; }
+.status i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-text-on-glass); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); animation: pulse 1.2s ease-in-out infinite; }
 
 /* Stacked just above Ember's handle in its corner, bottom right or (.left) bottom left as Handle position puts it
    (main.ts places them exactly, in the other bottom corner while the control Ember works on is under them there);
@@ -141,7 +141,7 @@ body { font: var(--type-callout); color: var(--label); }
 .rows[hidden] { display: none; }
 .rows li { position: relative; display: grid; grid-template-columns: 2.9em minmax(0, 1fr); gap: 6px; padding-left: 18px; min-width: 0; }
 .rows li::before { content: ""; position: absolute; left: 0; top: 0.18em; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 12px no-repeat; }
-.rows li[data-state="running"] { --sym-tint: var(--accent); --sym: var(--sym-live); }
+.rows li[data-state="running"] { --sym-tint: var(--accent-text-on-glass); --sym: var(--sym-live); }
 .rows li[data-state="done"] { --sym-tint: var(--green); --sym: var(--sym-done); }
 .rows li[data-state="failed"] { --sym-tint: var(--red); --sym: var(--sym-failed); }
 .rows li[data-state="waiting"] { --sym-tint: var(--purple); --sym: var(--sym-waiting); }
@@ -159,7 +159,7 @@ body { font: var(--type-callout); color: var(--label); }
 .plan li[data-state="done"] { color: var(--label-3); }
 .plan li[data-state="done"]::before { background: var(--green); box-shadow: none; }
 .plan li[data-state="now"] { color: var(--label); font-weight: 600; }
-.plan li[data-state="now"]::before { background: var(--accent); box-shadow: none; }
+.plan li[data-state="now"]::before { background: var(--accent-text-on-glass); box-shadow: none; }
 /* The step under way fills its dot as it starts (scale from 0.6, the brisk spring; the plan's dots are drawn anew when
    it moves on, so this plays once a step). Never on a card that waits for you: nothing near a question moves. */
 .task:not([data-status="waiting"]) .plan li[data-state="now"]::before { animation: dot-fill var(--t-fast) var(--spring-brisk) 1; }

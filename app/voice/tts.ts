@@ -6,7 +6,7 @@
  * Pure helpers here; nothing in this file loads a model.
  */
 
-import { spokenText } from "./spoken";
+import { speechMarkupOpen, spokenText } from "./spoken";
 
 /**
  * The natural voice (Kokoro) speaks only where it is made at most this fast (0.5: a second of speech in half a second),
@@ -224,7 +224,7 @@ export class SpeechStream {
       const before = this.raw.slice(0, m.index);
       // Not inside Markdown that isn't whole yet: a code span or block, a link's text or address, a table, a list's
       // first line (it reads better as a whole), or a heading.
-      if ((before.match(/`/g) ?? []).length % 2 || /\[[^\]]*$|\]\([^)]*$/.test(before)) return 0;
+      if (speechMarkupOpen(before)) return 0;
       if (/^[ \t]*(?:[|#>*+-]|\d+[.)])/m.test(before)) return 0;
       if ((before.match(/[\p{L}\p{N}]+/gu) ?? []).length < FIRST_WORDS) continue;
       return m.index + m[0].length;
@@ -237,8 +237,7 @@ export class SpeechStream {
     for (const end of sentenceEnds(this.raw)) {
       if (end <= this.said) continue;
       const before = this.raw.slice(0, end);
-      const fences = (before.match(/(^|\n)[ \t]*(```|~~~)/g) ?? []).length;
-      if (fences % 2) continue;
+      if (speechMarkupOpen(before)) continue;
       // In a table (a line that starts with "|"), or right after one: wait for the line after it.
       const line = before.slice(before.lastIndexOf("\n") + 1);
       if (/^[ \t]*\|/.test(line)) continue;

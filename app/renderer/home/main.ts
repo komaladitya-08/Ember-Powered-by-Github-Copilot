@@ -24,7 +24,7 @@ import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speec
 import type { Settings, SettingsPatch } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, memoryDeleteFailedText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
-  rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed, withCommandShells,
+  conversationContextLine, rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed, withCommandShells,
   type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
@@ -666,6 +666,7 @@ function renderAgent(a: AgentStatus | null): void {
     fill("m-worker", a.models.filter(m => m.vision), a.workerModel);
   }
   $("usage").textContent = usageLine(a.usage);
+  $("conversation-context").textContent = conversationContextLine(a.phase === "ready" ? a.conversationContext : undefined);
   if (retryFound && a.phase === "ready") say(retryMessage(retryFound, true));
   // A button that just went away (Sign in, Check again…) hands focus to the one that took its place.
   if (had && COPILOT_BUTTONS.includes(had.id) && isHidden(had)) focusFirst([...COPILOT_BUTTONS, "copilot-h"]);

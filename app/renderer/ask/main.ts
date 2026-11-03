@@ -167,10 +167,10 @@ window.emberAsk.onContext(c => {
   const live = liveWords(said, c);
   if (live !== null) seesLive.textContent = said = live;
   fitMeta();
-  input.focus();
   // Main opens the window one line tall, a row taller when this opening says to wait for the box (review #78). Said
   // before the window is shown, so the tip is there from the first frame.
   if (c.opened) {
+    input.focus();
     // It grows out of Ember as it shows: from 0.98 and transparent, released once it has been drawn so (a timer too, in
     // case the hidden window gets no frames: it must never stay transparent).
     form.classList.add("opening");

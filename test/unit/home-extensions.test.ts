@@ -55,6 +55,12 @@ describe("an installed item says what state it is in, in words (never colour alo
     expect(row.meta).toBe("Plugin · by GitHub · github/copilot-plugins · 1.4.0");
   });
 
+  it("says why a tool with a conflicting name is unavailable", () => {
+    const row = xc.installedRow(item({ tools: [{ name: "notes.list", description: "Lists.", readOnly: true, nameConflict: true }] }));
+    expect(row.tools[0].badge).toEqual({ label: "Name conflict", tone: "no" });
+    expect(row.note).toBe("Some tool names clash in Copilot. Ember leaves those tools off.");
+  });
+
   it("removes a plugin and disconnects a connector, asking first and naming it in curly quotes", () => {
     expect(xc.installedRow(item()).actions).toEqual([{ act: "uninstall", label: "Remove", ariaLabel: "Remove Release notes", confirm: "Remove “Release notes”? Ember stops using its tools at once.", danger: true }]);
     const slack = xc.installedRow(item({ kind: "connector", name: "Slack", status: "needs-auth" }));

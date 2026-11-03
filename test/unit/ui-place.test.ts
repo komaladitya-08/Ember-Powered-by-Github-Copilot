@@ -225,9 +225,9 @@ describe("the ask box at the text size (review #57)", () => {
         for (const rows of [1, 4, 6]) expect(inside(grownBounds(b, rows, small, b.y < c.y, pill, scale), small)).toBe(true);
       }
     }
-    // A screen narrower than the larger box: as wide as fits, never narrower than the usual box.
+    // Leave room for the edge gaps even below the usual width.
     expect(askBounds(null, { x: 0, y: 0, width: 640, height: 480 }, null, 1.3).width).toBe(624);
-    expect(askBounds(null, { x: 0, y: 0, width: 500, height: 480 }, null, 1.3).width).toBe(560);
+    expect(askBounds(null, { x: 0, y: 0, width: 500, height: 480 }, null, 1.3)).toMatchObject({ x: 8, width: 484 });
   });
 
   it("has room for its field, the line under it, and the note's and the tip's rows at every size (styles.css)", () => {

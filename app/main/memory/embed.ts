@@ -97,9 +97,10 @@ export class VectorIndex {
       version: 1, model: this.model, dim: first?.v.length ?? 1,
       rows: [...this.rows].map(([id, { hash, v }]) => {
         let max = 0;
-        for (const x of v) max = Math.max(max, Math.abs(x));
+        for (let i = 0; i < v.length; i++) max = Math.max(max, Math.abs(v[i]));
         const s = max / 127 || 1;
-        const q = Int8Array.from(v, x => Math.round(x / s));
+        const q = new Int8Array(v.length);
+        for (let i = 0; i < v.length; i++) q[i] = Math.round(v[i] / s);
         return { id, h: hash, s, v: Buffer.from(q.buffer, q.byteOffset, q.byteLength).toString("base64") };
       }),
     };

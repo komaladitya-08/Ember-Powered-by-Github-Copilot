@@ -1225,9 +1225,6 @@ function start(): void {
   let learningRef: MemoryLearning | null = null;
   let betterRecallRef: BetterRecall | null = null;
   const killSwitch = new KillSwitch(() => [
-    // Memory, as one part: Better recall's indexing stops and its memory process ends (the next question or change
-    // starts it again), and memory's own model calls (learning, refinement) are abandoned, its interview and question end.
-    { name: "memory", stop: () => { betterRecallRef?.semantic.stop(); learningRef?.stopNow(); } },
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
     // A request still being spoken is dropped, not sent after Stop.
@@ -1240,6 +1237,8 @@ function start(): void {
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
+    // Dispatch the safety stops above before Better recall synchronously flushes its pending vectors.
+    { name: "memory", stop: () => { learningRef?.stopNow(); betterRecallRef?.semantic.stop(); } },
   ], log.child("killswitch"), () => audit);
   /** Ctrl+Alt+X, "Ember, stop", Stop in the handle's menu or in settings: everything stops at once. */
   const stopEverything = (source: "hotkey" | "voice" | "menu" | "settings") => {
@@ -1348,7 +1347,7 @@ function start(): void {
     if (!memoryOn()) learningRef?.stopNow();
     betterRecall.settingsChanged();
   });
-  const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
+  const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
   const words = wordsStore(userData);
   const personal = new PersonalVoice({
@@ -1854,10 +1853,7 @@ function start(): void {
     return r;
   }));
   ipcMain.handle(IPC.voiceWords, guard(() => personal.words()));
-  ipcMain.handle(IPC.voiceForgetWord, guard((index: unknown) => {
-    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 1000) return personal.words();
-    return personal.forgetWord(index);
-  }));
+  ipcMain.handle(IPC.voiceForgetWord, guard((expected: unknown) => personal.forgetWord(expected)));
   ipcMain.handle(IPC.voiceForgetWords, guard(() => { personal.forgetWords(); log.info("voice.words_forgotten"); }));
   ipcMain.handle(IPC.memoryList, guard(() => (memoryAllowed() ? memory.list() : [])));
   ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
