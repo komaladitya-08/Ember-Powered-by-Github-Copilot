@@ -269,9 +269,9 @@ yes (“Ember, allow”) counts too for a question asked by a task you asked for
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
 question (“Proceed?”) or a bare “okay” isn't one. Otherwise the bubble says how, and the question stays. Measured on
-LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time; the task trust takes a
-short yes from someone else who can also play your recorded “Hey Ember” and sounds close to you (PLAN.md §2
-“Approvals” has the figures). It counts only for the question that was up, and armed, when you started speaking, and
+LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
+someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
+Ember” then says “allow” about 43 %, once: any voice turned away ends the trust (PLAN.md §2 “Approvals”). It counts only for the question that was up, and armed, when you started speaking, and
 once Voice Match turned another voice away during a question, that question takes a click or the keys only. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
 own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts), never says
 “Always” by voice, and never takes a spoken yes for a consent card. A command card or a long typed text is allowed by
