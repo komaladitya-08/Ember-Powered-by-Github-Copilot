@@ -1,6 +1,6 @@
 // Builds the Electron app into dist/app:
 //   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages),
-//   desk-agent.cjs, voice.cjs, voiceprint.cjs, tts.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs, job-host.cjs and mcp-launch.cjs (helpers Ember runs
+//   desk-agent.cjs, voice.cjs, voiceprint.cjs, tts.cjs, memory-embed.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs, job-host.cjs and mcp-launch.cjs (helpers Ember runs
 //   as plain Node)
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
@@ -99,6 +99,17 @@ await Promise.all([
     ...common,
     entryPoints: ["app/voice/voiceprint-worker.ts"],
     outfile: "dist/app/voiceprint.cjs",
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    external: ["electron", "onnxruntime-web"],
+  }),
+  // Ember's memory process (Better recall's embedding model, app/main/memory/embed-process.ts): onnxruntime-web stays
+  // external, as for voiceprint.cjs.
+  build({
+    ...common,
+    entryPoints: ["app/main/memory/embed-process.ts"],
+    outfile: "dist/app/memory-embed.cjs",
     platform: "node",
     format: "cjs",
     target: "node24",
