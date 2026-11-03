@@ -9,6 +9,7 @@
  * Plain Node: no Electron, no koffi at load (RUN's job-object code loads it lazily, on Windows only).
  */
 
+import { sweepScript as linuxSweepScript } from "../main/commands/run/sweep";
 import type { OS } from "../shared/shortcuts";
 import type { Classification, ClassifyContext, JobHostRef, RunnerFacts, RunSpec, ShellId } from "../main/commands/types";
 import { classifyCommand } from "../main/commands/classify";
@@ -50,10 +51,15 @@ export interface AgentContracts {
  */
 export const sweepScript = [
   "if [ -r /proc/self/environ ]; then",
-  "  for p in /proc/[0-9]*; do grep -qz \"^EMBER_RUN_ID=$2\\$\" \"$p/environ\" 2>/dev/null && kill -$1 \"${p#/proc/}\" 2>/dev/null; done",
+  linuxSweepScript,
   "else",
   "  ps -E -ww -U \"$(id -u)\" -o pid=,command= 2>/dev/null | while read -r pid rest; do",
-  "    case \" $rest \" in *\" EMBER_RUN_ID=$2 \"*) kill -$1 \"$pid\" 2>/dev/null ;; esac",
+  '    case "$pid" in ""|*[!0-9]*) continue ;; esac',
+  '    [ "$pid" -gt 1 ] && [ "$pid" != "$$" ] || continue',
+  '    case " $rest " in *" EMBER_RUN_ID=$2 "*)',
+  '      current=$(ps -E -ww -p "$pid" -o pid=,command= 2>/dev/null) || continue',
+  '      case " $current " in *" EMBER_RUN_ID=$2 "*) kill -$1 "$pid" 2>/dev/null ;; esac',
+  '    ;; esac',
   "  done",
   "fi",
   "exit 0",

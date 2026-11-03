@@ -389,6 +389,7 @@ function defaultDeps(o: RunnerOptions): RunnerDeps {
         self: [process.pid],
         readdir: dir => fs.promises.readdir(dir),
         readFile: file => fs.promises.readFile(file),
+        readProc: file => fs.readFileSync(file, "utf8"),
         // `ps -E -ww` lists every process's whole environment: only the run's lines are kept, so none is cut off.
         run: async (file, args) => helperExec(file, args, line => line.includes(`EMBER_RUN_ID=${runId}`)),
         kill,
@@ -707,31 +708,32 @@ class LocalRun implements KeptRun {
     }
     const pid = child.pid;
     const d = this.d;
-    let session: Promise<number | null> = Promise.resolve(null);
-    if (pid !== undefined && this.kind === "posix-pty") {
-      // The shell lives in the session script(1) made for it (its pid), which the group signal doesn't reach.
-      session = d.exec("pgrep", ["-P", String(pid)]).then(r => {
+    const session = async (): Promise<number | null> => {
+      if (pid === undefined || this.exited) return null;
+      if (this.kind === "posix-pipe") return pid; // the live shell leads its own session
+      if (this.kind !== "posix-pty") return null;
+      // Re-read script's current child for each step. A cached session id may have been reused after it exited.
+      try {
+        const r = await d.exec("pgrep", ["-P", String(pid)]);
         const sid = Number((r.stdout.trim().split(/\s+/)[0] ?? ""));
-        return Number.isInteger(sid) && sid > 1 ? sid : null;
-      }, () => null);
-    } else if (pid !== undefined && this.kind === "posix-pipe") {
-      session = Promise.resolve(pid); // detached: the shell leads its own session
-    }
+        return !this.exited && r.code === 0 && Number.isInteger(sid) && sid > 1 ? sid : null;
+      } catch { return null; }
+    };
     const ops: LadderOps = {
       interrupt: () => {
         child.stdin?.write("\x03");
       },
       group: signal => {
-        if (pid !== undefined) d.kill(-pid, signal);
+        if (pid !== undefined && !this.exited) d.kill(-pid, signal);
       },
       session: signal => {
-        void session.then(sid => (sid === null ? undefined : d.exec("pkill", [`-${signal.replace(/^SIG/, "")}`, "-s", String(sid)]))).catch(() => undefined);
+        void session().then(sid => (sid === null || this.exited ? undefined : d.exec("pkill", [`-${signal.replace(/^SIG/, "")}`, "-s", String(sid)]))).catch(() => undefined);
       },
       sweep: signal => d.sweep(this.runId, signal),
       terminate: () => {
         if (this.kind === "windows") child.kill();
-        // Once it exited (and was reaped) its pid is free for another program: only its group and session remain.
-        else if (pid !== undefined && !this.exited) d.kill(pid, "SIGKILL");
+        // Node owns the live child handle; no positive signal uses the cached pid after it was reaped.
+        else if (!this.exited) child.kill("SIGKILL");
       },
     };
     this.ladder = startLadder(this.kind, ops, d.timers);

@@ -292,6 +292,20 @@ describe("the conductor's prompt with routines on (audit of the conversation fea
 });
 
 describe("cancel_reminder and the user's own words (audit of the conversation features)", () => {
+  it("never cancels a mentioned or different reminder, even when only one is waiting (STATUS lifecycle review)", async () => {
+    const { asksToCancel } = await import("../../app/main/agent/conductor");
+    const r = { text: "call Priya" };
+    for (const text of [
+      "should I cancel the reminder to call Priya?", "what happens if I cancel all my reminders?",
+      "the email says cancel the reminder to call Priya", 'say "cancel the reminder to call Priya"',
+      "cancel the reminder to call Sam", "cancel all my reminders except the one to call Priya",
+      "cancel the reminder to call Priya if Sam calls", "I don't think you should cancel the reminder to call Priya",
+      "cancel my flight and keep the reminder to call Priya", "cancel the reminder to call Priya and Sam",
+    ]) expect(asksToCancel(text, r, 1), text).toBe(false);
+    for (const text of ["could you cancel the reminder to call Priya?", "Ember, please cancel the reminder to call Priya", "please don't remind me to call Priya"])
+      expect(asksToCancel(text, r, 2), text).toBe(true);
+  });
+
   it("cancels only when the user asks to, naming it or the only one waiting", async () => {
     const { asksToCancel } = await import("../../app/main/agent/conductor");
     const r = { text: "call Priya" };
@@ -301,6 +315,8 @@ describe("cancel_reminder and the user's own words (audit of the conversation fe
     expect(asksToCancel("never mind the reminder", r, 1)).toBe(true);
     expect(asksToCancel("never mind the reminder", r, 2)).toBe(false);
     expect(asksToCancel("cancel all my reminders", r, 2)).toBe(true);
+    expect(asksToCancel("cancel both reminders", r, 2)).toBe(true);
+    expect(asksToCancel("cancel both reminders", r, 3)).toBe(false);
   });
 
   it("needs the cancel word to govern the reminder, never a set request or a cancel of something else (review of #129)", async () => {

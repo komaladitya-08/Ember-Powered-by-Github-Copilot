@@ -467,7 +467,9 @@ as if you had just asked each one, and Ember still asks before anything risky, w
 step names (“delete the build folder”) always asks too, since the step isn't what you said just now. Only your own
 words make, run or delete a routine: making one needs its name and each of its steps in what you said, running one
 needs your request to be its name (alone, or “run my start my day routine”), and deleting one “delete my start my day
-routine”; a reminder is cancelled only by words such as “cancel the reminder to call Priya”. Text written as instructions to an AI
+routine”; a reminder is cancelled only by a direct request now, such as “cancel the reminder to call Priya”,
+not a question about cancelling or a saved routine step. A named reminder must match; “cancel the reminder” works
+only when one is waiting, and “cancel all my reminders” must name all without exceptions. Text written as instructions to an AI
 (“ignore your previous instructions”) in a window, in any open window's title, or in what Ember read on the screen
 before a task makes that task ask before every step. Home lists them with
 **Delete**, and signing out deletes them all, also while your organisation has routines turned off.

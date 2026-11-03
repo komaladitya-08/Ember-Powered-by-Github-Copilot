@@ -157,6 +157,16 @@ describe("the conductor's reminder tools", () => {
     expect(await handler(tools, "list_reminders")({})).toBe("No reminders are waiting.");
   });
 
+  it("does not let a saved routine's steps cancel a reminder without the user's current request", async () => {
+    const store = new Reminders({ onDue: () => undefined, now: () => NOW, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
+    const reminder = store.add("call Priya", NOW + 60_000, "remind me to call Priya") as Reminder;
+    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, {
+      store, said: () => "start my day\ncancel all my reminders", own: () => "start my day", now: () => NOW,
+    });
+    expect(await handler(tools, "cancel_reminder")({ id: reminder.id })).toMatch(/^Not cancelled/);
+    expect(store.list()).toHaveLength(1);
+  });
+
   it("says reminders last across a restart only while routines keep them (audit of the conversation features)", async () => {
     const { RoutineBook, routinesFile } = await import("../../app/main/agent/routines");
     const store = new Reminders({ onDue: () => undefined });
