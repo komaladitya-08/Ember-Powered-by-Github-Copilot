@@ -51,6 +51,7 @@ Automated tests use synthetic audio. Hands-on acceptance covers built-in and ext
 
 ## Playback, Activity and memory follow-up
 
+- Request transcription preserves a phrase repeated twice inside a longer request, such as “New York, New York”. The decoder comparison showed that the repeat filter had removed words the model heard correctly. Whole-segment doubles and longer decoder loops still use the repeat filter. Wake and Stop checks keep their original repeat handling.
 - The local `voice.hush_ack` event measures elapsed time from a hush request to confirmation from the renderer that was speaking. It records the renderer kind and elapsed milliseconds. Real-device measurements are still needed to establish when audible output stops.
 - Activity reads older audit blocks only until it has the requested recent entries. In five runs on a synthetic 104 MB monthly file with a fresh Activity cache and a warm filesystem cache, the same latest 500 entries took a median of 839 ms before the change and 6 ms after it on Windows. The WSL run went from 1,000 ms to 3 ms. Both read 256 KiB with the new reader. Files with fewer valid entries may require scanning further back.
 - Memory distinguishes opposing statements during initial deduplication and later upkeep. An explicit reversal of a single-valued preference closes the previous fact through the existing history rules. Account ownership and migration remain separate work.

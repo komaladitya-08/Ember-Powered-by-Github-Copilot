@@ -71,8 +71,8 @@ export interface VoiceBackend {
   /** Where a segment the VAD returned had its speech end by the VAD's own test (before the quiet added after it), as fed() counts. */
   speechEnd?(segment: Float32Array): number | null;
   resetVad(): void;
-  /** What was said in `samples`; "" for nothing heard (less than MIN_TRANSCRIBE_SAMPLES of audio, or the recognizer failed). */
-  transcribe(samples: Float32Array): string;
+  /** What was said in `samples`, or "". Keyword checks keep their original handling of decoder repeats. */
+  transcribe(samples: Float32Array, purpose?: "keyword"): string;
   /** What the VAD heard just before a segment it returned (0.1 s), if it still has it; optional. */
   before?(segment: Float32Array): Float32Array | null;
 }
@@ -870,7 +870,7 @@ export class VoiceEngine {
       this.ringOwn = own ? 0 : this.ringOwn + 1;
       if (now < this.mode.checkAt) return;
       this.mode.checkAt = null;
-      const heard = this.backend.transcribe(this.ring.read());
+      const heard = this.backend.transcribe(this.ring.read(), "keyword");
       if (heard && heardOtherWord(heard) && isStop(stripWake(heard, true))) {
         // "Hey, Amber, stop.": whoever it was for, stopping is the safe side (and it's often "Ember" misheard).
         this.emit({ type: "stop" });
@@ -982,10 +982,10 @@ export class VoiceEngine {
     const emberSpeaking = now < this.selfSpeakingUntil;
     if (s.keyword !== "ember_stop") {
       // "Hey Ember" while Ember spoke: a stop if "stop" came with it, otherwise Ember's own voice (or a wake it can't take now).
-      const heard = this.backend.transcribe(this.fromSound(this.recentAudio(this.fedAt - s.at + SELF_STOP_BEFORE_MS)));
+      const heard = this.backend.transcribe(this.fromSound(this.recentAudio(this.fedAt - s.at + SELF_STOP_BEFORE_MS)), "keyword");
       if (!saidWakeStop(heard)) { if (!s.bargeIn) this.emit({ type: "rejected", keyword: s.keyword, reason: "self", heard }); return; }
     } else if (s.checkAt !== null) {
-      const heard = this.backend.transcribe(this.fromSound(this.recentAudio(s.again ? this.fedAt - s.at + SELF_STOP_BEFORE_MS : STOP_CHECK_SECONDS * 1000)));
+      const heard = this.backend.transcribe(this.fromSound(this.recentAudio(s.again ? this.fedAt - s.at + SELF_STOP_BEFORE_MS : STOP_CHECK_SECONDS * 1000)), "keyword");
       const empty = !/[a-z]/i.test(heard);
       if (!s.again && (empty || (!emberSpeaking && afterName(heard.toLowerCase(), /amber|emma/) !== null)) && this.pauseRun < SELF_STOP_PAUSE_FRAMES) {
         // "Amber, stop…" and the speaker goes on, or nothing made out yet (the phrase cut mid-word): decided at their next
@@ -1019,7 +1019,7 @@ export class VoiceEngine {
     // A window that was already listening has heard its pre-roll (the ring is empty): nothing to check here, and the stop
     // check below still hears what was said with the name.
     const pre = this.ring.read();
-    const heard = pre.length >= MIN_TRANSCRIBE_SAMPLES ? this.backend.transcribe(pre) : "";
+    const heard = pre.length >= MIN_TRANSCRIBE_SAMPLES ? this.backend.transcribe(pre, "keyword") : "";
     if (saidWakeStop(heard)) {
       this.pendingStop = null;
       this.emit({ type: "stop" });
