@@ -168,8 +168,31 @@ export function removeMemoryModel(root: string): void {
   for (const m of MEMORY_MODEL) for (const f of [marker(root, m), path.join(root, m.target)]) fs.rmSync(f, { force: true, maxRetries: 5 });
 }
 
-/** Downloads `url` to `dest`, reporting bytes so far. */
-/** `signal`: cancels the download (Better recall's, when memory turns off); a downloader that takes none just finishes. */
+/**
+ * sherpa-onnx's prebuilt C API for Linux x64 (the release Ember's speech already pins), which the Linux packages carry
+ * in resources/voice-native for native speech (app/voice/capi.ts). It is never downloaded at run time: CI fetches the
+ * archive (scripts/voice/fetch-capi.mjs), checks it by SHA-256, and stage.mjs copies the two libraries Ember loads only
+ * when each matches its own SHA-256 below. libsherpa-onnx-c-api.so is Apache-2.0 (with what it is built from:
+ * packaging/licences/sherpa-onnx-native.txt) and libonnxruntime.so is ONNX Runtime 1.28.2 (MIT).
+ */
+export const CAPI_RELEASE = {
+  name: "sherpa-onnx 1.13.8 C API (Linux x64)", kind: "tar.bz2" as const, license: "Apache-2.0 AND MIT",
+  url: `${RELEASES}/v1.13.8/sherpa-onnx-v1.13.8-linux-x64-shared.tar.bz2`,
+  sha256: "c0bdb7907d3a74bba1d55d22bf4d9fa75586cf1530614ebe88a27b9118e015c4", bytes: 28_156_791,
+  target: "sherpa-onnx-v1.13.8-linux-x64-shared",
+  /** The libraries Ember loads, in the archive's lib/ folder, each with its own SHA-256 (onnxruntime first: it loads first). */
+  libs: {
+    "libonnxruntime.so": "4b3607aebd1784b26b6f9b20e4bd974c7ab8287043e4d095cb7d2cb40b5e566e",
+    "libsherpa-onnx-c-api.so": "b8351ca1632571ac108adbb317bcc4bf7cfe84b72690e3017316b0da3e1e344f",
+  },
+  /** ONNX Runtime's version inside it (its notices: packaging/licences/onnxruntime-1.28.2-ThirdPartyNotices.txt). */
+  onnxruntime: "1.28.2",
+};
+
+/**
+ * Downloads `url` to `dest`, reporting bytes so far. `signal`: cancels the download (Better recall's, when memory turns
+ * off); a downloader that takes none just finishes.
+ */
 export type Downloader = (url: string, dest: string, progress: (bytes: number) => void, signal?: AbortSignal) => Promise<void>;
 
 /**

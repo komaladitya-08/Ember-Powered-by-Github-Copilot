@@ -112,6 +112,8 @@ export function darwinSystem(deps: PlatformDeps, seams: DarwinSystemSeams = {}):
     voice: {
       speakerMonitor: false,
       bundledModelDirs: (resourcesPath: string) => [mac.join(resourcesPath, "voice-models"), "/Library/Application Support/Ember/voice-models"],
+      nativeSpeechDir: () => null,
+      naturalVoice: true,
     },
     privacy: {
       neverLookDefaults: NEVER_LOOK_DEFAULTS.darwin,

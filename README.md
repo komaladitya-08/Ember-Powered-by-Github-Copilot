@@ -52,7 +52,11 @@ are silent, settings shows a **Speaking** row and a note under **Speak**: run `s
 speech-dispatcher-espeak-ng`, then restart Ember.
 
 The RPM carries Ember's speech models (142 MB in all: the wake word and speech recognition, 48 MB, which listening
-needs; Ember's own voice, 67 MB; and Voice Match, 27 MB), so nothing is downloaded when voice is turned on.
+needs; Ember's own voice, 67 MB; and Voice Match, 27 MB), so nothing is downloaded when voice is turned on. Both the
+RPM and the AppImage also carry the libraries that run speech natively on this computer (sherpa-onnx and ONNX Runtime:
+32 MB installed, about 9 MB of each download), so Ember hears and answers about as fast as on Windows and macOS; on a
+processor or system where they can't run, speech runs on the slower WebAssembly build instead (`ember doctor` shows
+which, under **Speech**).
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
 system packages the RPM would bring for reading apps:
@@ -176,9 +180,9 @@ voice and Voice Match need no network. Ember's packages carry everything it runs
 runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256). The one thing it
 fetches from a third party is optional: Better recall's 23 MB language model (Settings › Memory), downloaded from
 Hugging Face (`huggingface.co`, served from `*.hf.co`) only when you click its Download, and checked against its pinned
-SHA-256. Without it, memory still works, matching your words. Only Copilot itself, and the review of commands, need the network: your organisation's
-model service, your own model provider, or GitHub Copilot's. With your own provider on a model server on this
-computer (below), nothing needs the network at all.
+SHA-256. Without it, memory still works, matching your words. Only Copilot itself, and the review of commands, need
+the network: your organisation's model service, your own model provider, or GitHub Copilot's. With your own provider
+on a model server on this computer (below), nothing needs the network at all.
 
 What to install so nothing is downloaded:
 
