@@ -2300,6 +2300,7 @@ namespace Ember.Uia
         if (offscreen)
         {
           Cut(ref cutOffscreen);
+          Omit(parent);
           return;
         }
         Cut(ref cutNodes);
@@ -2452,6 +2453,7 @@ namespace Ember.Uia
           if (listed == ListedOffscreen)
           {
             Cut(ref cutOffscreen);
+            lock (gate) node.Add("omitted", true);
             break;
           }
           kids.Add(kid);

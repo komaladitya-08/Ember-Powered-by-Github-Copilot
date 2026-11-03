@@ -377,17 +377,20 @@ export class AxSession {
    * Up to `max` children from the first of `names` the element has (null: it has none of them). Each attribute tried
    * is a round trip; `budget` caps how many are tried.
    */
-  children(el: AxRef, names: readonly string[], max: number, budget = names.length): { kids: AxRef[]; tries: number } {
+  children(el: AxRef, names: readonly string[], max: number, budget = names.length): { kids: AxRef[]; tries: number; failed: boolean } {
     let tries = 0;
+    let failed = false;
     for (const name of names.slice(0, Math.max(1, budget))) {
       tries++;
       this.calls++;
       const r = this.api.range(el, name, 0, max);
-      if (!isAxError(r)) return { kids: r, tries };
+      if (!isAxError(r)) return { kids: r, tries, failed };
       const c = errorCode(r.axError);
       if (c && FATAL.has(c)) this.raise(r.axError, `read ${name}`);
+      // "Failed" says it couldn't be read (an unsupported or empty attribute says it has none): its children aren't known.
+      if (c === "failed") failed = true;
     }
-    return { kids: [], tries };
+    return { kids: [], tries, failed };
   }
 
   /** AXUIElementCopyActionNames ([] where it has none or can't say). */
@@ -603,6 +606,11 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
     return true;
   };
 
+  // An element that couldn't be read, or whose children couldn't, is left out with all it holds: its listed parent (or the
+  // element itself, for its children) says so as `omitted`, so nobody takes what is listed for all of it (Ember's dialog
+  // waiver; as tree.ts's `omitted`).
+  const omit = (index: number): void => { if (index >= 0 && nodes[index]) nodes[index].node.omitted = true; };
+
   const visit = (ref: AxRef, parent: number, depth: number, path: number[], clip: Rect | null, ctx: RoleContext): void => {
     const first = nodes.length === 0 && parent < 0;
     if (!first && late()) { s.api.release(ref); return; }
@@ -621,6 +629,7 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
       if (first) throw err;
       if (err instanceof ProviderError && err.code === "busy") { busy = true; stop = true; return; }
       if (err instanceof ProviderError && err.code === "denied") throw err;
+      omit(parent);
       return; // gone (or unreadable) while it was read: left out, with what it holds
     }
     let trips = 1;
@@ -641,6 +650,7 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
       s.api.release(ref);
       if (err instanceof ProviderError && err.code === "busy") { busy = true; stop = true; return; }
       if (err instanceof ProviderError && err.code === "denied") throw err;
+      omit(parent);
       return;
     }
     const index = nodes.length;
@@ -658,15 +668,17 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
         const deep = depth >= o.maxDepth;
         const want = deep ? 1 : Math.min(maxChildren, o.maxNodes - nodes.length) + 1;
         const names = CHILDREN_OF[f.role] ?? ["AXChildren"];
-        let got: { kids: AxRef[]; tries: number } | null = null;
+        let got: { kids: AxRef[]; tries: number; failed: boolean } | null = null;
         try {
           got = s.children(ref, names, want, MAX_TRIPS - trips);
         } catch (err) {
           if (err instanceof ProviderError && err.code === "busy") { busy = true; stop = true; }
           else if (err instanceof ProviderError && err.code === "denied") throw err;
+          else omit(index);
         }
         if (got) {
           nodes[index].trips = trips += got.tries;
+          if (got.failed) omit(index);
           let kids = got.kids;
           if (deep) {
             if (kids.length) cut.add("depth");
@@ -700,6 +712,7 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
       } catch (err) {
         if (err instanceof ProviderError && err.code === "busy") { busy = true; stop = true; }
         else if (err instanceof ProviderError && err.code === "denied") throw err;
+        else omit(index);
       }
     }
     node.actions = actionsOf(f, names, null);

@@ -263,10 +263,10 @@ always works (`FEATURE_CONSENT_VERSION.autonomy`). While it is on, Ember doesn't
 before borrowing your mouse and keyboard (it still waits until you're still and lets go when you move), before
 moving text between apps (it says which apps and how many characters, never the text), before pressing OK on a
 message box whose only button is that OK, with nothing to choose, tick or type, and nothing in it Ember couldn't see ("Answering a message box in Notepad…";
-any dialog with a Cancel, a check box or another control, or a title bar's Close (except in a real Windows dialog box) still asks, and so does one that asks a question, says what has happened or will happen, is cut
+any dialog with a Cancel, a check box or another control, or a title bar's Close (except in a real Windows dialog box) still asks, and so does one that asks a question, says what has happened or will happen, is longer than 120 characters, is cut
 short, is a web page's, a browser's, an installer's or a permission prompt, or names something risky), or before
 typing line breaks into a plain text editor's main document with the borrowed keyboard (Notepad, gedit, Mousepad, Kate,
-TextEdit and the like; their consoles, any other app, a spreadsheet's cell, a web page and a tab still ask). While
+TextEdit and the like, when it is the window's main document; their consoles, any other app, a spreadsheet's cell, a web page and a tab still ask). Controls in a separate top-level window a dialog owns can't be detected (no reader lists them under the dialog). While
 Ember runs as an administrator or as root every command asks, and the hint under the switch says so; an ordinary command on this
 computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
 as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on

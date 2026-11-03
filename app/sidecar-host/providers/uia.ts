@@ -57,6 +57,8 @@ export interface BridgeNode {
   childrenFailed?: boolean;
   /** Snapshots: a child of it was left out and isn't listed (offscreen with no area, gone or not answering). */
   omitted?: boolean;
+  /** Snapshots: not every child was listed (maxChildren): the same as `omitted` for the host. */
+  childrenCut?: boolean;
   patterns?: {
     invoke?: boolean;
     toggle?: "On" | "Off" | "Indeterminate";
@@ -163,7 +165,7 @@ export function fromBridgeNode(b: BridgeNode): RawNode {
   // The bridge's hwnd is a signed 32-bit handle (JSON). The high bit set arrives negative; Win32 and keyboardFocus use it unsigned.
   if (b.hwnd) n.native = b.hwnd >>> 0;
   if (b.gone) n.gone = true;
-  if (b.omitted) n.omitted = true;
+  if (b.omitted || b.childrenCut) n.omitted = true;
   return n;
 }
 

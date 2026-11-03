@@ -1752,6 +1752,12 @@ function waiverOf(risk: Risk, also: AutonomyScope[]): Pick<Decision, "waivable" 
   return risk.carried ? { waivable: [...also, "crossWindow"], carriedFrom: risk.carried } : {};
 }
 
+/**
+ * The longest a message box's text may be for "Work without asking" to press its OK (characters): a plain "Cannot find
+ * ..." is short, and a long text has room for a consequence the word lists miss. The structural rule is the real gate;
+ * FUTURE_PASSIVE and the word lists are a blacklist, so open-ended phrasings ("Nuke the disk") may still get through.
+ */
+const ACK_TEXT_MAX = 120;
 /** The most of a dialog's words the worker passes (ActionRequest.dialog.text): text this long may have been cut. */
 export const DIALOG_TEXT_MAX = 400;
 /**
@@ -1791,13 +1797,13 @@ const QUESTION_FORM = /(^|[.!:;]\s+)(do|does|did|are|is|was|were|will|would|shal
 const FUTURE_PASSIVE = new RegExp(String.raw`(^|[^\p{L}\p{N}])(`
   + [
     // English
-    String.raw`will|won't|shall|shan't|going to|gets?|got|is|are|was|were|be|been|being|has|have|had|would|should|ends?|ending|\p{L}{3,}(ed|en)`,
+    String.raw`will|won't|shall|shan't|going to|gets?|got|is|are|was|were|be|been|being|has|have|had|would|should|ends?|ending|nuke|go away|goes away|disappear\p{L}*|vanish\p{L}*|\p{L}{3,}(ed|en)`,
     // German, Dutch, Swedish, Danish, Norwegian, Finnish, Czech
-    String.raw`wird|werden|wurde|wurden|worden|ist|sind|war|waren|ge\p{L}{3,}(t|en)|wordt|werd|zal|zullen|zijn|ge\p{L}{3,}d|kommer att|blir|ska|vil|tulee|aiotaan|bude|budou|byl|byla|bylo|byly`,
+    String.raw`wird|werden|wurde|wurden|worden|ist|sind|war|waren|ge\p{L}{3,}(t|en)|wordt|werd|zal|zullen|zijn|ge\p{L}{3,}d|kommer att|blir|ska|vil|tulee|aiotaan|\p{L}+taan|bude|budou|byl|byla|bylo|byly`,
     // French, Spanish, Italian, Portuguese
-    String.raw`sera|seront|serait|est|sont|etait|etaient|ete|va|vont|seran|esta|estan|fue|fueron|ha sido|han sido|van a|se \p{L}{3,}|sara|saranno|verra|verranno|viene|vengono|stato|stati|stata|state|sono|foi|foram|vai|vao|sera\p{L}*`,
+    String.raw`disparai\p{L}*|sera|seront|serait|est|sont|etait|etaient|ete|va|vont|seran|esta|estan|fue|fueron|ha sido|han sido|van a|se \p{L}{3,}|sara|saranno|verra|verranno|viene|vengono|stato|stati|stata|state|sono|foi|foram|vai|vao|sera\p{L}*`,
     // Polish, Russian, Turkish
-    String.raw`zosta\p{L}*|bedzie|beda|jest|bylo|budet|budut|будет|будут|был|была|были|было|удален\p{L}*|\p{L}+(ен|ена|ено|ены|ан|ана|ано|аны)|\p{L}+(ecek|acak)|\p{L}+(ildi|ildi|indi|uldu|uldu|ulmus|ilmis)|olacak|edilecek`,
+    String.raw`zosta\p{L}*|bedzie|beda|jest|bylo|budet|budut|будет|будут|был|была|были|было|исчез\p{L}*|удален\p{L}*|kaybol\p{L}*|\p{L}+(ен|ена|ено|ены|ан|ана|ано|аны)|\p{L}+(ecek|acak)|\p{L}+(ildi|ildi|indi|uldu|uldu|ulmus|ilmis)|olacak|edilecek`,
   ].join("|") + String.raw`)(?![\p{L}\p{N}])`, "u");
 /** Letters only Ukrainian and Belarusian write in Cyrillic, which RISKY_WORDS' Russian doesn't cover. */
 const NOT_RUSSIAN = /[іїєґўІЇЄҐЎ]/;
@@ -1833,12 +1839,12 @@ function acknowledgesOnly(r: ActionRequest, name: string, role: string, os: OS):
   if (body.length !== 1) return false;
   // The title bar's Close may cancel a GTK alert or a custom dialog: a second control. Only in a real Win32 dialog box
   // (#32770 with its one OK) does it return OK too.
-  if (d.controls.some(c => c.caption === true && !(d.messageBox === true && os === "win32" && CLOSE_LABEL.test(normalizeLabel(c.name).trim())))) return false;
+  if (d.controls.some(c => c.caption === true && !(d.messageBox === true && os === "win32" && PUSH_BUTTON.test(c.role) && CLOSE_LABEL.test(normalizeLabel(c.name).trim())))) return false;
   const only = body[0];
   const ok = (s: string) => ACKNOWLEDGES.test(normalizeLabel(s).trim());
   if (!PUSH_BUTTON.test(role) || !ok(name) || !PUSH_BUTTON.test(only.role) || !ok(only.name) || normalizeLabel(only.name).trim() !== normalizeLabel(name).trim()) return false;
   const text = d.text.replace(/\s+/g, " ").trim();
-  if (!/\p{L}/u.test(text)) return false;
+  if (!/\p{L}/u.test(text) || text.length > ACK_TEXT_MAX) return false;
   const app = appNameOf(r.app);
   const apps = [app, friendlyApp(r.app).trim()];
   if (apps.some(a => [WEB_APP, TABBED_APP, SETTINGS_APP, SECURITY_APP, ADMIN_APP].some(list => !!list[os]?.test(a)))) return false;
@@ -2036,7 +2042,12 @@ function enterMaySend(r: ActionRequest, role: string, os: OS): boolean {
  * script's interpreter (gedit's, Pluma's and xed's Python Console; Notepad++'s NppExec).
  */
 const RUNS_LINES = /(^|[^\p{L}\p{N}])(console|terminal|shell|command|commands|cmd|repl|python|interpreter|output|nppexec|run|execute|script|prompt)(?![\p{L}\p{N}])/u;
-/** A window title that names a file (an extension) or a new document, as editors title one ("list.txt - Notepad", "Unsaved Document 1 - gedit"). */
+/**
+ * A window title that names a file (an extension) or a new document, as editors title one ("list.txt - Notepad",
+ * "Unsaved Document 1 - gedit"). Weak on its own ("Python Console.py", "ls -la.sh" pass): a title is only one more
+ * check, and the real gates are `mainDocument` (the largest multi-line text, clearly a document, from a whole read),
+ * the role check and `around` (no console word in the field's name, labels, panes or selected tabs).
+ */
 const FILE_WINDOW = /\.[a-z0-9]{1,8}(?=$|[\s*)"'\]–—-])|(untitled|unsaved|new document|new file)/;
 /**
  * Is this typing line breaks (and no tab) into a plain text editor's document, where Enter only starts a new line? An

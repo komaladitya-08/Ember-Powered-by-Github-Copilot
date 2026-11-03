@@ -419,6 +419,12 @@ describe("a message box goes ahead only by its structure: one OK and nothing els
     expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog: two })).autonomy).toBeUndefined();
   });
 
+  it("believes a title bar's Close only as a push button: a “caption” toggle named Close in a real Win32 box still asks", () => {
+    const dialog = { name: "Notepad", text: "Cannot find \"milk\"", messageBox: true, controls: [{ role: "toggle button", name: "Close", caption: true }, OK] };
+    expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog })).autonomy).toBeUndefined();
+    expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog: { ...dialog, controls: [{ role: "push button", name: "Close", caption: true }, OK] } })).autonomy).toBe(true);
+  });
+
   it("counts a title bar's Close as a second control anywhere else: a GTK alert's or a custom dialog's Close may cancel", () => {
     const dialog = readBox(msgBox(false));
     expect(dialog.messageBox).toBeUndefined();
@@ -432,10 +438,17 @@ describe("a message box goes ahead only by its structure: one OK and nothing els
     const bar = (extra: AxNode[]) => msgBox(true, extra);
     const ctrls = (extra: AxNode[]) => readBox(bar(extra)).controls!;
     const kid = (id: number, role: string, name: string, states: string[] = []): AxNode => ({ id, parent: 2, depth: 2, role, name, states, bounds: null, actions: ["click"] });
-    expect(ctrls([kid(6, "push button", "Minimize"), kid(7, "push button", "Maximize"), kid(8, "push button", "Restore"), kid(9, "push button", "Help"), kid(10, "menu", "System")]))
+    expect(ctrls([kid(6, "push button", "Minimize"), kid(7, "push button", "Maximize"), kid(8, "push button", "Restore"), kid(9, "push button", "Help"), kid(10, "menu item", "System")]))
       .toEqual([{ role: "push button", name: "Close", caption: true }, OK]);
     const custom = ctrls([kid(6, "push button", "Delete all files"), kid(7, "check box", "Also empty the trash", ["checked"])]);
     expect(custom).toEqual([{ role: "push button", name: "Close", caption: true }, OK, { role: "push button", name: "Delete all files" }, { role: "check box", name: "Also empty the trash" }]);
+    // Only a push button or a menu item is a caption button: a check box or toggle named like one is a control.
+    for (const role of ["check box", "toggle button", "radio button", "switch"]) {
+      for (const name of ["Close", "Restore", "Help", "Minimize"]) {
+        expect(ctrls([kid(6, role, name)]).some(c => c.role === role && c.name === name && c.caption !== true), `${role} ${name}`).toBe(true);
+        expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog: readBox(bar([kid(6, role, name)])) })).autonomy, `${role} ${name}`).toBeUndefined();
+      }
+    }
     for (const extra of [[kid(6, "push button", "Delete all files")], [kid(6, "check box", "Also empty the trash", ["checked"])]]) {
       const dialog = readBox(bar(extra));
       expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog })).autonomy).toBeUndefined();
@@ -487,6 +500,14 @@ describe("a dialog whose read left something out has unknown controls (security 
     expect(d.autonomy).toBeUndefined();
   });
 
+  it("is what the UIA reader says for a child the bridge cut (maxChildren, past maxNodes offscreen) or left out", async () => {
+    const { fromBridgeNode } = await import("../../app/sidecar-host/providers/uia");
+    const bridge = (extra: Record<string, unknown>) => fromBridgeNode({ h: 1, ...extra } as never);
+    expect(bridge({ childrenCut: true }).omitted).toBe(true);
+    expect(bridge({ omitted: true }).omitted).toBe(true);
+    expect(bridge({}).omitted).toBeUndefined();
+  });
+
   it("is what the Windows host (tree.ts) says for an offscreen, hidden or sizeless element, and for a child the bridge left out", async () => {
     const { buildNodes } = await import("../../app/sidecar-host/tree");
     const raw = (n: Record<string, unknown>) => ({ platformRole: "Button", className: "", parent: -1, depth: 0, name: "", enabled: true, bounds: { x: 0, y: 0, width: 10, height: 10 }, ...n });
@@ -531,6 +552,25 @@ describe("a one-OK dialog that states what has happened or will happen asks (sec
         expect(d.autonomy, `${app}: ${text}`).toBeUndefined();
       }
     }
+  });
+
+  it("asks about the present-tense and intransitive probes the review named, in English and four languages", () => {
+    for (const text of ["Nuke the disk", "Files go away on OK", "Les fichiers disparaissent", "Файлы исчезнут", "Dosyalar kaybolur", "Kaikki tiedostot poistetaan."]) {
+      for (const [os, app, window] of [["linux", "gedit", "list.txt - gedit"], ["win32", "notepad.exe", "list.txt - Notepad"]] as const) {
+        const d = lone(os, app, window, text);
+        expect(d.verdict, `${app}: ${text}`).not.toBe("allow");
+        expect(d.autonomy, `${app}: ${text}`).toBeUndefined();
+      }
+    }
+  });
+
+  it("asks about a text longer than 120 characters, however plain: a long text has room for what the word lists miss", () => {
+    const plain = (n: number) => Array.from({ length: n }, () => "Cannot find milk.").join(" ");
+    expect(plain(6).length).toBeLessThanOrEqual(120);
+    expect(plain(7).length).toBeGreaterThan(120);
+    expect(lone("win32", "notepad.exe", "list.txt - Notepad", plain(6)).autonomy).toBe(true);
+    expect(lone("win32", "notepad.exe", "list.txt - Notepad", plain(7)).autonomy).toBeUndefined();
+    expect(lone("linux", "gedit", "list.txt - gedit", plain(7)).autonomy).toBeUndefined();
   });
 
   it("still acknowledges a plain statement with no future or passive marker (Notepad's “Cannot find”)", () => {
@@ -586,14 +626,29 @@ describe("a plain editor's main document only (security re-review of #140)", () 
 
   it("reads the worker's mainDocument as the largest multi-line text of the window, a tie not counting", () => {
     const text = (id: number, w: number, h: number, extra: Partial<AxNode> = {}): AxNode => ({ id, parent: 1, depth: 1, role: "text", name: "", states: ["multi line", "editable"], bounds: { x: 0, y: 0, width: w, height: h }, ...extra });
-    const doc = text(2, 700, 400), console_ = text(3, 700, 120), same = text(4, 700, 400);
+    const doc = text(2, 700, 400, { name: "Text editor" }), console_ = text(3, 700, 120), same = text(4, 700, 400, { name: "Text editor" });
     expect(mainDocument(doc, [doc, console_])).toBe(true);
     expect(mainDocument(console_, [doc, console_])).toBe(false);
     expect(mainDocument(doc, [doc, same])).toBe(false);
-    expect(mainDocument(text(5, 700, 400, { states: ["editable"] }), [doc])).toBe(false);
+    expect(mainDocument(text(5, 700, 400, { states: ["editable"], name: "Text editor" }), [doc])).toBe(false);
     expect(mainDocument(text(6, 0, 0), [doc])).toBe(false);
     // A one-line entry or a label isn't a competing document.
     expect(mainDocument(doc, [doc, { ...console_, role: "entry", states: ["editable"] }])).toBe(true);
+  });
+
+  it("asks for a sole multi-line text that doesn't say it is a document: no name, not a document role, in no document tab (Notepad++ with only its NppExec console)", () => {
+    const text = (extra: Partial<AxNode> = {}): AxNode => ({ id: 2, parent: 1, depth: 1, role: "text", name: "", states: ["multi line", "editable"], bounds: { x: 0, y: 0, width: 700, height: 400 }, ...extra });
+    const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Notepad++", states: [], bounds: FRAME };
+    expect(mainDocument(text(), [frame, text()])).toBe(false);
+    expect(mainDocument(text({ name: "Text editor" }), [frame, text({ name: "Text editor" })])).toBe(true);
+    expect(mainDocument(text({ role: "document text" }), [frame, text({ role: "document text" })])).toBe(true);
+    // The page of a document tab, however deep.
+    const tab: AxNode = { id: 3, parent: 1, depth: 1, role: "page tab", name: "", states: ["selected"], bounds: null };
+    const inTab = text({ parent: 4 });
+    const pane: AxNode = { id: 4, parent: 3, depth: 2, role: "scroll pane", name: "", states: [], bounds: null };
+    expect(mainDocument(inTab, [frame, tab, pane, inTab])).toBe(true);
+    // Another kind of ancestor says nothing.
+    expect(mainDocument(inTab, [frame, { ...tab, role: "panel" }, pane, inTab])).toBe(false);
   });
 
   it("reads the selected tab of each panel around the field, and all of a panel's tabs where none says it is selected (fieldAround)", () => {
@@ -713,6 +768,26 @@ describe("a plain editor's console still asks (security re-review of #140)", () 
       { id: 4, parent: 3, depth: 3, role: "text", name: "", states: ["multi line"], bounds: null },
     ];
     expect(fieldAround(nodes[3], ">>>", id => nodes.find(n => n.id === id))).toEqual([">>>", "Python Console"]);
+  });
+});
+
+describe("the main document needs a whole read (security re-review of #140)", () => {
+  const typeLines = async (read?: { truncated?: "nodes" | null; busy?: boolean }) => {
+    const h = notepadWorker(read ? { read } : {});
+    await h.call("perceive_window", {});
+    await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" });
+    return h;
+  };
+
+  it("goes ahead from a whole read, and asks from one cut short or busy, where a console could look like the largest text", async () => {
+    const whole = await typeLines();
+    expect(whole.st.asked).toEqual([]);
+    expect(whole.decisions("cursor_text").at(-1)).toMatchObject({ verdict: "allow", autonomy: true });
+    for (const read of [{ truncated: "nodes" as const }, { busy: true }]) {
+      const h = await typeLines(read);
+      expect(h.st.asked.length, JSON.stringify(read)).toBeGreaterThan(0);
+      expect(h.st.audit.some(e => e.autonomy === true && e.kind === "cursor_text"), JSON.stringify(read)).toBe(false);
+    }
   });
 });
 

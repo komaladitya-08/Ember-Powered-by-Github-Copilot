@@ -741,6 +741,8 @@ const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
 /** A title bar's Close, and its other standard caption buttons (dialogAround). */
 const CAPTION_CLOSE = /^close$/;
 const CAPTION_OTHER = /^(minimi[sz]e|maximi[sz]e|restore( down)?|help|system( menu)?)$/;
+/** Only a push button or a menu item is a caption button: a check box or toggle in a title bar named "Close" is a control. */
+const CAPTION_ROLE = /^(push button|button|menu item)$/;
 const CONTROL_ROLE = /button|check|radio|toggle|switch|combo|entry|^text$|password|spin|slider|link|menu|tab|list|tree|icon|table|cell|scroll bar|terminal|document|calendar|chooser|editbar|split/;
 /**
  * The dialog `start` sits in (see Worker.dialogOf), looked up through `get` among `all` the nodes read. `whole`: `all`
@@ -777,7 +779,7 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
         if (!up || n.role === "title bar") return [];
         const control = CONTROL_ROLE.test(n.role) || n.editable === true || n.states.includes("editable") || (n.actions?.length ?? 0) > 0;
         if (!control) return [];
-        if (up.some(a => a.role === "title bar")) {
+        if (CAPTION_ROLE.test(n.role) && up.some(a => a.role === "title bar")) {
           const label = normalizeLabel(n.name).trim();
           if (CAPTION_CLOSE.test(label)) return [{ role: n.role, name: n.name, caption: true }];
           if (CAPTION_OTHER.test(label)) return [];
@@ -824,12 +826,27 @@ export function fieldAround(n: AxNode, label: string | undefined, byId: (id: num
 const SWITCH_ROLE = /^(page tab|tab|tab item|toggle button|radio button)$/;
 /**
  * Is `n` the window's main document: a multi-line text that is the largest of the multi-line texts the window shows (a
- * console or a side pane is smaller)? Ties are not: ActionRequest.mainDocument. Exported for its tests.
+ * console or a side pane is smaller) and clearly a document (a "document text", a named text, or in a document tab: a
+ * sole text with nothing to say what it is isn't)? Ties are not. `all` must be a whole read (the caller checks
+ * `knownWhole`): from a cut-short one a console could look like the largest text. ActionRequest.mainDocument.
+ * Exported for its tests.
  */
 export function mainDocument(n: AxNode, all: Iterable<AxNode>): boolean {
   const area = (x: AxNode) => (x.bounds ? x.bounds.width * x.bounds.height : 0);
+  const nodes = [...all];
   if (!n.states.includes("multi line") || area(n) <= 0) return false;
-  return [...all].every(x => x.id === n.id || !/^(text|document text)$/.test(x.role) || !x.states.includes("multi line") || area(x) < area(n));
+  if (!nodes.every(x => x.id === n.id || !/^(text|document text)$/.test(x.role) || !x.states.includes("multi line") || area(x) < area(n))) return false;
+  // A sole text isn't a document for being the only one (Notepad++ with just its NppExec console shows one): it must say
+  // it is, by its role (a document), a name, or being the page of a document tab.
+  if (n.role === "document text" || n.name.trim()) return true;
+  const byId = new Map(nodes.map(x => [x.id, x]));
+  for (let p = n.parent, i = 0; p !== null && i < 80; i++) {
+    const a = byId.get(p);
+    if (!a) break;
+    if (a.role === "page tab") return true;
+    p = a.parent;
+  }
+  return false;
 }
 
 function inWebPage(n: AxNode | undefined, byId: (id: number) => AxNode | undefined): boolean {
@@ -2490,7 +2507,7 @@ export class Worker {
         ...(node.states.includes("multi line") ? { multiLine: true } : {}), ...(node.role === "document web" || inWebPage(node, i => this.known.get(i)) ? { inPage: true } : {}),
         // Its label and the panes and tabs around it (a "Python Console" tab), up to the window: plainEditorLines.
         around: fieldAround(node, this.labels.get(node.id), i => this.known.get(i), this.known.values()),
-        ...(mainDocument(node, this.known.values()) ? { mainDocument: true } : {}) } : {}),
+        ...(this.knownWhole && mainDocument(node, this.known.values()) ? { mainDocument: true } : {}) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
