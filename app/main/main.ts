@@ -20,7 +20,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
-import { VOICE_ANSWER_REFUSED, voiceAnswer, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { VOICE_ANSWER_REFUSED, heardAnswer, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1345,9 +1345,16 @@ function start(): void {
     const result = o.kind === "answer" ? confirmer.answerVoice(o.answer, { verified: o.verified, question: questionWhenSaid, startedAt: saidFrom }) : o.why;
     log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified });
     if (result === "answered" || result === "no-question") return;
-    const words = VOICE_ANSWER_REFUSED[result];
-    confirmer.note(words);
-    if (maySpeak()) voice?.speak(spokenText(words));
+    refuseVoiceAnswer(result);
+  };
+  /**
+   * A spoken answer wasn't taken (`why`): the question stays up, its bubble says why and what to do instead, and so
+   * does Ember, aloud, where it speaks (a fixed sentence: never Ember's own voice taken as an answer after it, as the
+   * echo guard dates each request from its wake, and the voice process hears nothing while Ember speaks).
+   */
+  const refuseVoiceAnswer = (why: VoiceAnswerNote) => {
+    if (!confirmer?.note(VOICE_ANSWER_REFUSED[why])) return;
+    if (maySpeak()) voice?.speak(voiceAnswerSaid(why));
   };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
@@ -1408,7 +1415,9 @@ function start(): void {
         // Ember's own; voice-answer.ts). Anything else is a request, as ever.
         {
           const matchOn = !!ownerPrint() && (voice?.matchReady ?? false);
-          const spokenReply = voiceAnswer({ text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, verified: e.verified === true, short: e.short === true, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true });
+          // Turned on, but not in use: never taught, or its model isn't in (the refusal says to finish setting it up).
+          const matchUnready = settings.get().voice.match && !matchOn;
+          const spokenReply = voiceAnswer({ text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchUnready, verified: e.verified === true, short: e.short === true, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true });
           if (spokenReply.kind !== "none") { answerByVoice(spokenReply); break; }
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
@@ -1427,6 +1436,14 @@ function start(): void {
         if (e.reason === "voice" && confirmer?.lockVoice()) {
           log.info("voice.answer_locked");
           confirmer.note(VOICE_ANSWER_REFUSED.locked);
+        }
+        // "Ember, allow" said while Ember read the question out, where it can't tell its voice from the user's (Windows,
+        // macOS): the wake was turned away, silently until now. It is never taken (it may be Ember's own words): Ember
+        // stops speaking, and the bubble and Ember say to say it again (owner report of 2026-11-03).
+        if (e.reason === "self" && confirmer?.waiting && e.heard && heardAnswer(e.heard)) {
+          log.info("voice.answer_heard_over");
+          voice?.hush();
+          refuseVoiceAnswer("heard-over");
         }
         break;
     }

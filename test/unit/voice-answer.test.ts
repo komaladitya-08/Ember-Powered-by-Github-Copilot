@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { spokenAnswer, voiceAnswer, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
+import { heardAnswer, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
 import fs from "node:fs";
@@ -70,7 +70,9 @@ describe("voiceAnswer (who may answer by voice)", () => {
 
   it("asks for a little more when the owner's yes was too short for Voice Match to vouch for (security review of #127)", () => {
     expect(voiceAnswer({ ...base, verified: false, short: true })).toEqual({ kind: "refused", answer: "allow", why: "too-short" });
-    expect(VOICE_ANSWER_REFUSED["too-short"]).toMatch(/“Ember, yes, go ahead and allow it\.”/);
+    expect(VOICE_ANSWER_REFUSED["too-short"]).toBe("Say a little more so I can be sure it's you, like “Yes, please go ahead and allow that.”");
+    // The longer yes it suggests is one Ember takes.
+    expect(spokenAnswer("Yes, please go ahead and allow that.")).toBe("allow");
   });
 
   it("says how to set Voice Match up when a yes can't be taken", () => {
@@ -272,5 +274,59 @@ describe("AgentHost's “Work without asking” switch by voice (no conductor to
     await h.ask("Ask me first again");
     expect(settings.get().autonomy.on).toBe(false);
     expect(answers.at(-1)).toBe("Okay, I'll ask you first again.");
+  });
+});
+
+describe("spoken answers as people say them (owner report of 2026-11-03: “Ember, allow” and “Ember, go ahead” did nothing on Windows)", () => {
+  it("hears the yeses people naturally say, and the recognizer's ways with them", () => {
+    for (const yes of [
+      "Ember, allow.", "Allow it.", "Go ahead.", "Yes, do it.", "Okay, go ahead.", "Sure.", "Yeah, go ahead.", "Please go ahead.", "Allow, please.",
+      "Hey, Ember. Allow.", "Amber, allow.", "Emma, go ahead.", "Yes.", "Yep, go ahead.", "Okay.", "Um, yes, go ahead.", "Please allow it.",
+      // Moonshine's ways with "allow" and "go ahead".
+      "Aloud.", "A loud.", "A low.", "Allowed.", "Go a head.", "Ember, aloud.",
+      "Yes, please go ahead and allow it.", "Go ahead and allow that.",
+    ]) expect(spokenAnswer(yes), yes).toBe("allow");
+  });
+
+  it("hears the noes people naturally say", () => {
+    for (const no of ["Nah.", "No, not yet.", "Not right now.", "Don't allow it.", "No, no.", "Deny it.", "Ember, not now, thanks.", "Okay, no."]) expect(spokenAnswer(no), no).toBe("deny");
+  });
+
+  it("still never hears Always, a yes inside a longer request, or an answer it can't be sure of", () => {
+    for (const other of [
+      "Always.", "Always allow.", "Yes, always.", "Allow always.", "Go ahead and always allow it.", "Yes and also delete the files.",
+      "Allow it to delete everything and then send the report to Sam", "No, go ahead.", "Go ahead, no.", "Hello.", "Read it aloud.", "Okay, so what's next?",
+    ]) expect(spokenAnswer(other), other).toBeNull();
+  });
+});
+
+describe("refusals of a spoken yes say exactly what to do, and are said aloud too", () => {
+  const base: VoiceAnswerInput = { text: "Ember, allow", questionUp: true, matchOn: false, verified: false, selfSpoke: false };
+
+  it("tells Voice Match off from Voice Match turned on but not ready (never taught, or its model not in)", () => {
+    expect(voiceAnswer(base)).toEqual({ kind: "refused", answer: "allow", why: "voice-match-off" });
+    expect(voiceAnswer({ ...base, matchUnready: true })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-unready" });
+    expect(VOICE_ANSWER_REFUSED["voice-match-off"]).toBe("To answer yes by voice, set up Voice Match in Settings › Voice, so I know it's you. For now, click Allow.");
+    expect(VOICE_ANSWER_REFUSED["voice-match-unready"]).toBe("Voice Match isn't ready yet: finish setting it up in Settings › Voice to answer yes by voice. For now, click Allow.");
+    // "Not now" is still taken from anyone.
+    expect(voiceAnswer({ ...base, text: "Not now", matchUnready: true })).toEqual({ kind: "answer", answer: "deny", verified: false });
+  });
+
+  it("says them in words fit for speech: the menu path as words, no quote marks", () => {
+    expect(voiceAnswerSaid("voice-match-off")).toBe("To answer yes by voice, set up Voice Match in Settings, then Voice, so I know it's you. For now, click Allow.");
+    expect(voiceAnswerSaid("too-short")).toBe("Say a little more so I can be sure it's you, like Yes, please go ahead and allow that.");
+    for (const why of Object.keys(VOICE_ANSWER_REFUSED) as (keyof typeof VOICE_ANSWER_REFUSED)[]) expect(voiceAnswerSaid(why), why).not.toMatch(/[›“”"]/);
+  });
+
+  it("asks again for an answer said over Ember's own voice, and never takes it", () => {
+    expect(VOICE_ANSWER_REFUSED["heard-over"]).toBe("I heard you over my own voice, so I didn't take it. Say it again now that I've stopped.");
+    // What the recognizer heard round the wake word Ember turned away while it spoke.
+    expect(heardAnswer("Ember, allow.")).toBe("allow");
+    expect(heardAnswer("Hey Ember, go ahead.")).toBe("allow");
+    expect(heardAnswer("Ember, not now.")).toBe("deny");
+    // Ember's own question read out ("Ember asks: … Press … for not now") is no answer.
+    expect(heardAnswer("Ember asks: Click Save in gedit? Press Windows key, Alt, N for not now.")).toBeNull();
+    expect(heardAnswer("Ember, stop.")).toBeNull();
+    expect(heardAnswer("allow")).toBeNull();
   });
 });
