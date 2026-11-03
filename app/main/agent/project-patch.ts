@@ -65,17 +65,18 @@ export function applyProjectPatch(patch: ProjectPatch, signal: AbortSignal, reco
   const check = () => {
     signal.throwIfAborted();
     const changed = () => new ProjectInputError("The selected file changed or cannot be replaced safely. Draft the patch again.");
-    const same = (live: fs.Stats) => live.isFile() && live.nlink === 1 && live.mode === stat.mode && (live.mode & 0o7000) === 0 &&
-      live.uid === stat.uid && live.gid === stat.gid && live.dev === stat.dev && live.ino === stat.ino &&
-      live.size === stat.size && live.mtimeMs === stat.mtimeMs && live.ctimeMs === stat.ctimeMs;
-    if (!same(fs.lstatSync(file)) || path.relative(resolved, fs.realpathSync(file)) !== "") throw changed();
+    const sameFile = (live: fs.Stats) => live.isFile() && live.dev === stat.dev && live.ino === stat.ino;
+    const sameContents = (live: fs.Stats) => sameFile(live) && live.nlink === 1 && live.mode === stat.mode && (live.mode & 0o7000) === 0 &&
+      live.uid === stat.uid && live.gid === stat.gid && live.size === stat.size && live.mtimeMs === stat.mtimeMs && live.ctimeMs === stat.ctimeMs;
+    // Match the native realpath used by fs.promises at selection, including Windows junctions and short path names.
+    if (!sameFile(fs.lstatSync(file)) || path.relative(resolved, fs.realpathSync.native(file)) !== "") throw changed();
     const fd = fs.openSync(resolved, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
     try {
-      if (!same(fs.fstatSync(fd))) throw changed();
+      if (!sameContents(fs.fstatSync(fd))) throw changed();
       const bytes = Buffer.alloc(stat.size + 1);
       const count = fs.readSync(fd, bytes);
       if (count !== stat.size || crypto.createHash("sha256").update(bytes.subarray(0, count)).digest("hex") !== digest ||
-          !same(fs.fstatSync(fd)) || !same(fs.lstatSync(file))) throw changed();
+          !sameContents(fs.fstatSync(fd)) || !sameFile(fs.lstatSync(file))) throw changed();
     } finally {
       fs.closeSync(fd);
     }
