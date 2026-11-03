@@ -1,6 +1,6 @@
 /** M8: admin lockdown, consent, kill switch, task alignment, auth prompts, audit timeline. */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -146,7 +146,12 @@ describe("authentication prompts (M8.3)", () => {
 });
 
 describe("kill switch (M8.9)", () => {
-  it("tells every part to stop at once and returns within 300 ms even if one hangs", async () => {
+  beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] }));
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  // Wall-clock bounds, including real audit I/O, live in integration/killswitch-deadline.test.ts.
+  // Here a busy CI runner cannot turn the 300 ms deadline into a test of OS scheduling.
+  it("tells every part to stop immediately and waits exactly 300 ms for a hung part", async () => {
     const order: string[] = [];
     const dir = tmp();
     const audit = new AuditLog(dir);
@@ -156,11 +161,16 @@ describe("kill switch (M8.9)", () => {
       { name: "speech", stop: () => { order.push("speech"); throw new Error("no speaker"); } },
       { name: "motion", stop: async () => { order.push("motion"); } },
     ], quiet, () => audit);
-    const t0 = Date.now();
-    const r = await ks.pull("hotkey");
-    expect(Date.now() - t0).toBeLessThan(400);
+    let settled = false;
+    const pulled = ks.pull("hotkey").then(r => { settled = true; return r; });
+    // All stop callbacks run before pull yields, despite an earlier hang or throw.
     expect(order).toEqual(["borrow", "agent", "speech", "motion"]);
-    expect(r.late).toEqual(["agent"]);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(settled).toBe(false);
+    expect(audit.recent(5)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    const r = await pulled;
+    expect(r).toEqual({ ms: 300, late: ["agent"] });
     expect(audit.recent(5)[0]).toMatchObject({ event: "stop", source: "hotkey" });
   });
 
@@ -170,10 +180,35 @@ describe("kill switch (M8.9)", () => {
     expect(audit.recent(1)[0]).toMatchObject({ event: "stop", source: "settings" });
   });
 
-  it("is quick when everything stops promptly", async () => {
+  it("returns without advancing time when everything stops promptly", async () => {
     const r = await new KillSwitch(() => [{ name: "a", stop: () => undefined }, { name: "b", stop: async () => undefined }], quiet).pull("voice");
-    expect(r.ms).toBeLessThan(50);
-    expect(r.late).toEqual([]);
+    expect(r).toEqual({ ms: 0, late: [] });
+  });
+
+  it("waits for a part completing before the deadline rather than always waiting 300 ms", async () => {
+    const pulled = new KillSwitch(() => [
+      { name: "agent", stop: () => new Promise(resolve => setTimeout(resolve, 123)) },
+    ], quiet).pull("menu");
+    await vi.advanceTimersByTimeAsync(123);
+    expect(await pulled).toEqual({ ms: 123, late: [] });
+  });
+
+  it("reports only unfinished parts at the deadline and still observes their late rejection", async () => {
+    const warn = vi.fn();
+    const failure = new Error("late stop failure");
+    const pulled = new KillSwitch(() => [
+      { name: "borrow", stop: () => new Promise(resolve => setTimeout(resolve, 299)) },
+      { name: "agent", stop: () => new Promise(() => {}) },
+      { name: "speech", stop: () => new Promise((_, reject) => setTimeout(() => reject(failure), 301)) },
+    ], { ...quiet, warn }).pull("hotkey");
+    await vi.advanceTimersByTimeAsync(300);
+    const result = await pulled;
+    expect(result).toEqual({ ms: 300, late: ["agent", "speech"] });
+    expect(warn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(warn).toHaveBeenCalledExactlyOnceWith("killswitch.part_failed", { part: "speech", err: failure });
+    // The returned snapshot is stable; a late rejection is handled rather than unhandled or discarded.
+    expect(result.late).toEqual(["agent", "speech"]);
   });
 });
 
