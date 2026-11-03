@@ -1351,6 +1351,8 @@ function start(): void {
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
+  /** The status line while a follow-up window listens. */
+  const FOLLOW_UP_STATUS = "Listening for a follow-up…";
   /** What Ember does with what it hears. */
   const onVoice = (e: VoiceEvent) => {
     switch (e.type) {
@@ -1365,7 +1367,9 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); speechStarts(); setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
+        if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); speechStarts(); setState({ emotion: "listening" }); setStatus("listen", FOLLOW_UP_STATUS); }
+        // "Hey Ember" said in a follow-up window made it a wake's window (engine.ts wakeOverFollowUp).
+        if (e.on && e.reason === "wake" && statusBy.listen === FOLLOW_UP_STATUS) setStatus("listen", null);
         // (Not the note that a request was cut: it comes with the "listening off" of that request, and stays.)
         if (!e.on && !isCutNote(statusBy.listen)) setStatus("listen", null);
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
