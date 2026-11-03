@@ -167,9 +167,10 @@ export function vectorFile(dir: string, onBroken?: (err: unknown) => void): Vect
       let index: VectorIndex;
       try {
         index = VectorIndex.fromJSON(JSON.parse(fs.readFileSync(file, "utf8")));
-      } catch {
-        // No file (nothing to drop), or a broken one, which the next load moves aside.
-        return;
+      } catch (err) {
+        // Only absence is success. Unreadable or corrupt vectors may still contain the forgotten fact.
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw err;
       }
       if (!index.delete(id)) return;
       if (index.size) this.save(index);
@@ -235,21 +236,30 @@ export class SemanticMemory {
     this.timer.unref?.();
   }
 
-  /** A fact was forgotten: its vector goes at once (and from the file soon), also while the model isn't in use. */
+  /** Removes a fact's persisted vector before acknowledging deletion, even with the model off. */
   forget(id: string): void {
     if (this.index) {
-      if (this.index.delete(id)) this.saveSoon();
-      return;
+      const next = VectorIndex.fromJSON(this.index.toJSON());
+      next.delete(id);
+      if (next.size) this.file.save(next);
+      else this.file.erase();
+      this.generation++;
+      this.clearTimers();
+      this.index = next;
+    } else {
+      this.file.drop(id);
+      this.generation++;
+      this.clearTimers();
     }
-    try { this.file.drop(id); } catch (err) { this.o.log.warn("memory.vectors_save_failed", { err: err instanceof Error ? err.message : String(err) }); }
   }
 
-  /** Everything was forgotten: the index and its file go, and work in flight is dropped. */
+  /** Clears the index and cancels in-flight work only after its file is successfully erased. */
   forgetAll(): void {
+    this.file.erase();
     this.generation++;
     this.clearTimers();
     this.index?.clear();
-    try { this.file.erase(); } catch (err) { this.o.log.warn("memory.vectors_erase_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    this.graph = null;
   }
 
   /**

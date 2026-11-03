@@ -54,6 +54,12 @@ export function saveFailedText(err: unknown): string {
   return /^Ember couldn't save /.test(said) ? said : "Ember couldn't save that change.";
 }
 
+/** A failed deletion must remain retryable without exposing an IPC or filesystem error. */
+export function memoryDeleteFailedText(err: unknown): string {
+  const said = ipcErrorText(err);
+  return /^Ember couldn't finish deleting /.test(said) ? said : "Ember couldn't finish deleting memory. Try Forget again.";
+}
+
 /** Token counts that read naturally: "312", "1.2k", "48k". */
 export function tokens(n: number): string {
   if (n < 1000) return String(Math.round(n));
@@ -393,7 +399,7 @@ export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: nu
   return `Download ${parts.length ? parts.join(" and ") : "speech models"} (${mb})`;
 }
 
-export const SPEAK_NO_VOICE = "Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.";
+export const SPEAK_NO_VOICE = "Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.";
 
 /** The voice line while the microphone is off; `muteLabel` is the mute shortcut Ember holds as this OS writes it ("": none). */
 export function micOffText(muteLabel = SHORTCUTS.linux.mute.label): string {

@@ -82,11 +82,12 @@ describe("the speaking page (review #101)", () => {
     const api: MicApi = { status: vi.fn(), speaking: vi.fn(), speech: vi.fn(), onSpeak: fn => { speak = fn; }, onHush: () => undefined, onAudio: () => undefined, onAudioDone: () => undefined, played: vi.fn(), level: vi.fn(), onLevelOn: () => undefined };
     vi.stubGlobal("window", { emberMic: api, addEventListener: () => undefined });
     vi.stubGlobal("SpeechSynthesisUtterance", Utterance);
-    vi.stubGlobal("speechSynthesis", { speak: (u: Utterance) => spoken.push(u), cancel: () => undefined, getVoices: () => [] });
+    vi.stubGlobal("speechSynthesis", { speak: (u: Utterance) => spoken.push(u), cancel: () => undefined, getVoices: () => [{ name: "Local", lang: "en-US", localService: true, default: true }], addEventListener: () => undefined });
+    vi.stubGlobal("navigator", { language: "en-US" });
     vi.resetModules();
     await import("../../app/renderer/mic/main");
 
-    // No voice: the reply never starts.
+    // The advertised local voice does not actually start.
     onSpeak("Night Light is on.");
     vi.advanceTimersByTime(7900);
     expect(api.speech).not.toHaveBeenCalled();

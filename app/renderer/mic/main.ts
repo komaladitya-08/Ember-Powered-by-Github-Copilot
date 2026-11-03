@@ -13,12 +13,19 @@ import type { MicApi } from "../../shared/voice";
 import { Capture } from "./capture";
 import { Player, playerAudio, type PlayerContext } from "./player";
 import { speechWatch, type WatchedUtterance } from "./speech-watch";
-import { bestVoice } from "./voices";
+import { LocalSpeech } from "./local-speech";
 import { LEVEL_MS, VOICE_KEEP_ALIVE_MS, VOICE_LEVEL_MS, LevelMeter, envelope, rms, voiceAt, type VoiceSpan } from "../../shared/level";
 
 declare global { interface Window { emberMic: MicApi } }
 
 const api = window.emberMic;
+/** Keep the warning in sync across neural playback, local-voice loading and the system-speech watchdog. */
+let speechOk: boolean | null = null;
+function reportSpeech(ok: boolean): void {
+  if (ok === speechOk) return;
+  speechOk = ok;
+  api.speech(ok);
+}
 let port: MessagePort | null = null;
 let capture: Capture | null = null;
 
@@ -116,9 +123,10 @@ function voicePlaying(on: boolean): void {
 
 /** Ember's own voice: main sends each reply's audio as it is made; the first chunk of sound says speech works. */
 const player = new Player(() => playerAudio(new AudioContext({ latencyHint: "interactive" }) as unknown as PlayerContext, new URLSearchParams(location.search).get("playback") === "element"), on => {
-  if (on) api.speech(true);
+  if (on) reportSpeech(true);
   voicePlaying(on);
   update();
+  if (!on) localSpeech.drain();
 }, (at, samples, rate) => { spans.push({ at, env: envelope(samples, rate), stepS: LEVEL_MS / 1000 }); });
 api.onAudio(a => {
   const seconds = player.chunk(a.id, a.samples, a.rate);
@@ -134,41 +142,49 @@ const watch = speechWatch({
   timeoutMs: 8000,
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: t => clearTimeout(t as ReturnType<typeof setTimeout>),
-  report: ok => api.speech(ok),
+  report: reportSpeech,
 });
 let watching: WatchedUtterance | null = null;
 
-/** The system's most natural local voice for the language (voices load late on some systems: asked each time). */
-const systemVoice = (lang: string): SpeechSynthesisVoice | null => bestVoice(speechSynthesis.getVoices(), lang);
+/** Local fallback waits for neural audio to finish, and briefly for voices to load. */
+const localSpeech = new LocalSpeech({
+  voices: () => speechSynthesis.getVoices(),
+  busy: () => player.active,
+  speak: speakLocal,
+  unavailable: () => reportSpeech(false),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
+}, navigator.language || "en-US");
+speechSynthesis.addEventListener("voiceschanged", () => localSpeech.drain());
 
-api.onSpeak(({ text, append }) => {
-  if (!append) {
-    watching?.cancelled();
-    speechSynthesis.cancel();
-    synthQueued = new Set();
-    synthStarted = false;
-  }
+function speakLocal(text: string, voice: SpeechSynthesisVoice): void {
   const u = new SpeechSynthesisUtterance(text);
   u.lang = navigator.language || "en-US";
-  const voice = systemVoice(u.lang);
-  if (voice) u.voice = voice;
+  u.voice = voice;
   u.rate = 1.05;
   const w = watching = watch.utterance();
   const queued = synthQueued;
   queued.add(u);
-  u.onstart = () => { w.started(); if (queued === synthQueued) synthStarted = true; update(); };
+  u.onstart = () => { if (queued !== synthQueued) return; w.started(); reportSpeech(true); synthStarted = true; update(); };
   // A reply replaced by the next one ends after the next has started: only the current queue counts.
   u.onend = () => { queued.delete(u); update(); };
   u.onerror = e => { w.failed(e.error); queued.delete(u); update(); };
   speechSynthesis.speak(u);
+}
+
+api.onSpeak(({ text, append }) => {
+  if (!append) hush();
+  localSpeech.enqueue(text);
 });
-api.onHush(() => {
+function hush(): void {
+  localSpeech.cancel();
   watching?.cancelled();
   speechSynthesis.cancel();
   synthQueued = new Set();
   synthStarted = false;
   player.stop();
   update();
-});
+}
+api.onHush(hush);
 
 window.addEventListener("beforeunload", () => capture?.stop());

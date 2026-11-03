@@ -817,6 +817,24 @@ describe("VoiceEngine with other people talking", () => {
       expect(events.filter(e => e.type === "utterance")).toMatchObject([{ text: "U47 b0", window: "wake" }, { text: "U30 b0", window: "follow-up" }]);
     });
 
+    it("keeps a softer follow-up's last words, without admitting quieter room talk on the next turn (PR #149)", () => {
+      const b = talking({ wake: 9, hangover: 19 });
+      const { events, e, c } = listen(b, [...n(100, room), level(0, 9), ...n(47, () => level(0.1)), ...n(40, room)]);
+      const feed = (frames: Float32Array[]) => { for (const f of frames) { e.feed(f); c.t += 32; } };
+      e.selfSpeaking(true);
+      feed(n(20, room));
+      e.selfSpeaking(false);
+      e.followUp(8000);
+      // The follow-up starts within 6 dB of the wake. Its softer words after a breath are still its own, but measured
+      // against the louder wake they looked like someone else's talk and were sent before the request ended.
+      feed([...n(30, room), ...n(20, () => level(0.055)), ...n(8, room), ...n(40, () => level(0.02)), ...n(60, room)]);
+      expect(utterances(events)).toEqual(["U47 b0", "U20 b40"]);
+      e.followUp(8000);
+      feed([...n(30, room), ...n(60, () => level(0.03)), ...n(300, room)]);
+      expect(utterances(events)).toEqual(["U47 b0", "U20 b40"]);
+      expect(events.at(-1)).toMatchObject({ type: "listening", reason: "timeout", window: "follow-up" });
+    });
+
     it("doesn't send the room's talk (10 dB quieter than the request) to the model", () => {
       const { events, b } = followUp(n(400, () => level(++said % 5 ? 0.03 : 0.006)));
       expect(utterances(events)).toEqual(["U47 b0"]);

@@ -88,7 +88,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `npm run test:integration` | Runs the real Copilot runtime against the offline mock model |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run test:smoke` | Starts Ember (set up), checks the window appears, a second launch hands over, a third with `--ask` opens the ask box, and Ask Ember is in the jump list (Windows) or the Dock menu (macOS). Without a desktop: `xvfb-run -a npm run test:smoke` |
-| `npm run test:voice` | Voice end to end in the Electron app (Linux): Ember's mic window hears WAV files through Chromium's fake microphone (`EMBER_TEST_MIC_WAV`, development builds only) and the scripted model answers; checks from the log the wake, the request, the spoken reply reaching the page, self-speaking and the follow-up window, "Hey Ember, stop" during a reply, and Voice Match turning away another voice. Needs `npm run build`, `node scripts/voice/prepare.mjs` and `node scripts/voice/prepare.mjs --voice ryan --clips`; without a desktop: `xvfb-run -a npm run test:voice` (one scenario: `… test:voice -- stop`) |
+| `npm run test:voice` | Voice end to end in the Electron app (Linux): Ember's mic window hears WAV files through Chromium's fake microphone (`EMBER_TEST_MIC_WAV`, development builds only) and the scripted model answers; checks from the log the wake, the request, the spoken reply reaching the page, self-speaking and the follow-up window, three requests with spoken replies between them (`multi`, the last two without a wake word), "Hey Ember, stop" during a reply reaching the app-wide kill switch (`killswitch.pulled`, source `voice`), and Voice Match turning away another voice. Needs `npm run build`, `node scripts/voice/prepare.mjs` and `node scripts/voice/prepare.mjs --voice ryan --clips`; without a desktop: `xvfb-run -a npm run test:voice` (one scenario: `… test:voice -- stop`) |
 | `node test/smoke/launch.mjs --folder '<name>'` | The smoke test from a copy of the app in a folder of that name; checks the settings page loaded there (CI uses one with %, #, &, brackets and non-ASCII) |
 | `npm run build:lab` | Builds the character lab demo into `dist/ember-character-lab.html` |
 | `npm run rebuild:el8` | Rebuilds native modules for RHEL 8 and checks every binary (§6) |
@@ -430,6 +430,13 @@ text you selected), so you can say “make this bold” or “what does this mea
 
 ### Talking to Ember
 
+If neural speech fails, already generated audio finishes before an explicitly local system voice says only the
+ungenerated remainder. Further replies use the system voice until Ember restarts, so speech engines never compete
+while recovery is queued. Stop or a replacement reply cancels queued recovery too. If no local voice matches the
+system language, Ember waits up to three seconds for the voice list to load, then shows a speech warning in Settings;
+the reply remains readable in the bubble. It never submits speech to an unspecified default or online voice.
+
+
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
 the speech models (142 MB, once; agreeing to the microphone note starts the download). Then say “Ember, …” (or “Hey
 Ember, …”) with your request. You can say it in one breath, or pause after the name. Ember answers out loud in its own
@@ -638,6 +645,15 @@ the mock model's pace, a typed question → the first token through the real Cop
 task's start → its first tool call and each tool's time (the eval's scripted tasks; set `EMBER_PYTHON` to a Python
 with GTK 3), and the kill switch with a turn streaming and the mouse borrowed. Run it on `main` and on a change, on
 the same computer, one after the other.
+The eval's wake gate also honours `EMBER_SHERPA_CAPI` and names the backend in its result. Both measurements count
+compute queued by an earlier slow frame. Compare the same backend and machine load before treating a wake over
+300 ms as a recognition regression; selecting the native libraries for the app does not select them for a separate
+eval unless its environment includes that directory too.
+
+A follow-up's admission stays tied to the original wake's loudness, even across successive requests. Once admitted,
+its own loudness decides when its softer words end. Reusing the louder wake for both checks cut a third request at
+"And make the text" before "a bit bigger"; the real-model suite keeps that slightly softer three-turn recording as a
+regression alongside the Electron smoke.
 
 **What Ember costs at rest.** On Linux, after `npm run build` and `node scripts/voice/prepare.mjs`, run
 `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs`.
@@ -1904,3 +1920,7 @@ test/fixtures       GTK3 test bench and hostile windows, the Windows bench (win_
                     (mac_bench.js), plist samples, voice clips;  test/demo  recorded tours
 eval/               task suite (eval/tasks), runner, checkers, release gates, report
 ```
+
+### Voice request cancellation
+
+`VoiceService` owns the listening generation sent with init, cancel, enrolment and voiceprint changes. The voice process tags engine events and learning samples with that generation; main rejects old generations even when IPC or inference is delayed beyond a second. `VoiceGate.cancel()` separately revokes pending checks and held wakes, without making new requests wait for old inference. Stop always passes through. Explicit owner changes revoke work, while the adaptation-only refresh preserves the generation and each pending request uses one captured owner/anchor/threshold configuration. Run `npx vitest run test/unit/voice-cancellation.test.ts test/unit/voice-service.test.ts test/unit/voice-match.test.ts test/unit/voice-process.test.ts` for the deterministic regressions; these do not establish real-microphone accuracy.

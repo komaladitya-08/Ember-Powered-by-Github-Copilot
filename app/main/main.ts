@@ -1671,16 +1671,22 @@ function start(): void {
     signOuts++;
     signInAbort?.abort();
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
-    await agent?.forgetConversation();
-    tokens?.clear();
-    currentToken = null;
-    keeper.use(null);
-    // Signing out forgets the user's own provider's key too (its other settings stay, without a key).
-    providers.forget();
-    // Refusals don't outlive the sign-in: the account may have Copilot now, so the next sign-in tries every source afresh.
-    refusedTokens.clear();
-    askHistory = [];
-    await agent?.start(null);
+    try {
+      await agent?.forgetConversation();
+    } finally {
+      // Failed memory erasure must not leave a signed-in account or provider key active.
+      currentToken = null;
+      keeper.use(null);
+      try { tokens?.clear(); }
+      finally {
+        try { providers.forget(); }
+        finally {
+          refusedTokens.clear();
+          askHistory = [];
+          await agent?.start(null);
+        }
+      }
+    }
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
   /** The page of the sign-in under way, opened again on request (GitHub's own pages, or the GitHub CLI's download page). */
@@ -1849,7 +1855,10 @@ function start(): void {
   // Better recall's model: its state, and the user's Download (the agreement to fetch it) and Remove.
   ipcMain.handle(IPC.memoryModel, guard(() => betterRecall.status()));
   ipcMain.handle(IPC.memoryModelDownload, guard(() => { void betterRecall.download().catch(() => { /* Settings is told why, in the status */ }); }));
-  ipcMain.handle(IPC.memoryModelRemove, guard(() => { betterRecall.remove(); }));
+  ipcMain.handle(IPC.memoryModelRemove, guard(() => {
+    try { betterRecall.remove(); }
+    catch (err) { throw new Error("Ember couldn't finish deleting Better recall's saved data. Try Remove again.", { cause: err }); }
+  }));
   ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
   ipcMain.handle(IPC.routinesForget, guard((id: unknown) => {
     if (typeof id !== "string" || !id || id.length > 20) return;
@@ -2707,7 +2716,7 @@ function start(): void {
         const r = lastHeard && lastHeard.utterance === s.utterance ? lastHeard : null;
         lastHeard = null;
         const print = personal.sample(s, r ? { verified: r.verified, cut: r.cut, selfSpoke: r.selfSpoke, locked: confirmer?.voiceLocked ?? false } : null);
-        if (print && settings.get().voice.match) { voice?.setVoiceprint(print); broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }
+        if (print && settings.get().voice.match) { voice?.setVoiceprint(print, true); broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }
       },
       onEnrol: p => {
         if (p.state === "done") {

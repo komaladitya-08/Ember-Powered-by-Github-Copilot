@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ipcErrorText } from "../../app/renderer/home/copy";
+import { ipcErrorText, memoryDeleteFailedText } from "../../app/renderer/home/copy";
 
 describe("ipcErrorText", () => {
   it("drops Electron's IPC prefix from a handler's error, leaving its own words", () => {
@@ -19,4 +19,9 @@ describe("ipcErrorText", () => {
     expect(ipcErrorText(new Error("Note: Error invoking remote method 'x': Error: y"))).toBe("Note: Error invoking remote method 'x': Error: y");
     expect(ipcErrorText("plain text")).toBe("plain text");
   });
+});
+
+it("shows safe memory deletion errors but never raw filesystem or IPC details", () => {
+  expect(memoryDeleteFailedText(new Error("EROFS: /private/memory.json"))).toBe("Ember couldn't finish deleting memory. Try Forget again.");
+  expect(memoryDeleteFailedText(new Error("Error invoking remote method 'memory': Error: Ember couldn't finish deleting memory. Try again."))).toBe("Ember couldn't finish deleting memory. Try again.");
 });

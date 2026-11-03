@@ -11,6 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { pendingCommand } from "../../app/main/commands/pending";
 import { AdminPolicySchema, adminSummary, type LoadedAdminPolicy } from "../../app/main/admin";
 import type { Hands } from "../../app/main/agent/host";
 import type { Question } from "../../app/main/agent/confirm";
@@ -2498,5 +2499,45 @@ describe("the runtime's bubbles in the shared bubble", () => {
     expect(s.screen().title).toBe("Lost build-01");
     s.advance(60_000);
     expect(s.screen()).toMatchObject({ visible: true, title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
+  });
+});
+
+describe("Commands-off revokes pending flows", () => {
+  it("routes the actual Commands action to only that target and does not revive old requests", async () => {
+    const r = rig({ settings: commandsOn("local") });
+    const task = new AbortController();
+    const local = pendingCommand("local", task.signal);
+    const remote = pendingCommand("ssh:build-01", task.signal);
+    const running = pendingCommand("local", task.signal);
+    running.started();
+    try {
+      expect(await r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: false })).toMatchObject({ ok: true });
+      expect(local.signal.aborted).toBe(true);
+      expect(remote.signal.aborted).toBe(false);
+      expect(running.signal.aborted).toBe(false);
+      expect(r.local.stopAll).not.toHaveBeenCalled();
+      await r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: true });
+      expect(local.signal.aborted).toBe(true);
+      const fresh = pendingCommand("local", task.signal);
+      expect(fresh.signal.aborted).toBe(false);
+      fresh.dispose();
+      // A run sent back by the remote for another approval cannot retry after an off/on cycle.
+      running.waiting();
+      expect(running.signal.aborted).toBe(true);
+    } finally { local.dispose(); remote.dispose(); running.dispose(); r.t.dispose(); }
+  });
+
+  it("routes WSL-off to every pending distro but not the local computer", async () => {
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings });
+    const task = new AbortController();
+    const ubuntuPending = pendingCommand("wsl:Ubuntu", task.signal);
+    const other = pendingCommand("wsl:Debian", task.signal);
+    const local = pendingCommand("local", task.signal);
+    try {
+      expect(await r.invoke(TARGETS_IPC.act, r.home, { kind: "wsl", on: false })).toMatchObject({ ok: true });
+      expect(ubuntuPending.signal.aborted).toBe(true);
+      expect(other.signal.aborted).toBe(true);
+      expect(local.signal.aborted).toBe(false);
+    } finally { ubuntuPending.dispose(); other.dispose(); local.dispose(); r.t.dispose(); }
   });
 });

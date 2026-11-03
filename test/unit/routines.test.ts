@@ -465,7 +465,7 @@ describe("AgentHost's routines across a sign-out, a restart and another account 
     host.reminders.clear();
   });
 
-  it("finishes signing out even when the routines or memory file can't be erased (review of #129)", async () => {
+  it("clears the transcript but reports a memory erasure failure at sign-out", async () => {
     const { AgentHost } = await import("../../app/main/agent/host");
     const { SettingsStore } = await import("../../app/main/settings");
     const dir = tmp();
@@ -474,7 +474,7 @@ describe("AgentHost's routines across a sign-out, a restart and another account 
     const broken = { forgetAll: () => { throw new Error("EACCES"); } };
     const transcripts: unknown[][] = [];
     const host = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, onTranscript: t => transcripts.push(t), routines: broken as never, memory: broken as never });
-    await expect(host.forgetConversation()).resolves.toBeUndefined();
+    await expect(host.forgetConversation()).rejects.toThrow(/couldn't finish deleting memory/);
     expect(transcripts.at(-1)).toEqual([]);
   });
 

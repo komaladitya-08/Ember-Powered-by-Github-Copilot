@@ -38,7 +38,7 @@ export interface VoiceInfo {
 export type TtsProcessMessage =
   | { type: "ready"; loadMs: number; rate: number; voice: VoiceInfo }
   | { type: "error"; message: string }
-  | { type: "audio"; id: number; samples: Float32Array; rate: number }
+  | { type: "audio"; id: number; samples: Float32Array; rate: number; remaining: string }
   | { type: "done"; id: number }
   | { type: "failed"; id: number; message: string };
 
@@ -121,7 +121,8 @@ function step(): void {
   if (chunk !== undefined) {
     try {
       const audio = tts.generate({ text: chunk, sid, speed: 1.0 });
-      if (item.id > hushed && audio.samples.length) send({ type: "audio", id: item.id, samples: audio.samples, rate: audio.sampleRate });
+      if (!audio.samples.length) throw new Error("The voice produced no audio.");
+      if (item.id > hushed) send({ type: "audio", id: item.id, samples: audio.samples, rate: audio.sampleRate, remaining: item.chunks.join(" ") });
     } catch (err) {
       // WebAssembly throws bare numbers: the rest of this reply goes unsaid (main lets the system's voice say it).
       queue.shift();
