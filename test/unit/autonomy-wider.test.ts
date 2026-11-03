@@ -775,17 +775,18 @@ describe("the main document needs a whole read (security re-review of #140)", ()
   const typeLines = async (read?: { truncated?: "nodes" | null; busy?: boolean }) => {
     const h = notepadWorker(read ? { read } : {});
     await h.call("perceive_window", {});
-    await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" });
-    return h;
+    const result = await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" });
+    return { ...h, result };
   };
 
-  it("goes ahead from a whole read, and asks from one cut short or busy, where a console could look like the largest text", async () => {
+  it("goes ahead from a whole read, asks from one cut short, and refuses a busy context it cannot revalidate", async () => {
     const whole = await typeLines();
     expect(whole.st.asked).toEqual([]);
     expect(whole.decisions("cursor_text").at(-1)).toMatchObject({ verdict: "allow", autonomy: true });
     for (const read of [{ truncated: "nodes" as const }, { busy: true }]) {
       const h = await typeLines(read);
-      expect(h.st.asked.length, JSON.stringify(read)).toBeGreaterThan(0);
+      if ("busy" in read) expect(h.result.resultType).toBe("failure");
+      else expect(h.st.asked.length, JSON.stringify(read)).toBeGreaterThan(0);
       expect(h.st.audit.some(e => e.autonomy === true && e.kind === "cursor_text"), JSON.stringify(read)).toBe(false);
     }
   });
