@@ -75,21 +75,24 @@ html[data-glass="clear"] .cut { color: var(--label); }
 /* Ember's suggestions of what to ask next: one quiet glass line, as the hint line above it, holding its caption as plain
    words (no capsule of its own, so it doesn't pass for a suggestion) and then the suggestions as flat bordered
    capsules (no glass on glass), never the accent. 20 px: the row's height. */
-.suggest {
+.suggest, .listen-once {
   box-sizing: border-box; margin: 0 0 0 14px; padding: 1px 2px 1px 10px; display: flex; gap: 6px; align-items: center; align-self: flex-start;
   flex: none; max-width: calc(100% - 28px); overflow: hidden; white-space: nowrap;
   border: 1px solid transparent; background: var(--glass); border-radius: var(--r-capsule);
 }
 .suggest[hidden] { display: none; }
 .suggest-cap { flex: none; font: var(--type-footnote); line-height: 16px; color: var(--label-2); }
-.suggest button {
+.listen-once { width: calc(100% - 28px); padding: 1px 6px 1px 2px; overflow: visible; white-space: normal; }
+.listen-once span { min-width: 0; font: var(--type-footnote); line-height: 16px; color: var(--label-2); overflow-wrap: anywhere; }
+.suggest button, .listen-once button {
   flex: none; margin: 0; padding: 0 8px; font: var(--type-footnote); font-weight: 500; line-height: 16px; color: var(--label); cursor: pointer;
   border: 0; background: rgba(255, 255, 255, 0.08); border-radius: var(--r-capsule);
   box-shadow: inset 0 0 0 1px var(--control-edge); transition: background-color 140ms ease, transform 220ms var(--spring-snappy);
 }
-@media (hover: hover) { .suggest button:hover { background: rgba(255, 255, 255, 0.14); } }
-.suggest button:active { transform: scale(0.97); }
-.suggest button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+@media (hover: hover) { .suggest button:hover, .listen-once button:hover { background: rgba(255, 255, 255, 0.14); } }
+.suggest button:active, .listen-once button:active { transform: scale(0.97); }
+.suggest button:focus-visible, .listen-once button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.listen-once button[aria-disabled="true"] { cursor: wait; }
 /* The keys as keycaps, each with its few words. */
 .hint { flex: none; margin-left: auto; display: inline-flex; gap: 10px; color: var(--label-2); }
 .hint [hidden], .hint .crowded { display: none; }
@@ -100,7 +103,7 @@ html.opaque body { box-shadow: var(--glass-rim); }
 html.opaque textarea { background: rgba(255, 255, 255, 0.05); border-color: var(--separator); box-shadow: none; }
 html.opaque textarea:focus { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
 html.opaque .meta, html.opaque .cut, html.opaque .tip { background: transparent; border-color: transparent; }
-html.opaque .suggest { background: transparent; border-color: transparent; }
+html.opaque .suggest, html.opaque .listen-once { background: transparent; border-color: transparent; }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): the field and the line under it grow with the
    type, all but the window's 10 px insets, and main grows the window by the same scale (ask.ts askSize, 24 px a row
@@ -118,13 +121,14 @@ html[data-text-size] .where { max-width: calc(240px * var(--text-scale)); }
 html[data-text-size] .where.tight { max-width: calc(150px * var(--text-scale)); }
 html[data-text-size] .cut, html[data-text-size] .tip { line-height: calc(16px * var(--text-scale)); }
 html[data-text-size] .suggest-cap, html[data-text-size] .suggest button { line-height: calc(16px * var(--text-scale)); }
+html[data-text-size] .listen-once button, html[data-text-size] .listen-once span { line-height: calc(16px * var(--text-scale)); }
 
 /* Windows contrast themes (forced colours; tokens in ember.css): the computer a request goes to is set apart by its
    weight (the highlight is no text colour). */
 @media (forced-colors: active) {
   /* The glass is gradients, which the system drops: the field and its capsules take the window's colour. */
-  textarea, .meta, .cut, .tip, .suggest { background: Canvas; }
-  .suggest button { background: ButtonFace; color: ButtonText; border: 1px solid ButtonText; }
-  .suggest button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+  textarea, .meta, .cut, .tip, .suggest, .listen-once { background: Canvas; }
+  .suggest button, .listen-once button { background: ButtonFace; color: ButtonText; border: 1px solid ButtonText; }
+  .suggest button:focus-visible, .listen-once button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
   .where { color: CanvasText; }
 }

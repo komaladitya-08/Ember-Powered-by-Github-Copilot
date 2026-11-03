@@ -184,7 +184,7 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
       }
       // A paste cut at the limit at Larger: four lines and the note, each row 24 px times the scale.
       const cut = await openAskAt(inEmber, "larger", "x".repeat(2000));
-      expect.soft(cut, JSON.stringify(cut)).toMatchObject({ width: 728, height: askHeight("larger", 5), clipped: false });
+      expect.soft(cut, JSON.stringify(cut)).toMatchObject({ width: 728, height: askHeight("larger", 6), clipped: false });
       expect.soft(cut.room, JSON.stringify(cut)).toBeGreaterThanOrEqual(8);
     } finally {
       await closeAsk(inEmber);

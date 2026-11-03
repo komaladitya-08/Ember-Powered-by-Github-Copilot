@@ -6,9 +6,10 @@ import type { AskContext, EmberAskApi } from "../../shared/ipc";
 import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
-import { CUT_NOTE, WAIT_TIP, atLimit, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "./field";
+import { CUT_NOTE, FIELD, WAIT_TIP, atLimit, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "./field";
 import { liveWords, seesView, type SeesView } from "./chips";
 import { watchPixels } from "../shared/pixels";
+import { mountListenOnce } from "../shared/listen-once";
 
 // Hairlines of one device pixel at any scale (ember.css --glass-hairline reads --dpx).
 watchPixels();
@@ -68,11 +69,12 @@ function cutShort(): boolean {
 let said = "";
 const form = document.getElementById("form") as HTMLFormElement;
 const field = input.parentElement!;
+const listenRow = document.getElementById("listen-once-row")!;
 /**
  * The rows the window was last sized for: the field's lines, and one each for the note and the tip (main opens it at
  * one, or two with the tip).
  */
-let shownRows = 1;
+let shownRows = 2;
 /**
  * The field as tall as its text (one line to four, then it scrolls), the note on a line of its own when the text
  * reached the most that is sent (a longer paste was cut at the limit), the tip while it shows, and the window with all;
@@ -86,9 +88,18 @@ function fit(): void {
   input.classList.toggle("scrolls", input.scrollHeight > fieldHeight(lines, s) + 1);
   const full = atLimit(input.value);
   if (cut.hidden === full) { cut.hidden = !full; cut.textContent = full ? CUT_NOTE : ""; }
-  const rows = boxRows(lines, full, !tip.hidden, !suggest.hidden);
+  const listenRows = Math.max(1, Math.ceil((listenRow.offsetHeight + 4) / (FIELD.line * s)));
+  const rows = boxRows(lines, full, !tip.hidden, !suggest.hidden, listenRows);
   if (rows !== shownRows) { shownRows = rows; window.emberAsk.fit?.(rows); }
 }
+const showListenOnce = mountListenOnce(
+  document.getElementById("listen-once") as HTMLButtonElement,
+  document.getElementById("listen-once-detail")!,
+  on => window.emberAsk.listenOnce(on),
+  "Say one request after you press Listen once.",
+  fit,
+);
+window.emberAsk.onListenOnce(showListenOnce);
 /**
  * Ember's suggestions of what to ask next (each opening brings them, or none): chips that send their words as if typed.
  * They show only while the field is empty, so they never sit beside a request being written.
@@ -179,10 +190,11 @@ window.emberAsk.onContext(c => {
     setTimeout(grown, 250);
     tip.hidden = c.tip !== true;
     tip.textContent = tip.title = c.tip === true ? WAIT_TIP : "";
-    shownRows = (c.tip === true ? 2 : 1) + (c.suggestions?.length ? 1 : 0);
+    shownRows = boxRows(1, false, c.tip === true, !!c.suggestions?.length, 1);
     showSuggestions(c.suggestions ?? []);
   }
-  fit();
+  if (c.listenOnce) showListenOnce(c.listenOnce);
+  else fit();
 });
 // Typed while the box was opening: it goes where the caret is, as if typed here.
 window.emberAsk.onTyped(t => {

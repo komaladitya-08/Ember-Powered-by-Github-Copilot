@@ -195,6 +195,49 @@ describe("Ring", () => {
 });
 
 describe("VoiceEngine", () => {
+  it("Listen once starts on fresh capture and submits one request without a wake word", () => {
+    const b = fake(["Do not disturb.", "Unexpected second request."]);
+    const events = run(b, (e, c) => {
+      c.t = 1000;
+      e.cancel();
+      e.listenOnce(c.t, 8000);
+      e.feed(frame(0, true), 999); // queued audio captured before the click
+      expect(b.speaking()).toBe(false);
+      c.t += 32; e.feed(frame(0, true), c.t);
+      e.followUp(); // an old answer cannot extend or change the manual window
+      c.t += 32; e.feed(frame(0), c.t);
+      c.t += 32; e.feed(frame(0, true), c.t);
+      c.t += 32; e.feed(frame(0), c.t);
+      expect(e.listening).toBe(false);
+    });
+    expect(events.filter(e => e.type === "utterance")).toEqual([{ type: "utterance", text: "Do not disturb.", window: "manual", ms: 0 }]);
+    expect(events.filter(e => e.type === "listening").map(e => e.reason)).toEqual(["manual", "done"]);
+  });
+
+  it("Listen once times out at its original deadline, including while speech is in progress", () => {
+    const events = run(fake(["A late request."]), (e, c) => {
+      c.t = 1000;
+      e.listenOnce(c.t, 8000);
+      c.t = 8999; e.feed(frame(0, true), c.t);
+      e.followUp();
+      c.t = 9000; e.feed(frame(0), c.t);
+    });
+    expect(events.filter(e => e.type === "utterance")).toEqual([]);
+    expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
+  });
+
+  it("does not transcribe queued audio captured in the playback tail", () => {
+    const b = fake([]);
+    const events = run(b, (e, c) => {
+      c.t = 1000; e.selfSpeaking(true);
+      c.t = 1100; e.selfSpeaking(false); e.listenOnce(c.t, 8000);
+      c.t = 1600; e.feed(frame(0, true), 1200); // playback tail, processed after the speakers went quiet
+      expect(b.speaking()).toBe(false);
+      e.feed(frame(0), c.t);
+    });
+    expect(events).toEqual([{ type: "listening", on: true, reason: "manual", window: "manual" }]);
+  });
+
   it("wakes, hears the request, and goes back to sleep", () => {
     const events = run(fake(["Hey Ember, turn on night light."]), (e, c) => {
       e.feed(frame(1));

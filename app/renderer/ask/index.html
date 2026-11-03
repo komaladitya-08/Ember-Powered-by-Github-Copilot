@@ -21,6 +21,10 @@
     <p id="cut" class="cut" role="status" hidden></p>
     <!-- The first few openings on Windows and macOS: wait for the box (letters typed sooner go to the app underneath). -->
     <p id="tip" class="tip" hidden></p>
+    <div id="listen-once-row" class="listen-once">
+      <button type="button" id="listen-once" aria-describedby="listen-once-detail" aria-disabled="true">Listen once</button>
+      <span id="listen-once-detail" role="status" aria-atomic="true"></span>
+    </div>
     <!-- What the user might say next: Ember's suggestions (said so by the caption); choosing one sends it as if typed. -->
     <div id="suggest" class="suggest" role="group" aria-labelledby="suggest-cap" hidden><span id="suggest-cap" class="suggest-cap">Ember suggests</span></div>
   </form>

@@ -8,6 +8,7 @@
 
 import type { CopilotSession, MCPServerConfig, PermissionHandler, ProviderConfig, SessionConfig, SessionHooks, SystemMessageConfig, Tool } from "@github/copilot-sdk";
 import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "../extensions/tool-name";
+import type { ReasoningEffort } from "./models";
 
 // The hook types, as SessionHooks names them (the SDK doesn't export them by name).
 export type PreToolUseHookInput = Parameters<NonNullable<SessionHooks["onPreToolUse"]>>[0];
@@ -22,6 +23,7 @@ export const BUILTIN_AGENTS = ["explore", "task", "general-purpose", "code-revie
 export interface HardenedOptions {
   sessionId?: string;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches SessionConfig.tools
   tools: Tool<any>[];
   systemMessage: SystemMessageConfig;
@@ -124,6 +126,7 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
   return {
     ...(o.sessionId ? { sessionId: o.sessionId } : {}),
     ...(o.model ? { model: o.model } : {}),
+    ...(o.reasoningEffort ? { reasoningEffort: o.reasoningEffort } : {}),
     ...(o.provider ? { provider: o.provider } : {}),
     streaming: true,
     tools: o.tools,

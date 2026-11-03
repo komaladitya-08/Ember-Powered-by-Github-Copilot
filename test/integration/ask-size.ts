@@ -4,7 +4,7 @@
  * server's run proves. Text size is set through Ember's own settings (its test hooks, EMBER_TEST_HOOKS), the box is
  * opened as the handle's menu opens it, and its window and its page are read: the window's size (ask.ts askSize: 560 × 92
  * at the default size, 644 × 101 at Large, 728 × 111 at Larger, each further row 24 px times the scale: a line of the
- * field, the note that a paste was cut, the tip to wait for the box on Windows' and macOS's first openings), the page's
+ * field, Listen once, the note that a paste was cut, the tip to wait for the box on Windows' and macOS's first openings), the page's
  * text size and its field's type, whether the line under the field is cut off, and the room left below the box's foot.
  */
 
@@ -34,7 +34,7 @@ export interface AskSeen {
   font: string;
   /** Whether the tip to wait for the box shows (Windows' and macOS's first openings; never on Linux). */
   tip: boolean;
-  /** Whether the line under the field is cut off. */
+  /** Whether the hint or Listen once explanation is cut off. */
   clipped: boolean;
   /** From the foot of what the box shows to its window's bottom edge, in px. */
   room: number;
@@ -43,10 +43,10 @@ export interface AskSeen {
   workArea: { x: number; y: number; width: number; height: number };
 }
 
-/** What the box must be at `size` with only its field's one line (and the tip's row while it shows). */
+/** The field's one line and Listen once (plus the tip's row while it shows). */
 export function askWant(size: TextSize, tip: boolean): Pick<AskSeen, "visible" | "width" | "height" | "size" | "font" | "clipped"> {
   const at = ASK_AT[size];
-  return { visible: true, width: at.width, height: askHeight(size, tip ? 2 : 1), size, font: at.font, clipped: false };
+  return { visible: true, width: at.width, height: askHeight(size, tip ? 3 : 2), size, font: at.font, clipped: false };
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -76,11 +76,12 @@ export async function openAskAt(inEmber: InEmber, size: TextSize, text = ""): Pr
     await w.webContents.executeJavaScript(`{ const q = document.getElementById("q"); q.value = ${JSON.stringify(t)}; q.dispatchEvent(new Event("input")); }`);
     await new Promise(r => setTimeout(r, 400));
     const page = await w.webContents.executeJavaScript(`(() => {
-      const meta = document.querySelector(".meta"), form = document.getElementById("form");
+      const meta = document.querySelector(".meta"), form = document.getElementById("form"), listen = document.getElementById("listen-once-detail");
       const foot = Math.max(...[...form.children].filter(e => getComputedStyle(e).display !== "none").map(e => e.getBoundingClientRect().bottom));
       return { size: document.documentElement.dataset.textSize ?? "default", font: getComputedStyle(document.getElementById("q")).fontSize,
         tip: document.getElementById("tip").hidden === false,
-        clipped: meta.scrollHeight > meta.clientHeight + 0.5 || meta.scrollWidth > meta.clientWidth, room: innerHeight - foot };
+        clipped: meta.scrollHeight > meta.clientHeight + 0.5 || meta.scrollWidth > meta.clientWidth ||
+          !listen?.getClientRects().length || listen.scrollHeight > listen.clientHeight + 0.5 || listen.scrollWidth > listen.clientWidth, room: innerHeight - foot };
     })()`) as Pick<AskSeen, "size" | "font" | "tip" | "clipped" | "room">;
     const bounds = w.getBounds();
     const display = screen.getDisplayMatching(bounds);

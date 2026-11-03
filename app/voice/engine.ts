@@ -77,11 +77,13 @@ export interface VoiceBackend {
   before?(segment: Float32Array): Float32Array | null;
 }
 
+type ListeningWindow = "wake" | "follow-up" | "manual";
+
 export type VoiceEvent =
   | { type: "wake"; keyword: string }
   | { type: "stop" }
   /** `window`: which listening window this is (a follow-up's timeout shouldn't clear the answer it follows). */
-  | { type: "listening"; on: boolean; reason: "wake" | "follow-up" | "timeout" | "done" | "stop" | "rejected"; window: "wake" | "follow-up" }
+  | { type: "listening"; on: boolean; reason: ListeningWindow | "timeout" | "done" | "stop" | "rejected"; window: ListeningWindow }
   | { type: "speech"; on: boolean }
   /** `window`: a wake's request or a follow-up (three follow-ups in a row at most); `cut`: the speaker was still talking when the request reached its length limit. */
   /** `verified`: Voice Match compared it with the owner's voiceprint and it matched (match.ts); absent otherwise. */
@@ -90,7 +92,7 @@ export type VoiceEvent =
    * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score against the
    * enrolled voiceprint, unrounded, when it had one (absent: too little voice to score, which is never trusted).
    */
-  | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean; verified?: true; short?: true; restScore?: number }
+  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; verified?: true; short?: true; restScore?: number }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number };
 
@@ -523,13 +525,15 @@ const LAG_MIN_CORRELATION = 0.5;
  */
 type Mode =
   | { kind: "idle" }
-  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up"; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean };
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean };
 
 /** A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. */
 type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean };
 
 export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
+  private manualFrom = 0;
+  private manualReady = false;
   /** What was heard for the request just emitted ("utterance"), for Voice Match; it never goes to main. */
   requestAudio: Float32Array | null = null;
   /** That audio starts with the wake phrase (heard with it in one breath): Voice Match vouches only for what follows it. */
@@ -682,6 +686,7 @@ export class VoiceEngine {
    * `afterQuestion`: Ember's answer asked something, so "Okay." or "Fine." is a reply to send, not a closer.
    */
   followUp(ms = 8000, o: { afterQuestion?: boolean } = {}): void {
+    if (this.mode.kind === "listening" && this.mode.reason === "manual") return;
     if (this.followUps >= MAX_FOLLOW_UPS) return;
     if (this.mode.kind === "listening" && this.mode.announced === false) {
       // A bare name's window not shown yet ("…remember…" may yet be taken back): it becomes the follow-up window, which
@@ -702,6 +707,19 @@ export class VoiceEngine {
     // Opened during the tail after Ember's answer: what was heard since its voice ended (before it said so) may be a reply.
     if (this.tailFrom) this.tail = this.recentFrames(TAIL_KEEP_FRAMES);
     this.emit({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
+  }
+
+  /** A fresh request after an explicit keyboard or mouse action. No pre-roll or inherited loudness. */
+  listenOnce(from: number, ms: number): void {
+    this.manualFrom = from;
+    this.manualReady = false;
+    this.peak = 0;
+    this.wakePeak = 0;
+    this.busyRoom = false;
+    this.wasSpeaking = false;
+    this.tail = [];
+    this.tailFrom = 0;
+    this.mode = { kind: "listening", until: from + ms, ms, heardSpeech: false, first: false, reason: "manual", checkAt: null, keyword: "" };
   }
 
   /** Stop listening for a command, and drop a wake or stop still being checked (the kill switch, Esc). */
@@ -726,8 +744,16 @@ export class VoiceEngine {
   }
 
   /** One frame of microphone audio, 16 kHz mono. */
-  feed(frame: Float32Array): void {
+  feed(frame: Float32Array, capturedAt?: number): void {
     const now = this.now();
+    if (this.mode.kind === "listening" && this.mode.reason === "manual") {
+      if (now >= this.mode.until) this.endListening("timeout");
+      else if (capturedAt === undefined || capturedAt <= Math.max(this.manualFrom, this.selfSpeakingUntil)) return;
+      else if (!this.manualReady) {
+        this.manualReady = true;
+        this.emit({ type: "listening", on: true, reason: "manual", window: "manual" });
+      }
+    }
     let sum = 0;
     for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
     const energy = sum / Math.max(1, frame.length);
@@ -864,6 +890,7 @@ export class VoiceEngine {
     if (now < this.selfSpeakingUntil) {
       // Ember's own voice (it plays outside the browser's echo cancellation) is not a request: the VAD isn't fed,
       // and the window stays open until Ember has finished. Otherwise Ember answers itself, again and again.
+      if (this.mode.reason === "manual") return;
       this.mode.until = Math.max(this.mode.until, now + this.mode.ms);
       this.tail.push({ frame, energy, at: now });
       if (this.tail.length > TAIL_KEEP_FRAMES) this.tail.shift();
@@ -1407,10 +1434,10 @@ export class VoiceEngine {
       this.endListening("rejected");
       return;
     }
-    let text = stripWake(heard, this.mode.first);
+    let text = this.mode.reason === "manual" ? heard.trim() : stripWake(heard, this.mode.first);
     // The clip holds the wake phrase before the request ("Hey Ember, allow" in one breath): Voice Match then vouches only
     // for what follows it (match.ts afterWakePhrase).
-    const withWake = holdsWake(heard, text, this.mode.first);
+    const withWake = this.mode.reason !== "manual" && holdsWake(heard, text, this.mode.first);
     const wakePhrase = this.mode.first && this.mode.reason === "wake";
     this.mode.first = false;
     if (clip.own && saysSomething(text) && !saysSomething(stripWake(this.transcribe(clip.own), true).replace(LONE_GREETING, ""))) {
@@ -1420,7 +1447,7 @@ export class VoiceEngine {
     }
     if (!saysSomething(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
-      this.mode.until = Math.max(this.mode.until, this.now() + 4000);
+      if (this.mode.reason !== "manual") this.mode.until = Math.max(this.mode.until, this.now() + 4000);
       // The request said after it is measured on its own loudness, not the wake phrase's (said up close, and louder: the
       // microphone has no gain control). Against the wake phrase's, its softer words counted as others' talk and ended it
       // early ("Hey Ember." … "And make the text a bit bigger." 6 dB softer was sent as "And make the text."). Only after
@@ -1429,7 +1456,7 @@ export class VoiceEngine {
       if (wakePhrase && paused && !this.busyRoom) { this.wakePeak = Math.max(this.wakePeak, this.peak); this.peak = 0; }
       return;
     }
-    if (stopped(text)) {
+    if (stopped(text) || (this.mode.reason === "manual" && isStop(stripWake(text, false)))) {
       // "Hey Ember, stop": the kill phrase in other words, handled here and never sent anywhere (once: the spotter may have heard it too).
       this.pendingStop = null;
       this.emit({ type: "stop" });

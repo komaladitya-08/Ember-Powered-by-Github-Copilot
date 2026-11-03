@@ -6,9 +6,15 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { AgentHost } from "../../app/main/agent/host";
+import { Worker } from "../../app/main/agent/worker";
+import { Confirmer } from "../../app/main/agent/confirm";
+import { Presenter } from "../../app/main/agent/presenter";
+import { AuditLog } from "../../app/main/policy/audit";
+import { PolicyEngine } from "../../app/main/policy/policy";
 import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { SettingsStore } from "../../app/main/settings";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
@@ -32,7 +38,7 @@ const box: SecretBox = {
   getSelectedStorageBackend: () => "gnome_libsecret",
 };
 
-let mock: { baseUrl: string; requests: { model: string; authorization: string | null; messages: unknown[] }[]; close(): Promise<void> };
+let mock: { baseUrl: string; requests: { model: string; reasoningEffort?: string; authorization: string | null; messages: unknown[] }[]; close(): Promise<void> };
 let dir: string;
 
 beforeAll(async () => {
@@ -44,6 +50,41 @@ afterAll(async () => {
   await mock?.close();
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
+
+it("sends the selected effort from a worker to a reasoning-capable model on the real runtime", async () => {
+  const userData = fs.mkdtempSync(path.join(dir, "effort-"));
+  const runtime = locateRuntime({ appPath: process.cwd(), runtimeId, exe });
+  const client = new CopilotClient({
+    mode: "empty", useLoggedInUser: false, baseDirectory: path.join(userData, "copilot"),
+    connection: RuntimeConnection.forStdio({ path: runtime.path }),
+    env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" },
+  });
+  const settings = new SettingsStore(path.join(userData, "settings.json"));
+  settings.load();
+  settings.update({ taskReasoning: { model: "gpt-5", effort: "high" } });
+  // A catalog fixture supplies the supported levels. The endpoint is a local mock to inspect the request.
+  const worker = new Worker({
+    client, settings, model: "gpt-5", reasoningEfforts: ["low", "medium", "high"], vision: false,
+    provider: { type: "openai", wireApi: "completions", baseUrl: mock.baseUrl, apiKey: KEY },
+    workDir: path.join(userData, "empty"), log: createLogger({ dir: path.join(userData, "logs") }),
+    perception: {} as never, sidecar: {} as never,
+    policy: new PolicyEngine({ neverLook: () => [], grants: () => ({}) }),
+    confirmer: new Confirmer(() => undefined), audit: new AuditLog(path.join(userData, "audit")),
+    presenter: new Presenter(() => undefined), lease: async () => () => undefined,
+    flyTo: () => undefined, onProgress: () => undefined,
+  }, { id: "effort", target: {}, goal: 'CALLTOOL:finish_task{"success":true,"summary":"Done."}' });
+  try {
+    await client.start();
+    const before = mock.requests.length;
+    expect(await worker.run(new AbortController().signal)).toMatchObject({ success: true });
+    const requests = mock.requests.slice(before);
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests[0]).toMatchObject({ model: "gpt-5", reasoningEffort: "high" });
+  } finally {
+    await worker.dispose();
+    await client.stop();
+  }
+}, 60_000);
 
 const until = async (cond: () => boolean, ms = 30000) => { for (const t0 = Date.now(); !cond() && Date.now() - t0 < ms;) await new Promise(r => setTimeout(r, 50)); return cond(); };
 

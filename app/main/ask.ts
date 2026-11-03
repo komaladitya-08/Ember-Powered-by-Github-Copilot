@@ -5,7 +5,7 @@
 
 import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
-import { IPC, type AskContext } from "../shared/ipc";
+import { IPC, type AskContext, type ListenOnceStatus } from "../shared/ipc";
 import type { OS } from "../shared/shortcuts";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
@@ -25,7 +25,7 @@ const GROWS = 46 + 17;
  * several lines; the note that a paste was cut, the tip to wait for the box and Ember's suggestions of what to ask next
  * take one more row of the same height each (MAX_ROWS).
  */
-const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 3;
+const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 5;
 /** The openings that say to wait for the box before typing, where Ember can't hold the letters typed meanwhile (review #78). */
 export const WAIT_TIP_OPENINGS = 5;
 
@@ -208,7 +208,7 @@ export class AskWindow {
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
     windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
-    settleMs?: number;
+    settleMs?: number; onHide?: () => void;
   } = {}) {}
 
   /** The box is still being handed the keyboard: a blur now is that handover, not the user (OPENING_MS, settleMs). */
@@ -283,7 +283,7 @@ export class AskWindow {
     // only this box's page is heard here.
     win.webContents.ipc.on(IPC.askFit, (_e, rows: unknown) => { if (this.win === win && typeof rows === "number" && Number.isFinite(rows)) this.fit(rows); });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
-    win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
+    win.webContents.on("render-process-gone", () => { if (this.win === win) this.hide(); if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
     // update and the first box opened from the menu never showed "Ember will see: …").
     win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
@@ -339,7 +339,7 @@ export class AskWindow {
     let bounds = askBounds(near, display.workArea, this.keepOff(), scale);
     this.up = !near || bounds.y + bounds.height <= near.y;
     // Saying to wait for it, or with suggestions: a row taller each from the start, so it doesn't grow once shown.
-    const rows = 1 + (this.context.tip ? 1 : 0) + (this.context.suggestions?.length ? 1 : 0);
+    const rows = 2 + (this.context.tip ? 1 : 0) + (this.context.suggestions?.length ? 1 : 0);
     if (rows > 1) bounds = grownBounds(bounds, rows, display.workArea, this.up, this.keepOff(), scale);
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
@@ -398,7 +398,7 @@ export class AskWindow {
 
   /** What Ember will read, once the quick look at the screen is done. */
   setContext(context: AskContext): void {
-    this.context = context;
+    this.context = { ...context, listenOnce: this.context.listenOnce };
     this.sendContext();
   }
 
@@ -406,7 +406,13 @@ export class AskWindow {
     if (this.win && !this.win.isDestroyed() && !this.win.webContents.isLoading()) this.win.webContents.send(IPC.askContext, this.context);
   }
 
+  setListenOnce(status: ListenOnceStatus): void {
+    this.context.listenOnce = status;
+    if (this.win && !this.win.isDestroyed() && !this.win.webContents.isLoading()) this.win.webContents.send(IPC.listenOnceStatus, status);
+  }
+
   hide(): void {
+    if (this.wanted) this.o.onHide?.();
     this.wanted = false;
     this.awaitingKeyboard = false;
     this.openingUntil = 0;

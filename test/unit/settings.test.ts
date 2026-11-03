@@ -27,6 +27,17 @@ describe("SettingsStore", () => {
     expect(again.load().settings).toMatchObject({ character: "glint", size: 72 });
   });
 
+  it("loads older model settings and saves a task effort for one model", () => {
+    fs.writeFileSync(file, JSON.stringify({ models: { conductor: null, worker: "gpt-5" } }));
+    const s = new SettingsStore(file);
+    expect(s.load().settings.taskReasoning).toBeUndefined();
+    s.update({ taskReasoning: { model: "gpt-5", effort: "high" } });
+    expect(new SettingsStore(file).load().settings.taskReasoning).toEqual({ model: "gpt-5", effort: "high" });
+    expect(() => s.update({ taskReasoning: { model: "gpt-5", effort: "arbitrary" as never } })).toThrow();
+    s.update({ taskReasoning: null });
+    expect(new SettingsStore(file).load().settings.taskReasoning).toBeNull();
+  });
+
   it("rejects invalid updates and keeps the old value", () => {
     const s = new SettingsStore(file);
     s.load();

@@ -53,6 +53,7 @@ export class Capture {
     clearTimeout(this.retry);
     this.retry = undefined;
     const attempt = ++this.attempt;
+    if (this.stream) this.d.status({ state: "paused" });
     this.release();
     let stream: MediaStream | null = null;
     try {
@@ -63,19 +64,24 @@ export class Capture {
       this.stream = stream;
       this.ctx = ctx;
       const track = stream.getAudioTracks()[0];
+      const report = () => {
+        if (this.stream !== stream) return;
+        if (track?.muted || ctx.state !== "running") this.d.status({ state: "paused" });
+        else this.d.status({ state: "capturing", device: track?.label ?? "", rate: ctx.sampleRate, context: ctx.state });
+      };
       if (track) {
         track.onended = () => { if (this.stream === stream) this.lost("The microphone was disconnected."); };
         let muted: ReturnType<typeof setTimeout> | undefined;
-        track.onmute = () => { muted = this.later(() => { if (this.stream === stream && track.muted) this.lost("The microphone stopped sending sound."); }, MUTE_GRACE_MS); };
-        track.onunmute = () => clearTimeout(muted);
+        track.onmute = () => { report(); muted = this.later(() => { if (this.stream === stream && track.muted) this.lost("The microphone stopped sending sound."); }, MUTE_GRACE_MS); };
+        track.onunmute = () => { clearTimeout(muted); report(); };
       }
-      ctx.onstatechange = () => this.contextChanged(ctx);
+      ctx.onstatechange = () => { if (ctx.state !== "closed") report(); this.contextChanged(ctx); };
       const device = await this.defaultInput();
       if (attempt !== this.attempt || stream !== this.stream) return;
       this.device = device;
       this.worked = true;
       this.since = Date.now();
-      this.d.status({ state: "capturing", device: track?.label ?? "", rate: ctx.sampleRate, context: ctx.state });
+      report();
     } catch (err) {
       if (stream && this.stream !== stream) stopTracks(stream);
       if (attempt !== this.attempt) return;

@@ -40,8 +40,11 @@ export interface SpeechPlayed {
   seconds: number;
 }
 
+/** Capture time of the first sample, so Listen once cannot use audio queued before activation. */
+export interface MicFrame { samples: ArrayBuffer; capturedAt: number }
+
 /** "error": Ember may not use the microphone (not retried); "lost": there's no sound from it (it went away, isn't there yet, or is busy), and the page is trying again. */
-export type MicStatus = { state: "capturing"; device: string; rate: number; context: string } | { state: "error"; message: string } | { state: "lost"; message: string };
+export type MicStatus = { state: "capturing"; device: string; rate: number; context: string } | { state: "paused" } | { state: "error"; message: string } | { state: "lost"; message: string };
 
 export interface MicApi {
   status(s: MicStatus): void;

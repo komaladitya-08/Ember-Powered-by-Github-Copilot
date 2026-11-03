@@ -206,6 +206,9 @@
           <select id="m-conductor"></select>
           <label for="m-worker">Model for tasks (must understand images)</label>
           <select id="m-worker"></select>
+          <label for="m-worker-effort" id="m-worker-effort-label" hidden>Thinking effort for tasks</label>
+          <select id="m-worker-effort" aria-describedby="m-worker-effort-hint" hidden></select>
+          <p class="hint models-hint" id="m-worker-effort-hint" hidden>Higher effort can take longer. Changes apply to new tasks.</p>
           <p class="hint models-hint">A new choice applies from your next message; tasks already running keep theirs.</p>
         </div>
         <p class="usage" id="usage"></p>
@@ -290,6 +293,8 @@
         </div>
         <p class="agent-line"><i id="voice-dot" class="dot" aria-hidden="true"></i><span id="voice-text">Off</span></p>
         <p class="sr" id="voice-live" role="status"></p>
+        <div class="agent-actions"><button type="button" id="voice-listen-once" class="btn quiet" aria-describedby="voice-listen-once-detail" aria-disabled="true">Listen once</button></div>
+        <p class="hint" id="voice-listen-once-detail" role="status" aria-atomic="true"></p>
         <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button><button type="button" id="voice-fix" class="btn quiet" hidden>Open Settings</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
         <div id="match" class="match" role="group" aria-labelledby="match-label" hidden>

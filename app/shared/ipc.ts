@@ -87,6 +87,8 @@ export const IPC = {
   askFit: "agent:ask-fit",
   /** The ask box went away: what was left in its field is selected, so typing replaces it when the box opens again. */
   askHidden: "agent:ask-hidden",
+  listenOnce: "voice:listen-once",
+  listenOnceStatus: "voice:listen-once-status",
   /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
   presence: "ember:presence",
   setPresence: "ember:set-presence",
@@ -124,6 +126,11 @@ export interface SignInProgress {
   link?: string;
 }
 
+export interface ListenOnceStatus {
+  phase: "ready" | "blocked" | "starting" | "listening" | "checking";
+  detail: string;
+}
+
 export interface VoiceStatus {
   state: MicState;
   detail: string | null;
@@ -140,6 +147,7 @@ export interface VoiceStatus {
   match?: VoiceMatchStatus;
   /** The natural voice (Kokoro, Windows and macOS): what became of turning it on, shown under its switch. */
   natural?: NaturalVoiceStatus;
+  listenOnce?: ListenOnceStatus;
 }
 
 /**
@@ -328,6 +336,7 @@ export interface EmberHomeApi {
   quit(): Promise<void>;
   /** Opens the ask box, as the handle menu's Ask Ember… does (the keyboard's way when another app has the shortcut). */
   openAsk(): Promise<void>;
+  listenOnce(on: boolean): Promise<ListenOnceStatus>;
   /** Stops everything, as the handle menu's Stop everything does. */
   stopEverything(): Promise<void>;
   /** Everything was just stopped, and how ("hotkey", "voice", "menu" or "settings"). */
@@ -380,6 +389,7 @@ export interface AskContext {
    * (with `opened`: the box opens a row taller). Choosing one sends it as if typed.
    */
   suggestions?: string[];
+  listenOnce?: ListenOnceStatus;
 }
 
 export interface EmberAskApi {
@@ -387,6 +397,8 @@ export interface EmberAskApi {
   /** One of Ember's suggestions chosen (AskContext.suggestions): main sends it as the user's choice of Ember's words. */
   askSuggestion?(text: string): void;
   close(): void;
+  listenOnce(on: boolean): Promise<ListenOnceStatus>;
+  onListenOnce(fn: (s: ListenOnceStatus) => void): void;
   onContext(fn: (c: AskContext) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
   onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;

@@ -9,7 +9,7 @@
  * microphone goes away, or isn't there yet, capture starts again (capture.ts).
  */
 
-import type { MicApi } from "../../shared/voice";
+import type { MicApi, MicFrame } from "../../shared/voice";
 import { Capture } from "./capture";
 import { Player, playerAudio, type PlayerContext } from "./player";
 import { speechWatch, type WatchedUtterance } from "./speech-watch";
@@ -64,8 +64,9 @@ async function graph(stream: MediaStream): Promise<AudioContext> {
     const node = new AudioWorkletNode(ctx, "ember-frames", { numberOfInputs: 1, numberOfOutputs: 0 });
     // Copied, not transferred: ports that cross into a utility process can't carry transferables.
     node.port.onmessage = ev => {
-      port?.postMessage(ev.data);
-      if (micLevels && ev.data instanceof ArrayBuffer) micMeter.push(rms(new Float32Array(ev.data)), performance.now());
+      const frame = ev.data as MicFrame;
+      port?.postMessage(frame);
+      if (micLevels) micMeter.push(rms(new Float32Array(frame.samples)), performance.now());
     };
     src.connect(node);
     if (ctx.state !== "running") await ctx.resume();

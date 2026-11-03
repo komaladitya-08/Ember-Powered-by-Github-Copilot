@@ -413,6 +413,7 @@ export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: nu
 }
 
 export const SPEAK_NO_VOICE = "Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.";
+export const LISTEN_ONCE_READY = "Press Listen once, then say one request without saying “Hey Ember”.";
 
 /** The voice line while the microphone is off; `muteLabel` is the mute shortcut Ember holds as this OS writes it ("": none). */
 export function micOffText(muteLabel = SHORTCUTS.linux.mute.label): string {

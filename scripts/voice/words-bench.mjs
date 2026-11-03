@@ -3,7 +3,7 @@
 // names the user asked Ember to remember), and after the user taught it what it got wrong once ("That's not what I
 // said": learnt from a first take of each request, measured on a second take in the same voice). The clips: the voice tests' own (they must
 // come out unchanged), and requests with app and people's names synthesised in two voices (in memory, never saved).
-// Also counts words changed that were right. Prints a table, and the same as JSON for docs/ASSISTANT.md.
+// Counts reference words helped and harmed separately. Prints a table and the same as JSON for docs/ASSISTANT.md.
 // Needs the models and the test-only TTS voice from `node scripts/voice/prepare.mjs --tts-voice --voice ryan`.
 //   usage: node scripts/voice/words-bench.mjs [voice dir] [--show]   (default: .cache/voice; --show prints each name clip it got wrong)
 import { build } from "esbuild";
@@ -23,6 +23,7 @@ fs.writeFileSync(entry, [
   `export { modelPaths } from ${JSON.stringify(path.join(root, "app/voice/models.ts"))};`,
   `export { correctTranscript, learnFrom } from ${JSON.stringify(path.join(root, "app/main/personal/correct.ts"))};`,
   `export { isRiskyLabel } from ${JSON.stringify(path.join(root, "app/main/policy/policy.ts"))};`,
+  `export { recognitionScore } from ${JSON.stringify(path.join(root, "scripts/voice/word-errors.ts"))};`,
 ].join("\n"));
 // Beside node_modules, so sherpa-onnx (left out of the bundle) is found as bench.mjs finds it.
 const bundle = path.join(root, "node_modules", ".ember-words-bench.cjs");
@@ -45,18 +46,7 @@ const NAMED = [
   "When is my meeting with Joaquin?", "Remind me to thank Saoirse tomorrow.", "Find the notes from Mehmet.",
   "What did Nguyen say about the launch?", "Set up a call with Kofi.", "Remind me Aoife's birthday is Friday.", "Open the report Ravi sent.",
 ];
-
-const words = s => s.toLowerCase().replace(/[’]/g, "'").replace(/[^a-z0-9' ]+/g, " ").split(/\s+/).filter(Boolean);
-function distance(a, b) {
-  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
-  for (let j = 1; j <= b.length; j++) d[0][j] = j;
-  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-  return d[a.length][b.length];
-}
-/** Errors against the reference, and the reference's word count. */
-const errors = (ref, hyp) => ({ e: distance(words(ref), words(hyp)), n: words(ref).length });
-/** Words that were right in `raw` and wrong after correction (a correction that did harm). */
-const harmed = (ref, raw, fixed) => Math.max(0, errors(ref, fixed).e - errors(ref, raw).e);
+const REPEATED = ["Find the New York, New York office.", "Write go team, go team in the note.", "Say very, very clearly."];
 
 function readWav(file) { return sherpa.readWave(file).samples; }
 const clips = [];
@@ -74,12 +64,12 @@ for (const [voice, d, model, speed] of ttsVoices) {
   const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(d, model), tokens: path.join(d, "tokens.txt"), dataDir: path.join(d, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
   // Two takes of each (the voices vary from one rendering to the next, as a person does): the user corrects the first
   // take's misses, the second is measured.
-  for (const take of [1, 2]) for (const ref of NAMED) {
-    const g = tts.generate({ text: ref, sid: 0, speed: speed * (take === 1 ? 1 : 0.95) });
+  for (const [set, prompts] of [["taught", NAMED], ["names", NAMED], ["repetitions", REPEATED]]) for (const ref of prompts) {
+    const g = tts.generate({ text: ref, sid: 0, speed: speed * (set === "taught" ? 1 : 0.95) });
     // At 16 kHz, as the microphone's frames come (the voices speak at 16 or 22.05 kHz).
     const rate = g.sampleRate;
     const audio = rate === 16000 ? g.samples : Float32Array.from({ length: Math.floor(g.samples.length * 16000 / rate) }, (_, i) => g.samples[Math.floor(i * rate / 16000)]);
-    clips.push({ set: take === 1 ? "taught" : "names", voice, ref, audio });
+    clips.push({ set, voice, ref, audio });
   }
 }
 fs.rmSync(tmp, { recursive: true, force: true });
@@ -88,14 +78,21 @@ for (const c of clips) c.raw = backend.transcribe(c.audio);
 // Each voice's owner corrects what the first take got wrong ("That's not what I said"); the second take is measured
 // with what their Ember learnt.
 const learnedBy = new Map();
-for (const c of clips) if (c.set === "taught" && errors(c.ref, c.raw).e) { const l = m.learnFrom(c.raw, c.ref, risky); if (l) learnedBy.set(c.voice, [...(learnedBy.get(c.voice) ?? []), l]); }
+for (const c of clips) if (c.set === "taught" && m.recognitionScore(c.ref, c.raw).errors) { const l = m.learnFrom(c.raw, c.ref, risky); if (l) learnedBy.set(c.voice, [...(learnedBy.get(c.voice) ?? []), l]); }
 const learned = [...learnedBy.values()].flat();
 
-const sum = (set, pick) => { let e = 0, n = 0, h = 0; for (const c of clips.filter(set)) { const r = errors(c.ref, pick(c)); e += r.e; n += r.n; h += harmed(c.ref, c.raw, pick(c)); } return { wer: n ? e / n : 0, errors: e, words: n, harmed: h }; };
+const sum = (set, pick) => {
+  const total = { errors: 0, words: 0, harmed: 0, improved: 0 };
+  for (const c of clips.filter(set)) {
+    const score = m.recognitionScore(c.ref, c.raw, pick(c));
+    for (const key of Object.keys(total)) total[key] += score[key];
+  }
+  return { ...total, wer: total.words ? total.errors / total.words : 0 };
+};
 const lex = lexicon();
 const lexOf = c => lexicon(learnedBy.get(c.voice) ?? []);
 const results = {};
-for (const [name, set] of [["voice tests", c => c.set === "voice tests"], ["names (all voices)", c => c.set === "names"], ...ttsVoices.map(([v]) => [`names (${v})`, c => c.set === "names" && c.voice === v])]) {
+for (const [name, set] of [["voice tests", c => c.set === "voice tests"], ["names (all voices)", c => c.set === "names"], ["intentional repeats", c => c.set === "repetitions"], ...ttsVoices.map(([v]) => [`names (${v})`, c => c.set === "names" && c.voice === v])]) {
   results[name] = {
     raw: sum(set, c => c.raw),
     lexicon: sum(set, c => m.correctTranscript(c.raw, lex, risky).text),
@@ -107,10 +104,10 @@ const pct = x => `${(x * 100).toFixed(1)} %`;
 console.log(`Word error rate (${clips.filter(c => c.set !== "taught").length} clips measured; ${learned.length} corrections taught from the first takes' misses)`);
 for (const [k, r] of Object.entries(results)) {
   if (typeof r !== "object") continue;
-  console.log(`  ${k.padEnd(20)} raw ${pct(r.raw.wer)}   lexicon ${pct(r.lexicon.wer)} (harmed ${r.lexicon.harmed})   + taught ${pct(r.learnt.wer)} (harmed ${r.learnt.harmed})   of ${r.raw.words} words`);
+  console.log(`  ${k.padEnd(20)} raw ${pct(r.raw.wer)}   lexicon ${pct(r.lexicon.wer)} (helped ${r.lexicon.improved}, harmed ${r.lexicon.harmed})   + taught ${pct(r.learnt.wer)} (helped ${r.learnt.improved}, harmed ${r.learnt.harmed})   of ${r.raw.words} words`);
 }
-for (const c of clips.filter(c => c.set === "names")) {
+for (const c of clips.filter(c => c.set === "names" || c.set === "repetitions")) {
   const fixed = m.correctTranscript(c.raw, lexOf(c), risky).text;
-  if (process.argv.includes("--show") && (errors(c.ref, c.raw).e || fixed !== c.raw)) console.log(`    [${c.voice}] ${c.ref}  |  ${c.raw}  →  ${fixed}`);
+  if (process.argv.includes("--show") && (m.recognitionScore(c.ref, c.raw).errors || fixed !== c.raw)) console.log(`    [${c.voice}] ${c.ref}  |  ${c.raw}  →  ${fixed}`);
 }
 console.log(JSON.stringify(results));

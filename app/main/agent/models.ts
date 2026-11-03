@@ -9,10 +9,16 @@
  * code and slow reasoning ones. The user's own choice always wins.
  */
 
+import type { SessionConfig } from "@github/copilot-sdk";
+
+export type ReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
+export const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const satisfies readonly ReasoningEffort[];
+
 export interface ModelLike {
   id: string;
   name?: string;
-  capabilities?: { supports?: { vision?: boolean } };
+  capabilities?: { supports?: { vision?: boolean; reasoningEffort?: boolean } };
+  supportedReasoningEfforts?: ReasoningEffort[];
   policy?: { state?: string };
   /** Copilot's billing: the premium-request multiplier (0 included, 1 standard, more costs more). */
   billing?: { multiplier?: number };
@@ -34,6 +40,12 @@ const NOT_CHAT = [/(^|[-_. ])(code|codex|coder)($|[-_. ])/i, /^o\d/i];
 
 const enabled = (m: ModelLike) => !m.policy?.state || m.policy.state === "enabled";
 export const supportsVision = (m: ModelLike) => m.capabilities?.supports?.vision === true;
+/** The levels advertised for this exact model. Auto routing does not name the model that will run. */
+export function reasoningEffortsOf(m: ModelLike | undefined): ReasoningEffort[] {
+  if (!m || m.id === "auto" || !enabled(m) || m.capabilities?.supports?.reasoningEffort !== true || !Array.isArray(m.supportedReasoningEfforts)) return [];
+  const levels = m.supportedReasoningEfforts;
+  return REASONING_EFFORTS.filter(level => levels.includes(level));
+}
 const fast = (m: ModelLike) => FAST.some(r => r.test(m.id));
 const chat = (m: ModelLike) => !NOT_CHAT.some(r => r.test(m.id));
 const standard = (m: ModelLike) => costOf(m) <= 1;

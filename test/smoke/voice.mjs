@@ -15,6 +15,8 @@
 //   match      Voice Match: enrolled from 4 clips through the settings page's own IPC (window.ember.enrolVoice, on
 //              Chromium's debugging port), then a request in another synthetic voice is turned away (voice.rejected,
 //              reason "voice") and one in the owner's is heard.
+//   listen-once (opt in) opens Ask and presses its Listen once button after microphone and models are ready. One plain
+//              request is answered aloud; a second plain request does not start a turn or an automatic follow-up.
 // Needs an X display (in CI: xvfb-run -a), the speech models (node scripts/voice/prepare.mjs) and the other voice's
 // clips (node scripts/voice/prepare.mjs --voice ryan --clips); a development build (npm run build).
 // EMBER_VOICE_E2E_MODELS and EMBER_VOICE_E2E_OTHER override where those are (.cache/voice/models,
@@ -38,10 +40,11 @@ const otherVoice = path.resolve(process.env.EMBER_VOICE_E2E_OTHER ?? path.join(r
 const verbose = process.env.EMBER_VOICE_E2E_VERBOSE === "1";
 const wantBackend = process.env.EMBER_VOICE_E2E_BACKEND || null;
 if (wantBackend && wantBackend !== "native" && wantBackend !== "wasm") { console.error("EMBER_VOICE_E2E_BACKEND is native or wasm"); process.exit(2); }
-const SCENARIOS = ["reply", "name", "multi", "stop", "match"];
+const DEFAULT_SCENARIOS = ["reply", "name", "multi", "stop", "match"];
+const SCENARIOS = [...DEFAULT_SCENARIOS, "listen-once"];
 const wanted = process.argv.slice(2);
 if (wanted.some(s => !SCENARIOS.includes(s))) { console.error(`usage: node test/smoke/voice.mjs [${SCENARIOS.join(" | ")}]...`); process.exit(2); }
-const run = wanted.length ? wanted : SCENARIOS;
+const run = wanted.length ? wanted : DEFAULT_SCENARIOS;
 
 if (!existsSync(path.join(models, "silero_vad.onnx"))) {
   console.error(`FAIL no speech models in ${models}: run node scripts/voice/prepare.mjs`);
@@ -216,8 +219,8 @@ async function stop(inst) {
   clearTimeout(late);
 }
 
-/** Evaluates `expression` in the settings window's page, through Chromium's debugging port (Node's own WebSocket). */
-async function evaluateInSettings(inst, expression) {
+/** Evaluates `expression` in an Ember page, through Chromium's debugging port (Node's own WebSocket). */
+async function evaluateInSettings(inst, expression, page = "home") {
   const t0 = Date.now();
   let port;
   while (!(port = /DevTools listening on ws:\/\/[^:]+:(\d+)\//.exec(inst.stderr)?.[1])) {
@@ -225,8 +228,8 @@ async function evaluateInSettings(inst, expression) {
     await sleep(100);
   }
   let target;
-  while (!(target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(p => /\/renderer\/home\/index\.html/.test(p.url)))) {
-    if (Date.now() - t0 > 20_000) throw new Error("no settings window to call Voice Match from");
+  while (!(target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(p => p.url.includes(`/renderer/${page}/index.html`)))) {
+    if (Date.now() - t0 > 20_000) throw new Error(`no Ember ${page} page`);
     await sleep(200);
   }
   const ws = new WebSocket(target.webSocketDebuggerUrl);
@@ -262,6 +265,45 @@ async function spoken(inst, from, ms = 30_000) {
 }
 
 const scenarios = {
+  async "listen-once"() {
+    reply = "Do not disturb is on. You can turn it off whenever you need to.";
+    const sent = mock.requests.length;
+    const lead = 14, gap = 8;
+    const inst = startEmber("listen-once", cat(silence(lead), clip("followup"), silence(gap), clip("bigger"), silence(12)), { debugPort: true });
+    try {
+      const mic = await waitFor(inst, e => e.msg === "voice.mic" && e.context === "running", 20_000, "the running microphone");
+      const ready = await waitFor(inst, e => e.msg === "voice.ready", 20_000, "the speech recogniser");
+      await evaluateInSettings(inst, "window.ember.openAsk()");
+      // Time the click from when capture started so the fixture's request lands inside the eight-second window.
+      await sleep(Math.max(0, inst.log[mic].at + (lead - 2) * 1000 - Date.now()));
+      const active = await evaluateInSettings(inst, `(async () => {
+        const button = document.getElementById("listen-once");
+        button.focus();
+        button.click();
+        for (let i = 0; i < 30; i++) {
+          if (document.getElementById("listen-once-detail").textContent === "Listening for one request…") return true;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        return document.getElementById("listen-once-detail").textContent;
+      })()`, "ask");
+      expect(active === true, `Listen once did not start (${active})`);
+      const heard = await waitFor(inst, e => e.msg === "voice.utterance" && e.window === "manual", 10_000, "the manual request");
+      await spoken(inst, heard);
+      if (wantBackend) {
+        expect(inst.log[ready].backend === wantBackend, `listening ran on ${inst.log[ready].backend}, expected ${wantBackend}`);
+        const tts = index(inst, "voice.tts_ready");
+        expect(tts >= 0 && inst.log[tts].backend === wantBackend, `speech did not load on ${wantBackend}`);
+      }
+      expect(asked(sent, /do not disturb/i), "the model did not receive the request about Do Not Disturb");
+      expect(await evaluateInSettings(inst, `window.ember.conversation().then(rows => rows.some(row => row.who === "ember" && row.text.includes(${JSON.stringify(reply)})))`), "the model's reply wasn't in the conversation");
+      await sleep(Math.max(0, inst.log[mic].at + (lead + gap + 6) * 1000 - Date.now()));
+      expect(all(inst, "voice.wake").length === 0, "the fixture unexpectedly contained a wake");
+      expect(all(inst, "voice.utterance").length === 1, "the second plain request started a turn");
+      expect(index(inst, "voice.follow_up") < 0, "an automatic follow-up opened after Listen once");
+      console.log("ok   listen-once: Ask → ready microphone → one plain request → spoken answer → no follow-up");
+    } finally { await finish(inst); }
+  },
+
   async reply() {
     reply = "Night Light is on now. I turned it on for you in the display settings.";
     const sent = mock.requests.length;

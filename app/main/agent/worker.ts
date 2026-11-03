@@ -19,6 +19,7 @@ import { PlanSchema, ViewInputSchema, checkView, viewCatalogPrompt, type ViewChe
 import { ViewOpsSchema, applyViewOps } from "./view-doc";
 import { VIEW_LIMITS, planSteps, viewCounts, type PlanStep, type TaskHand, type ViewDoc } from "../../shared/view";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
+import type { ReasoningEffort } from "./models";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
@@ -93,6 +94,8 @@ export interface WorkerDeps {
   autonomy?: () => AutonomyScopes | null;
   log: Logger;
   model: string | null;
+  /** The levels the connected Copilot catalog advertises for this worker's model. */
+  reasoningEfforts?: readonly ReasoningEffort[];
   /**
    * With no model (`model` null), the runtime's default is used: only where the host found Copilot lists none and
    * nothing limits the models (mayUseRuntimeDefault).
@@ -1760,9 +1763,13 @@ export class Worker {
     try {
       fs.mkdirSync(d.workDir, { recursive: true });
       const tools = this.tools();
+      const preference = d.settings.get().taskReasoning;
+      const reasoningEffort = preference?.model === d.model && d.reasoningEfforts?.includes(preference.effort)
+        ? preference.effort : undefined;
       const config = hardenedSessionConfig({
         sessionId: `ember-task-${this.spec.id}`,
         model: d.model ?? undefined,
+        reasoningEffort,
         provider: d.provider,
         tools,
         systemMessage: this.spec.mode === "guide" ? guideSystemMessage({ words: this.sys.words })

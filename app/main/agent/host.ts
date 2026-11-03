@@ -17,8 +17,8 @@ import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgen
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import type { ActiveProvider } from "../provider";
-import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
-import type { AdminPolicy } from "../admin";
+import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
+import { modelsManaged, type AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
@@ -123,7 +123,7 @@ export interface AgentStatus {
   /** How this build signs in (HostOptions.signInWith): the settings window labels its button by it. */
   signInWith?: SignInWith;
   /** `cost`: the premium-request multiplier, when Copilot gives one (the settings window marks the costly ones). */
-  models: { id: string; name: string; vision: boolean; cost?: number }[];
+  models: { id: string; name: string; vision: boolean; cost?: number; reasoningEfforts?: ReasoningEffort[] }[];
   conductorModel: string | null;
   workerModel: string | null;
   usage: { calls: number; inputTokens: number; outputTokens: number };
@@ -219,7 +219,7 @@ export interface HostOptions {
   onAnswerEnd?: (text: string) => void;
   onTurnEnd?: (aborted: boolean) => void;
   /** The matched request whose reply is starting, including queued and locally answered requests. */
-  onTurnStart?: (turn: { text: string; spoken: boolean }) => void;
+  onTurnStart?: (turn: { text: string; spoken: boolean; manual?: true }) => void;
   /** The current answer was interrupted: buffered audio and delayed acknowledgements must go too. */
   onAnswerInterrupted?: () => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
@@ -624,6 +624,7 @@ interface UserRequest {
   words: string;
   /** Follow-up listening belongs to this request, not whichever request arrived most recently. */
   spoken?: boolean;
+  manual?: true;
   screen: string[];
   /** The target the context was read on (QuickContext.targetId; absent: this computer). */
   targetId?: TargetId;
@@ -897,7 +898,7 @@ export class AgentHost {
     const i = said === undefined ? -1 : this.queued.findIndex(r => r.prompt === said);
     this.turn = i < 0 ? null : this.queued[i];
     if (i >= 0) this.queued.splice(i, 1);
-    if (this.turn) this.o.onTurnStart?.({ text: this.turn.words, spoken: !!this.turn.spoken });
+    if (this.turn) this.o.onTurnStart?.({ text: this.turn.words, spoken: !!this.turn.spoken, ...(this.turn.manual ? { manual: true } : {}) });
     // Its reply announces the tasks it starts ("On it…"), not the ones an earlier turn did.
     this.announced.clear();
   }
@@ -1399,6 +1400,7 @@ export class AgentHost {
           this.taskStatus.set(spec.id, followStatus(h.commands?.runner, text => presenter.progress(text)));
           return new Worker({
             client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && h.binding.desktop === "screen",
+            reasoningEfforts: this.taskReasoningEfforts(this.models.find(m => m.id === this.status.workerModel)),
             provider: provider?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
@@ -1607,7 +1609,13 @@ export class AgentHost {
         defaultModel: runtimeDefault,
         login,
         source: this.source,
-        models: models.map(m => ({ id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true, ...(m.billing?.multiplier !== undefined ? { cost: costOf(m) } : {}) })),
+        models: models.map(m => {
+          const reasoningEfforts = this.taskReasoningEfforts(m);
+          return { id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true,
+            ...(m.billing?.multiplier !== undefined ? { cost: costOf(m) } : {}),
+            ...(reasoningEfforts.length ? { reasoningEfforts } : {}),
+          };
+        }),
         conductorModel: choice.conductor,
         workerModel: choice.worker,
         service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
@@ -1749,6 +1757,10 @@ export class AgentHost {
     } catch (err) {
       this.o.log.warn("agent.sweep_failed", { err });
     }
+  }
+
+  private taskReasoningEfforts(model: ModelLike | undefined): ReasoningEffort[] {
+    return this.active || modelsManaged(this.o.admin?.().models) ? [] : reasoningEffortsOf(model);
   }
 
   /** A different model chosen in settings: the conversation switches now, tasks use it from their next start. No restart. */
@@ -2055,7 +2067,7 @@ export class AgentHost {
    * Answers `text` with Ember's own `reply`, without a Copilot turn: kept in the conversation, shown and spoken as an
    * answer, and (asked by voice) followed by the usual follow-up window.
    */
-  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number; spoken?: boolean }): void {
+  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number; spoken?: boolean; manual?: true }): void {
     // The request is kept as it was asked: heard unchecked, a chosen suggestion and a heard one keep what they were (a later
     // "yes please" that reads back over this line must not take Ember's suggested words, or words heard from the speakers,
     // for the user's own: review of #145).
@@ -2063,7 +2075,7 @@ export class AgentHost {
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
     this.interruptAnswer();
-    this.o.onTurnStart?.({ text, spoken: !!how.spoken });
+    this.o.onTurnStart?.({ text, spoken: !!how.spoken, ...(how.manual ? { manual: true } : {}) });
     this.presenter.say(reply);
     this.o.onAnswer?.(reply);
     this.o.onTurnEnd?.(false);
@@ -2110,7 +2122,7 @@ export class AgentHost {
    * behind a turn under way), just before it is sent: main's acknowledgement waits for it, so "On it." never comes
    * while the request still waits, nor over another turn's answer.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
     // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
@@ -2255,6 +2267,7 @@ export class AgentHost {
     const request: UserRequest = {
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
       ...(how.spoken ? { spoken: true } : {}),
+      ...(how.manual ? { manual: true } : {}),
       ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
     };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
