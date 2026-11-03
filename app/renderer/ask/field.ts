@@ -26,8 +26,11 @@ export const CUT_NOTE = `Only the first ${FIELD.maxChars} characters will be sen
  */
 export const WAIT_TIP = "Wait for this box before you type: letters typed sooner go to the app underneath.";
 
-/** The rows the box needs: the field's lines, and one each for the note that a paste was cut and the tip to wait for it. */
-export const boxRows = (lines: number, cut: boolean, tip: boolean): number => lines + (cut ? 1 : 0) + (tip ? 1 : 0);
+/**
+ * The rows the box needs: the field's lines, and one each for the note that a paste was cut, the tip to wait for it and
+ * Ember's suggestions.
+ */
+export const boxRows = (lines: number, cut: boolean, tip: boolean, suggest = false): number => lines + (cut ? 1 : 0) + (tip ? 1 : 0) + (suggest ? 1 : 0);
 
 /**
  * The lines the field shows for text `scrollHeight` px tall, measured at one line's height: 1 to FIELD.maxLines.

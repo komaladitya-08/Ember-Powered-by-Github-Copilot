@@ -301,3 +301,91 @@ machine before they can become a default.
 | 4 Natural voice | Kokoro-quality voice on Linux too | medium |
 | 5.3–5.5 Lazy models, GPU process, runtime cap | towards ≤ 400 MB | medium |
 | 6 Proactive companion | the Jarvis feel | after memory step 2 |
+
+## 7. Personalisation: a voice that keeps learning you (built 2026-11-03)
+
+The owner asked for voice that "keeps improving, recognizing my voice, and … predict[s] what I'm going to say next".
+Three parts, all on this computer, measured with scripts/voice/match-bench.mjs and scripts/voice/words-bench.mjs.
+
+### 7.1 Voice Match that adapts (app/voice/adapt.ts, adapt-sample.ts; main: app/main/personal/service.ts)
+
+- **What it learns from.** A request the gate verified that matched the print by `ADAPT.margin` (0.08) more than
+  the threshold and the enrolment by the threshold, one voice throughout (a request with 3 s of voice or more is printed
+  half by half and both halves must match), and that main lets through `adaptGuard`: Keep learning on, Voice Match in
+  force, not Ember's own voice since the wake (`selfSpokeSince`), no other voice turned away and no stop in the last
+  two minutes, not cut at the length limit, at most one a minute. Logs say only whether it learnt and why not.
+- **How.** A running weighted mean: the enrolment counts as four samples, plus the last 24 samples (numbers only,
+  in voiceprint.json, 0600). The print moves at most 0.02 (cosine) a sample and stays within 0.95 of the enrolment.
+- **The gate asks more of a learnt print.** An average of more clips matches every voice a little more: learning
+  without that let more strangers in (FAR 3.0 % → 4.1 %). So a print that learnt from `n` samples needs
+  0.75 + 0.03 × min(1, n / 8), and a request must also match the enrolment itself by 0.74 (`gateMatches`).
+- **Reset to my enrolment** keeps the anchor and drops the rest; **Forget my voice** deletes the file. "Ember, stop" is
+  never checked.
+
+Measured on LibriSpeech dev-clean, 40 speakers (4 enrolment phrases of 3 s each; then 12 requests of 2.5 s that go
+through the gate and may be learnt from, and 8 more tested per speaker against everyone else's 8: 320 owner trials,
+12,480 impostor trials):
+
+| | FRR before | FAR before | FRR after | FAR after | learnt from |
+|---|---|---|---|---|---|
+| The enrolment's room | 8.4 % | 3.0 % | 7.8 % | 1.8 % | 76 % of requests |
+| Another microphone (200 Hz–5 kHz, 30 dB SNR) | 52.2 % | 1.6 % | 50.9 % | 1.5 % | 27 % of requests |
+| No limits (learn from anything let in), same room | | | 1.6 % | 4.7 % | 96 % |
+| No limits, another microphone | | | 17.2 % | 7.0 % | 37 % |
+
+On another microphone the guarded learning recovers slowly by design (1.3 points of FRR in 12 requests, about 3 of
+them learnt from): learning from anything let in recovers far more (17 %) but lets 7 % of other voices in, which is
+the trade this design refuses. Re-enrolling on the new microphone is still the quick fix. A telephone-band microphone (300 Hz–3.4 kHz, 25 dB SNR) turned the owner away 81 % of the time before and after: too
+little of it got through to learn from (5 %), and learning without limits there let 5.7 % of other voices in. Only 0.1 %
+of other speakers' requests (32 of 31,200) matched any owner by the margin at all.
+
+**The drift attack.** For each of the 1,560 owner–other pairs, the other speaker feeds 200 samples crafted to sit
+between the print in use and their own voice at a set score, each taken as a verified request (every guard in main
+assumed passed), then their own 8 real requests are tried:
+
+| Crafted samples score | With adapt.ts's limits | With no limits |
+|---|---|---|
+| Just under the threshold (−0.01) | 3.1 % let in (nothing learnt but the 0.1 % of real voices that already pass) | 12.0 % |
+| Just over the threshold (+0.005) | 3.1 % | 98.3 % |
+| Just over the margin (+0.085: an attacker who already sounds 0.83 like the owner) | 4.0 % | 98.3 % |
+
+Baseline: 3.0 %. The enrolment floor bounds the worst case (6.3 % with a floor of 0.72; equal to the baseline with a
+floor of 0.75, which also gave up the owner's gain: FRR 8.8 %).
+
+### 7.2 Personal vocabulary (app/main/personal/phonetic.ts, correct.ts)
+
+Moonshine has no hotword biasing, so the transcript is corrected after it, against: Ember's name at the start of a
+request ("Amber," / "Emma," → "Ember,"), the platform's app catalog (installed apps), the names in memory's `user`
+facts while memory is in force, the corrections the user taught ("That's not what I said": words.json, 0600), and,
+with a 0.03 bonus, the words of the suggestions shown now. A near-miss is corrected when its sound key (Metaphone's
+main rules, voiced and unvoiced pairs merged) and letters together score 0.85 or more and 0.05 ahead of the next entry;
+never a common word on its own, never digits; nothing but the name in a request policy's `isRiskyLabel` calls risky;
+and a correction that would make a request risky is undone, so policy (`spokenWords` included) gets the raw words. A
+spoken answer to a question is judged on the raw words. The log counts corrections by source, never the words.
+sherpa-onnx's keyword spotter could take more keywords, but adding the user's own would change wake behaviour, so it
+was left alone.
+
+Word error rate (words-bench.mjs; requests with app and people's names synthesised in two voices, two takes each:
+the corrections the user would teach come from the first take, the second is measured):
+
+| Clips | Raw | Lexicon | + taught | Words a correction made wrong |
+|---|---|---|---|---|
+| The voice tests' 22 clips (amy and ryan) | 12.3 % | 11.6 % | 11.6 % | 1 (the "Hey Amber" clip, whose wake the engine turns away before it is a request) |
+| 40 name requests (ryan, kristin) | 35.0 % | 30.6 % | 26.7 % | 0 |
+| ryan | 37.8 % | 35.6 % | 27.8 % | 0 |
+| kristin | 32.2 % | 25.6 % | 25.6 % | 0 |
+
+The synthetic voices vary between runs (±3 points). Names Moonshine hears as other words ("Nautilus" → "not a",
+"Mehmet" → "name it") are beyond a sound match; teaching them once fixes them when they come out the same way again.
+
+### 7.3 What comes next (app/main/personal/predict.ts)
+
+Local rules only, no model and nothing sent: from the last request and reply, whether the reply was spoken, the task
+the request started, the time of day, this session's requests and (memory in force) people's names: "Yes, please" and
+"No, thanks" after a question, "Close it" after opening something, "Turn … off" after turning it on, "Do the same for
+the next one" after a task on one item, "Read it out" after an unspoken answer, "What went wrong?" after a failure, a
+request said twice this session, and by time of day otherwise. Never anything risky unless the user's own last words
+were about it ("Send it to Priya" only after a request to send). Shown under the answer in the bubble (only under the
+answer they were made for) and in the Ask box (only while the field is empty), captioned "Ember suggests"; a click
+sends the words as typed. After a spoken reply that asked something, or a finished task with a likely next step, the
+follow-up window is 12 s instead of 8 (no change to wake detection).

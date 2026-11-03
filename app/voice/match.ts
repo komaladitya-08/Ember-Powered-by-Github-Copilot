@@ -6,6 +6,7 @@
 
 import { BARE_NAME, type VoiceEvent } from "./engine";
 import { ENROL_MIN_SECONDS, ENROL_PHRASES, VOICE_MATCH_THRESHOLD, WAKE_MATCH_THRESHOLD, averagePrint, consistentPrints, similarity } from "./voiceprint";
+import { gateMatches } from "./adapt";
 
 /** Makes a voiceprint (unit length) of 16 kHz audio. */
 export interface Printer {
@@ -68,12 +69,23 @@ export function afterWakePhrase(audio: Float32Array, withWake: boolean): Float32
 
 export class VoiceGate {
   private owner: Float32Array | null = null;
+  /**
+   * What Voice Match learnt (adapt.ts): the enrolment's own print, which a request must match by ADAPT.anchorFloor too,
+   * and the threshold for the print in use (adaptedThreshold). Null and the constructor's threshold: nothing learnt.
+   */
+  private anchor: Float32Array | null = null;
+  private learntThreshold: number | null = null;
   /** Requests waiting for their check finish in order (a later one never overtakes an earlier). */
   private queue: Promise<void> = Promise.resolve();
   /** A wake being looked at (WAKE_MATCH_THRESHOLD): it and what followed it wait, but for a stop. */
   private held: { e: VoiceEvent; audio: Float32Array | null; withWake: boolean }[] | null = null;
   /** A turned-away wake's window is being cancelled: what it emits meanwhile goes nowhere. */
   private dropping = false;
+  /**
+   * Told of each request that matched the owner and was `verified` (sent first), with its voiceprint, its score and its
+   * audio: what Voice Match may learn from (adapt-sample.ts, adapt.ts). Null: nothing is.
+   */
+  onSample: ((print: Float32Array, score: number, audio: Float32Array) => void) | null = null;
 
   /** `cancelWindow`: ends the engine's listening window (a wake turned away at its first look); it emits synchronously. */
   constructor(
@@ -85,13 +97,28 @@ export class VoiceGate {
     private wakeThreshold = WAKE_MATCH_THRESHOLD,
   ) {}
 
-  /** The owner's voiceprint (null: Voice Match off, every voice is heard). */
-  setOwner(print: Float32Array | null): void {
+  /**
+   * The owner's voiceprint (null: Voice Match off, every voice is heard). `learnt`: it learnt from the owner's requests
+   * since enrolment (adapt.ts), so the enrolment is checked too and the threshold is the learnt print's.
+   */
+  setOwner(print: Float32Array | null, learnt?: { anchor: Float32Array; threshold: number } | null): void {
     this.owner = print;
+    this.anchor = print && learnt ? learnt.anchor : null;
+    this.learntThreshold = print && learnt ? Math.max(this.threshold, learnt.threshold) : null;
+  }
+
+  /** The owner's match for a request's voiceprint (adapt.ts gateMatches). */
+  private matches(print: Float32Array, owner: Float32Array): boolean {
+    return gateMatches(print, owner, this.learntThreshold ?? this.threshold, this.anchor);
   }
 
   get on(): boolean {
     return !!this.owner;
+  }
+
+  /** The owner's voiceprint in use (null: Voice Match off). */
+  get ownerPrint(): Float32Array | null {
+    return this.owner;
   }
 
   /**
@@ -112,9 +139,10 @@ export class VoiceGate {
     // which ends the voice process. The await below still sees it.
     check.catch(() => undefined);
     this.queue = this.queue.then(async () => {
-      let score: number;
+      let score: number, print: Float32Array;
       try {
-        score = similarity(await check, owner);
+        print = await check;
+        score = similarity(print, owner);
       } catch (err) {
         // The model failed: the request is heard (Voice Match failing must not leave Ember deaf), and main is told.
         this.onError(err);
@@ -126,7 +154,12 @@ export class VoiceGate {
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
       // own: the threshold was tuned on 2.5 s requests, a bare "allow" is too short to tell voices apart, and a recording
       // of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
-      if (score >= this.threshold) { this.send(await this.vouched(e, audio, owner, withWake)); return; }
+      if (this.matches(print, owner)) {
+        const heard = await this.vouched(e, audio, owner, withWake);
+        this.send(heard);
+        if (heard.type === "utterance" && heard.verified) this.onSample?.(print, score, audio);
+        return;
+      }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
       this.send({ type: "listening", on: false, reason: "rejected", window: e.window });
     });
@@ -142,7 +175,7 @@ export class VoiceGate {
     if (voicedSeconds(rest) < APPROVAL_MIN_SECONDS) return { ...e, short: true };
     if (rest === audio) return { ...e, verified: true };
     try {
-      return similarity(await this.printer().print(rest), owner) >= this.threshold ? { ...e, verified: true } : { ...e, short: true };
+      return this.matches(await this.printer().print(rest), owner) ? { ...e, verified: true } : { ...e, short: true };
     } catch (err) {
       this.onError(err);
       return e;

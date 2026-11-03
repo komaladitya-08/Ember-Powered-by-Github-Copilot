@@ -35,6 +35,13 @@ export const IPC = {
   voiceMatchEnrol: "voice:match-enrol",
   voiceMatchCancel: "voice:match-cancel",
   voiceMatchForget: "voice:match-forget",
+  /** Voice personalisation (app/main/personal/): back to the enrolment; what was heard lately; a correction taught; the words learnt. */
+  voiceMatchReset: "voice:match-reset",
+  voiceHeard: "voice:heard",
+  voiceTeach: "voice:teach",
+  voiceWords: "voice:words",
+  voiceForgetWord: "voice:forget-word",
+  voiceForgetWords: "voice:forget-words",
   askClose: "agent:ask-close",
   activity: "ember:activity",
   /** "Check again": look for a sign-in once more and reconnect. */
@@ -123,8 +130,15 @@ export interface VoiceStatus {
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */
 export type SpeechModelId = "kws" | "vad" | "asr" | "tts" | "speaker";
 
+/** What teaching a correction did ("That's not what I said"): app/main/personal/service.ts PersonalVoice.teach. */
+export interface VoiceTeachOutcome { outcome: "learnt" | "off" | "unknown" | "unlike" | "same"; word?: { heard: string; meant: string } }
+/** A correction Ember learnt: what it heard, what was meant, when (ISO). */
+export interface VoiceWord { heard: string; meant: string; at: string }
+
 export interface VoiceMatchStatus {
   enrolled: boolean;
+  /** How many of the owner's requests Voice Match has learnt from since enrolment (Keep learning my voice). */
+  learnt?: number;
   /** In use: wanted, a voiceprint kept, and its model in. */
   on: boolean;
   /** Its voiceprint model is in (false: Voice Match is off until it is downloaded, whatever the setting says). */
@@ -237,6 +251,17 @@ export interface EmberHomeApi {
   enrolVoice(): Promise<boolean>;
   cancelEnrolVoice(): Promise<void>;
   forgetVoice(): Promise<void>;
+  /** Voice Match goes back to the enrolment alone (what it learnt since is dropped). */
+  resetVoice(): Promise<void>;
+  /** The requests heard lately as the conversation shows them (for "That's not what I said"). */
+  voiceHeard(): Promise<string[]>;
+  /** The user retyped what they meant for a request heard as `shown`: what happened (VoiceTeachOutcome). */
+  teachWords(shown: string, meant: string): Promise<VoiceTeachOutcome>;
+  /** The corrections learnt, and forgetting one (by its place) or all. */
+  voiceWords(): Promise<VoiceWord[]>;
+  onVoiceWords(fn: (words: VoiceWord[]) => void): () => void;
+  forgetVoiceWord(index: number): Promise<VoiceWord[]>;
+  forgetVoiceWords(): Promise<void>;
   /** What Ember remembers (newest first), and changes to it. */
   memory(): Promise<MemoryItem[]>;
   onMemory(fn: (items: MemoryItem[]) => void): () => void;
@@ -309,6 +334,11 @@ export interface AskContext {
   tip?: boolean;
   /** Where a request goes when it names no computer (the picker's choice, §8.1); absent or null: this computer. */
   target?: TargetSummary | null;
+  /**
+   * What the user might say next (app/main/personal/predict.ts): Ember's suggestions, a row of chips under the field
+   * (with `opened`: the box opens a row taller). Choosing one sends it as if typed.
+   */
+  suggestions?: string[];
 }
 
 export interface EmberAskApi {

@@ -1,0 +1,134 @@
+/**
+ * Settings › Voice's personalisation rows (Keep learning my voice, Reset to my enrolment, Learn my words with the words
+ * learnt, Suggest what I might say next) and the conversation's “That's not what I said” (app/main/personal/). The
+ * words are copy.ts's; main checks every argument again.
+ */
+
+import type { VoiceStatus, VoiceWord } from "../../shared/ipc";
+import type { Settings, SettingsPatch } from "../../main/settings";
+import { PERSONAL_TEXT, forgetWordLabel, learntText, teachOutcomeText, wordRowText } from "./copy";
+
+const $ = (id: string) => document.getElementById(id)!;
+
+type Save = (patch: SettingsPatch) => Promise<unknown>;
+
+let current: Settings | null = null;
+let save: Save = async () => undefined;
+let wordsFocus: number | null = null;
+
+/** The voice settings as Home last had them, with this change. */
+const voiceWith = (change: Partial<Settings["voice"]>): Settings["voice"] => ({
+  consent: false, speakerRejection: true, muted: false, match: false, natural: false, learn: true, words: true, suggest: true,
+  ...(current?.voice ?? {}), ...change,
+});
+
+function renderWords(list: VoiceWord[]): void {
+  const ul = $("words-list");
+  ul.replaceChildren(...(list.length
+    ? list.map((w, i) => {
+      const li = document.createElement("li");
+      li.append(Object.assign(document.createElement("span"), { textContent: wordRowText(w) }));
+      const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
+      btn.setAttribute("aria-label", forgetWordLabel(w));
+      btn.addEventListener("click", () => { wordsFocus = i; void window.ember.forgetVoiceWord(i).then(renderWords); });
+      li.append(btn);
+      return li;
+    })
+    : [Object.assign(document.createElement("li"), { className: "empty", textContent: PERSONAL_TEXT.wordsEmpty })]));
+  ($("words-forget-all") as HTMLButtonElement).hidden = !list.length;
+  if (wordsFocus !== null) {
+    const buttons = ul.querySelectorAll("button");
+    (buttons[Math.min(wordsFocus, buttons.length - 1)] ?? $("words-on")).focus();
+    wordsFocus = null;
+  }
+}
+
+/** The rows as the settings say (the learning row only once Voice Match knows the voice). */
+export function personalSettings(s: Settings): void {
+  current = s;
+  ($("match-learn") as HTMLInputElement).checked = s.voice.learn;
+  ($("words-on") as HTMLInputElement).checked = s.voice.words;
+  ($("suggest-on") as HTMLInputElement).checked = s.voice.suggest;
+}
+
+/** Voice Match's state: the learning row and Reset show once it knows the voice (Reset only once it learnt something). */
+export function personalMatch(v: VoiceStatus | null, matchHidden: boolean): void {
+  const m = v?.match;
+  const enrolled = !!m?.enrolled && !m.enrolling && !matchHidden;
+  $("match-learn-row").hidden = !enrolled;
+  $("match-learnt").textContent = enrolled ? learntText(m?.learnt ?? 0) : "";
+  ($("match-learnt") as HTMLElement).hidden = !enrolled || !(m?.learnt ?? 0);
+  $("match-reset").hidden = !enrolled || !(m?.learnt ?? 0);
+}
+
+/**
+ * The conversation's requests Ember heard (not typed) get “That's not what I said”: the user retypes the words in place,
+ * and Ember keeps the correction (Learn my words). `rows`: the conversation's list.
+ */
+export function markHeard(rows: HTMLElement): void {
+  void window.ember.voiceHeard().then(heard => {
+    const said = new Set(heard);
+    for (const li of rows.querySelectorAll<HTMLLIElement>("li.you")) {
+      const p = li.querySelector("p");
+      const text = p?.textContent ?? "";
+      if (!said.has(text) || li.querySelector(".not-said")) continue;
+      const btn = Object.assign(document.createElement("button"), { type: "button", className: "link not-said", textContent: PERSONAL_TEXT.notSaid });
+      btn.addEventListener("click", () => teachForm(li, text, btn));
+      li.append(btn);
+    }
+  }, () => { /* nothing heard to mark */ });
+}
+
+let formN = 0;
+function teachForm(li: HTMLLIElement, shown: string, opener: HTMLButtonElement): void {
+  if (li.querySelector("form.teach")) return;
+  opener.hidden = true;
+  const id = `teach-${++formN}`;
+  const form = Object.assign(document.createElement("form"), { className: "teach add-row" });
+  const label = Object.assign(document.createElement("label"), { className: "sr", htmlFor: id, textContent: PERSONAL_TEXT.teachLabel });
+  const input = Object.assign(document.createElement("input"), { type: "text", id, value: shown, maxLength: 2000, spellcheck: false, autocomplete: "off" });
+  const ok = Object.assign(document.createElement("button"), { type: "submit", className: "btn small", textContent: PERSONAL_TEXT.teachSave });
+  const no = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: PERSONAL_TEXT.teachCancel });
+  const note = Object.assign(document.createElement("p"), { className: "teach-note" });
+  note.setAttribute("role", "status");
+  const close = () => { form.remove(); opener.hidden = false; opener.focus(); };
+  no.addEventListener("click", close);
+  form.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); close(); } });
+  form.addEventListener("submit", e => {
+    e.preventDefault();
+    const meant = input.value.trim();
+    if (!meant) return;
+    void window.ember.teachWords(shown, meant).then(r => {
+      form.replaceChildren(note);
+      note.textContent = teachOutcomeText(r.outcome, r.word?.meant ?? meant);
+      if (r.outcome === "learnt") opener.remove(); else opener.hidden = false;
+    });
+  });
+  form.append(label, input, ok, no);
+  li.append(form);
+  input.focus();
+  input.select();
+}
+
+/** Wires the rows (once). `saveSettings`: Home's own save. */
+export function startPersonal(saveSettings: Save): void {
+  save = saveSettings;
+  $("match-learn-label").textContent = PERSONAL_TEXT.learn;
+  $("match-learn-hint").textContent = PERSONAL_TEXT.learnHint;
+  $("match-reset").textContent = PERSONAL_TEXT.reset;
+  $("words-label").textContent = PERSONAL_TEXT.words;
+  $("words-hint").textContent = PERSONAL_TEXT.wordsHint;
+  $("words-h").textContent = PERSONAL_TEXT.wordsHeading;
+  $("words-forget-all").textContent = PERSONAL_TEXT.forgetAllWords;
+  $("suggest-label").textContent = PERSONAL_TEXT.suggest;
+  $("suggest-hint").textContent = PERSONAL_TEXT.suggestHint;
+  $("match-learn").addEventListener("change", e => { void save({ voice: voiceWith({ learn: (e.target as HTMLInputElement).checked }) }); });
+  $("words-on").addEventListener("change", e => { void save({ voice: voiceWith({ words: (e.target as HTMLInputElement).checked }) }); });
+  $("suggest-on").addEventListener("change", e => { void save({ voice: voiceWith({ suggest: (e.target as HTMLInputElement).checked }) }); });
+  $("match-reset").addEventListener("click", () => {
+    void window.ember.resetVoice().then(() => { $("voice-live").textContent = PERSONAL_TEXT.resetDone; ($("match-learn") as HTMLElement).focus(); });
+  });
+  $("words-forget-all").addEventListener("click", () => { wordsFocus = 0; void window.ember.forgetVoiceWords().then(() => renderWords([])); });
+  void window.ember.voiceWords().then(renderWords, () => renderWords([]));
+  window.ember.onVoiceWords(renderWords);
+}

@@ -77,6 +77,8 @@ export function keyHintParts(step: string | null | undefined): { keys: string[];
 export const RISKY_TAG = "Risky step";
 /** The tag beside Ember's own announcement of a step it took without asking (BubbleState.autonomous): never model text. */
 export const AUTONOMOUS_TAG = "Without asking";
+/** The caption before Ember's suggestions of what the user might say next (setSuggestions): they're Ember's guesses. */
+export const SUGGEST_CAPTION = "Ember suggests";
 
 export interface BubbleView {
   visible: boolean;
@@ -527,6 +529,23 @@ html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { backg
 .eb-actions button[aria-disabled="true"] { opacity: 0.4; cursor: default; filter: none; transform: none; }
 .eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
 .eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
+/* What the user might say next (app/main/personal/predict.ts): Ember's suggestions, said so by the caption before them,
+   as small quiet capsules (24 px) after the answer. Choosing one is the same as typing it. Never the accent: none of
+   them is the one prominent action. */
+.eb-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 6px; pointer-events: auto; }
+.eb-suggest[hidden] { display: none; }
+.eb-suggest-cap { font: 400 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); color: var(--label-2, rgba(245, 240, 236, 0.74)); }
+.eb-suggest button {
+  font: 500 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: 0;
+  min-height: calc(24px * var(--text-scale, 1)); padding: 4px 10px; border-radius: var(--r-capsule, 999px); cursor: pointer;
+  max-width: 100%; overflow-wrap: anywhere;
+  border: 0; background: rgba(255, 255, 255, 0.06); color: var(--label, #f5f2ef);
+  box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42));
+  transition: background-color 140ms ease, transform 220ms var(--spring-snappy, ease-out);
+}
+@media (hover: hover) { .eb-suggest button:hover { background: rgba(255, 255, 255, 0.14); } }
+.eb-suggest button:active { transform: scale(0.97); }
+.eb-suggest button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
 /* Needs you: four corner brackets lock onto the bubble once (Ember's HUD: a question is told apart by its shape, not
    only its colour), then hold still; in the caution colour on a risky question. Decorative, and outside the bubble's
    clickable parts. */
@@ -575,6 +594,8 @@ html.calm .ember-bubble { transition: opacity var(--t-calm-fade, 150ms) ease, vi
   .eb-actions button { border: 1px solid ButtonText; }
   .eb-actions button.eb-primary, .eb-actions button.eb-primary:hover { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; }
   .eb-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+  .eb-suggest button { border: 1px solid ButtonText; }
+  .eb-suggest button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
   .eb-actions button[aria-disabled="true"], .eb-actions button.eb-primary[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
   .eb-whole { border: 1px solid CanvasText; }
   /* The state's tag and the risky tag keep an edge (their tint is dropped); the brackets are drawn as they are. */
@@ -596,6 +617,7 @@ html[data-text-size] .eb-step { font-size: calc(13px * var(--text-scale, 1)); li
 html[data-text-size] .ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
 html[data-text-size] .eb-actions button { font-size: calc(13px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
 html[data-text-size] .eb-whole-hint { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .eb-suggest-cap, html[data-text-size] .eb-suggest button { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
 `;
 
 /**
@@ -644,6 +666,10 @@ export class ReasoningBubble {
   private readonly wholeBox: HTMLDivElement;
   private readonly wholeHint: HTMLParagraphElement;
   private readonly actions: HTMLDivElement;
+  /** Ember's suggestions of what the user might say next (setSuggestions). */
+  private readonly suggest: HTMLDivElement;
+  private suggestKey = "";
+  private suggestHandlers: (() => void)[] = [];
   /** The one place screen readers hear Ember from (see `announcement`). */
   private readonly live: HTMLDivElement;
   private actionKey = "";
@@ -708,7 +734,8 @@ export class ReasoningBubble {
       <div class="eb-whole" hidden></div>
       <p class="eb-whole-hint" hidden></p>
       <div class="eb-step" hidden><span class="eb-step-arrow" aria-hidden="true">→</span><span class="eb-step-text"></span></div>
-      <div class="eb-actions" hidden></div>`;
+      <div class="eb-actions" hidden></div>
+      <div class="eb-suggest" role="group" hidden><span class="eb-suggest-cap"></span></div>`;
     this.head = this.root.querySelector(".eb-head")!;
     this.root.querySelector(".eb-risk")!.textContent = RISKY_TAG;
     this.root.querySelector(".eb-auto")!.textContent = AUTONOMOUS_TAG;
@@ -719,6 +746,9 @@ export class ReasoningBubble {
     this.step = this.root.querySelector(".eb-step")!;
     this.stepText = this.root.querySelector(".eb-step-text")!;
     this.actions = this.root.querySelector(".eb-actions")!;
+    this.suggest = this.root.querySelector(".eb-suggest")!;
+    this.suggest.setAttribute("aria-label", SUGGEST_CAPTION);
+    this.root.querySelector(".eb-suggest-cap")!.textContent = SUGGEST_CAPTION;
     this.wholeBox = this.root.querySelector(".eb-whole")!;
     this.wholeHint = this.root.querySelector(".eb-whole-hint")!;
     // Scrolled (by the wheel, or a page on by the approve key): judged again.
@@ -942,6 +972,28 @@ export class ReasoningBubble {
     this.changed();
   }
 
+  /**
+   * Shows Ember's suggestions of what the user might say next under an answer (null or empty: none), each a button that
+   * runs `onClick` (main takes it as if typed). Kept, not rebuilt, while the same words show.
+   */
+  setSuggestions(list: { label: string; onClick: () => void }[] | null): void {
+    const items = list ?? [];
+    this.suggestHandlers = items.map(s => s.onClick);
+    const key = JSON.stringify(items.map(s => s.label));
+    if (key === this.suggestKey) return;
+    this.suggestKey = key;
+    for (const b of [...this.suggest.querySelectorAll("button")]) b.remove();
+    this.suggest.hidden = !items.length;
+    items.forEach((s, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = s.label;
+      onPress(b, () => this.suggestHandlers[i]?.());
+      this.suggest.appendChild(b);
+    });
+    this.changed();
+  }
+
   /** The read hint and the waiting buttons as the whole text's state says (a hint that comes or goes resizes the bubble). */
   private paintWhole(): void {
     const unread = !!this.whole && !this.whole.seen;
@@ -1112,6 +1164,7 @@ export class ReasoningBubble {
     const rel = (el: HTMLElement): Rect => ({ x: edge + el.offsetLeft, y: edge + el.offsetTop, width: el.offsetWidth, height: el.offsetHeight });
     const hot: Rect[] = [];
     if (!this.actions.hidden) hot.push(rel(this.actions));
+    if (!this.suggest.hidden) hot.push(rel(this.suggest));
     // The whole text's block scrolls under the wheel, whether or not it runs on (it takes the pointer as a question's does).
     if (!this.wholeBox.hidden) hot.push(rel(this.wholeBox));
     if (over && thoughtScrolls({ mood: this.mood, expanded: this.expanded, streaming: this.streaming })) hot.push(rel(t));

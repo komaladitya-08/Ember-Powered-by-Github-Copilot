@@ -21,6 +21,8 @@
     <p id="cut" class="cut" role="status" hidden></p>
     <!-- The first few openings on Windows and macOS: wait for the box (letters typed sooner go to the app underneath). -->
     <p id="tip" class="tip" hidden></p>
+    <!-- What the user might say next: Ember's suggestions (said so by the caption); choosing one sends it as if typed. -->
+    <div id="suggest" class="suggest" role="group" aria-labelledby="suggest-cap" hidden><span id="suggest-cap" class="suggest-cap">Ember suggests</span></div>
   </form>
   <!-- What Ember will see comes a moment after the field has the keyboard: said here once it does. -->
   <div id="sees-live" class="sr" role="status" aria-live="polite"></div>

@@ -18,7 +18,7 @@ import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, ty
 import { ReasoningBubble, onPress, plainStream, snapToDevice } from "@ember/bubble";
 import { canvasSize, watchPixels } from "../shared/pixels";
 import { LEVEL_STEPS } from "../../shared/level";
-import { TASK_STOPPING, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, cardLines, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { ArmClock, TASK_ARM_MS } from "../handle/arm";
@@ -183,7 +183,8 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   presence.setState(presenceOf(s));
   presence.setHearing(s.mic === "active");
   // Its buttons are armed from when they show (and disarmed while it is hidden), whatever it keeps while it fades.
-  bubbleArm.shown(b.visible ? b.actions.map(a => a.id) : [], performance.now());
+  const suggested = suggestionsShown(s);
+  bubbleArm.shown(b.visible ? [...b.actions.map(a => a.id), ...suggested.map((_t, i) => suggestAction(i))] : [], performance.now());
   // Going away, it keeps what it said while it fades out, the way it came in: emptied at once, it collapsed to a thin bar
   // as it faded. (Hidden, nothing in it takes a click: interactiveRects is empty.)
   if (b.visible) {
@@ -200,6 +201,8 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
     // A question's whole text (a long typed text), and its Allow waiting until all of it has been in view.
     bubble.setWhole(b.whole ?? null);
     bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => { if (bubbleArm.ready(a.id, performance.now())) api.bubbleAction(a.id); } })) : null);
+    // What the user might say next, under the answer they were made for (Ember's suggestions: a click is as if typed).
+    bubble.setSuggestions(suggested.map((label, i) => ({ label, onClick: () => { if (bubbleArm.ready(suggestAction(i), performance.now())) api.bubbleAction(suggestAction(i)); } })));
   }
   const f = s.focus && s.focus.width > 2 && s.focus.height > 2 ? s.focus : null;
   focusEl.hidden = !f;

@@ -325,6 +325,25 @@ allows them.
   turns the user's off (managed); `models.allowed` still holds. An older Ember reads a policy with this key as broken
   and locks down, so update Ember before adding it.
 
+### Voice that learns you
+
+- **Keep learning my voice** (Settings › **Voice**, on once Voice Match knows you): Voice Match follows your voice
+  slowly, from requests it is sure are yours, so a new microphone or a cold doesn't wear it down. It never learns from
+  its own voice, a request with another voice in it, or for two minutes after it turned someone away or you stopped
+  it; it takes at most one request a minute, moves a small step at a time and stays close to what you taught it, and
+  it asks a little more of a request as it learns, so other voices get in less often, not more (measured on 40
+  LibriSpeech speakers: docs/ASSISTANT.md §7). **Reset to my enrolment** goes back; **Forget my voice** deletes it all.
+  It keeps numbers, never audio. “Ember, stop” still works for anyone.
+- **Ember hears names better**: what it hears is checked against your installed apps and, with Memory on, the names
+  you asked it to remember (“Open Spotfy” → “Open Spotify”; “Amber, …” at the start → “Ember, …”). When it still gets
+  one wrong, **That's not what I said** under the request in Conversation lets you type what you said, and with
+  **Learn my words** on it hears it right from then on (listed in Settings › Voice with Forget). A request about
+  sending, deleting or paying is never changed.
+- **Suggest what I might say next**: two or three likely next requests (“Close it”, “Read it out”, “Do the same for
+  the next one”) under Ember's answers and in Ask Ember, marked as Ember's suggestions and made on this computer.
+  Choosing one is the same as typing it; nothing risky is suggested unless you just asked about it. After a spoken
+  answer that asked you something, the follow-up window stays open 12 seconds instead of 8.
+
 ### In detail
 
 #### Signing in and Copilot

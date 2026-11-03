@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus } from "../shared/ipc";
+import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
@@ -29,6 +29,13 @@ const api: EmberHomeApi = {
   enrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchEnrol),
   cancelEnrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchCancel),
   forgetVoice: () => ipcRenderer.invoke(IPC.voiceMatchForget),
+  resetVoice: () => ipcRenderer.invoke(IPC.voiceMatchReset),
+  voiceHeard: () => ipcRenderer.invoke(IPC.voiceHeard),
+  teachWords: (shown, meant) => ipcRenderer.invoke(IPC.voiceTeach, shown, meant),
+  voiceWords: () => ipcRenderer.invoke(IPC.voiceWords),
+  onVoiceWords: fn => listen<VoiceWord[]>(IPC.voiceWords, fn),
+  forgetVoiceWord: index => ipcRenderer.invoke(IPC.voiceForgetWord, index),
+  forgetVoiceWords: () => ipcRenderer.invoke(IPC.voiceForgetWords),
   memory: () => ipcRenderer.invoke(IPC.memoryList),
   onMemory: fn => listen<MemoryItem[]>(IPC.memoryChanged, fn),
   forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
