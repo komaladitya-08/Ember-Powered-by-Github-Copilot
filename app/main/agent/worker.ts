@@ -731,19 +731,25 @@ function intoSheet(n: AxNode | undefined, byId: (id: number) => AxNode | undefin
  * A dialog as the policy reads it (ActionRequest.dialog): its title, its words, whether it is a message box or a page's
  * own, whether its words were cut, and (from a whole read only) every control in it.
  */
-type Dialog = { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[] };
+type Dialog = { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean };
 const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
 /**
  * Roles that are something to press, choose, tick or type into (on every OS's screen reader): anything with one of
  * these in a dialog is a control of it. An element that is editable or has an action of its own counts too, whatever
  * its role says.
  */
+/** A title bar's Close, and its other standard caption buttons (dialogAround). */
+const CAPTION_CLOSE = /^close$/;
+const CAPTION_OTHER = /^(minimi[sz]e|maximi[sz]e|restore( down)?|help|system( menu)?)$/;
 const CONTROL_ROLE = /button|check|radio|toggle|switch|combo|entry|^text$|password|spin|slider|link|menu|tab|list|tree|icon|table|cell|scroll bar|terminal|document|calendar|chooser|editbar|split/;
 /**
  * The dialog `start` sits in (see Worker.dialogOf), looked up through `get` among `all` the nodes read. `whole`: `all`
- * is a whole read of the window (not cut short, not busy): only then does it say every control the dialog holds
- * (`controls`, without its title bar's own buttons: a Windows MessageBox's Close), which policy.ts's acknowledgesOnly
- * needs before "Work without asking" presses its one OK. Exported for its tests.
+ * is a whole read of the window (not cut short, not busy): only then, and only if nothing under the dialog was left out
+ * of it (`omitted`: offscreen, closed, hidden, collapsed, without a size, not answering), does it say every control the
+ * dialog holds (`controls`), which policy.ts's acknowledgesOnly needs before "Work without asking" presses its one OK.
+ * A title bar's Minimise, Maximise, Restore, Help and system menu are left out; its Close is a control of its own
+ * (`caption`: it may cancel), and anything else in a title bar (a custom one's buttons and check boxes) counts as the
+ * control it is. Exported for its tests.
  */
 export function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>, whole = false): Dialog | undefined {
   let cur = start;
@@ -764,15 +770,24 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
       // asking" never answers either (policy.ts's acknowledgesOnly).
       const page = inWebPage(cur, get);
       const alert = cur.role === "alert" || page;
-      const controls = whole ? nodes.flatMap(n => {
+      // Known only from a whole read with nothing left out under the dialog (an element that isn't listed may be a button).
+      const complete = whole && !cur.omitted && !nodes.some(n => n.omitted && chain(n));
+      const controls = complete ? nodes.flatMap((n): DialogControl[] => {
         const up = chain(n);
-        if (!up || up.some(a => a.role === "title bar") || n.role === "title bar") return [];
+        if (!up || n.role === "title bar") return [];
         const control = CONTROL_ROLE.test(n.role) || n.editable === true || n.states.includes("editable") || (n.actions?.length ?? 0) > 0;
-        return control ? [{ role: n.role, name: n.name }] : [];
+        if (!control) return [];
+        if (up.some(a => a.role === "title bar")) {
+          const label = normalizeLabel(n.name).trim();
+          if (CAPTION_CLOSE.test(label)) return [{ role: n.role, name: n.name, caption: true }];
+          if (CAPTION_OTHER.test(label)) return [];
+        }
+        return [{ role: n.role, name: n.name }];
       }) : undefined;
       return {
         name: cur.name, text: words.slice(0, DIALOG_TEXT_MAX), ...(alert ? { alert } : {}), ...(page ? { page } : {}),
         ...(words.length > DIALOG_TEXT_MAX ? { truncated: true } : {}), ...(controls ? { controls } : {}),
+        ...(cur.dialogBox ? { messageBox: true } : {}),
       };
     }
     cur = cur.parent !== null ? get(cur.parent) : undefined;
@@ -784,15 +799,37 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
  * A field's label (`label`, inferred where it has no name) and the names of the elements around it, up to its window
  * (not the window's own title, which names the file): ActionRequest.around. Exported for its tests.
  */
-export function fieldAround(n: AxNode, label: string | undefined, byId: (id: number) => AxNode | undefined): string[] {
+export function fieldAround(n: AxNode, label: string | undefined, byId: (id: number) => AxNode | undefined, all: Iterable<AxNode> = []): string[] {
   const out = label ? [label] : [];
+  const nodes = [...all];
   for (let p = n.parent, i = 0; p !== null && i < 80; i++) {
     const a = byId(p);
-    if (!a || /^(frame|window|application)$/.test(a.role)) break;
-    if (a.name) out.push(a.name);
+    if (!a) break;
+    // The window itself is the last panel read (its own name, the file's, is not): gedit's bottom panel is a child of it.
+    const top = /^(frame|window|application)$/.test(a.role);
+    if (a.name && !top) out.push(a.name);
+    // The tabs and stack switcher buttons of this panel (its children, and the tabs of a tab list among them: gedit's
+    // Python Console view is unnamed, a sibling of the bottom panel's tab list): the selected one's name, or all of them
+    // where none says it is selected (a console's page is named by its tab, not by the page).
+    const tabs = nodes.filter(c => c.parent === a.id).flatMap(c => (SWITCH_ROLE.test(c.role) ? [c]
+      : c.role === "page tab list" ? nodes.filter(t => t.parent === c.id && SWITCH_ROLE.test(t.role)) : [])).filter(c => c.name);
+    const chosen = tabs.filter(c => c.states.some(s => /^(selected|checked|pressed|active)$/.test(s)));
+    out.push(...(chosen.length ? chosen : tabs).map(c => c.name));
+    if (top) break;
     p = a.parent;
   }
-  return out;
+  return [...new Set(out)];
+}
+/** Roles of a panel's tabs and stack switcher buttons (fieldAround). */
+const SWITCH_ROLE = /^(page tab|tab|tab item|toggle button|radio button)$/;
+/**
+ * Is `n` the window's main document: a multi-line text that is the largest of the multi-line texts the window shows (a
+ * console or a side pane is smaller)? Ties are not: ActionRequest.mainDocument. Exported for its tests.
+ */
+export function mainDocument(n: AxNode, all: Iterable<AxNode>): boolean {
+  const area = (x: AxNode) => (x.bounds ? x.bounds.width * x.bounds.height : 0);
+  if (!n.states.includes("multi line") || area(n) <= 0) return false;
+  return [...all].every(x => x.id === n.id || !/^(text|document text)$/.test(x.role) || !x.states.includes("multi line") || area(x) < area(n));
 }
 
 function inWebPage(n: AxNode | undefined, byId: (id: number) => AxNode | undefined): boolean {
@@ -2452,7 +2489,8 @@ export class Worker {
         // (Only a page found is said: unknown, a browser's or a web app's field counts as a page's, WEB_APP.)
         ...(node.states.includes("multi line") ? { multiLine: true } : {}), ...(node.role === "document web" || inWebPage(node, i => this.known.get(i)) ? { inPage: true } : {}),
         // Its label and the panes and tabs around it (a "Python Console" tab), up to the window: plainEditorLines.
-        around: fieldAround(node, this.labels.get(node.id), i => this.known.get(i)) } : {}),
+        around: fieldAround(node, this.labels.get(node.id), i => this.known.get(i), this.known.values()),
+        ...(mainDocument(node, this.known.values()) ? { mainDocument: true } : {}) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);

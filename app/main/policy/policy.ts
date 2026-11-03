@@ -34,8 +34,11 @@ export type ActionKind = "read" | "click" | "toggle" | "text" | "select" | "valu
 
 export type TextMode = "replace" | "insert" | "append";
 
-/** A control in a dialog (ActionRequest.dialog.controls): its role and name, as the screen reader gives them. */
-export interface DialogControl { role: string; name: string }
+/**
+ * A control in a dialog (ActionRequest.dialog.controls): its role and name, as the screen reader gives them.
+ * `caption`: the Close of the dialog's own title bar (its other standard caption buttons are left out).
+ */
+export interface DialogControl { role: string; name: string; caption?: boolean }
 
 export interface ActionRequest {
   taskId: string;
@@ -100,10 +103,12 @@ export interface ActionRequest {
   /**
    * `alert`: a message box (an alert's role) or a web page's own dialog; `page`: drawn by a web page (an `alert()`, a
    * site's "example.com says"); `truncated`: its words were cut to DIALOG_TEXT_MAX, so not all of them were read.
-   * `controls`: every control the dialog holds (buttons, check boxes, radio buttons, fields, links…, but not its title
-   * bar's), by role and name, set only from a read of the whole window: absent, it isn't known (acknowledgesOnly).
+   * `controls`: every control the dialog holds (buttons, check boxes, radio buttons, fields, links…, and its title
+   * bar's Close as `caption`; not its other standard caption buttons), by role and name, set only from a read of the
+   * whole window with nothing left out under it: absent, it isn't known (acknowledgesOnly). `messageBox`: a Win32
+   * dialog box (#32770), whose title bar's Close answers as its OK does.
    */
-  dialog?: { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[] };
+  dialog?: { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean };
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
   /**
@@ -111,6 +116,11 @@ export interface ActionRequest {
    * tab, an "Output" pane), as the worker read them: plainEditorLines refuses a console's field by them.
    */
   around?: string[];
+  /**
+   * For text: the field is the largest multi-line text its window shows (the editor's document, not a console, a
+   * panel or a side pane), as the worker read it: plainEditorLines waives only that.
+   */
+  mainDocument?: boolean;
   /**
    * For text and keys: what the field holds now is only what this task typed there (replacing it, however long, takes
    * nothing of the user's).
@@ -1749,6 +1759,8 @@ export const DIALOG_TEXT_MAX = 400;
  * Dismiss back off a dialog and were never asked about.)
  */
 const ACKNOWLEDGES = /^(ok|okay)$/;
+/** A title bar's Close, as a screen reader names it. */
+const CLOSE_LABEL = /^close$/;
 /** A push button, as each OS's screen reader names one (never a check box, radio button, toggle or tab named "OK"). */
 const PUSH_BUTTON = /^(push button|button)$/;
 /**
@@ -1767,6 +1779,26 @@ const ACK_RISK = /(^|[^\p{L}\p{N}])(charge[ds]?|charging|card|payment|pay|paid|p
  * "Can…" but not "Cannot" or "Can't"), and the phrases that ask in English and the languages of RISKY_WORDS (folded).
  */
 const QUESTION_FORM = /(^|[.!:;]\s+)(do|does|did|are|is|was|were|will|would|shall|should|can(?!'t|not)|could|may|might|have|has|had|want|wish)(?![\p{L}])|(^|[^\p{L}])(do you|would you|are you|you sure|want to|wish to|like to|ok to|choose|select|proceed|continue|voulez|souhaitez|veux|mochten|wollen|wirklich|desea|quiere|deseja|quer|vuoi|vuole|desideri|wilt|weet u|czy|chcesz|хотите|уверены|действительно|vill du|vil du|onsker|haluatko|haluatteko|oletko|chcete|opravdu|emin|istiyor|mi|mı|mu|mü)(?![\p{L}])/u;
+/**
+ * A future or passive marker in a dialog's text, in English and the languages of RISKY_WORDS (folded like them: no
+ * accents, "й" as "и"): "will", "going to", "is/are/was/were/be/been/being", "gets", "has/have/had", any English word
+ * in -ed or -en ("shredded", "terminated", "closed"), "ends", "wird/werden/wurde/gelöscht", "sera/seront/est/été",
+ * "será/se borrará/ha sido", "sarà/verrà/stato", "zostanie/będzie", "wordt/worden/gewist", "будет/будут/был/удалены",
+ * "silinecek/silindi" and the like. A one-OK dialog that says what has happened or will happen to something is not
+ * a plain acknowledgement. Fails closed: a harmless sentence with one of these asks. (Written already folded, as
+ * saysWord matches it against folded text, so it is not folded again: that would lower-case \p{L}.)
+ */
+const FUTURE_PASSIVE = new RegExp(String.raw`(^|[^\p{L}\p{N}])(`
+  + [
+    // English
+    String.raw`will|won't|shall|shan't|going to|gets?|got|is|are|was|were|be|been|being|has|have|had|would|should|ends?|ending|\p{L}{3,}(ed|en)`,
+    // German, Dutch, Swedish, Danish, Norwegian, Finnish, Czech
+    String.raw`wird|werden|wurde|wurden|worden|ist|sind|war|waren|ge\p{L}{3,}(t|en)|wordt|werd|zal|zullen|zijn|ge\p{L}{3,}d|kommer att|blir|ska|vil|tulee|aiotaan|bude|budou|byl|byla|bylo|byly`,
+    // French, Spanish, Italian, Portuguese
+    String.raw`sera|seront|serait|est|sont|etait|etaient|ete|va|vont|seran|esta|estan|fue|fueron|ha sido|han sido|van a|se \p{L}{3,}|sara|saranno|verra|verranno|viene|vengono|stato|stati|stata|state|sono|foi|foram|vai|vao|sera\p{L}*`,
+    // Polish, Russian, Turkish
+    String.raw`zosta\p{L}*|bedzie|beda|jest|bylo|budet|budut|будет|будут|был|была|были|было|удален\p{L}*|\p{L}+(ен|ена|ено|ены|ан|ана|ано|аны)|\p{L}+(ecek|acak)|\p{L}+(ildi|ildi|indi|uldu|uldu|ulmus|ilmis)|olacak|edilecek`,
+  ].join("|") + String.raw`)(?![\p{L}\p{N}])`, "u");
 /** Letters only Ukrainian and Belarusian write in Cyrillic, which RISKY_WORDS' Russian doesn't cover. */
 const NOT_RUSSIAN = /[іїєґўІЇЄҐЎ]/;
 
@@ -1790,14 +1822,19 @@ function readableScripts(s: string): boolean {
  * `page`; nor in a browser, web, chat or mail app). Then, as defence in depth: not the system's Settings, security or
  * administration apps nor a permission, system or installer window (PROMPT_WINDOW); its words read whole (not
  * `truncated`) and saying something, all in scripts the word lists cover, asking nothing (no question mark, no
- * QUESTION_FORM) and naming nothing risky anywhere (button, title, text or window: RISKY's lists, the acting verbs,
+ * QUESTION_FORM), stating no future or consequence (no FUTURE_PASSIVE marker) and naming nothing risky anywhere (button, title, text or window: RISKY's lists, the acting verbs,
  * security talk, ACK_RISK, a file conflict, a disk's Format). Any of these fails, and it asks as before. Not keyed on
  * the "alert" role, which only Linux reports (a Windows MessageBox and a macOS sheet are a "dialog").
  */
 function acknowledgesOnly(r: ActionRequest, name: string, role: string, os: OS): boolean {
   const d = r.dialog;
-  if (!d || d.page === true || d.truncated === true || r.inPage === true || !Array.isArray(d.controls) || d.controls.length !== 1) return false;
-  const only = d.controls[0];
+  if (!d || d.page === true || d.truncated === true || r.inPage === true || !Array.isArray(d.controls)) return false;
+  const body = d.controls.filter(c => c.caption !== true);
+  if (body.length !== 1) return false;
+  // The title bar's Close may cancel a GTK alert or a custom dialog: a second control. Only in a real Win32 dialog box
+  // (#32770 with its one OK) does it return OK too.
+  if (d.controls.some(c => c.caption === true && !(d.messageBox === true && os === "win32" && CLOSE_LABEL.test(normalizeLabel(c.name).trim())))) return false;
+  const only = body[0];
   const ok = (s: string) => ACKNOWLEDGES.test(normalizeLabel(s).trim());
   if (!PUSH_BUTTON.test(role) || !ok(name) || !PUSH_BUTTON.test(only.role) || !ok(only.name) || normalizeLabel(only.name).trim() !== normalizeLabel(name).trim()) return false;
   const text = d.text.replace(/\s+/g, " ").trim();
@@ -1810,7 +1847,7 @@ function acknowledgesOnly(r: ActionRequest, name: string, role: string, os: OS):
   if (all.some(t => /[?¿؟⸮]/.test(t.normalize("NFKC")))) return false;
   if (PROMPT_WINDOW.test(foldLabel(`${apps.join(" ")} ${d.name} ${r.window}`))) return false;
   return !all.some(t => isRiskyLabel(t, os) || isRiskyActLabel(t) || securityTalk(t) || saysWord(ACK_RISK, t) || saysWord(QUESTION_FORM, t)
-    || FILE_CONFLICT.test(plainText(t)) || formatsDisk(name, t));
+    || FILE_CONFLICT.test(plainText(t)) || formatsDisk(name, t)) && !saysWord(FUTURE_PASSIVE, text) && !saysWord(FUTURE_PASSIVE, d.name);
 }
 
 /**
@@ -1999,17 +2036,25 @@ function enterMaySend(r: ActionRequest, role: string, os: OS): boolean {
  * script's interpreter (gedit's, Pluma's and xed's Python Console; Notepad++'s NppExec).
  */
 const RUNS_LINES = /(^|[^\p{L}\p{N}])(console|terminal|shell|command|commands|cmd|repl|python|interpreter|output|nppexec|run|execute|script|prompt)(?![\p{L}\p{N}])/u;
+/** A window title that names a file (an extension) or a new document, as editors title one ("list.txt - Notepad", "Unsaved Document 1 - gedit"). */
+const FILE_WINDOW = /\.[a-z0-9]{1,8}(?=$|[\s*)"'\]–—-])|(untitled|unsaved|new document|new file)/;
 /**
  * Is this typing line breaks (and no tab) into a plain text editor's document, where Enter only starts a new line? An
  * allow-list that fails closed (security reviews of #140): the app is one of PLAIN_EDITOR[os] (Notepad, gedit,
  * Mousepad, Kate, TextEdit…; whole names only, so no browser, chat, mail or office app), the field is its multi-line
- * text outside a page, a formula or a cell, and the field's name, labels and the panes around it (`around`, which the
- * worker always sends: absent, it isn't known) say nothing of a console, terminal, shell or output (RUNS_LINES), where
- * Enter would run code. Anywhere else Enter may send, submit, commit or run.
+ * text outside a page, a formula or a cell, it is the window's main document (`mainDocument`: the largest multi-line
+ * text there) in a window titled by a file or a new document, and the field's name, labels and the panes around it
+ * (`around`, with the selected tab of each; the worker always sends it: absent, it isn't known) say nothing of a
+ * console, terminal, shell or output (RUNS_LINES), where Enter would run code. Anywhere else Enter may send, submit,
+ * commit or run.
  */
 function plainEditorLines(r: ActionRequest, role: string, os: OS): boolean {
   if (/\t/.test(r.value ?? "") || r.multiLine !== true || !/^(text|document text)$/.test(role)) return false;
   if (r.inPage === true || r.formula !== undefined || (r.element && isSheetCell(r.element))) return false;
+  // Only the window's main document: the largest multi-line text it shows (a console is a smaller, often unnamed, pane),
+  // in a window titled by a file or a new document, with nothing around it (its panes, the selected tab of each) that
+  // says console, terminal, shell, output.
+  if (r.mainDocument !== true || !FILE_WINDOW.test(foldLabel(r.window))) return false;
   if (!Array.isArray(r.around) || [r.element?.name ?? "", ...r.around].some(n => saysWord(RUNS_LINES, n))) return false;
   return PLAIN_EDITOR[os].test(appNameOf(r.app));
 }

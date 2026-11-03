@@ -8,9 +8,12 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { ELEVATED_TEXT } from "../../app/main/platform/win32/system/doctor";
 import { DIALOG_TEXT_MAX, PolicyEngine, type ActionRequest, type DialogControl } from "../../app/main/policy/policy";
 import { ALL_SCOPES, type AutonomyScopes } from "../../app/main/policy/autonomy";
-import { Worker, dialogAround, fieldAround, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
+import { Worker, dialogAround, fieldAround, mainDocument, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
 import { Presenter } from "../../app/main/agent/presenter";
 import { KEYS, SHORTCUTS } from "../../app/shared/shortcuts";
 import { PLATFORM_WORDS } from "../../app/shared/words";
@@ -53,13 +56,13 @@ const notepad = (r: Partial<ActionRequest>): ActionRequest => ({ taskId: "t1", k
  * by paste), an "OK" in a dialog, and (`extra`) whatever else the screen shows. The confirmer answers `answer`
  * ("deny" for questions matching `denyIf`) and records every question.
  */
-function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; answer?: string; denyIf?: RegExp; goal?: string } = {}) {
+function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; answer?: string; denyIf?: RegExp; goal?: string; read?: { truncated?: "nodes" | null; busy?: boolean }; noAreaFocus?: boolean } = {}) {
   const st = { asked: [] as string[], audit: [] as Record<string, unknown>[], activity: [] as Record<string, unknown>[], keys: [] as string[], borrows: 0 };
   const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "list.txt - Notepad", states: [], bounds: FRAME };
-  const area: AxNode = { id: 2, parent: 1, depth: 1, role: "text", name: "Text editor", text: "", states: ["enabled", "sensitive", "editable", "focusable", "focused", "multi line"], bounds: { x: 10, y: 60, width: 700, height: 400 } };
+  const area: AxNode = { id: 2, parent: 1, depth: 1, role: "text", name: "Text editor", text: "", states: ["enabled", "sensitive", "editable", "focusable", ...(o.noAreaFocus ? [] : ["focused"]), "multi line"], bounds: { x: 10, y: 60, width: 700, height: 400 } };
   const nodes = (): AxNode[] => [frame, area, ...(o.extra ?? [])];
   const window = { app: "notepad.exe", pid: 7, name: "list.txt - Notepad", role: "frame", active: true, bounds: FRAME };
-  const seen = () => ({ window, x11Window: null, nodes: nodes(), blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1 });
+  const seen = () => ({ window, x11Window: null, nodes: nodes(), blocked: false, busy: o.read?.busy ?? false, truncated: o.read?.truncated ?? null, others: [], ms: 0, axScale: 1 });
   const written: string[] = [];
   const hand: Hand = {
     glideTo: async () => undefined, click: async () => undefined, type: async () => undefined, checkTyping: () => undefined, scroll: async () => undefined,
@@ -97,7 +100,7 @@ function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; an
   const authorizeCells = (cells: { cell: string; text: string }[]) => (w as unknown as { authorizeCells(jobs: unknown[]): Promise<unknown> })
     .authorizeCells(cells.map((c, i) => ({ ...c, place: { col: 1, row: 5 + i }, seenKey: c.cell, expected: undefined, listed: undefined })));
   const decisions = (kind: string) => st.audit.filter(e => e.event === "decision" && e.kind === kind);
-  return { st, call, authorizeCells, decisions };
+  return { st, call, authorizeCells, decisions, worker: w };
 }
 
 describe("an ordinary borrow on Windows with all four scopes on (the owner's report)", () => {
@@ -175,7 +178,7 @@ describe("an ordinary borrow on Windows with all four scopes on (the owner's rep
 });
 
 describe("typing line breaks with the borrowed keyboard: only plain text editors go ahead (allow-list, security review of #140)", () => {
-  const typed = (o: Partial<ActionRequest>) => winPolicy().decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, around: [], ...o }));
+  const typed = (o: Partial<ActionRequest>) => winPolicy().decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, around: [], mainDocument: true, ...o }));
   const on = (os: "linux" | "darwin" | "win32") => new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os, keys: KEYS[os] });
 
   it("announces line breaks into Notepad, gedit and TextEdit, never with the text", () => {
@@ -184,7 +187,7 @@ describe("typing line breaks with the borrowed keyboard: only plain text editors
     expect(d.announce).toBe(`Using your keyboard to type 10 characters in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
     expect(d.announce).not.toMatch(/milk|eggs/);
     for (const [os, app] of [["linux", "gedit"], ["linux", "mousepad"], ["darwin", "TextEdit"], ["win32", "notepad++.exe"]] as const) {
-      expect(on(os).decide(notepad({ kind: "cursor_text", app, window: "list.txt", element: { role: "text", name: "" }, mode: "insert", multiLine: true, around: [], value: "milk\neggs" })).autonomy, app).toBe(true);
+      expect(on(os).decide(notepad({ kind: "cursor_text", app, window: "list.txt", element: { role: "text", name: "" }, mode: "insert", multiLine: true, around: [], mainDocument: true, value: "milk\neggs" })).autonomy, app).toBe(true);
     }
   });
 
@@ -197,7 +200,7 @@ describe("typing line breaks with the borrowed keyboard: only plain text editors
       ["darwin", "zoom.us", "text"], ["darwin", "Messages", "text"],
     ];
     for (const [os, app, role] of probes) {
-      const d = on(os).decide(notepad({ kind: "cursor_text", app, window: "Chat", element: { role, name: "" }, mode: "insert", multiLine: true, around: [], value: "hi\nsee you" }));
+      const d = on(os).decide(notepad({ kind: "cursor_text", app, window: "Chat", element: { role, name: "" }, mode: "insert", multiLine: true, around: [], mainDocument: true, value: "hi\nsee you" }));
       expect(d.verdict, app).toBe("confirm");
       expect(d.autonomy, app).toBeUndefined();
       expect(d.waivable, app).toBeUndefined();
@@ -205,7 +208,7 @@ describe("typing line breaks with the borrowed keyboard: only plain text editors
   });
 
   it("asks in a spreadsheet's cell and Calc's input line, where Enter commits and moves to the next cell (B2)", () => {
-    const calc = (o: Partial<ActionRequest>) => on("linux").decide(notepad({ kind: "cursor_text", app: "soffice.bin", window: "Budget.ods - LibreOffice Calc", mode: "insert", multiLine: true, around: [], value: "hi\nsee you", ...o }));
+    const calc = (o: Partial<ActionRequest>) => on("linux").decide(notepad({ kind: "cursor_text", app: "soffice.bin", window: "Budget.ods - LibreOffice Calc", mode: "insert", multiLine: true, around: [], mainDocument: true, value: "hi\nsee you", ...o }));
     expect(calc({ element: { role: "paragraph", name: "" }, formula: "hi\nsee you" }).autonomy).toBeUndefined();
     expect(calc({ element: { role: "text", name: "Input line" }, formula: "hi\nsee you" }).autonomy).toBeUndefined();
     // Notepad itself, with a formula set (never a plain editor's text then).
@@ -234,7 +237,7 @@ describe("typing line breaks with the borrowed keyboard: only plain text editors
   });
 
   it("asks as before with the mode off: the same question, every time, no Always", () => {
-    const d = winPolicy(null).decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, around: [], value: "milk\neggs" }));
+    const d = winPolicy(null).decide(notepad({ kind: "cursor_text", element: { role: "text", name: "Text editor" }, mode: "insert", multiLine: true, around: [], mainDocument: true, value: "milk\neggs" }));
     expect(d).toMatchObject({ verdict: "confirm", risky: true, everyTime: true, remember: false, reason: "the text contains line breaks, typed with Enter in a text editor" });
   });
 });
@@ -397,29 +400,53 @@ describe("a message box goes ahead only by its structure: one OK and nothing els
     }
   });
 
-  it("acknowledges a Windows MessageBox as the host reads it: a “dialog” (#32770, not an alert) with its title bar's Close left out", () => {
-    const nodes: AxNode[] = [
-      { id: 1, parent: null, depth: 0, role: "dialog", name: "Notepad", states: ["active"], bounds: FRAME },
-      { id: 2, parent: 1, depth: 1, role: "title bar", name: "Notepad", states: [], bounds: null },
-      { id: 3, parent: 2, depth: 2, role: "push button", name: "Close", states: ["enabled", "sensitive"], bounds: null, actions: ["click"] },
-      { id: 4, parent: 1, depth: 1, role: "label", name: "Cannot find \"milk\"", states: [], bounds: null },
-      { id: 5, parent: 1, depth: 1, role: "push button", name: "OK", states: ["enabled", "sensitive", "focused"], bounds: null, actions: ["click"] },
-    ];
-    const byId = (id: number) => nodes.find(n => n.id === id);
-    const dialog = dialogAround(nodes[4], byId, nodes, true)!;
-    expect(dialog).toEqual({ name: "Notepad", text: "Cannot find \"milk\"", controls: [OK] });
-    const d = engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog }));
-    expect(d).toMatchObject({ verdict: "allow", autonomy: true, answersDialog: true });
-    // With a Cancel, it asks.
-    const two = dialogAround(nodes[4], byId, [...nodes, { id: 6, parent: 1, depth: 1, role: "push button", name: "Cancel", states: [], bounds: null }], true)!;
+  const msgBox = (dialogBox: boolean, extra: AxNode[] = []): AxNode[] => [
+    { id: 1, parent: null, depth: 0, role: "dialog", name: "Notepad", states: ["active"], bounds: FRAME, ...(dialogBox ? { dialogBox: true } : {}) },
+    { id: 2, parent: 1, depth: 1, role: "title bar", name: "Notepad", states: [], bounds: null },
+    { id: 3, parent: 2, depth: 2, role: "push button", name: "Close", states: ["enabled", "sensitive"], bounds: null, actions: ["click"] },
+    { id: 4, parent: 1, depth: 1, role: "label", name: "Cannot find \"milk\"", states: [], bounds: null },
+    { id: 5, parent: 1, depth: 1, role: "push button", name: "OK", states: ["enabled", "sensitive", "focused"], bounds: null, actions: ["click"] },
+    ...extra,
+  ];
+  const readBox = (nodes: AxNode[], whole = true) => dialogAround(nodes[4], id => nodes.find(n => n.id === id), nodes, whole)!;
+
+  it("acknowledges a real Win32 message box (#32770 with its one OK): its title bar's Close returns OK too, so it is no second choice", () => {
+    const dialog = readBox(msgBox(true));
+    expect(dialog).toEqual({ name: "Notepad", text: "Cannot find \"milk\"", controls: [{ role: "push button", name: "Close", caption: true }, OK], messageBox: true });
+    expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog }))).toMatchObject({ verdict: "allow", autonomy: true, answersDialog: true });
+    // With a Cancel beside the OK, it asks.
+    const two = readBox(msgBox(true, [{ id: 6, parent: 1, depth: 1, role: "push button", name: "Cancel", states: [], bounds: null }]));
     expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog: two })).autonomy).toBeUndefined();
+  });
+
+  it("counts a title bar's Close as a second control anywhere else: a GTK alert's or a custom dialog's Close may cancel", () => {
+    const dialog = readBox(msgBox(false));
+    expect(dialog.messageBox).toBeUndefined();
+    expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog })).autonomy).toBeUndefined();
+    expect(engine("linux").decide(notepad({ app: "gedit", window: "list.txt - gedit", element: { role: "push button", name: "OK" }, dialog })).autonomy).toBeUndefined();
+    // And a Win32 box's Close is only believed on Windows (a flag from elsewhere is nothing).
+    expect(engine("linux").decide(notepad({ app: "gedit", window: "list.txt - gedit", element: { role: "push button", name: "OK" }, dialog: readBox(msgBox(true)) })).autonomy).toBeUndefined();
+  });
+
+  it("leaves out only a title bar's standard caption buttons: a custom title bar's “Delete all files” and a checked “Also empty the trash” count", () => {
+    const bar = (extra: AxNode[]) => msgBox(true, extra);
+    const ctrls = (extra: AxNode[]) => readBox(bar(extra)).controls!;
+    const kid = (id: number, role: string, name: string, states: string[] = []): AxNode => ({ id, parent: 2, depth: 2, role, name, states, bounds: null, actions: ["click"] });
+    expect(ctrls([kid(6, "push button", "Minimize"), kid(7, "push button", "Maximize"), kid(8, "push button", "Restore"), kid(9, "push button", "Help"), kid(10, "menu", "System")]))
+      .toEqual([{ role: "push button", name: "Close", caption: true }, OK]);
+    const custom = ctrls([kid(6, "push button", "Delete all files"), kid(7, "check box", "Also empty the trash", ["checked"])]);
+    expect(custom).toEqual([{ role: "push button", name: "Close", caption: true }, OK, { role: "push button", name: "Delete all files" }, { role: "check box", name: "Also empty the trash" }]);
+    for (const extra of [[kid(6, "push button", "Delete all files")], [kid(6, "check box", "Also empty the trash", ["checked"])]]) {
+      const dialog = readBox(bar(extra));
+      expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog })).autonomy).toBeUndefined();
+    }
   });
 
   it("acknowledges a macOS sheet as the host reads it (AXSheet: a “dialog”) in TextEdit", () => {
     const nodes: AxNode[] = [
       { id: 1, parent: null, depth: 0, role: "frame", name: "list.txt", states: ["active"], bounds: FRAME },
       { id: 2, parent: 1, depth: 1, role: "dialog", name: "", states: [], bounds: null },
-      { id: 3, parent: 2, depth: 2, role: "label", name: "The document could not be autosaved.", states: [], bounds: null },
+      { id: 3, parent: 2, depth: 2, role: "label", name: "Cannot find \"milk\"", states: [], bounds: null },
       { id: 4, parent: 2, depth: 2, role: "push button", name: "OK", states: ["enabled", "sensitive"], bounds: null, actions: ["click"] },
     ];
     const dialog = dialogAround(nodes[3], id => nodes.find(n => n.id === id), nodes, true)!;
@@ -427,6 +454,205 @@ describe("a message box goes ahead only by its structure: one OK and nothing els
     expect(dialog.alert).toBeUndefined();
     const d = engine("darwin").decide(notepad({ app: "TextEdit", window: "list.txt", element: { role: "push button", name: "OK" }, dialog }));
     expect(d.autonomy).toBe(true);
+  });
+});
+
+describe("a dialog whose read left something out has unknown controls (security re-review of #140)", () => {
+  const nodes = (extra: Partial<AxNode> = {}): AxNode[] => [
+    { id: 1, parent: null, depth: 0, role: "dialog", name: "Notepad", states: [], bounds: FRAME, ...extra },
+    { id: 2, parent: 1, depth: 1, role: "label", name: "Cannot find \"milk\"", states: [], bounds: null },
+    { id: 3, parent: 1, depth: 1, role: "push button", name: "OK", states: [], bounds: null },
+  ];
+  const read = (all: AxNode[], whole = true) => dialogAround(all[2], id => all.find(n => n.id === id), all, whole)!;
+
+  it("gives no controls when the dialog, or anything listed inside it, says something under it isn't listed (omitted)", () => {
+    expect(read(nodes()).controls).toEqual([{ role: "push button", name: "OK" }]);
+    expect(read(nodes({ omitted: true })).controls).toBeUndefined();
+    const inner = nodes();
+    inner[1] = { ...inner[1], omitted: true };
+    expect(read(inner).controls).toBeUndefined();
+    const deep: AxNode[] = [...nodes(), { id: 4, parent: 1, depth: 1, role: "panel", name: "Options", states: [], bounds: null, omitted: true }];
+    expect(read(deep).controls).toBeUndefined();
+    // Something omitted elsewhere in the window is not this dialog's.
+    const elsewhere: AxNode[] = [{ id: 0, parent: null, depth: 0, role: "frame", name: "list.txt", states: [], bounds: FRAME, omitted: true }, ...nodes().map(n => (n.id === 1 ? { ...n, parent: 0 } : n))];
+    expect(read(elsewhere).controls).toEqual([{ role: "push button", name: "OK" }]);
+  });
+
+  it("asks for a dialog with a control that isn't listed: the policy never sees a one-OK list", () => {
+    const hidden = nodes();
+    hidden[0] = { ...hidden[0], omitted: true };
+    const dialog = read(hidden);
+    const d = winPolicy().decide(notepad({ element: { role: "push button", name: "OK" }, dialog }));
+    expect(d.verdict).toBe("confirm");
+    expect(d.autonomy).toBeUndefined();
+  });
+
+  it("is what the Windows host (tree.ts) says for an offscreen, hidden or sizeless element, and for a child the bridge left out", async () => {
+    const { buildNodes } = await import("../../app/sidecar-host/tree");
+    const raw = (n: Record<string, unknown>) => ({ platformRole: "Button", className: "", parent: -1, depth: 0, name: "", enabled: true, bounds: { x: 0, y: 0, width: 10, height: 10 }, ...n });
+    const o = { maxNodes: 100, maxDepth: 10, vocabulary: "uia", windowActive: true, allocate: (i: number) => i + 1, isSecret: () => false } as never;
+    const root = raw({ platformRole: "Window", className: "#32770", name: "Notepad", modal: true });
+    const cases: [string, Record<string, unknown>[]][] = [
+      ["offscreen", [root, raw({ parent: 0, depth: 1, name: "Delete", offscreen: true })]],
+      ["without a size", [root, raw({ parent: 0, depth: 1, name: "Delete", bounds: { x: 0, y: 0, width: 0, height: 0 } })]],
+      ["inside an offscreen element", [root, raw({ parent: 0, depth: 1, platformRole: "Group", offscreen: true }), raw({ parent: 1, depth: 2, name: "Delete" })]],
+      ["a child the bridge left out", [{ ...root, omitted: true }]],
+    ];
+    for (const [what, list] of cases) {
+      const built = buildNodes(list as never, o);
+      expect(built.nodes[0].omitted, what).toBe(true);
+    }
+    // An element that vanished while it was read says so itself, and inside the dialog that is enough (dialogAround).
+    const gone = buildNodes([root, raw({ parent: 0, depth: 1, name: "Delete", gone: true })] as never, o);
+    expect(gone.nodes.some(n => n.omitted)).toBe(true);
+    const whole = buildNodes([root, raw({ parent: 0, depth: 1, name: "OK" })] as never, o);
+    expect(whole.nodes[0].omitted).toBeUndefined();
+    expect(whole.nodes[0].dialogBox).toBe(true);
+  });
+});
+
+describe("a one-OK dialog that states what has happened or will happen asks (security re-review of #140)", () => {
+  const engine = (os: "linux" | "darwin" | "win32") => new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os, keys: KEYS[os] });
+  const lone = (os: "linux" | "darwin" | "win32", app: string, window: string, text: string) =>
+    engine(os).decide(notepad({ app, window, element: { role: "push button", name: "OK" }, dialog: { name: "Notepad", text, controls: [{ role: "push button", name: "OK" }] } }));
+  const CONSEQUENCES = [
+    "The files were shredded.", "The session was terminated.", "This ends your session.", "Your account has been closed.", "The window is closed.",
+    "Your files will be shredded.", "Changes are going to be lost.", "The mail gets sent.", "Files are being removed.",
+    "Ihr Verlauf wird gelöscht.", "Die Dateien wurden gelöscht.", "Alle Dateien werden entfernt.", "Les fichiers seront supprimés.", "Le compte est fermé.",
+    "Su historial se borrará.", "El archivo fue eliminado.", "Il cestino verrà svuotato.", "Il file sarà rimosso.", "Wszystkie pliki zostaną usunięte.",
+    "Alle bestanden worden verwijderd.", "Het bestand is gewist.", "Все файлы будут удалены.", "Файл был удалён.", "Tüm dosyalar silinecek.", "Dosya silindi.",
+  ];
+
+  it("asks about every consequence the review named, in English and in the languages of the word lists, on Windows and Linux", () => {
+    for (const [os, app, window] of [["linux", "gedit", "list.txt - gedit"], ["win32", "notepad.exe", "list.txt - Notepad"]] as const) {
+      for (const text of CONSEQUENCES) {
+        const d = lone(os, app, window, text);
+        expect(d.verdict, `${app}: ${text}`).not.toBe("allow");
+        expect(d.autonomy, `${app}: ${text}`).toBeUndefined();
+      }
+    }
+  });
+
+  it("still acknowledges a plain statement with no future or passive marker (Notepad's “Cannot find”)", () => {
+    expect(lone("win32", "notepad.exe", "list.txt - Notepad", "Cannot find \"milk\"").autonomy).toBe(true);
+  });
+});
+
+describe("what counts as the one OK (security re-review of #140)", () => {
+  const win = winPolicy();
+  const decide = (element: { role: string; name: string }, controls: DialogControl[]) =>
+    win.decide(notepad({ element, dialog: { name: "Notepad", text: "Cannot find \"milk\"", controls } }));
+  const OK = { role: "push button", name: "OK" };
+
+  it("goes ahead for a push button named OK that is the only control", () => {
+    expect(decide(OK, [OK]).autonomy).toBe(true);
+    expect(decide({ role: "push button", name: "Okay" }, [{ role: "push button", name: "Okay" }]).autonomy).toBe(true);
+  });
+
+  it("asks when the one OK is a check box, toggle, switch or tab: the pressed element and the one control must both be push buttons", () => {
+    for (const role of ["check box", "toggle button", "switch", "page tab", "radio button"]) {
+      const named = { role, name: "OK" };
+      expect(decide(named, [named]).autonomy, `${role} pressed, alone`).toBeUndefined();
+      expect(decide(OK, [named]).autonomy, `${role} the one control, a button pressed`).toBeUndefined();
+      expect(decide(named, [OK]).autonomy, `${role} pressed, a button the one control`).toBeUndefined();
+    }
+  });
+
+  it("asks when the pressed button's name isn't the one control's name (“OK” pressed, the one control is “Okay”)", () => {
+    expect(decide(OK, [{ role: "push button", name: "Okay" }]).autonomy).toBeUndefined();
+    expect(decide({ role: "push button", name: "Okay" }, [OK]).autonomy).toBeUndefined();
+  });
+});
+
+describe("a plain editor's main document only (security re-review of #140)", () => {
+  const linux = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "linux", keys: KEYS.linux });
+  const typed = (o: Partial<ActionRequest>) => linux.decide(notepad({ kind: "cursor_text", app: "gedit", window: "list.txt - gedit", element: { role: "text", name: "" }, mode: "insert", multiLine: true, value: "print(1)\nprint(2)", around: [], mainDocument: true, ...o }));
+
+  it("asks for an unnamed field with nothing around it that isn't said to be the main document (a console is often exactly that)", () => {
+    expect(typed({ around: [], mainDocument: undefined }).autonomy).toBeUndefined();
+    expect(typed({ around: [], mainDocument: false }).autonomy).toBeUndefined();
+    expect(typed({}).autonomy).toBe(true);
+  });
+
+  it("asks unless the window's title names a file or a new document", () => {
+    for (const window of ["Python Console - gedit", "gedit", "Terminal", ""]) expect(typed({ window }).autonomy, window).toBeUndefined();
+    for (const window of ["list.txt - gedit", "*notes.md - Mousepad", "Unsaved Document 1 - gedit", "*Untitled - Notepad"]) expect(typed({ window }).autonomy, window).toBe(true);
+  });
+
+  it("asks in a field that is a paragraph (LibreOffice-style) or any role but text and document text", () => {
+    expect(typed({ element: { role: "paragraph", name: "" } }).autonomy).toBeUndefined();
+    expect(typed({ element: { role: "entry", name: "" } }).autonomy).toBeUndefined();
+  });
+
+  it("reads the worker's mainDocument as the largest multi-line text of the window, a tie not counting", () => {
+    const text = (id: number, w: number, h: number, extra: Partial<AxNode> = {}): AxNode => ({ id, parent: 1, depth: 1, role: "text", name: "", states: ["multi line", "editable"], bounds: { x: 0, y: 0, width: w, height: h }, ...extra });
+    const doc = text(2, 700, 400), console_ = text(3, 700, 120), same = text(4, 700, 400);
+    expect(mainDocument(doc, [doc, console_])).toBe(true);
+    expect(mainDocument(console_, [doc, console_])).toBe(false);
+    expect(mainDocument(doc, [doc, same])).toBe(false);
+    expect(mainDocument(text(5, 700, 400, { states: ["editable"] }), [doc])).toBe(false);
+    expect(mainDocument(text(6, 0, 0), [doc])).toBe(false);
+    // A one-line entry or a label isn't a competing document.
+    expect(mainDocument(doc, [doc, { ...console_, role: "entry", states: ["editable"] }])).toBe(true);
+  });
+
+  it("reads the selected tab of each panel around the field, and all of a panel's tabs where none says it is selected (fieldAround)", () => {
+    const base: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "frame", name: "list.txt - gedit", states: [], bounds: FRAME },
+      { id: 2, parent: 1, depth: 1, role: "page tab list", name: "", states: [], bounds: null },
+      { id: 3, parent: 2, depth: 2, role: "page tab", name: "Python Console", states: ["selected"], bounds: null },
+      { id: 4, parent: 2, depth: 2, role: "page tab", name: "Terminal", states: [], bounds: null },
+      { id: 5, parent: 2, depth: 2, role: "scroll pane", name: "", states: [], bounds: null },
+      { id: 6, parent: 5, depth: 3, role: "text", name: "", states: ["multi line"], bounds: null },
+    ];
+    const byId = (id: number) => base.find(n => n.id === id);
+    // The tabs are children of the panel: the pane's own parent is the tab list, whose tabs are its children.
+    expect(fieldAround(base[5], undefined, byId, base)).toEqual(["Python Console"]);
+    const unsure = base.map(n => (n.id === 3 ? { ...n, states: [] } : n));
+    expect(fieldAround(base[5], undefined, id => unsure.find(n => n.id === id), unsure)).toEqual(["Python Console", "Terminal"]);
+    // The refusal goes through the policy: an unnamed field with nothing but the tab to name it.
+    expect(typed({ around: fieldAround(base[5], undefined, byId, base) }).autonomy).toBeUndefined();
+  });
+});
+
+describe("real gedit 46.2 trees, read through the AT-SPI sidecar (fixtures; security re-review of #140)", () => {
+  const load = (file: string) => JSON.parse(fs.readFileSync(path.resolve("test/fixtures/atspi", file), "utf8")) as { window: { app?: string; name: string }; nodes: AxNode[] };
+  const linux = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "linux", keys: KEYS.linux });
+  const area = (n: AxNode) => n.bounds!.width * n.bounds!.height;
+  /** The request type_text makes for a multi-line text view of the tree, as the worker builds it. */
+  const typeInto = (tree: ReturnType<typeof load>, field: AxNode) => linux.decide(notepad({
+    kind: "cursor_text", app: "gedit", window: tree.window.name, element: { role: field.role, name: field.name }, mode: "insert", multiLine: true, value: "print(1)\nprint(2)",
+    around: fieldAround(field, undefined, id => tree.nodes.find(n => n.id === id), tree.nodes), ...(mainDocument(field, tree.nodes) ? { mainDocument: true } : {}),
+  }));
+  const texts = (tree: ReturnType<typeof load>) => tree.nodes.filter(n => n.role === "text" && n.states.includes("multi line")).sort((a, b) => area(b) - area(a));
+
+  it("goes ahead in the document of gedit with nothing else open (the Python Console plugin active, its panel closed)", () => {
+    const tree = load("gedit-document-only.json");
+    const [doc, ...others] = texts(tree);
+    expect(others).toEqual([]);
+    expect(mainDocument(doc, tree.nodes)).toBe(true);
+    // (The header bar's “Menu” toggle buttons are read as a stack switcher's: harmless words.)
+    expect(fieldAround(doc, undefined, id => tree.nodes.find(n => n.id === id), tree.nodes)).toEqual(["Menu"]);
+    expect(typeInto(tree, doc)).toMatchObject({ verdict: "allow", autonomy: true });
+  });
+
+  it("asks in gedit's Python Console, an unnamed text view next to the bottom panel's tab list: it isn't the main document", () => {
+    const tree = load("gedit-python-console-open.json");
+    const views = texts(tree);
+    expect(views).toHaveLength(2);
+    const [doc, console_] = views;
+    expect(console_.name).toBe("");
+    expect(mainDocument(doc, tree.nodes)).toBe(true);
+    expect(mainDocument(console_, tree.nodes)).toBe(false);
+    expect(typeInto(tree, console_).autonomy).toBeUndefined();
+    expect(typeInto(tree, console_).verdict).toBe("confirm");
+  });
+
+  it("asks in the document too while the console's panel is open: its selected tab, “Python Console”, is read around the field", () => {
+    const tree = load("gedit-python-console-open.json");
+    const [doc] = texts(tree);
+    expect(fieldAround(doc, undefined, id => tree.nodes.find(n => n.id === id), tree.nodes)).toContain("Python Console");
+    expect(typeInto(tree, doc).autonomy).toBeUndefined();
   });
 });
 
@@ -467,7 +693,7 @@ describe("the worker's reading of a dialog (dialogAround)", () => {
 describe("a plain editor's console still asks (security re-review of #140)", () => {
   const linux = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ALL(), os: "linux", keys: KEYS.linux });
   const typedIn = (app: string, name: string, around: string[] | undefined, engine = linux) =>
-    engine.decide(notepad({ kind: "cursor_text", app, window: "list.txt - gedit", element: { role: "text", name }, mode: "insert", multiLine: true, value: "print(1)\nprint(2)", ...(around ? { around } : {}) }));
+    engine.decide(notepad({ kind: "cursor_text", app, window: "list.txt - gedit", element: { role: "text", name }, mode: "insert", multiLine: true, mainDocument: true, value: "print(1)\nprint(2)", ...(around ? { around } : {}) }));
 
   it("asks in gedit's, Pluma's and xed's Python Console and in Notepad++'s NppExec, by the field's name or the panes around it", () => {
     for (const app of ["gedit", "pluma", "xed"]) expect(typedIn(app, "", ["Python Console", "Bottom panel"]).autonomy, app).toBeUndefined();
@@ -490,14 +716,49 @@ describe("a plain editor's console still asks (security re-review of #140)", () 
   });
 });
 
+describe("the worker's reads of a dialog from a read that was cut short or busy (security re-review of #140)", () => {
+  const dialog = (): AxNode[] => [
+    { id: 10, parent: 1, depth: 1, role: "dialog", name: "Notepad", states: [], bounds: FRAME },
+    { id: 11, parent: 10, depth: 2, role: "label", name: "Cannot find \"milk\"", states: [], bounds: null },
+    { id: 12, parent: 10, depth: 2, role: "push button", name: "OK", states: ["enabled", "sensitive", "focused"], bounds: null, actions: ["click"] },
+  ];
+  type Peek = { dialogOf(id: number): { controls?: unknown[] } | undefined; focusIn(wait?: boolean): Promise<unknown>; focusDialog?: { controls?: unknown[] } };
+
+  it("gives controls from a whole read, by both ways of reaching the dialog (dialogOf from a perceive_window, focusDialog from a look at the focus)", async () => {
+    const h = notepadWorker({ extra: dialog(), noAreaFocus: true });
+    await h.call("perceive_window", {});
+    const w = h.worker as unknown as Peek;
+    expect(w.dialogOf(12)?.controls).toEqual([{ role: "push button", name: "OK" }]);
+    await w.focusIn();
+    expect(w.focusDialog?.controls).toEqual([{ role: "push button", name: "OK" }]);
+  });
+
+  it("gives none from a read cut short or busy, so the dialog asks", async () => {
+    for (const read of [{ truncated: "nodes" as const }, { busy: true }]) {
+      const h = notepadWorker({ extra: dialog(), noAreaFocus: true, read });
+      await h.call("perceive_window", {});
+      const w = h.worker as unknown as Peek;
+      expect(w.dialogOf(12), JSON.stringify(read)).toBeDefined();
+      expect(w.dialogOf(12)?.controls, `dialogOf ${JSON.stringify(read)}`).toBeUndefined();
+      await w.focusIn();
+      expect(w.focusDialog, `focusDialog ${JSON.stringify(read)}`).toBeDefined();
+      expect(w.focusDialog?.controls, `focusDialog ${JSON.stringify(read)}`).toBeUndefined();
+    }
+  });
+});
+
 describe("Home's line while Ember runs elevated (the owner's complaint)", () => {
   it("says every command asks while Ember runs as an administrator or as root, and nothing more otherwise", () => {
     expect(autonomyHint(false, "administrator")).toMatch(/ Ember is running as an administrator, so it asks before every command\. Start it normally to change that\.$/);
     expect(autonomyHint(false, "root")).toMatch(/ Ember is running as root, so it asks before every command\. Start it as yourself to change that\.$/);
+    expect(autonomyHint(false, "maybe-administrator")).toMatch(/ Ember may be running as an administrator \(it couldn't tell\), and then it asks before every command\. Start it normally to be sure\.$/);
     expect(autonomyHint(false)).not.toMatch(/every command/);
     expect(elevationOf([{ id: "elevated", label: "Administrator", status: "warn" }])).toBe("administrator");
     expect(elevationOf([{ id: "elevated", label: "Root", status: "warn" }])).toBe("root");
     expect(elevationOf([{ id: "root", label: "Root", status: "warn" }])).toBe("root");
+    // The Windows row that couldn't tell (win32/system/doctor.ts): said as "may be".
+    expect(elevationOf([{ id: "elevated", label: "Administrator", status: "warn", detail: "Ember couldn't tell whether it runs as administrator." }])).toBe("maybe-administrator");
+    expect(elevationOf([{ id: "elevated", label: "Administrator", status: "warn", detail: ELEVATED_TEXT }])).toBe("administrator");
     expect(elevationOf([{ id: "elevated", label: "Administrator", status: "ok" }])).toBeNull();
     expect(elevationOf([])).toBeNull();
   });

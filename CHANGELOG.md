@@ -310,7 +310,7 @@ allows them.
 - **Work without asking covers more everyday steps**: it also presses OK on a message box whose only button is OK,
   with nothing to choose or tick (it says "Answering a message box in …"), types a list or a letter with line breaks
   into Notepad, gedit, TextEdit or another plain text editor with the borrowed keyboard, and fills spreadsheet cells,
-  all announced. A dialog with a Cancel, a check box or any other control, or one that asks a question, is cut short,
+  all announced. A dialog with a Cancel, a check box or any other control, or one that asks a question or says what has happened or will happen, is cut short,
   is a web page's, an installer's or a permission prompt, or is in a language Ember doesn't know still asks, and so do
   line breaks in an editor's console or any other app, keys Ember can't be sure of
   (Alt+letter, unknown shortcuts) and dangerous commands. Its card

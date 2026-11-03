@@ -1,0 +1,317 @@
+{
+ "_about": "gedit 46.2 (GTK 3) showing one document with its Python Console plugin active but the bottom panel closed, read through Ember's AT-SPI sidecar (ember_atspi.py read_window) on Xorg under xvfb, 2026-11-03: the window's nodes, ids renumbered, the file's folder renamed.",
+ "window": {
+  "app": "gedit",
+  "name": "list.txt (/tmp/claude-0/-home-user-Ember-Powered-by-Git\u2026b-5fd5-ab4d-cf096f8d4b6a/scratchpad/gedit-tree) - gedit"
+ },
+ "nodes": [
+  {
+   "role": "frame",
+   "name": "list.txt (/tmp/claude-0/-home-user-Ember-Powered-by-Git\u2026b-5fd5-ab4d-cf096f8d4b6a/scratchpad/gedit-tree) - gedit",
+   "states": [
+    "active",
+    "enabled",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 0,
+    "y": 0,
+    "width": 910,
+    "height": 756
+   },
+   "id": 1,
+   "parent": null,
+   "depth": 0,
+   "omitted": true
+  },
+  {
+   "role": "separator",
+   "name": "",
+   "states": [
+    "enabled",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 774,
+    "y": 3,
+    "width": 1,
+    "height": 46
+   },
+   "id": 2,
+   "parent": 1,
+   "depth": 4
+  },
+  {
+   "role": "push button",
+   "name": "Minimize",
+   "states": [
+    "enabled",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 781,
+    "y": 11,
+    "width": 34,
+    "height": 30
+   },
+   "actions": [
+    "click"
+   ],
+   "id": 3,
+   "parent": 1,
+   "depth": 4
+  },
+  {
+   "role": "push button",
+   "name": "Maximize",
+   "states": [
+    "enabled",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 821,
+    "y": 11,
+    "width": 34,
+    "height": 30
+   },
+   "actions": [
+    "click"
+   ],
+   "id": 4,
+   "parent": 1,
+   "depth": 4
+  },
+  {
+   "role": "push button",
+   "name": "Close",
+   "states": [
+    "enabled",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 861,
+    "y": 11,
+    "width": 34,
+    "height": 30
+   },
+   "actions": [
+    "click"
+   ],
+   "id": 5,
+   "parent": 1,
+   "depth": 4
+  },
+  {
+   "role": "push button",
+   "name": "Save",
+   "states": [
+    "enabled",
+    "focusable",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 661,
+    "y": 3,
+    "width": 65,
+    "height": 46
+   },
+   "actions": [
+    "click"
+   ],
+   "id": 6,
+   "parent": 1,
+   "depth": 3
+  },
+  {
+   "role": "toggle button",
+   "name": "Menu",
+   "states": [
+    "enabled",
+    "focusable",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 732,
+    "y": 3,
+    "width": 36,
+    "height": 46
+   },
+   "actions": [
+    "click"
+   ],
+   "id": 7,
+   "parent": 1,
+   "depth": 3
+  },
+  {
+   "role": "label",
+   "name": "list.txt",
+   "states": [
+    "enabled",
+    "multi line",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 166,
+    "y": 10,
+    "width": 489,
+    "height": 17
+   },
+   "id": 8,
+   "parent": 1,
+   "depth": 4
+  },
+  {
+   "role": "label",
+   "name": "/tmp/claude-0/-home-user-Ember-Powered-by-Git\u2026b-5fd5-ab4d-cf096f8d4b6a/scratchpad/gedit-tree",
+   "states": [
+    "enabled",
+    "multi line",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 166,
+    "y": 27,
+    "width": 489,
+    "height": 14
+   },
+   "id": 9,
+   "parent": 1,
+   "depth": 4
+  },
+  {
+   "role": "push button",
+   "name": "",
+   "states": [
+    "enabled",
+    "focusable",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 124,
+    "y": 3,
+    "width": 36,
+    "height": 46
+   },
+   "actions": [
+    "click"
+   ],
+   "id": 10,
+   "parent": 1,
+   "depth": 3
+  },
+  {
+   "role": "push button",
+   "name": "Open",
+   "states": [
+    "enabled",
+    "focusable",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 15,
+    "y": 3,
+    "width": 67,
+    "height": 46
+   },
+   "actions": [
+    "click"
+   ],
+   "id": 11,
+   "parent": 1,
+   "depth": 4
+  },
+  {
+   "role": "toggle button",
+   "name": "Menu",
+   "states": [
+    "enabled",
+    "focusable",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 82,
+    "y": 3,
+    "width": 36,
+    "height": 46
+   },
+   "actions": [
+    "click"
+   ],
+   "id": 12,
+   "parent": 1,
+   "depth": 4,
+   "omitted": true
+  },
+  {
+   "role": "page tab list",
+   "name": "",
+   "states": [
+    "enabled",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 5,
+    "y": 51,
+    "width": 900,
+    "height": 675
+   },
+   "id": 13,
+   "parent": 1,
+   "depth": 7
+  },
+  {
+   "role": "page tab",
+   "name": "",
+   "states": [
+    "enabled",
+    "selected"
+   ],
+   "bounds": null,
+   "id": 14,
+   "parent": 13,
+   "depth": 8,
+   "omitted": true
+  },
+  {
+   "role": "text",
+   "name": "",
+   "states": [
+    "editable",
+    "enabled",
+    "focusable",
+    "focused",
+    "multi line",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 5,
+    "y": 51,
+    "width": 900,
+    "height": 675
+   },
+   "text": "hello",
+   "editable": true,
+   "id": 15,
+   "parent": 14,
+   "depth": 12
+  },
+  {
+   "role": "status bar",
+   "name": "",
+   "states": [
+    "enabled",
+    "sensitive"
+   ],
+   "bounds": {
+    "x": 5,
+    "y": 726,
+    "width": 900,
+    "height": 25
+   },
+   "id": 16,
+   "parent": 1,
+   "depth": 5
+  }
+ ]
+}

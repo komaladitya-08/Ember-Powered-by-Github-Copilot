@@ -206,6 +206,7 @@ and strings are left out when empty. Strings are cut to 2000 characters.
 | `childCount` | number | snapshots only: how many listable children the element had, when that was more than `maxChildren` |
 | `childrenCut` | `true` | snapshots only: not every child was listed (`maxChildren`) |
 | `childrenFailed` | `true` | snapshots only: the children couldn't be read (an error other than `gone`) |
+| `omitted` | `true` | snapshots only: a child was left out and isn't listed at all (offscreen with no area, or it vanished or didn't answer while it was being read), so what is listed under the element isn't all of it |
 
 `patterns` holds one key per supported pattern:
 

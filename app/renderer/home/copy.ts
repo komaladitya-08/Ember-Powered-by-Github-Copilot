@@ -247,22 +247,25 @@ export const AUTONOMY_CONSENT_TEXT = "Ember will use your apps, borrow your mous
  * `elevated`: Ember runs as an administrator or as root (elevationOf), so every command asks whatever the switch says
  * (commands/decide.ts): said, so the user can tell why.
  */
-export function autonomyHint(managed: boolean, elevated: "administrator" | "root" | null = null): string {
+export function autonomyHint(managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null): string {
   const base = managed
     ? "Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps."
     : "Off, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: “Ember, allow” (with Voice Match on) or “Ember, not now”.";
   if (elevated === "administrator") return `${base} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
+  if (elevated === "maybe-administrator") return `${base} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
   if (elevated === "root") return `${base} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
   return base;
 }
 
 /**
  * Whether the setup check says Ember runs elevated (Windows' "elevated" row, Linux's "elevated" and macOS's "root",
- * whenever it isn't ok: one that can't tell counts, as the commands do), and how to say it.
+ * whenever it isn't ok: one that can't tell counts, as the commands do, but is said as "may be"), and how to say it.
  */
-export function elevationOf(checks: readonly { id: string; label: string; status: string }[]): "administrator" | "root" | null {
+export function elevationOf(checks: readonly { id: string; label: string; status: string; detail?: string }[]): "administrator" | "maybe-administrator" | "root" | null {
   const row = checks.find(c => (c.id === "elevated" || c.id === "root") && c.status !== "ok");
-  return !row ? null : row.label === "Administrator" ? "administrator" : "root";
+  if (!row) return null;
+  if (row.label !== "Administrator") return "root";
+  return /couldn't tell/i.test(row.detail ?? "") ? "maybe-administrator" : "administrator";
 }
 
 /** The routines note (FEATURE_CONSENT_VERSION.routines): change it only with a bump of that version. */

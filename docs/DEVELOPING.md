@@ -262,10 +262,10 @@ it on shows its card first: what runs without asking, what still asks, that Embe
 always works (`FEATURE_CONSENT_VERSION.autonomy`). While it is on, Ember doesn't ask before its first step in an app,
 before borrowing your mouse and keyboard (it still waits until you're still and lets go when you move), before
 moving text between apps (it says which apps and how many characters, never the text), before pressing OK on a
-message box whose only button is that OK, with nothing to choose, tick or type ("Answering a message box in Notepad…";
-any dialog with a Cancel, a check box or another control still asks, and so does one that asks a question, is cut
+message box whose only button is that OK, with nothing to choose, tick or type, and nothing in it Ember couldn't see ("Answering a message box in Notepad…";
+any dialog with a Cancel, a check box or another control, or a title bar's Close (except in a real Windows dialog box) still asks, and so does one that asks a question, says what has happened or will happen, is cut
 short, is a web page's, a browser's, an installer's or a permission prompt, or names something risky), or before
-typing line breaks into a plain text editor's document with the borrowed keyboard (Notepad, gedit, Mousepad, Kate,
+typing line breaks into a plain text editor's main document with the borrowed keyboard (Notepad, gedit, Mousepad, Kate,
 TextEdit and the like; their consoles, any other app, a spreadsheet's cell, a web page and a tab still ask). While
 Ember runs as an administrator or as root every command asks, and the hint under the switch says so; an ordinary command on this
 computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask

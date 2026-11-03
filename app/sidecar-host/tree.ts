@@ -128,6 +128,11 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
   const unlisted: UnlistedSecret[] = [];
   const unnamed: UnlistedField[] = [];
   const cutShort = (why: string) => { if (!cut.includes(why)) cut.push(why); };
+  // Listed elements with something under them that isn't listed (offscreen, closed, hidden, collapsed, without a size):
+  // reported as `omitted`, so nobody takes what is listed under one for all of it (Ember's dialog waiver). As the
+  // Python sidecar's budget.omitted.
+  const omittedAt = new Set<number>();
+  const omit = (id: number | null) => { if (id !== null) omittedAt.add(id); };
   // Per index: nothing inside it is listed (it doesn't show, it is secret, or it lies too deep); the id of the nearest
   // listed element at or above it; the clip what is inside it shows within; whether it is in a web page.
   const closed: boolean[] = new Array(raw.length).fill(false);
@@ -141,11 +146,12 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
   for (let i = 0; i < raw.length; i++) {
     const n = raw[i];
     const p = n.parent >= 0 && n.parent < i ? n.parent : -1;
-    if (p >= 0 && closed[p]) { closed[i] = true; continue; }
+    if (p >= 0 && closed[p]) { closed[i] = true; omit(listedAt[p]); continue; }
     if (!full && nodes.length >= o.maxNodes) { cutShort("nodes"); full = true; }
     if (n.offscreen || full) {
       // Not listed, nor anything in it that doesn't show; past maxNodes, what shows in it is looked through too.
       closed[i] = n.offscreen || n.depth > o.maxDepth || p < 0;
+      omit(p >= 0 ? listedAt[p] : null);
       const pc = p >= 0 ? ctx[p] ?? lookCtx[p] : undefined;
       if (!pc) { closed[i] = true; continue; }
       const c = lookCtx[i] = { ...childContext(pc, raw[p], roles[p] || lookRole[p]), depth: n.depth };
@@ -179,6 +185,7 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
         id, parent: listedAt[i], depth: n.depth, role, name: name.slice(0, 200),
         states: statesOf(n, role, n.depth === 0 && o.windowActive), bounds,
       };
+      if (role === "dialog" && (n.className ?? "").toLowerCase() === "#32770") node.dialogBox = true;
       const interactive = INTERACTIVE_ROLES.has(role);
       if (interactive && !LAZY_ACTION_ROLES.has(role)) {
         const acts = actionNames(n);
@@ -229,6 +236,10 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
     } else if (TEXT_ROLES.has(role)) {
       secret = o.isSecret(i, role, name);
     }
+    // The provider says a child of it, or it itself (gone), was left out: it, or what is above it, says so too.
+    if (n.omitted || n.gone) omit(listedAt[i]);
+    // Something (a role or a name) that has no size isn't listed: what is under its parent isn't all of it.
+    if (listed && !(!bounds || (bounds.width > 0 && bounds.height > 0))) omit(listedAt[i]);
     // What a secret field holds is its contents too: nothing inside it is listed.
     if (secret) closed[i] = true;
     if (page) {
@@ -239,6 +250,7 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
       webFor[i] = web;
     }
   }
+  for (const n of nodes) if (omittedAt.has(n.id)) n.omitted = true;
   return { nodes, hidden, indexOf, roles, ctx, cut, wanted, unlisted, unnamed };
 }
 

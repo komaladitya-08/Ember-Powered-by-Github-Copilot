@@ -2311,7 +2311,13 @@ namespace Ember.Uia
       {
         // Listed, so its RawNode properties are read now, for it alone.
         try { el = el.GetUpdatedCache(Props.Request(false)); }
-        catch (Exception) { return; /* gone, or not answering: it doesn't show, so nothing that shows is lost */ }
+        catch (Exception)
+        {
+          // Gone, or not answering: it doesn't show, so nothing that shows is lost; but it isn't listed, so its parent
+          // says something under it is left out (`omitted`).
+          Omit(parent);
+          return;
+        }
       }
       int handle = Methods.Register(call, el, window);
       JObj node = Props.Node(el, handle, parent, depth, want);
@@ -2321,7 +2327,11 @@ namespace Ember.Uia
         index = nodes.Count;
         nodes.Add(node);
       }
-      if (node.Has("gone")) return;
+      if (node.Has("gone"))
+      {
+        Omit(parent);
+        return;
+      }
       // Nothing inside an offscreen element is read: a long page scrolled down has thousands of elements above what
       // shows, and walking them spent the budget before the part on screen was reached (only the element itself is
       // listed, with its flag).
@@ -2339,6 +2349,18 @@ namespace Ember.Uia
       {
         Visit(kids[i], index, depth + 1, combo, i >= slimFrom);
         if (stop) return;
+      }
+    }
+
+    // Says (`omitted`) that something under the listed element `index` isn't listed: the host passes it on, and Ember's
+    // dialog waiver then takes the dialog's controls to be unknown.
+    private void Omit(int index)
+    {
+      if (index < 0) return;
+      lock (gate)
+      {
+        JObj parent = nodes[index] as JObj;
+        if (parent != null) parent.Add("omitted", true);
       }
     }
 
@@ -2398,7 +2420,11 @@ namespace Ember.Uia
       Dictionary<string, bool> read = offscreen != null ? new Dictionary<string, bool>() : null;
       foreach (AutomationElement kid in found)
       {
-        if (Props.Skipped(kid)) continue;
+        if (Props.Skipped(kid))
+        {
+          lock (gate) node.Add("omitted", true);
+          continue;
+        }
         if (read != null)
         {
           string key = Props.RuntimeKey(kid);
@@ -2415,7 +2441,11 @@ namespace Ember.Uia
         int listed = 0;
         foreach (AutomationElement kid in offscreen)
         {
-          if (Props.Skipped(kid)) continue;
+          if (Props.Skipped(kid))
+          {
+            lock (gate) node.Add("omitted", true);
+            continue;
+          }
           // One that came into view between the two reads was read in full with what shows.
           string key = Props.RuntimeKey(kid);
           if (key != null && read.ContainsKey(key)) continue;
