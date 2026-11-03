@@ -26,6 +26,7 @@ const api: EmberHomeApi = {
   signOut: () => ipcRenderer.invoke(IPC.signOut),
   voiceStatus: () => ipcRenderer.invoke(IPC.voiceStatus),
   onVoiceStatus: fn => listen<VoiceStatus>(IPC.voiceStatus, fn),
+  listenOnce: on => ipcRenderer.invoke(IPC.listenOnce, on),
   downloadVoice: () => ipcRenderer.invoke(IPC.voiceDownload),
   retryNaturalVoice: () => ipcRenderer.invoke(IPC.voiceNaturalRetry),
   enrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchEnrol),

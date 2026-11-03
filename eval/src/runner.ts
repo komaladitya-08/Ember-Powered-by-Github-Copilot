@@ -424,7 +424,9 @@ export class Runner {
         let ready = false;
         for (let i = 0; i < 100 && !ready; i++) {
           const r = await this.sidecar.readWindow({ title: window }).catch(() => null);
-          ready = !!r?.window && r.nodes.length > 2;
+          // Gedit exposes its document before the loading notice clears and changes the approval context.
+          ready = !!r?.window && r.nodes.length > 2 &&
+            !("editor" in task.app && r.nodes.some(n => n.role === "status bar" && n.name.startsWith("Loading file ")));
           if (!ready) await sleep(200);
         }
         if (!ready) throw new Error(`the window "${window}" didn't appear`);

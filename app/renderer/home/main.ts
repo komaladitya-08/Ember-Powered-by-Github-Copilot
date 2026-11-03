@@ -8,7 +8,8 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, naturalVoiceView, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, modelsDownloadLabel, naturalVoiceView, setupBadge, setupView } from "./copy";
+import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, LEARNED_UNDONE, MEMORY_CONSENT_TEXT,
   MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
@@ -143,6 +144,7 @@ let memoryFocus: number | null = null;
 function applySettings(s: Settings): void {
   const changed = settings?.character !== s.character;
   settings = s;
+  renderTaskReasoning();
   applyCalm();
   for (const c of cards) {
     const on = c.id === s.character;
@@ -503,6 +505,7 @@ function renderAdmin(a: Status["admin"]): void {
     if (managed.has(key)) input.title = "Managed by your organisation";
   }
   privacyKey = "";
+  renderTaskReasoning();
   if (settings) renderPrivacy(settings);
   if (voice) renderVoice(voice);
   if (settings) applyMemorySettings(settings);
@@ -631,6 +634,30 @@ const COPILOT_BUTTONS = ["sign-in", "cancel-sign-in", "retry", "sign-out"];
 let agent: AgentStatus | null = null;
 let signingIn = false;
 let modelsKey = "";
+let taskReasoningKey = "";
+const effortLabels = { low: "Low", medium: "Medium", high: "High", xhigh: "Very high", max: "Maximum" };
+
+function taskReasoningModel(): AgentStatus["models"][number] | undefined {
+  if (!settings || agent?.phase !== "ready" || agent.service || managed.has("models")) return undefined;
+  const workerModel = agent.workerModel;
+  return agent.models.find(m => m.id === workerModel && m.reasoningEfforts?.length);
+}
+
+function renderTaskReasoning(): void {
+  const model = taskReasoningModel();
+  const levels = model?.reasoningEfforts ?? [];
+  const preference = settings?.taskReasoning;
+  const chosen = preference && preference.model === model?.id && levels.includes(preference.effort) ? preference.effort : "";
+  const key = JSON.stringify([model?.id, levels, chosen]);
+  if (key === taskReasoningKey) return;
+  taskReasoningKey = key;
+  const select = $("m-worker-effort") as HTMLSelectElement;
+  select.hidden = $("m-worker-effort-label").hidden = $("m-worker-effort-hint").hidden = !model;
+  if (!model) return;
+  select.replaceChildren(new Option("Model default", ""), ...levels.map(level => new Option(effortLabels[level], level)));
+  select.value = chosen;
+}
+
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
   agent = a;
@@ -667,6 +694,7 @@ function renderAgent(a: AgentStatus | null): void {
   }
   $("usage").textContent = usageLine(a.usage);
   $("conversation-context").textContent = conversationContextLine(a.phase === "ready" ? a.conversationContext : undefined);
+  renderTaskReasoning();
   if (retryFound && a.phase === "ready") say(retryMessage(retryFound, true));
   // A button that just went away (Sign in, Check again…) hands focus to the one that took its place.
   if (had && COPILOT_BUTTONS.includes(had.id) && isHidden(had)) focusFirst([...COPILOT_BUTTONS, "copilot-h"]);
@@ -679,6 +707,14 @@ for (const [id, key] of [["m-conductor", "conductor"], ["m-worker", "worker"]] a
     void save({ models: { ...current, [key]: value } });
   });
 }
+$("m-worker-effort").addEventListener("change", e => {
+  const model = taskReasoningModel();
+  if (!model) return;
+  const value = (e.target as HTMLSelectElement).value;
+  const effort = model.reasoningEfforts?.find(level => level === value);
+  if (value && !effort) return;
+  void save({ taskReasoning: effort ? { model: model.id, effort } : null });
+});
 const signInMsg = (text: string, error = false) => {
   const msg = $("sign-in-msg");
   msg.hidden = !text;
@@ -1346,6 +1382,12 @@ const VOICE_TEXT: Record<string, string> = {
 };
 let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
 let voice: VoiceStatus | null = null;
+const showListenOnce = mountListenOnce(
+  $("voice-listen-once") as HTMLButtonElement,
+  $("voice-listen-once-detail"),
+  on => window.ember.listenOnce(on),
+  LISTEN_ONCE_READY,
+);
 /** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
 let speechMissing = false;
 /** Screen readers hear the voice line when it changes, and a download only every 25 %. */
@@ -1370,6 +1412,7 @@ $("voice-fix").addEventListener("click", () => {
   }).finally(() => { btn.disabled = false; });
 });
 function renderVoice(v: VoiceStatus): void {
+  if (v !== voice) showListenOnce(v.listenOnce);
   voice = v;
   renderVoiceFix();
   const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;

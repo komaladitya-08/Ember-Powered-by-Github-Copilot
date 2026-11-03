@@ -15,7 +15,7 @@
  * the chord, showed the box and had the keyboard (its log), how many letters the bench got, and the box's tip to wait
  * for it (its first openings); then its right-click menu dismissed by a click on the bench leaves the bench the
  * keyboard (review #77). Last, Ember started again with Text size set to Larger through its settings opens the box
- * 728 × 111 DIP (142 with the tip's row), its page and field at that size (review #57; ask-size.ts).
+ * 728 × 142 DIP (173 with the tip's row), its page and field at that size (review #57; ask-size.ts).
  *
  * Skipped off Windows; with EMBER_WIN32_TEST=1 it fails instead of skipping when Windows, the backends, Windows
  * PowerShell, Electron or (with EMBER_PACKAGED_APP set) the packaged app is missing. What this runner can't show is
@@ -518,13 +518,14 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       await waitFor("Ember's test hooks", () => ember.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
       const seen = await openAskAt(inEmber, "larger");
       console.log(`the ask box at Larger text (review #57): ${JSON.stringify(seen)}`);
-      // 728 × 111 DIP, and a row of round(24 × 1.3) = 31 more while it says to wait for it (its first openings here).
-      // Electron rounds the pixel rectangle's edges out on readback, so check the HWND's actual pixel dimensions.
+      // Windows rounds the two pixel edges separately, and Electron converts them back to whole DIP on readback.
       const hwnd = await ember.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!.getNativeWindowHandle().readUInt32LE(0));
       const native = loadWin32()!.windowRect(hwnd);
       const { width, height, ...page } = askWant("larger", seen.tip);
-      expect(native, JSON.stringify({ native, seen })).toMatchObject({ width: Math.round(width * seen.scaleFactor), height: Math.round(height * seen.scaleFactor) });
+      expect(native, JSON.stringify({ native, seen })).toMatchObject({ width: Math.round(width * seen.scaleFactor) });
+      expect(Math.abs(native!.height - height * seen.scaleFactor), JSON.stringify({ native, seen })).toBeLessThan(1);
       expect(seen, JSON.stringify(seen)).toMatchObject(page);
+      expect(Math.abs(seen.height - height), JSON.stringify(seen)).toBeLessThanOrEqual(1);
       expect(seen.room, JSON.stringify(seen)).toBeGreaterThanOrEqual(8);
     } finally {
       await closeAsk(inEmber);

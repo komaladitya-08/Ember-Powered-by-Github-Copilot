@@ -28,9 +28,10 @@ export const WAIT_TIP = "Wait for this box before you type: letters typed sooner
 
 /**
  * The rows the box needs: the field's lines, and one each for the note that a paste was cut, the tip to wait for it and
- * Ember's suggestions.
+ * Ember's suggestions. The Listen once detail may need more than one row on a small display.
  */
-export const boxRows = (lines: number, cut: boolean, tip: boolean, suggest = false): number => lines + (cut ? 1 : 0) + (tip ? 1 : 0) + (suggest ? 1 : 0);
+export const boxRows = (lines: number, cut: boolean, tip: boolean, suggest = false, listenRows = 0): number =>
+  lines + (cut ? 1 : 0) + (tip ? 1 : 0) + (suggest ? 1 : 0) + listenRows;
 
 /**
  * The lines the field shows for text `scrollHeight` px tall, measured at one line's height: 1 to FIELD.maxLines.

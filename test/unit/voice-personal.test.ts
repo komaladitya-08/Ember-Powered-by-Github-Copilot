@@ -691,7 +691,7 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
     expect(MAIN).toContain("const text = suggestionsShown(lastState)[suggested];");
     // A queued suggestion must not change the spoken ownership of the turn still answering.
     const start = MAIN.slice(MAIN.indexOf("      onTurnStart: turn =>"), MAIN.indexOf("      onAnswerInterrupted:"));
-    expect(start).toContain("lastAskByVoice = turn.spoken;");
+    expect(start).toContain("lastAskByVoice = turn.spoken && !turn.manual;");
   });
   it("takes an Ask box suggestion only if it offers it now, and sends it as Ember's words the user chose (review of #145)", () => {
     expect(MAIN).toContain('if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;\n    askWindow.hide();\n    log.info("ask.suggestion");\n    void askEmber(text, { suggested: true });');

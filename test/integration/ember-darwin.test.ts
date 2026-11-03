@@ -281,7 +281,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     try {
       const seen = await openAskAt(inEmber, "larger");
       console.log(`ember-darwin: the ask box at Larger text (review #57): ${JSON.stringify(seen)}`);
-      // 728 × 111 points, and a row of round(24 × 1.3) = 31 more while it says to wait for it (its first openings here).
+      // 728 × 142 points with Listen once, plus the wait tip on its first openings.
       expect(seen, JSON.stringify(seen)).toMatchObject(askWant("larger", seen.tip));
       expect(seen.room, JSON.stringify(seen)).toBeGreaterThanOrEqual(8);
       expect(activePid(), "the active app while the box is up").toBe(user.pid);

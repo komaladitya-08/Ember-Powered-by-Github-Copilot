@@ -120,7 +120,7 @@ function makeHost(extra: Partial<HostOptions> = {}) {
     setState: p => { screen = { ...screen, ...p }; patches.push(p); },
     onStatus: s => statuses.push(s), ...extra,
   });
-  return { host, dir, patches, statuses, screen: () => screen, agentJson: () => { try { return JSON.parse(fs.readFileSync(path.join(dir, "agent.json"), "utf8")); } catch { return null; } } };
+  return { host, settings, dir, patches, statuses, screen: () => screen, agentJson: () => { try { return JSON.parse(fs.readFileSync(path.join(dir, "agent.json"), "utf8")); } catch { return null; } } };
 }
 
 /** Pretend hands: tasks run (their workers talk to the pretend SDK) but never touch a screen. */
@@ -148,6 +148,20 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe("connecting and signing in", () => {
+  it("keeps a manually opened spoken request with its own queued turn", async () => {
+    const started: { text: string; spoken: boolean; manual?: true }[] = [];
+    const { host } = makeHost({ onTurnStart: turn => started.push(turn) });
+    await host.start(TOKEN, "stored");
+    await host.ask("Regular spoken request", null, host.stopEpoch, { spoken: true });
+    sim.holdTurns = true;
+    await host.ask("One request", null, host.stopEpoch, { spoken: true, manual: true, voiceUnchecked: true });
+    expect(started).toEqual([{ text: "Regular spoken request", spoken: true }]);
+    conductorSession().emit("session.idle");
+    conductorSession().nextTurn();
+    expect(started.at(-1)).toEqual({ text: "One request", spoken: true, manual: true });
+    await host.stop();
+  });
+
   it("keeps queued spoken and typed replies with the turn that actually starts (review turn ownership)", async () => {
     const started: { text: string; spoken: boolean }[] = [];
     const { host } = makeHost({ onTurnStart: turn => started.push(turn) });
@@ -2871,6 +2885,64 @@ describe("the live conversation context in model settings", () => {
     conductorSession().emit("session.usage_info", { currentTokens: 500, tokenLimit: 128_000 });
     expect(host.getStatus().conversationContext).toEqual({ kind: "usage", currentTokens: 500 });
     await host.stop();
+  });
+});
+
+describe("thinking effort for tasks", () => {
+  const catalog = [
+    { id: "talk-mini", capabilities: { supports: { vision: true } } },
+    { id: "task-pro", capabilities: { supports: { vision: true, reasoningEffort: true } }, supportedReasoningEfforts: ["high", "medium", "medium", "future"] },
+    { id: "next-pro", capabilities: { supports: { vision: true, reasoningEffort: true } }, supportedReasoningEfforts: ["high"] },
+  ];
+
+  it("uses a selected effort for new tasks only, and drops it at Default or when the model changes", async () => {
+    sim.models = catalog;
+    sim.abortEnds = true;
+    const { host, settings } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const tasks = host.tasks!;
+    const start = async (goal: string) => {
+      const task = tasks.start(goal);
+      const session = () => sim.sessions.find(s => s.sessionId === `ember-task-${task.id}`);
+      await vi.waitFor(() => expect(session()).toBeDefined());
+      return session();
+    };
+    try {
+      expect(host.getStatus()).toMatchObject({ conductorModel: "talk-mini", workerModel: "task-pro" });
+      expect(host.getStatus().models.find(m => m.id === "task-pro")?.reasoningEfforts).toEqual(["medium", "high"]);
+      expect(host.getStatus().models.find(m => m.id === "talk-mini")?.reasoningEfforts).toBeUndefined();
+      settings.update({ taskReasoning: { model: "task-pro", effort: "high" } });
+      const first = await start("First task");
+      expect(first.config).toMatchObject({ model: "task-pro", reasoningEffort: "high" });
+      expect(conductorSession().config.reasoningEffort).toBeUndefined();
+      settings.update({ taskReasoning: null });
+      const second = await start("Use model default");
+      expect(second.config).toMatchObject({ model: "task-pro" });
+      expect(second.config.reasoningEffort).toBeUndefined();
+      expect(first.config.reasoningEffort).toBe("high");
+      tasks.cancelAll();
+      await tasks.drain(1000);
+      settings.update({ taskReasoning: { model: "task-pro", effort: "high" } });
+      await host.setModels({ worker: "next-pro" });
+      const third = await start("Use a different model");
+      expect(third.config).toMatchObject({ model: "next-pro" });
+      expect(third.config.reasoningEffort).toBeUndefined();
+    } finally { await host.stop(); }
+  });
+
+  it("withholds the preference and options where models are managed", async () => {
+    sim.models = catalog;
+    sim.abortEnds = true;
+    const { host, settings } = makeHost({ hands: hands(), admin: () => AdminPolicySchema.parse({ models: { worker: "task-pro" } }) });
+    settings.update({ taskReasoning: { model: "task-pro", effort: "high" } });
+    await host.start(TOKEN, "stored");
+    try {
+      expect(host.getStatus().models.every(m => m.reasoningEfforts === undefined)).toBe(true);
+      const task = host.tasks!.start("Managed task");
+      const session = () => sim.sessions.find(s => s.sessionId === `ember-task-${task.id}`);
+      await vi.waitFor(() => expect(session()).toBeDefined());
+      expect(session().config.reasoningEffort).toBeUndefined();
+    } finally { await host.stop(); }
   });
 });
 

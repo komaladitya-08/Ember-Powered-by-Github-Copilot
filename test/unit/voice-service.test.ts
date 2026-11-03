@@ -82,11 +82,112 @@ const speaking = (win: { webContents: { send: ReturnType<typeof vi.fn> } }, on: 
   const generation = win.webContents.send.mock.calls.filter(c => c[0] === VOICE.hush).at(-1)?.[1] ?? 0;
   electron.ipcMain.emit(VOICE.speaking, { sender: win.webContents }, on, generation);
 };
+const captured = (context = "running") => {
+  const mic = electron.windows.findLast(w => w.title === "Ember microphone")!;
+  electron.ipcMain.emit(VOICE.status, { sender: mic.webContents }, { state: "capturing", device: "Test microphone", rate: 16000, context });
+  return mic;
+};
 
 beforeEach(() => { electron.app.isPackaged = false; electron.procs.length = 0; electron.windows.length = 0; electron.ipcMain.removeAllListeners(); electron.net.fetch.mockReset(); services = []; });
 afterEach(() => { vi.useRealTimers(); for (const s of services) s.stop(); fs.rmSync(root, { recursive: true, force: true }); });
 
 describe("VoiceService", () => {
+  it("requires both a running capture and the recogniser before Listen once can arm", async () => {
+    const { v } = service();
+    expect(v.listenOnce()).toBe(false);
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    captured();
+    expect(v.listenOnce()).toBe(false);
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured("suspended");
+    expect(v.listenOnce()).toBe(false);
+    captured();
+    expect(v.listenOnceStatus.phase).toBe("ready");
+    expect(v.listenOnce()).toBe(true);
+    expect(v.listenOnce()).toBe(false);
+    expect(posted(proc, "listen-once")).toEqual([{ type: "listen-once", generation: expect.any(Number), from: expect.any(Number), ms: 8000 }]);
+    expect(v.listenOnceStatus.phase).toBe("starting");
+  });
+
+  it("keeps a manual request until Voice Match finishes, then accepts it only once", async () => {
+    const { v, events } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    v.listenOnce();
+    const generation = (posted(proc, "listen-once")[0] as { generation?: number }).generation;
+    const send = (e: VoiceEvent) => proc.emit("message", { ...e, generation });
+    const gate = new VoiceGate(() => ({ print: async () => Float32Array.of(1, 0) }), send, () => undefined);
+    gate.setOwner(Float32Array.of(1, 0));
+    send({ type: "listening", on: true, reason: "manual", window: "manual" });
+    const request = { type: "utterance", text: "One request.", ms: 0, window: "manual" } as const;
+    gate.event(request, new Float32Array(16_000).fill(0.1));
+    send({ type: "listening", on: false, reason: "done", window: "manual" });
+    expect(v.listenOnceStatus.phase).toBe("checking");
+    expect(events.filter(e => e.type === "utterance")).toEqual([]);
+    await flush();
+    send(request);
+    expect(events.filter(e => e.type === "utterance")).toEqual([{ ...request, verified: true }]);
+    expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "Request heard." });
+  });
+
+  it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const { v, events } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    const mic = captured();
+    v.listenOnce();
+    const stillCurrent = v.listenOnceStillCurrent();
+    const generation = (posted(proc, "listen-once")[0] as { generation?: number }).generation;
+    proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+    proc.emit("message", { generation, type: "listening", on: false, reason: "done", window: "manual" });
+    expect(stillCurrent()).toBe(true);
+    if (why === "cancel") v.cancelListenOnce();
+    if (why === "stop") v.cancelListening();
+    if (why === "mute") { v.setMuted(true); v.setMuted(false); }
+    if (why === "lock") { v.setLocked(true); v.setLocked(false); }
+    if (why === "device") electron.ipcMain.emit(VOICE.status, { sender: mic.webContents }, { state: "paused" });
+    if (why === "expiry") vi.advanceTimersByTime(11_000);
+    proc.emit("message", { generation, type: "utterance", window: "manual", text: "Late request.", ms: 0, verified: true });
+    expect(events.some(e => e.type === "utterance")).toBe(false);
+    expect(stillCurrent()).toBe(false);
+    expect(v.listenOnceStatus.phase).not.toBe("checking");
+  });
+
+  it.each(["cancel", "stop", "speak", "none"])("handles %s after recognition while the Ask context is pending", async why => {
+    const { v, events } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    expect(v.listenOnce()).toBe(true);
+    const generation = (posted(proc, "listen-once")[0] as { generation?: number }).generation;
+    const stillCurrent = v.listenOnceStillCurrent();
+    const request = { type: "utterance", window: "manual", text: "One request.", ms: 0 } as const;
+    proc.emit("message", { ...request, generation });
+    expect(events).toContainEqual(request);
+    expect(v.listenOnceStatus.phase).toBe("ready");
+
+    let finishRead!: (context: string) => void;
+    const pendingContext = new Promise<string>(resolve => { finishRead = resolve; });
+    const submit = vi.fn();
+    const dispatch = pendingContext.then(context => { if (stillCurrent()) submit(request.text, context); });
+    // A competing turn, an approval prompt, and suspend cancel only the manual request.
+    if (why === "cancel") v.cancelListenOnce();
+    if (why === "stop") v.cancelListening();
+    if (why === "speak") v.speak("A background task finished.");
+    const context = "The desktop view before Ask opened";
+    finishRead(context);
+    await dispatch;
+    if (why === "cancel" || why === "stop") expect(submit).not.toHaveBeenCalled();
+    else expect(submit).toHaveBeenCalledExactlyOnceWith(request.text, context);
+    expect(posted(proc, "cancel")).toHaveLength(why === "stop" ? 1 : 0);
+  });
+
   it.each([[false, true, "1"], [false, false, null], [true, true, null]] as const)("sets raw WAV capture only for a synthetic mic in development (packaged %s, WAV %s)", async (packaged, testMicWav, value) => {
     electron.app.isPackaged = packaged;
     const { v } = service(true, { testMicWav });

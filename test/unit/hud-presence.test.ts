@@ -119,7 +119,7 @@ describe("sound levels for the presence (never audio)", () => {
     expect(read("app/main/main.ts")).toContain("if (homeWantsLevel && l.mic !== undefined && home && !home.isDestroyed() && home.isVisible() && !home.isMinimized()) home.webContents.send(IPC.homeLevel, l.mic);");
     // The mic page measures only while asked to, and ends the meter when told to stop.
     const mic = read("app/renderer/mic/main.ts");
-    expect(mic).toContain("if (micLevels && ev.data instanceof ArrayBuffer) micMeter.push(");
+    expect(mic).toContain("if (micLevels) micMeter.push(rms(new Float32Array(frame.samples))");
     expect(mic).toContain("if (!on) micMeter.end();");
   });
 

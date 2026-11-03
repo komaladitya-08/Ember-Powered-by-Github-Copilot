@@ -91,7 +91,7 @@ describe("microphone capture", () => {
     await vi.advanceTimersByTimeAsync(600);
     expect(c.deps.getUserMedia).toHaveBeenCalledTimes(2);
     expect(c.tracks[0].stop).toHaveBeenCalled();
-    expect(c.statuses).toEqual(["capturing", "capturing"]); // no "lost": just a moment's gap
+    expect(c.statuses).toEqual(["capturing", "paused", "capturing"]); // a gap while the new device opens
   });
 
   it("waits out a short mute, and starts again after a long one", async () => {
@@ -102,10 +102,10 @@ describe("microphone capture", () => {
     await vi.advanceTimersByTimeAsync(1500);
     t.muted = false; t.onunmute!();
     await vi.advanceTimersByTimeAsync(3000);
-    expect(c.statuses).toEqual(["capturing"]);
+    expect(c.statuses).toEqual(["capturing", "paused", "capturing"]);
     t.muted = true; t.onmute!();
     await vi.advanceTimersByTimeAsync(2000);
-    expect(c.statuses).toEqual(["capturing", "lost"]);
+    expect(c.statuses).toEqual(["capturing", "paused", "capturing", "paused", "lost"]);
   });
 
   it("resumes a suspended audio context, and starts again if it closes", async () => {
@@ -114,10 +114,12 @@ describe("microphone capture", () => {
     const ctx = c.contexts[0];
     ctx.state = "suspended"; ctx.onstatechange!();
     expect(ctx.resume).toHaveBeenCalled();
+    expect(c.statuses).toEqual(["capturing", "paused"]);
+    ctx.onstatechange!(); // Chromium announces the completed resume
     await vi.advanceTimersByTimeAsync(2500);
-    expect(c.statuses).toEqual(["capturing"]);
+    expect(c.statuses).toEqual(["capturing", "paused", "capturing"]);
     ctx.state = "closed"; ctx.onstatechange!();
-    expect(c.statuses).toEqual(["capturing", "lost"]);
+    expect(c.statuses).toEqual(["capturing", "paused", "capturing", "lost"]);
     await vi.advanceTimersByTimeAsync(1000);
     expect(c.statuses.at(-1)).toBe("capturing");
   });

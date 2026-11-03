@@ -7,14 +7,16 @@ declare function registerProcessor(name: string, ctor: unknown): void;
 class EmberFrames extends AudioWorkletProcessor {
   private buf = new Float32Array(512);
   private n = 0;
+  private capturedAt = 0;
 
   process(inputs: Float32Array[][]): boolean {
     const ch = inputs[0]?.[0];
     if (!ch) return true;
     for (let i = 0; i < ch.length; i++) {
+      if (!this.n) this.capturedAt = Date.now();
       this.buf[this.n++] = ch[i];
       if (this.n === 512) {
-        this.port.postMessage(this.buf.buffer, [this.buf.buffer]);
+        this.port.postMessage({ samples: this.buf.buffer, capturedAt: this.capturedAt }, [this.buf.buffer]);
         this.buf = new Float32Array(512);
         this.n = 0;
       }

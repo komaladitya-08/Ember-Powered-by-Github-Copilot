@@ -115,6 +115,10 @@ export const AdminPolicySchema = z.object({
 
 export type AdminPolicy = z.infer<typeof AdminPolicySchema>;
 
+export function modelsManaged(models: AdminPolicy["models"] | undefined): boolean {
+  return !!(models?.allowed || models?.conductor || models?.worker);
+}
+
 export interface LoadedAdminPolicy {
   policy: AdminPolicy;
   /** The file in force, if any. */
@@ -276,7 +280,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.voice === false) keys.push("wakeWord");
   if (admin.features.speak === false) keys.push("speak");
   if (admin.features.voice === false || admin.features.speak === false) keys.push("naturalVoice");
-  if (admin.models.conductor || admin.models.worker || admin.models.allowed) keys.push("models");
+  if (modelsManaged(admin.models)) keys.push("models");
   if (!admin.allowGrants) keys.push("grants", "askedApps");
   if (admin.features.aiReview === false) keys.push("reviewCommands");
   if (admin.features.memory === false) keys.push("memory");

@@ -63,7 +63,7 @@ afterEach(() => { made.length = 0; events.length = 0; });
 function ready(o: ConstructorParameters<typeof AskWindow>[0] = {}) {
   const ask = new AskWindow(o);
   ask.prepare();
-  const [win] = made;
+  const win = made.at(-1);
   win!.emit("ready-to-show");
   events.length = 0;
   return { ask, win: win! };
@@ -149,12 +149,12 @@ describe("the ask box's tip to wait for it (review #78, owner decision D-78)", (
     ask.hide();
     ask.show({ x: 400, y: 500 }, { sees: null, history: [] }, "hotkey");
     const one = { ...win.bounds };
-    expect(one.height).toBe(92);
+    expect(one.height).toBe(116);
     // Above Ember: the hint row stays beside Ember's head, the box grows upward.
-    expect(tall).toEqual({ ...one, height: 116, y: one.y - 24 });
-    // Four lines, the note that a paste was cut and the tip: six rows.
-    win.heard.get("agent:ask-fit")!({}, 6);
-    expect(win.bounds.height).toBe(92 + 5 * 24);
+    expect(tall).toEqual({ ...one, height: 140, y: one.y - 24 });
+    // Four lines, the note that a paste was cut, the tip and Listen once: seven rows.
+    win.heard.get("agent:ask-fit")!({}, 7);
+    expect(win.bounds.height).toBe(92 + 6 * 24);
   });
 
   it("is counted by main where the box is shown, and its row by the page", () => {
@@ -183,27 +183,27 @@ describe("the ask box at the text size (review #57)", () => {
     // Made ahead of time at the size then.
     expect(win.bounds).toMatchObject({ width: 728, height: 111 });
     ask.show({ x: 400, y: 500 }, { sees: null, history: [] }, "hotkey");
-    expect(win.bounds).toMatchObject({ width: 728, height: 111 });
+    expect(win.bounds).toMatchObject({ width: 728, height: 142 });
     // What it shows first, then shown and given the keyboard, exactly as at the default size (review #78).
     expect(events).toEqual(["send agent:ask-context", "show", "focus", "takeFocus"]);
-    // Four lines, the note and the tip: five rows of 31.2 px more.
-    win.heard.get("agent:ask-fit")!({}, 6);
-    expect(win.bounds.height).toBe(111 + 156);
+    // Four lines, the note, the tip and Listen once: six rows of 31.2 px more.
+    win.heard.get("agent:ask-fit")!({}, 7);
+    expect(win.bounds.height).toBe(111 + 187);
     ask.hide();
     // Changed in Settings while the box was hidden (it closes when Settings takes the keyboard): its next opening is
     // the new size, the tip's row included, growing upward away from Ember.
     scale = 1.15;
     ask.show({ x: 400, y: 500 }, { sees: null, history: [], tip: true }, "hotkey");
-    expect(win.bounds).toMatchObject({ width: 644, height: 101 + 28 });
+    expect(win.bounds).toMatchObject({ width: 644, height: 156 });
     const tall = { ...win.bounds };
     ask.hide();
     ask.show({ x: 400, y: 500 }, { sees: null, history: [] }, "hotkey");
-    expect(win.bounds).toEqual({ ...tall, height: 101, y: tall.y + 28 });
+    expect(win.bounds).toEqual({ ...tall, height: 129, y: tall.y + 27 });
     ask.hide();
     // Back at the default size, the usual box; and a scale that can't be read is the default's.
     scale = 1;
     ask.show({ x: 400, y: 500 }, { sees: null, history: [] }, "hotkey");
-    expect(win.bounds).toMatchObject({ width: 560, height: 92 });
+    expect(win.bounds).toMatchObject({ width: 560, height: 116 });
     ask.hide();
     const broken = ready({ textScale: () => { throw new Error("settings gone"); } });
     expect(broken.win.bounds).toMatchObject({ width: 560, height: 92 });

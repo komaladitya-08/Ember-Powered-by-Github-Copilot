@@ -24,7 +24,7 @@ import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, refusalEndsTrust, re
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
+import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -449,16 +449,19 @@ function start(): void {
     }
     home = createHomeWindow(platform.os);
     home.once("ready-to-show", () => log.info("window.home.shown"));
+    const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); };
     // A crashed settings page comes back (it may be the consent page on first run).
-    revive(home, reason => log.warn("window.home.renderer_gone", { reason }));
+    revive(home, reason => { cancelHomeListenOnce(); log.warn("window.home.renderer_gone", { reason }); });
     // While the user works in settings, Ember waits beside the window instead of over it.
     for (const e of ["focus", "blur", "move", "resize", "minimize", "restore", "hide", "show"] as const) home.on(e as "focus", stepAside);
     // Minimised or hidden, the page stops drawing its characters (X11 still reports it visible).
     const win = home;
     win.once("show", () => bringToFront(win));
     const shown = (on: boolean) => () => { if (!win.isDestroyed()) win.webContents.send(IPC.homeVisibility, on); };
-    win.on("minimize", shown(false)); win.on("hide", shown(false)); win.on("restore", shown(true)); win.on("show", shown(true));
+    const hidden = () => { shown(false)(); cancelHomeListenOnce(); };
+    win.on("minimize", hidden); win.on("hide", hidden); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
+      cancelHomeListenOnce();
       home = null;
       homeWantsLevel = false;
       stepAside();
@@ -970,6 +973,7 @@ function start(): void {
     // On another computer it says which (§2.4), aloud and in the notification as the bubble's badge does.
     // A question with a whole text to read (review #116): the approve key shows its next part until all of it has been shown.
     const aloud = questionAloud(q.question, { keys: (q.question.detail ? readKeyWords(heldKeys()) : heldKeys()).map(k => k.say), spoken: spokenText });
+    voice?.cancelListenOnce();
     pauseAnswerSpeech();
     if (maySpeak()) voice?.speak(words ?? aloud.say);
     if (userAway()) notify("Ember needs your OK", words ?? aloud.notify);
@@ -1088,6 +1092,10 @@ function start(): void {
     },
     // How long the box took to have the keyboard, by Electron's word: what was typed before went elsewhere (review #78).
     onKeyboard: () => log.info("ask.keyboard", { ms: Date.now() - askAsked }),
+    onHide: () => {
+      if (manualCall?.source === "ask") voice?.cancelListenOnce();
+      askContextRead = Promise.resolve(null);
+    },
     // As large as its words at the text size (review #57).
     textScale: () => textScale(settings.get().textSize),
   });
@@ -1100,6 +1108,8 @@ function start(): void {
   let screenLock: ScreenLock | null = null;
   /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
+  let askContextRead = callContext;
+  let manualCall: { source: "ask" | "home"; context: Promise<QuickContext | null>; before?: Pick<EmberState, "emotion" | "bubble"> } | null = null;
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
   const consented = () => hasConsent(settings.get());
   /**
@@ -1150,7 +1160,7 @@ function start(): void {
    * `how.suggested`: one of Ember's suggestions the user chose (never their own words for commands: host.ts
    * UserRequest.suggested); `how.heardId`: the request Ember heard, for "That's not what I said" (personal/service.ts).
    */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number } = {}) => {
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number } = {}, read = callContext, stillCurrent?: () => boolean) => {
     if (!consented()) { showHome(); return; }
     recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
@@ -1165,10 +1175,11 @@ function start(): void {
     const epoch = agent?.stopEpoch;
     // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
     // Ember starts also starts the accessibility helper).
-    const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
+    const context = await Promise.race([read, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
+    if (stillCurrent && (!stillCurrent() || !consented() || screenLock?.locked)) return;
     if (how.spoken) turnLatency.mark("sent");
     if (!agent) return;
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}) }).catch(err => { log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.manual ? { manual: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}) }).catch(err => { log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1205,15 +1216,17 @@ function start(): void {
       read: (active, before) => captureContext(active, before),
       // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
       show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {
-        sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened),
+        sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened), listenOnce: listenOnceStatus("ask"),
         ...(personalRef?.current().length ? { suggestions: personalRef.current().map(s => s.text) } : {}),
       }, source),
     });
+    const read = askContextRead = callContext;
     // ms: from the call (the shortcut's press, as Ember heard it) to the box shown.
     log.info("ask.open", { source, ms: Date.now() - asked });
     if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
     // What Ember will read, shown as a chip once the quick look is done: the window, and what else goes with a request.
-    void callContext.then(c => {
+    void read.then(c => {
+      if (askContextRead !== read) return;
       const ctx: AskContext = { ...askSees(c), history: askHistory, target: askTarget() };
       askWindow.setContext(ctx);
     });
@@ -1277,8 +1290,9 @@ function start(): void {
   const CUT_NOTES = {
     wake: "I only caught the first part: say the rest after my answer.",
     "follow-up": "I only caught the first part: say “Ember” and the rest.",
+    manual: "I only caught the first part. Use Listen once to say the rest.",
   } as const;
-  const isCutNote = (s: string | null) => s === CUT_NOTES.wake || s === CUT_NOTES["follow-up"];
+  const isCutNote = (s: string | null) => s === CUT_NOTES.wake || s === CUT_NOTES["follow-up"] || s === CUT_NOTES.manual;
   let shownForAnswer = false;
   /** "Hide Ember" while there is no overlay to hold it (no compositor): the next overlay starts hidden. */
   let keptHidden = false;
@@ -1311,16 +1325,60 @@ function start(): void {
     setStatus("mic", voice.isMuted ? "Microphone off" : null);
     if (voice.isMuted) setTimeout(() => { if (voice?.isMuted) setStatus("mic", null); }, 2500);
   };
+  const listenOnceStatus = (source: "ask" | "home"): ListenOnceStatus => {
+    const s = settings.get();
+    const blocked = (detail: string): ListenOnceStatus => ({ phase: "blocked", detail });
+    if (policy.features.voice === false) return blocked("Your organisation has turned voice off.");
+    if (!consented()) return blocked("Finish Ember’s setup first.");
+    if (screenLock?.locked) return blocked("The screen is locked.");
+    if (!s.wakeWord || !s.voice.consent) return blocked("Turn on “Listen for Ember” in Settings.");
+    if (s.voice.muted) return blocked("Unmute the microphone first.");
+    if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
+    if (confirmer?.waiting) return blocked("Answer Ember’s question first.");
+    if (agent?.answerOpen) return blocked("Wait for Ember’s answer to finish.");
+    return voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
+  };
+  const clearManualCall = () => {
+    const call = manualCall;
+    manualCall = null;
+    if (!call?.before || lastState.bubble.mood !== "listening") return;
+    setState(call.before);
+    const shown = lastState.bubble;
+    if (!(agent?.releaseBubble(shown) ?? false) && shown.visible) hideIfStill(shown, 4000);
+  };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
     modelsReady: voice?.modelsReady ?? false,
     modelsMissing: (voice?.missingModels ?? VOICE_MODELS).map(m => m.id), modelsBytes: voice ? modelsBytes(voice.missingModels) : VOICE_MODELS_BYTES,
     ...(voice?.isDownloading ? { downloading: true } : {}),
     speechMissing: speechHeard === false,
+    listenOnce: listenOnceStatus("home"),
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
     match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips },
     ...(voice ? { natural: voice.naturalStatus } : {}),
   });
+  let lastListenStatus = "";
+  const syncListenOnce = () => {
+    const phase = voice?.listenOnceStatus.phase;
+    if (manualCall && (phase === undefined || phase === "ready" || phase === "blocked")) clearManualCall();
+    const ask = listenOnceStatus("ask");
+    const key = JSON.stringify([ask, listenOnceStatus("home")]);
+    if (key === lastListenStatus) return;
+    lastListenStatus = key;
+    askWindow.setListenOnce(ask);
+    // A reloaded Home reads the current status when it starts.
+    if (home && !home.isDestroyed() && !home.webContents.isCrashed()) sendToHome(IPC.voiceStatus, voiceStatus(voiceDetail));
+  };
+  const requestListenOnce = (source: "ask" | "home", on: boolean): ListenOnceStatus => {
+    if (!on) {
+      if (manualCall?.source === source) voice?.cancelListenOnce();
+    } else if (voice && listenOnceStatus(source).phase === "ready") {
+      // Home is Ember’s own window. Ask uses the desktop view taken before Ask took the keyboard.
+      manualCall = { source, context: source === "ask" ? askContextRead : Promise.resolve(null) };
+      if (!voice.listenOnce()) clearManualCall();
+    }
+    return listenOnceStatus(source);
+  };
   /**
    * Voice Match (app/voice/voiceprint.ts): the owner's voiceprint, kept apart from the settings (voiceprint-store.ts),
    * is in use while the setting is on; `enrolling` is the teaching under way (settings shows the phrase to say).
@@ -1527,6 +1585,18 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
+        if (e.window === "manual") {
+          if (e.on && manualCall) {
+            heardFrom = Date.now();
+            speechStarts();
+            manualCall.before = { emotion: lastState.emotion, bubble: lastState.bubble };
+            agent?.claimBubble();
+            setState({ emotion: "listening", bubble: { visible: true, mood: "listening", title: "Listening…", thought: "Say one request.", step: null, streaming: true, actions: [] } });
+          } else if (manualCall && e.reason === "done" && lastState.bubble.mood === "listening") {
+            setState({ bubble: { ...lastState.bubble, title: "Checking what I heard…", thought: "" } });
+          }
+          break;
+        }
         if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); speechStarts(); setState({ emotion: "listening" }); setStatus("listen", FOLLOW_UP_STATUS); }
         // "Hey Ember" said in a follow-up window made it a wake's window (engine.ts wakeOverFollowUp).
         if (e.on && e.reason === "wake" && statusBy.listen === FOLLOW_UP_STATUS) setStatus("listen", null);
@@ -1558,6 +1628,13 @@ function start(): void {
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
       case "utterance": {
+        const manual = e.window === "manual" ? manualCall : null;
+        if (e.window === "manual" && (!manual || !voice || !consented() || screenLock?.locked || policy.features.voice === false)) break;
+        const stillCurrent = manual ? voice?.listenOnceStillCurrent() : undefined;
+        if (manual) {
+          clearManualCall();
+          if (manual.source === "ask") askWindow.hide();
+        }
         // A spoken request's answer opens a follow-up window; the engine refuses one after MAX_FOLLOW_UPS in a row.
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
         lastHeard = { utterance: heard?.utterance ?? -1, verified: e.verified === true, cut: !!e.cut, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true };
@@ -1589,7 +1666,8 @@ function start(): void {
           turnLatency.heard(e.ms);
           // Near-misses corrected against the user's own words (personal/correct.ts): never into a risky request.
           const heard = personal.heard(e.text);
-          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) });
+          // A click opens this window, but doesn't identify the voice in the room as the user for command policy.
+          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: !!manual || !voice?.rejectsSpeakers, spoken: true, ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
         }
         break;
       }
@@ -1815,6 +1893,14 @@ function start(): void {
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
+  const listenOnceFromHome = guard((on: boolean): ListenOnceStatus => on && (!home?.isVisible() || home.isMinimized())
+    ? { phase: "blocked", detail: "Open Ember’s settings to listen here." }
+    : requestListenOnce("home", on));
+  ipcMain.handle(IPC.listenOnce, (event, on: unknown) => {
+    if (typeof on !== "boolean") throw new Error("Invalid listening request");
+    if (askWindow.visible && askWindow.owns(event.sender) && isTrustedSender(event.senderFrame?.url ?? "")) return requestListenOnce("ask", on);
+    return listenOnceFromHome(event, on);
+  });
   ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));
   // First run's "Hey Ember" try: the microphone's level (a step of 0–8, never audio) goes to the settings window too,
   // only while that step shows and the window can be seen.
@@ -2547,11 +2633,13 @@ function start(): void {
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
       onTurnStart: turn => {
+        voice?.cancelListenOnce();
         resetAnswerSpeech();
         askedAt = Date.now();
         answerInterrupted = false;
-        lastAskByVoice = turn.spoken;
+        lastAskByVoice = turn.spoken && !turn.manual;
         if (turn.spoken) ackLater(turn.text);
+        syncListenOnce();
       },
       onAnswerInterrupted: resetAnswerSpeech,
       onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
@@ -2576,6 +2664,7 @@ function start(): void {
         lastAskByVoice = false;
         turnAnswer = "";
         answerInterrupted = true;
+        syncListenOnce();
       },
       onStatus: status => {
         // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.
@@ -2596,7 +2685,7 @@ function start(): void {
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.
-        if (maySpeak() && !agent?.answerOpen && voice?.micState !== "active") voice?.speak(spokenText(`Reminder: ${r.text}`), { append: true });
+        if (maySpeak() && !agent?.answerOpen && !manualCall && voice?.micState !== "active") voice?.speak(spokenText(`Reminder: ${r.text}`), { append: true });
         // A notification shows on the lock screen: while it is locked, it says only that one is due.
         if (userAway()) notify("Ember: reminder", reminderNotification(r, screenLock?.locked ?? false));
       },
@@ -2617,7 +2706,7 @@ function start(): void {
       },
       onTaskFinished: t => {
         // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
-        if (maySpeak() && settings.get().speakResults && !agent?.answerOpen && voice?.micState !== "active") voice?.speak(spokenText(t.text), { append: true });
+        if (maySpeak() && settings.get().speakResults && !agent?.answerOpen && !manualCall && voice?.micState !== "active") voice?.speak(spokenText(t.text), { append: true });
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
       },
       isOnline: () => net.isOnline(),
@@ -2711,6 +2800,7 @@ function start(): void {
       // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
+      onListenOnce: syncListenOnce,
       onSelfSpeaking: on => { if (on) turnLatency.mark("firstAudio"); },
       // The level for Ember's presence ring and voice meter: straight to the overlay, never through the state.
       onLevel: l => {
@@ -2779,6 +2869,7 @@ function start(): void {
           } else if (lastState.emotion === "listening") setState({ emotion: "neutral" });
         }
         broadcast(IPC.voiceStatus, voiceStatus(detail));
+        syncListenOnce();
       },
     });
     if (settings.get().voice.muted) voice.setMuted(true);
@@ -2810,7 +2901,9 @@ function start(): void {
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));
       micConsent = next.voice.consent;
       if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); }
+      syncListenOnce();
     });
+    powerMonitor.on("suspend", () => voice?.cancelListenOnce());
     app.on("will-quit", () => voice?.stop());
 
     // The administrator's policy changed while Ember ran: everything stops, and Ember holds itself locked down (no

@@ -42,10 +42,10 @@ describe("ask-size.ts: what the live suites expect of the ask box (review #57)",
       const one = askBounds({ x: 900, y: 600, size: 60 }, wa, null, scale);
       for (const rows of [1, 2, 5]) expect(grownBounds(one, rows, wa, true, null, scale), `${size}, ${rows} rows`).toMatchObject({ width: ASK_AT[size].width, height: askHeight(size, rows) });
     }
-    expect(askWant("larger", false)).toEqual({ visible: true, width: 728, height: 111, size: "larger", font: "23.4px", clipped: false });
-    expect(askWant("larger", true)).toMatchObject({ width: 728, height: 142 });
-    expect(askWant("large", true)).toMatchObject({ width: 644, height: 129 });
-    expect(askWant("default", true)).toMatchObject({ width: 560, height: 116 });
+    expect(askWant("larger", false)).toEqual({ visible: true, width: 728, height: 142, size: "larger", font: "23.4px", clipped: false });
+    expect(askWant("larger", true)).toMatchObject({ width: 728, height: 173 });
+    expect(askWant("large", true)).toMatchObject({ width: 644, height: 156 });
+    expect(askWant("default", true)).toMatchObject({ width: 560, height: 140 });
     expect(askHeight("larger", 5)).toBe(236);
   });
 

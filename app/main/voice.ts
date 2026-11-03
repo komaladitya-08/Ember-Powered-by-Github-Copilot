@@ -26,7 +26,7 @@ import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
 import { readLevel, type SoundLevel } from "../shared/level";
 import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio, type SpeechPlayed } from "../shared/voice";
-import type { NaturalVoiceStatus } from "../shared/ipc";
+import type { ListenOnceStatus, NaturalVoiceStatus } from "../shared/ipc";
 import type { Logger } from "./logger";
 import { pageUrl } from "./page-url";
 
@@ -54,6 +54,8 @@ const RESTART_MS = [1000, 5000, 30_000];
  * longest piece of work, 21 s of speech to transcribe, took 1.4 s as measured; ms).
  */
 const ALIVE_MS = 15_000;
+const LISTEN_ONCE_MS = 8000;
+const LISTEN_ONCE_CHECK_MS = 3000;
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /** What the voice line says while the microphone sends only digital silence (review #255). */
@@ -79,6 +81,7 @@ export interface VoiceOptions {
   /** `heard.utterance`: which utterance of this voice process it is (a voice-sample's `utterance` is the same number). */
   onEvent: (e: VoiceEvent, heard?: { utterance: number }) => void;
   onState: (s: MicState, detail?: string) => void;
+  onListenOnce?: () => void;
   /** A reply was heard (true), or no voice spoke (false): the speaking page tells it when that changes (review #101). */
   onSpeech?: (ok: boolean) => void;
   /** Ember started (true) or stopped (false) making sound, as the page that speaks tells it (turn-latency.ts). */
@@ -200,6 +203,11 @@ export class VoiceService {
   private followUpAsked = false;
   private followUpTimer: NodeJS.Timeout | null = null;
   private listeningGeneration = 0;
+  private capturing = false;
+  private captureGeneration = 0;
+  private manual: { phase: "starting" | "listening" | "checking"; timer: NodeJS.Timeout } | null = null;
+  private manualGeneration = 0;
+  private manualDetail = "";
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
   private micLost = false;
   /** The microphone sends only digital silence (the voice line says so until sound comes back). */
@@ -259,12 +267,17 @@ export class VoiceService {
     if (this.naturalWanted) this.natural = this.naturalBlocked() ?? { state: "later" };
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
       if (!this.mic || e.sender !== this.mic.webContents) return;
+      const capturing = s.state === "capturing" && s.context === "running";
+      const paused = this.capturing && !capturing;
+      this.capturing = capturing;
+      if (paused) { this.captureGeneration++; this.cancelListenOnce(); }
       if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
       else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
-      else {
+      else if (s.state === "capturing") {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
         if (this.micLost) { this.micLost = false; this.setState("waiting"); }
       }
+      this.o.onListenOnce?.();
     });
     ipcMain.on(VOICE.speech, (e, ok: unknown) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
@@ -301,11 +314,64 @@ export class VoiceService {
         else this.idleSpeaker();
       }
       this.openFollowUp();
+      this.o.onListenOnce?.();
     });
   }
 
   get micState(): MicState {
     return this.state;
+  }
+
+  get listenOnceStatus(): ListenOnceStatus {
+    if (this.manual) return {
+      phase: this.manual.phase,
+      detail: this.manual.phase === "starting" ? "Starting to listen…" : this.manual.phase === "listening" ? "Listening for one request…" : "Checking what Ember heard…",
+    };
+    const blocked = (detail: string): ListenOnceStatus => ({ phase: "blocked", detail });
+    if (this.locked) return blocked("The screen is locked.");
+    if (this.muted) return blocked("Unmute the microphone first.");
+    if (!this.wanted) return blocked("Turn on “Listen for Ember” in Settings.");
+    if (this.enrolling) return blocked("Finish teaching Ember your voice first.");
+    if (this.state === "needs-models") return blocked("Download speech models in Settings first.");
+    if (this.state === "downloading") return blocked("Speech models are downloading.");
+    if (this.state === "error") return blocked("Check the microphone and voice status in Settings.");
+    if (!this.capturing || !this.readyAt || !this.proc) return blocked("The microphone or speech recogniser is getting ready.");
+    if (this.state === "active") return blocked("Ember is already listening.");
+    if (this.saidSpeaking || this.ttsPending.size || this.speakingUntil > Date.now()) return blocked("Wait until Ember finishes speaking.");
+    return { phase: "ready", detail: this.manualDetail };
+  }
+
+  listenOnce(): boolean {
+    if (this.listenOnceStatus.phase !== "ready" || !this.proc) return false;
+    this.dropFollowUp();
+    this.manual = { phase: "starting", timer: setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), LISTEN_ONCE_MS + LISTEN_ONCE_CHECK_MS) };
+    this.manual.timer.unref();
+    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS });
+    this.o.onListenOnce?.();
+    return true;
+  }
+
+  cancelListenOnce(detail = "Listening cancelled."): void {
+    // Recognition can be done while the request still waits for its desktop context.
+    this.manualGeneration++;
+    if (!this.manual) return;
+    this.cancelListening(detail);
+  }
+
+  /** A manual request may be waiting for its pre-focus context after Voice Match let it through. */
+  listenOnceStillCurrent(): () => boolean {
+    const manual = this.manualGeneration;
+    const generation = this.listeningGeneration;
+    const capture = this.captureGeneration;
+    return () => manual === this.manualGeneration && generation === this.listeningGeneration && capture === this.captureGeneration && this.capturing && this.wanted && !this.muted && !this.locked;
+  }
+
+  private finishListenOnce(detail: string): void {
+    if (!this.manual) return;
+    clearTimeout(this.manual.timer);
+    this.manual = null;
+    this.manualDetail = detail;
+    this.o.onListenOnce?.();
   }
 
   /**
@@ -459,6 +525,7 @@ export class VoiceService {
    * itself. `afterQuestion`: the answer asked something, so "Okay." or "Fine." is a reply to send (not "that's all").
    */
   followUp(ms = 8000, o: { afterQuestion?: boolean } = {}): void {
+    if (this.manual) return;
     this.followUpMs = ms;
     this.followUpAsked = !!o.afterQuestion;
     this.openFollowUp();
@@ -487,8 +554,10 @@ export class VoiceService {
   enrol(): boolean {
     if (this.enrolling) return true;
     if (!this.proc || !this.readyAt || !this.matchReady) return false;
+    this.cancelListenOnce();
     this.enrolling = true;
     this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
+    this.o.onListenOnce?.();
     return true;
   }
 
@@ -496,6 +565,7 @@ export class VoiceService {
     if (!this.enrolling) return;
     this.enrolling = false;
     this.proc?.postMessage({ type: "enrol-cancel" });
+    this.o.onListenOnce?.();
   }
 
   /**
@@ -504,7 +574,7 @@ export class VoiceService {
    */
   setVoiceprint(print: string | null, refresh = false): void {
     const p = this.matchReady ? print : null;
-    if (!refresh) this.listeningGeneration++;
+    if (!refresh) { this.cancelListenOnce(); this.listeningGeneration++; }
     this.proc?.postMessage({ type: "voiceprint", generation: this.listeningGeneration, refresh, print: p, ...(p ? this.o.matchLearnt?.() ?? {} : {}) });
   }
 
@@ -514,10 +584,13 @@ export class VoiceService {
   }
 
   /** Stops listening for a request at once (the kill switch): a wake being checked, a waiting follow-up and a request already on its way are dropped. */
-  cancelListening(): void {
+  cancelListening(detail = "Listening cancelled."): void {
     this.listeningGeneration++;
     this.dropFollowUp();
     this.proc?.postMessage({ type: "cancel", generation: this.listeningGeneration });
+    if (!this.manual) return;
+    if (this.state === "active") this.setState("waiting");
+    this.finishListenOnce(detail);
   }
 
   /**
@@ -526,6 +599,7 @@ export class VoiceService {
    */
   speak(text: string, o: { append?: boolean } = {}): void {
     if (this.locked || !text.trim()) return;
+    if (this.manual) this.cancelListenOnce();
     // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
     if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
     const neural = this.neuralVoice;
@@ -895,7 +969,7 @@ export class VoiceService {
         this.setState("error", m.message);
         return;
       }
-      if (m.type === "enrol") { this.enrolling = m.state !== "done" && m.state !== "cancelled"; this.o.onEnrol?.(m); return; }
+      if (m.type === "enrol") { this.enrolling = m.state !== "done" && m.state !== "cancelled"; this.o.onEnrol?.(m); this.o.onListenOnce?.(); return; }
       if (m.type === "voice-match-error") { this.o.log.warn("voice.match_error", { message: m.message }); return; }
       // A request Voice Match may learn from (app/voice/adapt.ts): main decides (numbers only, never audio).
       if (m.type === "voice-sample") { if (m.generation === this.listeningGeneration) this.o.onSample?.(m); return; }
@@ -910,7 +984,7 @@ export class VoiceService {
         this.o.log.warn("voice.silent", { on: m.on });
         const was = this.micSilent;
         this.micSilent = m.on;
-        if (m.on) this.setState("error", SILENT_TEXT);
+        if (m.on) { this.captureGeneration++; this.cancelListenOnce(); this.setState("error", SILENT_TEXT); }
         else if (was && this.state === "error") this.setState("waiting"); // (not another error, such as a lost microphone)
         return;
       }
@@ -922,12 +996,29 @@ export class VoiceService {
       // Every utterance the voice process sends is counted, dropped or not: a voice-sample names its request by this number.
       if (m.type === "utterance") this.utterances++;
       if (m.type !== "stop" && m.generation !== this.listeningGeneration) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
-      if (m.type === "wake") { this.o.log.info("voice.wake", { keyword: m.keyword }); this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
+      if (m.type === "wake") { this.finishListenOnce("Listening cancelled."); this.o.log.info("voice.wake", { keyword: m.keyword }); this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
       if (m.type === "stop") this.o.log.info("voice.stop");
+      const { generation: _generation, ...event } = m;
+      if ((m.type === "utterance" || m.type === "listening") && m.window === "manual") {
+        const manual = this.manual;
+        if (!manual) return;
+        if (m.type === "utterance") {
+          this.o.onEvent(event, { utterance: this.utterances });
+          if (this.state === "active") this.setState("waiting");
+          this.finishListenOnce("Request heard.");
+          return;
+        }
+        if (m.on) manual.phase = "listening";
+        else if (m.reason === "done") manual.phase = "checking";
+        this.setState(m.on ? "active" : "waiting");
+        this.o.onEvent(event);
+        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? "No request heard. Try again." : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
+        else this.o.onListenOnce?.();
+        return;
+      }
       if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });
-      const { generation: _generation, ...event } = m;
       this.o.onEvent(event, m.type === "utterance" ? { utterance: this.utterances } : undefined);
     });
     const { port1, port2 } = new MessageChannelMain();
@@ -1028,6 +1119,9 @@ export class VoiceService {
   }
 
   private teardown(): void {
+    this.listeningGeneration++;
+    this.capturing = false;
+    this.finishListenOnce("Listening cancelled.");
     this.enrolling = false;
     this.closeMic();
     this.dropFollowUp();

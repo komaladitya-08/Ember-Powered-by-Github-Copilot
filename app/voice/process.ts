@@ -18,6 +18,7 @@ import type { VoiceprintWorkerMessage } from "./voiceprint-worker";
 import { ModelLoadError, sherpaBackend, type BackendInfo, type ModelPaths } from "./sherpa";
 import { SpeakerMonitor } from "./speakers";
 import { FrameWatchdog, SilenceWatch } from "./watchdog";
+import type { MicFrame } from "../shared/voice";
 
 type FromMain =
   /** `dev`: an unpackaged (development) build. */
@@ -37,6 +38,7 @@ type FromMain =
   | { type: "question"; up: boolean }
   /** `afterQuestion`: Ember's answer asked something ("Okay." is then a reply, not a closer). */
   | { type: "follow-up"; ms: number; afterQuestion?: boolean }
+  | { type: "listen-once"; generation: number; from: number; ms: number }
   | { type: "cancel"; generation: number };
 
 /**
@@ -221,12 +223,15 @@ parent.on("message", e => {
     const port = e.ports[0];
     port.on("message", ev => {
       watchdog.frame();
-      const d = ev.data as ArrayBuffer | ArrayBufferView;
+      const data = ev.data as ArrayBuffer | ArrayBufferView | MicFrame;
+      // The native backend smoke probe also supplies unlabelled frames, for wake recognition only.
+      const packet = "samples" in data ? data : null;
+      const d = packet ? packet.samples : data as ArrayBuffer | ArrayBufferView;
       const frame = ArrayBuffer.isView(d) ? new Float32Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength)) : new Float32Array(d);
       dump?.write(Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength));
       silence.frame(frame);
       const t0 = performance.now();
-      if (!broken) try { if (enrolment) enrolFrame(frame); else engine?.feed(frame); } catch (err) { failed(err); }
+      if (!broken) try { if (enrolment) enrolFrame(frame); else engine?.feed(frame, packet?.capturedAt); } catch (err) { failed(err); }
       cpuMs += performance.now() - t0;
       audioMs += frame.length / 16;
       for (let i = 0; i < frame.length; i++) peak = Math.max(peak, Math.abs(frame[i]));
@@ -243,6 +248,12 @@ parent.on("message", e => {
     engine?.questionUp(m.up);
   } else if (m.type === "follow-up") {
     engine?.followUp(m.ms, { afterQuestion: m.afterQuestion });
+  } else if (m.type === "listen-once") {
+    if (enrolment || broken || !engine) return;
+    gate.cancel();
+    engine.cancel();
+    generation = m.generation;
+    engine.listenOnce(m.from, m.ms);
   } else if (m.type === "cancel") {
     generation = m.generation;
     gate.cancel();

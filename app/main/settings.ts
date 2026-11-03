@@ -19,6 +19,7 @@ import { HOST_OS } from "./platform/os";
 import { AZURE_API_VERSION, endpointProblem, MAX_ENDPOINT, MODEL_ID, PROVIDER_TYPES, WIRE_APIS } from "../shared/provider";
 import { readTextFile } from "./text-file";
 import { writeAllSync } from "./write-all";
+import { REASONING_EFFORTS } from "./agent/models";
 
 /** This OS's never-look defaults (read once at load: renderers import this module only for its types). */
 const neverLookDefault = () => [...NEVER_LOOK_DEFAULTS[HOST_OS]];
@@ -148,6 +149,8 @@ export const SettingsSchema = z.object({
     conductor: z.string().nullable().default(null),
     worker: z.string().nullable().default(null),
   }).default({ conductor: null, worker: null }),
+  /** A task effort choice for one exact Copilot model. Missing or null uses the model default. */
+  taskReasoning: z.object({ model: z.string().regex(MODEL_ID), effort: z.enum(REASONING_EFFORTS) }).nullable().optional(),
   /**
    * The user's own model provider ("bring your own key", Home › Copilot): off by default. While on, agreed to for its
    * endpoint's host (`consent`, FEATURE_CONSENT_VERSION.provider) and allowed by the administrator
