@@ -430,6 +430,8 @@ export const USER_PROVIDER_NOT_ALLOWED = "None of the models you entered for you
 export const PROVIDER_SWITCH_TITLE = "Switching model service";
 export const PROVIDER_SWITCH_WAIT = "You changed the model service, so I'll send this there once what I'm doing now has finished. It won't go to the one before.";
 /** A task that would have started on the model service the user switched away from. */
+/** How often held requests look again for a quiet moment to go (a turn's end comes a moment after its answer). */
+const HELD_RECHECK_MS = 250;
 export const PROVIDER_MOVED_TASK = "The model service changed before this task could start. Ask me again and I'll use the new one.";
 
 /** What a connection's endpoint is, to tell a change: its kind, config (key included: kept in memory only) and models. */
@@ -667,6 +669,8 @@ export class AgentHost {
   private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3] }[] = [];
   /** A release of the held requests is under way. */
   private releasing = false;
+  /** The next look at whether the held requests can go. */
+  private heldTimer: ReturnType<typeof setTimeout> | null = null;
   private models: ModelLike[] = [];
   /** The bubble is shared by the conversation and every task (see BubbleOwner). */
   private readonly owner: BubbleOwner;
@@ -1801,12 +1805,31 @@ export class AgentHost {
   }
 
   /**
+   * Nothing a switch of model service would cut off: idle, and no conversation turn under way or owed as the runtime's
+   * own events say (the bubble may show something else meanwhile, such as the hold's notice).
+   */
+  private quietForSwitch(): boolean {
+    return this.idle && !(this.conductor?.turnOpen ?? false);
+  }
+
+  /** Drops the requests held for a new model service (Stop): none of them is sent. */
+  private dropHeld(): void {
+    this.held = [];
+    if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = null; }
+  }
+
+  /**
    * Sends the requests held for a new model service once nothing is under way any more: Ember reconnects to the service
    * in force, then asks each in order. A Stop pressed meanwhile drops them (their epoch is old). Nothing goes to the
    * service before.
    */
   private async releaseHeld(): Promise<void> {
-    if (this.releasing || !this.held.length || !this.idle) return;
+    if (this.quitting || this.releasing || !this.held.length) return;
+    if (!this.quietForSwitch()) {
+      // A turn's end reaches the runtime's events a moment after its answer: looked at again shortly, until it is quiet.
+      if (!this.heldTimer) this.heldTimer = setTimeout(() => { this.heldTimer = null; void this.releaseHeld(); }, HELD_RECHECK_MS);
+      return;
+    }
     this.releasing = true;
     try {
       if (this.providerMoved()) await this.launch(this.token, this.source);
@@ -1832,7 +1855,7 @@ export class AgentHost {
    */
   providerChanged(): Promise<AgentPhase> | null {
     if (this.quitting || !this.providerMoved()) return null;
-    if (this.status.phase === "ready" && !this.idle) return null;
+    if (this.status.phase === "ready" && (!this.quietForSwitch() || this.held.length > 0)) return null;
     this.o.log.info("agent.provider_changed", { kind: this.providerNow()?.kind ?? "copilot" });
     return this.launch(this.token, this.source);
   }
@@ -2023,12 +2046,15 @@ export class AgentHost {
     // The model service in force changed since this connection started (the user's own provider turned on or off, or
     // edited): reconnected first, so this request goes to the one in force now. Tasks finish on the service they started
     // with; while they (or a turn) are under way, the request is held for the new service instead.
-    if (this.status.phase === "ready" && this.providerMoved() && !this.idle) {
+    if (this.status.phase === "ready" && (this.held.length > 0 || (this.providerMoved() && !this.quietForSwitch()))) {
       // A turn or a task is under way on the service before: this request goes to the one in force now, never to that
-      // one. It waits (saying so) until they are done, then Ember reconnects and sends it (releaseHeld).
-      this.o.log.info("agent.request_held", { kind: this.providerNow()?.kind ?? "copilot" });
+      // one. It waits (saying so) until they are done, then Ember reconnects and sends it (releaseHeld). One asked while
+      // others wait goes behind them, in order. The notice is the notice board's, so the conversation's own state (a
+      // turn still streaming) is left as it is.
+      this.o.log.info("agent.request_held", { kind: this.providerNow()?.kind ?? "copilot", waiting: this.held.length });
       this.held.push({ text, context, epoch, how });
-      this.presenter.notice({ title: PROVIDER_SWITCH_TITLE, text: PROVIDER_SWITCH_WAIT, mood: "attention" });
+      this.noticeBoard.post({ title: PROVIDER_SWITCH_TITLE, thought: PROVIDER_SWITCH_WAIT, actions: [], mood: "attention" }, { ms: 30_000 });
+      this.releaseHeldSoon();
       return true;
     }
     if (this.status.phase !== "starting" && this.providerMoved()) {
@@ -2106,6 +2132,7 @@ export class AgentHost {
   async stopAnswer(): Promise<void> {
     this.stops++;
     this.queued = [];
+    this.dropHeld();
     this.presenter.stopped();
     this.o.log.info("agent.answer_stopped");
     await this.conductor?.abort();
@@ -2117,8 +2144,10 @@ export class AgentHost {
    */
   async abortAll(): Promise<void> {
     this.stops++;
-    // Requests still waiting for their turn are dropped with it (the runtime runs none of them).
+    // Requests still waiting for their turn are dropped with it (the runtime runs none of them), and those held for a
+    // new model service.
     this.queued = [];
+    this.dropHeld();
     this.claimBubble();
     this.presenter.quiet();
     // (A connection's bubble too: the kill switch stops its reconnects, so "I'll try to reconnect" doesn't come back.)

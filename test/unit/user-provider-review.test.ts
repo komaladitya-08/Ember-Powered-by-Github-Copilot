@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
 import { SettingsSchema, SettingsStore, withOwnProvider, type Settings } from "../../app/main/settings";
 import {
-  PROVIDER_HOST_CHANGED, ProviderKeyStore, createProviderService, keyFor, providerNotAgreed, providerStateOf, redact, redactingLogger, testConnection,
+  PROVIDER_HOST_CHANGED, ProviderKeyStore, createProviderService, keyFor, ownProviderAuth, providerNotAgreed, providerStateOf, redact, redactingLogger, testConnection,
   userProviderConfig, type FetchLike, type StoredKey,
 } from "../../app/main/provider";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -23,6 +23,7 @@ import type { SecretBox } from "../../app/main/agent/auth";
 import type { Logger } from "../../app/main/logger";
 import { friendlyError } from "../../app/main/agent/presenter";
 import { settingsFromHome } from "../../app/main/windows";
+import { agreeAction } from "../../app/shared/provider";
 
 const KEY = "sk-" + "r".repeat(40); // not a real key
 const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -110,10 +111,18 @@ describe("the card's yes (S1, S4)", () => {
     expect((withOwnProvider(sent, own).provider as Settings["provider"]).consent).toEqual(own.consent);
   });
 
-  it("is given for what the address field says when I agree is clicked", () => {
+  it("is given for the host the card named, never for another one the field holds by then (re-review N-S4)", () => {
+    // The card named a.example; the field was changed to b.example and not yet saved: nothing is agreed, the new
+    // address is saved and the card drawn again for it.
+    expect(agreeAction("a.example", "https://b.example/v1")).toEqual({ save: "https://b.example/v1" });
+    expect(agreeAction("a.example", "https://a.example/v2")).toEqual({ agree: "a.example" });
+    expect(agreeAction("a.example", "")).toEqual({ agree: "a.example" });
+    expect(agreeAction("a.example", "http://far.example/v1")).toEqual({ problem: "Use an https:// address. Only a model server on this computer (localhost) may use http://." });
+    expect(agreeAction(null, "https://a.example/v1")).toBeNull();
     const page = readFileSync("app/renderer/home/provider.ts", "utf8");
-    expect(page).toContain('const typed = input("byok-url").value.trim();');
-    expect(page).toContain("a.agree(host)");
+    expect(page).toContain('const next = agreeAction(cardHost, input("byok-url").value);');
+    expect(page).toContain("a.agree(next.agree)");
+    expect(page).toContain("cardHost = asking ? host : null;");
   });
 });
 
@@ -204,12 +213,13 @@ describe("the keyring at a start (macOS second-instance hang in CI)", () => {
     const main = readFileSync("app/main/main.ts", "utf8");
     const lock = main.indexOf("app.requestSingleInstanceLock()");
     expect(lock).toBeGreaterThan(0);
-    // Every use of the key store is inside start(), which runs only once the lock is held.
+    // The key store that can ask the keyring is made inside start(), which runs only once the lock is held; the setup
+    // check (its own process, --doctor) only reads the host beside the key file, which asks no keyring.
     const start = main.indexOf("function start(): void {");
-    for (const word of ["new ProviderKeyStore(", "providers.ensureKey()"]) {
-      const at = main.indexOf(word);
-      expect(at, word).toBeGreaterThan(start);
-    }
+    expect(main.indexOf("const providers = createProviderService({")).toBeGreaterThan(start);
+    expect(main.indexOf("providers.ensureKey()")).toBeGreaterThan(start);
+    const before = main.slice(0, start);
+    expect(before.match(/new ProviderKeyStore\([^\n]*/g) ?? []).toEqual([expect.stringMatching(/\)\.savedHost\(\)\);$/)]);
     expect(main).not.toMatch(/providerKeys\.canPersist\(\)|safeStorage\.isEncryptionAvailable\(\)/);
   });
 });
@@ -242,5 +252,42 @@ describe("the runtime's address, the logs and images (N1, N3, N6)", () => {
       .toBe("This model can't read images. Choose a model for tasks that understands images in Ember's settings (Ctrl+Alt+E).");
     expect(friendlyError("400 Invalid image: multimodal input not supported", undefined, { provider: "user" }))
       .toBe("This model can't read images. Choose a model for tasks that understands images in Ember's settings (Ctrl+Alt+E).");
+  });
+});
+
+describe("the re-review's nits (#136)", () => {
+  it("says a key is saved in the setup check only when it was saved for the endpoint's host", () => {
+    const text = JSON.stringify(SettingsSchema.parse({ provider: provider({ baseUrl: "https://a.example/v1", consent: agreedFor("a.example") }) }));
+    expect(ownProviderAuth(text, NONE, "a.example")).toEqual({ kind: "own-provider", host: "a.example", key: true });
+    expect(ownProviderAuth(text, NONE, "b.example")).toEqual({ kind: "own-provider", host: "a.example", key: false });
+    expect(ownProviderAuth(text, NONE, null)).toEqual({ kind: "own-provider", host: "a.example", key: false });
+  });
+
+  it("keeps redacting a key replaced or removed this run, as a task may still run on it", async () => {
+    const { s } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    s.api.agree("a.example");
+    const first = "sk-" + "1".repeat(40), second = "sk-" + "2".repeat(40);
+    await s.api.saveKey(first);
+    await s.api.saveKey(second);
+    expect(s.secrets()).toEqual([second, first]);
+    s.api.removeKey();
+    expect([...s.secrets()].sort()).toEqual([first, second].sort());
+    const lines: string[] = [];
+    const base: Logger = { debug() {}, info() {}, warn() {}, error: m => lines.push(m), child() { return base; }, file: "x" };
+    redactingLogger(base, () => s.secrets()).error(`refused ${first} then ${second}`);
+    expect(lines).toEqual(["refused [key] then [key]"]);
+  });
+
+  it("asks main to say it is reading the key only when it is about to (the provider on, a key saved for its host)", async () => {
+    const { s, settings, keys } = service({ settings: { baseUrl: "https://a.example/v1", on: false } });
+    await keys.save(KEY, "a.example");
+    expect(s.needsRead()).toBe(false);
+    s.api.agree("a.example");
+    expect(settings.own().provider.on).toBe(true);
+    expect(s.needsRead()).toBe(true);
+    await s.ensureKey();
+    expect(s.needsRead()).toBe(false);
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain('if (!provider && providers.needsRead()) {\n        setStatus("keychain", "Reading your saved API key…");');
   });
 });

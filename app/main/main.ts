@@ -94,7 +94,7 @@ import { MemoryService } from "./memory/service";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
-import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, createProviderService, redactingLogger, userProviderFromFile, type ActiveProvider, type FetchLike } from "./provider";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, createProviderService, ownProviderAuth, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
@@ -322,9 +322,10 @@ async function runDoctor(): Promise<void> {
     const admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
     let auth: DoctorProbes["auth"] = null;
-    const ownProvider = admin.policy.provider ? null : userProviderFromFile(settingsText(), admin);
+    // The user's own provider by its host, with a key saved only if it was saved for that host (no keyring asked).
+    const ownProvider = admin.policy.provider ? null : ownProviderAuth(settingsText(), admin, new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage).savedHost());
     if (admin.policy.provider) auth = { kind: "provider", host: new URL(admin.policy.provider.baseUrl).host };
-    else if (ownProvider) auth = { kind: "own-provider", host: endpointHost(ownProvider.baseUrl) ?? "?", key: fs.existsSync(path.join(userData, PROVIDER_KEY_FILE)) };
+    else if (ownProvider) auth = ownProvider;
     else {
       const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage), process.env, ghOptions()).catch(() => null);
       // After "Sign out" in Ember, a GitHub CLI or environment sign-in isn't used (as Ember itself does).
@@ -2289,7 +2290,7 @@ function start(): void {
       readTime,
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),
-      userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secret()).child("agent"), setState, provider: providerNow, admin: () => policy, signInWith: signInWith(),
+      userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secrets()).child("agent"), setState, provider: providerNow, admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).
@@ -2391,7 +2392,11 @@ function start(): void {
       // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
       // without the keychain words. The status lasts through both reads (renewing a sign-in that ran out reads it first).
       // The user's own provider's key, read once (the keychain may ask on macOS, as for the sign-in).
-      if (!provider) await providers.ensureKey();
+      // The user's own provider's key, read once it is needed (the keychain may ask on macOS): the status says what for.
+      if (!provider && providers.needsRead()) {
+        setStatus("keychain", "Reading your saved API key…");
+        try { await providers.ensureKey(); } finally { setStatus("keychain", null); }
+      }
       const keychain = !provider && platform.os === "darwin" && !!tokens?.firstReadSinceUpdate();
       if (keychain) {
         setStatus("keychain", "Reading your saved sign-in from the keychain…");

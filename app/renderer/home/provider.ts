@@ -9,7 +9,7 @@
 import type { EmberProviderApi, ProviderState } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { AZURE_API_VERSION, endpointHost, endpointProblem, MODEL_ID, type ProviderType } from "../../shared/provider";
+import { AZURE_API_VERSION, agreeAction, endpointHost, endpointProblem, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerConsentText, providerHint, providerTestText } from "./copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -27,6 +27,8 @@ let state: ProviderState | null = null;
 let replacing = false;
 /** The card was put away with Not now (for this host): it doesn't come back until the switch is turned on again. */
 let declinedFor: string | null = null;
+/** The host the card was last drawn for (null: no card up). */
+let cardHost: string | null = null;
 
 /** One line under the group: how the last action went (`error`: in red). */
 function say(text: string, error = false): void {
@@ -61,6 +63,8 @@ function draw(): void {
   // The card: on, with an address, not agreed to for it, and not put away for it.
   const asking = on && !!host && !agreedFor(p, host) && declinedFor !== host;
   $("byok-consent").hidden = !asking;
+  // The host the card names, remembered: "I agree" is for it, whatever the field says by the time it is clicked.
+  cardHost = asking ? host : null;
   if (asking) $("byok-consent-text").textContent = providerConsentText(host);
   // Nothing goes to a host the card isn't agreed for, Test connection included: it waits for the yes.
   const test = $("byok-test") as HTMLButtonElement;
@@ -114,17 +118,20 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     if (on && own && endpointHost(own.baseUrl) && !agreedFor(own, endpointHost(own.baseUrl))) queueMicrotask(() => $("byok-yes").focus());
   });
   $("byok-yes").addEventListener("click", () => {
-    // What the field says now (an edit whose save hasn't come back yet included), saved first, so the yes is for it.
-    const typed = input("byok-url").value.trim();
-    const host = endpointHost(typed);
-    if (!host) { say(endpointProblem(typed) ?? PROVIDER_WORDS.badAddress, true); input("byok-url").focus(); return; }
-    void (typed !== own?.baseUrl ? change({ baseUrl: typed }) : Promise.resolve(true))
-      .then(ok => (ok ? a.agree(host) : { ok: false as const, why: PROVIDER_WORDS.badAddress }))
-      .then(r => {
-        if (!r.ok) { say(r.why, true); return; }
-        $("byok-consent").hidden = true;
-        input("byok-url").focus();
-      });
+    // The yes is for the host the card named. The field naming another one now (an edit whose save hasn't come back
+    // yet): that address is saved and the card is drawn again for its host, to be read and agreed to; nothing is agreed.
+    const next = agreeAction(cardHost, input("byok-url").value);
+    if (!next) return;
+    if ("problem" in next) { say(next.problem, true); input("byok-url").focus(); return; }
+    if ("save" in next) {
+      void change({ baseUrl: next.save }).then(() => { say(PROVIDER_WORDS.readAgain); $("byok-yes").focus(); });
+      return;
+    }
+    void a.agree(next.agree).then(r => {
+      if (!r.ok) { say(r.why, true); return; }
+      $("byok-consent").hidden = true;
+      input("byok-url").focus();
+    });
   });
   $("byok-no").addEventListener("click", () => {
     declinedFor = own ? endpointHost(own.baseUrl) : null;

@@ -521,6 +521,8 @@ export class TurnWatch {
     this.silentMs = opts.silentMs ?? TURN_SILENT_MS;
   }
 
+  /** A request was sent and its turn hasn't ended (sent, taken, or at work): whatever the bubble shows meanwhile. */
+  get open(): boolean { return !this.over && (this.owed > 0 || this.taken || this.working || this.inTurn); }
   /** A request is about to be sent (its message may come before session.send returns). */
   sending(): void { this.owed++; }
   /** session.send returned: the turn begins now, or when the one under way ends. */
@@ -729,6 +731,14 @@ export class Conductor {
 
   private guarded<A extends unknown[], R extends string | Promise<string>>(start?: (...a: A) => R): ((...a: A) => string | R) | undefined {
     return start && ((...a: A) => this.stopping ? "The user just stopped everything. Don't start anything now; say you've stopped." : start(...a));
+  }
+
+  /**
+   * A turn of this conversation is under way or owed, as the runtime's events say, whatever the bubble shows (a notice
+   * may cover a streaming answer): a reconnect now would cut it off.
+   */
+  get turnOpen(): boolean {
+    return this.watch?.open ?? false;
   }
 
   get sessionId(): string | null {

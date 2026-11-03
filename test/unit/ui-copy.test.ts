@@ -826,6 +826,7 @@ describe("the Model provider group's words (Copilot section)", () => {
       testFailed: "Ember couldn't test the connection. Try again.",
       badModel: "A model name has no spaces in it, such as gpt-4.1 or llama3.2:3b.",
       badAddress: "Enter the service's full address, starting with https://.",
+      readAgain: "The address changed: read the note again for the new one, then agree.",
       badAzure: "Enter the API version as Azure writes it, such as 2024-10-21.",
     });
   });

@@ -47,6 +47,21 @@ export function endpointProblem(url: string): string | null {
   return "Enter the service's full address, starting with https://.";
 }
 
+/**
+ * What Home's "I agree" does: agree for the host the card was drawn for (`cardHost`), and only for it. When the address
+ * field (`typed`) names another host by the time it is clicked, that address is saved and the card drawn again for it
+ * instead (nothing is agreed); one that isn't an address says why. No card up: nothing.
+ */
+export function agreeAction(cardHost: string | null, typed: string): { agree: string } | { save: string } | { problem: string } | null {
+  if (!cardHost) return null;
+  const t = typed.trim();
+  if (!t) return { agree: cardHost };
+  const host = endpointHost(t);
+  if (host === cardHost) return { agree: cardHost };
+  if (!host) return { problem: endpointProblem(t) ?? "Enter the service's full address, starting with https://." };
+  return { save: t };
+}
+
 /** The host (with its port, when it has one) of a valid endpoint, as the consent card and the setup check name it; null otherwise. */
 export function endpointHost(url: string): string | null {
   if (endpointProblem(url) !== null) return null;

@@ -623,7 +623,9 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
   from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
   no keyring is asked to know it). It goes only to that host: moving the endpoint to another host deletes it, and the
-  user enters it again. The keyring is asked only once the provider is on with a key saved for its host (never at a
+  user enters it again; so does clearing the Endpoint field (on purpose: a key with no host to go to isn't kept).
+  While it is read at a start, the status line says "Reading your saved API key…" (a macOS Keychain prompt then has
+  context). A key replaced or removed stays redacted from the log for the rest of the run, as a task may still run on it. The keyring is asked only once the provider is on with a key saved for its host (never at a
   start otherwise), and on macOS only asynchronously: a synchronous Keychain check on the main thread can block on a
   headless Mac, and a second Ember handing over to a blocked first one hangs. Where the keyring is `basic_text` (no GNOME Keyring or KWallet), Ember refuses to keep a key and
   says why; a local server that needs no key still works. The key is never logged, audited, shown again (Home says

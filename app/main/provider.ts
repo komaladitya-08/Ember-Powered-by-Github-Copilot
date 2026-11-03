@@ -76,6 +76,17 @@ export function userProviderFromFile(text: string | null, loaded: LoadedAdminPol
   }
 }
 
+/**
+ * The setup check's model row for the user's own provider (`ember doctor`), from the settings file as it is on disk and
+ * the host the saved key belongs to (read beside it, no keyring asked): its host, and whether a key is saved for that
+ * very host. null: the user's provider isn't in force.
+ */
+export function ownProviderAuth(settingsText: string | null, loaded: LoadedAdminPolicy, savedHost: string | null): { kind: "own-provider"; host: string; key: boolean } | null {
+  const p = userProviderFromFile(settingsText, loaded);
+  const host = p ? endpointHost(p.baseUrl) : null;
+  return host ? { kind: "own-provider", host, key: savedHost === host } : null;
+}
+
 /** The key, only when it was entered for the host `baseUrl` names (never one entered for another host). */
 export function keyFor(baseUrl: string, stored: StoredKey | null): string | null {
   const host = endpointHost(baseUrl);
@@ -251,13 +262,14 @@ export async function providerStateOf(o: { settings: Settings; admin: LoadedAdmi
   };
 }
 
-/** `text` with every exact occurrence of `secret` replaced (nothing when there is no secret, or it is too short to be one). */
-export function redact(text: string, secret: string | null): string {
-  return secret && secret.length >= 8 ? text.split(secret).join("[key]") : text;
+/** `text` with every exact occurrence of each secret replaced (none, or one too short to be a key, changes nothing). */
+export function redact(text: string, secret: string | null | readonly string[]): string {
+  const all = secret === null ? [] : typeof secret === "string" ? [secret] : secret;
+  return all.filter(s => s.length >= 8).reduce((t, s) => t.split(s).join("[key]"), text);
 }
 
 /** A copy of `v` with `secret` redacted from every string in it, errors included (a depth limit keeps it finite). */
-function scrub(v: unknown, secret: string, depth = 0): unknown {
+function scrub(v: unknown, secret: readonly string[], depth = 0): unknown {
   if (typeof v === "string") return redact(v, secret);
   if (depth > 6 || v === null || typeof v !== "object") return v;
   if (v instanceof Error) {
@@ -277,12 +289,13 @@ function scrub(v: unknown, secret: string, depth = 0): unknown {
  * `base` with the user's provider key (`secret()`, asked at each line) replaced in every message and field, errors
  * included: a model service's error text may quote the request it refused. Its children redact too.
  */
-export function redactingLogger(base: Logger, secret: () => string | null): Logger {
+export function redactingLogger(base: Logger, secret: () => string | null | readonly string[]): Logger {
+  const list = (): string[] => { const s = secret(); return (s === null ? [] : typeof s === "string" ? [s] : [...s]).filter(x => x.length >= 8); };
   const clean = (fields?: Fields): Fields | undefined => {
-    const s = secret();
-    return fields && s && s.length >= 8 ? scrub(fields, s) as Fields : fields;
+    const s = list();
+    return fields && s.length ? scrub(fields, s) as Fields : fields;
   };
-  const msg = (m: string) => redact(m, secret());
+  const msg = (m: string) => redact(m, list());
   return {
     debug: (m, f) => base.debug(msg(m), clean(f)),
     info: (m, f) => base.info(msg(m), clean(f)),
@@ -318,6 +331,13 @@ export const PROVIDER_HOST_CHANGED = "The address changed: check it, then agree 
 export function createProviderService(d: ProviderServiceDeps) {
   let stored: StoredKey | null = null;
   let reading: Promise<void> | null = null;
+  /**
+   * Keys replaced or removed this run: still redacted from the log, since a task may still run on one (tasks keep the
+   * config they started with). In memory only, like the key in use.
+   */
+  const retired: string[] = [];
+  /** The key in use goes out of use (replaced, removed, deleted with its host, or signing out). */
+  const retire = () => { if (stored && !retired.includes(stored.key)) retired.push(stored.key); stored = null; };
   const allowed = () => { const a = d.admin(); return a.error === undefined && userProviderAllowed(a.policy); };
   const hostNow = () => endpointHost(d.settings.get().provider.baseUrl);
 
@@ -335,17 +355,22 @@ export function createProviderService(d: ProviderServiceDeps) {
   return {
     /** The saved key and its host, once read (null: none, or not needed yet). */
     key: (): StoredKey | null => stored,
-    /** The key's text, for redactingLogger. */
-    secret: (): string | null => stored?.key ?? null,
+    /** Every key this run has used, for redactingLogger: the one in use and those a running task may still hold. */
+    secrets: (): string[] => [...(stored ? [stored.key] : []), ...retired],
     /** Reads the key if the provider in force needs it. Touches no keyring otherwise (never at a start with it off). */
     ensureKey: () => readKey(),
+    /** ensureKey would ask the keyring now (main says so on screen meanwhile: the Keychain may ask the user). */
+    needsRead: (): boolean => {
+      const host = hostNow();
+      return !stored && !!host && allowed() && d.settings.get().provider.on && d.keys.savedHost() === host;
+    },
     /** The settings changed: a key saved for another host than the endpoint now is deleted, and one now needed is read. */
     settingsChanged(): void {
       const saved = d.keys.savedHost();
       const host = endpointHost(d.settings.own().provider.baseUrl);
       if (saved && saved !== host) {
         d.keys.clear();
-        stored = null;
+        retire();
         d.log.info("provider.key_cleared", { why: "endpoint_changed" });
         d.changed();
       }
@@ -354,7 +379,7 @@ export function createProviderService(d: ProviderServiceDeps) {
     /** Signing out: the key goes. */
     forget(): void {
       d.keys.clear();
-      stored = null;
+      retire();
     },
     api: {
       state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys }),
@@ -364,6 +389,7 @@ export function createProviderService(d: ProviderServiceDeps) {
         if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
         const r = await d.keys.save(key, host);
         if (!r.ok) return r;
+        retire();
         stored = { key: key.trim(), host };
         d.log.info("provider.key_saved", {});
         d.changed();
@@ -371,7 +397,7 @@ export function createProviderService(d: ProviderServiceDeps) {
       },
       removeKey: (): KeySave => {
         d.keys.clear();
-        stored = null;
+        retire();
         d.log.info("provider.key_removed", {});
         d.changed();
         return { ok: true };

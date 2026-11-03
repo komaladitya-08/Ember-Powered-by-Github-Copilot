@@ -2675,4 +2675,54 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     expect(before.sent.join("\n")).not.toContain("summarise my inbox");
     await host.stop();
   });
+
+  it("never cuts off a turn still running, and sends the held requests in order once it ends (re-review N-B2a)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    // Q1's turn begins on a.example and keeps running (its session hasn't gone idle).
+    await host.ask("first question");
+    await vi.waitFor(() => expect(before.sent.join("\n")).toContain("first question"));
+    now = at("b.example");
+    await host.ask("second question");
+    // The task ends while Q1's turn still runs: nothing reconnects, so Q1's answer isn't cut off.
+    host.tasks!.cancel(t.id);
+    await new Promise(r => setTimeout(r, 400));
+    expect(before.disconnected).toBe(false);
+    expect(conductorSession()).toBe(before);
+    // A third question waits behind the second, never jumping ahead or cutting the turn.
+    await host.ask("third question");
+    expect(before.disconnected).toBe(false);
+    expect(before.sent.join("\n")).not.toMatch(/second question|third question/);
+    // Q1's turn ends: Ember moves to b.example and sends the held questions there, in order.
+    before.emit("assistant.turn_end");
+    before.emit("session.idle", {});
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    const after = conductorSession();
+    expect(after.config.provider.baseUrl).toBe("https://b.example/v1");
+    await vi.waitFor(() => expect(after.sent.join("\n")).toContain("third question"), { timeout: 3000 });
+    const joined = after.sent.join("\n");
+    expect(joined.indexOf("second question")).toBeGreaterThanOrEqual(0);
+    expect(joined.indexOf("second question")).toBeLessThan(joined.indexOf("third question"));
+    await host.stop();
+  });
+
+  it("drops the held requests on Stop: none is sent afterwards", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    await host.ask("held question");
+    await host.abortAll();
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 }).catch(() => undefined);
+    await new Promise(r => setTimeout(r, 400));
+    for (const s of sim.sessions) expect((s.sent as string[]).join("\n")).not.toContain("held question");
+    await host.stop();
+  });
 });
