@@ -137,10 +137,20 @@ export const BARE_NAME = "ember";
  * as "Number, the…" (measured: taking it woke Ember on 4 of 120 near-miss phrases).
  */
 export function calledByName(transcript: string): boolean {
+  if (MISHEARD_NAME.test(transcript) && !heardOtherWord(transcript.replace(MISHEARD_NAME, ""))) return true;
   if (heardOtherWord(transcript)) return false;
   // "Hey" as the recognizer writes it too ("Pay Ember", "Peyember"): the spotter may take the name of "Hey Ember" first.
   return /^\W*(?:(?:\S+\s+){0,4}?\S*[.!?;:]\s+)?(?:(?:hey|hi|ok|okay|hay|pay|pey|they|a|oh|so|um|uh|well|and|yes|yeah|no|please)[\s,.!'"“”]+)*(?:hey|hay|pay|pey)?(?:ember|emmer|umber|anber|embre)\b(?!['’]?s\b)/i.test(transcript);
 }
+
+/**
+ * More of the recognizer's spellings of the name said first, alone or before the request ("Member.", "Member, what time
+ * is it?", "Embra."): measured on 33 synthesized voices, Moonshine wrote a lone "Ember." as the name itself for 4 of
+ * them, and as one of these for 3 more (and "Ember?" for 3 more than 6). Only at the very start, with no filler before
+ * it ("No member, I think." was "November, I think."). Not "Amber" or "Emma" (people's names: the spotter took the name
+ * in "Amber, dinner is ready." for 28 of the 33 voices), nor "Number" ("I remember the…" comes out as "Number, the…").
+ */
+const MISHEARD_NAME = /^\W*(?:member|embra|embro|embo|emba)\b(?!['’]?s\b)/i;
 
 /** "Ember, stop" as the recognizer writes it ("Ember stopped the task.", "Embers, please stop", "Emmer, stop the task."). */
 const EMBER_STOP = /\b(embers?|emmer)\b[^a-z]*(please\s+)?stop/;
@@ -183,8 +193,8 @@ function afterName(transcript: string, names: RegExp): string | null {
 }
 
 const GREETING = String.raw`(hey|hi|ok|okay|hay|pay|pey|they)[\s,.!]*`;
-const NAME = String.raw`(embers?\b|ember(?=[a-z])|emmer\b|amber\b|member\b|emma\b|[ap][.\s-]*m[.\s-]*[br]\b\.?)[\s,.!?:;-]*`;
-/** The wake phrase as the recognizer writes it ("Hey, Ember." "hey Emmer" "OK Amber" "Hey, EmberStop." "Peyamber" "A. M. B." "P. M. B."). */
+const NAME = String.raw`(embers?\b|ember(?=[a-z])|emmer\b|amber\b|member\b|emma\b|emb(?:ra|ro|o|a)\b|[ap][.\s-]*m[.\s-]*[br]\b\.?)[\s,.!?:;-]*`;
+/** The wake phrase as the recognizer writes it ("Hey, Ember." "hey Emmer" "OK Amber" "Hey, EmberStop." "Peyamber" "A. M. B." "P. M. B." "Embra."). */
 const WAKE = String.raw`(${GREETING})?${NAME}`;
 const WAKE_AT_START = new RegExp(String.raw`^\s*` + WAKE, "i");
 /** Right after a wake, the pre-roll can start with the end of what was said before it: "Lunch, hey Ember, …". */
