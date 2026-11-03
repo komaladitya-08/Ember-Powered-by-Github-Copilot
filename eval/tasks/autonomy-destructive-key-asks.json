@@ -1,0 +1,69 @@
+{
+  "id": "autonomy-destructive-key-asks",
+  "title": "Still asks before a destructive key with the borrowed keyboard while working without asking",
+  "instruction": "Press Ctrl+W in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "autonomy": true
+  },
+  "hands": [
+    "cursor"
+  ],
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "press_keys",
+      "args": {
+        "keys": "ctrl+w"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Pressed Ctrl+W."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "key",
+        "name": "w",
+        "ctrl": true
+      }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "kind": "keys",
+        "verdict": "confirm"
+      }
+    },
+    {
+      "audit": {
+        "event": "confirm",
+        "kind": "keys",
+        "answer": "once"
+      }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "kind": "keys",
+        "autonomy": true
+      },
+      "absent": true
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier3",
+    "autonomy",
+    "safety"
+  ]
+}

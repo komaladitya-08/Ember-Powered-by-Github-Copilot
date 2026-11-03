@@ -302,6 +302,12 @@ allows them.
   time before anything risky (sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing
   out, security settings, dangerous commands), and a task that a page tried to steer goes back to asking. Say “Ember,
   work without asking” (Voice Match must recognise you) or “Ember, ask me first again”.
+- **Work without asking covers more everyday steps**: it also answers an app's dialog that names nothing risky (it
+  says "Answering a dialog in …"), types a list or a letter with line breaks into Notepad or another multi-line editor
+  with the borrowed keyboard, and fills spreadsheet cells, all announced. Dialogs about deleting, sending, replacing a
+  file, security, privacy or permissions, keys Ember can't be sure of (Alt+letter, unknown shortcuts), dangerous
+  commands, and every command while Ember runs as an administrator still ask. Filling cells after you said no in a
+  task now asks again, as every other step does.
 - **Answer questions by voice**: while Ember asks, “Ember, allow” (with Voice Match on and recognising you) or “Ember,
   not now” (anyone) answers it. Never “Always”, never Ember's own voice, and a command card or a long text only once
   all of it has been shown. The audit log says the answer was spoken.

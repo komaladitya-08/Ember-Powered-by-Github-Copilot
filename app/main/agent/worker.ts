@@ -2395,7 +2395,10 @@ export class Worker {
       }
     }
     const base: ActionRequest = { taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
-      ...(kind === "cursor_text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + text } : {}), ...this.formulaOf(node, text, judged), ...this.ownText(field, node.text) } : {}),
+      ...(kind === "cursor_text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + text } : {}), ...this.formulaOf(node, text, judged), ...this.ownText(field, node.text),
+        // Where line breaks typed with Enter can't send (a multi-line editor outside a web page): policy's enterMaySend.
+        // (Only a page found is said: unknown, a browser's or a web app's field counts as a page's, WEB_APP.)
+        ...(node.states.includes("multi line") ? { multiLine: true } : {}), ...(node.role === "document web" || inWebPage(node, i => this.known.get(i)) ? { inPage: true } : {}) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
@@ -2820,7 +2823,11 @@ export class Worker {
       const req: ActionRequest = { ...base, element, value: job.text, ...(typedHere ? { typedHere } : {}),
         ...(job.expected !== undefined ? { currentText: job.expected, ...this.ownText(field, job.expected) } : {}) };
       if (job.text) typed = { field, text: (typedHere ?? job.text).slice(-TYPED_MAX) };
-      return { job, req, d: i === 0 ? this.d.policy.decide(req) : this.d.policy.recheck(req) };
+      const d = i === 0 ? this.d.policy.decide(req) : this.d.policy.recheck(req);
+      // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize).
+      if (!d.autonomy || !this.saidNoThisTask) return { job, req, d };
+      const { autonomy: _a, announce: _n, ...asked } = d;
+      return { job, req, d: { ...asked, verdict: "confirm" as const, tier: "confirm" as const, reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` } };
     });
     // "What Ember did" shows the batch's decisions as one line (on the last cell's): refused (a cell isn't allowed),
     // asked (the one question), or none where no question is asked of the batch (all allowed, or each cell on its own).
@@ -2830,7 +2837,7 @@ export class Worker {
     const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
     for (const [i, { req, d }] of judged.entries()) {
       const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
-      this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...batch });
+      this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...batch });
     }
     if (no) return denied(`Not allowed in ${no.job.cell}: ${no.d.reason}. Nothing was typed. Don't try another way for that cell; fill the others without it if that still makes sense, and tell the user in finish_task.`);
     const out = jobs.find(j => reachesOut(j.text));
@@ -2839,7 +2846,16 @@ export class Worker {
       this.tainted = true;
       return "each";
     }
-    if (judged.every(j => j.d.verdict === "allow")) return null;
+    if (judged.every(j => j.d.verdict === "allow")) {
+      // Going ahead without asking: one line for the batch, built from it (how many cells, the app), never their text.
+      const waived = judged.filter(j => j.d.autonomy && j.d.announce);
+      if (waived.length === 1 && jobs.length === 1) this.announce(waived[0].d.announce!);
+      else if (waived.length) {
+        const app = this.window.app ? friendlyApp(this.window.app) : "this app";
+        this.announce(`${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, without asking as you let me.${this.place ? "" : " Move the mouse or press a key to take it back."}`);
+      }
+      return null;
+    }
     // Each cell, with what goes in (and what it replaces): the values cut short, all of them listed.
     const list = jobs.map(j => `${j.cell} ${j.text ? curly(j.text, CELL_SHOWN) : "emptied"}${j.expected ? ` (replacing ${curly(j.expected, 16)})` : ""}`).join(", ");
     // A value cut short there, or whose spaces it closes up (curly), is approved whole: the card shows each cell with all

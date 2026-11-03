@@ -244,8 +244,8 @@ export const AUTONOMY_CONSENT_TEXT = "Ember will use your apps, borrow your mous
 
 /** Under the "Work without asking" switch: what changes, and that questions can be answered by voice (Voice Match). */
 export function autonomyHint(managed: boolean): string {
-  if (managed) return "Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, and before moving text between apps.";
-  return "Off, Ember asks before its first step in an app, before using your mouse and keyboard, and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: “Ember, allow” (with Voice Match on) or “Ember, not now”.";
+  if (managed) return "Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, before answering an app's dialog and before moving text between apps.";
+  return "Off, Ember asks before its first step in an app, before using your mouse and keyboard, before answering an app's dialog and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: “Ember, allow” (with Voice Match on) or “Ember, not now”.";
 }
 
 /** The routines note (FEATURE_CONSENT_VERSION.routines): change it only with a bump of that version. */

@@ -67,8 +67,12 @@ export const TaskSchema = z.object({
     /** "Work without asking" is on, its card agreed to, all four scopes (app/main/policy/autonomy.ts). */
     autonomy: z.boolean().default(false),
   }).strict().default({ answer: "allow", answers: [], grants: [], autonomy: false }),
-  /** Tools available beyond accessibility: the user's mouse (tier 3), Ember's desk (tier 2). */
-  hands: z.array(z.enum(["cursor", "desk"])).default([]),
+  /**
+   * Tools available beyond accessibility: the user's mouse (tier 3), Ember's desk (tier 2), and commands on this computer
+   * (run_command through the real classifier, decision and local runner, in the attempt's folder; the card's answers come
+   * from the simulated user, whose "Not now" counts from anywhere, as in Ember).
+   */
+  hands: z.array(z.enum(["cursor", "desk", "commands"])).default([]),
   script: z.array(z.object({ tool: z.string(), args: z.record(z.string(), Arg).default({}) }).strict()).default([]),
   expect: z.array(Check).min(1),
   /** Checks that must hold before and after (nothing else changed). */

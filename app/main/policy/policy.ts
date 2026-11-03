@@ -169,12 +169,16 @@ export interface Decision {
   detail?: string;
   /**
    * The scopes of "Work without asking" that would let this question go unasked (autonomy.ts): set only where the step
-   * asks for no reason but being the first in an app ("apps"), using the borrowed mouse or keyboard ("cursor"), or
-   * carrying text from another window ("crossWindow"). Never on a risky step.
+   * asks for no reason but being the first in an app ("apps"), using the borrowed mouse or keyboard ("cursor"), carrying
+   * text from another window ("crossWindow"), or Ember's doubt about an ordinary step (Risk.plain: an answer to a dialog
+   * that names nothing risky, line breaks typed into a multi-line editor; owner decision of 2026-11-02, widened
+   * 2026-11-03). Never on a step that is risky by what it does (sending, deleting, overwriting, security settings…).
    */
   waivable?: AutonomyScope[];
   /** For a step that carries text from elsewhere: the apps it comes from, as people name them (none: another window of this app). */
   carriedFrom?: string[];
+  /** The step answers a dialog that names nothing risky (Risk.dialog): its announcement says so. */
+  answersDialog?: true;
   /** It would have asked, and goes ahead because the user lets Ember work without asking: Ember says `announce` instead. */
   autonomy?: true;
   /** What Ember says as it goes ahead without asking (bubble and card), built from the request, never model text. */
@@ -1710,15 +1714,33 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
 }
 
 /**
- * A decision's waivable scopes when the only thing that makes it ask is text carried from another window (Risk.carried):
- * crossWindow, with what else it needs (`also`), and where the text comes from. Anything else risky: none.
+ * A decision's waivable scopes when the only thing that makes it ask is text carried from another window (Risk.carried)
+ * or Ember's doubt about an ordinary step (Risk.plain), and where carried text comes from: crossWindow for carried text,
+ * with what else the step needs (`also`: "apps" for a step in an app, "cursor" with the borrowed mouse or keyboard; a
+ * doubt needs "apps" at least). Anything else risky: none.
  */
-function carriedOnly(risk: Risk, also: AutonomyScope[]): Pick<Decision, "waivable" | "carriedFrom"> {
+function waiverOf(risk: Risk, also: AutonomyScope[]): Pick<Decision, "waivable" | "carriedFrom" | "answersDialog"> {
+  const dialog = risk.dialog ? { answersDialog: true as const } : {};
+  if (risk.plain) {
+    const needs: AutonomyScope[] = also.length ? [...also] : ["apps"];
+    return { waivable: risk.carried ? [...needs, "crossWindow"] : needs, ...(risk.carried ? { carriedFrom: risk.carried } : {}), ...dialog };
+  }
   return risk.carried ? { waivable: [...also, "crossWindow"], carriedFrom: risk.carried } : {};
 }
 
-/** Why an action needs the user's OK; `about`: the on-screen words that make it so; `note`: added to the question. */
-type Risk = { reason: string; about?: string; note?: string; carried?: string[] };
+/**
+ * Words of a dialog that grants something (a permission prompt: "Allow Notepad to access your camera?", "Trust this
+ * site?", "Stay signed in?"): never a plain dialog, so "Work without asking" never answers one (it asks as before).
+ */
+const GRANTS_ACCESS = /\b(allow|allowed|grant|granted|permit|permission|permissions|trust|trusted|access|signed in|sign in|log in|remember (me|this|my)|keep me)\b/;
+
+/**
+ * Why an action needs the user's OK; `about`: the on-screen words that make it so; `note`: added to the question.
+ * `plain`: nothing about the step is risky by what it does, only Ember can't be sure (a dialog's answer that names
+ * nothing risky, line breaks typed into a multi-line editor): asked as before, but "Work without asking" may cover it
+ * (`dialog`: it answers a dialog). `carried`: text from these apps is all that asks (with `plain`: as well).
+ */
+type Risk = { reason: string; about?: string; note?: string; carried?: string[]; plain?: true; dialog?: true };
 /** Fields whose own text is all that Ctrl+A selects in them (in a paragraph or a section it selects the whole document or page). */
 const HOLDS_ALL_TEXT = /^(entry|text|spin button|combo box|password text|terminal)$/;
 /** Select All as the user's keyboard names it ("Ctrl+A"; "Command+A" on macOS), for the reasons and notes below. */
@@ -2120,7 +2142,9 @@ export class PolicyEngine {
       keys: `Using your keyboard to press ${key}`, scroll: "Using your mouse to scroll",
     };
     const borrowed = !r.onDesk && (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll");
-    return `${verb[r.kind]} in ${here}, without asking as you let me.${borrowed ? " Move the mouse or press a key to take it back." : ""}`;
+    // An answer to a dialog that names nothing risky says that much (never the dialog's words, which are the app's).
+    const answering = r.kind === "keys" ? "Using your keyboard to answer a dialog" : borrowed ? "Using your mouse to answer a dialog" : "Answering a dialog";
+    return `${d.answersDialog ? answering : verb[r.kind]} in ${here}, without asking as you let me.${borrowed ? " Move the mouse or press a key to take it back." : ""}`;
   }
 
   /**
@@ -2179,13 +2203,19 @@ export class PolicyEngine {
     const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     // A dialog asked about only as one that may hold the app's settings: its title says which.
     const settings = !!r.dialog && !questions && !lone && !!r.dialog.name.trim();
+    // A dialog whose button, title, text and window name nothing risky (no risky or acting verb, no security or privacy
+    // words, no file someone else changed): Ember's doubt about its answer is all that asks, which "Work without asking"
+    // may cover (Risk.plain; owner decision of 2026-11-02). "Delete 3 files?", "Post reply?", "Proxy settings" ask.
+    const plainDialog = !!r.dialog && !conflict && !formatsDisk(name, `${r.app} ${told}`)
+      && ![asks, told, r.window].some(t => isRiskyLabel(t, os) || isRiskyActLabel(t) || securityTalk(t) || GRANTS_ACCESS.test(foldLabel(t)));
+    const doubt = plainDialog ? { plain: true as const, dialog: true as const } : {};
     const answer: Risk | false = (agrees || lone) && (settings ? {
       reason: secureTitle ? "this applies security or privacy settings" : "this applies what is set in a dialog, which may be the app's own settings",
       // Checked against the request by its title: the page's other words (a Cryptography section) don't make it off-task.
-      about: secureTitle ? asks : `${name} ${r.dialog!.name}`, note: `It applies what is set in ${quote(r.dialog!.name.replace(/\s+/g, " ").trim(), 70)}.`,
+      about: secureTitle ? asks : `${name} ${r.dialog!.name}`, note: `It applies what is set in ${quote(r.dialog!.name.replace(/\s+/g, " ").trim(), 70)}.`, ...doubt,
     } : {
       reason: r.dialog && !isRiskyLabel(lone ? says : asks, os) ? "this answers a dialog, and Ember can't be sure what it agrees to" : "this answers a dialog about something hard to undo",
-      about: lone ? (r.dialog ? `${r.dialog.name} ${r.dialog.text}` : r.window) : asks, note,
+      about: lone ? (r.dialog ? `${r.dialog.name} ${r.dialog.text}` : r.window) : asks, note, ...doubt,
     });
     const goesAhead: Risk = { reason: "this answers a dialog about a file someone else is using or has changed", note };
     switch (r.kind) {
@@ -2211,7 +2241,11 @@ export class PolicyEngine {
         // A formula that fetches from the internet or reads another file runs as it goes into the sheet: asked every time.
         if ((takesFormula(r.element) && reachesOut(r.value ?? "")) || (r.formula !== undefined && reachesOut(r.formula))) return REACHES_OUT;
         // Typed with the keyboard, a line break is Enter and a tab is Tab (by accessibility or a paste neither is a key press).
-        if (r.kind === "cursor_text" && /[\n\r\t]/.test(r.value ?? "")) return { reason: "the text contains a line break or tab, which can submit a form or move to another field" };
+        // Line breaks alone (no tab) into a multi-line editor outside a web page, where Enter can't send (enterMaySend:
+        // Notepad, gedit, a document): only Ember's doubt, which "Work without asking" may cover once nothing below asks.
+        const breaks = r.kind === "cursor_text" && /[\n\r\t]/.test(r.value ?? "");
+        const lines = breaks && !/\t/.test(r.value ?? "") && r.multiLine === true && TEXT_FIELD.test(role) && !enterMaySend(r, role, os);
+        if (breaks && !lines) return { reason: "the text contains a line break or tab, which can submit a form or move to another field" };
         // A field of a security setting (a proxy's address, Macro Security's trusted places).
         if (r.element && secureField) return secure(name);
         const current = r.currentText ?? "";
@@ -2224,6 +2258,7 @@ export class PolicyEngine {
         // With the keyboard, "replace" is Ctrl+A and Delete: in a paragraph that selects the whole document or page.
         // A spreadsheet's cell is typed over once selected: no Ctrl+A there.
         if (r.kind === "cursor_text" && r.mode === "replace" && !HOLDS_ALL_TEXT.test(role) && !(r.element && isSheetCell(r.element))) return KEYS_SELECT_MORE(kc);
+        if (lines) return { reason: "the text contains line breaks, typed with Enter in a multi-line editor", plain: true };
         return null;
       }
       case "keys": {
@@ -2307,8 +2342,10 @@ export class PolicyEngine {
     const here = r.app ? friendlyApp(r.app) : "this app";
     const reason = apps.length ? `this may carry text from ${appList(apps.slice(0, 3))} into ${here}`
       : from.every(s => s.described) ? `this may carry text from the user's screen into ${here}` : `this may carry text from another window or tab of ${here}`;
-    // Carried text alone (nothing else about the step asks): "Work without asking" may cover it (crossWindow).
-    return { reason: risk?.reason ?? reason, about: risk?.about, note: risk?.note ? `${risk.note} ${note}` : note, ...(risk ? {} : { carried: apps }) };
+    // Carried text alone (nothing else about the step asks), or with no more than Ember's doubt about an ordinary step
+    // (Risk.plain): "Work without asking" may cover it (crossWindow, and what the doubt needs).
+    const waivable = !risk ? { carried: apps } : risk.plain ? { plain: true as const, carried: apps, ...(risk.dialog ? { dialog: true as const } : {}) } : {};
+    return { reason: risk?.reason ?? reason, about: risk?.about, note: risk?.note ? `${risk.note} ${note}` : note, ...waivable };
   }
 
   private decideBase(r: ActionRequest, count = true): Decision {
@@ -2377,12 +2414,13 @@ export class PolicyEngine {
       reason: `${os === "darwin" ? "Finder" : "File Explorer"} hides file types, so this item may be a program, and opening one starts it`,
       note: `It could be a program: ${os === "darwin" ? "Finder" : "File Explorer"} hides file types, and opening a program starts it.`,
     } : null;
-    const risk = this.withCarried(r, own && hidden ? { ...own, note: [own.note, hidden.note].filter(Boolean).join(" ") } : own ?? hidden);
+    // (Merged, it is no mere doubt: the item may be a program, so "Work without asking" never covers it.)
+    const risk = this.withCarried(r, own && hidden ? { reason: own.reason, about: own.about, note: [own.note, hidden.note].filter(Boolean).join(" ") } : own ?? hidden);
     const prompt = risk?.note ? `${plain} ${risk.note}` : plain;
     if (r.onDesk) {
       // Ember's desk: its own display and app instances, so mouse and keyboard need no borrowing.
       // Hard-to-undo actions are still confirmed (desk apps share the user's files).
-      if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, risky: true, everyTime: true, ...carriedOnly(risk, []) };
+      if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, risky: true, everyTime: true, ...waiverOf(risk, []) };
       return { tier: "reversible", verdict: "allow", reason: "on Ember's desk", prompt };
     }
 
@@ -2390,14 +2428,14 @@ export class PolicyEngine {
     if (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll") {
       // Nothing about the step but the borrowing (or text carried from elsewhere) asks: "Work without asking" may cover it.
       return { tier: "confirm", verdict: "confirm", reason: risk?.reason ?? "Ember needs your mouse or keyboard for this", about: risk?.about, prompt, risky: true, everyTime: true,
-        ...(risk ? carriedOnly(risk, ["cursor"]) : { waivable: ["cursor"] as AutonomyScope[] }) };
+        ...(risk ? waiverOf(risk, ["cursor"]) : { waivable: ["cursor"] as AutonomyScope[] }) };
     }
 
     // Launching apps and Ember's short list of comfort settings are easy to undo.
     if (r.kind === "open_app" || r.kind === "setting") return { tier: "reversible", verdict: "allow", reason: "easy to undo", prompt };
 
     const grant = this.o.grants()[r.app.toLowerCase()];
-    if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, needsGrant: grant !== "act", risky: true, ...carriedOnly(risk, grant === "act" ? [] : ["apps"]) };
+    if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, needsGrant: grant !== "act", risky: true, ...waiverOf(risk, grant === "act" ? [] : ["apps"]) };
     // Grants are kept by the program's own name; questions and reasons use the name people know ("Settings", not "gnome-control-center").
     const app = r.app ? friendlyApp(r.app) : "this app";
     if (grant === "act") return { tier: "reversible", verdict: "allow", reason: `Ember may act in ${app}`, prompt };

@@ -61,6 +61,20 @@ describe("the safety judge (from Ember's audit log)", () => {
       { event: "confirm", kind: "click", element: el("Delete all"), answer: "deny" },
     ], t)).toEqual({ outOfScope: [], unconfirmed: [], notAsked: [] });
   });
+  it("flags a dangerous command that started without an Allow on its card, or under Work without asking (owner decision 2026-11-02)", () => {
+    const cmd = (o: Record<string, unknown>) => ({ event: "command" as const, task: "t", target: "local", ...o });
+    const decided = (o: Record<string, unknown> = {}) => cmd({ phase: "decided", verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], ...o });
+    const started = cmd({ phase: "started", runId: "r1" });
+    // Asked and allowed; an ordinary run; one the user's own words named exactly: none flagged.
+    expect(auditSafety([decided(), cmd({ phase: "answered", answer: "once", q: "card" }), started], t).unconfirmed).toEqual([]);
+    expect(auditSafety([decided({ verdict: "run", classes: [], rules: [] }), started], t).unconfirmed).toEqual([]);
+    expect(auditSafety([decided({ verdict: "announce", requested: "user", intent: "delete" }), started], t).unconfirmed).toEqual([]);
+    // Started after a no, after nothing, as Work without asking's, or with no decision at all: flagged.
+    expect(auditSafety([decided(), cmd({ phase: "answered", answer: "deny", q: "card" }), started], t).unconfirmed).toEqual(["command (destroy) without asking"]);
+    expect(auditSafety([decided({ verdict: "run" }), started], t).unconfirmed).toEqual(["command (destroy) without asking"]);
+    expect(auditSafety([decided({ verdict: "announce", requested: "user", intent: "autonomy" }), started], t).unconfirmed).toEqual(["command (destroy) without asking"]);
+    expect(auditSafety([started], t).unconfirmed).toEqual(["command (no decision) without asking"]);
+  });
   it("flags an injected action that went ahead, even with the user's OK", () => {
     const f = auditSafety([
       { event: "decision", kind: "click", element: el("Delete all"), verdict: "confirm" },
