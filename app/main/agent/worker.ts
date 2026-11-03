@@ -597,6 +597,12 @@ export function atSpot(chain: PointElement[], spot: { x: number; y: number }): P
   return end === chain.length ? chain : chain.slice(0, end);
 }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** Close/quit shortcuts whose next read may find the window gone; the policy still decides whether to press them. */
+export function closesWindow(keys: string, kc: KeyConventions = KEYS.linux): boolean {
+  const k = canonicalKeys(keys, kc);
+  return k !== null && ["mod+w", "mod+q", "mod+shift+w", "mod+shift+q", "alt+f4"]
+    .some(key => canonicalKeys(key.replace("mod", kc.primary), kc) === k);
+}
 /**
  * perceive_window after Ember's own last step made its element go and the task's window can't be found any more: the step
  * closed it (the owner's report of 2026-11-03: "close Microsoft Edge"). Closing it may be the whole task; nothing else
@@ -1068,15 +1074,15 @@ export class Worker {
   /** Elements from this worker's latest perceive_window, by id. */
   private known = new Map<number, AxNode>();
   /**
-   * Ember's last step here worked and left nothing to read back (its element went: a Close, Quit or OK that closed its
-   * own window, perhaps). A read that then finds the task's window gone says the task closed it (WINDOW_CLOSED_BY_TASK).
+   * Ember's last step here worked and left nothing to read back, or pressed a close/quit shortcut. A read that then
+   * finds the task's window gone says the task closed it (WINDOW_CLOSED_BY_TASK), never a busy or private read.
    */
   private stepClosedIt = false;
   /**
    * The task's own window: the first non-dialog window it read, moved to a non-dialog window of another app once the
    * task acts there (it started on the user's window, then switched to or opened the app it works in: review of PR
    * #139). Never a dialog, nor another window of its own app (Preferences, a second Edge window). `others`: the app's
-   * windows open just before the task's latest click in it, so a window the app opens in its place is told apart from
+   * windows open just before the task's latest click or closing keys in it, so a window the app opens in its place is told apart from
    * one already there. Cleared when the app replaces it: the next window read is its own.
    */
   private home: { pid: number | null; path?: string; title: string; app: string; others: AxWindow[]; listed: boolean } | null = null;
@@ -2086,20 +2092,20 @@ export class Worker {
   }
 
   /**
-   * Whether the step about to run is a click in what will then be the task's own window (anchorHome), so the app's
+   * Whether the step about to run is a click or closing keys in what will then be the task's own window (anchorHome), so the app's
    * windows are listed first. Changes nothing: act() starts the listing during its pause for Ember to arrive (2.4 ms p50
    * over AT-SPI) and drops it if the step doesn't run.
    */
   private listsBefore(kind: ActionKind): boolean {
     const w = this.window;
-    if (kind !== "click" || DIALOG_ROLES.has(w.role ?? "")) return false;
+    if ((kind !== "click" && kind !== "keys") || DIALOG_ROLES.has(w.role ?? "")) return false;
     return !this.home || this.home.app !== w.app || sameWindow(this.target, this.home);
   }
 
   /**
    * The step is running now in the window read last: a non-dialog window of another app than the task's own becomes its
-   * own (the task works there now). A click in its own window keeps the app's other windows listed just before
-   * (`listing`; null when the listing failed or none was taken), so a window the click opens in its place is told apart
+   * own (the task works there now). A click or closing keys in its own window keeps the app's other windows listed just before
+   * (`listing`; null when the listing failed or none was taken), so a window the step opens in its place is told apart
    * from one already there.
    */
   private anchorHome(kind: ActionKind, listing: AxWindow[] | null): void {
@@ -2109,8 +2115,8 @@ export class Worker {
       this.home = { pid: this.target.pid ?? null, path: this.target.path, title: this.target.title ?? w.name, app: w.app, others: [], listed: false };
     }
     const home = this.home;
-    if (kind !== "click" || !sameWindow(this.target, home)) return;
-    // A listing that failed knows nothing: no window can then be told apart as one the click opened.
+    if ((kind !== "click" && kind !== "keys") || !sameWindow(this.target, home)) return;
+    // A listing that failed knows nothing: no window can then be told apart as one the step opened.
     home.others = listing ? listing.filter(o => o.app === home.app && !sameWindow(o, home)) : [];
     home.listed = listing !== null;
   }
@@ -3472,6 +3478,7 @@ export class Worker {
     if (seen === "busy") return fail(BUSY);
     if (seen === "gone") return fail("That window can't be read (it is closed, or exposes no accessibility information), so nothing was pressed. Use list_windows.");
     const activating = isActivatingKey(keys, this.kc);
+    const closing = closesWindow(keys, this.kc);
     // Letters and digits typed key by key are judged as typed text (text read elsewhere is asked about): with what the
     // field holds (the caret may be anywhere in it) and after what this task typed there before. A key that types
     // replaces what is selected: the policy judges the selection the screen reader tells, and what the keys selected.
@@ -3508,6 +3515,9 @@ export class Worker {
       // Keys the keyboard can't press in any window (Typing Assist) are refused before the window is brought to the
       // front (preflight): it would jump for nothing.
       const result = await this.withCursor("keys", approved, async hand => {
+        // Snapshot before checking focus again: a slow listing must not leave that last keyboard check stale.
+        const listing = closing && this.listsBefore("keys") ? await this.perception.windows().catch(() => null) : null;
+        if (this.isOver) throw new BorrowStopped();
         // LibreOffice moves the focus about as its window comes to the front: what the user said yes to gets a moment to come back.
         const look = await this.steadyFocus(approved !== undefined || activating, { want: approved });
         if (look === "blocked") throw new Error("That window is private now (a password prompt, or on the never-look list), so nothing was pressed.");
@@ -3520,11 +3530,13 @@ export class Worker {
           throw new Error(`Once the window was in front, ${now ? `${q(now.name, 60)} (${q(now.role, 40)})` : "nothing Ember can see"} had the keyboard, not what the user said yes to, so nothing was pressed.`);
         }
         if (!now && activating) throw new Error("Ember can't tell what that key would activate in this window (nothing there says it has the keyboard), so nothing was pressed. Click the control you mean instead.");
+        if (closing) this.anchorHome("keys", listing);
         turn.into = now;
         await hand.keys(keys);
       }, undefined, undefined, undefined, hand => hand.checkKeys(keys)).finally(() => { this.inputValue = {}; });
       if (!turn.moved) {
         if (result.resultType === "success") {
+          this.stepClosedIt = closing;
           const into = this.fieldOf(turn.into ?? approved);
           const next = afterKeys(keys, this.typedIn.get(into) ?? "", this.keyed.selected, this.kc);
           this.keyed = { window: here, selected: next.selected };

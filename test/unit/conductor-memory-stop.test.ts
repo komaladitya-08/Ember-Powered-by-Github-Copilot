@@ -115,3 +115,28 @@ describe("a Stop while the request waits for memory", () => {
     expect(sent[0]).toMatch(/what's the weather$/);
   });
 });
+
+describe("memory provenance for unchecked speech", () => {
+  it("uses each queued turn's ownership, even when the words repeat, preserving saved routine steps", () => {
+    const store = new MemoryService({ dir: tmp(), log: quiet });
+    const { c } = conductor(store);
+    const state = c as unknown as {
+      unstarted: { text: string; own: boolean }[];
+      turnBegan(text: string): void;
+      routineWords: string[];
+      memoryTools: { store: ConductorMemory; said(): string };
+    };
+    const words = "I prefer short answers";
+    state.unstarted = [{ text: words, own: false }, { text: words, own: true }, { text: words, own: false }];
+    for (const own of [false, true, false]) {
+      state.turnBegan(words);
+      const memory = state.memoryTools;
+      expect(memory.said()).toBe(own ? words : "");
+      memory.store.remember("Prefers short answers", [], memory.said());
+      expect(store.list()[0].source).toBe(own ? "user" : "conversation");
+      store.forgetAll();
+    }
+    state.routineWords = ["I work on Ember"];
+    expect(state.memoryTools.said()).toBe("I work on Ember");
+  });
+});

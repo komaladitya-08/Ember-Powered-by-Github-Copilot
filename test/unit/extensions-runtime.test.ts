@@ -750,6 +750,10 @@ describe("ExtensionsService", () => {
     expect((await s.list())[0].tools.find(t => t.name === "lookup")).toMatchObject({ changed: true });
     expect(s.generation).not.toBe(gen);
     expect(audit).toContainEqual(expect.objectContaining({ phase: "changed", tool: "fake-lookup" }));
+    // A changed tool revokes pending checks, not later calls to this server's other unchanged, agreed tools.
+    answers = ["once"];
+    expect(await call(ext, "fake-post_message")).toEqual({ permissionDecision: "allow" });
+    expect(asked).toHaveLength(1);
     // Even if the server changes it back, it stays off until the user agrees again.
     live = asShown([LOOKUP, POST]);
     expect(await call(ext, "fake-lookup")).toMatchObject({ permissionDecision: "deny" });
@@ -785,6 +789,91 @@ describe("ExtensionsService", () => {
     shown(ext);
     expect(await call(ext, "fake-post_message")).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: "The user turned this extension off." });
     expect(audit).toContainEqual(expect.objectContaining({ phase: "answer", answer: "stale" }));
+  });
+
+  const revocations: { name: string; revoke(s: ExtensionsService, id: string): unknown }[] = [
+    { name: "disabled", revoke: (s, id) => s.setEnabled(id, false) },
+    { name: "disabled and enabled again", revoke: async (s, id) => { await s.setEnabled(id, false); await s.setEnabled(id, true); } },
+    { name: "removed", revoke: (s, id) => s.uninstall(id) },
+    { name: "replaced with a newly agreed install", revoke: async (s, id) => {
+      await s.uninstall(id);
+      expect(await s.install("local-market", "fake")).toMatchObject({ ok: true });
+      const [item] = await s.list();
+      await s.reagree(item.id, item.reviewToken!);
+    } },
+    { name: "replaced by a new session", revoke: s => shown(s.forSession()!) },
+    { name: "conversation closed", revoke: s => s.conversationEnded() },
+    { name: "stopped", revoke: s => s.stopPart().stop() },
+    { name: "switched off", revoke: () => { settings = { ...settings, extensions: { ...settings.extensions, on: false } }; } },
+    { name: "blocked by the administrator", revoke: () => { admin = AdminPolicySchema.parse({ features: { extensions: false } }); } },
+    { name: "consent revoked", revoke: () => { settings = { ...settings, extensions: { ...settings.extensions, consent: { version: 0, at: null } } }; } },
+    { name: "changed during a refresh", revoke: async s => { served = [{ ...LOOKUP, description: "New lookup." }, { ...POST, description: "New post." }]; await s.refresh(); } },
+  ];
+
+  for (const lookup of ["initial", "after Allow"] as const) {
+    it.each(revocations)(`denies when $name during the ${lookup} live tool lookup`, async ({ revoke }) => {
+      const s = await installed();
+      const [item] = await s.list();
+      const ext = s.forSession()!;
+      shown(ext);
+      const unchanged = live;
+      let resolve!: (tools: typeof live) => void;
+      const deferred = new Promise<typeof live>(r => { resolve = r; });
+      let entered!: () => void;
+      const waiting = new Promise<void>(r => { entered = r; });
+      let reads = 0;
+      ext.bind!(async () => {
+        if (++reads === (lookup === "initial" ? 1 : 2)) { entered(); return deferred; }
+        return unchanged;
+      });
+      answers = ["once"];
+      const dispatch = vi.fn();
+      const pending = Promise.resolve(call(ext, lookup === "initial" ? "fake-lookup" : "fake-post_message")).then(result => {
+        if (result.permissionDecision === "allow") dispatch();
+        return result;
+      });
+      await waiting;
+      await revoke(s, item.id);
+      resolve(unchanged);
+      expect(await pending).toMatchObject({ permissionDecision: "deny" });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(asked).toHaveLength(lookup === "initial" ? 0 : 1);
+      if (lookup === "after Allow") expect(audit).toContainEqual(expect.objectContaining({ phase: "answer", answer: "stale" }));
+    });
+  }
+
+  for (const phase of ["decision", "answer"] as const) {
+    it(`rechecks revocation immediately after the ${phase} audit, before returning Allow`, async () => {
+      const s: ExtensionsService = await installed({ audit: () => ({ write: (event: Record<string, unknown>) => {
+        audit.push(event);
+        if (event.phase === phase) s.conversationEnded();
+      } }) as never });
+      const ext = s.forSession()!;
+      shown(ext);
+      answers = ["once"];
+      expect(await call(ext, phase === "decision" ? "fake-lookup" : "fake-post_message")).toMatchObject({ permissionDecision: "deny" });
+      expect(asked).toHaveLength(phase === "decision" ? 0 : 1);
+    });
+  }
+
+  it("does not mark a replacement installation changed when an old live lookup finishes", async () => {
+    const s = await installed();
+    const [item] = await s.list();
+    const ext = s.forSession()!;
+    shown(ext);
+    let resolve!: (tools: typeof live) => void;
+    ext.bind!(() => new Promise<typeof live>(r => { resolve = r; }));
+    const pending = call(ext, "fake-lookup");
+    await s.uninstall(item.id);
+    expect(await s.install("local-market", "fake")).toMatchObject({ ok: true });
+    const [replacement] = await s.list();
+    await s.reagree(replacement.id, replacement.reviewToken!);
+    const fresh = s.forSession()!;
+    shown(fresh);
+    resolve([{ ...live[0], description: "Changed old metadata." }]);
+    expect(await pending).toMatchObject({ permissionDecision: "deny" });
+    expect((await s.list())[0].tools.every(t => !t.changed)).toBe(true);
+    expect(await call(fresh, "fake-lookup")).toEqual({ permissionDecision: "allow" });
   });
 
   it("says a failed call's text is untrusted and taints the conversation, auditing sizes only (audit B2)", async () => {

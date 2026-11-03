@@ -147,6 +147,8 @@ export class ExtensionsService implements ExtensionsApi {
 
   /** The conversation was forgotten (sign-out, another account, a new conversation): its taint goes with it. */
   conversationEnded(): void {
+    this.stopPart().stop();
+    this.session = null;
     this.tainted = false;
   }
 
@@ -640,11 +642,13 @@ export class ExtensionsService implements ExtensionsApi {
    * so this is read from the live list at every call; a tool that differs is marked changed for good (off until the
    * user agrees again). No live list (not bound, or it can't be read): not as pinned (fail closed).
    */
-  private async shownNow(gate: SessionGate, name: string): Promise<boolean> {
+  private async shownNow(gate: SessionGate, name: string, generation: number): Promise<boolean> {
     const e = gate.tools.get(name);
     if (!e || !gate.live || gate.shown.get(name) !== true) return false;
     let now: ShownTool | undefined;
     try { now = (await gate.live()).find(t => t.name === name); } catch (err) { this.o.log.warn("extensions.live_tools_failed", { err }); return false; }
+    // An old lookup must not change the pins of a replacement item or a newer conversation.
+    if (gate !== this.session || gate.epoch !== this.epoch || generation !== this.generation || !this.items.includes(e.item)) return false;
     if (now && shownHash(e.tool.name, now.description ?? "", now.input_schema ?? null) === shownHash(e.tool.name, e.tool.description, e.tool.inputSchema)) return true;
     gate.shown.set(name, false);
     this.o.log.warn("extensions.tool_changed_live", { ext: e.item.id, tool: e.tool.name });
@@ -658,24 +662,30 @@ export class ExtensionsService implements ExtensionsApi {
     return false;
   }
 
-  /** The gate's inputs for `name` as things are now (the store may have changed while a question was up). */
-  private async gateInput(gate: SessionGate, name: string) {
+  /** Read policy synchronously, after metadata awaits and again immediately before returning Allow. */
+  private gateInput(gate: SessionGate, name: string, shownAsPinned: boolean, generation: number) {
     const e = gate.tools.get(name);
-    const current = e ? this.items.find(i => i.id === e.item.id) : undefined;
-    const tool = current?.servers.flatMap(s => s.tools).find(t => t.name === e?.tool.name && t.hash === e?.tool.hash);
-    return classify({
+    const current = e && this.items.includes(e.item) ? e.item : undefined;
+    const server = current?.servers.find(s => s === e?.server && s.status === "ready");
+    const tool = server?.tools.find(t => t.name === e?.tool.name && t.hash === e?.tool.hash);
+    const decision = classify({
       allowed: this.active(), stopped: gate.epoch !== this.epoch,
       ...(current ? { item: { enabled: current.enabled, consented: current.consentedAt !== null } } : {}),
       ...(tool ? { tool } : {}),
-      shownAsPinned: await this.shownNow(gate, name),
+      shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
       tainted: this.tainted, refused: gate.refused.has(name), remote: e?.server.spec?.type !== "stdio",
       hintsStale: !!e && gate.listChanged.has(e.server.key),
     });
+    if (decision.verdict === "deny") return decision;
+    if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
+    return decision;
   }
 
   private async decide(gate: SessionGate, input: PreToolUseHookInput): Promise<PreToolUseHookOutput> {
     const e = gate.tools.get(input.toolName);
-    const { verdict, reason } = await this.gateInput(gate, input.toolName);
+    const generation = this.generation;
+    const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
+    const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation);
     const argChars = (() => { try { return JSON.stringify(input.toolArgs ?? {}).length; } catch { return 0; } })();
     const base = { ext: e?.item.id ?? null, tool: input.toolName, argChars };
     const deny = (r: string): PreToolUseHookOutput => ({ permissionDecision: "deny", permissionDecisionReason: r });
@@ -687,19 +697,25 @@ export class ExtensionsService implements ExtensionsApi {
       return deny("Ember couldn't record this step, so it didn't take it.");
     }
     if (verdict === "deny") return deny(reason);
-    if (verdict === "allow") return { permissionDecision: "allow" };
+    const before = this.gateInput(gate, input.toolName, shownAsPinned, generation);
+    if (before.verdict === "deny") return deny(before.reason);
+    if (verdict === "allow" && before.verdict === "allow") return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
     const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs);
     const answer = await confirmer.ask(question, this.stopAsks.signal).catch(() => null);
     // The question may have been up a while: the item, its pin and the live tool are checked again before a yes counts.
-    const after = answer === "once" ? await this.gateInput(gate, input.toolName) : null;
+    const shownAfter = answer === "once" && await this.shownNow(gate, input.toolName, generation);
+    const after = answer === "once" ? this.gateInput(gate, input.toolName, shownAfter, generation) : null;
     const yes = answer === "once" && after !== null && after.verdict !== "deny";
     // A spoken answer says so, and whether Voice Match verified it (confirm.ts answerVoice).
     const how = confirmer.howAnswered?.(question);
     const channel = how?.via === "voice" ? { via: "voice", verified: how.verified === true, ...(how.trust ? { trust: how.trust } : {}) } : {};
     try { this.audit({ phase: "answer", ...base, answer: yes ? "allow" : answer === null ? "none" : answer === "once" ? "stale" : "deny", ...channel }); } catch { return deny("Ember couldn't record this step, so it didn't take it."); }
-    if (yes) return { permissionDecision: "allow" };
+    if (yes) {
+      const current = this.gateInput(gate, input.toolName, shownAfter, generation);
+      return current.verdict === "deny" ? deny(current.reason) : { permissionDecision: "allow" };
+    }
     if (answer === "once" && after) return deny(after.reason);
     gate.refused.add(input.toolName);
     return deny(REFUSED);
