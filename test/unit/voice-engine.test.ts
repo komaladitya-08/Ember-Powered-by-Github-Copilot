@@ -1495,6 +1495,85 @@ describe("a request transcribed ahead of the VAD, at its pause (SPECULATE_FRAMES
     expect(said.text).toBe(whole.text);
   });
 
+  /**
+   * A backend whose transcripts say what was in the audio (frames of loud and of soft speech, whatever the quiet
+   * around them), with a VAD that takes the room's `noise` off before its own speech test, as Silero's rises with it.
+   */
+  function said(noise: number) {
+    const b = talking({ wake: 9, hangover: 19 });
+    let seg: Float32Array[] = [], fed = 0, spoke = 0;
+    const vad = b.vad.bind(b), reset = b.resetVad.bind(b), flush = b.flushVad.bind(b);
+    const ends = new WeakMap<Float32Array, number>();
+    let calls = 0;
+    b.vad = f => {
+      const g = f.slice();
+      g[5] -= noise;
+      fed += 512;
+      if (g[5] > 0.005) spoke = fed;
+      const out = vad(g);
+      for (const x of out) ends.set(x, spoke);
+      seg = out.length ? [] : b.speaking() ? [...seg, g] : [];
+      return out;
+    };
+    b.fed = () => fed;
+    b.speechEnd = x => ends.get(x) ?? null;
+    b.resetVad = () => { seg = []; fed = 0; reset(); };
+    b.flushVad = () => { seg = []; return flush(); };
+    b.speechSoFar = () => {
+      if (!seg.length) return null;
+      const o = new Float32Array(seg.length * 512);
+      seg.forEach((f, i) => o.set(f, i * 512));
+      return o;
+    };
+    b.transcribe = x => {
+      calls++;
+      let loudN = 0, softN = 0;
+      for (let i = 0; i + 512 <= x.length; i += 512) { if (x[i + 5] > 0.05) loudN++; else if (x[i + 5] > 0.005) softN++; }
+      return `Hey Ember, loud ${loudN} soft ${softN}.`;
+    };
+    return { b, calls: () => calls };
+  }
+  function both(noise: number, body: Float32Array[]) {
+    const run = (on: boolean) => {
+      const { b, calls } = said(noise);
+      const events: (VoiceEvent & { at: number })[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push({ ...ev, at: c.t }), { now: () => c.t, verifyWake: false, transcribeAhead: on });
+      for (const f of [...n(60, () => level(noise)), level(noise || 0.003, 9), ...body, ...n(90, () => level(noise))]) { e.feed(f); c.t += 32; }
+      return { sent: events.flatMap(x => (x.type === "utterance" ? [[x.text, x.at]] : [])), calls: calls() };
+    };
+    return { on: run(true), off: run(false) };
+  }
+
+  it("hears a soft frame the VAD takes for speech right after the transcript made ahead (the last 's' of a word: re-review of PR #137)", () => {
+    // 47 loud frames, the 11 quiet ones the transcript is made at, then one soft frame the VAD counts as speech.
+    const { on, off } = both(0.015, [...n(47, loud), ...n(11, () => level(0.015)), level(0.032)]);
+    expect(off.sent).toEqual([["Loud 47 soft 1.", expect.any(Number)]]);
+    expect(on.sent).toEqual(off.sent);
+  });
+
+  it("sends what the VAD's own segment holds, ahead or not, over rooms, pauses and soft words after them", () => {
+    let early = 0, cases = 0;
+    for (const noise of [0, 0.005, 0.015, 0.03]) {
+      const q = () => level(noise), soft = () => level(noise ? Math.min(noise * 2.4, 0.09) : 0.0062);
+      const bodies = [
+        [...n(47, loud), ...n(14, q)],
+        [...n(47, loud), ...n(14, q), ...n(25, soft)],
+        [...n(30, loud), ...n(14, q), ...n(30, loud), ...n(14, q), ...n(10, soft)],
+        ...[9, 11, 12, 16].flatMap(k => [1, 2, 4].map(len => [...n(47, loud), ...n(k, q), ...n(len, soft)])),
+        [...n(47, loud), ...n(11, q), ...n(5, loud)],
+      ];
+      for (const body of bodies) {
+        const { on, off } = both(noise, body);
+        expect(on.sent).toEqual(off.sent);
+        cases++;
+        if (on.calls === off.calls) early++;
+      }
+    }
+    // (The transcript made ahead is still what's sent where nothing came after it.)
+    expect(early).toBeGreaterThanOrEqual(cases / 8);
+  });
+
   it("transcribes the VAD's segment itself when turned off, or with a backend that can't give the speech so far", () => {
     const off = ahead();
     const a = hear(off.b, [...n(47, loud), ...n(60, quiet)], { transcribeAhead: false });

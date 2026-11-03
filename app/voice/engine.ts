@@ -1051,7 +1051,7 @@ export class VoiceEngine {
     for (const seg of segments) {
       const clip = this.trim(seg, false);
       const end = ahead ? this.backend.speechEnd?.(seg) ?? null : null;
-      this.early = ahead !== null && clip && end !== null && end <= ahead.at + 512 ? { audio: clip.audio, text: ahead.text } : null;
+      this.early = ahead !== null && clip && end !== null && end <= ahead.at ? { audio: clip.audio, text: ahead.text } : null;
       try { this.handleSegment(clip); } finally { this.early = null; }
     }
     if (segments.length && !speaking) this.endSegment();
