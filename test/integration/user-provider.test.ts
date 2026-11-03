@@ -59,28 +59,34 @@ describe("the user's own model provider on the real Copilot runtime", () => {
     expect(await keys.save(KEY, endpointHost(mock.baseUrl)!)).toEqual({ ok: true });
     const key = await keys.load();
     const states: Partial<EmberState>[] = [];
+    // What happened, said when an expectation fails (a flake must say why).
+    const phases: string[] = [];
+    let turnsEnded = 0;
     const host = new AgentHost({
       userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
       log: createLogger({ dir: path.join(userData, "logs") }),
-      setState: p => states.push(p), onStatus: () => undefined,
+      setState: p => states.push(p), onStatus: st => phases.push(`${st.phase}${st.reason ? `/${st.reason}` : ""}: ${st.detail}`),
+      onTurnEnd: () => { turnsEnded++; },
       provider: () => activeProvider({ fixed: null, settings: settings.get(), admin: NONE, key }),
     });
     try {
-      expect(await host.start(null)).toBe("ready");
+      expect(await host.start(null), phases.join("\n")).toBe("ready");
       expect(host.getStatus()).toMatchObject({ service: { kind: "user", host: endpointHost(mock.baseUrl) }, conductorModel: "mock-model" });
       const before = mock.requests.length;
       await host.ask("hello from my own provider");
       expect(await until(() => states.some(s => s.bubble?.thought?.includes("You said:") === true && s.bubble.streaming === false))).toBe(true);
       const sent = mock.requests.slice(before);
       expect(sent.length).toBeGreaterThan(0);
-      expect(sent.every(r => r.authorization === `Bearer ${KEY}` && r.model === "mock-model")).toBe(true);
+      expect(sent.map(r => [r.authorization === `Bearer ${KEY}`, r.model])).toEqual(sent.map(() => [true, "mock-model"]));
       // Nothing in the settings file or the log holds the key.
       expect(fs.readFileSync(path.join(userData, "settings.json"), "utf8")).not.toContain(KEY);
       const logs = fs.readdirSync(path.join(userData, "logs")).map(f => fs.readFileSync(path.join(userData, "logs", f), "utf8")).join("\n");
       expect(logs).not.toContain(KEY);
-      // Turned off: back to Copilot at once, which has no sign-in here.
+      // Turned off once the turn has ended (its answer shows a moment before the runtime says the turn is over, and the
+      // switch never cuts a turn off): back to Copilot at once, which has no sign-in here.
+      expect(await until(() => turnsEnded > 0), `turns ended: ${turnsEnded}`).toBe(true);
       settings.update({ provider: { ...settings.get().provider, on: false } });
-      expect(await host.providerChanged()).toBe("signed-out");
+      expect(await host.providerChanged(), phases.join("\n")).toBe("signed-out");
     } finally {
       await host.stop();
     }
