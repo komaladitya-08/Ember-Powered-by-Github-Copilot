@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { constants, type Stats } from "node:fs";
+import fsSync, { constants, type Stats } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
@@ -17,6 +17,29 @@ export const projectRequest = z.object({
   mode: z.enum(["review", "plan", "patch"]),
   question: z.string().trim().min(1).max(4000),
 }).strict();
+
+export const projectCommandText = z.string().trim().min(1).max(2000).refine(s => !/[\p{Cc}\p{Cf}]/u.test(s) && !memoryRefusal(s));
+
+/** A native folder selection bound to its local directory identity until the run starts. */
+export function projectCommandFolder(folder: string, privateDir: string) {
+  const resolved = fsSync.realpathSync(folder);
+  const relative = path.relative(fsSync.realpathSync(privateDir), resolved);
+  if (/^[\\/]{2}|[\p{Cc}\p{Cf}]/u.test(resolved) || !relative || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative))) {
+    throw new ProjectInputError("Choose a local folder outside Ember’s data folder.");
+  }
+  const selected = fsSync.lstatSync(resolved);
+  if (!selected.isDirectory()) throw new ProjectInputError("Choose a project folder.");
+  return {
+    path: resolved,
+    current: () => {
+      try {
+        const live = fsSync.lstatSync(resolved);
+        return live.isDirectory() && live.dev === selected.dev && live.ino === selected.ino &&
+          path.relative(resolved, fsSync.realpathSync(resolved)) === "";
+      } catch { return false; }
+    },
+  };
+}
 
 export const PROJECT_SYSTEM = [
   "You are Ember's project assistant. Work only from the user request and the files explicitly provided.",

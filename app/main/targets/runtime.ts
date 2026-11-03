@@ -411,6 +411,8 @@ export interface TargetsDepsExtra {
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
 export interface TargetsRuntimeExtra {
+  /** The existing command flow for Home project work, always on this computer. */
+  localProjectCommands(): CommandService | null;
   /** Under a question shown in a window of Ember's own, how to reach that window from the keyboard (target-copy's panelHint). */
   panelHint(panel: NonNullable<Question["panel"]>): string;
   /**
@@ -1830,6 +1832,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   return {
     agent,
     wsl,
+    localProjectCommands: () => liveCommands(localService, LOCAL_TARGET),
     stopAll: async () => {
       // Every part told at once (step 1 of each ladder is synchronous), then waited for together; nothing throws.
       const waits: Promise<unknown>[] = [];

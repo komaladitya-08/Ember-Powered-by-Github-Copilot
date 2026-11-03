@@ -237,6 +237,21 @@
           <button type="button" id="project-apply" class="btn">Apply patch…</button>
         </details>
       </form>
+      <details class="group" id="project-commands">
+        <summary>Run a project command</summary>
+        <form id="project-command-form">
+          <p class="hint" id="project-command-hint">Choose the starting folder and enter a command for this computer. Ember shows the exact command and folder for approval before running it.</p>
+          <button type="button" class="btn quiet" id="project-folder-pick" disabled>Choose command folder…</button>
+          <p id="project-folder" class="hint">No command folder selected.</p>
+          <label for="project-command-text">Command</label>
+          <input type="text" id="project-command-text" maxlength="2000" required spellcheck="false" autocomplete="off" aria-describedby="project-command-hint project-folder">
+          <div class="actions">
+            <button type="submit" class="btn" id="project-command-send" disabled>Review command…</button>
+            <button type="button" class="btn quiet" id="project-command-stop" hidden>Stop command</button>
+          </div>
+          <p class="hint" id="project-command-status" role="status"></p>
+        </form>
+      </details>
       <h3 class="sub" id="byok-h">Model provider</h3>
       <div class="group byok" id="byok" role="group" aria-labelledby="byok-h">
         <label class="switch-row"><input type="checkbox" id="byok-on" role="switch" aria-describedby="byok-hint"><span>Use my own model provider</span></label>

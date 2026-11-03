@@ -43,6 +43,11 @@ import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { copilotOneShot } from "./one-shot";
 import { PROJECT_SYSTEM } from "./project";
+import { runCommandTool } from "../commands/flow";
+import { DEFAULT_TERM_SIZE } from "../commands/window";
+import { afterTheStep } from "../policy/audit";
+import type { CommandService } from "../commands/types";
+import { randomUUID } from "node:crypto";
 import type { OneShot } from "../memory/learn";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
@@ -2314,6 +2319,30 @@ export class AgentHost {
       throw err;
     }
     return true;
+  }
+
+  /** Project commands use the same classifier, review card, runner and audit as desktop tasks. */
+  async runProjectCommand(command: string, folder: string, service: CommandService, signal: AbortSignal, projectFolderCurrent: () => boolean): Promise<string> {
+    const base = this.o.taskBase;
+    if (!base || service.binding.kind !== "local") return "Commands are unavailable on this computer.";
+    const isOver = () => signal.aborted || this.status.phase !== "ready" || this.o.screenLocked?.() === true;
+    const result = await runCommandTool({ target: service.binding.id, command, why: "You entered this command in Project work." }, {
+      task: {
+        id: `project-${randomUUID()}`, title: "Project command", commandWords: () => command,
+        agreed: () => [], tainted: () => false, taint: () => undefined, readFrom: () => [],
+      },
+      service, confirmer: base.confirmer, presenter: this.presenter, signal, isOver, projectFolderCurrent,
+      log: this.o.log.child("project-command"), size: () => DEFAULT_TERM_SIZE,
+      emberPids: () => this.o.emberPids?.() ?? [],
+      state: { cwd: folder, downloaded: new Set(), running: false },
+      audit: entry => {
+        try { base.audit.write(entry); } catch (err) { if (!afterTheStep(entry)) throw err; }
+      },
+    });
+    if (isOver()) return "Project command stopped.";
+    if (result.resultType === "success") return "Command finished. See the command window for output.";
+    const first = result.textResultForLlm.split("\n", 1)[0];
+    return first.replace(/\s+(?:Don't|Finish the task).*$/, "").slice(0, 320);
   }
 
   async runProject(prompt: string, run: AbortController): Promise<string | null> {

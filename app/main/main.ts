@@ -61,7 +61,7 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands, type TranscriptEntry } from "./agent/host";
-import { projectNames, projectPrompt, projectRequest, ProjectInputError, type ProjectSource } from "./agent/project";
+import { projectCommandFolder, projectCommandText, projectNames, projectPrompt, projectRequest, ProjectInputError, type ProjectSource } from "./agent/project";
 import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
 import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
@@ -419,7 +419,8 @@ function start(): void {
   let projectPicking = false;
   let projectJob: AbortController | null = null;
   let projectPatch: ProjectPatch | null = null;
-  const clearProject = () => { projectFiles = []; projectPatch = null; projectJob?.abort(); };
+  let projectFolder: ReturnType<typeof projectCommandFolder> | null = null;
+  const clearProject = () => { projectFiles = []; projectPatch = null; projectFolder = null; projectJob?.abort(); };
   /** First run's "Hey Ember" try is showing: the microphone's level goes to the settings window too (IPC.watchLevel). */
   let homeWantsLevel = false;
   /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
@@ -1997,6 +1998,41 @@ function start(): void {
       return { done: true, message: `Patch applied to ${patch.source.name}.` };
     } catch (err) {
       return { done: false, message: run.signal.aborted ? "Patch application cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't apply the patch. Draft it again after checking the file." };
+    } finally {
+      if (projectJob === run) projectJob = null;
+    }
+  }));
+  ipcMain.handle(IPC.projectChooseFolder, guard(async () => {
+    const owner = home;
+    if (!owner || !projectAvailable() || projectPicking || projectJob) return { folder: null, message: "Project work is unavailable right now." };
+    const previous = projectFiles;
+    projectPicking = true;
+    try {
+      const selected = await dialog.showOpenDialog(owner, { title: "Choose command folder", properties: ["openDirectory"] });
+      if (home !== owner || projectFiles !== previous || !projectAvailable()) return { folder: null, message: "Folder selection cancelled." };
+      if (!selected.canceled && selected.filePaths.length === 1) projectFolder = projectCommandFolder(selected.filePaths[0], userData);
+      return { folder: projectFolder?.path ?? null };
+    } catch (err) {
+      return { folder: projectFolder?.path ?? null, message: err instanceof ProjectInputError ? err.message : "Couldn't open that folder." };
+    } finally {
+      projectPicking = false;
+    }
+  }));
+  ipcMain.handle(IPC.projectRunCommand, guard(async (raw: unknown): Promise<string> => {
+    const parsed = projectCommandText.safeParse(raw);
+    if (!parsed.success) return "Enter one line of up to 2,000 characters without passwords or keys.";
+    const host = agent;
+    const folder = projectFolder;
+    if (!host || !projectAvailable() || projectPicking || projectJob) return "Project work is unavailable right now.";
+    if (!folder?.current()) return "Choose a current command folder.";
+    const service = targets?.localProjectCommands();
+    if (!service) return "Commands are off on this computer. Check the Commands settings.";
+    const run = projectJob = new AbortController();
+    try {
+      return await host.runProjectCommand(parsed.data, folder.path, service, run.signal,
+        () => projectFolder === folder && projectAvailable() === true && folder.current());
+    } catch {
+      return run.signal.aborted ? "Project command stopped." : "Couldn't finish the command. Check the command window.";
     } finally {
       if (projectJob === run) projectJob = null;
     }
