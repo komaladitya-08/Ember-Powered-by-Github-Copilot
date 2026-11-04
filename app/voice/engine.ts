@@ -284,7 +284,7 @@ const GREETED_STOP = new RegExp(String.raw`\b${GREETING}${NAME}["“”]?\s*(ple
  * WAKE, as Ember's own words reach the microphone there: not "Amber", "Emma" or "A. M. B." ("Hi Emma, the meeting
  * moved."), not "they", not "Ember's". Ember never says what this matches (spoken.ts withoutOwnPhrases takes it out).
  */
-const CUT_IN_WAKE = /\b(?:hey|hi|ok|okay|hay|pay|pey)[\s,.!]*(?:ember|emmer)\b(?!['’]?s\b)/i;
+const CUT_IN_WAKE = /\b(?:hey|hi|ok|okay|k|hay|pay|pey)[\s,.!]*(?:ember|emmer)\b(?!['’]?s\b)/i;
 
 /** Did the microphone hear "Hey Ember" as a cut-in without the speakers' stream must (CUT_IN_WAKE)? */
 export function heardCutInWake(transcript: string): boolean {
@@ -1629,7 +1629,9 @@ export class VoiceEngine {
     const withWake = this.mode.reason !== "manual" && holdsWake(heard, text, this.mode.first || conversation);
     const wakePhrase = this.mode.first && this.mode.reason === "wake";
     this.mode.first = false;
-    if (clip.own && saysSomething(text) && !saysSomething(stripWake(this.transcribe(clip.own), true).replace(LONE_GREETING, ""))) {
+    // (One word is the wake phrase misheard over the room's talk: Moonshine base wrote it as "10.".)
+    const ownWords = clip.own && saysSomething(text) ? stripWake(this.transcribe(clip.own), true).replace(LONE_GREETING, "") : null;
+    if (ownWords !== null && (!saysSomething(ownWords) || wordsOf(ownWords).length < 2)) {
       // "Hey Ember." and then only others' talk (a TV, colleagues: under the wake phrase's loudness): the user hasn't
       // said their request yet.
       text = "";

@@ -318,7 +318,7 @@ Say “Ember, work without asking” (Voice Match must recognise you, and the ca
 Ember opens the switch or its card here) or “Ember, ask me first again” (anyone) to switch it by voice.
 
 **Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “go ahead”) answers it, and “Ember, not now”
-(or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you
+(or “no”, “don't”) declines it. A yes counts only when **Answer questions with my voice (Voice Match)** is on and recognises you
 in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is enough). A shorter
 yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
 10 minutes of asking, unless that short yes is too quiet or clipped to tell (it is then too short, never trusted) or sounds clearly unlike
@@ -453,9 +453,10 @@ the standard speech models (about 138.5 MB of downloads, once; agreeing to the m
 Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name.
 Ember answers out loud in the default Kitten voice when its native runtime and model are ready, or a local system
 voice otherwise, sentence by sentence as the answer
-arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Match)** under it and say the four
-phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
-voice** deletes your voiceprint. With **Keep learning my voice** (on by default once Voice Match knows you), the
+arrives. To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
+the four phrases it shows. It decides only what a voice may approve: every voice is heard, and a request it doesn't
+match simply can't approve anything (owner decision of 2026-11-05: on a laptop's microphone the owner's own requests
+scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint. With **Keep learning my voice** (on by default once Voice Match knows you), the
 voiceprint follows your voice slowly, from requests it is sure are yours: never from Ember's own voice, a request with
 two voices in it, an answer to a question, or for two minutes after it turned another voice away or you stopped
 Ember; at most one request a minute (with 2 s of voice or more), a small step at a time, and never far from what you
@@ -472,8 +473,16 @@ call, tell, invite…), keeps every name as heard, and a person's name from Memo
 something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
 Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
 as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
-you just asked. Both are in “Before Ember starts” (`CONSENT_VERSION` 2). After Ember answers a “Hey Ember” request you
-have 8 seconds (12 when it asked you something) for
+you just asked. Both are in “Before Ember starts” (`CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
+(**Keep listening after I call Ember**, on by default): what you say next needs no name, also while Ember speaks and works,
+until “That's all” or 30 seconds after everything has gone quiet (`CONVERSATION_IDLE_MS`, app/voice/engine.ts). Speech over
+Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo canceller left almost nothing of the user's
+words), and stops it when what the recognizer made of it isn't Ember's own words (`spokenByEmber`) or a “yeah”
+(`BACKCHANNEL`). What is said then replaces the reply on its way (`AgentHost.ask` `replaces`); tasks go on. It never
+approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
+level while a conversation is open (app/renderer/mic/output-watch.ts: Chromium gives system audio only with a screen's
+video, which is stopped at once), Linux uses the speakers' stream, macOS can't tell yet. With the switch off, after Ember
+answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows, macOS and Linux without
 `parec`, where Ember can't hear its own speakers, “Ember” alone doesn't (Ember's own words have it), and what you said before it went quiet isn't
@@ -711,7 +720,7 @@ Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
 installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS`, `EMBER_BENCH_LOG`,
-`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER`, `EMBER_TTS_OUTPUT` and `EMBER_SHERPA_CAPI` switch):
+`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER`, `EMBER_TTS_OUTPUT`, `EMBER_NO_OUTPUT_WATCH` (a test that speaks through the speakers as the user would count as other sound) and `EMBER_SHERPA_CAPI` switch):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &

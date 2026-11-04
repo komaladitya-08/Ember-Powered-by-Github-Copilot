@@ -218,13 +218,13 @@ reported in every PR that touches it.
 2. **Semantic end of turn.** A small text classifier (evaluate Namo's per-language model; licence and size decide)
    reads the partial transcript and ends the turn early when you're clearly done. It waits longer when you pause
    mid-thought. Silero VAD stays the hard limit.
-3. **Barge-in without the wake word.** While Ember speaks, your voice (VAD, after Chromium's echo cancellation, with
+3. **Barge-in without the wake word.** **Built 2026-11-05** (conversations; §10 of PLAN.md has the measurements). While Ember speaks, your voice (VAD, after Chromium's echo cancellation, with
    speaker rejection where `parec` exists) stops it within about 200 ms, and what you say becomes the next request.
    Where Ember can't tell its own voice from yours (`rejectsSpeakers` false), keep needing "Hey Ember": since
    2026-11-03 "Hey Ember" cuts in there too (Ember never says the phrase there, the bare name doesn't cut in, and
    nothing said over Ember's voice is sent; PLAN.md §10 "Voice on Windows"). Spoken approvals retain the existing
    question-bound Voice Match and task-voice rules in PLAN.md §2 and CLAUDE.md; interruption never grants approval.
-4. **Longer conversation.** The follow-up window grows from 8 s to "until a natural pause of about 20 s", with the
+4. **Longer conversation.** **Built 2026-11-05**: a conversation stays open until “That's all” or 30 s of quiet. The plan was: the follow-up window grows from 8 s to "until a natural pause of about 20 s", with the
    mic dot showing it. You can turn it off. Done so far (2026-11-03): up to three follow-ups in a row, each in the
    voice that woke Ember, and "Hey Ember" said in a follow-up window starts a wake's; the window is still 8 s.
 
@@ -240,7 +240,7 @@ reported in every PR that touches it.
    remembered as a `user` fact and used by step 1.
 3. **Hotwords where the model allows.** If a transducer model beats Moonshine on your phrase set (phase 0), sherpa's
    hotword biasing with your lexicon becomes available. Otherwise Moonshine stays.
-4. **A bigger model only where it pays.** Moonshine v2 base had 8.4 % of words wrong against tiny's 10.5 %, for
+4. **A bigger model only where it pays.** (Taken 2026-11-05 everywhere: on a real microphone it heard 8 of 8 requests where tiny lost 4.) Moonshine v2 base had 8.4 % of words wrong against tiny's 10.5 %, for
    twice the CPU and 225 MB more (docs/DEVELOPING.md). Offer it as a setting on machines with spare cores, decided by
    the bench, never by default on the reference machine.
 5. **Voice Match stays the gate** for "only my voice". Its threshold is tuned on the phrase set.

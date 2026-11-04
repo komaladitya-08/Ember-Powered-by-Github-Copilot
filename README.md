@@ -55,7 +55,7 @@ are silent, settings shows a **Speaking** row and a note under **Speak**: run `s
 speech-dispatcher-espeak-ng`, then restart Ember.
 
 The RPM carries Ember's verified speech models, so nothing is downloaded when voice is turned on. The standard
-model downloads total about 138.5 MB: listening needs 48.1 MB, the default Kitten Nano 0.8 voice 63.8 MB, and Voice
+model downloads total about 220 MB: listening needs 130 MB, the default Kitten Nano 0.8 voice 63.8 MB, and Voice
 Match 26.5 MB. These are download sizes; the archives expand when installed. Kitten runs locally on one CPU thread;
 Kokoro remains an explicit optional voice download in Voice settings. Both the RPM and the AppImage also carry the
 libraries that run speech natively on this computer (sherpa-onnx and ONNX Runtime: 32 MB installed, about 9 MB of each
@@ -73,9 +73,9 @@ chmod +x Ember-0.1.1-x86_64.AppImage
 ./Ember-0.1.1-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
 
-The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): about 138.5 MB,
-of which listening needs 48.1 MB. Should Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still
-listens, replies in the system's voice or answers anyone meanwhile, and settings offers just that one to download. Where user
+The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): about 220 MB,
+of which listening needs 130 MB. Should Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still
+listens, replies in the system's voice or takes no spoken yes meanwhile, and settings offers just that one to download. Where user
 namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, quit Ember, then install the new RPM the same way (`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`,
@@ -319,7 +319,7 @@ and VoiceOver on a Mac. While one runs:
 | Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
 | What the handle's menu does | Settings' **Home**: **Ask Ember…** and **Stop everything**. Settings › **Your Ember › Ember on screen**: **Hide Ember until it needs me** for **Hide Ember**, **Follow my cursor** for **Stay put**, **Handle position** for **Move to the other side**, and **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
 | A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command; or say “Ember, allow” (Voice Match on) or “Ember, not now” then |
-| Any question of Ember's | Say “Ember, allow” (only with **Answer only my voice (Voice Match)** on and recognising you) or “Ember, not now” (anyone). Never “Always” by voice. **Apps & privacy › Work without asking** has Ember tell you instead of asking before routine steps; risky ones still ask |
+| Any question of Ember's | Say “Ember, allow” (only with **Answer questions with my voice (Voice Match)** on and recognising you) or “Ember, not now” (anyone). Never “Always” by voice. **Apps & privacy › Work without asking** has Ember tell you instead of asking before routine steps; risky ones still ask |
 | The command window | Tab and Shift+Tab move between the tabs, the buttons and the command's terminal, never into the command (Ctrl+I types a Tab for a program that wants one); Ctrl+Shift+C copies (Command+C on a Mac), and **Copy output** copies all a command printed |
 | Bubble buttons for other computers (**Bring Ember**, **Reconnect**, **Try again**) | Settings › **Computers** has the same; the bubble says so |
 | Sign-in and consent cards | Their window takes the keyboard; where the system keeps it in another app, a card you type into says so, and Alt+Tab reaches the card. Tab to a button, Enter presses the highlighted one, Esc cancels (**Not now** on a consent card). A consent card's yes counts once you have read all of it: Tab to its words and scroll with the arrow keys or Page Down. It is answered there only, never with Ember's keys or by voice |
