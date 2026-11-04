@@ -3215,8 +3215,9 @@ function start(): void {
       // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
       conversation: () => settings.get().voice.conversation,
-      // (EMBER_NO_OUTPUT_WATCH: a test that speaks through the speakers as the user would count as other sound.)
-      outputLevel: sys.voice.outputLevel && !devEnv("EMBER_NO_OUTPUT_WATCH"),
+      // (EMBER_NO_OUTPUT_WATCH: a test that speaks through the speakers as the user would count as other sound. A fake
+      // microphone's WAV is Chromium's fake loopback too, so it would.)
+      outputLevel: sys.voice.outputLevel && !testMicWav && !devEnv("EMBER_NO_OUTPUT_WATCH"),
       // Where the system that refused it lets the user allow it (the setup check has a button for it). Named without
       // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,

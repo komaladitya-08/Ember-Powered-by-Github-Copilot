@@ -12,8 +12,9 @@
 //   multi      three requests with Ember speaking in between; the second and third need no wake word.
 //   stop       "Hey Ember, stop" said while Ember speaks a long reply pulls the app-wide kill switch, hushes it at
 //              once, and no follow-up opens.
+//   conversation  "Hey Ember, …" and then two requests with no name, in one open conversation (the setting's default).
 //   match      Voice Match: enrolled from 4 clips through the settings page's own IPC (window.ember.enrolVoice, on
-//              Chromium's debugging port), then a request in another synthetic voice is turned away (voice.rejected,
+//              Chromium's debugging port), then a request in another synthetic voice is said not to match, and heard (voice.rejected,
 //              reason "voice") and one in the owner's is heard.
 //   listen-once (opt in) opens Ask and presses its Listen once button after microphone and models are ready. One plain
 //              request is answered aloud; a second plain request does not start a turn or an automatic follow-up.
@@ -40,7 +41,7 @@ const otherVoice = path.resolve(process.env.EMBER_VOICE_E2E_OTHER ?? path.join(r
 const verbose = process.env.EMBER_VOICE_E2E_VERBOSE === "1";
 const wantBackend = process.env.EMBER_VOICE_E2E_BACKEND || null;
 if (wantBackend && wantBackend !== "native" && wantBackend !== "wasm") { console.error("EMBER_VOICE_E2E_BACKEND is native or wasm"); process.exit(2); }
-const DEFAULT_SCENARIOS = ["reply", "name", "multi", "stop", "match", "listen-once-off"];
+const DEFAULT_SCENARIOS = ["reply", "name", "multi", "conversation", "stop", "match", "listen-once-off"];
 const SCENARIOS = [...DEFAULT_SCENARIOS, "listen-once"];
 const wanted = process.argv.slice(2);
 if (wanted.some(s => !SCENARIOS.includes(s))) { console.error(`usage: node test/smoke/voice.mjs [${SCENARIOS.join(" | ")}]...`); process.exit(2); }
@@ -122,15 +123,16 @@ function inRoom(samples) {
   return out;
 }
 
-function startEmber(name, wav, { debugPort = false, wakeWord = true } = {}) {
+function startEmber(name, wav, { debugPort = false, wakeWord = true, conversation = false } = {}) {
   const userData = mkdtempSync(path.join(tmpdir(), `ember-voice-${name}-`));
   const micWav = path.join(userData, "mic.wav");
   writeWav(micWav, inRoom(wav));
   // Set up, listening and speaking: wake word on, the microphone agreed to, replies spoken. Speaker rejection off, so
   // the run is the same with or without parec and a sound server (it changes how "Hey Ember" over Ember's voice is taken).
+  // Conversations off but in their own scenario: the rest check the follow-up window, which is what that switch leaves.
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
     version: 1, onboarded: true, consent: { version: 6, at: new Date().toISOString() },
-    wakeWord, speak: true, voice: { consent: wakeWord, speakerRejection: false, muted: false, match: false },
+    wakeWord, speak: true, voice: { consent: wakeWord, speakerRejection: false, muted: false, match: false, conversation },
   }));
   const env = {
     ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1", EMBER_LOG_LEVEL: "debug",
@@ -448,6 +450,21 @@ const scenarios = {
     } finally { await finish(inst); }
   },
 
+  async conversation() {
+    reply = "Done.";
+    const inst = startEmber("conversation", cat(silence(LEAD_S), clip("wake"), silence(6), clip("followup"), silence(6), clip("bigger"), silence(12)), { conversation: true });
+    try {
+      await waitFor(inst, e => e.msg === "voice.ready", 40_000, "the voice process (voice.ready)");
+      let from = 0;
+      for (const window of ["wake", "conversation", "conversation"]) {
+        from = await waitFor(inst, e => e.msg === "voice.utterance", 30_000, `the ${window} request (voice.utterance)`, from);
+        expect(inst.log[from].window === window, `request heard in a ${inst.log[from].window} window, not ${window}`);
+        from++;
+      }
+      console.log("ok   conversation: three requests in one conversation, two of them with no name");
+    } finally { await finish(inst); }
+  },
+
   async match() {
     reply = "Night Light is on. Anything else?";
     const other = readWav(path.join(otherVoice, "wake.wav"));
@@ -463,12 +480,13 @@ const scenarios = {
       expect(inst.log[enrolled].phrases === 4, `enrolled from ${inst.log[enrolled].phrases} phrases`);
       expect(existsSync(path.join(inst.userData, "voiceprint.json")), "no voiceprint.json was written");
       console.log(`ok   match: enrolled from ${enrolClips.length} clips through the voiceMatch IPC`);
-      const rejected = await waitFor(inst, e => e.msg === "voice.rejected", 30_000, "the other voice to be turned away (voice.rejected)", enrolled);
+      const rejected = await waitFor(inst, e => e.msg === "voice.rejected" && e.reason === "voice", 30_000, "the other voice to be said not to match (voice.rejected)", enrolled);
       expect(inst.log[rejected].reason === "voice", `the other voice was rejected for "${inst.log[rejected].reason}", not its voice`);
-      const owner = await waitFor(inst, e => e.msg === "voice.utterance", 30_000, "the owner's request after the other voice (voice.utterance)", rejected);
-      expect(index(inst, "voice.utterance", () => true, enrolled) === owner, "the other voice's request got through");
+      // Voice Match decides what a voice may approve, never who is heard (owner decision of 2026-11-05).
+      const heard = await waitFor(inst, e => e.msg === "voice.utterance", 30_000, "the other voice's request to be heard all the same (voice.utterance)", rejected);
+      const owner = await waitFor(inst, e => e.msg === "voice.utterance", 30_000, "the owner's request after the other voice (voice.utterance)", heard + 1);
       await spoken(inst, owner);
-      console.log(`ok   match: another voice was turned away (voice.rejected reason voice, score ${inst.log[rejected].score}); the owner's request was heard and answered`);
+      console.log(`ok   match: another voice didn't match (voice.rejected reason voice, score ${inst.log[rejected].score}) and was heard unverified; the owner's request was heard and answered`);
     } finally { await finish(inst); }
   },
 };

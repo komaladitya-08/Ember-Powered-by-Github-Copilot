@@ -300,6 +300,34 @@ describe("endsConversation", () => {
   });
 });
 
+describe("“Hey Ember” written as “Hey Amber” (Moonshine base)", () => {
+  /** A wake checked by what the recognizer makes of it: first the check's few words, then the whole. */
+  const hear = (check: string, whole: string) => {
+    const said = [check, whole];
+    const events: VoiceEvent[] = [];
+    const clock = { t: 1000 };
+    const e = new VoiceEngine(fake(said), ev => events.push(ev), { now: () => clock.t, rejectWindowMs: 0, checkAfterMs: 0 });
+    const feed = (f: Float32Array) => { clock.t += 32; e.feed(f); };
+    feed(frame(0, 1));
+    for (let i = 0; i < 2; i++) feed(frame(0));
+    for (let i = 0; i < 20; i++) feed(frame(0.2));
+    for (let i = 0; i < 2; i++) feed(frame(0));
+    return events;
+  };
+
+  it("doesn't take a real wake back on the first words alone", () => {
+    const events = hear("Pay amber to", "Pay amber, turn on night light.");
+    expect(events.some(v => v.type === "rejected")).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({ type: "utterance", text: "Turn on night light." }));
+  });
+
+  it("still takes back someone talking to an Amber, on all they said", () => {
+    const events = hear("Hey amber din", "Hey Amber, dinner's ready.");
+    expect(events.some(v => v.type === "rejected" && v.reason === "check")).toBe(true);
+    expect(events.some(v => v.type === "utterance")).toBe(false);
+  });
+});
+
 describe("the bare name said on its own (9 real “Ember”s taken back in one evening's log)", () => {
   it("is the name in a short segment of up to two words, or none the recognizer made out", () => {
     for (const heard of ["", "Emperor.", "I'm there.", "Amber."]) expect(nameOnItsOwn(heard, 16_000)).toBe(true);

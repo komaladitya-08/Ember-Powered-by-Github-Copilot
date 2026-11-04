@@ -170,7 +170,15 @@ export function calledByName(transcript: string): boolean {
  * owner's "it doesn't listen". After a greeting, or before a request's first word (never before "the": "I remember the…"
  * comes out as "Number, the…"). "Amber" only before a plain command: it is someone's name otherwise.
  */
-const CALLED_AS_WORD = /^\W*(?:(?:hey|hi|hay|day|a)\W+(?:a\W+)?number\b|number\b(?=\W+(?:open|close|turn|play|search|what|who|how|when|where|why|tell|show|go|set|start|send|find|call|can|could|please)\b)|amber\b(?=\W+(?:open|close|turn|play|search|show|set|start)\b))\W*/i;
+const CALLED_AS_WORD = /^\W*(?:(?:hey|hi|hay|day|a)\W+(?:a\W+)?number\b|number\b(?=\W+(?:open|close|turn|play|search|what|who|how|when|where|why|tell|show|go|set|start|send|find|call|can|could|please)\b)|amber\b(?=\W+(?:open|close|turn|play|search|show|set|start)\b)|(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?=\W+(?:open|close|turn|play|search|show|set|start|send|find|call)\b))\W*/i;
+
+/**
+ * "Hey Amber…" when the spotter heard "Hey Ember": Moonshine base writes the name so (the early check heard "Pay amber to"
+ * for "Hey Ember, turn on night light", and took a real wake back). Where the check heard only a word or two after the
+ * name, with no end to it, it leaves this to the whole of what was said (Mode.maybeAmber): "Hey Amber, dinner's ready." is
+ * still someone else's, and so is "Hey Amber, what time is it?", heard whole.
+ */
+const GREETED_AMBER = /^\W*(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?:\W+[\w']+){0,2}\s*,?\s*$/i;
 
 /**
  * More of the recognizer's spellings of the name said first, alone or before the request ("Member.", "Member, what time
@@ -574,7 +582,7 @@ const LAG_MIN_CORRELATION = 0.5;
  */
 type Mode =
   | { kind: "idle" }
-  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean };
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; maybeAmber?: boolean };
 
 /** A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. */
 type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean };
@@ -1028,6 +1036,9 @@ export class VoiceEngine {
         this.emit({ type: "stop" });
         this.ring.clear();
         this.endListening("stop");
+      } else if (heard && GREETED_AMBER.test(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard)) {
+        this.mode.maybeAmber = true;
+        this.replayPreRoll();
       } else if (heard && heardOtherWord(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard)) {
         this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
         this.ring.clear();
@@ -1579,6 +1590,14 @@ export class VoiceEngine {
       // A second try with the moment before the segment (as above) hears the whole name.
       const again = this.transcribe(withBefore(clip.before));
       if (calledByName(again) || isStop(stripWake(again, true))) heard = again;
+    }
+    if (this.mode.maybeAmber) {
+      this.mode.maybeAmber = false;
+      if (heardOtherWord(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard) && !isStop(stripWake(heard, true))) {
+        this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
+        this.endListening("rejected");
+        return;
+      }
     }
     if (this.mode.announced === false) {
       // The bare name, with all that was said with it: "Ember, stop" stops (the spotter takes the name, so the kill phrase
