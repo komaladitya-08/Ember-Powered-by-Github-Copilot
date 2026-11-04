@@ -161,7 +161,7 @@ export function vectorFile(dir: string, onBroken?: (err: unknown) => void): Vect
     save(index) {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const tmp = `${file}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(index.toJSON()) + "\n", { mode: 0o600 });
+      fs.writeFileSync(tmp, JSON.stringify(index.toJSON()) + "\n", { mode: 0o600, flush: true });
       fs.renameSync(tmp, file);
     },
     drop(id) {
