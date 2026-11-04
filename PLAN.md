@@ -679,3 +679,7 @@ M12 review: removed the obsolete terminal exit-marker parser, which let command 
 - Windows safety vocabulary: native testing found “Stored Usernames and Passwords” and “Address Bar” outside the old patterns. Both names now receive the same protection as the older variants. Test fixtures own their classic console, Notepad and Explorer windows and do not depend on the user's default console or environment.
 - Extensions: align admitted dotted tool names, retain complete descriptions for consent pins/live checks, and give provider-appropriate authentication advice. Home accurately distinguishes supported MCP plugins from unavailable hosted connectors.
 - Release preparation: app and npm launcher are 0.1.1 with matching notes. Publishing remains separate from local implementation and validation; no release claim is made by this entry.
+
+### Review fixes (2026-11-04)
+
+Nine reviewers read `main` at 6b75bf38; each item here was checked against the code. Memory, the reconnect's account lookup, the workspace library and model calls now fail without losing data or holding Project's controls. The action limit is now one count across tasks, as §5 states it: a runaway task can use up the minute for another task, which is the safer failure. The command reviewer's session runs `verifySessionTools`, `tailscale` is classified, the handle's face rests once dozing and settled, and a question no longer hashes every fact. A short spoken yes on a risky step (the owner decision of 2026-11-03) is unchanged.

@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import type { CopilotClient, ProviderConfig } from "@github/copilot-sdk";
 import { REVIEW_SYSTEM, parseReview, reviewPrompt, type CommandReviewer } from "../commands/review";
 import type { Logger } from "../logger";
-import { hardenedSessionConfig } from "./session-config";
+import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 
 /** How long a review may take before the command asks instead (ms). */
 export const REVIEW_MS = 20_000;
@@ -26,6 +26,9 @@ export function copilotReviewer(o: { client: CopilotClient; model: string | null
         onPermissionRequest: () => ({ kind: "reject", feedback: "The reviewer has no tools." }),
       }));
       made = true;
+      // No tool at all may be offered (fail closed, as one-shot.ts): this session reads text a page may have shaped.
+      await verifySessionTools(session, []);
+      if (signal.aborted) return null;
       const abort = () => { void session.abort().catch(() => undefined); };
       signal.addEventListener("abort", abort, { once: true });
       try {

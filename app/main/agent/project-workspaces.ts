@@ -65,9 +65,17 @@ export class ProjectWorkspaceStore {
       fs.closeSync(fd);
     }
     await this.requireKeyring();
-    const text = this.asyncKeyring && this.box.decryptStringAsync
-      ? (await this.box.decryptStringAsync(bytes)).result : this.box.decryptString(bytes);
-    const data = library.parse(JSON.parse(text));
+    let data: z.infer<typeof library>;
+    try {
+      const text = this.asyncKeyring && this.box.decryptStringAsync
+        ? (await this.box.decryptStringAsync(bytes)).result : this.box.decryptString(bytes);
+      data = library.parse(JSON.parse(text));
+    } catch {
+      // Damaged, or from a keyring that is gone: every action reads the library first, so left in place it could never be
+      // replaced or forgotten. Moved aside, not deleted, as memory does (memory/store.ts).
+      fs.renameSync(file, `${file}.broken`);
+      throw new ProjectInputError("I couldn't read your saved workspaces, so I set them aside. You can save new ones.");
+    }
     if (data.scope !== scope) throw new Error("Workspace owner changed");
     return data.entries;
   }

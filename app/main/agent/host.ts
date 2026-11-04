@@ -152,7 +152,12 @@ export interface AgentStatus {
  */
 export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number }
 
+/** How long to wait before each further try at a reconnect's account lookup (ms). */
+const ACCOUNT_RETRY_MS: readonly number[] = [1000, 3000];
+
 export interface HostOptions {
+  /** Instead of ACCOUNT_RETRY_MS (tests). */
+  accountRetryMs?: readonly number[];
   userData: string;
   /**
    * Long-term memory (app/main/memory/service.ts): the conductor gets it while the user has it on (settings `memory`,
@@ -579,15 +584,15 @@ export function explainStartError(err: unknown, ctx: { source?: string; sourceNa
   if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. It will try again when the network is back.";
   if (/certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember.";
   if (/client not connected|connection (is |got |was )?disposed|connection (closed|lost)|pending response rejected/i.test(msg)) return "Ember's Copilot runtime stopped while connecting. Press Check again.";
-  if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic/i.test(msg)) return "Copilot is turned off for your account by an organisation policy. Ask your GitHub admin to enable the Copilot CLI policy.";
-  if (/\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "This GitHub account has no Copilot access. Check your Copilot subscription or seat.";
+  if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic/i.test(msg)) return "Your organisation has turned Copilot off for your account. Ask whoever manages its GitHub to turn it on (the Copilot CLI policy).";
+  if (/\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "This GitHub account doesn't have Copilot. Add Copilot to it, or ask whoever manages your GitHub plan.";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) {
     // A token from the environment comes before every other sign-in: only taking it out of Ember's environment (or
     // fixing it) gets past it for good. (Ember tried the other sign-ins it found before saying this: main.)
     if (ctx.source === "environment" && ctx.sourceName && /^[A-Z_]+$/.test(ctx.sourceName)) {
       return `Copilot didn't accept the GitHub token in ${ctx.sourceName} (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove ${ctx.sourceName}, then restart Ember; or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
     }
-    return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again, or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
+    return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again.${proxyNote(ctx.proxy)}`;
   }
   if (transient(err, msg)) return TRANSIENT_DETAIL;
   return msg;
@@ -1288,9 +1293,15 @@ export class AgentHost {
         await this.forgetCurrent(RUNTIME_WAIT_MS);
         this.carried = [];
       }
-      const accountId = !provider && token && login
-        ? await this.o.memory?.resolveAccountId?.(token, login) ?? null
-        : null;
+      const lookUp = async () => !provider && token && login ? await this.o.memory?.resolveAccountId?.(token, login) ?? null : null;
+      let accountId = await lookUp();
+      // A failed lookup says nothing about who this is, and waking from sleep fails it while the network settles. Only
+      // after these tries does it count as an owner not verified (below), which ends the conversation.
+      for (const wait of provider || this.githubAccountId === null ? [] : this.o.accountRetryMs ?? ACCOUNT_RETRY_MS) {
+        if (accountId !== null || gen !== this.gen) break;
+        await new Promise(done => setTimeout(done, wait));
+        if (gen === this.gen) accountId = await lookUp();
+      }
       if (gen !== this.gen) return;
       const sameAccount = accountId !== null && accountId === this.githubAccountId;
       const changedId = accountId !== null && this.githubAccountId !== null && !sameAccount;

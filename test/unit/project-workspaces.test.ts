@@ -41,11 +41,22 @@ it("fails closed if the keyring or the account is unavailable", async () => {
   expect(await fs.readdir(dir)).toEqual([]);
 });
 
-it("preserves a corrupt library on read failure and bounds how many checkpoints can be saved", async () => {
+it("sets a corrupt library aside so new workspaces can be saved, and bounds how many checkpoints can be saved", async () => {
   const storage = new ProjectWorkspaceStore(dir, box(), false);
   await expect(storage.write(first, Array.from({ length: 9 }, (_, i) => ({ ...entry, name: String(i) })), allow)).rejects.toThrow("eight");
   const saved = path.join(dir, "project-workspaces-" + first + ".bin");
   await fs.writeFile(saved, "invalid");
-  await expect(storage.list(first)).rejects.toThrow();
+  await expect(storage.list(first)).rejects.toThrow("set them aside");
+  expect(await fs.readFile(saved + ".broken", "utf8")).toBe("invalid");
+  expect(await storage.list(first)).toEqual([]);
+  await storage.write(first, [entry], allow);
+  expect(await storage.list(first)).toEqual([entry]);
+});
+
+it("leaves the library alone while the keyring is unavailable", async () => {
+  const saved = path.join(dir, "project-workspaces-" + first + ".bin");
+  await fs.writeFile(saved, "invalid");
+  const unavailable = { ...box(), getSelectedStorageBackend: () => "basic_text" };
+  await expect(new ProjectWorkspaceStore(dir, unavailable, false).list(first)).rejects.toThrow("system keyring");
   expect(await fs.readFile(saved, "utf8")).toBe("invalid");
 });

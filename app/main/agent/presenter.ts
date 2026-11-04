@@ -92,7 +92,7 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
     if (mine) return `Your model service refused the request. Check its API key ${inSettings(true)}.`;
     return "Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.";
   }
-  const refused = "Copilot refused this for your account (an organisation policy or a missing Copilot seat).";
+  const refused = "Copilot refused this for your account. Check that your GitHub plan includes Copilot, or ask whoever manages it.";
   if (status === 403) return refused;
   if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return SIGN_IN_REFUSED;
   if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
@@ -180,6 +180,7 @@ export function problemTitle(said: string, provider: ServiceKind = false): strin
 export function forBubble(text: string): string {
   return firstPerson(text)
     .replace(/,? or run “gh auth login” in a terminal and press Check again\./g, " in settings.")
+    .replace(/\bSign in again\.(?!\S)/g, "Sign in again in settings.")
     .replace(/\bPress Check again to retry\b/g, "Open settings to try again")
     .replace(/\bPress Check again\./g, "Open settings to try again.");
 }

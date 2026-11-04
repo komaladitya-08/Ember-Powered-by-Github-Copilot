@@ -61,12 +61,12 @@ describe("PolicyEngine", () => {
     expect(engine().decide(req({ kind: "open_app", app: "", window: "", value: "Files" })).verdict).toBe("allow");
   });
 
-  it("rate-limits a runaway task", () => {
+  it("rate-limits a runaway task, and another task can't add to the limit (review 2026-11-04)", () => {
     const e = engine({ mousepad: "act" });
     const click = req({ element: { role: "push button", name: "Bold" } });
     for (let i = 0; i < 3; i++) expect(e.decide(click).verdict).toBe("allow");
     expect(e.decide(click).verdict).toBe("deny");
-    expect(e.decide({ ...click, taskId: "t2" }).verdict).toBe("allow");
+    expect(e.decide({ ...click, taskId: "t2" }).verdict).toBe("deny");
   });
 });
 
@@ -263,7 +263,7 @@ describe("policy: Ember doesn't run programs, through a file manager either (rev
 });
 
 describe("policy: review round 3", () => {
-  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act", gedit: "act" }) });
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act", gedit: "act" }), rateLimit: 1e6 });
   const click = (name: string, o: Partial<ActionRequest> = {}) =>
     e.decide({ taskId: `c-${Math.random()}`, kind: "click", app: "Firefox", window: "Page", element: { role: "push button", name }, goal: "fill in the form", ...o });
   const deskKeys = (value: string, element?: { role: string; name: string; secret?: boolean }) =>

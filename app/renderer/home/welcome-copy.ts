@@ -64,7 +64,7 @@ export const STEP_TEXT: Readonly<Record<WelcomeStep, { title: string; lead: stri
   },
   "sign-in": {
     title: "Sign in to GitHub",
-    lead: "I think with GitHub Copilot, so I need your GitHub account. Your browser opens so you can approve it there.",
+    lead: "I think with GitHub Copilot, so I need a GitHub account that has Copilot. Your browser opens so you can approve it there.",
   },
   checks: {
     title: "Checking this computer",

@@ -2214,7 +2214,8 @@ export function askedFor(r: Pick<ActionRequest, "app" | "askedIn" | "goal">): bo
 }
 
 export class PolicyEngine {
-  private recent = new Map<string, number[]>();
+  /** When the last minute's actions happened, every task's together: the limit is on Ember, not on each task. */
+  private recent: number[] = [];
 
   constructor(private o: PolicyInputs) {}
 
@@ -2561,7 +2562,7 @@ export class PolicyEngine {
     if (r.kind === "read") return { tier: "read", verdict: "allow", reason: "reading is allowed", prompt: plain };
     if (this.o.actionsAllowed && !this.o.actionsAllowed()) return never("your organisation has turned off Ember acting in apps");
 
-    if (count && !this.withinRate(r.taskId)) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt: plain };
+    if (count && !this.withinRate()) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt: plain };
 
     // An item whose type the file manager may hide (it shows "invoice.pdf" for invoice.pdf.exe): asked about, saying so.
     const own = this.riskOf(r);
@@ -2608,11 +2609,10 @@ export class PolicyEngine {
     };
   }
 
-  private withinRate(taskId: string): boolean {
+  private withinRate(): boolean {
     const now = (this.o.now ?? Date.now)();
-    const list = (this.recent.get(taskId) ?? []).filter(t => now - t < 60_000);
-    list.push(now);
-    this.recent.set(taskId, list);
-    return list.length <= (this.o.rateLimit ?? 40);
+    this.recent = this.recent.filter(t => now - t < 60_000);
+    this.recent.push(now);
+    return this.recent.length <= (this.o.rateLimit ?? 40);
   }
 }

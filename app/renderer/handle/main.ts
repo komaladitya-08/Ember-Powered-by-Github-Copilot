@@ -12,6 +12,7 @@ import type { Settings } from "../../main/settings";
 import { micBadge } from "../../shared/mic";
 import { presenceOf } from "../../shared/presence";
 import { HandleLive } from "./live";
+import { mayRest } from "./rest";
 import { watchPixels } from "../shared/pixels";
 import { handleLine, pillLine } from "./line";
 
@@ -42,6 +43,7 @@ function applySettings(s: Settings): void {
   reduceSetting = s.reduceMotion;
   document.documentElement.classList.toggle("calm", s.reduceMotion);
   applyMotion();
+  resume();
 }
 
 let fallback = false;
@@ -186,6 +188,8 @@ api.onState(s => {
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
   rig.setTalking(s.talking);
   busy = s.talking || s.bubble.streaming;
+  if (busy || s.bubble.visible) rig.wake();
+  resume();
   const b = s.bubble;
   // The microphone: a shape and words for its state (never colour alone), whenever listening is on.
   const mic = $("mic");
@@ -331,12 +335,24 @@ function fitCard(): void {
 $("handle").addEventListener("click", () => api.openMenu());
 
 let pointer = { x: -1, y: -1 };
-window.addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; });
+window.addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; rig.wake(); resume(); });
+window.addEventListener("resize", () => resume());
 
 let last = performance.now();
 /** Talking or streaming, or a lively face: full frame rate; a calm face ~30 fps; a still one ~15 (the page sleeps in between). */
 let busy = false;
+let resting = false;
+/** Something may have changed: draws again if the loop had stopped. */
+function resume(): void {
+  if (!resting) return;
+  resting = false;
+  last = performance.now();
+  requestAnimationFrame(frame);
+}
 const next = () => {
+  // Dozing and still: the last frame stays until the state, settings or the pointer change (as overlay/main.ts does). This
+  // loop cost 3.4-6.3 % of a core at idle (docs/ASSISTANT.md), drawing a picture that didn't change.
+  if (mayRest(rig.asleep, rig.settled, busy)) { resting = true; return; }
   const motion = rig.motion;
   const gap = busy || motion === "brisk" ? 0 : motion === "gentle" ? 33 : 66;
   if (gap) setTimeout(() => requestAnimationFrame(frame), gap); else requestAnimationFrame(frame);

@@ -2015,7 +2015,7 @@ const KNOWN_ORDINARY = new Set([
  */
 const NOT_RUNNERS = new Set([
   "trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb",
-  "desktop-file-install", "desktop-file-edit", "update-desktop-database", "busybox", "caddy", "miniserve", "cloudflared", "ngrok",
+  "desktop-file-install", "desktop-file-edit", "update-desktop-database", "busybox", "caddy", "miniserve", "cloudflared", "ngrok", "tailscale",
   "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav",
 ]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
@@ -4966,6 +4966,16 @@ reg(NATIVE, ["cloudflared", "ngrok"], h => {
   if (sub === "delete" || sub === "cleanup") { h.e.add("remote-delete", "cloud.delete", "Deletes things in Cloudflare."); return; }
   if (sub === "create" || sub === "route" || sub === "login" || sub === "vnet") { h.e.add("publish", "cloud.change", "Changes Cloudflare."); return; }
   h.e.add("publish", "net.tunnel", TUNNEL_SAYS);
+});
+reg(NATIVE, ["tailscale"], h => {
+  const words = h.args.map(a => a.v);
+  const sub = words.find(w => w === null || !w.startsWith("-"));
+  if (sub === undefined || (sub !== null && /^(status|ip|ping|netcheck|whois|version|help|completion|licenses)$/.test(sub))) return;
+  // `funnel` opens this computer to the internet, `serve` to the tailnet; each only prints with `status`.
+  if (sub === "funnel" || sub === "serve") { if (!words.includes("status")) h.e.add("publish", "net.tunnel", TUNNEL_SAYS); return; }
+  if (sub === "file" && words.includes("cp")) { h.e.add("publish", "net.send", "Sends files to another computer."); return; }
+  // Everything else (up, down, set, login, logout, ssh, a word it doesn't know) changes or leaves this computer's network.
+  h.e.add("system", "net.tailscale", "Changes this computer's Tailscale connection.");
 });
 reg(NATIVE, ["ssh-copy-id"], h => {
   const p = opts(h, { shortValue: "ioptFJ", longValue: [] });

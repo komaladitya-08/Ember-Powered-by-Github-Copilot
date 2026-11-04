@@ -221,7 +221,7 @@ describe("Presenter: review round 2", () => {
       ["Authentication failed with provider at http://x/v1 (HTTP 403).", "authentication", { statusCode: 403, provider: true }, /organisation's model service refused/],
       ["Authentication failed with provider at http://x/v1 (HTTP 401).", "authentication", { statusCode: 401, provider: true }, /organisation's model service refused/],
       ["Request failed: 401 Unauthorized", undefined, {}, /sign in again/],
-      ["Forbidden", undefined, { statusCode: 403 }, /organisation policy or a missing Copilot seat/],
+      ["Forbidden", undefined, { statusCode: 403 }, /Check that your GitHub plan includes Copilot, or ask whoever manages it/],
       ["Could not connect to local model provider at http://127.0.0.1:1/v1.", "query", { provider: true }, /can't reach your organisation's model service/],
       ["Failed to get response from the AI model; retried 5 times. Last error: 429 Rate limit reached", "rate_limit", { statusCode: 429 }, /usage limit/],
       ["400 This model's maximum context length is 8192 tokens.", "query", { statusCode: 400 }, /too much/],
