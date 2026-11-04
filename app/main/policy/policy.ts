@@ -1973,13 +1973,15 @@ const LEAD_IN = /^([^\p{L}\p{N}]*(yes|ok|okay|sure|please|go ahead|and|click|tap
  * asked for (PolicyEngine.judge).
  */
 /**
- * A page's link that reads as a command ("Delete my account", "Buy now"): a few words starting with a risky one. A link is
- * otherwise named by what it leads to ("Post Malone - Circles (Official Video)", "How to install Node"), and one such title
- * used to end "Work without asking" for the whole task.
+ * A page's link that reads as a command ("Delete my account and all my data", "Buy now"): it starts with a risky word or
+ * says what it does. A link is otherwise named by what it leads to, a title with parts ("Post Malone - Circles (Official
+ * Video)") or one that only mentions a risky word ("How to install Node"), and one such title used to end "Work without
+ * asking" for the whole task.
  */
 function linkCommands(name: string): boolean {
+  if (/\s[-–—|:(]|[|:(]\s/.test(name)) return false;
   const label = plainText(name).trim();
-  return (label.match(/[p{L}p{N}]+/gu) ?? []).length <= 4 && riskyTerms(name).some(t => label.startsWith(plainText(t)));
+  return riskyTerms(name).some(t => label.startsWith(plainText(t))) || RISKY_ACT_LEAD.test(normalizeLabel(name));
 }
 
 function riskyContent(name: string, acts: boolean, os: OS): boolean {
@@ -2389,7 +2391,7 @@ export class PolicyEngine {
     const content = CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage);
     const selects = !!r.clickSelects && (r.kind === "click" || r.kind === "cursor_click");
     const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
-    const riskyNamed = (role === "link" && content ? riskyContent(name, false, os) || linkCommands(name) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
+    const riskyNamed = (role === "link" && content ? linkCommands(name) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = riskyNamed && !opensDialog(role, name);
