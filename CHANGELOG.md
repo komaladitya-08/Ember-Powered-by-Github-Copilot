@@ -4,6 +4,12 @@
 
 Reliability beta, prepared for validation before publication.
 
+### Light mode on 5 November
+
+- Home, the command window and Ember's password and consent windows now have a light look, and by default match the
+  computer's light or dark setting. Choose Light or Dark under Comfort & access › Appearance. Ember's bubble, task cards,
+  handle and ask box stay dark, so they read clearly over any app.
+
 ### Update notices and the voice's source on 5 November
 
 - New, off by default: **Tell me when a new version is out** under Updates. With its note agreed to, Ember asks GitHub

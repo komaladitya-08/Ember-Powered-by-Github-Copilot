@@ -73,6 +73,8 @@ export interface UpdateCheckerOptions {
 /** Looks once a day while allowed, and asks nothing of the network otherwise. */
 export class UpdateChecker {
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** A scheduled look is under way. */
+  private looking = false;
   private latest: string | null = null;
   private checkedAt: string | null = null;
   private phase: Exclude<UpdateStatus["phase"], "off"> = "idle";
@@ -87,7 +89,8 @@ export class UpdateChecker {
   /** Settings changed: starts looking if it may and wasn't, stops if it may not. */
   refresh(): void {
     if (!this.o.allowed()) { this.stop(); this.phase = "idle"; this.latest = null; this.checkedAt = null; }
-    else if (!this.timer) this.schedule(FIRST_CHECK_MS);
+    // Announcing changes the settings, which lands here mid-look: that look schedules the next one itself.
+    else if (!this.timer && !this.looking) this.schedule(FIRST_CHECK_MS);
     this.o.changed(this.status);
   }
 
@@ -97,7 +100,14 @@ export class UpdateChecker {
   }
 
   private schedule(ms: number): void {
-    this.timer = setTimeout(() => { this.timer = null; void this.check().finally(() => { if (this.o.allowed() && !this.timer) this.schedule(CHECK_EVERY_MS); }); }, ms);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.looking = true;
+      void this.check().finally(() => {
+        this.looking = false;
+        if (this.o.allowed() && !this.timer) this.schedule(CHECK_EVERY_MS);
+      });
+    }, ms);
     this.timer.unref?.();
   }
 

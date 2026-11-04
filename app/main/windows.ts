@@ -22,6 +22,11 @@ import { revive } from "./revive";
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
 
+/** What a content window paints before its page does (ember.css's --surface-0), so it never flashes the other colour. */
+function contentBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? "#121011" : "#f5f3f1";
+}
+
 /** The settings window, which zooms by keys on Windows and Linux (zoomByKeys). */
 export function createHomeWindow(os: OS): BrowserWindow {
   const win = new BrowserWindow({
@@ -31,10 +36,10 @@ export function createHomeWindow(os: OS): BrowserWindow {
     minHeight: 420,
     title: "Ember",
     show: false,
-    backgroundColor: "#121011",
-    // Linux: GTK's dark variant, so GNOME draws the title bar dark, as the page is (review #245). nativeTheme
-    // (setUpAppChrome) doesn't reach GTK; Windows and macOS ignore this and follow nativeTheme.
-    darkTheme: true,
+    backgroundColor: contentBackground(),
+    // Linux: GTK's variant, so GNOME's title bar matches the page (review #245). nativeTheme (setUpAppChrome) doesn't
+    // reach GTK, and a window keeps this until it is opened again; Windows and macOS ignore this and follow nativeTheme.
+    darkTheme: nativeTheme.shouldUseDarkColors,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(appDir, "preload", "home.cjs"),
@@ -167,8 +172,8 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Page
     ...forText({ width: 760, height: 480, ...COMMAND_MIN }),
     title: "Ember commands",
     show: false,
-    backgroundColor: "#121011",
-    darkTheme: true,
+    backgroundColor: contentBackground(),
+    darkTheme: nativeTheme.shouldUseDarkColors,
     autoHideMenuBar: true,
     ...(os === "darwin" ? { type: "panel", acceptFirstMouse: true } : {}),
     webPreferences: webPreferences("command"),
@@ -236,8 +241,8 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
     show: false,
     alwaysOnTop: true,
     skipTaskbar: false,
-    backgroundColor: "#121011",
-    darkTheme: true,
+    backgroundColor: contentBackground(),
+    darkTheme: nativeTheme.shouldUseDarkColors,
     autoHideMenuBar: true,
     // A click on Allow or Connect while another app is active counts, rather than only activating Ember.
     ...(os === "darwin" ? { acceptFirstMouse: true } : {}),
@@ -377,14 +382,13 @@ export interface ChromeElectron {
  * Ember's app-wide chrome, set once Electron is ready and before any window opens: the application menu (none on
  * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS, the dark native
  * theme, and from then on Ember's icon on every window on Linux and, in a packaged build, DevTools locked on every
- * page. Every page is dark-only (ember.css says color-scheme: dark), so the native theme is too, whatever the system's
- * appearance (review #245): on Windows it makes the title bars and Electron's menus dark, and on macOS the title bars,
- * menus and dialogs. Windows' message boxes (the quit question) have no dark mode and stay light. On Linux it reaches
- * nothing GTK draws: the windows ask GTK for its dark variant themselves (darkTheme in their factories), so GNOME's
- * title bars are dark, and menus and dialogs follow the GTK theme. A light appearance would be a design of its own.
+ * page. The content windows follow `appearance` (settings; ember.css's light block reads it as prefers-color-scheme), and
+ * so do the title bars, menus and dialogs on Windows and macOS; the floating pages stay dark whatever it says. Windows'
+ * message boxes (the quit question) have no dark mode and stay light. On Linux it reaches nothing GTK draws: the windows
+ * ask GTK for their variant themselves (darkTheme in their factories), and menus and dialogs follow the GTK theme.
  */
-export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuActions }, e: ChromeElectron = { Menu, nativeTheme, app }): void {
-  e.nativeTheme.themeSource = "dark";
+export function setUpAppChrome(o: { os: OS; appMenu: boolean; appearance: "system" | "light" | "dark"; actions: AppMenuActions }, e: ChromeElectron = { Menu, nativeTheme, app }): void {
+  e.nativeTheme.themeSource = o.appearance;
   if (o.appMenu) e.app.setAboutPanelOptions(aboutPanel(e.app.getVersion()));
   const template = appMenuTemplate(o.appMenu, o.actions);
   e.Menu.setApplicationMenu(template ? e.Menu.buildFromTemplate(template) : null);

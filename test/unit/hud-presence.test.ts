@@ -157,7 +157,7 @@ describe("the presence ring's styles (software compositing; Calm)", () => {
   it("gives the HUD tokens an Increase Contrast value and a forced-colours mapping", () => {
     const shared = read("app/renderer/shared/ember.css");
     for (const t of ["hud-line", "hud-dim"]) {
-      expect(shared.match(new RegExp(`--${t}: `, "g"))?.length, t).toBe(3);
+      expect(shared.match(new RegExp(`--${t}: `, "g"))?.length, t).toBe(4); // default, contrast, forced colours, light
     }
     const forced = shared.slice(shared.indexOf("@media (forced-colors: active)"));
     expect(forced).toContain("--hud-line: CanvasText;");

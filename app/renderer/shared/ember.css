@@ -1,6 +1,6 @@
 /*
  * Ember's design system, shared by every window: the typeface, colour, type scale, shape, materials, symbols,
- * motion and the standard controls. It follows Apple's Human Interface Guidelines (dark appearance, Liquid Glass)
+ * motion and the standard controls. It follows Apple's Human Interface Guidelines (Liquid Glass; light and dark windows)
  * adapted to a Linux desktop: Inter stands in for SF Pro, and glass over other apps is an opaque frost with a lit
  * rim, never a backdrop blur (with software compositing a blur costs a core, and it can't see other apps anyway).
  * Each page links this file before its own styles.css. Pages use these tokens, not literals, so Increase Contrast
@@ -47,6 +47,17 @@
   /* A control's outline: 3:1 against every surface (WCAG 1.4.11). */
   --control-edge: rgba(255, 255, 255, 0.4);
   --fill: rgba(120, 120, 128, 0.26);
+  /* Flat washes over a surface, by strength: a quiet control, a row's hover, the current item. Dark ink in light windows. */
+  --wash-4: rgba(255, 255, 255, 0.04);
+  --wash-6: rgba(255, 255, 255, 0.06);
+  --wash-7: rgba(255, 255, 255, 0.07);
+  --wash-8: rgba(255, 255, 255, 0.08);
+  --wash-10: rgba(255, 255, 255, 0.1);
+  --wash-12: rgba(255, 255, 255, 0.12);
+  --wash-14: rgba(255, 255, 255, 0.14);
+  /* A keycap's face and edge. */
+  --key-face: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
+  --key-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 1px 0 rgba(0, 0, 0, 0.5);
   /* Scrollbar thumbs: 4.4:1 or more on every surface. */
   --scroll-thumb: rgba(255, 255, 255, 0.45);
 
@@ -296,10 +307,10 @@ html {
 @media (hover: hover) { .btn:hover { filter: brightness(1.08); } }
 .btn:active { transform: scale(0.97); filter: brightness(0.94); }
 .btn.quiet {
-  color: var(--label); background: rgba(255, 255, 255, 0.07);
+  color: var(--label); background: var(--wash-7);
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-@media (hover: hover) { .btn.quiet:hover { background: rgba(255, 255, 255, 0.12); filter: none; } }
+@media (hover: hover) { .btn.quiet:hover { background: var(--wash-12); filter: none; } }
 .btn.small { min-height: calc(24px * var(--text-scale)); padding: 3px 10px; border-radius: var(--r-xs); font-size: calc(12px * var(--text-scale)); line-height: round(calc(16px * var(--text-scale)), 1px); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: default; filter: none; transform: none; }
 .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
@@ -339,7 +350,7 @@ input[type="checkbox"][role="switch"]:disabled { opacity: 0.4; cursor: default; 
 input[type="checkbox"]:not([role="switch"]) {
   appearance: none; -webkit-appearance: none; margin: 0; flex: none; cursor: pointer;
   position: relative; width: 20px; height: 20px; border-radius: var(--r-xs);
-  background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1.5px var(--control-edge);
+  background: var(--wash-6); box-shadow: inset 0 0 0 1.5px var(--control-edge);
   transition: background-color 160ms ease, box-shadow 160ms ease;
 }
 input[type="checkbox"]:not([role="switch"]):checked { background: var(--accent); box-shadow: none; }
@@ -357,8 +368,8 @@ input[type="checkbox"]:not([role="switch"]):checked:focus-visible { box-shadow: 
 kbd {
   display: inline-block; min-width: 1.6em; padding: 0 5px; border-radius: var(--r-xs); text-align: center;
   font: 600 calc(11px * var(--text-scale))/round(calc(18px * var(--text-scale)), 1px) var(--ember-font); letter-spacing: 0.01em; color: var(--label);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 1px 0 rgba(0, 0, 0, 0.5);
+  background: var(--key-face);
+  box-shadow: var(--key-edge);
   vertical-align: 1px;
 }
 
@@ -420,4 +431,71 @@ html.calm .calm-fade { transition: opacity var(--t-calm-fade) ease, visibility v
   input[type="checkbox"][role="switch"]:disabled:checked::before { background: Canvas; }
   /* Keycaps keep their edge (an outline: it takes no room). */
   kbd { outline: 1px solid CanvasText; outline-offset: -1px; }
+}
+
+/* Light windows. Only the content windows (html.content: Home, the command window, the prompt window) follow the
+   appearance: main sets nativeTheme.themeSource from Settings › Comfort & access, so this query is the system's or the
+   user's choice. The floating layer stays dark: it sits over any app, and its labels are measured against that. A
+   contrast theme keeps its system colours. html.content outranks :root, so Increase Contrast needs its own block. */
+@media (prefers-color-scheme: light) and (forced-colors: none) {
+  html.content {
+    color-scheme: light;
+    --label: #1d1a1b;
+    --label-2: rgba(29, 26, 27, 0.74);
+    --label-3: rgba(29, 26, 27, 0.68);
+    --surface-0: #f5f3f1;
+    --surface-1: #ffffff;
+    --surface-2: #f0edea;
+    --separator: rgba(0, 0, 0, 0.1);
+    --group-edge: 0 0 0 1px rgba(0, 0, 0, 0.07);
+    --control-edge: rgba(0, 0, 0, 0.5);
+    --fill: rgba(120, 120, 128, 0.18);
+    --scroll-thumb: rgba(0, 0, 0, 0.48);
+    --wash-4: rgba(0, 0, 0, 0.025);
+    --wash-6: rgba(0, 0, 0, 0.035);
+    --wash-7: rgba(0, 0, 0, 0.04);
+    --wash-8: rgba(0, 0, 0, 0.05);
+    --wash-10: rgba(0, 0, 0, 0.06);
+    --wash-12: rgba(0, 0, 0, 0.075);
+    --wash-14: rgba(0, 0, 0, 0.09);
+    --key-face: linear-gradient(180deg, #ffffff, #f4f1ee);
+    --key-edge: inset 0 0 0 0.5px rgba(0, 0, 0, 0.28), 0 1px 0 rgba(0, 0, 0, 0.22);
+    /* Orange as words and fills: deep enough for 4.5:1 on every light surface, with white on it. */
+    --accent: #ad4a00;
+    --accent-2: #a34e00;
+    --glow: #e8701a;
+    --on-accent: #ffffff;
+    --green: #1a7a35;
+    --red: #c21f26;
+    --yellow: #806000;
+    --purple: #9a1fb8;
+    --blue: #0062c4;
+    --gray: #6c6c70;
+    --green-text: #146b2d;
+    --red-text: #b0151c;
+    --purple-text: #87199f;
+    --hud-line: rgba(173, 74, 0, 0.32);
+    --hud-dim: rgba(173, 74, 0, 0.2);
+  }
+}
+@media (prefers-color-scheme: light) and (forced-colors: none) and (prefers-contrast: more) {
+  html.content {
+    --label-2: rgba(29, 26, 27, 0.86);
+    --label-3: rgba(29, 26, 27, 0.78);
+    --separator: rgba(0, 0, 0, 0.3);
+    --group-edge: 0 0 0 1px rgba(0, 0, 0, 0.45);
+    --control-edge: rgba(0, 0, 0, 0.66);
+    --scroll-thumb: rgba(0, 0, 0, 0.62);
+    --accent: #943e00;
+    --accent-2: #8a4200;
+    --green: #12642a;
+    --red: #a5151c;
+    --yellow: #6b5000;
+    --purple: #82189c;
+    --blue: #0052a6;
+    --gray: #58585c;
+    --green-text: #0f5a24;
+    --red-text: #950f15;
+    --purple-text: #731488;
+  }
 }

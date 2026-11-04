@@ -687,3 +687,7 @@ Nine reviewers read `main` at 6b75bf38; each item here was checked against the c
 ### Update notices and the voice's source (2026-11-05)
 
 Owner decision. Opt-in update notices (app/main/updates.ts): one unauthenticated request a day to GitHub's releases list, once `settings.updates` is on with its own consent, off under `features.updates` and LOCKDOWN. It only tells; it installs nothing while packages are unsigned. Each release now also attaches the checked `source-*.zip` archives for sherpa-onnx, eSpeak NG and piper-phonemize (GPL-3.0 section 6), so the source no longer depends on third-party repositories staying up.
+
+### Light mode (2026-11-05)
+
+Owner decision, replacing "dark only". `settings.appearance` (system, light, dark; system by default) sets `nativeTheme.themeSource`. Content windows (`html.content`) take ember.css's light tokens through `prefers-color-scheme`, measured by light-mode.test.ts. The floating layer stays dark, because it sits over any app and its labels are measured against that.

@@ -51,13 +51,13 @@ When a case isn't covered here, follow the HIG page for that control.
 ## What Ember's look never includes
 
 Name these patterns when you design something new. Vague direction such as "make it clean" drifts toward defaults Ember rejects:
-- light, cream or off-white backgrounds (Ember is dark only: `color-scheme: dark`, `darkTheme: true` on every window, and main sets `nativeTheme.themeSource = "dark"`)
+- a light floating layer: the bubble, cards, handle and Ask box stay dark over any app. Only the content windows (`html.content`: Home, command, prompt) have a light look, from `settings.appearance` through `nativeTheme.themeSource` and ember.css's light blocks (owner decision of 2026-11-05)
 - serif or display typefaces, or italic accent words
 - tracked all-caps, monospace labels, or numbered "01/02/03" section labels
 - gradient text, emoji icons, icon fonts, or spinning indicators
 - `backdrop-filter` blur, or glass on content windows
 - a second filled orange button in one group (or in one view that has no groups, such as a card or the bubble)
-- a frosted scroll-edge header or a glass slider (each needs blur or glass on glass), or a light appearance
+- a frosted scroll-edge header or a glass slider (each needs blur or glass on glass)
 - HUD spectacle: rotating or orbiting rings, parallax, scrolling micro-numbers, hex grids, fake waveforms or a meter that moves on silence, tracked-caps readouts, or HUD chrome (brackets, accent styling) round untrusted text, over background tasks, or on authentication and never-look windows
 
 ## Layers and glass
@@ -78,7 +78,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - Shadows on surfaces that move with Ember are tight, with a negative spread (the bubble's `0 12px 28px -8px`). The larger `--glass-depth` is for surfaces that stay put.
 - **Without a compositor.** A transparent window paints black there, so the whole window becomes one opaque panel: `var(--glass-solid)` plus `box-shadow: var(--glass-rim)`, with no outer shadows (`html.opaque` in Ask, `body.fallback` in the handle's corner card). Ember switches between the two on its own when the compositor comes or goes (Linux only: Windows and macOS always composite).
 - **Window backgrounds.** Set each BrowserWindow's `backgroundColor` to what its page paints, or it flashes before the first paint:
-  - `"#121011"` for Home, the command window and the prompt window;
+  - `contentBackground()` for Home, the command window and the prompt window (`"#121011"`, or `"#f5f3f1"` when light);
   - `"#242022"` when opaque or in fallback;
   - `"#000000"` for the desk;
   - `"#00000000"` for glass windows.
@@ -124,7 +124,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - `--red`, `--blue`, `--purple` and `--gray` only mark things (3:1). Red or purple words use `--red-text` or `--purple-text`.
   - A tag is its system colour at 14–18% behind a word in its `-text` tint. Yellow has no tint: its word is `--yellow` itself (Home's `--warn`).
 - **Outlines.** Outline every unfilled control with `inset 0 0 0 1px var(--control-edge)` (WCAG 1.4.11, 3:1); checkboxes use 1.5px. That covers quiet buttons, the off switch, checkboxes, fields, pop-up buttons and floating capsules.
-- **New colour tokens.** Give each one an override in ember.css's `@media (prefers-contrast: more)` block, using the HIG's Increased Contrast value, and a mapping in its `@media (forced-colors: active)` block (`CanvasText`, `GrayText` or `Highlight`), and keep the default definitions first in `:root`. One the bubble uses also needs its `var(--x, fallback)` there. Every system colour and Ember's lights have their override (yellow #FEDF43, blue #5CB8FF, gray #AEAEB2, `--accent-2` #FFC266, `--glow` #FFA056).
+- **New colour tokens.** Give each one a value in ember.css's light blocks if a content window uses it (light-mode.test.ts measures them), an override in ember.css's `@media (prefers-contrast: more)` block, using the HIG's Increased Contrast value, and a mapping in its `@media (forced-colors: active)` block (`CanvasText`, `GrayText` or `Highlight`), and keep the default definitions first in `:root`. One the bubble uses also needs its `var(--x, fallback)` there. Every system colour and Ember's lights have their override (yellow #FEDF43, blue #5CB8FF, gray #AEAEB2, `--accent-2` #FFC266, `--glow` #FFA056).
 
 ## Type
 

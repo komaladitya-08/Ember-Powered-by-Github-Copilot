@@ -4,6 +4,7 @@
 :root {
   /* The window behind everything (the placeholder and label contrasts are measured against it). */
   --bg: #121011;
+  --sidebar-fill: #181517;
   --panel: var(--surface-1);
   --line: var(--separator);
   --fg: var(--label);
@@ -62,7 +63,7 @@ body:not(.first-run) .ring::before {
 body:not(.first-run) .hero-text #tagline { margin-top: 4px; font: var(--type-callout); letter-spacing: -0.003em; }
 .hero-text .setup-link { display: block; margin-top: 4px; font: var(--type-callout); font-weight: 500; text-align: left; }
 .task-group .asking { margin: 12px 0 0; }
-.task-filter .btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.14); font-weight: 600; }
+.task-filter .btn[aria-pressed="true"] { background: var(--wash-14); font-weight: 600; }
 .status-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
 .status-facts > div { min-width: 0; }
 .status-facts dt { color: var(--muted); font: var(--type-footnote); }
@@ -192,15 +193,15 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* A choice in a list (Speak … out loud), laid out and styled as the model choices. */
 .choice { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; }
 /* A pop-up button, sized to its choice and set at the row's end; its height grows with the text size, as its words do. */
-.models select, .choice select, #text-size, #handle-position, #glass {
+.models select, .choice select, #text-size, #handle-position, #glass, #appearance {
   justify-self: end; max-width: 100%; height: calc(28px * var(--text-scale)); padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
   -webkit-appearance: none; appearance: none; cursor: pointer;
   color: var(--fg); font: 500 13px var(--ember-font); letter-spacing: -0.003em;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f2ef' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E") right 10px center / 12px no-repeat, rgba(255, 255, 255, 0.07);
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-.models select:focus-visible, .choice select:focus-visible, #text-size:focus-visible, #handle-position:focus-visible, #glass:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-.models select option, .choice select option, #text-size option, #handle-position option, #glass option { background: var(--surface-2); color: var(--fg); }
+.models select:focus-visible, .choice select:focus-visible, #text-size:focus-visible, #handle-position:focus-visible, #glass:focus-visible, #appearance:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.models select option, .choice select option, #text-size option, #handle-position option, #glass option, #appearance option { background: var(--surface-2); color: var(--fg); }
 /* Narrow: the choice goes under its label. */
 @media (max-width: 480px) { .choice { grid-template-columns: minmax(0, 1fr); } .choice select { justify-self: start; } }
 .models-hint { grid-column: 1 / -1; margin: 0; }
@@ -260,14 +261,14 @@ progress[hidden] { display: none; }
 .plain-list li > button, .plain-list li > .managed-tag { flex: none; }
 /* Its words end at the row's trailing edge, where the switches and pop-ups end (its padding hangs past it). */
 .plain-list .btn.quiet { background: transparent; box-shadow: none; color: var(--red-text); font-weight: 500; padding: 3px 8px; margin-right: -8px; }
-@media (hover: hover) { .plain-list .btn.quiet:hover { background: rgba(255, 255, 255, 0.08); } }
+@media (hover: hover) { .plain-list .btn.quiet:hover { background: var(--wash-8); } }
 .plain-list .btn.quiet:focus-visible { box-shadow: var(--focus-ring); }
 .managed-tag { color: var(--muted); font: var(--type-footnote); }
 .add-row { display: flex; gap: 8px; margin-top: 4px; }
 /* A text field: filled, rounded, Apple's focus ring; as tall as the button beside it at every text size. */
 .add-row input, .field-row > input {
   flex: 1; min-width: 0; height: calc(28px * var(--text-scale)); padding: 0 11px; border-radius: var(--r-sm); border: 0;
-  background: rgba(255, 255, 255, 0.06); color: var(--fg); font: var(--type-body); letter-spacing: -0.006em;
+  background: var(--wash-6); color: var(--fg); font: var(--type-body); letter-spacing: -0.006em;
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
 .add-row input:focus-visible, .field-row > input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
@@ -477,9 +478,9 @@ body.loading .home { visibility: hidden; }
   scroll-margin-inline: 4px; /* a focused link scrolls into the narrow row with room for its ring */
   font: 500 13px/18px var(--ember-font);
 }
-@media (hover: hover) { .jump a:hover { color: var(--fg); background: rgba(255, 255, 255, 0.06); } }
+@media (hover: hover) { .jump a:hover { color: var(--fg); background: var(--wash-6); } }
 /* The section you are in: a fill and semibold words (not colour alone). */
-.jump a[aria-current="true"] { color: var(--fg); font-weight: 600; background: rgba(255, 255, 255, 0.12); }
+.jump a[aria-current="true"] { color: var(--fg); font-weight: 600; background: var(--wash-12); }
 .jump a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 h2, summary { scroll-margin-top: 16px; }
 /* Wide: a sidebar beside the content, as System Settings. It sits in its own column, so nothing scrolls under it and
@@ -491,7 +492,7 @@ h2, summary { scroll-margin-top: 16px; }
     margin: 0; padding: 22px 10px; flex-direction: column; gap: 2px; overflow: auto;
     /* The slim scrollbar (ember.css) shows when the links outgrow a short window: none is only for the narrow row. */
     scrollbar-width: auto;
-    background: #181517; box-shadow: inset -1px 0 0 var(--separator);
+    background: var(--sidebar-fill); box-shadow: inset -1px 0 0 var(--separator);
   }
   .jump a { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); color: var(--fg); font: 500 14px/20px var(--ember-font); }
   /* Each section's symbol on its coloured tile. */
@@ -503,7 +504,7 @@ h2, summary { scroll-margin-top: 16px; }
     content: ""; position: absolute; left: 11px; width: 16px; height: 16px; background: #fff;
     -webkit-mask: var(--icon) center / contain no-repeat;
   }
-  .jump a[aria-current="true"] { background: rgba(255, 255, 255, 0.1); }
+  .jump a[aria-current="true"] { background: var(--wash-10); }
 }
 html { scroll-padding-top: 16px; }
 .jump a[href="#home-h"] { --tile: #ff9230; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M11.1 2.9a1.4 1.4 0 0 1 1.8 0l8 6.7c.6.5.2 1.4-.6 1.4H19v8.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H6.5A1.5 1.5 0 0 1 5 19.5V11H3.7c-.8 0-1.2-.9-.6-1.4z'/%3E%3C/svg%3E"); }
@@ -550,12 +551,12 @@ html { scroll-padding-top: 16px; }
    an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
 @media (forced-colors: active) {
   body:not(.first-run) .status-panel, .task-group, .task-groups > .empty, .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .consent, .managed, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
-  .card, .start, .models select, .choice select, #text-size, #handle-position, #glass, .add-row input, .field-row > input { border: 1px solid ButtonText; }
+  .card, .start, .models select, .choice select, #text-size, #handle-position, #glass, #appearance, .add-row input, .field-row > input { border: 1px solid ButtonText; }
   .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
-  .models select, .choice select, #text-size, #handle-position, #glass { appearance: auto; -webkit-appearance: menulist; background-image: none; }
+  .models select, .choice select, #text-size, #handle-position, #glass, #appearance { appearance: auto; -webkit-appearance: menulist; background-image: none; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
   .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }
@@ -638,15 +639,15 @@ html { scroll-padding-top: 16px; }
 .ext-list .ext-row-actions .btn.quiet:last-child, .ext-list .ext-head > .btn.quiet { margin-right: -8px; }
 .ext-list .btn.quiet.danger { color: var(--red-text); }
 .ext-list .btn.quiet[aria-disabled="true"], .ext-card .btn[aria-disabled="true"] { opacity: 0.4; pointer-events: none; }
-.ext-list .btn.quiet[aria-current="true"] { font-weight: 600; background: rgba(255, 255, 255, 0.08); }
+.ext-list .btn.quiet[aria-current="true"] { font-weight: 600; background: var(--wash-8); }
 /* Except that only Remove and Disconnect (and Computers' Remove) stay red text buttons: Browse, Connect, Agree again and
    the rest are bordered quiet buttons, so they look like something to click (white words alone read as a label). */
 .ext-list .btn.quiet:not(.danger), .targets .target-actions .btn.quiet:not(.danger) {
-  margin-left: 0; margin-right: 0; padding: 3px 10px; color: var(--label); background: rgba(255, 255, 255, 0.07); box-shadow: inset 0 0 0 1px var(--control-edge);
+  margin-left: 0; margin-right: 0; padding: 3px 10px; color: var(--label); background: var(--wash-7); box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-@media (hover: hover) { .ext-list .btn.quiet:not(.danger):hover, .targets .target-actions .btn.quiet:not(.danger):hover { background: rgba(255, 255, 255, 0.12); } }
+@media (hover: hover) { .ext-list .btn.quiet:not(.danger):hover, .targets .target-actions .btn.quiet:not(.danger):hover { background: var(--wash-12); } }
 .ext-list .btn.quiet:not(.danger):focus-visible, .targets .target-actions .btn.quiet:not(.danger):focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-.ext-list .btn.quiet[aria-current="true"]:not(.danger) { background: rgba(255, 255, 255, 0.14); }
+.ext-list .btn.quiet[aria-current="true"]:not(.danger) { background: var(--wash-14); }
 .ext-list li.ext-market { min-height: 48px; }
 /* Browsing a marketplace: its entries as cards in a group of their own. */
 .ext-browse { display: grid; gap: 10px; padding: 12px 16px 16px; border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--group-edge); }
@@ -677,8 +678,8 @@ html { scroll-padding-top: 16px; }
 .ext-consent-lines { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 6px; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
 .plain-list .ext-consent-lines li { display: list-item; }
 /* In a list, the card's Not now is the bordered button again (the list's buttons are text buttons). */
-.ext-list .ext-consent .btn.quiet { margin: 0; padding: 4px 13px; color: var(--label); background: rgba(255, 255, 255, 0.07); box-shadow: inset 0 0 0 1px var(--control-edge); }
-@media (hover: hover) { .ext-list .ext-consent .btn.quiet:hover { background: rgba(255, 255, 255, 0.12); } }
+.ext-list .ext-consent .btn.quiet { margin: 0; padding: 4px 13px; color: var(--label); background: var(--wash-7); box-shadow: inset 0 0 0 1px var(--control-edge); }
+@media (hover: hover) { .ext-list .ext-consent .btn.quiet:hover { background: var(--wash-12); } }
 .ext-list .ext-consent .btn.quiet:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
 .ext-card .ext-consent { margin-top: 4px; padding: 10px 0 0; border-radius: 0; background: transparent; box-shadow: inset 0 1px 0 var(--line); }
 @media (forced-colors: active) {
@@ -693,7 +694,7 @@ html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: 
 html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-height: round(calc(20px * var(--text-scale)), 1px); }
 html[data-text-size] .terms code, html[data-text-size] .hint code { font-size: calc(12px * var(--text-scale)); }
 html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: round(calc(28px * var(--text-scale)), 1px); }
-html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size, html[data-text-size] #handle-position, html[data-text-size] #glass { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size, html[data-text-size] #handle-position, html[data-text-size] #glass, html[data-text-size] #appearance { font-size: calc(13px * var(--text-scale)); }
 html[data-text-size] .ext-tool-name { font-size: calc(12px * var(--text-scale)); line-height: round(calc(16px * var(--text-scale)), 1px); }
 html[data-text-size] .ext-list .tag, html[data-text-size] .ext-card .tag { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
 html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
@@ -731,7 +732,7 @@ html[data-text-size] .timeline .at, html[data-text-size] .timeline .what { line-
 .search { flex: none; display: flex; padding: 0 0 6px; }
 .search input {
   width: 100%; min-width: 150px; height: calc(28px * var(--text-scale)); padding: 0 10px; border: 0; border-radius: var(--r-sm);
-  background: rgba(255, 255, 255, 0.06); color: var(--fg); font: var(--type-callout); box-shadow: inset 0 0 0 1px var(--control-edge);
+  background: var(--wash-6); color: var(--fg); font: var(--type-callout); box-shadow: inset 0 0 0 1px var(--control-edge);
 }
 .search input::placeholder { color: #9a9592; opacity: 1; }
 .search input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
@@ -779,7 +780,7 @@ body:not(.first-run) .home > [data-pane]:not(.off-pane) {
 @media (min-width: 640px) {
   .jump-hl {
     position: absolute; left: 10px; right: 10px; top: 0; z-index: -1; pointer-events: none; border-radius: var(--r-sm);
-    background: rgba(255, 255, 255, 0.1); translate: 0 var(--hl-y, 0); height: var(--hl-h, 32px);
+    background: var(--wash-10); translate: 0 var(--hl-y, 0); height: var(--hl-h, 32px);
   }
   .jump.glides .jump-hl { transition: translate var(--t-move) var(--spring-smooth-0); }
   body:not(.first-run) .home > .jump.has-hl a[aria-current="true"] { background: transparent; }
@@ -794,7 +795,7 @@ body:not(.first-run) .home > [data-pane]:not(.off-pane) {
 }
 @media (prefers-contrast: more) {
   .jump-hl { display: none; }
-  body:not(.first-run) .home > .jump.has-hl a[aria-current="true"] { background: rgba(255, 255, 255, 0.1); }
+  body:not(.first-run) .home > .jump.has-hl a[aria-current="true"] { background: var(--wash-10); }
 }
 
 /* ───── First run (welcome.ts): one decision a step, Ember's line as its title, a still step indicator ─────
@@ -1030,3 +1031,13 @@ html.calm .w-card > * { transition-delay: 0s; }
   .w-try > .btn { margin-inline-start: 32px; }
 }
 #natural-row { display: grid; gap: 8px; }
+
+/* Light windows (ember.css): what no token reaches. */
+@media (prefers-color-scheme: light) and (forced-colors: none) {
+  html.content { --bg: var(--surface-0); --sidebar-fill: #ebe7e4; }
+  html.content ::placeholder { color: #6b6664; }
+  html.content .conversation li.you p { color: var(--label); }
+  html.content :is(.models select, .choice select, #text-size, #handle-position, #glass, #appearance) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d1a1b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E");
+  }
+}

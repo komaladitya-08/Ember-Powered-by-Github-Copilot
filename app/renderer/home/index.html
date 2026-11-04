@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="content">
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
@@ -546,6 +546,15 @@
     <section class="after-setup" data-pane="access" aria-labelledby="access-h">
       <h2 id="access-h" tabindex="-1">Comfort &amp; access</h2>
       <div class="stack">
+        <h3 class="sub">Appearance</h3>
+        <div class="group">
+          <label class="switch-row"><span>Appearance</span><select id="appearance">
+            <option value="system">Match this computer</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select></label>
+        </div>
+        <p class="hint">Changes this window, the command window and Ember's password and consent windows. Ember's bubble, task cards and ask box stay dark, so they read clearly over any app.</p>
         <h3 class="sub">Text</h3>
         <div class="group">
           <label class="switch-row"><span>Text size</span><select id="text-size">

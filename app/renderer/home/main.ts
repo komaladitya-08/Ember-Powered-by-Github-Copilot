@@ -168,6 +168,7 @@ function applySettings(s: Settings): void {
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
+  ($("appearance") as HTMLSelectElement).value = s.appearance;
   ($("text-size") as HTMLSelectElement).value = s.textSize;
   ($("glass") as HTMLSelectElement).value = s.glass ?? "regular";
   ($("handle-position") as HTMLSelectElement).value = s.handlePosition;
@@ -200,6 +201,7 @@ $("login").addEventListener("change", e => { void save({ startAtLogin: (e.target
 $("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (e.target as HTMLInputElement).checked }); });
 $("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
 // The text size reaches every window from main (page-prefs.ts), this one included.
+$("appearance").addEventListener("change", e => { void save({ appearance: (e.target as HTMLSelectElement).value as Settings["appearance"] }); });
 $("text-size").addEventListener("change", e => { void save({ textSize: (e.target as HTMLSelectElement).value as Settings["textSize"] }); });
 // Comfort & access › Glass: its choices and words from copy.ts.
 $("glass-label").textContent = GLASS_LABEL;

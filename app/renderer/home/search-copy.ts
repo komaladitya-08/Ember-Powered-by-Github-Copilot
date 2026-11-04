@@ -25,7 +25,7 @@ export const SEARCH_ALIASES: Readonly<Record<string, string>> = {
   "pick-h": "character avatar size handle",
   "memory-h": "remember forget routines reminders",
   "privacy-h": "permissions never look passwords autonomy work without asking always allow",
-  "access-h": "accessibility text size font bigger larger glass transparency contrast motion calm reduce motion keyboard",
+  "access-h": "appearance light dark mode theme accessibility text size font bigger larger glass transparency contrast motion calm reduce motion keyboard",
   "computers-h": "ssh wsl remote server linux windows",
   "commands-h": "terminal shell command line run",
   "extensions-h": "plugins marketplace connectors tools",
