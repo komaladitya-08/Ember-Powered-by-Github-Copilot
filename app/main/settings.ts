@@ -146,6 +146,8 @@ export const SettingsSchema = z.object({
     version: z.number().int().min(0).default(0),
     at: z.string().nullable().default(null),
   }).default({ version: 0, at: null }),
+  /** The content windows' look: the computer's light or dark setting, or one of them whatever it says. */
+  appearance: z.enum(["system", "light", "dark"]).default("system"),
   /** Start Ember when the user logs in (the OS's own login item: an XDG autostart entry on Linux). */
   startAtLogin: z.boolean().default(false),
   /** Onboarding finished (consent given, character picked). */

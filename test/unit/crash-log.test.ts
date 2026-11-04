@@ -34,7 +34,7 @@ vi.mock("electron", () => {
     on(): void { /* the command window's close guard listens (review #262) */ }
   }
   // The command window's close guard also listens for Ember quitting (#262); placement reads the screen (#272).
-  return { BrowserWindow, app: { getAppPath: () => "/app", on: () => undefined, removeListener: () => undefined }, screen: {} };
+  return { nativeTheme: { shouldUseDarkColors: true }, BrowserWindow, app: { getAppPath: () => "/app", on: () => undefined, removeListener: () => undefined }, screen: {} };
 });
 
 describe("crashes in ember.log (review #91)", () => {

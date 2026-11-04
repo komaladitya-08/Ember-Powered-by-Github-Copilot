@@ -325,7 +325,8 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   edges) and `--hud-dim` (a segment not lit), decorative only, each with an Increase Contrast value
   and a contrast-theme colour. Text on filled buttons
   is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %. Ember is
-  dark only, whatever the system's appearance: title bars are dark on Windows, macOS and GNOME,
+  by default the computer's light or dark setting (Settings › Comfort & access › Appearance) for Home, the command
+  window and the prompt window, and always dark for the floating layer: title bars follow on Windows, macOS and GNOME,
   native menus and dialogs on macOS, and menus on Windows. On Linux, menus and dialogs follow the
   GTK theme, and Windows' message boxes (the quit question) stay light.
   `test/unit/design-system.test.ts` checks the token pairs: labels and system colours on every

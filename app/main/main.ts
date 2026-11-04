@@ -9,7 +9,7 @@
  * never tests the OS itself; it asks the platform's members.
  */
 
-import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeTheme, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, logLevel } from "./logger";
@@ -603,6 +603,7 @@ function start(): void {
   }));
   settings.onChange(s => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.settingsChanged, s);
+    if (nativeTheme.themeSource !== s.appearance) nativeTheme.themeSource = s.appearance;
   });
   // And again when it changes (only then: the size slider changes the settings many times a second). The command and
   // prompt windows grow with the text size, open ones too (windows.ts).
@@ -2555,7 +2556,7 @@ function start(): void {
     // The application menu (macOS: its Quit, Command+Q, asks as the handle's Quit does, and its Edit menu makes
     // Command+C/V/X/A/Z work in fields; Windows and Linux: none, so no Ctrl+Q that skips the question and no
     // DevTools), the dark native theme, the windows' icon on Linux and DevTools locked in a packaged build (windows.ts).
-    setUpAppChrome({ os: platform.os, appMenu: sys.lifecycle.appMenu, actions: { showSettings: () => showHome(), quit: () => void quitEmber() } });
+    setUpAppChrome({ os: platform.os, appMenu: sys.lifecycle.appMenu, appearance: settings.get().appearance, actions: { showSettings: () => showHome(), quit: () => void quitEmber() } });
     // Windows: the Start Menu shortcut toasts need (made once, for the zip build).
     sys.lifecycle.ensureShortcut();
     // Linux: X11 only with $DISPLAY, as always (the platform reads it).

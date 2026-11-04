@@ -25,6 +25,7 @@ vi.mock("node:child_process", async importOriginal => {
 /** The window factories' BrowserWindows, each with its options and what was done to it. */
 const electron = vi.hoisted(() => ({ made: [] as { options: Record<string, unknown>; calls: [string, ...unknown[]][] }[] }));
 vi.mock("electron", () => ({
+  nativeTheme: { shouldUseDarkColors: true },
   BrowserWindow: class {
     calls: [string, ...unknown[]][] = [];
     webContents = { on() { /* a crashed page closes its window (review #91): not exercised here */ } };

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const electron = vi.hoisted(() => ({ made: [] as Record<string, unknown>[], workArea: { width: 1920, height: 1040 } }));
 vi.mock("electron", () => ({
+  nativeTheme: { shouldUseDarkColors: true },
   BrowserWindow: class {
     bounds: { x: number; y: number; width: number; height: number };
     min: [number, number] | null = null;

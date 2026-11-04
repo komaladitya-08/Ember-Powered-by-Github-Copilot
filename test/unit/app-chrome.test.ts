@@ -36,7 +36,7 @@ vi.mock("electron", () => ({
     on() { /* not what these tests look at */ }
   },
   // The command window lets a quit through its close guard (app's before-quit).
-  Menu: {}, nativeTheme: {}, app: { on() { /* not what these tests look at */ }, removeListener() { /* nor this */ } },
+  Menu: {}, nativeTheme: { shouldUseDarkColors: true }, app: { on() { /* not what these tests look at */ }, removeListener() { /* nor this */ } },
 }));
 
 const { WINDOW_ICON, ZOOM, aboutPanel, appMenuTemplate, createCommandWindow, createHomeWindow, createPromptWindow, lockDevTools, quitQuestion, setUpAppChrome, windowIconFor, zoomLevelFor } = await import("../../app/main/windows");
@@ -80,7 +80,7 @@ describe("the application menu (review #243, #176, #232)", () => {
     expect(appMenuTemplate(false, actions())).toBeNull();
     for (const os of ["linux", "win32"] as OS[]) {
       const f = fakeElectron();
-      setUpAppChrome({ os, appMenu: false, actions: actions() }, f.e as never);
+      setUpAppChrome({ os, appMenu: false, appearance: "system", actions: actions() }, f.e as never);
       // null, not an empty menu: Electron's default menu goes, and with it the bar Alt showed.
       expect(f.menus).toEqual([null]);
       expect(f.built).toEqual([]);
@@ -111,7 +111,7 @@ describe("the application menu (review #243, #176, #232)", () => {
     const roles = flat(t!).map(i => i.role).filter(Boolean);
     for (const r of ["quit", "reload", "forceReload", "toggleDevTools", "togglefullscreen"]) expect(roles).not.toContain(r);
     const f = fakeElectron();
-    setUpAppChrome({ os: "darwin", appMenu: true, actions: a }, f.e as never);
+    setUpAppChrome({ os: "darwin", appMenu: true, appearance: "system", actions: a }, f.e as never);
     expect(f.built).toHaveLength(1);
     expect(f.built[0][0].label).toBe("Ember");
     expect(f.menus).toEqual(["built menu"]);
@@ -119,14 +119,14 @@ describe("the application menu (review #243, #176, #232)", () => {
 
   it("is set on macOS with an About panel that names Ember, its version once and its licence", () => {
     const f = fakeElectron();
-    setUpAppChrome({ os: "darwin", appMenu: true, actions: actions() }, f.e as never);
+    setUpAppChrome({ os: "darwin", appMenu: true, appearance: "system", actions: actions() }, f.e as never);
     expect(f.about).toEqual([aboutPanel("0.1.0")]);
     // An empty build version: macOS would otherwise say "Version 0.1.0 (0.1.0)" (Info.plist has both).
     expect(aboutPanel("0.1.0")).toEqual({ applicationName: "Ember", applicationVersion: "0.1.0", version: "", copyright: "Copyright © 2026 komaladitya-08. Released under the MIT licence." });
   });
 
   it("is set by main.ts on every OS, before the first window, in place of the macOS-only menu", () => {
-    expect(MAIN).toContain("setUpAppChrome({ os: platform.os, appMenu: sys.lifecycle.appMenu, actions: { showSettings: () => showHome(), quit: () => void quitEmber() } });");
+    expect(MAIN).toContain("setUpAppChrome({ os: platform.os, appMenu: sys.lifecycle.appMenu, appearance: settings.get().appearance, actions: { showSettings: () => showHome(), quit: () => void quitEmber() } });");
     expect(MAIN).not.toContain("if (sys.lifecycle.appMenu)");
     const ready = MAIN.indexOf("const whenReady = () => {");
     const chrome = MAIN.indexOf("setUpAppChrome(", ready);
@@ -140,7 +140,7 @@ describe("the application menu (review #243, #176, #232)", () => {
 describe("DevTools in a packaged Ember (review #176)", () => {
   it("are closed on every page as soon as anything opens them", () => {
     const f = fakeElectron({ packaged: true });
-    setUpAppChrome({ os: "linux", appMenu: false, actions: actions() }, f.e as never);
+    setUpAppChrome({ os: "linux", appMenu: false, appearance: "system", actions: actions() }, f.e as never);
     expect(f.calls).toContain("web-contents-created");
     const opened: (() => void)[] = [];
     const contents = { on: (event: string, fn: () => void) => { if (event === "devtools-opened") opened.push(fn); }, closeDevTools: vi.fn() };
@@ -152,7 +152,7 @@ describe("DevTools in a packaged Ember (review #176)", () => {
 
   it("stay available in a development run", () => {
     const f = fakeElectron({ packaged: false });
-    setUpAppChrome({ os: "win32", appMenu: false, actions: actions() }, f.e as never);
+    setUpAppChrome({ os: "win32", appMenu: false, appearance: "system", actions: actions() }, f.e as never);
     expect(f.calls).not.toContain("web-contents-created");
     const contents = { on: vi.fn(), closeDevTools: vi.fn() };
     lockDevTools(contents);
@@ -161,11 +161,13 @@ describe("DevTools in a packaged Ember (review #176)", () => {
 });
 
 describe("the native theme (review #245)", () => {
-  it("is dark on every OS, as every page is", () => {
+  it("follows the appearance setting on every OS", () => {
     for (const [os, appMenu] of [["linux", false], ["win32", false], ["darwin", true]] as [OS, boolean][]) {
       const f = fakeElectron();
-      setUpAppChrome({ os, appMenu, actions: actions() }, f.e as never);
-      expect(f.e.nativeTheme.themeSource).toBe("dark");
+      for (const appearance of ["system", "light", "dark"] as const) {
+        setUpAppChrome({ os, appMenu, appearance, actions: actions() }, f.e as never);
+        expect(f.e.nativeTheme.themeSource).toBe(appearance);
+      }
     }
   });
 
@@ -261,13 +263,13 @@ describe("the window icon (review #247)", () => {
 
   it("is given to every window made on Linux, so Alt-Tab and the dash show Ember without a .desktop entry", () => {
     const f = fakeElectron();
-    setUpAppChrome({ os: "linux", appMenu: false, actions: actions() }, f.e as never);
+    setUpAppChrome({ os: "linux", appMenu: false, appearance: "system", actions: actions() }, f.e as never);
     const win = { setIcon: vi.fn() };
     f.handlers.get("browser-window-created")!({}, win as never);
     expect(win.setIcon).toHaveBeenCalledWith(WINDOW_ICON);
     for (const [os, appMenu, iconThere] of [["win32", false, true], ["darwin", true, true], ["linux", false, false]] as [OS, boolean, boolean][]) {
       const other = fakeElectron({ iconThere });
-      setUpAppChrome({ os, appMenu, actions: actions() }, other.e as never);
+      setUpAppChrome({ os, appMenu, appearance: "system", actions: actions() }, other.e as never);
       expect(other.calls).not.toContain("browser-window-created");
     }
   });
