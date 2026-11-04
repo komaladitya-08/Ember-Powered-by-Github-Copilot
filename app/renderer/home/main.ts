@@ -7,12 +7,12 @@
  */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
-import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
+import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  MEMORY_OWNER_LOCKED, MEMORY_OWNER_WAITING, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
+  MEMORY_OWNER_LOCKED, MEMORY_OWNER_WAITING, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -162,6 +162,7 @@ function applySettings(s: Settings): void {
   if (!sliding && document.activeElement !== size) showSize(s.size);
   applyMemorySettings(s);
   applyRoutineSettings(s);
+  applyUpdateSettings(s);
   applyAutonomySettings(s);
   providerSettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
@@ -501,7 +502,7 @@ function renderAdmin(a: Status["admin"]): void {
   }
   const service = document.querySelector<HTMLElement>("#w-full #model-service");
   if (a.provider && !sendLine && service) service.textContent = `your organisation's model service (${new URL(a.provider).host})`;
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -1214,6 +1215,37 @@ $("routines-yes").addEventListener("click", () => {
 });
 $("routines-no").addEventListener("click", () => { $("routines-consent").hidden = true; $("routines-on").focus(); });
 mountReminders(window.ember);
+
+// ───── Telling the user a newer Ember is out (app/main/updates.ts): on only once they agree to its note ─────
+const UPDATES_VERSION = FEATURE_CONSENT_VERSION.updates;
+$("updates-consent-text").textContent = UPDATES_CONSENT_TEXT;
+function applyUpdateSettings(s: Settings): void {
+  ($("updates-on") as HTMLInputElement).checked = s.updates.on && s.updates.consent.version >= FEATURE_CONSENT_VERSION.updates;
+}
+function renderUpdates(s: UpdateStatus): void {
+  $("updates-status").textContent = updateStatusText(s);
+  ($("updates-open") as HTMLButtonElement).hidden = s.phase !== "available";
+  const check = $("updates-check") as HTMLButtonElement;
+  check.hidden = s.phase === "off";
+  check.disabled = s.phase === "checking";
+}
+$("updates-on").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  const own = settings?.updates ?? { on: false, consent: { version: 0, at: null }, told: null };
+  // First time: the note comes first, and focus moves to it so it is read and answered.
+  if (on && own.consent.version < UPDATES_VERSION) { $("updates-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("updates-yes").focus(); return; }
+  void save({ updates: { ...own, on } });
+});
+$("updates-yes").addEventListener("click", () => {
+  $("updates-consent").hidden = true;
+  void save({ updates: { on: true, told: settings?.updates.told ?? null, consent: { version: UPDATES_VERSION, at: new Date().toISOString() } } });
+  $("updates-on").focus();
+});
+$("updates-no").addEventListener("click", () => { $("updates-consent").hidden = true; $("updates-on").focus(); });
+$("updates-check").addEventListener("click", () => { void window.ember.checkForUpdates().then(renderUpdates); });
+$("updates-open").addEventListener("click", () => { void window.ember.openUpdate(); });
+window.ember.onUpdates(renderUpdates);
+void window.ember.updates().then(renderUpdates);
 
 // ───── Work without asking (app/main/policy/autonomy.ts): on only once the user agrees to its card ─────
 $("autonomy-consent-text").textContent = AUTONOMY_CONSENT_TEXT;

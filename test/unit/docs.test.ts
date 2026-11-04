@@ -182,6 +182,7 @@ describe("docs/DEVELOPING.md", () => {
       `ember-${v}-1.el8.x86_64.rpm`, `Ember-${v}-x86_64.AppImage`, `Ember-voice-models-${v}.zip`,
       ...[layoutFor("win32", "x64"), layoutFor("darwin", "arm64"), layoutFor("darwin", "x64")].flatMap(l => artifactNames(l, v)),
     ];
+    expect(flat(publish)).toContain("`source-*.zip`");
     for (const f of files("<v>")) expect(flat(publish), f).toContain(`\`${f}\``);
     // The command that writes SHA256SUMS: "hash  name" lines, which the README's sha256sum -c reads; its patterns
     // take in every file of the release.

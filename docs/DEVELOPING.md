@@ -860,6 +860,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
 | `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it). Better recall's model isn't downloaded or run either |
+| `features.updates` | `false`: Ember never asks GitHub about new versions ("Tell me when a new version is out" off, managed) |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
@@ -1896,7 +1897,10 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
 3. The tag runs every job of `ci.yml`, the Intel Mac's included, and each platform's job uploads its packages
    (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,
    the only one with write access, downloads the four artifacts into one folder, and `scripts/package/release.mjs`
-   checks that it holds exactly the eight files the README downloads: `ember-<v>-1.el8.x86_64.rpm`,
+   fetches the three `source-*.zip` archives the licence notices name (`scripts/package/gpl-source.mjs`: sherpa-onnx,
+   eSpeak NG and piper-phonemize, refused unless their SHA-256 matches; GPL-3.0 section 6 for the voice's eSpeak NG. A
+   sherpa-onnx bump means pinning its new sources there), and
+   checks that it holds exactly those and the eight files the README downloads: `ember-<v>-1.el8.x86_64.rpm`,
    `Ember-<v>-x86_64.AppImage`, `Ember-voice-models-<v>.zip`, `Ember-<v>-win-x64.zip`,
    `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`, `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`. It
    refuses a tag that isn't package.json's version, and takes the notes from CHANGELOG.md, with relative links made
@@ -1904,10 +1908,10 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    spaces and the file name, which is what `sha256sum -c` reads):
 
    ```bash
-   sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg > SHA256SUMS
+   sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg source-*.zip > SHA256SUMS
    ```
 
-   and creates the release `Ember <v>` for the tag with the eight files and `SHA256SUMS`.
+   and creates the release `Ember <v>` for the tag with the eleven files and `SHA256SUMS`.
 4. When that ci run has passed, `.github/workflows/npm.yml` publishes the npm launcher, `packages/npm` (the
    `ember-copilot` package, whose `ember` command downloads the release's zip or AppImage, checks it against
    `SHA256SUMS` and starts it), with `npm publish --access public --provenance`. Its version must be the tag's: bump

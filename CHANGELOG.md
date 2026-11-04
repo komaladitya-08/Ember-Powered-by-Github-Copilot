@@ -4,6 +4,14 @@
 
 Reliability beta, prepared for validation before publication.
 
+### Update notices and the voice's source on 5 November
+
+- New, off by default: **Tell me when a new version is out** under Updates. With its note agreed to, Ember asks GitHub
+  once a day and tells you once per version. It sends no sign-in and never downloads or installs anything. An
+  administrator can turn it off with `features.updates`; a policy with that key needs this Ember or newer.
+- Each release now carries `source-*.zip`, the checked source of sherpa-onnx, eSpeak NG and piper-phonemize, beside the
+  packages, as GPL-3.0 section 6 asks for the voice's eSpeak NG.
+
 ### Review fixes on 4 November
 
 - Memory: a `memory.json` that exists but can't be read (a virus scan's lock, a permission) is tried again and is never
