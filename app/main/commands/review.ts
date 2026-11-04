@@ -1,5 +1,5 @@
 /**
- * AI review of commands (Settings › Commands › "Ask only about dangerous commands", on by default): a command the rules
+ * AI review of commands (Settings › Commands › "Ask only about dangerous commands", off by default): a command the rules
  * would ask about (decide.ts) is first shown to the model, with the user's own words, in a session of its own with no
  * tools. One it finds routine for what the user asked runs with its announcement (the command window's Stop countdown,
  * D4.4) instead of a question; one it finds dangerous, or can't judge, asks as before.

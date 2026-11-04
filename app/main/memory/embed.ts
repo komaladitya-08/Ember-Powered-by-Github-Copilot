@@ -161,7 +161,7 @@ export function vectorFile(dir: string, onBroken?: (err: unknown) => void): Vect
     save(index) {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const tmp = `${file}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(index.toJSON()) + "\n", { mode: 0o600 });
+      fs.writeFileSync(tmp, JSON.stringify(index.toJSON()) + "\n", { mode: 0o600, flush: true });
       fs.renameSync(tmp, file);
     },
     drop(id) {
@@ -213,6 +213,8 @@ export class SemanticMemory {
   private again = false;
   /** Bumped by stop(), erasure and replacement graphs: a pass reading the old graph cannot publish a batch. */
   private generation = 0;
+  /** The index a pass left complete, until an edit: a question then has nothing to schedule. */
+  private caughtUp: VectorIndex | null = null;
 
   constructor(private o: SemanticMemoryOptions) {
     this.file = o.file ?? vectorFile(o.dir, err => o.log.warn("memory.vectors_broken", { err: err instanceof Error ? err.message : String(err) }));
@@ -232,12 +234,20 @@ export class SemanticMemory {
   /** The vectors for this many facts are kept now (0 while there is no model). */
   get size(): number { return this.current()?.size ?? 0; }
 
-  /** The graph changed: the index catches up soon, in the background (nothing happens while there is no model). */
-  changed(graph: MemoryGraph): void {
-    if (this.graph !== graph) this.generation++;
+  /**
+   * The graph changed: the index catches up soon, in the background (nothing happens while there is no model). `edited`
+   * false is a question binding the graph it reads: unless that graph is new here, nothing is hashed again, as hashing
+   * every fact on the main thread for each question took 20-50 ms at the 5,000-fact cap.
+   */
+  changed(graph: MemoryGraph, edited = true): void {
+    const fresh = this.graph !== graph;
+    if (fresh) this.generation++;
     this.graph = graph;
-    if (this.index) this.pruneStale(this.index);
-    if (!this.o.model() || this.timer) return;
+    if (edited || fresh) this.caughtUp = null;
+    if (this.index && (edited || fresh)) this.pruneStale(this.index);
+    const model = this.o.model();
+    if (!model || this.timer) return;
+    if (this.caughtUp && this.caughtUp === this.index && this.caughtUp.model === model) return;
     this.timer = setTimeout(() => { this.timer = null; void this.catchUp(); }, this.o.indexDelayMs ?? INDEX_DELAY_MS);
     this.timer.unref?.();
   }
@@ -350,6 +360,7 @@ export class SemanticMemory {
     const todo = [...facts.values()].map(f => ({ id: f.id, text: documentText(graph, f) })).map(t => ({ ...t, hash: hashOf(t.text) })).filter(t => !index.has(t.id, t.hash));
     let added = 0;
     const started = Date.now();
+    let complete = true;
     for (let i = 0; i < todo.length; i += BATCH) {
       const batch = todo.slice(i, i + BATCH);
       let vectors: Float32Array[];
@@ -357,6 +368,7 @@ export class SemanticMemory {
         vectors = await this.o.embedder.embed(batch.map(t => t.text));
       } catch (err) {
         if (gen === this.generation) this.o.log.warn("memory.index_failed", { err: err instanceof Error ? err.message : String(err), added });
+        complete = false;
         break;
       }
       if (gen !== this.generation || this.current() !== index) return;
@@ -366,6 +378,7 @@ export class SemanticMemory {
         if (f && hashOf(documentText(graph, f)) === t.hash && vectors[j]) { index.set(t.id, t.hash, vectors[j]); added++; }
       });
     }
+    if (complete && !this.again && !this.timer) this.caughtUp = index;
     if (added || dropped) {
       this.o.log.info("memory.indexed", { added, dropped, size: index.size, ms: Date.now() - started });
       this.saveSoon();

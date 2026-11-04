@@ -94,7 +94,7 @@ scripts/, packaging/, test/ (unit, integration, smoke, fixtures, mock-llm, demo)
   - at most 2 running tasks (and beside them at most 2 guides), and one task per window;
   - a worker stops after 150 tool calls or 20 minutes;
   - a finished worker's session is deleted at once (TaskManager's `keepMs` defaults to 0);
-  - at most 40 actions a minute, which an admin's `maxActionsPerMinute` can only lower.
+  - at most 40 actions a minute across all tasks together, which an admin's `maxActionsPerMinute` can only lower.
 
 ## Safety and privacy
 

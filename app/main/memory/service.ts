@@ -149,7 +149,7 @@ export class MemoryService {
     // A restart may leave an older derived index beside a durable correction. Bind its hashes to the current graph
     // before the first query, even when the model became ready before index() could attach a lazy graph.
     let semantic: Map<string, number> | undefined;
-    try { this.o.semantic?.changed(this.g); semantic = await this.o.semantic?.seeds(request); }
+    try { this.o.semantic?.changed(this.g, false); semantic = await this.o.semantic?.seeds(request); }
     catch { this.o.log.warn("memory.semantic_unavailable"); }
     if (!allowed()) return "";
     return memoryBlock(this.recall(request, CONTEXT_FACTS, history, semantic));

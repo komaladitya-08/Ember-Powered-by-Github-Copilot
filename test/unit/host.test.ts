@@ -3282,6 +3282,32 @@ describe("memory erasure at account boundaries", () => {
       expect(memory.forgetAll).not.toHaveBeenCalled();
     } finally { await host.stop(); }
   });
+  it("keeps the conversation when a reconnect's account lookup fails for a moment (review 2026-11-04)", async () => {
+    const answers: (number | null)[] = [100, null, 100];
+    const memory = { ...failingMemory(), resolveAccountId: async () => answers.shift() ?? null };
+    let changed = 0;
+    const { host } = makeHost({ memory, accountRetryMs: [0, 0], onAccountChanged: () => changed++ });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(changed).toBe(0);
+      expect(answers).toEqual([]);
+    } finally { await host.stop(); }
+  });
+  it("still ends a conversation whose owner can't be verified after every try", async () => {
+    const answers: (number | null)[] = [100];
+    let lookups = 0;
+    const memory = { ...failingMemory(), resolveAccountId: async () => { lookups++; return answers.shift() ?? null; } };
+    let changed = 0;
+    const { host } = makeHost({ memory, accountRetryMs: [0, 0], onAccountChanged: () => changed++ });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(lookups).toBe(4);
+      expect(changed).toBe(1);
+      expect(memory.forgetAll).not.toHaveBeenCalled();
+    } finally { await host.stop(); }
+  });
   it("blocks another account and retries deletion even after its old conversation was cleared", async () => {
     const memory = failingMemory();
     const { host } = makeHost({ memory });

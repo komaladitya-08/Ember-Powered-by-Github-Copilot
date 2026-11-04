@@ -4,6 +4,22 @@
 
 Reliability beta, prepared for validation before publication.
 
+### Review fixes on 4 November
+
+- Memory: a `memory.json` that exists but can't be read (a virus scan's lock, a permission) is tried again and is never
+  saved over; the next start finds it whole. Memory is flushed to disk before it replaces the old file.
+- Reconnecting: a failed GitHub account lookup is tried three times before the conversation is ended, so waking from
+  sleep on a network that is still settling no longer loses the conversation or the selected project.
+- Projects: a workspace library that can't be read is set aside as `.broken`, with a message, so new workspaces can be
+  saved. Making a model session has a time limit, Cancel ends it at once, and a project request may take 2 minutes.
+- Safety: the command reviewer's session is checked for tools like every other session. At most 40 actions a minute now
+  counts all tasks together. `tailscale` is classified: `funnel`, `serve` and `file cp` ask as publishing, `up`, `down`,
+  `set`, `login`, `logout` and `ssh` as system changes.
+- Idle cost: the handle's face stops drawing once it has dozed off and settled, and a question no longer hashes every
+  remembered fact again unless something changed.
+- Wording: sign-in says a GitHub account needs Copilot before the browser opens, and common refusals say who can fix
+  them, without "seat" or `gh auth login`.
+
 ### Default voice override on 4 November
 
 - Kitten Nano 0.8 FP32 is now the default voice and replaces Piper in the production model/runtime path. Optional
