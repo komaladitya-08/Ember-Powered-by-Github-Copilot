@@ -1,11 +1,17 @@
 /**
  * Voice Match in the voice process (see voiceprint.ts): VoiceGate holds each request the engine heard until its
- * voiceprint has been compared with the owner's, then lets it through or turns it away; Enrolment takes the owner's
- * phrases and makes their voiceprint. The model is behind Printer, so both are tested without it.
+ * voiceprint has been compared with the owner's, then passes it on, saying whether Voice Match vouches for it; Enrolment
+ * takes the owner's phrases and makes their voiceprint. The model is behind Printer, so both are tested without it.
+ *
+ * It never decides whether Ember hears someone (owner decision of 2026-11-05). It used to: on a real laptop's microphone
+ * the owner's own requests of about a second scored 0.50–0.74, under the 0.75 measured on 2.5 s of clean LibriSpeech, and
+ * 45 of 112 requests and wakes in one evening were turned away: Ember showed "Listening…" and stopped. Other people's
+ * voices score in that same range, so no threshold tells them apart there. What Voice Match still decides is what a voice
+ * may approve (`verified`): a request it doesn't vouch for is heard like one with Voice Match off.
  */
 
-import { BARE_NAME, type VoiceEvent } from "./engine";
-import { ENROL_MIN_SECONDS, ENROL_PHRASES, VOICE_MATCH_THRESHOLD, WAKE_MATCH_THRESHOLD, averagePrint, consistentPrints, similarity } from "./voiceprint";
+import type { VoiceEvent } from "./engine";
+import { ENROL_MIN_SECONDS, ENROL_PHRASES, VOICE_MATCH_THRESHOLD, averagePrint, consistentPrints, similarity } from "./voiceprint";
 import { gateMatches } from "./adapt";
 
 /** Makes a voiceprint (unit length) of 16 kHz audio. */
@@ -84,7 +90,6 @@ export class VoiceGate {
   /** Drop held events and detach old promises, so a fresh request never waits for cancelled inference. */
   cancel(): void {
     this.revision++;
-    this.held = null;
     this.queue = Promise.resolve();
   }
 
@@ -97,10 +102,6 @@ export class VoiceGate {
   private learntThreshold: number | null = null;
   /** Requests waiting for their check finish in order (a later one never overtakes an earlier). */
   private queue: Promise<void> = Promise.resolve();
-  /** A wake being looked at (WAKE_MATCH_THRESHOLD): it and what followed it wait, but for a stop. */
-  private held: { e: VoiceEvent; audio: Float32Array | null; withWake: boolean }[] | null = null;
-  /** A turned-away wake's window is being cancelled: what it emits meanwhile goes nowhere. */
-  private dropping = false;
   /**
    * Told of each request that matched the owner and was `verified` (sent first), with its voiceprint, its score and the
    * audio that follows its wake phrase (the part that vouched for it): what Voice Match may learn from (adapt-sample.ts,
@@ -108,14 +109,11 @@ export class VoiceGate {
    */
   onSample: ((print: Float32Array, score: number, rest: Float32Array) => void) | null = null;
 
-  /** `cancelWindow`: ends the engine's listening window (a wake turned away at its first look); it emits synchronously. */
   constructor(
     private printer: () => Printer,
     private send: (e: VoiceEvent) => void,
     private onError: (err: unknown) => void,
     private threshold = VOICE_MATCH_THRESHOLD,
-    private cancelWindow?: () => void,
-    private wakeThreshold = WAKE_MATCH_THRESHOLD,
   ) {}
 
   /**
@@ -149,19 +147,15 @@ export class VoiceGate {
 
   /**
    * An event from the engine. A request ("utterance") is checked when Voice Match is on and its audio is known; a
-   * stop never is (anyone may stop Ember), nor is anything else. A request turned away is followed by the end of its
-   * window as main knows it for a wake taken back ("rejected"), so the bubble goes back to what it showed.
+   * stop never is (anyone may stop Ember), nor is anything else, nor a request said over Ember's own voice (no print of
+   * it would be the speaker's alone: it goes as it is, vouched for by nobody). One that doesn't match is said ("rejected",
+   * for what main keeps of a voice's trust) and then heard all the same, unverified.
    */
   event(e: VoiceEvent, audio: Float32Array | null, withWake = false): void {
     if (e.type === "stop") { this.cancel(); this.send(e); return; }
     const generation = this.revision;
-    if (this.dropping) return;
-    if (this.held) { this.held.push({ e, audio, withWake }); return; }
     const owner = this.owner;
-    // First look, at the wake phrase: a clearly other voice is turned away before main shows Ember listening. (The bare
-    // name shows with its request, which is checked as it comes.)
-    if (e.type === "wake" && owner && audio?.length && e.keyword !== BARE_NAME) { this.lookAtWake(e, audio, owner); return; }
-    if (e.type !== "utterance" || !owner || !audio?.length) { this.send(e); return; }
+    if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.
     const anchor = this.anchor;
     const threshold = this.learntThreshold ?? this.threshold;
@@ -196,7 +190,7 @@ export class VoiceGate {
         return;
       }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
-      this.send({ type: "listening", on: false, reason: "rejected", window: e.window });
+      this.send(e);
     });
   }
 
@@ -232,34 +226,6 @@ export class VoiceGate {
     return voiced >= APPROVAL_MIN_SECONDS && matches(restPrint, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(restPrint) };
   }
 
-  private lookAtWake(e: Extract<VoiceEvent, { type: "wake" }>, audio: Float32Array, owner: Float32Array): void {
-    const generation = this.revision;
-    this.held = [];
-    const look = this.printer().print(audio).then(p => similarity(p, owner), (err: unknown) => {
-      // The model failed: the wake stands (its request is checked as it comes), and main is told.
-      if (generation === this.revision) this.onError(err);
-      return 1;
-    });
-    this.queue = this.queue.then(async () => {
-      const score = await look;
-      if (generation !== this.revision) return;
-      const held = this.held ?? [];
-      this.held = null;
-      if (score >= this.wakeThreshold) {
-        this.send(e);
-        for (const h of held) {
-          if (generation !== this.revision) break;
-          this.event(h.e, h.audio, h.withWake);
-        }
-        return;
-      }
-      // Main never saw this wake: nothing it held is sent, and the engine's window ends unseen.
-      this.send({ type: "rejected", keyword: e.keyword, reason: "voice", score: Math.round(score * 1000) / 1000 });
-      if (held.some(h => h.e.type === "listening" && !h.e.on)) return;
-      this.dropping = true;
-      try { this.cancelWindow?.(); } finally { this.dropping = false; }
-    });
-  }
 }
 
 /** Enrolment: the owner says `of` phrases (any speech the VAD hands over counts as one); their voiceprint comes at the end. */

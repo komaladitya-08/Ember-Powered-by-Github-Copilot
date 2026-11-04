@@ -21,6 +21,7 @@ import { splitWindowsArgs } from "./argv";
 import { appEnv, findApp, hasBuiltInShell, isTerminalApp, LAUNCHERS, programsOf } from "./interim";
 import type { KnownFolders } from "./known-folders";
 import { expandEnvironmentStrings, LnkError, parseShellLink, type AnsiDecoder, type ShellLink } from "./lnk";
+import type { StartApp } from "./start-apps";
 
 const wpath = path.win32;
 
@@ -112,6 +113,8 @@ export interface Win32AppsDeps {
   folders: Pick<KnownFolders, "programs" | "commonPrograms" | "windowsDirectory">;
   /** Is a package of this family installed for this user? (null: can't tell, so it isn't offered.) */
   packageInstalled: (family: string) => boolean | null;
+  /** Store apps on the Start menu with no shortcut file (start-apps.ts); absent: only PACKAGED_APPS. */
+  startApps?: () => readonly StartApp[];
   /** Decodes a non-Unicode shortcut's strings in the system's ANSI code page (#65); Latin-1 without it. */
   ansi?: AnsiDecoder;
   fs?: AppsFs;
@@ -175,7 +178,7 @@ export function packagedApp(p: PackagedApp): DesktopApp {
 /** The package family of an AUMID ("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" → "Microsoft.WindowsCalculator_8wekyb3d8bbwe"). */
 export const packageFamily = (aumid: string) => aumid.slice(0, Math.max(0, aumid.indexOf("!")));
 
-interface Listing { apps: DesktopApp[]; at: number; folders: Map<string, number | null> }
+interface Listing { apps: DesktopApp[]; at: number; folders: Map<string, number | null>; started: number }
 
 /** The Windows AppCatalog. */
 export function win32Apps(d: Win32AppsDeps): AppCatalog & { /** Drops the cached listing (tests, and after a fix). */ forget(): void } {
@@ -253,12 +256,17 @@ export function win32Apps(d: Win32AppsDeps): AppCatalog & { /** Drops the cached
       if (byName.has(lower(p.name))) continue;
       if (p.always || d.packageInstalled(packageFamily(p.aumid)) === true) add(packagedApp(p));
     }
+    // (Never a terminal: check() below refuses it by name too.)
+    for (const s of d.startApps?.() ?? []) {
+      const app = packagedApp({ name: s.name, aumid: s.aumid, programs: [] });
+      if (!isTerminalApp(app, "win32")) add(app);
+    }
     const apps = [...byName.values()];
     if (!apps.some(a => a.programs?.includes("explorer")) && !byName.has(lower(FILE_EXPLORER.name))) apps.push({ ...FILE_EXPLORER, argv: [], programs: ["explorer"], keywords: [...FILE_EXPLORER.keywords] });
-    return { apps, at: now(), folders };
+    return { apps, at: now(), folders, started: d.startApps?.().length ?? 0 };
   };
 
-  const fresh = (c: Listing) => now() - c.at < CACHE_MS && [...c.folders].every(([dir, mtime]) => files.mtimeMs(dir) === mtime);
+  const fresh = (c: Listing) => (d.startApps?.().length ?? 0) === c.started && now() - c.at < CACHE_MS && [...c.folders].every(([dir, mtime]) => files.mtimeMs(dir) === mtime);
 
   /** Throws when `app` must not be opened now (rechecked right before launching, whatever the listing said). */
   const check = (app: DesktopApp): void => {
@@ -274,6 +282,7 @@ export function win32Apps(d: Win32AppsDeps): AppCatalog & { /** Drops the cached
     }
     if (app.file.startsWith("shell:AppsFolder\\")) {
       const p = PACKAGED_APPS.find(e => e.aumid === app.id && `shell:AppsFolder\\${e.aumid}` === app.file);
+      if (!p && d.startApps?.().some(s => s.aumid === app.id && `shell:AppsFolder\\${s.aumid}` === app.file)) return;
       if (!p) throw new Error("Ember can't open that app.");
       if (!p.always && d.packageInstalled(packageFamily(p.aumid)) !== true) throw new Error("That app isn't installed any more.");
       return;

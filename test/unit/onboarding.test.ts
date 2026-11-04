@@ -37,7 +37,7 @@ const tagOf = (id: string): { tag: string; attrs: Record<string, string> } => {
 const platformOf = (os: OS): StatusPlatform => ({
   os, shortcuts: Object.fromEntries(Object.entries(SHORTCUTS[os]).map(([id, d]) => [id, { label: d.label, keys: d.keys }])) as StatusPlatform["shortcuts"],
   dataDir: "~/.config/ember", settingsFile: "~/.config/ember/settings.json", auditCopy: null, micIndicator: PLATFORM_WORDS[os].micIndicator,
-  permissionsNote: PLATFORM_WORDS[os].permissionsNote, speakerRejection: os === "linux", fixLabels: {}, desk: os === "linux", autostartNote: null,
+  permissionsNote: PLATFORM_WORDS[os].permissionsNote, speakerRejection: os === "linux", outputLevel: false, fixLabels: {}, desk: os === "linux", autostartNote: null,
 });
 /** The text a patch puts in `selector` (its segments' words), or undefined when no patch writes it. */
 const patchedText = (patches: HomePatch[], selector: string): string | undefined => {

@@ -19,7 +19,7 @@ let wordRows: KeyedRows<VoiceWord> | null = null;
 
 /** The voice settings as Home last had them, with this change. */
 const voiceWith = (change: Partial<Settings["voice"]>): Settings["voice"] => ({
-  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true,
+  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true,
   ...(current?.voice ?? {}), ...change,
 });
 
@@ -60,6 +60,7 @@ export function personalSettings(s: Settings): void {
   ($("match-learn") as HTMLInputElement).checked = s.voice.learn;
   ($("words-on") as HTMLInputElement).checked = s.voice.words;
   ($("suggest-on") as HTMLInputElement).checked = s.voice.suggest;
+  ($("conversation-on") as HTMLInputElement).checked = s.voice.conversation;
 }
 
 /**
@@ -147,10 +148,13 @@ export function startPersonal(saveSettings: Save): void {
   $("words-hint").textContent = PERSONAL_TEXT.wordsHint;
   $("words-h").textContent = PERSONAL_TEXT.wordsHeading;
   $("words-forget-all").textContent = PERSONAL_TEXT.forgetAllWords;
+  $("conversation-label").textContent = PERSONAL_TEXT.conversation;
+  $("conversation-hint").textContent = PERSONAL_TEXT.conversationHint;
   $("suggest-label").textContent = PERSONAL_TEXT.suggest;
   $("suggest-hint").textContent = PERSONAL_TEXT.suggestHint;
   $("match-learn").addEventListener("change", e => { void save({ voice: voiceWith({ learn: (e.target as HTMLInputElement).checked }) }); });
   $("words-on").addEventListener("change", e => { void save({ voice: voiceWith({ words: (e.target as HTMLInputElement).checked }) }); });
+  $("conversation-on").addEventListener("change", e => { void save({ voice: voiceWith({ conversation: (e.target as HTMLInputElement).checked }) }); });
   $("suggest-on").addEventListener("change", e => { void save({ voice: voiceWith({ suggest: (e.target as HTMLInputElement).checked }) }); });
   $("match-reset").addEventListener("click", () => {
     void window.ember.resetVoice().then(() => { $("voice-live").textContent = PERSONAL_TEXT.resetDone; ($("match-learn") as HTMLElement).focus(); });

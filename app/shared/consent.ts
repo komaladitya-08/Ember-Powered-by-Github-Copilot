@@ -5,8 +5,10 @@ import type { TargetId } from "./targets";
  * refining the voiceprint from the owner's requests, and the words the user corrects are kept (docs/ASSISTANT.md §7).
  * 3: Listen once can open the microphone for a single request while wake listening is off.
  * 4: Project work sends the text files the user selects to the connected model.
+ * 6 (2026-11-05): once called, Ember keeps listening through a conversation, and what it hears goes to Copilot as text
+ * without its name; Voice Match no longer decides who is heard.
  */
-export const CONSENT_VERSION = 5;
+export const CONSENT_VERSION = 6;
 
 /**
  * The versions of the first-use consent cards for WSL, SSH (per host) and commands (per target), recorded apart from

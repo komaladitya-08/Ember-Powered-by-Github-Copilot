@@ -117,7 +117,7 @@ describe("Voice Match that keeps learning", () => {
     g.event({ type: "utterance", text: "Stranger.", ms: 100, window: "follow-up" }, clip(2));
     g.event({ type: "utterance", text: "Owner.", ms: 100, window: "follow-up" }, clip(0));
     await new Promise(r => setTimeout(r, 0));
-    expect(sent.map(e => e.type)).toEqual(["rejected", "listening", "utterance"]);
+    expect(sent.map(e => e.type)).toEqual(["rejected", "utterance", "utterance"]);
   });
 
   it("vouches for a request (verified) only when it matches the enrolment at its own threshold too: learning never lowers that bar (review of #145)", async () => {
@@ -204,7 +204,7 @@ describe("a sample's one voice (adapt-sample.ts)", () => {
     g.event({ type: "utterance", text: "Short.", ms: 100, window: "wake" }, clip(0.5, [1, 0.1]));
     g.event({ type: "utterance", text: "Another.", ms: 100, window: "wake" }, clip(2, [0, 1]));
     await new Promise(r => setTimeout(r, 0));
-    expect(sent.map(e => e.type)).toEqual(["utterance", "utterance", "rejected", "listening"]);
+    expect(sent.map(e => e.type)).toEqual(["utterance", "utterance", "rejected", "utterance"]);
     expect(samples).toHaveLength(1);
   });
 });

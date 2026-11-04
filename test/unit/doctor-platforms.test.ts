@@ -38,8 +38,8 @@ describe("ember doctor's Speech models row", () => {
   const row = (over: Partial<DoctorProbes>) => byId(doctorChecks(base(over)), "voice-models")!;
 
   it("warns only while listening's own models are missing, giving the size of what's missing", () => {
-    expect(row({ voiceModels: "missing" })).toMatchObject({ status: "warn", fix: expect.stringContaining("(138 MB, once)") });
-    expect(row({ voiceModels: "missing", voiceModelsMissing: ["asr", "tts", "speaker"] })).toMatchObject({ status: "warn", fix: expect.stringContaining("(120 MB, once)") });
+    expect(row({ voiceModels: "missing" })).toMatchObject({ status: "warn", fix: expect.stringContaining("(220 MB, once)") });
+    expect(row({ voiceModels: "missing", voiceModelsMissing: ["asr", "tts", "speaker"] })).toMatchObject({ status: "warn", fix: expect.stringContaining("(202 MB, once)") });
   });
 
   it("is fine without Ember's voice or Voice Match, saying what's missing and its size", () => {
@@ -47,7 +47,7 @@ describe("ember doctor's Speech models row", () => {
     expect(row({ voiceModels: "downloaded", voiceModelsMissing: [] })).toMatchObject({ status: "ok", detail: "Downloaded." });
     expect(row({ voiceModels: "bundled", voiceModelsMissing: ["tts"] })).toEqual({ id: "voice-models", status: "ok", label: "Speech models",
       detail: "Installed with Ember. Without Ember's own voice (replies use the system's voice) until it's downloaded in Ember's settings (64 MB)." });
-    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).toBe("Downloaded. Without Voice Match (Ember answers anyone) until it's downloaded in Ember's settings (27 MB).");
+    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).toBe("Downloaded. Without Voice Match (your voice can't answer questions) until it's downloaded in Ember's settings (27 MB).");
     expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["tts", "speaker"] }).detail).toMatch(/Ember's own voice .* and Voice Match .* until they're downloaded in Ember's settings \(90 MB\)\.$/);
   });
 });

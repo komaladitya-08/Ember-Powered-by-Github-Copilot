@@ -51,6 +51,8 @@ export interface ActionRequest {
    * `withheld`: it withheld the element's name (it may say what a secret field holds), so what it says can't be shown.
    */
   element?: { role: string; name: string; secret?: boolean; withheld?: boolean };
+  /** Keys: the focused element takes no typing (a page's document, not a field or an editable area of it). */
+  notEditable?: boolean;
   /**
    * Where an element without a name is, for the question only (never judged): the named control it sits in ("Save"
    * push button), or its place in the window ("top right").
@@ -276,7 +278,7 @@ export function normalizeLabel(s: string): string {
 }
 
 /** Words on buttons that make an action hard to undo or visible to others. */
-const RISKY = /\b(send|post|submit|publish|share|delete|remove|erase|discard|overwrite|replace|empty|buy|pay|order|purchase|checkout|install|uninstall|upload|transfer|reply|forward|sign(?! ?(in|on)\b)|accept|approve|confirm|authori[sz]e|grant|trust|merge|run|execute|reset|clear|archive|revoke|unsubscribe|trash|wipe|destroy|quit|close without saving|don't save|log ?out|sign ?out|shut ?down|restart|reboot|power off|kill|terminate|end process|force stop|donate|book now|deploy|subscribe|leave (the |this )?(group|chat|conversation|meeting|team|channel))\b/;
+const RISKY = /\b(send|post|submit|publish|share|delete|remove|erase|discard|overwrite|replace|empty|buy|pay|order|purchase|checkout|install|uninstall|upload|transfer|reply|forward|sign(?! ?(in|on)\b)|accept|approve|confirm|authori[sz]e|grant|trust|merge|run|execute|reset|clear|archive|revoke|unsubscribe|trash|wipe|destroy|quit|close without saving|don't save|log ?out|sign ?out|shut ?down|restart|reboot|power off|kill|terminate|end process|force stop|donate|book now|deploy|subscribe|activate now|start (my |your )?(free )?(trial|subscription)|upgrade now|complete (purchase|order)|leave (the |this )?(group|chat|conversation|meeting|team|channel))\b/;
 
 /**
  * Text in other languages, ready for matching: compatibility forms folded, invisible characters and
@@ -1970,6 +1972,16 @@ const LEAD_IN = /^([^\p{L}\p{N}]*(yes|ok|okay|sure|please|go ahead|and|click|tap
  * file's name only by its real extension. What it says isn't the user's request either: it never marks a step as not
  * asked for (PolicyEngine.judge).
  */
+/**
+ * A page's link that reads as a command ("Delete my account", "Buy now"): a few words starting with a risky one. A link is
+ * otherwise named by what it leads to ("Post Malone - Circles (Official Video)", "How to install Node"), and one such title
+ * used to end "Work without asking" for the whole task.
+ */
+function linkCommands(name: string): boolean {
+  const label = plainText(name).trim();
+  return (label.match(/[p{L}p{N}]+/gu) ?? []).length <= 4 && riskyTerms(name).some(t => label.startsWith(plainText(t)));
+}
+
 function riskyContent(name: string, acts: boolean, os: OS): boolean {
   const label = plainText(name).trim();
   if (acts) {
@@ -2020,6 +2032,27 @@ const REACHES_OUT: Risk = { reason: "this formula can fetch from the internet or
 /** Where Enter is a line break typed: text fields, a page's editable text, a combo box's own text. */
 const TEXT_FIELD = /^(entry|text|paragraph|section|document text|document web|document frame|spin button|combo box|heading|block quote|static)$/;
 const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit what is in it", note: "Enter there may send or submit it." };
+/**
+ * A one-line field that only looks something up or goes somewhere: a browser's address bar, a page's search box. Enter
+ * there can't send what it holds to anyone, so what asks is only Ember's doubt, which "Work without asking" may cover (an
+ * allow-list that fails closed: by role and name, never in a dialog, and it never makes another field's Enter any safer).
+ * Without it, Enter in Edge's address bar asked on every task (owner report of 2026-11-05).
+ */
+const GOES_SOMEWHERE = /(^|[^\p{L}\p{N}])(search|address|url|location)(?![\p{L}\p{N}])/iu;
+const goesSomewhere = (r: ActionRequest, role: string, name: string): boolean => /^(entry|combo box|text)$/.test(role) && !r.multiLine && !r.dialog && GOES_SOMEWHERE.test(name);
+/**
+ * Keys that only move a browser between its pages and tabs, or reload one (an allow-list, for browsers alone: an app that
+ * merely has a page in it may use them otherwise). Any other shortcut Ember doesn't know keeps asking.
+ */
+const BROWSER_KEYS: Readonly<Record<OS, RegExp>> = {
+  linux: /^(alt\+(left|right)|ctrl\+(r|shift\+t|[1-9]))$/,
+  win32: /^(alt\+(left|right)|ctrl\+(r|shift\+t|[1-9]))$/,
+  darwin: /^(cmd\+(r|[1-9]|left|right|\[|\])|shift\+cmd\+t)$/,
+};
+/** Web browsers themselves, by program name. */
+const BROWSER = /msedge|chrome|chromium|firefox|librewolf|brave|opera|vivaldi|safari|iexplore/i;
+/** A page that takes payment: a button on it may buy something whatever its label says ("Activate now"; audit of 2026-11-01). */
+const PAYMENT_PAGE = /\b(checkout|check out|payment|billing)\b/;
 /** Titles of file dialogs (open, save, export, attach). */
 const FILE_DIALOG_TITLE = /^\s*(save|save as|save a copy|save file|save image|export|export as|open|open files?|select files?|choose files?|insert (file|image|picture)|upload|attach)\b/i;
 /**
@@ -2031,6 +2064,9 @@ const FILE_DIALOG_TITLE = /^\s*(save|save as|save a copy|save file|save image|ex
  */
 function enterMaySend(r: ActionRequest, role: string, os: OS): boolean {
   if (!TEXT_FIELD.test(role) || role === "spin button" || r.formula !== undefined || (r.element && isSheetCell(r.element))) return false;
+  // A page's document itself has the keyboard, and takes no typing: nothing there to send. (Edge says this for a page while
+  // its own address bar has the keyboard. A field or an editable area in the page has it as the deeper focused element.)
+  if (r.notEditable && /^document (web|frame)$/.test(role)) return false;
   if (!r.inPage && (r.windowId?.role === "file chooser" || (DIALOG_WINDOW.test(r.windowId?.role ?? "") && FILE_DIALOG_TITLE.test(r.window)))) return false;
   // Web browsers, apps built on a web engine (Electron) and chat apps (WEB_APP): where Ember can't tell, a field there is
   // a page's. An office suite's (OFFICE_APP: LibreOffice) fields and documents' text never send.
@@ -2245,7 +2281,7 @@ export class PolicyEngine {
     // What a dialog or the window's title says, for an "OK" there (not the control's own name, nor the option chosen).
     const says = !!d.about && d.about !== r.element?.name && !(r.kind === "select" && d.about === r.value);
     // A row, cell, icon or list item is named by what it holds (a mail's subject): that isn't a request to check against.
-    const content = CONTENT_ROLES.test(role) && d.about === r.element?.name;
+    const content = (CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage)) && d.about === r.element?.name;
     const how = { setting: TOGGLE_ROLES.test(role), disk, says };
     if (d.about && !content && !alignedWithGoal(r.goal, d.about, how)) {
       // Named in a question of Ember's the user answered with a yes or a choice ("I can delete the old installers. Shall
@@ -2349,10 +2385,11 @@ export class PolicyEngine {
     // icon or a mail list's row is named by its content ("report.pdf", "Your order has shipped"): see riskyContent,
     // gentle where a click only selects it, stricter where it does something of its own (a page's list item, option or
     // grid cell with a click handler; Enter or Space on one).
-    const content = CONTENT_ROLES.test(role);
+    // (A page's link is named by what it leads to, as a row by what it holds: "Post Malone - Circles" isn't a request to post.)
+    const content = CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage);
     const selects = !!r.clickSelects && (r.kind === "click" || r.kind === "cursor_click");
     const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
-    const riskyNamed = (content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
+    const riskyNamed = (role === "link" && content ? riskyContent(name, false, os) || linkCommands(name) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = riskyNamed && !opensDialog(role, name);
@@ -2377,6 +2414,7 @@ export class PolicyEngine {
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
         if (named && !lone) return { reason: "this action may be hard to undo or visible to others", about: name };
+        if (ACTIVATING_ROLES.test(role) && r.inPage && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
         if (SETTING_ROLES.test(role) && (securitySetting(name) || secureDialog)) return secure(name);
@@ -2407,7 +2445,9 @@ export class PolicyEngine {
         const current = r.currentText ?? "";
         // What this task typed there itself is no one else's: rewriting it is no loss.
         if (r.mode === "replace" && !r.ownText && (current.length > 80 || current.includes("\n"))) {
-          return { reason: `this replaces ${howMany(current.length)} already there`, note: `This replaces ${howMany(current.length)} there.` };
+          // (A browser's own address bar holds a long address, which is no one's work: only Ember's doubt.)
+          const bar = !r.inPage && tabbed(r.app, os) && goesSomewhere(r, role, name);
+          return { reason: `this replaces ${howMany(current.length)} already there`, note: `This replaces ${howMany(current.length)} there.`, ...(bar ? { plain: true as const } : {}) };
         }
         // A rich-text editor's paragraphs (or a picture) stand in its text as U+FFFC: how much it holds can't be told.
         if (r.mode === "replace" && EMBEDDED.test(current)) return HOLDS_MORE;
@@ -2421,6 +2461,7 @@ export class PolicyEngine {
         // Keypad twins are judged as the keys they act like (KP_Delete deletes, Ctrl+KP_Enter sends).
         const k = keyFamily(canonicalKeys(r.value ?? "", kc) ?? "");
         const t = keyTables(kc);
+        const browser = BROWSER.test(r.app);
         // A formula typed key by key that reaches outside the sheet: every key that goes on with it, or enters it, is
         // asked about (Escape drops it, Backspace takes from it).
         if (r.formula !== undefined && reachesOut(r.formula) && !/^(escape|backspace)$/.test(k)) return REACHES_OUT;
@@ -2435,6 +2476,8 @@ export class PolicyEngine {
         // type_text's "replace"): judged by the real selection where the screen reader tells it.
         const replaces = replacesSelection(k, kc) ? replacedBySelection(r, role, k, kc) : null;
         if (replaces) return replaces;
+        // Closing a tab the user's own words asked to close: a click on its Close button goes unasked too.
+        if (k === `${kc.primary}+w` && browser && /\bclose\b/i.test(r.goal ?? "")) return { reason: "this closes a tab", plain: true };
         if (t.destructive.has(k)) return { reason: "this shortcut can delete, send or close things" };
         if (ACTIVATE_KEY.test(k)) {
           // Enter or Space on a focused button is a click on that button; on a row, cell, icon or list item it opens or
@@ -2447,14 +2490,14 @@ export class PolicyEngine {
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
           // Enter in a text field is a typed line break (as type_text's is): where it may send a chat message or submit a
           // form, it is asked about (enterMaySend).
-          if (!/space$/.test(k) && enterMaySend(r, role, os)) return ENTER_IN_FIELD;
+          if (!/space$/.test(k) && enterMaySend(r, role, os)) return goesSomewhere(r, role, name) ? { ...ENTER_IN_FIELD, plain: true } : ENTER_IN_FIELD;
           return null;
         }
         if (MNEMONIC_KEY.test(k)) return { reason: "this shortcut presses whichever button has that letter, and Ember can't tell which" };
         // In an open menu a plain letter picks the item with that underlined letter.
         if (/menu/.test(role) && /^(shift\+)?[a-z0-9]$/.test(k)) return { reason: "in an open menu a letter picks whichever item has that letter, and Ember can't tell which" };
         // Any other shortcut with Ctrl, Alt or ⌘: unknown to Ember unless it only moves, edits or saves.
-        if (SHORTCUT.test(k) && !t.safe.has(k)) return { reason: "Ember can't tell what this shortcut does in this app" };
+        if (SHORTCUT.test(k) && !t.safe.has(k)) return { reason: "Ember can't tell what this shortcut does in this app", ...(browser && BROWSER_KEYS[os].test(k) ? { plain: true as const } : {}) };
         return null;
       }
       default:

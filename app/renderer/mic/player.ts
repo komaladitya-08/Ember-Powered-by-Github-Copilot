@@ -13,6 +13,13 @@ export interface PlayerAudio {
   createBuffer(channels: number, length: number, rate: number): { copyToChannel(data: Float32Array, channel: number): void; readonly duration: number };
   createBufferSource(): PlayerSource;
   readonly destination: unknown;
+  /** A volume control for ducking; a stand-in without one just doesn't duck. */
+  createGain?(): PlayerGain;
+}
+
+export interface PlayerGain {
+  gain: { setTargetAtTime(level: number, at: number, seconds: number): void };
+  connect(to: unknown): void;
 }
 
 export interface PlayerSource {
@@ -58,9 +65,18 @@ export function playerAudio(ctx: PlayerContext, element: boolean, makeElement: (
       if (refused && ctx.state === "running") void play();
       return ctx.createBufferSource();
     },
+    ...(ctx.createGain ? { createGain: () => ctx.createGain!() } : {}),
     destination: dest,
   };
 }
+
+/**
+ * How far Ember's voice drops while speech is heard over it (12 dB…), and how fast (s): at once, so the user hears they
+ * were heard. It is also what lets their words through: over Ember at full volume the echo canceller suppressed them
+ * (measured on a laptop: "Wait, tell me about the weather instead." came through as "Other in step.", 3.5 s late).
+ */
+const DUCK_LEVEL = 0.15;
+const DUCK_SECONDS = 0.02;
 
 /** A moment between a chunk arriving and its sound, so it never starts in the past (s). */
 const LEAD_S = 0.03;
@@ -74,6 +90,9 @@ export class Player {
   private on = false;
   /** Replies at or below this were hushed: their late chunks are dropped. */
   private hushed = 0;
+  /** Ember's voice goes through this (made with the context), and is ducked now. */
+  private volume: PlayerGain | null = null;
+  private ducked = false;
 
   /**
    * `scheduled`: told of each chunk as it is scheduled (when it starts on the audio clock, and its samples), so the
@@ -86,12 +105,13 @@ export class Player {
     if (id <= this.hushed || !samples.length) return 0;
     this.open.add(id);
     const ctx = (this.ctx ??= this.make());
+    if (!this.volume && ctx.createGain) { this.volume = ctx.createGain(); this.volume.connect(ctx.destination); }
     if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
     const buffer = ctx.createBuffer(1, samples.length, rate);
     buffer.copyToChannel(samples, 0);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(ctx.destination);
+    src.connect(this.volume ?? ctx.destination);
     const at = Math.max(ctx.currentTime + LEAD_S, this.nextAt);
     src.onended = () => { this.playing.delete(src); this.settle(); };
     src.start(at);
@@ -108,6 +128,13 @@ export class Player {
     this.settle();
   }
 
+  /** Speech was heard over Ember, so its voice drops; or that passed, and it comes back. */
+  duck(on: boolean): void {
+    if (on === this.ducked) return;
+    this.ducked = on;
+    if (this.volume && this.ctx) this.volume.gain.setTargetAtTime(on ? DUCK_LEVEL : 1, this.ctx.currentTime, DUCK_SECONDS);
+  }
+
   /** Stops at once; chunks of replies up to `upTo` that are still on their way are dropped. */
   stop(upTo = Number.MAX_SAFE_INTEGER): void {
     this.hushed = Math.max(this.hushed, Math.min(upTo, Math.max(0, ...this.open)));
@@ -115,6 +142,7 @@ export class Player {
     for (const src of this.playing) { src.onended = null; try { src.stop(); } catch { /* not started yet */ } }
     this.playing.clear();
     this.nextAt = 0;
+    this.duck(false);
     this.tell(false);
   }
 

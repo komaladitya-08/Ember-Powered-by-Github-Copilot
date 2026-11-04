@@ -1742,7 +1742,7 @@ $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
   if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
-  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true }), match: on } });
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true }), match: on } });
 });
 $("match-teach").addEventListener("click", startEnrol);
 // Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
@@ -1766,7 +1766,7 @@ $("wake").addEventListener("change", e => {
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();

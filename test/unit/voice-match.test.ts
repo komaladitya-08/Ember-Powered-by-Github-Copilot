@@ -74,7 +74,7 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([utterance("Open the terminal.")]);
   });
 
-  it("sends the owner's request marked verified, and turns another voice's away as a wake taken back (in order)", async () => {
+  it("sends the owner's request marked verified, and hears another voice's unverified (in order)", async () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
     g.setOwner(owner);
@@ -84,7 +84,7 @@ describe("VoiceGate", () => {
     await flush();
     expect(sent).toEqual([
       { type: "rejected", keyword: "", reason: "voice", score: 0 },
-      { type: "listening", on: false, reason: "rejected", window: "wake" },
+      utterance("Someone else."),
       // Verified: only such a request may answer a question with a spoken yes (voice-answer.ts).
       { ...utterance("The owner."), verified: true },
     ]);
@@ -196,8 +196,8 @@ describe("VoiceGate", () => {
       g.event(utterance("Open the files."), Float32Array.from([0, 1]));
       await new Promise(r => setTimeout(r, 60));
       expect(unhandled).toEqual([]);
-      // Both are dealt with in order: the first turned away, the second heard unverified with the failure reported.
-      expect(sent.map(e => e.type)).toEqual(["rejected", "listening", "utterance"]);
+      // Both are dealt with in order: the first unmatched and heard, the second heard unverified with the failure reported.
+      expect(sent.map(e => e.type)).toEqual(["rejected", "utterance", "utterance"]);
       expect(errors).toHaveLength(1);
     } finally {
       process.off("unhandledRejection", note);
@@ -212,55 +212,6 @@ describe("VoiceGate", () => {
     await flush();
     expect(sent).toEqual([utterance("Open the terminal.")]);
     expect(errors).toHaveLength(1);
-  });
-});
-
-describe("VoiceGate's first look, at the wake phrase", () => {
-  const wake: VoiceEvent = { type: "wake", keyword: "hey_ember" };
-  const on: VoiceEvent = { type: "listening", on: true, reason: "wake", window: "wake" };
-  const off: VoiceEvent = { type: "listening", on: false, reason: "stop", window: "wake" };
-
-  it("shows the owner's wake once it looked, with what came meanwhile, in order", async () => {
-    const sent: VoiceEvent[] = [];
-    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
-    g.setOwner(owner);
-    g.event(wake, Float32Array.from([1, 0.2]));
-    g.event(on, null);
-    expect(sent).toEqual([]);
-    await flush();
-    expect(sent).toEqual([wake, on]);
-  });
-
-  it("turns another voice away before Ember shows it listens, and ends its window unseen", async () => {
-    const sent: VoiceEvent[] = [];
-    let cancelled = 0;
-    const g: VoiceGate = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined, undefined, () => { cancelled++; g.event(off, null); });
-    g.setOwner(owner);
-    g.event(wake, Float32Array.from([0, 1]));
-    g.event(on, null);
-    await flush();
-    expect(sent).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "voice", score: 0 }]);
-    expect(cancelled).toBe(1);
-    // The next window is heard as usual.
-    g.event({ type: "stop" }, null);
-    expect(sent.at(-1)).toEqual({ type: "stop" });
-  });
-
-  it("lets a stop through at once while it looks", () => {
-    const sent: VoiceEvent[] = [];
-    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
-    g.setOwner(owner);
-    g.event(wake, Float32Array.from([0, 1]));
-    g.event({ type: "stop" }, null);
-    expect(sent).toEqual([{ type: "stop" }]);
-  });
-
-  it("doesn't look at a bare-name wake (it shows with its request, which is checked)", () => {
-    const sent: VoiceEvent[] = [];
-    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
-    g.setOwner(owner);
-    g.event({ type: "wake", keyword: "ember" }, Float32Array.from([0, 1]));
-    expect(sent).toEqual([{ type: "wake", keyword: "ember" }]);
   });
 });
 

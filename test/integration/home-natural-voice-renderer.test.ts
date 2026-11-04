@@ -133,7 +133,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
     logFile: "/tmp/ember-test.log", settingsNotice: null,
     admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] },
     platform: { os: "win32", shortcuts: shownShortcuts(SHORTCUTS.win32, heldShortcuts(SHORTCUTS.win32, FALLBACK_SHORTCUTS.win32, [])),
-      dataDir: "~/.config/ember", settingsFile: "~/.config/ember/settings.json", auditCopy: null, micIndicator: "", permissionsNote: "", speakerRejection: false,
+      dataDir: "~/.config/ember", settingsFile: "~/.config/ember/settings.json", auditCopy: null, micIndicator: "", permissionsNote: "", speakerRejection: false, outputLevel: false,
       fixLabels: {}, desk: false, autostartNote: null },
   };
   const seedVoice: VoiceStatus = { state: "off", detail: null, modelsReady: true, modelsMissing: [], modelsBytes: 0,

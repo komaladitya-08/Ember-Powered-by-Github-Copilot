@@ -627,6 +627,13 @@ const OUTCOME = {
 /** A finished task, as the conductor hears about it. */
 /** A finished task as the next turn hears it (in <task_results>): its summary, and what its card showed, as words. */
 const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}${t.view ? `\n${viewText(t.view)}` : ""}`;
+/**
+ * Told to the conversation with what was heard in a spoken conversation (AgentHost.ask `replaces`), and not in its prompt:
+ * with conversations off the prompts stay as they were. Host-written, never model or screen text.
+ */
+const CONVERSATION_LINE = "(Heard in an open spoken conversation, without your name. A running task goes on while you talk: answer other questions as it runs, and pass on what changes it with steer_task, not a second task. If this plainly wasn't meant for you, such as people talking to each other or a video, reply with only “…”.)";
+const CUT_IN_LINE = "(The user said this before you had finished, so your last reply was stopped. It adds to or changes what they asked: answer with all of it in mind.)";
+
 /** Requests sent while the conversation was busy, kept at most (the runtime runs them one turn at a time). */
 const MAX_QUEUED = 20;
 /** Finished tasks kept for "what did I miss?" after their cards go (it names three and counts the rest). */
@@ -2171,8 +2178,15 @@ export class AgentHost {
    * behind a turn under way), just before it is sent: main's acknowledgement waits for it, so "On it." never comes
    * while the request still waits, nor over another turn's answer.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
+    // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
+    const cutIn = how.replaces === true && (this.conductor?.turnOpen ?? false);
+    if (cutIn) {
+      this.queued = [];
+      try { await this.conductor?.replaceTurn(); } catch (err) { this.o.log.warn("agent.replace_turn_failed", { err }); }
+      if (epoch !== this.stopEpoch) return false;
+    }
     // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
     // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
     const first = this.betweenTurns();
@@ -2329,7 +2343,7 @@ export class AgentHost {
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
       if (first) how.onSent?.();
-      await this.conductor.ask(text, context?.text, this.trustedLine(), !how.voiceUnchecked, prompt => { request.prompt = prompt; });
+      await this.conductor.ask(text, context?.text, [this.trustedLine(), ...(how.replaces ? [CONVERSATION_LINE] : []), ...(cutIn ? [CUT_IN_LINE] : [])].filter(Boolean).join(" "), !how.voiceUnchecked, prompt => { request.prompt = prompt; });
     } catch (err) {
       // Never sent: no turn of its own will come (nor its hint).
       this.hintOwed = false;

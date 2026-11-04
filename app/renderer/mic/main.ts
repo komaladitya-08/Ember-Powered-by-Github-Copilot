@@ -12,6 +12,7 @@
 import type { MicApi, MicFrame } from "../../shared/voice";
 import { Capture } from "./capture";
 import { Player, playerAudio, type PlayerContext } from "./player";
+import { OutputBusy, watchOutput } from "./output-watch";
 import { speechWatch, type WatchedUtterance } from "./speech-watch";
 import { LocalSpeech } from "./local-speech";
 import { LEVEL_MS, VOICE_KEEP_ALIVE_MS, VOICE_LEVEL_MS, LevelMeter, envelope, rms, voiceAt, type VoiceSpan } from "../../shared/level";
@@ -213,6 +214,16 @@ function hush(): void {
   player.stop();
   update();
 }
+api.onDuck(on => player.duck(on));
+// While a conversation is open, whether other sound plays (a song's words aren't requests). Each change waits for the last.
+const outputBusy = new OutputBusy(on => api.outputBusy(on));
+let stopOutput: Promise<(() => void) | null> = Promise.resolve(null);
+api.onOutputWatch(on => {
+  stopOutput = stopOutput.then(async stop => {
+    stop?.();
+    return on ? watchOutput(outputBusy, () => player.active).catch(() => null) : null;
+  });
+});
 api.onHush(generation => { hush(); speechGeneration = generation; api.speaking(false, speechGeneration); });
 
 window.addEventListener("beforeunload", () => capture?.stop());

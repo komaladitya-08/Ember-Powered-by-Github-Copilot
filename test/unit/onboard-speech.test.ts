@@ -79,7 +79,7 @@ describe("the speaking page (review #101)", () => {
     const spoken: Utterance[] = [];
     let speak: (r: { text: string }) => void = () => undefined;
     const onSpeak = (text: string) => speak({ text });
-    const api: MicApi = { status: vi.fn(), speaking: vi.fn(), speech: vi.fn(), onSpeak: fn => { speak = fn; }, onHush: () => undefined, onAudio: () => undefined, onAudioDone: () => undefined, played: vi.fn(), level: vi.fn(), onLevelOn: () => undefined };
+    const api: MicApi = { status: vi.fn(), speaking: vi.fn(), speech: vi.fn(), onDuck: () => undefined, onOutputWatch: () => undefined, outputBusy: () => undefined, onSpeak: fn => { speak = fn; }, onHush: () => undefined, onAudio: () => undefined, onAudioDone: () => undefined, played: vi.fn(), level: vi.fn(), onLevelOn: () => undefined };
     vi.stubGlobal("window", { emberMic: api, addEventListener: () => undefined });
     vi.stubGlobal("SpeechSynthesisUtterance", Utterance);
     vi.stubGlobal("speechSynthesis", { speak: (u: Utterance) => spoken.push(u), cancel: () => undefined, getVoices: () => [{ name: "Local", lang: "en-US", localService: true, default: true }], addEventListener: () => undefined });

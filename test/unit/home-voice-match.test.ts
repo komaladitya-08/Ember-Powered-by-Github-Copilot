@@ -47,7 +47,7 @@ describe("Voice Match's states", () => {
     const kept = matchView({ enrolled: true, on: false, model: false, wanted: true, enrolling: null }, { ...shown, speakerBytes: 26_534_365 });
     expect(kept).toMatchObject({ checked: false, disabled: true, forgetHidden: false, focus: ["voice-download", "wake"] });
     expect(kept.teach.hidden).toBe(true);
-    expect(kept.text).toMatch(/^Off for now: Voice Match's model is missing or was damaged, so Ember answers anyone .*Download it above \(27 MB\)/);
+    expect(kept.text).toMatch(/^Off for now: Voice Match's model is missing or was damaged, so your voice can't answer .*Download it above \(27 MB\)/);
     const fresh = matchView({ enrolled: false, on: false, model: false, enrolling: null }, shown);
     expect(fresh).toMatchObject({ disabled: true, text: "Voice Match needs its own model, which isn't on this computer. Download it above, then teach Ember your voice." });
     // Its model back: as before.

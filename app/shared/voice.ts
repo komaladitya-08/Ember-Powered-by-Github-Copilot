@@ -7,6 +7,12 @@ export const VOICE = {
   status: "voice:mic-status",
   speak: "voice:speak",
   hush: "voice:hush",
+  /** Ember's voice drops, or comes back: speech was heard over it, and may be the user cutting in (engine.ts). */
+  duck: "voice:duck",
+  /** Main to the mic page: a conversation opened or closed, so watch whether other sound plays (output-watch.ts), or stop. */
+  outputWatch: "voice:output-watch",
+  /** The mic page to main: other sound is playing, or no longer. */
+  outputBusy: "voice:output-busy",
   speaking: "voice:speaking",
   /** The speaking page found that a reply was heard (true) or that no voice spoke (false). */
   speech: "voice:speech",
@@ -52,6 +58,9 @@ export interface MicApi {
   /** A reply started (true), or none did: the computer has no voice (false). Sent only when it changes. */
   speech(ok: boolean): void;
   onSpeak(fn: (r: SpeakRequest) => void): void;
+  onDuck(fn: (on: boolean) => void): void;
+  onOutputWatch(fn: (on: boolean) => void): void;
+  outputBusy(on: boolean): void;
   onHush(fn: (generation: number) => void): void;
   onAudio(fn: (a: SpeechAudio) => void): void;
   onAudioDone(fn: (id: number) => void): void;

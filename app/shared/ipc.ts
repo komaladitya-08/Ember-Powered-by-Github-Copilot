@@ -254,6 +254,8 @@ export interface StatusPlatform {
   permissionsNote: string;
   /** Ember listens to the speakers to tell its own voice apart (Linux only): false drops that sentence from the consent. */
   speakerRejection: boolean;
+  /** A conversation can tell when other sound is playing (Windows): the consent says so. */
+  outputLevel: boolean;
   /** The button text of each setup-check fix this OS offers ("Turn on", "Open System Settings"); others say "Turn on". */
   fixLabels: Partial<Record<FixId | TargetFixId, string>>;
   /** Ember's desk is offered here. */

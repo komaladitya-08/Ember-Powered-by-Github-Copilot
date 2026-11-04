@@ -113,6 +113,7 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
     },
     voice: {
       speakerMonitor: true,
+      outputLevel: false,
       // Speech models installed with Ember's RPM (or unzipped there by IT), then those inside the AppImage.
       bundledModelDirs: resourcesPath => ["/usr/share/ember/voice-models", path.join(resourcesPath, "voice-models")],
       // sherpa-onnx's C API, inside the RPM's /opt/ember and the AppImage alike (stage.mjs puts it there).

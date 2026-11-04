@@ -468,6 +468,8 @@ export interface A11yProbes {
 export interface VoicePlatform {
   /** Linux only true (parec speaker rejection); win32/darwin false, and the setting and consent copy say so. */
   readonly speakerMonitor: boolean;
+  /** How loud the computer's output is can be read (Windows' system audio loopback): a conversation won't take a song for the user. */
+  readonly outputLevel: boolean;
   /** Folders a bundled copy of the models may be in, in order (linux: /usr/share/ember/voice-models, then resources/voice-models). */
   bundledModelDirs(resourcesPath: string): string[];
   /**

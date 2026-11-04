@@ -228,7 +228,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   const missing = VOICE_MODELS.filter(m => (p.voiceModelsMissing ?? (p.voiceModels === "missing" ? VOICE_MODELS.map(x => x.id) : [])).includes(m.id));
   const mb = (n: number) => `${Math.max(1, Math.round(n / 1e6))} MB`;
   const optional = missing.filter(m => !LISTENING_MODELS.includes(m.id));
-  const without = optional.map(m => m.id === "tts" ? "Ember's own voice (replies use the system's voice)" : "Voice Match (Ember answers anyone)").join(" and ");
+  const without = optional.map(m => m.id === "tts" ? "Ember's own voice (replies use the system's voice)" : "Voice Match (your voice can't answer questions)").join(" and ");
   out.push(p.voiceModels === "missing"
     ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${mb(modelsBytes(missing.length ? missing : VOICE_MODELS))}, once)${linux ? ", or unzip the release's Ember-voice-models zip into /usr/share/ember" : ""}.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: `${p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded."}${optional.length ? ` Without ${without} until ${optional.length > 1 ? "they're" : "it's"} downloaded in Ember's settings (${mb(modelsBytes(optional))}).` : ""}` });

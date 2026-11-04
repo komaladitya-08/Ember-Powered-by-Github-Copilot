@@ -10,7 +10,7 @@
  * is told while Ember speaks and doesn't take what it hears then as a request.
  */
 
-import { app, BrowserWindow, MessageChannelMain, ipcMain, net, session, utilityProcess, type UtilityProcess } from "electron";
+import { app, BrowserWindow, MessageChannelMain, desktopCapturer, ipcMain, net, session, utilityProcess, webContents, type UtilityProcess } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -117,6 +117,10 @@ export interface VoiceOptions {
    * scripts/voice/echo-check.mjs measures both on a real computer. Development builds only, for now (EMBER_TTS_OUTPUT).
    */
   playback?: "context" | "element";
+  /** A wake's request opens a conversation (settings' voice.conversation; engine.ts CONVERSATION_IDLE_MS). */
+  conversation?: () => boolean;
+  /** The mic page can read how loud the computer's output is (PlatformVoice.outputLevel). */
+  outputLevel?: boolean;
   /** Synthetic WAV input has no acoustic echo. Chromium's processing can distort it (development builds only). */
   testMicWav?: boolean;
   /**
@@ -310,6 +314,11 @@ export class VoiceService {
       // The microphone's level counts only while Ember hears a request (a late one after that is dropped).
       if (l.mic !== undefined && l.mic !== null && this.state !== "active") delete l.mic;
       if (Object.keys(l).length) this.o.onLevel?.(l);
+    });
+    ipcMain.on(VOICE.outputBusy, (e, on: unknown) => {
+      if (!(this.mic && e.sender === this.mic.webContents) || typeof on !== "boolean") return;
+      this.o.log.info("voice.other_sound", { on });
+      this.proc?.postMessage({ type: "other-sound", on });
     });
     ipcMain.on(VOICE.speaking, (e, on: unknown, generation: unknown) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
@@ -629,6 +638,32 @@ export class VoiceService {
     this.proc?.postMessage({ type: "learning", on });
   }
 
+  /** Speech was heard over Ember, so its voice drops while the words are checked; or it comes back. */
+  duck(on: boolean): void {
+    const win = this.speakingPage === "mic" ? this.mic : this.speakingPage === "speaker" ? this.speaker?.win : null;
+    if (win && !win.isDestroyed()) win.webContents.send(VOICE.duck, on);
+  }
+
+  /** A conversation opened or closed: while it is open, the mic page watches whether other sound plays. */
+  watchOutput(on: boolean): void {
+    if (this.o.outputLevel && this.mic && !this.mic.isDestroyed()) this.mic.webContents.send(VOICE.outputWatch, on);
+  }
+
+  /** The page asking for the output's level is the mic page, in a build where it can. */
+  allowsOutputLevel(wc: Electron.WebContents | null | undefined): boolean {
+    return !!this.o.outputLevel && !!wc && !!this.mic && wc === this.mic.webContents;
+  }
+
+  /** Conversations turned on or off (the setting): off ends one under way. */
+  setConversation(on: boolean): void {
+    this.proc?.postMessage({ type: "conversation", on });
+  }
+
+  /** A reply or a task is under way, so a conversation stays open; or none any more, and its idle time starts. */
+  conversationBusy(on: boolean): void {
+    this.proc?.postMessage({ type: "conversation-busy", on });
+  }
+
   /** Stops listening for a request at once (the kill switch): a wake being checked, a waiting follow-up and a request already on its way are dropped. */
   cancelListening(detail = "Listening cancelled."): void {
     this.manualGeneration++;
@@ -649,6 +684,8 @@ export class VoiceService {
     if (this.manual) this.cancelListenOnce();
     // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
     if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
+    // What is heard over Ember's voice is told from Ember's own words by these (engine.ts spokenByEmber).
+    this.proc?.postMessage({ type: "self-words", text });
     const neural = this.neuralVoice;
     if (!o.append) this.hush();
     if (!o.append || !this.saidSpeaking) this.awaitingSpeechStart = true;
@@ -1192,7 +1229,7 @@ export class VoiceService {
       this.o.onEvent(event, m.type === "utterance" ? { utterance: this.utterances } : undefined);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", generation: this.listeningGeneration, models: this.paths(), monitor: !temporary && this.o.monitor, ...(temporary ? { manualOnly: true } : {}), dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
+    proc.postMessage({ type: "init", generation: this.listeningGeneration, models: this.paths(), monitor: !temporary && this.o.monitor, ...(temporary ? { manualOnly: true } : {}), dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}), ...(!temporary && this.o.conversation?.() ? { conversation: true } : {}) }, [port1]);
     if (this.o.learning?.()) proc.postMessage({ type: "learning", on: true });
 
     this.mic = hiddenWindow("Ember microphone");
@@ -1394,4 +1431,11 @@ export function voicePermissions(voice: () => VoiceService | null): void {
     cb(permission === "media" && !!v && v.allowsMedia(wc, (details as { mediaTypes?: string[] }).mediaTypes));
   });
   ses.setPermissionCheckHandler((wc, permission) => permission === "media" && !!wc && !!voice()?.allowsMedia(wc, ["audio"]));
+  // System audio for the mic page's level meter (app/renderer/mic/output-watch.ts). Chromium gives it only with a screen's
+  // video, which the page stops at once. Anyone else asking gets nothing.
+  ses.setDisplayMediaRequestHandler((request, cb) => {
+    const page = request.frame ? webContents.fromFrame(request.frame) : null;
+    if (!voice()?.allowsOutputLevel(page)) { cb({}); return; }
+    desktopCapturer.getSources({ types: ["screen"] }).then(s => cb(s[0] ? { video: s[0], audio: "loopback" } : {}), () => cb({}));
+  });
 }

@@ -6,10 +6,10 @@ import type { VoiceMatchStatus } from "../../shared/ipc";
 
 /** Voice Match's words. */
 export const MATCH_TEXT = {
-  label: "Answer only my voice (Voice Match)",
-  none: "Ember answers anyone who says its name. Teach it your voice, and it answers only you. “Ember, stop” still works for anyone.",
-  on: "On: Ember answers only your voice. Your voiceprint stays on this computer; “Ember, stop” still works for anyone.",
-  off: "Off: Ember answers anyone who says its name. It keeps your voiceprint until you forget it.",
+  label: "Answer questions with my voice (Voice Match)",
+  none: "Ember hears anyone who talks to it. Teach it your voice, and you can answer its questions out loud (“Ember, allow”); other voices can't. “Ember, stop” works for anyone.",
+  on: "On: your voice can answer Ember's questions out loud, and other voices can't. Ember still hears everyone. Your voiceprint stays on this computer.",
+  off: "Off: answer Ember's questions by clicking. It keeps your voiceprint until you forget it.",
   /** enrolVoice() said no: Ember isn't listening just now (muted, starting, or not working), so it can't hear the phrases. */
   notListening: "Ember isn't listening just now, so it can't learn your voice. Try again once it's listening for “Ember”.",
   say: "Say:",
@@ -48,7 +48,7 @@ export interface MatchView {
 export function matchNoModelText(wanted: boolean, bytes: number | null = null): string {
   const size = bytes ? ` (${Math.max(1, Math.round(bytes / 1e6))} MB)` : "";
   return wanted
-    ? `Off for now: Voice Match's model is missing or was damaged, so Ember answers anyone who says its name. Download it above${size} and Ember answers only you again.`
+    ? `Off for now: Voice Match's model is missing or was damaged, so your voice can't answer Ember's questions. Download it above${size} to put that right.`
     : `Voice Match needs its own model, which isn't on this computer. Download it above${size}, then teach Ember your voice.`;
 }
 
