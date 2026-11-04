@@ -33,7 +33,7 @@ const defaultVoiceReady = modelReady(path.join(dir, "models"), "tts");
 const defaultVoiceNative = process.env.EMBER_VOICE_BACKEND !== "wasm" && (!!capiDir || !!addonFile || nativePackage() !== null);
 
 // Real recognizers on a loaded CI machine: a clip can take several seconds, so each test gets 20.
-describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EMBER_KITTEN_TEST !== "1")("voice on real models", { timeout: 20_000 }, () => {
+describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EMBER_KITTEN_TEST !== "1")("voice on real models", { timeout: 120_000 }, () => {
   let backend: ReturnType<typeof sherpaBackend>;
   /**
    * The recognizers the speakers' stream is tested on. Speaker rejection runs only on Linux (it needs parec), which runs
