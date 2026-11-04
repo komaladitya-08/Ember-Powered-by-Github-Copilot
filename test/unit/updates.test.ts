@@ -74,6 +74,24 @@ describe("the update checker", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("stays at once a day when announcing a version changes the settings mid-look", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn(async () => reply([release("v0.2.0")]));
+    let told: string | null = null;
+    const c: UpdateChecker = new UpdateChecker({
+      fetch: fetch as never, current: "0.1.1", allowed: () => true, told: () => told, changed: vi.fn(), log: { warn: vi.fn() },
+      // As main does: announcing saves `told`, and every settings change calls refresh().
+      announce: v => { told = v; c.refresh(); },
+    });
+    c.refresh();
+    await vi.advanceTimersByTimeAsync(FIRST_CHECK_MS);
+    expect(fetch).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(CHECK_EVERY_MS - 1);
+    expect(fetch).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("asks GitHub alone, with no token and no version of Ember", async () => {
     const { c, fetch } = checker();
     await c.check();
