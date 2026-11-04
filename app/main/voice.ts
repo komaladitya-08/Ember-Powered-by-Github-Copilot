@@ -15,13 +15,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
+import { COMPACT_VOICE, ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
 import type { ModelPaths } from "../voice/sherpa";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import type { TtsProcessMessage, VoiceInfo } from "../voice/tts-process";
 import { nativePackage } from "../voice/runtime";
-import { NATURAL_COST, NATURAL_MAX_RTF, speechChunks } from "../voice/tts";
+import { NATURAL_COST, NATURAL_MAX_RTF, speechChunks, type NaturalVoiceModel } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
 import { readLevel, type SoundLevel } from "../shared/level";
@@ -47,6 +47,8 @@ const SPEAKING_MAX_MS = 60_000;
  * a few hundred ms, under Ember's voice starting up (VOICE_START_MS).
  */
 const SPEAKER_IDLE_MS = 60_000;
+/** Retain the synthesiser through a conversation, then release its model and runtime until Ember is called again. */
+const VOICE_IDLE_MS = 120_000;
 /** Listening that broke starts again after 1 s, 5 s, then every 30 s (ms). */
 const RESTART_MS = [1000, 5000, 30_000];
 /**
@@ -99,6 +101,8 @@ export interface VoiceOptions {
    * with setNaturalVoice.
    */
   naturalVoice?: boolean;
+  /** Which optional voice to fetch and time, only while naturalVoice is wanted. Kokoro preserves the existing default. */
+  naturalModel?: NaturalVoiceModel;
   /** What became of the natural voice changed (naturalStatus): Home shows it under its switch. */
   onNatural?: (s: NaturalVoiceStatus) => void;
   /**
@@ -230,6 +234,7 @@ export class VoiceService {
   private userRoot: string;
   /** Ember's own voice: its process (started on the first reply), whether it has loaded, and how often it failed. */
   private tts: { proc: UtilityProcess; ready: boolean } | null = null;
+  private voiceIdle: NodeJS.Timeout | null = null;
   private ttsFailures = 0;
   /** Replies are numbered; those up to `ttsHushed` were hushed (their late audio is dropped). */
   private ttsId = 0;
@@ -245,8 +250,10 @@ export class VoiceService {
    * `switchVoice`: fetched, so the speech process starts again with it once it has nothing left to say.
    */
   private naturalFetch: Promise<void> | null = null;
+  private naturalFetchModel: NaturalVoiceModel | null = null;
   /** The natural voice is wanted (the setting). */
   private naturalWanted: boolean;
+  private naturalModel: NaturalVoiceModel;
   private naturalOff = false;
   private switchVoice = false;
   /** What became of the natural voice, as Home shows it while it is wanted (naturalStatus). */
@@ -262,6 +269,7 @@ export class VoiceService {
 
   constructor(private o: VoiceOptions) {
     this.naturalWanted = !!o.naturalVoice;
+    this.naturalModel = o.naturalModel ?? "kokoro";
     this.bundledRoot = o.bundled ? o.modelsRoot : null;
     this.userRoot = o.bundled?.userRoot ?? o.modelsRoot;
     // On at start: decided the next time Ember speaks (Ember's voice loads only then), unless it can't be at all.
@@ -463,7 +471,7 @@ export class VoiceService {
 
   /** Each model's path, from the folder it is used from (the user's own for one that isn't in anywhere). */
   private paths(): ModelPaths {
-    const at = (id: ModelId) => modelPaths(this.rootOf(id) ?? this.userRoot)[id];
+    const at = (id: keyof ModelPaths) => modelPaths(this.rootOf(id) ?? this.userRoot)[id];
     return { kws: at("kws"), vad: at("vad"), asr: at("asr"), tts: at("tts"), speaker: at("speaker"), natural: at("natural") };
   }
 
@@ -646,6 +654,7 @@ export class VoiceService {
     if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}) } satisfies SpeakRequest); return; }
     const id = ++this.ttsId;
     this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
+    this.cancelVoiceIdle();
     this.voiceProcess().postMessage({ type: "say", id, text });
   }
 
@@ -661,10 +670,30 @@ export class VoiceService {
     if (!on) {
       this.setNatural({ state: "off" });
       // Kokoro speaking (or loaded): the speech process starts again without it once it has nothing to say.
-      if (this.ttsInfo?.voice === "kokoro" || !this.ttsInfo) { this.switchVoice = true; this.switchWhenIdle(); }
+      if (this.ttsInfo?.voice !== "piper") { this.switchVoice = true; this.switchWhenIdle(); }
       return;
     }
     this.checkNatural();
+  }
+
+  /** Selects the optional model; choosing it while off downloads nothing. An in-flight old model never changes this choice. */
+  setNaturalModel(model: NaturalVoiceModel): void {
+    if (this.naturalModel === model) return;
+    this.naturalModel = model;
+    this.naturalOff = false;
+    this.naturalPercent = 0;
+    this.switchVoice = true;
+    this.switchWhenIdle();
+    if (this.naturalWanted) this.checkNatural();
+  }
+
+  private get naturalFile(): ModelFile {
+    return this.naturalModel === "kitten" ? COMPACT_VOICE : NATURAL_VOICE;
+  }
+
+  private get naturalPath(): string | null {
+    const file = this.naturalFile, root = this.rootOf(file.id);
+    return root === null ? null : path.join(root, file.target);
   }
 
   /** What became of the natural voice (Home shows it under its switch); `off` while it isn't wanted. */
@@ -688,13 +717,14 @@ export class VoiceService {
     const blocked = this.naturalBlocked();
     if (blocked) { this.setNatural(blocked); return; }
     // Turned off and on again while it downloads: the download carries on.
-    if (this.naturalFetch) { this.setNatural({ state: "downloading", percent: this.naturalPercent }); return; }
-    if (this.rootOf("natural") !== null) {
-      if (this.ttsInfo?.voice === "kokoro") { this.setNatural({ state: "on" }); return; }
+    if (this.naturalFetch) { this.setNatural(this.naturalFetchModel === this.naturalModel ? { state: "downloading", percent: this.naturalPercent } : { state: "checking" }); return; }
+    if (this.naturalPath !== null) {
+      if (this.ttsInfo?.voice === this.naturalModel) { this.setNatural({ state: "on" }); return; }
       this.switchVoice = true;
       this.switchWhenIdle();
       if (this.tts) { this.setNatural({ state: "checking" }); return; }
-    } else if (this.ttsInfo) { this.decideNatural(this.ttsInfo); return; }
+    } else if (this.ttsInfo?.voice === "piper") { this.decideNatural(this.ttsInfo); return; }
+    else if (this.ttsInfo) { this.switchVoice = true; this.switchWhenIdle(); if (this.tts) { this.setNatural({ state: "checking" }); return; } }
     // Nothing speaks while the screen is locked, so nothing can tell: "later", and it is decided once it is unlocked
     // (setLocked), never "Checking…" for as long as the lock lasts (review of #143).
     if (this.locked) { this.naturalOnUnlock = true; this.setNatural({ state: "later" }); return; }
@@ -732,6 +762,7 @@ export class VoiceService {
       this.ttsPending.clear();
       this.tts?.proc.postMessage({ type: "hush", id: this.ttsHushed });
     }
+    this.idleVoice();
     const generation = ++this.speechGeneration;
     const hushPage = (wc: Electron.WebContents) => { this.pageGenerations.set(wc, generation); wc.send(VOICE.hush, generation); };
     if (this.mic && !this.mic.isDestroyed()) hushPage(this.mic.webContents);
@@ -742,10 +773,42 @@ export class VoiceService {
 
   /**
    * Loads Ember's voice ahead of its first reply (2 s or so), once someone has called Ember: until then it costs no
-   * memory. It stays loaded from then on.
+   * memory. After a conversation it is released (VOICE_IDLE_MS), and the next wake warms it again.
    */
   warmVoice(): void {
-    if (this.neuralVoice && !this.locked) this.voiceProcess();
+    if (this.neuralVoice && !this.locked) { this.voiceProcess(); this.idleVoice(); }
+  }
+
+  private cancelVoiceIdle(): void {
+    if (this.voiceIdle) clearTimeout(this.voiceIdle);
+    this.voiceIdle = null;
+  }
+
+  /** Audio already handed to the page plays independently; pending generation always keeps the synthesiser alive. */
+  private idleVoice(): void {
+    this.cancelVoiceIdle();
+    const tts = this.tts;
+    if (!tts?.ready || this.ttsPending.size) return;
+    this.voiceIdle = setTimeout(() => {
+      this.voiceIdle = null;
+      if (this.tts !== tts || this.ttsPending.size) return;
+      this.o.log.info("voice.tts_idle");
+      this.releaseVoice();
+    }, VOICE_IDLE_MS);
+    this.voiceIdle.unref?.();
+  }
+
+  /** Drop the live handle before stopping it: late audio and exit events cannot revive a retired voice. */
+  private releaseVoice(): void {
+    this.cancelVoiceIdle();
+    const tts = this.tts;
+    this.tts = null;
+    this.ttsInfo = null;
+    if (!tts) return;
+    tts.proc.removeAllListeners("exit");
+    tts.proc.kill();
+    // utilityProcess.kill() before spawn has no effect. Retain this handle until it can actually be stopped.
+    if (tts.proc.pid === undefined) tts.proc.once("spawn", () => tts.proc.kill());
   }
 
   /** Whether replies are said in Ember's own voice: wanted, its model is in, and it hasn't failed this session. */
@@ -811,9 +874,10 @@ export class VoiceService {
       if (!this.saidSpeaking) { this.awaitingSpeechStart = true; this.speakingUntil = Date.now() + SPEECH_START_MS; }
       this.openFollowUp();
       this.switchWhenIdle();
+      this.idleVoice();
     });
-    const natural = this.naturalWanted && this.native && !this.naturalOff && this.rootOf("natural") !== null ? this.paths().natural : null;
-    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.wasmOnly.speech ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) });
+    const natural = this.naturalWanted && this.native && !this.naturalOff ? this.naturalPath : null;
+    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.naturalModel !== "kokoro" ? { naturalModel: this.naturalModel } : {}), ...(this.wasmOnly.speech ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) });
     return proc;
   }
 
@@ -825,6 +889,7 @@ export class VoiceService {
     this.o.log.info("voice.tts_ready", { loadMs, rate, ...(v ? { voice: v.voice, backend: v.backend, detail: v.detail, provider: v.provider, threads: v.threads, rtf: v.rtf, tried: v.tried, natural: v.natural } : {}) });
     this.ttsInfo = v ?? null;
     if (v) this.decideNatural(v);
+    this.idleVoice();
   }
 
   /**
@@ -835,7 +900,8 @@ export class VoiceService {
    */
   private decideNatural(v: VoiceInfo): void {
     if (!this.naturalWanted || this.naturalFetch) return;
-    if (v.voice === "kokoro") { this.setNatural({ state: "on" }); return; }
+    if (v.voice === this.naturalModel) { this.setNatural({ state: "on" }); return; }
+    if (v.voice !== "piper") { this.switchVoice = true; this.switchWhenIdle(); return; }
     if (this.naturalOff) return;
     // Downloaded, but too slow here or it wouldn't load: the Piper voice speaks for the rest of the session.
     if (v.natural) {
@@ -844,29 +910,36 @@ export class VoiceService {
       return;
     }
     if (v.backend !== "native" || v.rtf === undefined) { this.setNatural({ state: "needs-native" }); return; }
-    if (v.rtf * NATURAL_COST > NATURAL_MAX_RTF) {
-      this.o.log.info("voice.natural_skipped", { rtf: v.rtf, needs: Math.round((NATURAL_MAX_RTF / NATURAL_COST) * 1000) / 1000 });
+    // Kitten FP32 took about 1.6x Piper's CPU work on the same sentences; 2x leaves headroom before the real probe.
+    const cost = this.naturalModel === "kitten" ? 2 : NATURAL_COST;
+    if (v.rtf * cost > NATURAL_MAX_RTF) {
+      this.o.log.info("voice.natural_skipped", { rtf: v.rtf, needs: Math.round((NATURAL_MAX_RTF / cost) * 1000) / 1000 });
       this.naturalOff = true;
       this.setNatural({ state: "too-slow" });
       return;
     }
     // Downloaded already (and not loaded by this process: it started before): it starts again with it once idle.
-    if (this.rootOf("natural") !== null) { this.setNatural({ state: "ready" }); this.switchVoice = true; this.switchWhenIdle(); return; }
-    this.o.log.info("voice.natural_fetching", { rtf: v.rtf, bytes: NATURAL_VOICE.bytes });
+    if (this.naturalPath !== null) { this.setNatural({ state: "ready" }); this.switchVoice = true; this.switchWhenIdle(); return; }
+    const file = this.naturalFile, model = this.naturalModel;
+    this.o.log.info("voice.natural_fetching", { rtf: v.rtf, bytes: file.bytes, model });
     this.setNatural({ state: "downloading", percent: 0 });
     // Into the user's own models folder (one that came with Ember is never changed).
     this.naturalPercent = 0;
+    this.naturalFetchModel = model;
     const progress = (bytes: number) => {
-      const percent = Math.min(99, Math.floor((bytes / NATURAL_VOICE.bytes) * 100));
+      if (this.naturalModel !== model) return;
+      const percent = Math.min(99, Math.floor((bytes / file.bytes) * 100));
       if (percent === this.naturalPercent) return;
       this.naturalPercent = percent;
       if (this.naturalWanted) this.setNatural({ state: "downloading", percent });
     };
-    this.naturalFetch = ensureModel(this.userRoot, NATURAL_VOICE, this.o.downloader ?? electronDownloader, progress)
+    this.naturalFetch = ensureModel(this.userRoot, file, this.o.downloader ?? electronDownloader, progress)
       .then(() => {
         this.o.log.info("voice.natural_ready", { root: this.userRoot });
         this.naturalFetch = null;
+        this.naturalFetchModel = null;
         if (!this.naturalWanted) return;
+        if (this.naturalModel !== model) { this.checkNatural(); return; }
         this.setNatural({ state: "ready" });
         this.switchVoice = true;
         this.switchWhenIdle();
@@ -874,9 +947,11 @@ export class VoiceService {
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         this.naturalFetch = null;
+        this.naturalFetchModel = null;
+        if (this.naturalModel !== model) { if (this.naturalWanted) this.checkNatural(); return; }
         this.naturalOff = true;
         this.o.log.warn("voice.natural_download_failed", { message });
-        this.setNatural({ state: "failed", detail: downloadHelp(message, NATURAL_VOICE.bytes) });
+        this.setNatural({ state: "failed", detail: downloadHelp(message, file.bytes) });
       });
   }
 
@@ -889,12 +964,8 @@ export class VoiceService {
     if (!this.tts) { this.switchVoice = false; return; }
     if (this.ttsPending.size) return;
     this.switchVoice = false;
-    const t = this.tts;
-    this.tts = null;
-    this.ttsInfo = null;
-    t.proc.removeAllListeners("exit");
-    t.proc.kill();
-    if (this.naturalWanted && this.rootOf("natural") !== null) {
+    this.releaseVoice();
+    if (this.naturalWanted) {
       if (this.natural.state === "ready") this.setNatural({ state: "checking" });
       this.warmVoice();
     }
@@ -906,10 +977,7 @@ export class VoiceService {
    */
   private voiceFailed(): void {
     this.ttsFailures = VOICE_FAILURES;
-    const tts = this.tts;
-    this.tts = null;
-    this.ttsInfo = null;
-    if (tts) { tts.proc.removeAllListeners("exit"); tts.proc.kill(); }
+    this.releaseVoice();
     const pending = [...this.ttsPending.entries()];
     this.ttsPending.clear();
     if (pending.some(([, p]) => p.remaining.trim())) {
@@ -1200,13 +1268,12 @@ export class VoiceService {
 
   stop(): void {
     this.wanted = false;
+    this.naturalWanted = false;
     this.cancelRetry();
     this.teardown();
     this.closeSpeaker();
-    const tts = this.tts;
-    this.tts = null;
+    this.releaseVoice();
     this.ttsPending.clear();
-    tts?.proc.kill();
   }
 
   private closeSpeaker(): void {

@@ -24,7 +24,7 @@ import { extractTarBz2 } from "./untar";
 const RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
 
 export interface ModelFile {
-  id: keyof ModelPaths;
+  id: keyof ModelPaths | "compact";
   name: string;
   url: string;
   sha256: string;
@@ -107,7 +107,19 @@ export const NATURAL_VOICE: ModelFile = {
   target: "kokoro-multi-lang-v1_0",
 };
 
-const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE];
+/**
+ * Kitten Nano 0.8: an optional smaller native voice. The official sherpa export preserves the upstream style rows.
+ * FP32: measured less than half the CPU work of its INT8 export on the same pinned C API. Selected explicitly and
+ * timed before use, with the same real-time cap and Piper fallback as Kokoro. Not part of the initial model download.
+ */
+export const COMPACT_VOICE: ModelFile = {
+  id: "compact", name: "Kitten Nano 0.8 (US English)", kind: "tar.bz2", license: "Apache-2.0",
+  url: `${RELEASES}/tts-models/kitten-nano-en-v0_8-fp32.tar.bz2`,
+  sha256: "16092117bfe591ddcd58d078e1454603b8e1caea46f85653b2c2efae76bd883e", bytes: 63_815_222,
+  target: "kitten-nano-en-v0_8-fp32",
+};
+
+const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE, COMPACT_VOICE];
 
 /** A pinned download that isn't a speech model (the memory model's files): in place and verified like one. */
 export type PinnedFile = ModelDownload & Pick<ModelFile, "bytes" | "license">;

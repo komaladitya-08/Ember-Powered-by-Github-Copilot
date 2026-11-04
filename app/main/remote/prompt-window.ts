@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { PROMPT_IPC, type PromptAnswer, type PromptCard } from "../../shared/remote-ui";
+import { PROMPT_IPC, type ApprovalCard, type PromptAnswer, type PromptCard } from "../../shared/remote-ui";
 import type { OS } from "../../shared/shortcuts";
 import type { ConsentPanel } from "../../shared/consent";
 import type { Logger } from "../logger";
@@ -34,6 +34,10 @@ export interface ConsentAnswer { n: number; answer: "once" | "deny"; sha256: str
 
 /** What the controller adds for the targets runtime (beyond the contract; see the package report). */
 export interface PromptWindowExtras {
+  /** Explicitly opens one ordinary question, without changing its Confirmer authority. */
+  showApproval(card: ApprovalCard): void;
+  hideApproval(n: number): void;
+  onApproval(fn: (n: number, answer?: string) => boolean): () => void;
   /** Answers to consent questions (showConsent): wire to confirmer.answer(`q${n}:${answer}`, "panel", { sha256 }). */
   onConsent(fn: (a: ConsentAnswer) => void): () => void;
   /** Brings the window back up (the bubble's "Read it"), if it has a card. */
@@ -42,7 +46,7 @@ export interface PromptWindowExtras {
 }
 
 export type PromptWindowController = PromptUi & PromptWindowExtras & {
-  showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void;
+  showConsent(n: number, c: ConsentPanel, activate?: boolean): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void;
 };
 
 /** A rectangle in DIP: a window's bounds, a display's work area. */
@@ -59,7 +63,7 @@ export type PromptSize = (typeof PROMPT_SIZE)[keyof typeof PROMPT_SIZE];
 
 /** The size a card's window takes. */
 export const promptSizeOf = (card: PromptCard): PromptSize =>
-  (card.kind === "consent" || card.kind === "consent-direct" ? PROMPT_SIZE.consent : PROMPT_SIZE.card);
+  (card.kind === "consent" || card.kind === "consent-direct" || card.kind === "approval" ? PROMPT_SIZE.consent : PROMPT_SIZE.card);
 
 /** Bounds for a window of `size`, centred where the window is now, inside `area` (with `margin` where there is room). */
 export function fitBounds(now: Rect, size: { width: number; height: number }, area: Rect, margin = 16): Rect {
@@ -130,6 +134,10 @@ export function validPromptCard(c: unknown): c is PromptCard {
         && (c.via === undefined || str(c.via, 255, 1)) && (c.login === undefined || str(c.login, 255, 1));
     case "consent": return typeof c.n === "number" && Number.isSafeInteger(c.n) && c.n >= 0 && validConsent(c.consent);
     case "consent-direct": return validConsent(c.consent);
+    case "approval": return Number.isSafeInteger(c.n) && (c.n as number) >= 0 && str(c.title, 2000, 1) && str(c.prompt, 100_000, 1)
+      && (c.detail === undefined || str(c.detail, 1_000_000)) && (c.where === undefined || str(c.where, 500))
+      && Array.isArray(c.options) && c.options.length > 0 && c.options.length <= 12
+      && c.options.every(v => isObj(v) && str(v.id, 100, 1) && str(v.label, 200, 1) && (v.primary === undefined || typeof v.primary === "boolean"));
     default: return false;
   }
 }
@@ -145,7 +153,7 @@ export interface PromptWindowOptions {
 
 /** The prompt window, as connections and the targets runtime use it. */
 export function createPromptWindow(o: PromptWindowOptions):
-  PromptUi & { showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void } {
+  PromptUi & { showConsent(n: number, c: ConsentPanel, activate?: boolean): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void } {
   return createPromptWindowController(o);
 }
 
@@ -162,6 +170,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
   const stopIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = null; };
   /** The card on screen is queue[0]. */
   const queue: Entry[] = [];
+  const approvalFns = new Set<(n: number, answer?: string) => boolean>();
   const consentFns = new Set<(a: ConsentAnswer) => void>();
   /**
    * Consent questions shown and not yet hidden (the targets runtime hides each when its question ends). A card the user
@@ -300,6 +309,16 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
     wired = true;
     const refused = (channel: string) => note("warn", "prompt.ipc_refused", { channel });
 
+    o.ipc.handle(PROMPT_IPC.approval, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.approval); return false; }
+      const head = queue[0];
+      if (!head || head.card.kind !== "approval" || !isObj(raw) || raw.id !== head.card.id) return false;
+      const card = head.card;
+      if (raw.answer !== undefined && (typeof raw.answer !== "string" || !card.options.some(o => o.id === raw.answer))) return false;
+      let accepted = false;
+      for (const fn of approvalFns) accepted = fn(card.n, raw.answer as string | undefined) || accepted;
+      return accepted;
+    });
     o.ipc.handle(PROMPT_IPC.show, e => {
       if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.show); return null; }
       return queue[0]?.card ?? null;
@@ -311,6 +330,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       if (!head || !isObj(raw) || raw.id !== head.card.id || typeof raw.ok !== "boolean") return;
       const card = head.card;
       const id = card.id;
+      if (card.kind === "approval") return; // never answer an approval through the SSH/consent channel
       if (card.kind === "consent" || card.kind === "consent-direct") {
         // The yes counts only with the hash of the text that was shown; anything else is a no.
         const yes = raw.ok && raw.sha256 === card.consent.sha256;
@@ -339,6 +359,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.cancel); return; }
       const head = queue[0];
       if (!head || !isObj(raw) || raw.id !== head.card.id) return;
+      if (head.card.kind === "approval") return;
       if (head.card.kind === "consent") {
         const a: ConsentAnswer = { n: head.card.n, answer: "deny", sha256: head.card.consent.sha256 };
         finish(head, { id: head.card.id, ok: false });
@@ -351,7 +372,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
 
   return {
     ask(card) {
-      if (disposed || !validPromptCard(card) || card.kind === "consent" || queue.some(e => e.card.id === card.id)) {
+      if (disposed || !validPromptCard(card) || (card.kind === "consent" || card.kind === "approval") || queue.some(e => e.card.id === card.id)) {
         note("warn", "prompt.card_refused", { kind: (card as { kind?: unknown })?.kind });
         // Nobody was asked: the caller says so, not that the user said no (review #193).
         return Promise.resolve({ id: (card as { id?: string })?.id ?? "", ok: false, refused: true });
@@ -364,14 +385,30 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       if (e) finish(e, { id, ok: false });
     },
 
-    showConsent(n, c) {
+    showApproval(card) {
+      if (disposed || !validPromptCard(card) || card.kind !== "approval") return;
+      const existing = queue.find(e => e.card.id === card.id);
+      if (existing) { queue.splice(queue.indexOf(existing), 1); queue.unshift(existing); reveal(); return; }
+      queue.unshift({ card }); reveal();
+    },
+    hideApproval(n) {
+      const e = queue.find(x => x.card.kind === "approval" && x.card.n === n);
+      if (e) finish(e, { id: e.card.id, ok: false });
+    },
+    onApproval(fn) { approvalFns.add(fn); return () => { approvalFns.delete(fn); }; },
+    showConsent(n, c, activate = false) {
       if (disposed) return;
       if (!Number.isSafeInteger(n) || n < 0 || !validConsent(c)) { note("error", "prompt.consent_refused", { n }); return; }
       consents.set(n, c);
       const existing = queue.find(x => x.card.kind === "consent" && x.card.n === n);
       // Asked again (the bubble's "Read it"): the same card comes back up.
-      if (existing) { if (queue[0] === existing) reveal(); return; }
-      enqueue({ card: { id: `consent-${n}`, kind: "consent", n, consent: c } });
+      if (existing) {
+        if (activate) { queue.splice(queue.indexOf(existing), 1); queue.unshift(existing); }
+        if (queue[0] === existing) reveal();
+        return;
+      }
+      const entry: Entry = { card: { id: `consent-${n}`, kind: "consent", n, consent: c } };
+      if (activate) { queue.unshift(entry); reveal(); } else enqueue(entry);
     },
 
     hideConsent(n) {
@@ -412,6 +449,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       if (focusTimer) clearTimeout(focusTimer);
       focusTimer = null;
       for (const e of queue.splice(0)) e.resolve?.({ id: e.card.id, ok: false });
+      approvalFns.clear();
       consentFns.clear();
       consents.clear();
       const w = live();

@@ -9,19 +9,19 @@
  * enough (timed when it loads); otherwise the Piper voice does.
  */
 
-import { NATURAL_MAX_RTF, rememberedSlow, slowVerdict, speechChunks } from "./tts";
-import { kokoroSpec, kokoroSpeaker, piperSpec } from "./tts-spec";
+import { NATURAL_MAX_RTF, rememberedSlow, slowVerdict, speechChunks, type NaturalVoiceModel } from "./tts";
+import { kittenSpec, kokoroSpec, kokoroSpeaker, piperSpec } from "./tts-spec";
 import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type ProviderTry, type SherpaBackend, type Tts } from "./runtime";
 
 type FromMain =
   /** `model`: the Piper voice's folder; `natural`: Kokoro's (when downloaded); `wasm`: run on WebAssembly (a process before this one died loading natively). */
-  | { type: "init"; model: string; natural?: string | null; wasm?: boolean; capiDir?: string }
+  | { type: "init"; model: string; natural?: string | null; naturalModel?: NaturalVoiceModel; wasm?: boolean; capiDir?: string }
   | { type: "say"; id: number; text: string }
   | { type: "hush"; id: number };
 
 /** Which voice speaks, on which build and how, and how fast it is here (`rtf`: seconds to make a second of speech; measured natively only). */
 export interface VoiceInfo {
-  voice: "piper" | "kokoro";
+  voice: "piper" | NaturalVoiceModel;
   backend: SherpaBackend;
   detail: string;
   provider: string;
@@ -75,10 +75,12 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
   let naturalWhy: VoiceInfo["naturalWhy"];
   if (m.natural && sherpa.backend === "native") {
     // Kokoro is the model a GPU helps: CoreML competes with the CPU for it on macOS.
-    const list = providers(sherpa.backend, process.platform, process.env, { gpu: true });
+    const model = m.naturalModel ?? "kokoro";
+    const list = providers(sherpa.backend, process.platform, process.env, { gpu: model === "kokoro" });
     try {
-      const n = threads(sherpa.backend, 4);
-      const spec = kokoroSpec(m.natural);
+      // Kitten runs on one thread to leave the other cores to apps; its own probe still decides whether it is fast enough.
+      const n = threads(sherpa.backend, model === "kitten" ? 1 : 4);
+      const spec = model === "kitten" ? kittenSpec(m.natural) : kokoroSpec(m.natural);
       const store = providerCache();
       const key = modelKey(spec.model, list, n);
       const verdictKey = key && `natural|${key}`;
@@ -86,12 +88,12 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
       if (slow !== null) {
         natural = `too slow here: ${slow} of real time (at most ${NATURAL_MAX_RTF}; timed before)`;
       } else {
-        const speaker = kokoroSpeaker(m.natural);
+        const speaker = model === "kitten" ? 0 : kokoroSpeaker(m.natural);
         const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: speaker, speed: 1.0 }),
           { cache: { store, key }, free: v => v.free() });
         const rtf = realTimeFactor(chosen.made, speaker);
         const info = { backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, rtf };
-        if (rtf <= NATURAL_MAX_RTF) return { voice: chosen.made, speaker, info: { voice: "kokoro", ...info } };
+        if (rtf <= NATURAL_MAX_RTF) return { voice: chosen.made, speaker, info: { voice: model, ...info } };
         chosen.made.free();
         if (verdictKey && Number.isFinite(rtf)) store.set(verdictKey, slowVerdict(rtf, Date.now()));
         natural = `too slow here: ${rtf} of real time (at most ${NATURAL_MAX_RTF})`;

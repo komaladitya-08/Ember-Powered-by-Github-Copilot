@@ -129,6 +129,8 @@ export interface TargetsRuntime {
   menuItems(): MenuItemLike[];
   /** Bubble action ids this runtime owns ("target:…", "offer:…", "conn:…", "ui:panel:…", "ui:cmdstop:…", "ui:cmdshow:…"); true when handled. */
   bubbleAction(id: string): boolean;
+  /** Explicit Home action: opens only the exact question currently held by the Confirmer. */
+  openApproval(): boolean;
   /** The quick context when the active target isn't this screen (a promise), or null to take the local one. */
   quickContext(): Promise<QuickContext | null> | null;
   /** A question came up (or went: null): show or hide its panel window. */

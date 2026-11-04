@@ -16,7 +16,7 @@ export type Part = string | { v: string } | { code: string };
 export type Block = { kind: "p"; parts: Part[] } | { kind: "mono"; text: string } | { kind: "quote"; text: string };
 /** A card's button: "ok" answers yes (with the field's value), "cancel" no. */
 export interface ButtonView {
-  id: "ok" | "cancel";
+  id: string;
   label: string;
   /** The accent (at most one per card). */
   primary: boolean;
@@ -105,6 +105,13 @@ export function keyFileOf(prompt: string): string | null {
 /** A card as the page draws it. */
 export function promptView(card: PromptCard): PromptView {
   switch (card.kind) {
+    case "approval":
+      return {
+        title: [card.title],
+        body: [...(card.where ? [p(card.where)] : []), p(card.prompt), ...(card.detail ? [{ kind: "quote" as const, text: card.detail }] : [])],
+        field: null,
+        buttons: card.options.map(o => ({ id: o.id, label: o.label, primary: o.primary === true, isDefault: false, armed: false })),
+      };
     case "host-key":
       return {
         title: ["Is this really ", { v: card.host }, "?"],

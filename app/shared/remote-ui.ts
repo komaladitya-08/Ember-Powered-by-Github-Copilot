@@ -14,6 +14,8 @@ export const PROMPT_IPC = {
   answer: "prompt:answer",
   /** Page → main: the card was closed without an answer. */
   cancel: "prompt:cancel",
+  /** Exact ordinary question read/answer, accepted only from this window. */
+  approval: "prompt:approval",
 } as const;
 
 /** One card in the prompt window. */
@@ -32,7 +34,11 @@ export type PromptCard =
   /** A first-use consent card that is a Confirmer question (number n). */
   | { id: string; kind: "consent"; n: number; consent: ConsentPanel }
   /** A first-use consent card asked directly (settings' switches), not through a question. */
-  | { id: string; kind: "consent-direct"; consent: ConsentPanel };
+  | { id: string; kind: "consent-direct"; consent: ConsentPanel }
+  | { id: string; kind: "approval"; n: number; title: string; prompt: string; detail?: string; where?: string;
+      options: { id: string; label: string; primary?: boolean }[] };
+
+export type ApprovalCard = Extract<PromptCard, { kind: "approval" }>;
 
 /**
  * The page's answer to a card: `value` is the secret typed (never logged); `sha256` echoes a consent card's hash.

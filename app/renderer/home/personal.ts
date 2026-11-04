@@ -6,7 +6,8 @@
 
 import type { VoiceStatus, VoiceWord } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
-import { PERSONAL_TEXT, forgetWordLabel, personalView, teachOutcomeText, wordRowText } from "./copy";
+import { PERSONAL_TEXT, WORD_DELETE_FAILED, WORDS_DELETE_FAILED, forgetWordLabel, personalView, teachOutcomeText, wordRowText } from "./copy";
+import { KeyedRows } from "./keyed-rows";
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -14,44 +15,43 @@ type Save = (patch: SettingsPatch) => Promise<unknown>;
 
 let current: Settings | null = null;
 let save: Save = async () => undefined;
-let wordsFocus: number | null = null;
+let wordRows: KeyedRows<VoiceWord> | null = null;
 
 /** The voice settings as Home last had them, with this change. */
 const voiceWith = (change: Partial<Settings["voice"]>): Settings["voice"] => ({
-  consent: false, speakerRejection: true, muted: false, match: false, natural: false, learn: true, words: true, suggest: true,
+  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true,
   ...(current?.voice ?? {}), ...change,
 });
 
 function renderWords(list: VoiceWord[]): void {
-  const ul = $("words-list");
-  const restoreFocus = ul.contains(document.activeElement) || document.activeElement === $("words-forget-all");
-  ul.replaceChildren(...(list.length
-    ? list.map((w, i) => {
+  wordRows ??= new KeyedRows<VoiceWord>($("words-list"), {
+    key: word => JSON.stringify([word.heard, word.meant, word.at]),
+    empty: () => PERSONAL_TEXT.wordsEmpty,
+    fallback: () => $("words-on"),
+    create: read => {
+      const word = read();
       const li = document.createElement("li");
-      li.append(Object.assign(document.createElement("span"), { textContent: wordRowText(w) }));
-      const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
-      btn.setAttribute("aria-label", forgetWordLabel(w));
-      btn.addEventListener("click", () => {
-        if (btn.getAttribute("aria-disabled") === "true") return;
-        btn.setAttribute("aria-disabled", "true");
+      li.append(Object.assign(document.createElement("span"), { textContent: wordRowText(word) }));
+      const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
+      button.setAttribute("aria-label", forgetWordLabel(word));
+      button.addEventListener("click", () => {
+        if (button.getAttribute("aria-disabled") === "true") return;
+        button.setAttribute("aria-disabled", "true");
         $("words-note").textContent = "";
-        wordsFocus = i;
-        void window.ember.forgetVoiceWord(w).then(renderWords, () => {
-          wordsFocus = null;
-          btn.removeAttribute("aria-disabled");
-          $("words-note").textContent = "Couldn't forget that correction. Try again.";
+        void window.ember.forgetVoiceWord(read()).then(renderWords, () => {
+          button.removeAttribute("aria-disabled");
+          $("words-note").textContent = WORD_DELETE_FAILED;
         });
       });
-      li.append(btn);
+      li.append(button);
       return li;
-    })
-    : [Object.assign(document.createElement("li"), { className: "empty", textContent: PERSONAL_TEXT.wordsEmpty })]));
-  ($("words-forget-all") as HTMLButtonElement).hidden = !list.length;
-  if (wordsFocus !== null && restoreFocus) {
-    const buttons = ul.querySelectorAll("button");
-    (buttons[Math.min(wordsFocus, buttons.length - 1)] ?? $("words-on")).focus();
-  }
-  wordsFocus = null;
+    },
+  });
+  wordRows.render(list);
+  const all = $("words-forget-all");
+  const wasFocused = document.activeElement === all;
+  all.hidden = !list.length;
+  if (wasFocused && all.hidden) $("words-on").focus();
 }
 
 /** The rows as the settings say (the learning row only once Voice Match knows the voice). */
@@ -155,7 +155,13 @@ export function startPersonal(saveSettings: Save): void {
   $("match-reset").addEventListener("click", () => {
     void window.ember.resetVoice().then(() => { $("voice-live").textContent = PERSONAL_TEXT.resetDone; ($("match-learn") as HTMLElement).focus(); });
   });
-  $("words-forget-all").addEventListener("click", () => { wordsFocus = 0; void window.ember.forgetVoiceWords().then(() => renderWords([])); });
+  $("words-forget-all").addEventListener("click", () => {
+    const button = $("words-forget-all");
+    if (button.getAttribute("aria-disabled") === "true") return;
+    button.setAttribute("aria-disabled", "true");
+    $("words-note").textContent = "";
+    void window.ember.forgetVoiceWords().then(() => renderWords([]), () => { $("words-note").textContent = WORDS_DELETE_FAILED; }).finally(() => button.removeAttribute("aria-disabled"));
+  });
   void window.ember.voiceWords().then(renderWords, () => renderWords([]));
   window.ember.onVoiceWords(renderWords);
 }

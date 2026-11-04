@@ -43,10 +43,10 @@ export interface AskSeen {
   workArea: { x: number; y: number; width: number; height: number };
 }
 
-/** The field's one line and Listen once (plus the tip's row while it shows). */
+/** The field's one line and two rows for the comfortable Listen once control (plus any tip). */
 export function askWant(size: TextSize, tip: boolean): Pick<AskSeen, "visible" | "width" | "height" | "size" | "font" | "clipped"> {
   const at = ASK_AT[size];
-  return { visible: true, width: at.width, height: askHeight(size, tip ? 3 : 2), size, font: at.font, clipped: false };
+  return { visible: true, width: at.width, height: askHeight(size, tip ? 4 : 3), size, font: at.font, clipped: false };
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));

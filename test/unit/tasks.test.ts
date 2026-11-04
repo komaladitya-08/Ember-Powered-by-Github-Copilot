@@ -81,6 +81,62 @@ describe("TaskManager", () => {
   });
 });
 
+describe("finished card reading leases", () => {
+  const make = (readTime = 1, failed = false) => new TaskManager({
+    log: quiet, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined,
+    makeWorker: () => fakeWorker(async () => ({ success: !failed, summary: "Result" })),
+    readTime: () => readTime, cardMs: 15_000, failureCardMs: 60_000,
+  });
+  it("applies More time to success and failure cards", async () => {
+    vi.useFakeTimers();
+    try {
+      const done = make(2), failed = make(2, true);
+      const a = done.start("done"), b = failed.start("failed");
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(done.get(a.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(done.get(a.id)).toBeUndefined();
+      expect(failed.get(b.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(failed.get(b.id)).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+  it("pauses the remaining countdown until the last reader leaves", async () => {
+    vi.useFakeTimers();
+    try {
+      const tm = make(), t = tm.start("read result");
+      await vi.advanceTimersByTimeAsync(10_000);
+      tm.reading(t.id, 1, true); tm.reading(t.id, 2, true);
+      await vi.advanceTimersByTimeAsync(10_000);
+      tm.reading(t.id, 2, true); tm.reading(t.id, 1, false);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(tm.get(t.id)).toBeDefined();
+      tm.reading(t.id, 2, false);
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(tm.get(t.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(tm.get(t.id)).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+  it("a disappeared reader releases automatically; dismiss/close clear every lease", async () => {
+    vi.useFakeTimers();
+    try {
+      const tm = make(), t = tm.start("reader disappears");
+      await vi.advanceTimersByTimeAsync(14_000);
+      tm.reading(t.id, 1, true);
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(tm.get(t.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(tm.get(t.id)).toBeUndefined();
+      const u = tm.start("close"); await vi.advanceTimersByTimeAsync(1); tm.reading(u.id, 1, true); tm.dismiss(u.id);
+      const v = tm.start("quit"); await vi.advanceTimersByTimeAsync(1); tm.reading(v.id, 1, true); tm.close();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(tm.get(u.id)).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe("Confirmer", () => {
   it("shows one question at a time and only accepts its own buttons", async () => {
     const shown: Partial<EmberState>[] = [];

@@ -4,6 +4,19 @@
 
 Reliability beta, prepared for validation before publication.
 
+### UI and speech follow-up on 4 November
+
+- Ask provides a visible Send action, comfortable scaled controls, wrapping suggestions and scrolling in small work areas.
+- Home supports an inline transient conversation, search, full-answer Copy, explicit Edit then Send, and Stop response separately from Stop everything. Delayed updates cannot restore another account's draft or transcript.
+- Projects has its own destination, per-file removal and size feedback, an immutable running-request snapshot, readable code/diffs and native exports of reviewed output. Exports cannot overwrite selected source files or Ember's private data.
+- Open approval reaches the exact live question in a keyboard-focusable card. Pointer approvals commit on release inside the unchanged target; moving away cancels. Reading task details and More time postpone card dismissal.
+- Memory controls retain focus, deletion reports actual success, and local query/source filters and pages make retained facts easier to find. Explicit corrections save durably, retain source authority and invalidate stale recall/learning work. Settings search offers selectable labelled matches.
+- Upcoming reminders show their words, local due time and persistence state. Edits preserve timers on failed saves, text-only changes preserve seconds, and bulk deletion names its scope before confirmation.
+- The desk offers explicit read-only app text with private fields omitted. It retains consent, lock and action-identity protection; interactive semantic takeover is not claimed.
+- Recognition preserves intended dictated repeats and numeric sequences while retaining whole-sentence loop recovery. Neural voices release after two idle minutes.
+- Lightweight Kitten Nano FP32 is an opt-in native voice with a named 63.8 MB download, speed checks and Piper fallback. Existing Piper/Kokoro defaults remain; speech quality still needs listening evaluation.
+
+
 - Remote command output cannot replace the real process's exit code or signal.
 - Concurrent checkbox requests recheck their desired state under the window lease, so two requests to turn one on do not toggle it off again.
 - Stop and task deadlines return control when task startup or request submission stalls; late work cannot start after cancellation.

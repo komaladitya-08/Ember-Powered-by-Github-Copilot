@@ -148,11 +148,11 @@ describe("docs/DEVELOPING.md", () => {
   });
 
   it("says a failed task card goes on its own after about a minute, as the task list times it (review #147)", () => {
-    const ms = Number(/status === "failed" \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(read("app/main/agent/tasks.ts"))?.[1].replace(/_/g, ""));
+    const ms = Number(/status === "failed" \|\| task\.view \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(read("app/main/agent/tasks.ts"))?.[1].replace(/_/g, ""));
     expect(ms).toBe(60_000);
     const asking = flat(section(read("docs/DEVELOPING.md"), "Asking Ember to do things"));
     expect(asking).not.toMatch(/a failed card stays until you close it/);
-    expect(asking).toContain("a failed card goes on its own after about a minute (the settings window's Conversation section keeps what went wrong)");
+    expect(asking).toContain("a failed card goes on its own after about a minute when not being read (Home's Conversation keeps what went wrong)");
   });
 
   it("says what More time to read and answer scales, as the presenter and the question's wait do", () => {

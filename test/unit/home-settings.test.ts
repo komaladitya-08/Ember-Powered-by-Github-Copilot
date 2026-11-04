@@ -35,7 +35,7 @@ describe("the sidebar says what the sections are called (review #162)", () => {
   it("names each link with its section's heading", () => {
     const decode = (s: string) => s.replace(/&amp;/g, "&");
     const links = [...page.matchAll(/<a href="#([\w-]+-h)"[^>]*>([^<]+)<\/a>/g)].map(m => [m[1], decode(m[2])] as const);
-    expect(links.length).toBe(11);
+    expect(links.length).toBe(12);
     // Home opens the window's own page (its title is Ember's name); "Setup & about" the pane of the setup check and
     // About this build. Every other link says its pane's heading.
     expect(links[0]).toEqual(["home-h", "Home"]);

@@ -1,5 +1,5 @@
 /**
- * First run in the settings window (`#welcome`): Ember introduces itself, the character is chosen, the consent is
+ * First run in the settings window (`#welcome`): Ember introduces itself, optional character choice, the consent is
  * agreed (the gate: nothing is read, heard or sent before it, M8.8), GitHub is signed in to, the computer is checked,
  * the stop shortcut, "Hey Ember" and a first request are tried for real, and "Your Ember" sums it up before Start.
  * One decision a step, a still step indicator, Back on every step after the first, and a reason beside any button
@@ -18,7 +18,7 @@ import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel }
 import { mountAboutYou } from "./about-you";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
-  DEFAULT_SIZE, aboutNext, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry, type WelcomeStep,
+  DEFAULT_SIZE, aboutNext, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
 /** What the settings window lends the welcome. */
@@ -27,7 +27,7 @@ export interface WelcomeDeps {
   save(patch: SettingsPatch): Promise<boolean>;
   /** The character on its tile (the hero's), shown at the head of every step. */
   buddy: HTMLElement;
-  /** The character cards (a radio group): the second step's choice. */
+  /** The character cards (a radio group): the optional character choice. */
   cards: HTMLElement;
   /** Ember has landed on the first step: its character greets once (the rig's happy). */
   arrived(): void;
@@ -111,7 +111,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   /** Moves to `to` (held at the consent step without agreement), focusing its title so the step is read from the top. */
   function go(to: WelcomeStep): void {
     // The step comes in from the side it lies on (motion only; focus moves at once, as the motion starts).
-    root.dataset.dir = WELCOME_STEPS.indexOf(to) < WELCOME_STEPS.indexOf(step) ? "back" : "next";
+    root.dataset.dir = stepPosition(to) < stepPosition(step) ? "back" : "next";
     step = gated(to, consented());
     navigation++;
     if (step === "try") heardBefore = -1;
@@ -124,7 +124,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   function render(): void {
     if (!active) return;
     root.dataset.step = step;
-    const at = WELCOME_STEPS.indexOf(step);
+    const at = stepPosition(step);
     [...arc.children].forEach((seg, i) => seg.classList.toggle("on", i <= at));
     $("w-count").textContent = stepCount(step);
     const text = step === "sign-in" ? signInText(managed()) : STEP_TEXT[step];
@@ -144,11 +144,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     alt.hidden = true;
     let label: string = NAV.next;
     let why = "";
-    if (step === "hello") label = NAV.begin;
+    if (step === "hello") { label = NAV.begin; alt.hidden = false; alt.textContent = NAV.character; }
     if (step === "consent") ({ label, why } = renderConsent());
     if (step === "sign-in") ({ label, why } = renderSignIn());
     if (step === "checks") label = renderChecks();
-    if (step === "try") renderTry();
+    if (step === "try") { renderTry(); alt.hidden = false; alt.textContent = NAV.about; }
     if (step === "about") label = aboutNext(about);
     if (step === "done") { renderSummary(); label = START_LABEL; next.className = "start"; }
     if (saving) why = "Saving…";
@@ -305,9 +305,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       }
       return held;
     };
-    $("w-try-stop").hidden = !chord("stop", "w-stop-keys");
+    const stopHeld = chord("stop", "w-stop-keys");
+    $("w-try-stop").hidden = false;
     chord("ask", "w-ask-keys");
-    mark("w-try-stop", tried.stop, tried.stop ? TRY_TEXT.stop.done : TRY_TEXT.stop.ask);
+    mark("w-try-stop", tried.stop, tried.stop ? TRY_TEXT.stop.done : stopHeld ? TRY_TEXT.stop.ask : TRY_TEXT.stop.fallback);
     const vs = voiceState();
     $("w-try-voice").hidden = vs === "off";
     $("w-voice-later").hidden = vs !== "off";
@@ -375,6 +376,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (to) go(to);
   });
   alt.addEventListener("click", () => {
+    if (saving) return;
+    if (step === "hello") { go("character"); return; }
+    if (step === "try") { go("about"); return; }
     if (step === "consent") {
       if (declined) { void window.ember.quit(); return; }
       declined = true;
@@ -400,6 +404,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     window.ember.retrySignIn().then(r => show(retryMessage(r, r.found && agent?.phase === "ready"), r.found ? "" : "error"),
       err => show(ipcErrorText(err), "error"));
   });
+  $("w-stop").addEventListener("click", () => { void window.ember.stopEverything(); });
   $("w-ask").addEventListener("click", () => {
     if ($("w-ask").getAttribute("aria-disabled") === "true") return;
     void window.ember.openAsk();
@@ -449,8 +454,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   }
 
   // ───── What the tries hear ─────
-  window.ember.onStopped(source => {
-    if (!active || step !== "try" || source !== "hotkey" || tried.stop) return;
+  window.ember.onStopped(() => {
+    if (!active || step !== "try" || tried.stop) return;
     tried.stop = true;
     live(TRY_TEXT.stop.done);
     render();

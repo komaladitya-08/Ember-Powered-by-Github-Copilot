@@ -558,7 +558,7 @@ describe("main's sign-in wiring", () => {
 
   it("connects nothing a look under way found when the user signed out, so Sign out isn't undone (final review S1)", () => {
     // Counted as soon as it is clicked, before the conversation is deleted and the stored sign-in cleared.
-    expect(MAIN).toMatch(/ipcMain\.handle\(IPC\.signOut, guard\(async \(\) => \{ signOuts\+\+; signInAbort\?\.abort\(\);/);
+    expect(MAIN).toMatch(/ipcMain\.handle\(IPC\.signOut, guard\(async \(\) => \{ signOuts\+\+; accountErasures\+\+; resetAnswerSpeech\(\); signInAbort\?\.abort\(\);/);
     // Signed out since the look began: nothing is connected, the first sign-in found or the next after a refusal.
     expect(MAIN).toContain([
       "const connectWith = async (found: ResolvedToken | null, how: \"user\" | \"auto\" = \"user\", since = signOuts) => {",

@@ -1,7 +1,7 @@
 # Towards a Jarvis-like Ember: voice, recognition and footprint
 
-Status: research and decisions (2026-11-01). Nothing here is built yet. Each phase below ships as its own PR, with
-its measurements. Companion to docs/MEMORY.md (what Ember knows about you).
+Research began on 2026-11-01. The dated phase entries record implementation and measurements; the 4 November
+follow-up below covers recognition cleanup, idle release and the optional lightweight voice. Companion to docs/MEMORY.md (what Ember knows about you).
 
 The goal: an assistant you talk to like a person. It hears you first time, answers before the silence feels long,
 sounds natural, can be interrupted, knows you, and costs almost nothing while it waits. Every choice below has to
@@ -132,7 +132,8 @@ card stands in for them).
   are: correcting the transcript against a vocabulary you own; giving the language model that vocabulary; and Voice
   Match, which is already built, to answer only you.
   ([sherpa-onnx hotwords](https://k2-fsa.github.io/sherpa/onnx/hotwords/index.html))
-- **Natural voices on a CPU.** Kokoro (82M) sounds best of the small models but costs about 3.5 times Piper.
+- **Natural voices on a CPU.** Earlier comparisons favoured Kokoro (82M), at about 3.5 times Piper's compute cost;
+  perceived naturalness still requires listening tests.
   Supertonic reports a real-time factor of 0.015 on an M4 Pro (66M parameters, OpenRAIL licence: needs review).
   Kitten TTS nano is 24 MB, with audible clicks. Piper stays the safe choice for slow machines. All the numbers are
   vendors' or bloggers', so Ember's own bench (`scripts/voice/bench.mjs`) decides.
@@ -417,3 +418,20 @@ captioned "Ember suggests". A click sends them as the user's choice of Ember's w
 applies, and they never count as the user's own words for a command (no announce-with-Stop: host.ts
 `UserRequest.suggested`). After a spoken reply that asked something the follow-up window is 12 s instead of 8 (no
 change to wake detection).
+
+
+## 8. Recognition and lightweight speech follow-up on 4 November
+
+[The speech review](voice-review-2026-11-04.md) records current primary model sources, verified Kitten archive,
+targeted recognition comparisons and resource interpretation. The current Tiny recogniser stays the default.
+Cleanup preserves literal dictated repeats and entirely numeric repeated spans without disabling whole-sentence
+loop recovery. A synthetic repeat/number subset improved from 64 to 35 edits over 146 reference words; three
+additional model insertion tokens remain. Names on that subset were unchanged. This is not a general microphone
+accuracy claim, and wake/Stop/Voice Match/action thresholds are unchanged.
+
+Piper Kristin remains the default voice. Kitten Nano 0.8 FP32 is an explicit native alternative to Kokoro, with a
+63.8 MB verified complete download, one CPU thread, measured speed gate and Piper fallback. The INT8 candidate
+used more CPU here despite its smaller weights and was not selected. Native capability, saved choice and current
+readiness are distinct in Home; saving a model while off never enables it. A lost native backend leaves the saved
+preference inspectable and switchable off. Speech utilities release after two minutes without pending synthesis.
+Queued audio and model benchmarks do not establish actual silence, naturalness or real-device recognition quality.

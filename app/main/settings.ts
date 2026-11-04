@@ -115,10 +115,12 @@ export const SettingsSchema = z.object({
     /** Voice Match: answer only the owner's voice (its voiceprint is kept apart, in voiceprint.json: voiceprint-store.ts). */
     match: z.boolean().default(false),
     /**
-     * Ember's natural voice (Kokoro, 350 MB, downloaded when this is turned on): Windows and macOS only, where speech
-     * runs natively, and only where this computer makes it fast enough (VoiceService, tts-process.ts).
+     * Ember's selected natural voice, downloaded only when this is turned on. Kokoro uses the Windows/macOS native
+     * backend; Kitten also supports Linux's native C API. Both keep the usual voice when too slow or unavailable.
      */
     natural: z.boolean().default(false),
+    /** Explicit local voice choice; old installations keep Kokoro and no optional model downloads while off. */
+    naturalModel: z.enum(["kokoro", "kitten"]).default("kokoro"),
     /**
      * Voice Match keeps learning: the voiceprint follows the owner's voice slowly, from their own requests it is sure of
      * (app/voice/adapt.ts; kept in voiceprint.json). In force only while Voice Match is on.
@@ -128,7 +130,7 @@ export const SettingsSchema = z.object({
     words: z.boolean().default(true),
     /** Suggest what I might say next: chips under the bubble and in the Ask box (app/main/personal/predict.ts). */
     suggest: z.boolean().default(true),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, learn: true, words: true, suggest: true }),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true }),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),

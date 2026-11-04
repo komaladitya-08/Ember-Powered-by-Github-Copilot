@@ -77,6 +77,8 @@ export interface RemindersOptions {
   onDue: (r: Reminder) => void;
   /** The reminders waiting changed (one set, cancelled or due): routines keep them for the next run. */
   onChange?: (list: Reminder[]) => void;
+  /** Local UI observes the live list independently of the optional persistence callback. */
+  onList?: (list: Reminder[]) => void;
   now?: () => number;
   timers?: { set: typeof setTimeout; clear: typeof clearTimeout };
 }
@@ -125,6 +127,7 @@ export class Reminders {
       const r: Reminder = { id: kept.id, text: kept.text, at: kept.at, created: kept.created, ...(kept.at < now ? { missed: true } : {}) };
       this.items.set(r.id, { r, timer: this.arm(r, now) });
     }
+    this.o.onList?.(this.list());
   }
 
   /** Where the list goes when it changes (null: nowhere, routines off). */
@@ -134,6 +137,12 @@ export class Reminders {
 
   private changed(): void {
     this.o.onChange?.(this.list());
+    this.notifyList();
+  }
+
+  /** A broken observer cannot undo a committed timer or falsely report that a durable edit failed. */
+  private notifyList(): void {
+    try { this.o.onList?.(this.list()); } catch { /* The next explicit list read reconciles a detached UI. */ }
   }
 
   /** The reminders waiting, soonest first. */
@@ -151,10 +160,33 @@ export class Reminders {
     return true;
   }
 
+  /**
+   * An explicit Home edit/cancellation, bound to the exact reminder shown. Persist first so failed writes leave the
+   * original timer and words intact. The UI cannot create reminders through this route or overwrite a newer edit.
+   */
+  change(expected: Reminder, replacement: { text: string; at: number } | null, save: (next: Reminder[]) => void): boolean {
+    const item = this.items.get(expected.id);
+    if (!item || item.r.text !== expected.text || item.r.at !== expected.at || item.r.created !== expected.created) return false;
+    const text = replacement?.text.trim().replace(/\s+/g, " ") ?? "";
+    if (replacement && (!text || text.length > MAX_TEXT || !Number.isSafeInteger(replacement.at)
+      || replacement.at <= this.now() || replacement.at - this.now() > MAX_AHEAD_MS)) throw new Error("Choose reminder words and a future time within one week.");
+    const updated = replacement ? { ...item.r, text, at: replacement.at } : null;
+    const next = this.list().flatMap(r => r.id === expected.id ? updated ? [updated] : [] : [r]);
+    save(next);
+    this.timers.clear(item.timer);
+    this.items.delete(expected.id);
+    if (updated) this.items.set(updated.id, { r: updated, timer: this.arm(updated, this.now()) });
+    // save(next) already committed the complete new list. A second persistence callback would duplicate that write.
+    this.notifyList();
+    return true;
+  }
+
   /** Every reminder goes (sign-out, quit). */
   clear(): void {
     for (const i of this.items.values()) this.timers.clear(i.timer);
     this.items.clear();
+    // Quit intentionally leaves the lasting reminders on disk; observers still need an empty live list.
+    this.o.onList?.([]);
   }
 
   /** A timer for `r`, at most CHECK_MS away: when it goes off, due() looks at the clock. */

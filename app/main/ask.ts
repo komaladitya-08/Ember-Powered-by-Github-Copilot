@@ -22,9 +22,10 @@ const SIZE = { width: 560, height: 92 };
 const GROWS = 46 + 17;
 /**
  * The field grows a line at a time (its line height, at the text size), up to MAX_LINES, as the user types or pastes
- * several lines; the cut note, wait tip and suggestions each take another row. Listen once can take two rows.
+ * several lines; the cut note and wait tip each take another row. Comfortable controls and wrapped suggestions use
+ * their measured rows; the work area caps the window and the page scrolls on very small displays.
  */
-const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 5;
+const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 20;
 /** The openings that say to wait for the box before typing, where Ember can't hold the letters typed meanwhile (review #78). */
 export const WAIT_TIP_OPENINGS = 5;
 
@@ -337,8 +338,8 @@ export class AskWindow {
     const scale = this.scale();
     let bounds = askBounds(near, display.workArea, this.keepOff(), scale);
     this.up = !near || bounds.y + bounds.height <= near.y;
-    // Saying to wait for it, or with suggestions: a row taller each from the start, so it doesn't grow once shown.
-    const rows = 2 + (this.context.tip ? 1 : 0) + (this.context.suggestions?.length ? 1 : 0);
+    // Reserve the first rows before showing; the page measures any further wrapping at the work area's width.
+    const rows = 3 + (this.context.tip ? 1 : 0) + (this.context.suggestions?.length ? 1 : 0);
     if (rows > 1) bounds = grownBounds(bounds, rows, display.workArea, this.up, this.keepOff(), scale);
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
@@ -373,7 +374,7 @@ export class AskWindow {
   }
 
   /**
-   * The page needs `rows` rows (1 to 6: the field's lines, the note's when a paste was cut, the tip's): the box grows
+   * The page needs `rows` rows (the field, cut note, wait tip and measured controls): the box grows
    * or shrinks to fit, away from Ember.
    */
   fit(rows: number): void {

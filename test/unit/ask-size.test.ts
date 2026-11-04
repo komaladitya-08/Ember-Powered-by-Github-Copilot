@@ -23,7 +23,7 @@ describe("ask-size.ts: what the live suites expect of the ask box (review #57)",
   it("keeps Ask inside a small work area at Larger, including when it grows", () => {
     const small = { x: -500, y: 50, width: 480, height: 180 };
     const opened = askBounds({ x: -40, y: 200 }, small, null, textScale("larger"));
-    for (const bounds of [opened, grownBounds(opened, 6, small, true, null, textScale("larger"))]) {
+    for (const bounds of [opened, ...[6, 12, 24].map(rows => grownBounds(opened, rows, small, true, null, textScale("larger")))]) {
       expect(bounds.x).toBeGreaterThanOrEqual(small.x);
       expect(bounds.y).toBeGreaterThanOrEqual(small.y);
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(small.x + small.width);
@@ -42,10 +42,10 @@ describe("ask-size.ts: what the live suites expect of the ask box (review #57)",
       const one = askBounds({ x: 900, y: 600, size: 60 }, wa, null, scale);
       for (const rows of [1, 2, 5]) expect(grownBounds(one, rows, wa, true, null, scale), `${size}, ${rows} rows`).toMatchObject({ width: ASK_AT[size].width, height: askHeight(size, rows) });
     }
-    expect(askWant("larger", false)).toEqual({ visible: true, width: 728, height: 142, size: "larger", font: "23.4px", clipped: false });
-    expect(askWant("larger", true)).toMatchObject({ width: 728, height: 173 });
-    expect(askWant("large", true)).toMatchObject({ width: 644, height: 156 });
-    expect(askWant("default", true)).toMatchObject({ width: 560, height: 140 });
+    expect(askWant("larger", false)).toEqual({ visible: true, width: 728, height: 173, size: "larger", font: "23.4px", clipped: false });
+    expect(askWant("larger", true)).toMatchObject({ width: 728, height: 205 });
+    expect(askWant("large", true)).toMatchObject({ width: 644, height: 184 });
+    expect(askWant("default", true)).toMatchObject({ width: 560, height: 164 });
     expect(askHeight("larger", 5)).toBe(236);
   });
 

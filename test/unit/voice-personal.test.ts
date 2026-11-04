@@ -555,8 +555,8 @@ describe("the suggestions under the bubble", () => {
   });
 
   it("take a row of their own in the Ask box", () => {
-    expect(boxRows(1, false, false, true)).toBe(2);
-    expect(boxRows(4, true, true, true)).toBe(7);
+    expect(boxRows(1, false, false, 1)).toBe(2);
+    expect(boxRows(4, true, true, 1)).toBe(7);
   });
 });
 

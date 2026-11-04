@@ -89,8 +89,11 @@ export type CommandWindow = CommandWindowPort & {
 
 /** UI's prompt window as the runtime uses it: the contract, plus its consent-answer hook and show() when it has them. */
 export type PromptWindow = PromptUi & {
-  showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void;
+  showConsent(n: number, c: ConsentPanel, activate?: boolean): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void;
   /** A consent question's answer from its card (UI's extra; without it a consent question can only be declined). */
+  showApproval?(card: import("../../shared/remote-ui").ApprovalCard): void;
+  hideApproval?(n: number): void;
+  onApproval?(fn: (n: number, answer?: string) => boolean): () => void;
   onConsent?(fn: (a: PanelAnswer) => void): () => void;
   /** Brings the window back with its card (UI's extra). */
   show?(): void;
@@ -1201,9 +1204,16 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   // A consent question's yes comes only from its card's own button; without UI's hook it can only be declined (fail closed).
   if (promptWindow.onConsent) promptWindow.onConsent(confirmAnswer("consent"));
   else log.info("targets.consent_answers_unwired", {});
+  promptWindow.onApproval?.((n, answer) => {
+    if (current?.n !== n || current.question.panel) return false;
+    if (answer === undefined) { deps.confirmer()?.wholeSeen(n); return true; }
+    if (!current.question.options.some(o => o.id === answer)) return false;
+    return deps.confirmer()?.answer(`q${n}:${answer}`, "bubble") ?? false;
+  });
   const hidePanel = (q: { n: number; question: Question }) => {
     const p = q.question.panel;
     try {
+      promptWindow.hideApproval?.(q.n);
       if (p?.kind === "command") commandWindow.hideCard(q.n);
       else if (p?.kind === "consent") promptWindow.hideConsent(q.n);
     } catch (err) { log.warn("targets.panel_hide_failed", { err }); }
@@ -1885,6 +1895,21 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       }
     },
     bubbleAction,
+    openApproval: () => {
+      const q = current;
+      if (!q) return false;
+      const p = q.question.panel;
+      if (p?.kind === "command") commandWindow.showCard(q.n, p.card);
+      else if (p?.kind === "consent") {
+        promptWindow.showConsent(q.n, p.consent, true);
+      } else {
+        if (!promptWindow.showApproval) return false;
+        const { title, prompt, detail, where, options } = q.question;
+        promptWindow.showApproval({ id: `approval-${q.n}`, kind: "approval", n: q.n, title, prompt,
+          ...(detail ? { detail } : {}), ...(where ? { where } : {}), options: options.map(o => ({ ...o })) });
+      }
+      return true;
+    },
     quickContext: (): Promise<QuickContext | null> | null => {
       try {
         const a = activeId();

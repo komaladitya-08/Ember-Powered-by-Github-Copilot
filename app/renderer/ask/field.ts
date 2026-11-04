@@ -27,11 +27,15 @@ export const CUT_NOTE = `Only the first ${FIELD.maxChars} characters will be sen
 export const WAIT_TIP = "Wait for this box before you type: letters typed sooner go to the app underneath.";
 
 /**
- * The rows the box needs: the field's lines, and one each for the note that a paste was cut, the tip to wait for it and
- * Ember's suggestions. The Listen once detail may need more than one row on a small display.
+ * The rows the box needs: the field's lines, one each for the cut note and wait tip, and the measured suggestion and
+ * Listen once groups, including every wrapped line.
  */
-export const boxRows = (lines: number, cut: boolean, tip: boolean, suggest = false, listenRows = 0): number =>
-  lines + (cut ? 1 : 0) + (tip ? 1 : 0) + (suggest ? 1 : 0) + listenRows;
+export const boxRows = (lines: number, cut: boolean, tip: boolean, suggestRows = 0, listenRows = 0): number =>
+  lines + (cut ? 1 : 0) + (tip ? 1 : 0) + suggestRows + listenRows;
+
+/** A measured auxiliary group plus its 4 px gap, in main's text-scaled rows; hidden groups need none. */
+export const auxiliaryRows = (height: number, scale = 1): number =>
+  height > 0 ? Math.ceil((height + 4) / (FIELD.line * scale)) : 0;
 
 /**
  * The lines the field shows for text `scrollHeight` px tall, measured at one line's height: 1 to FIELD.maxLines.

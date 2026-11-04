@@ -8,43 +8,51 @@
 
 import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attention";
 
-/** The steps, in order. The try step and the summary come after the consent gate; nothing before it reads or sends. */
-export const WELCOME_STEPS = ["hello", "character", "consent", "sign-in", "checks", "try", "about", "done"] as const;
-export type WelcomeStep = (typeof WELCOME_STEPS)[number];
+/** The essential first-run route; character and memory personalisation remain optional detours. */
+export const WELCOME_STEPS = ["hello", "consent", "sign-in", "checks", "try", "done"] as const;
+export type WelcomeStep = (typeof WELCOME_STEPS)[number] | "character" | "about";
 
-/** Where first run opens: at the start, or (terms already agreed in an earlier run that didn't finish) at sign-in. */
+/** Where first run opens: at the start, or at sign-in once consent was already agreed. */
 export function firstStep(consented: boolean): WelcomeStep {
   return consented ? "sign-in" : "hello";
 }
 
-/** "Step 3 of 7": the still step indicator's words (its segments are for the eye only). */
-export function stepCount(step: WelcomeStep): string {
-  return `Step ${WELCOME_STEPS.indexOf(step) + 1} of ${WELCOME_STEPS.length}`;
+/** Position in the essential route; optional detours keep their originating step's indicator. */
+export function stepPosition(step: WelcomeStep): number {
+  return WELCOME_STEPS.indexOf(step === "character" ? "hello" : step === "about" ? "try" : step);
 }
 
-/** The step before and after `step` (null at either end). */
+/** Optional personalisation never pretends to be another mandatory setup step. */
+export function stepCount(step: WelcomeStep): string {
+  if (step === "character") return "Optional · Character";
+  if (step === "about") return "Optional · About you";
+  return `Step ${stepPosition(step) + 1} of ${WELCOME_STEPS.length}`;
+}
+
+/** The step before and after `step`, including the optional detours. */
 export function stepBefore(step: WelcomeStep): WelcomeStep | null {
-  const i = WELCOME_STEPS.indexOf(step);
+  if (step === "character") return "hello";
+  if (step === "about") return "try";
+  const i = stepPosition(step);
   return i > 0 ? WELCOME_STEPS[i - 1] : null;
 }
 export function stepAfter(step: WelcomeStep): WelcomeStep | null {
-  const i = WELCOME_STEPS.indexOf(step);
+  if (step === "character") return "consent";
+  if (step === "about") return "done";
+  const i = stepPosition(step);
   return i < WELCOME_STEPS.length - 1 ? WELCOME_STEPS[i + 1] : null;
 }
 
-/**
- * A step past the consent gate can't be reached without consent: going forward from the consent step needs Agree, and
- * a later step asked for without it falls back to the consent step (M8.8: first run can't skip consent).
- */
+/** Every route to a connected feature, including optional memory, still passes saved consent. */
 export function gated(step: WelcomeStep, consented: boolean): WelcomeStep {
-  return !consented && WELCOME_STEPS.indexOf(step) > WELCOME_STEPS.indexOf("consent") ? "consent" : step;
+  return !consented && stepPosition(step) > stepPosition("consent") ? "consent" : step;
 }
 
 /** Each step's title (Ember's line) and the sentence under it. */
 export const STEP_TEXT: Readonly<Record<WelcomeStep, { title: string; lead: string }>> = {
   hello: {
     title: "Hi, I'm Ember.",
-    lead: "I sit beside your cursor, answer your questions and do things in your apps while you watch. Setting me up takes about a minute.",
+    lead: "I sit beside your cursor, answer your questions and do things in your apps while you watch. You can personalise my character and memory later in Settings.",
   },
   character: {
     title: "Who should keep you company?",
@@ -64,7 +72,7 @@ export const STEP_TEXT: Readonly<Record<WelcomeStep, { title: string; lead: stri
   },
   try: {
     title: "Try me out",
-    lead: "A few things worth trying now. Each is optional.",
+    lead: "Learn how to stop me, then try a request. The practice activities and personalisation are optional.",
   },
   about: {
     title: "Tell me about you",
@@ -166,7 +174,7 @@ export function signInView(o: { phase: string | null; reason?: string; login?: s
 export const CHECK_AGAIN = "Check again";
 
 /** What "Skip for now" leaves for later, and where. */
-export const SKIP_SIGN_IN = "You can sign in later in Settings › Copilot. Until then I can't answer or act.";
+export const SKIP_SIGN_IN = "You can sign in later in Settings › Models & connections. Until then I can't answer or act.";
 
 /**
  * A setup row in plain words: a short title, what it means for the user, how serious it is (`held`: Ember can't read,
@@ -240,7 +248,7 @@ export const CHECKS_DETAIL = "Show the details";
 
 /** The try step's three tries: what each says before and after it is done. */
 export const TRY_TEXT = {
-  stop: { title: "Stop me", ask: "Press the stop shortcut now. It stops everything I'm doing, at once, anywhere.", done: "That's how you stop me." },
+  stop: { title: "Stop me", fallback: "Use Stop everything from my handle or Home whenever you need me to stop. The stop shortcut is unavailable on this computer.", ask: "Press the stop shortcut now. It stops everything I'm doing, at once, anywhere.", done: "That's how you stop me." },
   voice: { title: "Say “Hey Ember”", ask: "Say “Hey Ember”, then ask something and watch the meter.", done: "I heard you." },
   ask: { title: "Ask me something", ask: "Open the ask box and type a question, such as “What can you do?”", done: "You asked me something.", open: "Open the ask box" },
   /** The ask box can't be opened yet: why, beside its button. */
@@ -292,7 +300,7 @@ export const SUMMARY_NOTE = "You can change any of this in Settings, which opens
 export const START_LABEL = "Start Ember";
 
 /** The navigation buttons. */
-export const NAV = { back: "Back", next: "Continue", begin: "Get started", skip: "Skip for now" } as const;
+export const NAV = { back: "Back", next: "Continue", begin: "Get started", skip: "Skip for now", character: "Choose a character…", about: "Personalise memory…" } as const;
 
 /** The "about you" step's main button: it saves what was answered, or goes on without (nothing kept). */
 export function aboutNext(o: { ready: boolean; filled: boolean }): string {

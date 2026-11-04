@@ -58,7 +58,7 @@ describe("Listen once controls", () => {
   });
 
   it("adds room for the control and a wrapped explanation alongside the existing rows", () => {
-    expect(boxRows(1, false, false, false, 1)).toBe(2);
-    expect(boxRows(4, true, true, true, 2)).toBe(9);
+    expect(boxRows(1, false, false, 0, 1)).toBe(2);
+    expect(boxRows(4, true, true, 1, 2)).toBe(9);
   });
 });

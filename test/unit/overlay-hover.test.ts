@@ -110,6 +110,19 @@ describe("the overlay without an input region", () => {
     expect(ignore).toEqual([[false], [true, { forward: true }], [false]]);
   });
 
+  it("keeps native routing for renderer capture when the OS cannot report button state", async () => {
+    const { shaper } = fakeShaper(true);
+    const { m, sender, ignore, moveTo } = await overlay(shaper);
+    m.setInteractive(sender, [button]);
+    moveTo(120, 110);
+    m.pointerHeld(sender, true);
+    moveTo(800, 700); // no native button mask on this backend
+    expect(ignore.every(call => call[0] === false)).toBe(true);
+    m.pointerHeld(sender, false);
+    moveTo(800, 700);
+    expect(ignore.at(-1)).toEqual([true, { forward: true }]);
+  });
+
   it("goes click-through at once when nothing is clickable any more (a question answered), with the platform's options", async () => {
     const { shaper } = fakeShaper(true);
     const { m, sender, ignore, moveTo } = await overlay(shaper);

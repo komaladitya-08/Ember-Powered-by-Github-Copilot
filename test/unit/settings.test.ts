@@ -84,7 +84,7 @@ describe("settings keep what the user set (review fixes)", () => {
     expect(r.recoveredFrom).toBeTruthy();
     expect(s.get().privacy.neverLook).toEqual(["thunderbird", "remmina"]);
     expect(s.get().grants).toEqual({ gedit: "act" });
-    expect(s.get().voice).toEqual({ consent: true, speakerRejection: true, muted: false, match: false, natural: false, learn: true, words: true, suggest: true });
+    expect(s.get().voice).toEqual({ consent: true, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true });
   });
 
   it("a change made by hand while Ember runs is kept when Ember saves something else", () => {
@@ -238,5 +238,26 @@ describe("a change sent from the settings window", () => {
     const home = fs.readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
     expect(home).toContain("void save({ trust: { askedApps: (e.target as HTMLInputElement).checked } } as SettingsPatch);");
     expect(fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain("settings.update(ownNeverLook(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider))");
+  });
+});
+
+
+describe("natural voice model preference", () => {
+  it("keeps Kokoro for existing installations and saves Kitten only as an explicit choice", () => {
+    fs.writeFileSync(file, JSON.stringify({ voice: { natural: true, muted: true, learn: false } }));
+    const store = new SettingsStore(file);
+    expect(store.load().settings.voice).toMatchObject({ natural: true, naturalModel: "kokoro", muted: true, learn: false });
+    store.update({ voice: { ...store.get().voice, natural: false, naturalModel: "kitten" } });
+    expect(new SettingsStore(file).load().settings.voice).toMatchObject({ natural: false, naturalModel: "kitten", muted: true, learn: false });
+    expect(DEFAULT_SETTINGS.voice).toMatchObject({ natural: false, naturalModel: "kokoro" });
+  });
+
+  it("rejects unsupported models without changing an existing choice", () => {
+    const store = new SettingsStore(file);
+    store.load();
+    expect(() => store.update({ voice: { ...store.get().voice, naturalModel: "automatic" as never } })).toThrow();
+    expect(store.get().voice.naturalModel).toBe("kokoro");
+    fs.writeFileSync(file, JSON.stringify({ voice: { natural: false, naturalModel: "unknown", muted: true } }));
+    expect(new SettingsStore(file).load().settings.voice).toMatchObject({ natural: false, naturalModel: "kokoro", muted: true });
   });
 });

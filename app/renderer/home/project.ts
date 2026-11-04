@@ -1,12 +1,27 @@
+/** Project selection, explicit context sharing and inert, reviewable output in the Projects destination. */
+import { renderProjectAnswer } from "./project-output";
+import { projectBytes, projectSelectionText } from "./project-copy";
 import type { ProjectMode, ProjectWorkspaceAction } from "../../shared/ipc";
 
 export function mountProject() {
+  const provider = document.querySelector<HTMLElement>("#project-provider")!;
+  let providerText = "";
   const form = document.querySelector<HTMLFormElement>("#project-form")!;
   const pick = form.querySelector<HTMLButtonElement>("#project-pick")!;
   const clear = form.querySelector<HTMLButtonElement>("#project-clear")!;
   const send = form.querySelector<HTMLButtonElement>("#project-send")!;
   const cancel = form.querySelector<HTMLButtonElement>("#project-cancel")!;
   const files = form.querySelector<HTMLUListElement>("#project-files")!;
+  const selection = form.querySelector<HTMLElement>("#project-selection")!;
+  const running = form.querySelector<HTMLElement>("#project-running")!;
+  const outputStatus = form.querySelector<HTMLElement>("#project-output-status")!;
+  const outputActions = form.querySelector<HTMLElement>("#project-answer-actions")!;
+  const copyAnswer = form.querySelector<HTMLButtonElement>("#project-copy-answer")!;
+  const copyDiff = form.querySelector<HTMLButtonElement>("#project-copy-diff")!;
+  const exportAnswer = form.querySelector<HTMLButtonElement>("#project-export-answer")!;
+  const exportDiff = form.querySelector<HTMLButtonElement>("#project-export-diff")!;
+  const exportHint = form.querySelector<HTMLElement>("#project-export-hint")!;
+  const patchSummary = form.querySelector<HTMLElement>("#project-patch-summary")!;
   const mode = form.querySelector<HTMLSelectElement>("#project-mode")!;
   const question = form.querySelector<HTMLTextAreaElement>("#project-question")!;
   const status = form.querySelector<HTMLElement>("#project-status")!;
@@ -32,13 +47,25 @@ export function mountProject() {
   const includePrevious = form.querySelector<HTMLInputElement>("#project-include-previous")!;
   const previousQuestion = form.querySelector<HTMLElement>("#project-previous-question")!;
   let commandFolder: string | null = null;
-  const clearPatch = () => { patch.hidden = true; patch.open = false; diff.textContent = ""; };
+  let patchCurrent = false;
+  let selectedNames: string[] = [];
+  let shownAnswer = "";
+  const clearPatch = () => { patch.hidden = true; patch.open = false; diff.textContent = ""; patchCurrent = false; };
+  const invalidatePatch = () => {
+    patchCurrent = false;
+    patchSummary.textContent = "Previous diff (read-only)";
+  };
   let ready = false;
-  let busy: "picking" | "running" | "applying" | "command" | "workspace" | null = null;
+  let busy: "picking" | "running" | "applying" | "command" | "workspace" | "export" | null = null;
   let revision = 0;
   const draw = () => {
     pick.disabled = !ready || !!busy;
-    apply.disabled = !ready || !!busy;
+    apply.disabled = !ready || !!busy || !patchCurrent;
+    apply.hidden = !patchCurrent;
+    exportAnswer.disabled = exportDiff.disabled = !ready || !!busy;
+    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || !!busy;
+    form.setAttribute("aria-busy", String(busy === "running"));
+    send.textContent = busy === "running" ? "Working…" : "Send selected files";
     folderPick.disabled = !ready || !!busy;
     command.disabled = !ready || !!busy;
     review.disabled = !ready || !!busy || !commandFolder || !command.value.trim();
@@ -53,19 +80,32 @@ export function mountProject() {
     cancel.hidden = busy !== "running";
     folder.textContent = commandFolder ?? "No command folder selected.";
   };
-  const names = (selected: string[]) => {
-    files.replaceChildren(...selected.map(name => {
+  const names = (selected: string[], sizes?: (number | null)[]) => {
+    selectedNames = [...selected];
+    files.replaceChildren(...selected.map((name, index) => {
       const row = document.createElement("li");
-      row.textContent = name;
+      const label = document.createElement("span");
+      label.textContent = name;
+      const size = sizes?.[index];
+      if (size !== null && size !== undefined) label.textContent += ` · ${projectBytes(size)}`;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn quiet small remove";
+      remove.textContent = "Remove";
+      remove.setAttribute("aria-label", `Remove ${name}`);
+      remove.addEventListener("click", () => void removeFile(name));
+      row.append(label, remove);
       return row;
     }));
-    files.hidden = !selected.length;
+    selection.textContent = projectSelectionText(selected, sizes);
+    selection.hidden = files.hidden = !selected.length;
   };
   const showPrevious = (previous: { question: string; answer: string } | null, canContinue = false) => {
     previousQuestion.textContent = previous ? "Previous request: " + previous.question : "";
     previousQuestion.hidden = !previous;
-    answer.textContent = previous?.answer ?? "";
-    answer.hidden = !previous;
+    shownAnswer = previous?.answer ?? "";
+    renderProjectAnswer(answer, shownAnswer, text => void copyText(text, "Project code copied."));
+    answer.hidden = outputActions.hidden = exportHint.hidden = !previous;
     previousControl.hidden = !canContinue;
     if (!canContinue) includePrevious.checked = false;
   };
@@ -78,19 +118,20 @@ export function mountProject() {
     commandFolder = null;
     command.value = "";
     commandStatus.textContent = "";
+    running.hidden = true;
+    running.textContent = outputStatus.textContent = "";
     showPrevious(null);
     draw();
   };
   pick.addEventListener("click", async () => {
     const at = revision;
     busy = "picking";
-    clearPatch();
     draw();
     try {
       const result = await window.ember.projectPick();
       if (at !== revision) return;
-      names(result.names);
-      if (result.changed) showPrevious(null);
+      names(result.names, result.sizes);
+      if (result.changed) { clearPatch(); showPrevious(null); }
       status.textContent = result.error ?? (result.names.length ? "Review the selection before sending." : "Choose the files for this request.");
     } catch {
       if (at === revision) status.textContent = "Couldn't choose project files.";
@@ -98,6 +139,56 @@ export function mountProject() {
       if (at === revision) { busy = null; draw(); }
     }
   });
+  async function removeFile(name: string): Promise<void> {
+    if (!ready || busy) return;
+    const at = revision;
+    busy = "picking";
+    let focusAfter: HTMLButtonElement | null = null;
+    draw();
+    try {
+      const result = await window.ember.projectRemove(name);
+      if (at !== revision) return;
+      names(result.names, result.sizes);
+      if (result.changed) {
+        invalidatePatch();
+        previousControl.hidden = true;
+        includePrevious.checked = false;
+      }
+      status.textContent = result.error ?? `Removed ${name}. Your request is kept.`;
+      if (result.changed) focusAfter = files.querySelector<HTMLButtonElement>("button") ?? pick;
+    } catch {
+      if (at === revision) status.textContent = "Couldn't remove the file. Your selection is kept.";
+    } finally {
+      if (at === revision) { busy = null; draw(); focusAfter?.focus(); }
+    }
+  }
+  async function copyText(text: string, message: string): Promise<void> {
+    const at = revision;
+    try {
+      await window.ember.copyText(text);
+      if (at === revision) outputStatus.textContent = message;
+    } catch {
+      if (at === revision) outputStatus.textContent = "Couldn't copy. Select the output and copy it with your keyboard.";
+    }
+  }
+  const exportOutput = async (kind: "answer" | "diff") => {
+    if (!ready || busy) return;
+    const at = revision;
+    busy = "export";
+    draw();
+    try {
+      const result = await window.ember.projectExport(kind);
+      if (at === revision) outputStatus.textContent = result.message;
+    } catch {
+      if (at === revision) outputStatus.textContent = "Couldn't export the project output.";
+    } finally {
+      if (at === revision) { busy = null; draw(); }
+    }
+  };
+  copyAnswer.addEventListener("click", () => void copyText(shownAnswer, "Project answer copied."));
+  copyDiff.addEventListener("click", () => void copyText(diff.textContent ?? "", "Project diff copied."));
+  exportAnswer.addEventListener("click", () => void exportOutput("answer"));
+  exportDiff.addEventListener("click", () => void exportOutput("diff"));
   clear.addEventListener("click", () => {
     reset();
     status.textContent = "Project work cleared.";
@@ -160,7 +251,7 @@ export function mountProject() {
       }
       if (result.opened && input.action === "open") {
         clearPatch();
-        names(result.opened.files);
+        names(result.opened.files, result.opened.sizes);
         workspaceName.value = input.name;
         commandFolder = result.opened.folder;
         command.value = "";
@@ -197,12 +288,12 @@ export function mountProject() {
     try {
       const result = await window.ember.projectApply();
       if (at !== revision) return;
-      if (result.done) clearPatch();
+      if (result.done) { invalidatePatch(); patchSummary.textContent = "Applied diff"; }
       status.textContent = result.message;
     } catch {
       if (at === revision) status.textContent = "Couldn't apply the patch.";
     } finally {
-      if (at === revision) { busy = null; draw(); if (patch.hidden) question.focus(); }
+      if (at === revision) { busy = null; draw(); if (!patchCurrent) question.focus(); }
     }
   });
   form.addEventListener("submit", async event => {
@@ -210,29 +301,37 @@ export function mountProject() {
     if (send.disabled) return;
     const at = revision;
     busy = "running";
-    clearPatch();
+    invalidatePatch();
     const sent = { mode: mode.value as ProjectMode, question: question.value, includePrevious: includePrevious.checked };
-    status.textContent = "Working on the project request…";
+    running.textContent = `${mode.selectedOptions[0]?.textContent ?? "Project request"} · ${selectedNames.join(", ")}\nRequest: ${sent.question}\nSent to ${providerText}.${sent.includePrevious ? "\nIncludes the previous request and answer." : "\nPrevious request and answer are not included."}`;
+    running.hidden = false;
+    outputStatus.textContent = "";
+    status.textContent = "Working on the request shown below. Edits apply to your next send.";
     draw();
     try {
       const result = await window.ember.projectRun(sent);
       if (at !== revision) return;
       if ("answer" in result) {
+        clearPatch();
         showPrevious({ question: sent.question, answer: result.answer }, result.canContinue);
         if (result.patch) {
           diff.textContent = result.patch.diff;
           apply.textContent = `Apply patch to ${result.patch.name}…`;
           patch.hidden = false;
+          patchCurrent = true;
+          patchSummary.textContent = "Review changes before applying";
         }
         status.textContent = result.patch ? "Patch ready to review." : sent.mode === "patch" ? "Draft ready. Ember could not verify an exact patch to apply." : "Project answer ready.";
-      } else status.textContent = result.error;
+      } else status.textContent = result.error + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
     } catch {
-      if (at === revision) status.textContent = "Couldn't finish the project request.";
+      if (at === revision) status.textContent = "Couldn't finish the project request." + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
     } finally {
-      if (at === revision) { busy = null; draw(); }
+      if (at === revision) { busy = null; running.hidden = true; draw(); }
     }
   });
-  return (on: boolean) => {
+  return (on: boolean, service = "GitHub Copilot", model: string | null = null) => {
+    providerText = `${service}${model ? ` · ${model}` : ""}`;
+    provider.textContent = on ? `Next send uses ${providerText}.` : "Connect a model in Models & connections.";
     if (ready === on) return;
     ready = on;
     if (!on) {

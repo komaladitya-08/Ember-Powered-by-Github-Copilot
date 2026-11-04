@@ -623,22 +623,60 @@ html[data-text-size] .eb-suggest-cap, html[data-text-size] .eb-suggest button { 
 `;
 
 /**
- * Runs `fn` when `button` is pressed with the mouse (at the press, not the release) or activated from the keyboard.
- * Ember's windows let clicks through except over their buttons and learn where the pointer is by polling, so a
- * release can land after the window let go of the pointer (or the button moved under it): the press is the click.
+ * A primary press is committed only on release inside the same, unmoved control. Pointer capture keeps the release
+ * with the control when the native window passes other areas through. Mouse clicks never provide a second path;
+ * keyboard Enter/Space produce the one detail-zero click. Replacing a question or hiding a surface cancels a press.
  */
 export function onPress(button: HTMLElement, fn: () => void): void {
-  let pressedAt = -Infinity;
+  let held: { pointer: number; bounds: DOMRect; label: string } | null = null;
+  let watch: MutationObserver | null = null;
+  const doc = button.ownerDocument;
+  const hidden = () => { if (doc.visibilityState === "hidden") cancel(); };
+  const available = () => button.isConnected && !button.hidden && !button.closest("[hidden]")
+    && !button.hasAttribute("disabled") && button.getAttribute("aria-disabled") !== "true"
+    && button.ownerDocument.visibilityState !== "hidden";
+  const cancel = () => {
+    const pointer = held?.pointer;
+    held = null;
+    watch?.disconnect();
+    watch = null;
+    doc.removeEventListener("visibilitychange", hidden);
+    if (pointer !== undefined && button.hasPointerCapture?.(pointer)) button.releasePointerCapture(pointer);
+  };
   button.addEventListener("pointerdown", e => {
-    if (e.button !== 0) return;
-    pressedAt = performance.now();
-    fn();
+    cancel();
+    if (e.button !== 0 || e.isPrimary === false || !available()) return;
+    const bounds = button.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    held = { pointer: e.pointerId, bounds, label: button.textContent ?? "" };
+    try { button.setPointerCapture(e.pointerId); } catch { cancel(); return; }
+    doc.addEventListener("visibilitychange", hidden);
+    if (typeof MutationObserver === "function") {
+      watch = new MutationObserver(changes => {
+        if (changes.some(c => {
+          if (!(c.target instanceof Element)) return button.contains(c.target);
+          // Reapplying unchanged state (the overlay refreshes aria-expanded during progress) keeps a gesture alive.
+          if (c.type === "attributes" && c.target.getAttribute(c.attributeName!) === c.oldValue) return false;
+          return c.target === button || button.contains(c.target) || c.target.contains(button);
+        })) cancel();
+      });
+      watch.observe(doc.documentElement, { attributes: true, attributeOldValue: true, childList: true, subtree: true });
+    }
   });
-  // A keyboard's Enter or Space (detail 0), or a mouse click whose press never came.
-  button.addEventListener("click", e => {
-    if (e.detail > 0 && performance.now() - pressedAt < 1500) return;
-    fn();
+  button.addEventListener("pointerup", e => {
+    const press = held;
+    if (!press || press.pointer !== e.pointerId || e.button !== 0) return;
+    const r = button.getBoundingClientRect();
+    const same = (["x", "y", "width", "height"] as const).every(k => Math.abs(r[k] - press.bounds[k]) < .5);
+    const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    const act = available() && same && inside && press.label === (button.textContent ?? "");
+    cancel();
+    if (act) fn();
   });
+  button.addEventListener("pointercancel", cancel);
+  button.addEventListener("lostpointercapture", cancel);
+  // A keyboard click is generated after the key's own native activation rules; a pointer click is already handled.
+  button.addEventListener("click", e => { if (e.detail === 0 && available()) fn(); });
 }
 
 export interface BubbleAction {

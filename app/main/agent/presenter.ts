@@ -522,12 +522,12 @@ export function stepOf(tool: string, onDesk = false): string | undefined {
 
 /**
  * The bubble once "Read all" is pressed on an answer cut short: all of `full` (it scrolls inside the bubble if it must),
- * with a way to the conversation in settings and one to close it.
+ * with a way to the conversation and one to close it.
  */
 export function expandedBubble(b: BubbleState, full: string): BubbleState {
   return {
     ...b, visible: true, mood: "idle", title: b.title || "Ember", thought: full, step: null, streaming: false, expanded: true,
-    actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open in settings" }],
+    actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }],
   };
 }
 

@@ -190,6 +190,7 @@ describe("sherpaRuntime", () => {
   it("refuses Kokoro in WebAssembly (it would speak several times slower than real time)", () => {
     const s = sherpaRuntime({ prefer: "wasm" });
     expect(() => s.createTts({ kind: "kokoro", model: "m", voices: "v", tokens: "t", dataDir: "d", lexicon: "", lang: "", lengthScale: 1 }, { provider: "cpu", numThreads: 1 }, 1)).toThrow("Kokoro needs the native build");
+    expect(() => s.createTts({ kind: "kitten", model: "m", voices: "v", tokens: "t", dataDir: "d", lengthScale: 1 }, { provider: "cpu", numThreads: 1 }, 1)).toThrow("Kitten needs the native build");
   });
 
   it("throws for a model that can't be made, in WebAssembly too (where it would be an empty handle)", () => {

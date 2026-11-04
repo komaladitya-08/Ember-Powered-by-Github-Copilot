@@ -155,7 +155,7 @@ describe("the settings window before a status names an OS", () => {
     expect(visible(byId(root, "autostart-note"))).toBe("");
   });
 
-  it("keeps the empty conversation's hint in the list's data-empty, as the style sheet says it today", () => {
+  it("keeps the empty conversation's composer and shortcut guidance in data-empty", () => {
     expect(byId(page(), "conversation").attrs["data-empty"]).toBe(emptyConversationText());
     // The style sheet writes Linux's hint itself until it shows the attribute instead.
     const content = /\.conversation:empty::before \{ content: ([^;]+);/.exec(STYLES)![1];
@@ -185,7 +185,7 @@ describe("the settings window before a status names an OS", () => {
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
     expect(tagline(base)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
     expect(micOffText()).toBe("Microphone off (Ctrl+Alt+M to turn on)");
-    expect(emptyConversationText()).toBe("Nothing yet. Press Ctrl+Alt+Space and ask Ember something.");
+    expect(emptyConversationText()).toBe("No messages yet. Write to Ember below, or press Ctrl+Alt+Space to open Ask Ember.");
     expect(describeEntry({ t, event: "stop", source: "hotkey" })?.what).toBe("Everything stopped (stop shortcut)");
     expect(describeEntry({ t, event: "stop", source: "voice" })?.what).toBe("Everything stopped (“Ember, stop”)");
     expect(entryWords(undefined)).toBe(LINUX_ENTRY_WORDS);
@@ -274,7 +274,7 @@ describe("the settings window with a Windows or macOS status", () => {
     expect(tagline(base, WINDOWS.shortcuts.ask.label)).toBe("Ember is beside your cursor. Press Win+Alt+Space to ask it anything.");
     expect(tagline(base, MAC.shortcuts.ask.label)).toBe("Ember is beside your cursor. Press Control+Shift+Command+Space to ask it anything.");
     expect(micOffText(WINDOWS.shortcuts.mute.label)).toBe("Microphone off (Win+Alt+M to turn on)");
-    expect(byId(apply(page(), homePatches(MAC)), "conversation").attrs["data-empty"]).toBe("Nothing yet. Press Control+Shift+Command+Space and ask Ember something.");
+    expect(byId(apply(page(), homePatches(MAC)), "conversation").attrs["data-empty"]).toBe("No messages yet. Write to Ember below, or press Control+Shift+Command+Space to open Ask Ember.");
     // The record doesn't keep which chord was pressed (default or fallback, maybe in an earlier run): it names none.
     expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(WINDOWS))?.what).toBe("Everything stopped (stop shortcut)");
     expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(MAC))?.what).toBe("Everything stopped (stop shortcut)");
@@ -457,7 +457,7 @@ describe("the settings window names the chord Ember holds: its fallback, or none
     expect(sentence(root, "ask")).toBe("Ask Ember anything with Ctrl+Alt+Shift+Space.");
     expect(sentence(root, "stop")).toBe("Or press Ctrl+Alt+Shift+X to stop everything at once.");
     expect(tagline(base, st.shortcuts.ask.label)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Shift+Space to ask it anything.");
-    expect(byId(root, "conversation").attrs["data-empty"]).toBe("Nothing yet. Press Ctrl+Alt+Shift+Space and ask Ember something.");
+    expect(byId(root, "conversation").attrs["data-empty"]).toBe("No messages yet. Write to Ember below, or press Ctrl+Alt+Shift+Space to open Ask Ember.");
     // A stop pressed with Ctrl+Alt+X (in this run or an earlier one) isn't renamed by the fallback Ember holds now.
     expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(st))?.what).toBe("Everything stopped (stop shortcut)");
     // No sentence for a key Ember doesn't have.
@@ -478,7 +478,7 @@ describe("the settings window names the chord Ember holds: its fallback, or none
     expect(text).toContain("Mute microphone, in Ember's handle menu, turns the microphone off and on.");
     expect(text).toContain("When Ember asks “May I?”, answer in its bubble: another app has the keys for Allow and Not now.");
     expect(tagline(base, st.shortcuts.ask.label)).toBe("Ember is beside your cursor. Ask it anything with Ask Ember… below.");
-    expect(byId(root, "conversation").attrs["data-empty"]).toBe("Nothing yet. Use Ask Ember… at the top of Home to ask Ember something.");
+    expect(byId(root, "conversation").attrs["data-empty"]).toBe("No messages yet. Write to Ember below, or use Ask Ember… at the top of Home.");
     expect(micOffText(st.shortcuts.mute.label)).toBe("Microphone off");
     expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(st))?.what).toBe("Everything stopped (stop shortcut)");
     // Each OS's own way back, and the page as it was once Ember holds them again.

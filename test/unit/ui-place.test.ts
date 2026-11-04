@@ -76,11 +76,11 @@ describe("grownBounds (review #70: the field grows to four lines, and a row for 
     const tall = grownBounds(b, 4, wa, true);
     expect(tall).toEqual({ ...b, height: 92 + 3 * 24, y: b.y + b.height - (92 + 3 * 24) });
     expect(grownBounds(tall, 1, wa, true)).toEqual(b);
-    // Never more than four lines, the note's row (a paste cut at the limit), the tip's (wait for the box, review
-    // #78), suggestions and up to two rows for Listen once, never less than one.
+    // Wrapped suggestions can need more rows than the field. Even an excessive request stays inside the work area.
     expect(grownBounds(b, 5, wa, true)).toEqual({ ...b, height: 92 + 4 * 24, y: b.y + b.height - (92 + 4 * 24) });
     expect(grownBounds(b, 9, wa, true).height).toBe(284);
-    expect(grownBounds(b, 12, wa, true).height).toBe(284);
+    expect(grownBounds(b, 12, wa, true).height).toBe(356);
+    expect(grownBounds(b, 1000, wa, true).height).toBe(wa.height - 16);
     expect(grownBounds(b, 0, wa, true).height).toBe(92);
   });
 

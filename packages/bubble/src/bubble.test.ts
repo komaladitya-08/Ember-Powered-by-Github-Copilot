@@ -310,30 +310,82 @@ describe("bubble styles", () => {
   });
 });
 
-describe("onPress (live test: Allow ignored the first click)", () => {
-  class Press extends Event { constructor(type: string, readonly button = 0, readonly detail = 1) { super(type); } }
-
-  it("acts at the mouse's press, once: the click that follows (if it comes) does nothing more", () => {
-    const b = new EventTarget() as unknown as HTMLElement;
-    let n = 0;
-    onPress(b, () => n++);
-    b.dispatchEvent(new Press("pointerdown"));
-    expect(n).toBe(1);
-    b.dispatchEvent(new Press("click"));
-    expect(n).toBe(1);
-    // Another mouse button doesn't.
-    b.dispatchEvent(new Press("pointerdown", 2));
-    expect(n).toBe(1);
+describe("onPress: release inside one unchanged control", () => {
+  class Press extends Event {
+    readonly pointerId = 7;
+    readonly isPrimary = true;
+    constructor(type: string, readonly clientX = 25, readonly clientY = 20, readonly button = 0, readonly detail = 1) { super(type); }
+  }
+  function control() {
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    let captured = false;
+    let rect = { x: 10, y: 10, left: 10, top: 10, right: 110, bottom: 40, width: 100, height: 30 };
+    const b = Object.assign(new EventTarget(), {
+      ownerDocument: doc, isConnected: true, hidden: false, textContent: "Allow", disabled: false,
+      closest: () => null, hasAttribute: () => b.disabled, getAttribute: () => null,
+      getBoundingClientRect: () => ({ ...rect }),
+      setPointerCapture: () => { captured = true; }, hasPointerCapture: () => captured,
+      releasePointerCapture: () => { captured = false; },
+    });
+    let count = 0;
+    onPress(b as unknown as HTMLElement, () => count++);
+    return { b, doc, count: () => count, captured: () => captured, move: () => { rect = { ...rect, x: 20, left: 20, right: 120 }; } };
+  }
+  it("captures down, activates on release inside, and suppresses the following mouse click", () => {
+    const c = control();
+    c.b.dispatchEvent(new Press("pointerdown"));
+    expect(c.count()).toBe(0);
+    expect(c.captured()).toBe(true);
+    c.b.dispatchEvent(new Press("pointerup"));
+    expect(c.count()).toBe(1);
+    expect(c.captured()).toBe(false);
+    c.b.dispatchEvent(new Press("click"));
+    expect(c.count()).toBe(1);
   });
-
-  it("the keyboard (Enter or Space: a click with no press) still works, as does a click whose press never came", () => {
-    const b = new EventTarget() as unknown as HTMLElement;
-    let n = 0;
-    onPress(b, () => n++);
-    b.dispatchEvent(new Press("click", 0, 0));
-    expect(n).toBe(1);
-    b.dispatchEvent(new Press("click", 0, 1));
-    expect(n).toBe(2);
+  it("allows dragging outside then back inside, and cancels a release outside", () => {
+    const c = control();
+    c.b.dispatchEvent(new Press("pointerdown"));
+    c.b.dispatchEvent(new Press("pointermove", 200));
+    c.b.dispatchEvent(new Press("pointerup"));
+    expect(c.count()).toBe(1);
+    c.b.dispatchEvent(new Press("pointerdown"));
+    c.b.dispatchEvent(new Press("pointerup", 200));
+    c.b.dispatchEvent(new Press("click"));
+    expect(c.count()).toBe(1);
+  });
+  for (const event of ["pointercancel", "lostpointercapture"]) it(`cancels ${event}`, () => {
+    const c = control();
+    c.b.dispatchEvent(new Press("pointerdown"));
+    c.b.dispatchEvent(new Press(event));
+    c.b.dispatchEvent(new Press("pointerup"));
+    expect(c.count()).toBe(0);
+  });
+  it("cancels a hidden page even if shown again before release", () => {
+    const c = control();
+    c.b.dispatchEvent(new Press("pointerdown"));
+    c.doc.visibilityState = "hidden"; c.doc.dispatchEvent(new Event("visibilitychange"));
+    c.doc.visibilityState = "visible";
+    c.b.dispatchEvent(new Press("pointerup"));
+    expect(c.count()).toBe(0);
+  });
+  for (const change of ["moved", "removed", "hidden", "disabled", "changed"] as const) it(`cancels a ${change} control`, () => {
+    const c = control(); c.b.dispatchEvent(new Press("pointerdown"));
+    if (change === "moved") c.move();
+    if (change === "removed") c.b.isConnected = false;
+    if (change === "hidden") c.b.hidden = true;
+    if (change === "disabled") c.b.disabled = true;
+    if (change === "changed") c.b.textContent = "Allow another question";
+    c.b.dispatchEvent(new Press("pointerup"));
+    expect(c.count()).toBe(0);
+  });
+  it("preserves one keyboard activation and refuses orphan/right mouse clicks", () => {
+    const c = control();
+    c.b.dispatchEvent(new Press("click", 0, 0, 0, 0));
+    expect(c.count()).toBe(1);
+    c.b.dispatchEvent(new Press("click"));
+    c.b.dispatchEvent(new Press("pointerdown", 25, 20, 2));
+    c.b.dispatchEvent(new Press("pointerup", 25, 20, 2));
+    expect(c.count()).toBe(1);
   });
 });
 

@@ -111,8 +111,8 @@ describe("Search settings", () => {
   it("says how many it found and where, for a screen reader", () => {
     expect(searchMessage("", 0, 0)).toBe("");
     expect(searchMessage("zzz", 0, 0)).toBe("Nothing found. Try another word.");
-    expect(searchMessage("out", 2, 1)).toBe("2 matches in 1 section. Press Enter to go to the first.");
-    expect(searchMessage("a", 1, 1)).toBe("1 match in 1 section. Press Enter to go to the first.");
+    expect(searchMessage("out", 2, 1)).toBe("2 matches in 1 section. Press Enter for the first, or choose a result.");
+    expect(searchMessage("a", 1, 1)).toBe("1 match in 1 section. Press Enter for the first, or choose a result.");
   });
 });
 
@@ -142,7 +142,9 @@ describe("Home's panes and its Task activity channel", () => {
     const links = [...page.matchAll(/<a href="#([\w-]+)-h"/g)].map(m => m[1]);
     for (const l of links) expect(page, l).toMatch(new RegExp(`<section[^>]*data-pane="\\w+"[^>]*>\\s*(?:<[^>]+>\\s*)*?<h[12] id="${l}-h"`));
     expect(links[0]).toBe("home");
-    expect(panes).toEqual(new Set(["home", "pick", "copilot", "voice", "memory", "privacy", "computers", "commands", "extensions", "access", "checks"]));
+    expect(panes).toEqual(new Set(["home", "projects", "pick", "copilot", "voice", "memory", "privacy", "computers", "commands", "extensions", "access", "checks"]));
+    expect(page).toContain('<a href="#project-h">Projects</a>');
+    expect(page).toContain('<a href="#copilot-h">Models &amp; connections</a>');
     // The status panel, the conversation, Task activity and What Ember did are Home's.
     for (const h of ["home-h", "conversation-h", "tasks-h", "activity-h"]) expect(page).toMatch(new RegExp(`data-pane="home"[^>]*>[^]*?id="${h}"`));
   });

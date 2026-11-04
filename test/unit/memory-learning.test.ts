@@ -759,7 +759,11 @@ describe("the second re-review of PR #142", () => {
     expect(l.intent("forget that", { own: true })).toBe("Forgotten: “Likes to be called Ram”.");
     expect(remembered(s)).toEqual([]);
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
-    expect(main).toMatch(/ipcMain\.handle\(IPC\.memoryForget, guard\(\(id: unknown\) => \{\n[^\n]*\n[^\n]*\n\s+learning\.forget\(id\);\n/);
+    const handler = main.slice(main.indexOf("ipcMain.handle(IPC.memoryForget,"), main.indexOf("ipcMain.handle(IPC.memoryForgetAll,"));
+    expect(handler).toContain("learning.forget(id);");
+    // A locked or signed-out account refuses the action, so Undo cannot acknowledge a deletion that never ran.
+    expect(handler).toMatch(/if \(!memoryOwner\.ready\) throw new Error/);
+    expect(handler).toMatch(/if \(typeof id !== "string"[^\n]+throw new Error/);
   });
 
   it("logs an idle pass that throws instead of leaving an unhandled rejection", async () => {

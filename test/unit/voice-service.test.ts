@@ -46,7 +46,7 @@ import { VoiceGate } from "../../app/voice/match";
 import { VoiceService, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
-import { NATURAL_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
+import { COMPACT_VOICE, NATURAL_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
 import type { VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
 
@@ -65,7 +65,7 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent">> & { onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "naturalModel" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
@@ -1061,6 +1061,33 @@ describe("speech models", () => {
   describe("Ember's own voice", () => {
     const audio = (id: number, remaining = "") => ({ type: "audio", id, samples: new Float32Array(4), rate: 22_050, remaining });
 
+    it("drops already queued and late old-account synthesis after erasure hush, including after new playback starts", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("An old account’s queued answer.");
+      await flush();
+      const tts = electron.procs[0];
+      const speaker = electron.windows.find(w => w.title === "Ember speech")!;
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      tts.emit("message", audio(1));
+      await flush();
+      expect(speaker.webContents.send).toHaveBeenCalledWith(VOICE.audio, expect.objectContaining({ id: 1 }));
+      v.hush(); // Main's sign-out/account-erasure reset owns this cancellation.
+      await flush();
+      expect(speaker.webContents.send).toHaveBeenCalledWith(VOICE.hush, expect.any(Number));
+      speaker.webContents.send.mockClear();
+      tts.emit("message", audio(1));
+      tts.emit("message", { type: "done", id: 1 });
+      await flush();
+      expect(speaker.webContents.send).not.toHaveBeenCalledWith(VOICE.audio, expect.anything());
+      v.speak("The new account’s answer.");
+      tts.emit("message", audio(1));
+      tts.emit("message", audio(2));
+      await flush();
+      const played = speaker.webContents.send.mock.calls.filter(([channel]) => channel === VOICE.audio);
+      expect(played).toHaveLength(1);
+      expect(played[0][1]).toMatchObject({ id: 2 });
+    });
+
     it("keeps follow-up listening closed between appended neural replies (review same-generation speech gap)", async () => {
       vi.useFakeTimers();
       const { v } = service(true, { neuralVoice: true });
@@ -1127,6 +1154,71 @@ describe("speech models", () => {
       await flush();
       expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.audio, expect.objectContaining({ id: 1, rate: 22_050 }));
       expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.audioDone, 1);
+    });
+
+    it("releases an idle voice, then loads it again without counting the release as a failure", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true });
+      v.warmVoice();
+      const [first] = electron.procs;
+      first.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(first.kill).toHaveBeenCalledOnce();
+      first.emit("exit", 0);
+      first.emit("message", audio(1));
+      v.speak("Hello again.");
+      expect(electron.procs).toHaveLength(2);
+      expect(posted(electron.procs[1], "say")).toEqual([{ type: "say", id: 1, text: "Hello again." }]);
+    });
+
+    it("retains queued synthesis past the idle interval, resetting it after each streamed sentence and wake", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("First sentence.");
+      const [tts] = electron.procs;
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      await vi.advanceTimersByTimeAsync(120_001);
+      expect(tts.kill).not.toHaveBeenCalled();
+      tts.emit("message", { type: "done", id: 1 });
+      await vi.advanceTimersByTimeAsync(119_000);
+      v.speak("Next sentence.", { append: true });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(tts.kill).not.toHaveBeenCalled();
+      tts.emit("message", { type: "done", id: 2 });
+      await vi.advanceTimersByTimeAsync(119_000);
+      v.warmVoice();
+      await vi.advanceTimersByTimeAsync(119_000);
+      expect(tts.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(tts.kill).toHaveBeenCalledOnce();
+    });
+
+    it("releases a cancelled synthesis after the idle interval, ignoring late audio", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Cancelled reply.");
+      const [tts] = electron.procs;
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      v.hush();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(tts.kill).toHaveBeenCalledOnce();
+      tts.emit("message", audio(1));
+      expect(electron.windows[0].webContents.send.mock.calls.filter(c => c[0] === VOICE.audio)).toEqual([]);
+    });
+
+    it("stops an unspawned speech process once it starts, with no idle timer left behind", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true });
+      v.warmVoice();
+      const [tts] = electron.procs;
+      v.stop();
+      expect(tts.kill).toHaveBeenCalledOnce();
+      tts.emit("spawn");
+      expect(tts.kill).toHaveBeenCalledTimes(2);
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      await vi.advanceTimersByTimeAsync(240_000);
+      expect(tts.kill).toHaveBeenCalledTimes(2);
+      expect(electron.procs).toHaveLength(1);
     });
 
     it("drops what was on its way once hushed, and a new reply cuts the old one off (the next sentence of one doesn't)", async () => {
@@ -1402,6 +1494,72 @@ describe("speech models", () => {
         fs.mkdirSync(path.join(root, NATURAL_VOICE.target));
         fs.writeFileSync(path.join(root, `.${NATURAL_VOICE.target}.ok`), `${NATURAL_VOICE.sha256}\n`);
       };
+
+      it("selects Kitten while off without fetching it, then fetches only the chosen model with its own size", async () => {
+        const urls: string[] = [];
+        const downloader = vi.fn(async (url: string, _dest: string, progress: (bytes: number) => void) => { urls.push(url); progress(COMPACT_VOICE.bytes / 2); throw new Error("HTTP 503"); });
+        const seen: unknown[] = [];
+        const { v } = service(true, { neuralVoice: true, native: true, downloader, onNatural: s => seen.push(s) });
+        v.setNaturalModel("kitten");
+        expect(downloader).not.toHaveBeenCalled();
+        expect(electron.procs).toHaveLength(0);
+        v.setNaturalVoice(true);
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 22_050, voice: piper({ rtf: 0.2 }) });
+        await vi.waitFor(() => expect(v.naturalStatus.state).toBe("failed"));
+        expect(urls).toEqual([COMPACT_VOICE.url]);
+        expect(seen).toContainEqual({ state: "downloading", percent: 50 });
+        expect(v.missingModels.map(m => m.id)).not.toContain("compact");
+      });
+
+      it("switches downloaded native models only after queued synthesis ends, keeping Kokoro as the default", () => {
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true });
+        withKokoro();
+        fs.mkdirSync(path.join(root, COMPACT_VOICE.target));
+        fs.writeFileSync(path.join(root, `.${COMPACT_VOICE.target}.ok`), `${COMPACT_VOICE.sha256}\n`);
+        v.speak("First sentence.");
+        const [first] = electron.procs;
+        expect(posted(first, "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
+        first.emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: piper({ voice: "kokoro", rtf: 0.3 }) });
+        v.setNaturalModel("kitten");
+        expect(first.kill).not.toHaveBeenCalled();
+        first.emit("message", { type: "done", id: 1 });
+        expect(first.kill).toHaveBeenCalledOnce();
+        expect(posted(electron.procs[1], "init")[0]).toMatchObject({ naturalModel: "kitten", natural: path.join(root, COMPACT_VOICE.target) });
+        electron.procs[1].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: piper({ voice: "kitten", rtf: 0.25 }) });
+        expect(v.naturalStatus).toEqual({ state: "on" });
+        v.setNaturalVoice(false);
+        expect(electron.procs[1].kill).toHaveBeenCalledOnce();
+        expect(v.naturalStatus).toEqual({ state: "off" });
+      });
+
+      it("ignores an older download's failure after another optional model was selected", async () => {
+        let rejectOld!: (reason: Error) => void;
+        const downloader = vi.fn((url: string) => url === NATURAL_VOICE.url ? new Promise<void>((_resolve, reject) => { rejectOld = reject; }) : Promise.reject(new Error("HTTP 503")));
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader });
+        v.warmVoice();
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 22_050, voice: piper() });
+        await vi.waitFor(() => expect(rejectOld).toBeTypeOf("function"));
+        v.setNaturalModel("kitten");
+        const next = electron.procs.at(-1)!;
+        next.emit("message", { type: "ready", loadMs: 1000, rate: 22_050, voice: piper() });
+        expect(v.naturalStatus).toEqual({ state: "checking" });
+        rejectOld(new Error("HTTP 503"));
+        await vi.waitFor(() => expect(downloader.mock.calls.map(c => c[0])).toEqual([NATURAL_VOICE.url, COMPACT_VOICE.url]));
+      });
+
+      it("does not resurrect speech after shutdown when an optional download finishes late", async () => {
+        let rejectDownload!: (reason: Error) => void;
+        const downloader = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectDownload = reject; }));
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, naturalModel: "kitten", native: true, downloader });
+        v.warmVoice();
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 22_050, voice: piper() });
+        await vi.waitFor(() => expect(rejectDownload).toBeTypeOf("function"));
+        v.stop();
+        rejectDownload(new Error("HTTP 503"));
+        await flush();
+        expect(electron.procs).toHaveLength(1);
+        expect(v.naturalStatus).toEqual({ state: "off" });
+      });
 
       it("starts the check and the download at once when turned on after Ember's voice loaded, with its progress, and offers Try again when it fails", async () => {
         const seen: unknown[] = [];

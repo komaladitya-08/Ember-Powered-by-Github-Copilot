@@ -9,7 +9,8 @@
  */
 
 import crypto from "node:crypto";
-import { TASK_STOPPING, type TaskCard } from "../../shared/overlay";
+import type { TaskWindow } from "./task-controls";
+import { TASK_READING_LEASE_MS, TASK_STOPPING, type TaskCard } from "../../shared/overlay";
 import type { Logger } from "../logger";
 import type { WindowTarget } from "../perception";
 import type { Worker, WorkerResult, TaskSpec } from "./worker";
@@ -49,10 +50,12 @@ export interface Task {
   plan?: PlanStep[];
   /** What it shows on its card: its live view (show_view, update_view) while it works, then finish_task's (or the live one). */
   view?: ViewDoc;
+  /** The last app window successfully read by this worker, never inferred from its goal or summary. */
+  window?: TaskWindow;
 }
 
 /** What a worker tells its card besides its steps: its plan, how it works now, its live view. */
-export interface TaskUpdate { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc }
+export interface TaskUpdate { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc; window?: TaskWindow | null }
 
 /**
  * What the TaskManager uses of a worker (§2.6): a stand-in that refuses a task (its target can't be used) needs
@@ -100,6 +103,10 @@ export interface TaskManagerDeps {
   keepMs?: number;
   /** How long finished cards stay on screen. */
   cardMs?: number;
+  /** More time to read and answer, read when each card finishes. */
+  readTime?: () => number;
+  /** Availability/focus of a worker-read local window. Main revalidates its native identity on focus. */
+  taskWindow?: (task: Task, focus: boolean) => boolean;
   /** How long a failed card stays before it goes on its own (longer, so it can be read and closed). */
   failureCardMs?: number;
 }
@@ -174,7 +181,61 @@ export class TaskManager {
   /** What each task was asked with, so a failed one can be tried again from its card. */
   private specs = new Map<string, { goal: string; opts: StartOptions }>();
 
+  private expiry = new Map<string, { remaining: number; since: number; timer: ReturnType<typeof setTimeout> | null }>();
+  private readers = new Map<string, Map<number, ReturnType<typeof setTimeout>>>();
+
   constructor(private d: TaskManagerDeps) {}
+
+  /** A card stays while its visible details, pointer, or keyboard are reading it. Each renderer holds a short lease. */
+  reading(id: string, reader: number, on: boolean): void {
+    if (this.closed || !this.tasks.has(id)) return;
+    let readers = this.readers.get(id);
+    const old = readers?.get(reader);
+    if (old) clearTimeout(old);
+    if (on) {
+      if (!readers?.size) {
+        const expiry = this.expiry.get(id);
+        if (expiry?.timer) { clearTimeout(expiry.timer); expiry.timer = null; expiry.remaining = Math.max(0, expiry.remaining - (Date.now() - expiry.since)); }
+      }
+      if (!readers) { readers = new Map(); this.readers.set(id, readers); }
+      const timer = setTimeout(() => this.reading(id, reader, false), TASK_READING_LEASE_MS);
+      timer.unref?.();
+      readers.set(reader, timer);
+    } else {
+      readers?.delete(reader);
+      if (!readers?.size) {
+        this.readers.delete(id);
+        const expiry = this.expiry.get(id);
+        if (expiry) { expiry.remaining = Math.max(expiry.remaining, 5000 * this.readScale()); this.expireLater(id); }
+      }
+    }
+  }
+
+  private readScale(): number {
+    const n = this.d.readTime?.() ?? 1;
+    return Number.isFinite(n) ? Math.max(1, Math.min(4, n)) : 1;
+  }
+
+  private forgetCardTime(id: string): void {
+    const expiry = this.expiry.get(id);
+    if (expiry?.timer) clearTimeout(expiry.timer);
+    this.expiry.delete(id);
+    for (const timer of this.readers.get(id)?.values() ?? []) clearTimeout(timer);
+    this.readers.delete(id);
+  }
+
+  private expireLater(id: string): void {
+    const expiry = this.expiry.get(id);
+    if (!expiry || expiry.timer || this.readers.get(id)?.size || this.closed) return;
+    expiry.since = Date.now();
+    expiry.timer = setTimeout(() => {
+      const task = this.tasks.get(id);
+      this.forgetCardTime(id);
+      if (!task || task.status === "running" || task.status === "queued") return;
+      this.tasks.delete(id); this.specs.delete(id); this.dropView(task); this.publish(); this.d.onRemoved?.(task, false);
+    }, expiry.remaining);
+    expiry.timer.unref?.();
+  }
 
   /**
    * `userWords`: what the user said in the turn that started it (risky steps are checked against those); `agreed`:
@@ -234,9 +295,26 @@ export class TaskManager {
         ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan.map(p => ({ ...p })) } : {}),
         ...(ended && t.result?.summary ? { summary: t.result.summary } : {}),
         ...(t.view ? { view: t.view } : {}),
+        controls: { stop: this.canStop(id), retry: this.canRetry(id), window: !this.closed && this.tasks.has(id) && (this.d.taskWindow?.(t, false) ?? false) },
         activity,
       };
     });
+  }
+
+  /** A live task can be stopped once, even while another task is asking a question. */
+  canStop(id: string): boolean {
+    const t = this.tasks.get(id);
+    return !this.closed && !!t && (t.status === "running" || t.status === "queued") && !this.stopping.has(id);
+  }
+
+  canRetry(id: string): boolean {
+    const t = this.tasks.get(id);
+    return !!t && this.specs.has(id) && retryable(t) && !this.cutOff && !this.closed && this.actionsAllowed();
+  }
+
+  openWindow(id: string): boolean {
+    const t = this.tasks.get(id);
+    return !this.closed && !!t && (this.d.taskWindow?.(t, true) ?? false);
   }
 
   /**
@@ -246,7 +324,7 @@ export class TaskManager {
   retry(id: string): Task | null {
     const t = this.tasks.get(id);
     const spec = this.specs.get(id);
-    if (!t || !spec || !retryable(t) || this.cutOff || this.closed || !this.actionsAllowed()) return null;
+    if (!t || !spec || !this.canRetry(id)) return null;
     this.dismiss(id);
     return this.start(spec.goal, spec.opts);
   }
@@ -325,7 +403,7 @@ export class TaskManager {
   /** A finished card the user closed. */
   dismiss(id: string): void {
     const t = this.tasks.get(id);
-    if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.specs.delete(id); this.dropView(t); this.publish(); this.d.onRemoved?.(t, true); }
+    if (t && t.status !== "running" && t.status !== "queued") { this.forgetCardTime(id); this.tasks.delete(id); this.specs.delete(id); this.dropView(t); this.publish(); this.d.onRemoved?.(t, true); }
   }
 
   /** A task's view, to its card (a listener's fault never stops the task). */
@@ -345,6 +423,7 @@ export class TaskManager {
   /** Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). */
   close(): void {
     this.closed = true;
+    for (const id of new Set([...this.expiry.keys(), ...this.readers.keys()])) this.forgetCardTime(id);
     for (const t of this.tasks.values()) this.dropView(t);
     this.d.setCards([]);
   }
@@ -427,6 +506,8 @@ export class TaskManager {
         if (u.hand && u.hand !== (task.hand ?? "background")) log.add({ type: "hand", hand: u.hand }, Date.now());
         if (u.hand) task.hand = u.hand;
         if (u.view) this.showView(task, u.view);
+        if (u.window) task.window = { ...u.window };
+        else if (u.window === null) delete task.window;
         this.publish();
       }, e => { if (log.add(e, Date.now())) this.publish(); });
     } catch (err) {
@@ -497,12 +578,10 @@ export class TaskManager {
     this.d.log.info("task.finished", { id: task.id, status, ms: task.finished - task.started });
     // The card first: the screen shows how it went even when its record or a listener fails (review #79).
     this.publish();
-    // Finished cards stay on screen briefly, then go; a failure, or a result shown as a view, stays longer so it can be
-    // read (and closed sooner).
-    const timer = setTimeout(() => {
-      if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.specs.delete(task.id); this.dropView(task); this.publish(); this.d.onRemoved?.(task, false); }
-    }, status === "failed" ? this.d.failureCardMs ?? 60_000 : task.view ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
-    timer.unref?.();
+    // Open/hovered/focused cards pause their countdown; More time applies to every result, including failures/views.
+    const duration = status === "failed" || task.view ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000;
+    this.expiry.set(task.id, { remaining: duration * this.readScale(), since: Date.now(), timer: null });
+    this.expireLater(task.id);
     this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
     this.d.onFinished?.(task);
   }

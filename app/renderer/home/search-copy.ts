@@ -18,7 +18,8 @@ export function searchFold(s: string): string {
  * to the pane's heading, so "mic" finds Voice. By the heading's id; words only, never shown.
  */
 export const SEARCH_ALIASES: Readonly<Record<string, string>> = {
-  "copilot-h": "github account sign in sign out login model",
+  "copilot-h": "connections github account sign in sign out login model",
+  "project-h": "files review patch diff workspace folder",
   "byok-h": "byok bring your own key api key provider openai azure anthropic ollama lm studio endpoint local model server",
   "voice-h": "mic microphone wake word hey ember speech speak listen voice match hearing",
   "pick-h": "character avatar size handle",
@@ -47,5 +48,5 @@ export function searchMatches<T extends Searchable>(query: string, items: readon
 export function searchMessage(query: string, matches: number, panes: number): string {
   if (!query.trim()) return "";
   if (!matches) return "Nothing found. Try another word.";
-  return `${matches === 1 ? "1 match" : `${matches} matches`} in ${panes === 1 ? "1 section" : `${panes} sections`}. Press Enter to go to the first.`;
+  return `${matches === 1 ? "1 match" : `${matches} matches`} in ${panes === 1 ? "1 section" : `${panes} sections`}. Press Enter for the first, or choose a result.`;
 }

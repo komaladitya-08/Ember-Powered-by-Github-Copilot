@@ -8,14 +8,15 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, modelsDownloadLabel, naturalVoiceView, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
-  AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, LEARNED_UNDONE, MEMORY_CONSENT_TEXT,
+  AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
   MEMORY_OWNER_LOCKED, MEMORY_OWNER_WAITING, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
-  memorySourceLabel, routinesEmptyText, undoLearnedLabel,
+  memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
+import { mountReminders } from "./reminders";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -32,14 +33,20 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { providerSettings, startProvider } from "./provider";
 import { mountProject } from "./project";
+import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
-import { revealAsking, startTasks } from "./tasks";
+import { startTasks } from "./tasks";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
+import { CONVERSATION_EDIT, CONVERSATION_RETENTION, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
+import { KeyedRows } from "./keyed-rows";
+import { mountLearnedUndo } from "./learned-undo";
+import { mountMemoryCorrection } from "./memory-correction";
+import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
 import type { TaskEntry } from "../../shared/activity";
 
 declare global {
@@ -140,8 +147,6 @@ let memoryRows: MemoryRow[] = [];
 let routineRows: RoutineRow[] = [];
 /** The routine whose Delete was pressed: focus goes to the one now in its place. */
 let routineFocus: number | null = null;
-/** After a Forget, focus goes to the row that took its place (or the list's last, or the switch). */
-let memoryFocus: number | null = null;
 function applySettings(s: Settings): void {
   const changed = settings?.character !== s.character;
   settings = s;
@@ -241,7 +246,8 @@ let tasksNow: TaskEntry[] = [];
 let today = { tasks: 0, approvals: 0 };
 const setText = (id: string, text: string) => { if ($(id).textContent !== text) $(id).textContent = text; };
 function renderStatus(): void {
-  const { running, asking } = taskCounts(tasksNow);
+  const { running, asking: askingTasks } = taskCounts(tasksNow);
+  const asking = Math.max(askingTasks, presence?.approval ? 1 : 0);
   const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking });
   setText("state-word", s.word);
   $("ring").dataset.ring = s.ring;
@@ -267,14 +273,10 @@ function renderStatus(): void {
 }
 $("p-setup").addEventListener("click", () => showSection("checks"));
 $("p-connect").addEventListener("click", () => showSection("copilot"));
-// The question is asked in the bubble: this goes to where Home says so, with the keys that answer it.
-$("p-waiting").addEventListener("click", () => {
-  // The filter shows the waiting task first if it hid it (Ended, Working).
-  const at = revealAsking();
-  if (!at) return;
-  at.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  at.focus({ preventScroll: true });
-});
+// Home opens the exact live approval in its own focusable window; main owns question identity and authority.
+const openApproval = () => { void window.ember.openApproval(); };
+$("p-waiting").addEventListener("click", openApproval);
+$("tasks-open-approval").addEventListener("click", openApproval);
 
 // ───── Setup check and build facts ─────
 let checksOpened = false;
@@ -429,8 +431,8 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   if (!platform) useAppNames(p.os);
   platform = p;
   for (const patch of homePatches(p)) applyPatch(patch);
-  // The natural voice needs speech to run natively: Windows and macOS (app/voice/runtime.ts).
-  $("natural-row").hidden = p.os === "linux";
+  // Retain the enabled preference's Off control when a native backend becomes unavailable.
+  renderNatural();
   const muted = micOffText(p.shortcuts.mute.label);
   if (VOICE_TEXT.muted !== muted) { VOICE_TEXT.muted = muted; if (voice) renderVoice(voice); }
   // Keys read differently on this OS: the lines already shown are written again.
@@ -663,7 +665,7 @@ const projectReady = mountProject();
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
   agent = a;
-  projectReady(a.phase === "ready");
+  projectReady(a.phase === "ready", a.service?.host ?? "GitHub Copilot", a.conductorModel);
   const had = document.activeElement;
   ($("agent-dot") as HTMLElement).dataset.phase = a.phase;
   $("agent-text").textContent = a.detail;
@@ -825,6 +827,15 @@ startTasks(t => { tasksNow = t; renderStatus(); });
 type Entry = Awaited<ReturnType<EmberHomeApi["conversation"]>>[number];
 const WHO: Record<string, string> = { you: "You", ember: "Ember", task: "Task", problem: "Problem" };
 let shownConversation: Entry[] = [];
+const conversationMessage = $("conversation-message") as HTMLTextAreaElement;
+const conversationSearch = $("conversation-search") as HTMLInputElement;
+const conversationComposeStatus = $("conversation-compose-status");
+let conversationAwaitingReply = false;
+let conversationLastAtSend: Entry | undefined;
+let conversationDraftBeforeEdit: string | null = null;
+let conversationGeneration = 0;
+$("conversation-scope").textContent = CONVERSATION_SCOPE;
+$("conversation-retention").textContent = CONVERSATION_RETENTION;
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");
   li.className = e.who;
@@ -833,17 +844,7 @@ function conversationRow(e: Entry): HTMLLIElement {
     const text = Object.assign(document.createElement("p"), { textContent: learnedLine(e.text) });
     li.append(text);
     const id = e.fact;
-    if (id) {
-      const undo = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Undo" });
-      undo.setAttribute("aria-label", undoLearnedLabel(e.text));
-      undo.addEventListener("click", () => {
-        if (undo.disabled) return;
-        undo.disabled = true;
-        undo.textContent = LEARNED_UNDONE;
-        void window.ember.forgetMemory(id);
-      });
-      li.append(undo);
-    }
+    if (id) mountLearnedUndo(li, e.text, id, window.ember.forgetMemory);
     return li;
   }
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
@@ -852,6 +853,33 @@ function conversationRow(e: Entry): HTMLLIElement {
   // A request Ember heard: "That's not what I said" finds its row by this (personal.ts markHeard).
   if (e.heardId) li.dataset.heardId = String(e.heardId);
   li.append(who, t, text);
+  const actions = Object.assign(document.createElement("div"), { className: "conversation-message-actions" });
+  if (e.who === "ember" || e.who === "you") {
+    const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
+    copy.setAttribute("aria-label", `Copy ${e.who === "you" ? "your message" : "Ember’s answer"} from ${time(e.t)}`);
+    copy.addEventListener("click", () => {
+      copy.disabled = true;
+      void window.ember.copyText(e.text).then(() => { conversationComposeStatus.textContent = "Copied message."; }, () => {
+        conversationComposeStatus.textContent = "Couldn’t copy this message. Select its text and copy it manually.";
+      }).finally(() => { copy.disabled = false; });
+    });
+    actions.append(copy);
+  }
+  if (e.who === "you") {
+    const edit = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Edit" });
+    edit.setAttribute("aria-label", `Edit your message from ${time(e.t)} as a new request`);
+    edit.addEventListener("click", () => {
+      // Editing has no IPC side effect: Send is a new, deliberate typed request, never a tool/voice/suggestion replay.
+      if (conversationDraftBeforeEdit === null) conversationDraftBeforeEdit = conversationMessage.value;
+      $("conversation-cancel-edit").hidden = false;
+      conversationMessage.value = e.text;
+      conversationComposeStatus.textContent = CONVERSATION_EDIT;
+      conversationMessage.focus();
+    });
+    actions.append(edit);
+  }
+  if (actions.childElementCount) li.append(actions);
+  if (e.truncated) li.append(Object.assign(document.createElement("small"), { className: "conversation-limit", textContent: CONVERSATION_TRUNCATED }));
   return li;
 }
 /**
@@ -864,14 +892,30 @@ let conversationAllShown = false;
 let conversationAll: Entry[] = [];
 function renderConversation(entries: Entry[]): void {
   // Forgotten (signed out, another account): back to the latest messages.
-  if (!entries.length) conversationAllShown = false;
+  if (!entries.length) {
+    conversationAllShown = false;
+  }
   conversationAll = entries;
   const list = $("conversation");
-  const shown = conversationShown(entries, conversationAllShown);
+  const searching = !!conversationSearch.value.trim();
+  const shown = conversationShown(entries, conversationAllShown || searching);
   const { drop, add } = conversationChange(shownConversation, shown);
   for (let i = 0; i < drop; i++) list.firstElementChild?.remove();
   list.append(...add.map(conversationRow));
   shownConversation = shown;
+  let matches = 0;
+  for (let i = 0; i < shown.length; i++) {
+    const match = !searching || conversationMatchesText(shown[i].text, conversationSearch.value);
+    (list.children[i] as HTMLElement).hidden = !match;
+    if (match) matches++;
+  }
+  $("conversation-search-status").textContent = searching ? conversationSearchCount(matches) : "";
+  const latest = entries.at(-1);
+  const newReply = latest && (latest.t !== conversationLastAtSend?.t || latest.who !== conversationLastAtSend?.who || latest.text !== conversationLastAtSend?.text);
+  if (conversationAwaitingReply && newReply && ["ember", "problem"].includes(latest.who)) {
+    conversationAwaitingReply = false;
+    conversationComposeStatus.textContent = entries.at(-1)?.who === "problem" ? "Ember couldn’t finish this reply. Review the message above; you can edit your request and send again." : "Reply received.";
+  }
   // Requests Ember heard (not typed) offer “That's not what I said”.
   markHeard(list);
   const earlier = $("conversation-earlier") as HTMLButtonElement;
@@ -887,41 +931,164 @@ $("conversation-earlier").addEventListener("click", () => {
   renderConversation(conversationAll);
   $("conversation-h").focus();
 });
-void window.ember.conversation().then(renderConversation);
-window.ember.onConversation(renderConversation);
+const conversationOpened = conversationGeneration;
+let conversationReceived = false;
+void window.ember.conversation().then(entries => {
+  if (!conversationReceived && conversationOpened === conversationGeneration) renderConversation(entries);
+}, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t load this conversation. New replies will still appear here."; });
+window.ember.onConversation(entries => { conversationReceived = true; renderConversation(entries); });
+window.ember.onConversationForgotten(() => {
+  // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
+  conversationMessage.value = "";
+  conversationSearch.value = "";
+  conversationComposeStatus.textContent = "";
+  conversationAwaitingReply = false;
+  conversationLastAtSend = undefined;
+  conversationDraftBeforeEdit = null;
+  conversationGeneration++;
+  $("conversation-cancel-edit").hidden = true;
+  const send = $("conversation-send") as HTMLButtonElement;
+  send.disabled = false;
+  send.textContent = "Send";
+  ($("conversation-stop") as HTMLButtonElement).disabled = false;
+  renderConversation([]);
+});
+conversationSearch.addEventListener("input", () => renderConversation(conversationAll));
+$("conversation-compose").addEventListener("submit", event => {
+  event.preventDefault();
+  const send = $("conversation-send") as HTMLButtonElement;
+  if (send.disabled) return;
+  const text = conversationMessage.value;
+  if (!text.trim() || text.length > 2000) {
+    conversationComposeStatus.textContent = "Enter a request of up to 2,000 characters.";
+    conversationMessage.focus();
+    return;
+  }
+  send.disabled = true;
+  send.textContent = "Sending…";
+  conversationAwaitingReply = true;
+  conversationLastAtSend = conversationAll.at(-1);
+  const generation = conversationGeneration;
+  conversationComposeStatus.textContent = "Sending request…";
+  void window.ember.conversationSend(text).then(() => {
+    if (generation !== conversationGeneration) return;
+    // Preserve any edits made while the acknowledgement was pending.
+    if (conversationMessage.value === text) conversationMessage.value = "";
+    conversationDraftBeforeEdit = null;
+    $("conversation-cancel-edit").hidden = true;
+    if (conversationAwaitingReply) conversationComposeStatus.textContent = "Request sent. Ember’s reply will appear above.";
+  }, error => {
+    if (generation !== conversationGeneration) return;
+    conversationAwaitingReply = false;
+    conversationComposeStatus.textContent = ipcErrorText(error) || "Couldn’t send. Your draft is still here; try again.";
+  }).finally(() => { if (generation === conversationGeneration) { send.disabled = false; send.textContent = "Send"; } });
+});
+$("conversation-cancel-edit").addEventListener("click", () => {
+  conversationMessage.value = conversationDraftBeforeEdit ?? "";
+  conversationDraftBeforeEdit = null;
+  $("conversation-cancel-edit").hidden = true;
+  conversationComposeStatus.textContent = "Edit cancelled. Your previous draft is restored.";
+  conversationMessage.focus();
+});
+conversationMessage.addEventListener("keydown", event => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
+    event.preventDefault();
+    ($("conversation-compose") as HTMLFormElement).requestSubmit();
+  }
+});
+$("conversation-stop").addEventListener("click", () => {
+  const stop = $("conversation-stop") as HTMLButtonElement;
+  const generation = conversationGeneration;
+  stop.disabled = true;
+  void window.ember.conversationStop().then(() => {
+    if (generation !== conversationGeneration) return;
+    conversationAwaitingReply = false;
+    conversationComposeStatus.textContent = "Response stopped. Running tasks continue.";
+  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t stop this response. Try again, or use Stop everything."; })
+    .finally(() => { if (generation === conversationGeneration) stop.disabled = false; });
+});
 
 // ───── Memory (docs/MEMORY.md): kept between runs, only once the user turns it on and agrees to its note ─────
 $("memory-consent-text").textContent = MEMORY_CONSENT_TEXT;
 const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION;
 let memoryOwner: MemoryView["ownership"] = "waiting";
+let memoryEpoch = 0;
+const memoryCorrection = mountMemoryCorrection(window.ember, () => $("memory-on"), (expected, corrected) => {
+  const current = memoryRows.find(row => row.id === expected.id);
+  // A newer push wins; a successful IPC reply can fill in a missed view notification without resurrecting a deletion.
+  if (!current || current.text !== expected.text || current.source !== expected.source || current.at !== expected.at || (current.revision ?? 0) !== (expected.revision ?? 0)) return;
+  renderMemory(memoryRows.map(row => row.id === corrected.id ? corrected : row));
+});
+const memoryQuery = $("memory-query") as HTMLInputElement;
+const memorySource = $("memory-source") as HTMLSelectElement;
+let memoryShown = MEMORY_PAGE_SIZE;
+$("memory-query-label").textContent = MEMORY_SEARCH_LABEL;
+$("memory-source-label").textContent = MEMORY_SOURCE_LABEL;
+memorySource.replaceChildren(...["", ...MEMORY_SOURCES].map(source => Object.assign(document.createElement("option"), { value: source, textContent: source ? memorySourceLabel(source) : MEMORY_ALL_SOURCES })));
+$("memory-more").textContent = MEMORY_SHOW_MORE;
+const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
+  key: row => row.id,
+  empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn()),
+  fallback: () => $("memory-on"),
+  create: read => {
+    const row = read();
+    const li = document.createElement("li");
+    const fact = Object.assign(document.createElement("span"), { className: "mem-fact" });
+    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memorySourceLabel(row.source) }));
+    const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
+    button.setAttribute("aria-label", forgetMemoryLabel(row.text));
+    button.dataset.memoryForget = "";
+    button.addEventListener("click", () => { void deleteMemory(button, () => window.ember.forgetMemory(read().id)); });
+    const correct = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: MEMORY_CORRECTION.correct });
+    correct.dataset.memoryCorrect = row.id;
+    correct.addEventListener("click", () => memoryCorrection.open(read()));
+    const actions = Object.assign(document.createElement("div"), { className: "agent-actions" });
+    actions.append(button, correct); li.append(fact, actions);
+    return li;
+  },
+  update: (li, row) => {
+    li.querySelector<HTMLElement>(".mem-fact > span")!.textContent = row.text;
+    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt);
+    li.querySelector<HTMLElement>("[data-memory-forget]")!.setAttribute("aria-label", forgetMemoryLabel(row.text));
+    li.querySelector<HTMLElement>("[data-memory-correct]")!.setAttribute("aria-label", correctMemoryLabel(row.text));
+  },
+});
 function renderMemory(rows: MemoryRow[]): void {
   memoryRows = rows;
-  const list = $("memory-list");
-  list.replaceChildren(...(rows.length
-    ? rows.map((r, i) => {
-      const li = document.createElement("li");
-      // The fact, and under it where it came from (you, our conversation, a task).
-      const fact = Object.assign(document.createElement("span"), { className: "mem-fact" });
-      fact.append(Object.assign(document.createElement("span"), { textContent: r.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memorySourceLabel(r.source) }));
-      li.append(fact);
-      const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
-      btn.setAttribute("aria-label", forgetMemoryLabel(r.text));
-      btn.addEventListener("click", () => { void deleteMemory(btn, () => window.ember.forgetMemory(r.id), i); });
-      li.append(btn);
-      return li;
-    })
-    : [Object.assign(document.createElement("li"), { className: "empty", textContent: memoryEmptyText(memoryOn()) })]));
+  memoryCorrection.observe(rows, memoryEpoch, memoryOwner === "ready", memoryOwner === "ready" && memoryOn() && !managed.has("memory"));
+  const page = memoryPage(rows, memoryQuery.value, memorySource.value, memoryShown);
+  memoryList.render(page.rows);
+  const filters = $("memory-filters");
+  const unavailable = memoryOwner !== "ready";
+  if (unavailable && filters.contains(document.activeElement)) $("memory-on").focus();
+  filters.hidden = unavailable;
+  $("memory-list").hidden = unavailable;
+  $("memory-count").hidden = unavailable;
+  $("memory-count").textContent = memoryCountText(page.rows.length, page.total, rows.length);
+  const more = $("memory-more");
+  const moreWasFocused = document.activeElement === more;
+  more.hidden = page.rows.length >= page.total;
+  if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? $("memory-on") : memoryQuery)).focus();
   const owner = $("memory-owner");
   owner.hidden = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn());
   owner.textContent = memoryOwner === "locked" ? MEMORY_OWNER_LOCKED : MEMORY_OWNER_WAITING;
-  ($("memory-forget-all") as HTMLButtonElement).hidden = !rows.length && memoryOwner !== "locked";
-  if (memoryFocus !== null) {
-    const buttons = list.querySelectorAll("button");
-    (buttons[Math.min(memoryFocus, buttons.length - 1)] ?? $("memory-on")).focus();
-    memoryFocus = null;
-  }
+  const all = $("memory-forget-all");
+  const wasFocused = document.activeElement === all;
+  all.hidden = !rows.length && memoryOwner !== "locked";
+  if (wasFocused && all.hidden) $("memory-on").focus();
 }
-const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; renderMemory(view.rows); };
+for (const control of [memoryQuery, memorySource]) control.addEventListener("input", () => {
+  memoryShown = MEMORY_PAGE_SIZE;
+  renderMemory(memoryRows);
+});
+$("memory-more").addEventListener("click", () => {
+  const before = $("memory-list").children.length;
+  memoryShown += MEMORY_PAGE_SIZE;
+  renderMemory(memoryRows);
+  // Move into the newly revealed page, including when Show more has reached the end and disappeared.
+  $("memory-list").children[before]?.querySelector<HTMLElement>("button")?.focus();
+});
+const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; memoryEpoch = view.epoch ?? 0; renderMemory(view.rows); };
 /** Memory's settings as they are, so a change to one of its fields keeps the others (the patch replaces it whole). */
 const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, at: null }, questions: true, askedAt: null };
 /** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */
@@ -946,7 +1113,7 @@ function applyMemorySettings(s: Settings): void {
   $("memory-paused").textContent = MEMORY_PAUSED_TEXT;
   $("memory-paused").hidden = !paused;
   if (paused && !pausedSeen) { pausedSeen = true; $("memory-consent").hidden = false; }
-  if (!memoryRows.length) renderMemory(memoryRows);
+  renderMemory(memoryRows);
 }
 $("memory-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
@@ -963,17 +1130,16 @@ $("memory-yes").addEventListener("click", () => {
 });
 $("memory-no").addEventListener("click", () => { $("memory-consent").hidden = true; $("memory-on").focus(); });
 /** A rejected deletion keeps the list and presents a retryable, user-safe failure. */
-async function deleteMemory(button: HTMLButtonElement, remove: () => Promise<unknown>, focus: number): Promise<void> {
-  if (button.disabled) return;
-  button.disabled = true;
+async function deleteMemory(button: HTMLButtonElement, remove: () => Promise<unknown>): Promise<void> {
+  if (button.getAttribute("aria-disabled") === "true") return;
+  button.setAttribute("aria-disabled", "true");
   $("memory-error").textContent = "";
-  memoryFocus = focus;
   try { await remove(); }
-  catch (err) { memoryFocus = null; $("memory-error").textContent = memoryDeleteFailedText(err); }
-  finally { button.disabled = false; }
+  catch (err) { $("memory-error").textContent = memoryDeleteFailedText(err); }
+  finally { button.removeAttribute("aria-disabled"); }
 }
 $("memory-forget-all").addEventListener("click", () => {
-  void deleteMemory($("memory-forget-all") as HTMLButtonElement, () => window.ember.forgetAllMemory(), 0);
+  void deleteMemory($("memory-forget-all") as HTMLButtonElement, () => window.ember.forgetAllMemory());
 });
 window.ember.onSettingsChanged(applyMemorySettings);
 let receivedMemory = false;
@@ -1047,7 +1213,7 @@ $("routines-yes").addEventListener("click", () => {
   $("routines-on").focus();
 });
 $("routines-no").addEventListener("click", () => { $("routines-consent").hidden = true; $("routines-on").focus(); });
-$("routines-forget-all").addEventListener("click", () => { routineFocus = 0; void window.ember.forgetAllRoutines(); });
+mountReminders(window.ember);
 
 // ───── Work without asking (app/main/policy/autonomy.ts): on only once the user agrees to its card ─────
 $("autonomy-consent-text").textContent = AUTONOMY_CONSENT_TEXT;
@@ -1211,9 +1377,44 @@ function searchItems(): { pane: string; text: string; alias?: string; el: HTMLEl
 }
 let found: ReturnType<typeof searchItems> = [];
 const search = $("search") as HTMLInputElement;
+$("search-results").setAttribute("aria-label", SETTINGS_RESULTS_LABEL);
+let searchShown = 12;
+function renderSearchResults(): void {
+  const results = $("search-results");
+  results.hidden = !found.length;
+  results.replaceChildren(...found.slice(0, searchShown).map(result => {
+    const li = document.createElement("li");
+    const section = jumpLinks.find(link => paneOf(document.getElementById(`${sectionOf(link)}-h`) ?? link) === result.pane)?.textContent ?? result.pane;
+    const button = Object.assign(document.createElement("button"), { type: "button", className: "search-result", textContent: settingsResultText(section, result.text) });
+    button.addEventListener("click", () => openSearchResult(result));
+    li.append(button);
+    return li;
+  }));
+  if (found.length > searchShown) {
+    const li = document.createElement("li");
+    const more = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: SETTINGS_MORE_RESULTS });
+    more.addEventListener("click", () => {
+      const before = searchShown;
+      searchShown += 12;
+      renderSearchResults();
+      results.children[before]?.querySelector<HTMLElement>("button")?.focus();
+    });
+    li.append(more);
+    results.append(li);
+  }
+}
+$("search-results").addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.preventDefault(); search.focus(); $("search-results").hidden = true; }
+});
+search.addEventListener("focus", renderSearchResults);
+for (const event of ["pointerdown", "focusin"]) document.addEventListener(event, e => {
+  if (e.target instanceof Element && !e.target.closest(".search, #search-results")) $("search-results").hidden = true;
+});
 search.addEventListener("input", () => {
   const q = search.value;
   found = searchMatches(q, searchItems());
+  searchShown = 12;
+  renderSearchResults();
   const panes = new Set(found.map(f => f.pane));
   for (const a of jumpLinks) {
     const h = document.getElementById(`${sectionOf(a)}-h`);
@@ -1225,11 +1426,9 @@ search.addEventListener("input", () => {
   $("search-none").hidden = !none;
   if (none) setText("search-none", searchMessage(q, 0, 0));
 });
-search.addEventListener("keydown", e => {
-  if (e.key === "Escape" && search.value) { e.preventDefault(); search.value = ""; search.dispatchEvent(new Event("input")); return; }
-  if (e.key !== "Enter" || !found.length) return;
-  e.preventDefault();
-  const { pane: p, el: hit } = found[0];
+function openSearchResult(result: ReturnType<typeof searchItems>[number]): void {
+  $("search-results").hidden = true;
+  const { pane: p, el: hit } = result;
   // A group's header or footnote stands for its group, which it describes as a whole: a group of one row is that row
   // (marked, its control focused); a longer one is marked whole and takes focus itself, so no one row is picked for it.
   const sibling = hit.matches("h3.sub") ? hit.nextElementSibling : hit.matches(".hint") ? hit.previousElementSibling : null;
@@ -1240,14 +1439,21 @@ search.addEventListener("keydown", e => {
   // A setting in a fold (What Ember did, About) shows once its folds are open.
   for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) d.open = true;
   // The setting found takes focus (its control, when it is a label), marked until it loses focus.
-  const control = el === group ? null : el.matches("label") ? el.querySelector<HTMLElement>("input, select") ?? el : el.matches("summary, button") ? el : el.querySelector<HTMLElement>("input, select, button");
-  const to = control ?? el;
+  const control = el === group ? null : el.matches("label") ? el.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled)") : el.matches("summary, button:not(:disabled)") ? el : el.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled), button:not(:disabled)");
+  const to = control ?? (el.matches(":disabled") ? el.closest<HTMLElement>(".group") ?? el.parentElement ?? el : el);
   const madeFocusable = !control && !to.hasAttribute("tabindex");
   if (madeFocusable) to.tabIndex = -1;
   el.classList.add("found");
   to.addEventListener("blur", () => { el.classList.remove("found"); if (madeFocusable) to.removeAttribute("tabindex"); }, { once: true });
   to.scrollIntoView({ block: "center", behavior: "auto" });
   to.focus({ preventScroll: true });
+}
+search.addEventListener("keydown", e => {
+  if (e.key === "Escape" && search.value) { e.preventDefault(); search.value = ""; search.dispatchEvent(new Event("input")); return; }
+  if (e.key === "ArrowDown" && found.length) { e.preventDefault(); renderSearchResults(); $("search-results").querySelector<HTMLElement>("button")?.focus(); return; }
+  if (e.key !== "Enter" || !found.length) return;
+  e.preventDefault();
+  openSearchResult(found[0]);
 });
 
 // ───── Apps & privacy ─────
@@ -1502,7 +1708,7 @@ $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
   if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
-  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, learn: true, words: true, suggest: true }), match: on } });
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true }), match: on } });
 });
 $("match-teach").addEventListener("click", startEnrol);
 // Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
@@ -1513,7 +1719,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
   ($("speak") as HTMLSelectElement).value = speakChoice(s);
   ($("speak-results") as HTMLInputElement).checked = s.speakResults;
-  ($("natural") as HTMLInputElement).checked = s.voice.natural;
+  naturalUI.settings(s);
   personalSettings(s);
   if (voice) renderVoice(voice);
   else renderNatural();
@@ -1526,32 +1732,19 @@ $("wake").addEventListener("change", e => {
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, learn: true, words: true, suggest: true, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
-/** The natural voice's state as last said to screen readers (not every percent of its download). */
-let naturalSaid = "";
-/** Under the natural voice's switch: what became of turning it on (copy.ts naturalVoiceView), and Try again after a failed download. */
+/** The model choice discloses its download before an enabled voice is changed. */
+const naturalUI = mountNaturalVoice({ save, live: voiceLive, managed: () => managed.has("naturalVoice") });
 function renderNatural(): void {
-  const on = ($("natural") as HTMLInputElement).checked;
-  const view = naturalVoiceView(on ? voice?.natural : undefined);
-  $("natural-text").textContent = view.text;
-  const retry = $("natural-retry") as HTMLButtonElement;
-  const had = document.activeElement === retry;
-  retry.hidden = !view.retry;
-  if (had && retry.hidden) ($("natural") as HTMLInputElement).focus();
-  const state = on ? voice?.natural?.state ?? "" : "";
-  if (state && state !== naturalSaid && state !== "downloading") voiceLive(view.text);
-  naturalSaid = state;
+  const models = voice?.naturalModels ?? (platform?.os === "linux" ? [] : ["kokoro", "kitten"] as const);
+  $("natural-row").hidden = !settings?.voice.natural && !models.length;
+  naturalUI.status(voice?.natural, models);
 }
-$("natural-retry").addEventListener("click", () => { void window.ember.retryNaturalVoice(); });
-$("natural").addEventListener("change", e => {
-  const on = (e.target as HTMLInputElement).checked;
-  void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false, learn: true, words: true, suggest: true }), natural: on } });
-});
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });
 $("voice-download").addEventListener("click", () => {

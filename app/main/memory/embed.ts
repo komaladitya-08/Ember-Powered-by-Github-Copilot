@@ -211,7 +211,7 @@ export class SemanticMemory {
   private running: Promise<void> | null = null;
   /** Something changed while a pass ran: another follows it. */
   private again = false;
-  /** Bumped by stop() and forgetAll(): a pass that started before stops at its next batch. */
+  /** Bumped by stop(), erasure and replacement graphs: a pass reading the old graph cannot publish a batch. */
   private generation = 0;
 
   constructor(private o: SemanticMemoryOptions) {
@@ -222,7 +222,10 @@ export class SemanticMemory {
   private current(): VectorIndex | null {
     const model = this.o.model();
     if (!model) return null;
-    if (this.index?.model !== model) this.index = this.file.load(model);
+    if (this.index?.model !== model) {
+      this.index = this.file.load(model);
+      this.pruneStale(this.index);
+    }
     return this.index;
   }
 
@@ -231,10 +234,23 @@ export class SemanticMemory {
 
   /** The graph changed: the index catches up soon, in the background (nothing happens while there is no model). */
   changed(graph: MemoryGraph): void {
+    if (this.graph !== graph) this.generation++;
     this.graph = graph;
+    if (this.index) this.pruneStale(this.index);
     if (!this.o.model() || this.timer) return;
     this.timer = setTimeout(() => { this.timer = null; void this.catchUp(); }, this.o.indexDelayMs ?? INDEX_DELAY_MS);
     this.timer.unref?.();
+  }
+
+  /** A changed sentence's old vector cannot seed recall while its replacement is still being embedded. */
+  private pruneStale(index: VectorIndex): void {
+    if (!this.graph) return;
+    let dropped = false;
+    for (const id of index.ids()) {
+      const fact = this.graph.fact(id);
+      if (!fact || !index.has(id, hashOf(documentText(this.graph, fact)))) { index.delete(id); dropped = true; }
+    }
+    if (dropped) this.saveSoon();
   }
 
   /** Removes a fact's persisted vector before acknowledging deletion, even with the model off. */

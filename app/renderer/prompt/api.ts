@@ -14,4 +14,6 @@ export interface PromptApi {
   answer(a: PromptAnswer): void;
   /** The card was closed without an answer (Cancel, Not now, Close, Esc). */
   cancel(id: string): void;
+  /** Without answer: the full text was in view. Main keeps all decision authority. */
+  approval(id: string, answer?: string): Promise<boolean>;
 }

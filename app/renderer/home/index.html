@@ -11,10 +11,11 @@
 </head>
 <body class="loading">
   <main class="home">
-    <nav class="jump after-setup" id="jump" aria-label="Settings sections">
-      <div class="search" role="search"><label for="search" class="sr">Search settings</label><input id="search" type="search" maxlength="60" spellcheck="false" autocomplete="off" placeholder="Search settings" aria-describedby="search-msg"><p class="sr" id="search-msg" role="status"></p></div>
+    <nav class="jump after-setup" id="jump" aria-label="Ember sections">
+      <div class="search" role="search"><label for="search" class="sr">Search settings</label><input id="search" type="search" maxlength="60" spellcheck="false" autocomplete="off" placeholder="Search settings" aria-controls="search-results" aria-describedby="search-msg"><p class="sr" id="search-msg" role="status"></p></div>
       <p class="search-none" id="search-none" aria-hidden="true" hidden></p>
-      <a href="#home-h">Home</a><a href="#copilot-h">Copilot</a><a href="#voice-h">Voice</a><a href="#pick-h">Your Ember</a><a href="#memory-h">Memory</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#access-h">Comfort &amp; access</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#extensions-h">Extensions</a><a href="#checks-h">Setup &amp; about</a>
+      <ul class="search-results" id="search-results" hidden></ul>
+      <a href="#home-h">Home</a><a href="#project-h">Projects</a><a href="#copilot-h">Models &amp; connections</a><a href="#voice-h">Voice</a><a href="#pick-h">Your Ember</a><a href="#memory-h">Memory</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#access-h">Comfort &amp; access</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#extensions-h">Extensions</a><a href="#checks-h">Setup &amp; about</a>
     </nav>
 
     <section class="status-panel" data-pane="home" aria-labelledby="home-h">
@@ -22,7 +23,7 @@
         <div class="ring" id="ring" aria-hidden="true"><canvas id="buddy" width="132" height="132" aria-label="Your Ember character"></canvas></div>
         <div class="hero-text">
           <h1 id="home-h" tabindex="-1">Ember</h1>
-          <p class="state-word after-setup"><span id="state-word">Starting…</span> <button type="button" id="p-waiting" class="link" hidden>Show the question</button></p>
+          <p class="state-word after-setup"><span id="state-word">Starting…</span> <button type="button" id="p-waiting" class="link" hidden>Open approval</button></p>
           <p id="tagline" role="status">Starting…</p>
           <p class="sr" id="home-live" role="status"></p>
           <button type="button" id="p-setup" class="link setup-link after-setup" hidden></button>
@@ -50,7 +51,7 @@
       <div class="w-head">
         <div class="w-stage" id="w-stage"></div>
         <div class="w-heading">
-          <p class="w-count" id="w-count">Step 1 of 7</p>
+          <p class="w-count" id="w-count">Step 1 of 6</p>
           <h2 id="w-title" tabindex="-1">Hi, I'm Ember.</h2>
           <p class="w-lead" id="w-lead"></p>
         </div>
@@ -102,6 +103,7 @@
             <i class="w-tick" aria-hidden="true"></i>
             <div class="w-try-text"><b>Stop me</b> <span class="w-keys chord" id="w-stop-keys"></span>
               <p id="w-try-stop-text">Press the stop shortcut now. It stops everything I'm doing, at once, anywhere.</p></div>
+            <button type="button" class="btn quiet small" id="w-stop" aria-describedby="w-try-stop-text">Practise Stop everything</button>
           </li>
           <li class="w-try" id="w-try-voice" hidden>
             <i class="w-tick" aria-hidden="true"></i>
@@ -140,15 +142,25 @@
     <section class="after-setup" data-pane="home" aria-labelledby="conversation-h">
       <h2 id="conversation-h" tabindex="-1">Conversation</h2>
       <div class="convo">
+        <div class="conversation-search"><label for="conversation-search">Search this session</label><input id="conversation-search" type="search" maxlength="200" autocomplete="off" placeholder="Find a message"><span id="conversation-search-status" class="hint" role="status"></span></div>
         <button type="button" id="conversation-earlier" class="btn quiet small earlier" hidden>Show earlier messages</button>
-        <ol class="conversation" id="conversation" aria-labelledby="conversation-h" data-empty="Nothing yet. Press Ctrl+Alt+Space and ask Ember something."></ol>
+        <ol class="conversation" id="conversation" aria-labelledby="conversation-h" data-empty="No messages yet. Write to Ember below, or press Ctrl+Alt+Space to open Ask Ember."></ol>
+        <form id="conversation-compose" class="conversation-compose">
+          <label for="conversation-message">Message Ember</label>
+          <p id="conversation-scope" class="hint"></p>
+          <textarea id="conversation-message" rows="3" maxlength="2000" placeholder="What would you like help with?" aria-describedby="conversation-scope conversation-send-hint conversation-compose-status"></textarea>
+          <div class="conversation-compose-actions"><button type="submit" id="conversation-send" class="btn primary">Send</button><button type="button" id="conversation-cancel-edit" class="btn quiet" hidden>Cancel edit</button><button type="button" id="conversation-stop" class="btn quiet" aria-describedby="conversation-stop-hint">Stop response</button></div>
+          <p id="conversation-send-hint" class="hint">Up to 2,000 characters. Enter adds a new line. Ctrl+Enter or ⌘+Enter sends.</p>
+          <p id="conversation-stop-hint" class="hint">Stop response ends the current reply and queued messages. Running tasks continue; use Stop everything to end those too.</p>
+          <p id="conversation-compose-status" class="hint" role="status"></p>
+        </form>
       </div>
-      <p class="hint">Kept only while Ember runs: closing Ember forgets it. Signing out forgets it too.</p>
+      <p id="conversation-retention" class="hint"></p>
     </section>
 
     <section class="after-setup" data-pane="home" aria-labelledby="tasks-h">
       <h2 id="tasks-h" tabindex="-1">Task activity</h2>
-      <p class="asking" id="tasks-asking" tabindex="-1" hidden><span data-asked-in="bubble"><span data-question-keys="both">Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now, or answer there.</span><span data-question-keys="allow" hidden>Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow, or answer there.</span><span data-question-keys="deny" hidden>Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now, or answer there.</span><span data-question-keys="none" hidden>Ember is asking you something in its bubble: answer there.</span></span><span data-asked-in="command" hidden>Ember is asking you in its command window, “Ember commands”: answer on its card there.</span><span data-asked-in="card" hidden>Ember is asking you on a card in a window of its own: read it and answer there.</span></p>
+      <p class="asking" id="tasks-asking" tabindex="-1" hidden><span data-asked-in="bubble"><span data-question-keys="both">Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now, or answer there.</span><span data-question-keys="allow" hidden>Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow, or answer there.</span><span data-question-keys="deny" hidden>Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now, or answer there.</span><span data-question-keys="none" hidden>Ember is asking you something in its bubble: answer there.</span></span><span data-asked-in="command" hidden>Ember is asking you in its command window, “Ember commands”: answer on its card there.</span><span data-asked-in="card" hidden>Ember is asking you on a card in a window of its own: read it and answer there.</span> <button class="btn quiet" id="tasks-open-approval" type="button">Open approval</button></p>
       <div class="task-filter agent-actions" id="task-filter" role="group" aria-label="Show tasks" hidden></div>
       <div class="task-groups" id="tasks" aria-labelledby="tasks-h"></div>
       <p class="hint" id="tasks-note">Kept until you quit Ember. Every decision and action is also in What Ember did.</p>
@@ -191,7 +203,7 @@
     </section>
 
     <section class="after-setup" data-pane="copilot" aria-labelledby="copilot-h">
-      <h2 id="copilot-h" tabindex="-1">Copilot</h2>
+      <h2 id="copilot-h" tabindex="-1">Models &amp; connections</h2>
       <div class="copilot">
         <p class="agent-line" role="status"><i id="agent-dot" class="dot" aria-hidden="true"></i><span id="agent-text">Checking…</span></p>
         <div class="agent-actions">
@@ -214,13 +226,46 @@
         <p class="usage" id="usage"></p>
         <p class="usage" id="conversation-context"></p>
       </div>
-      <h3 class="sub" id="project-h">Project work</h3>
+      <h3 class="sub" id="byok-h">Model provider</h3>
+      <div class="group byok" id="byok" role="group" aria-labelledby="byok-h">
+        <label class="switch-row"><input type="checkbox" id="byok-on" role="switch" aria-describedby="byok-hint"><span>Use my own model provider</span></label>
+        <div id="byok-consent" class="consent" role="group" aria-label="Before Ember uses your model provider" hidden>
+          <p id="byok-consent-text"></p>
+          <div class="agent-actions"><button type="button" id="byok-yes" class="btn" aria-describedby="byok-consent-text">I agree, use this provider</button><button type="button" id="byok-no" class="btn quiet">Not now</button></div>
+        </div>
+        <label class="choice byok-field"><span>Provider</span><select id="byok-type"><option value="openai">OpenAI-compatible</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option></select></label>
+        <div class="field-row byok-field"><label for="byok-url">Endpoint</label><input id="byok-url" type="url" maxlength="2048" spellcheck="false" autocomplete="off" placeholder="https://api.openai.com/v1" aria-describedby="byok-msg"></div>
+        <div class="field-row byok-field" id="byok-key-row">
+          <label for="byok-key" id="byok-key-label">API key</label>
+          <form class="add-row" id="byok-key-form" autocomplete="off"><input id="byok-key" type="password" maxlength="8192" spellcheck="false" autocomplete="off" placeholder="Paste your key" aria-describedby="byok-msg"><button type="submit" class="btn quiet">Save</button></form>
+          <p class="row-note" id="byok-no-keyring" hidden></p>
+          <div class="key-saved" id="byok-key-saved" hidden><span class="key-state">Key saved</span><button type="button" id="byok-key-replace" class="btn quiet small">Replace</button><button type="button" id="byok-key-remove" class="btn quiet small remove">Remove</button></div>
+        </div>
+        <div class="field-row byok-field"><label for="byok-conductor">Conversation model</label><input id="byok-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1"></div>
+        <div class="field-row byok-field"><label for="byok-worker">Model for tasks (must understand images)</label><input id="byok-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation"></div>
+        <details class="fold byok-advanced byok-field" id="byok-fold">
+          <summary>Advanced</summary>
+          <label class="choice"><span>Wire API</span><select id="byok-wire"><option value="">Chat completions</option><option value="responses">Responses</option></select></label>
+          <div class="field-row" id="byok-azure-row"><label for="byok-azure">Azure API version</label><input id="byok-azure" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder="2024-10-21"></div>
+        </details>
+        <div class="agent-actions byok-field"><button type="button" id="byok-test" class="btn quiet">Test connection</button></div>
+      </div>
+      <p class="hint byok-msg" id="byok-msg" role="status" aria-live="polite"></p>
+      <p class="hint" id="byok-hint"></p>
+      <p class="hint" data-key-held="ask">Ask Ember anything with <span class="chord" data-shortcut="ask"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd></span>.</p>
+      <p class="hint" data-key-taken="ask" hidden>Another app has Ember's ask shortcut: ask with Ask Ember… on Home, or from Ember's handle.</p>
+    </section>
+
+    <section class="after-setup" data-pane="projects" aria-labelledby="project-h">
+      <h2 id="project-h" tabindex="-1">Projects</h2>
+      <p class="hint" id="project-provider">Connect a model in Models &amp; connections.</p>
       <form class="group" id="project-form" aria-labelledby="project-h">
-        <p class="hint" id="project-privacy">Choose up to six source or text files. When you send, Ember shares those files and your request with the connected model. The answer stays here for you to review.</p>
+        <p class="hint" id="project-privacy">Choose up to six source or text files. Files are read when you send. When you send, Ember shares those files and your request with the connected model. The answer stays here for you to review.</p>
         <div class="agent-actions">
           <button type="button" id="project-pick" class="btn quiet" aria-describedby="project-privacy" disabled>Choose files…</button>
           <button type="button" id="project-clear" class="btn quiet" disabled>Clear</button>
         </div>
+        <p id="project-selection" class="hint" hidden></p>
         <ul id="project-files" aria-label="Selected project files" hidden></ul>
         <label class="choice"><span>What should Ember do?</span><select id="project-mode"><option value="review">Review files</option><option value="plan">Plan a change</option><option value="patch">Draft a patch</option></select></label>
         <label for="project-question">Project request</label>
@@ -231,13 +276,17 @@
           <button type="button" id="project-cancel" class="btn quiet" hidden>Cancel</button>
         </div>
         <p class="hint" id="project-status" role="status">Connect a model to work with project files.</p>
+        <p id="project-running" class="project-request hint" hidden></p>
         <p id="project-previous-question" class="hint" hidden></p>
-        <pre id="project-answer" class="project-answer" aria-label="Project answer" tabindex="0" hidden></pre>
+        <div id="project-answer" class="project-answer" role="region" aria-label="Project answer" tabindex="0" hidden></div>
+        <div id="project-answer-actions" class="agent-actions" hidden><button type="button" id="project-copy-answer" class="btn quiet">Copy answer</button><button type="button" id="project-export-answer" class="btn quiet">Export answer…</button></div>
         <details id="project-patch" hidden>
-          <summary>Review changes before applying</summary>
+          <summary id="project-patch-summary">Review changes before applying</summary>
           <pre id="project-diff" class="project-answer" aria-label="Changes to apply" tabindex="0"></pre>
-          <button type="button" id="project-apply" class="btn">Apply patch…</button>
+          <div class="agent-actions"><button type="button" id="project-apply" class="btn">Apply patch…</button><button type="button" id="project-copy-diff" class="btn quiet">Copy diff</button><button type="button" id="project-export-diff" class="btn quiet">Export diff…</button></div>
         </details>
+        <p id="project-output-status" class="hint" role="status"></p>
+        <p id="project-export-hint" class="hint" hidden>Export saves plain text to the destination you choose. Exported files stay there after Ember closes.</p>
       </form>
       <details class="group" id="project-commands">
         <summary>Run a project command</summary>
@@ -269,34 +318,6 @@
         </div>
         <p class="hint" id="project-workspace-status" role="status"></p>
       </details>
-      <h3 class="sub" id="byok-h">Model provider</h3>
-      <div class="group byok" id="byok" role="group" aria-labelledby="byok-h">
-        <label class="switch-row"><input type="checkbox" id="byok-on" role="switch" aria-describedby="byok-hint"><span>Use my own model provider</span></label>
-        <div id="byok-consent" class="consent" role="group" aria-label="Before Ember uses your model provider" hidden>
-          <p id="byok-consent-text"></p>
-          <div class="agent-actions"><button type="button" id="byok-yes" class="btn" aria-describedby="byok-consent-text">I agree, use this provider</button><button type="button" id="byok-no" class="btn quiet">Not now</button></div>
-        </div>
-        <label class="choice byok-field"><span>Provider</span><select id="byok-type"><option value="openai">OpenAI-compatible</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option></select></label>
-        <div class="field-row byok-field"><label for="byok-url">Endpoint</label><input id="byok-url" type="url" maxlength="2048" spellcheck="false" autocomplete="off" placeholder="https://api.openai.com/v1" aria-describedby="byok-msg"></div>
-        <div class="field-row byok-field" id="byok-key-row">
-          <label for="byok-key" id="byok-key-label">API key</label>
-          <form class="add-row" id="byok-key-form" autocomplete="off"><input id="byok-key" type="password" maxlength="8192" spellcheck="false" autocomplete="off" placeholder="Paste your key" aria-describedby="byok-msg"><button type="submit" class="btn quiet">Save</button></form>
-          <p class="row-note" id="byok-no-keyring" hidden></p>
-          <div class="key-saved" id="byok-key-saved" hidden><span class="key-state">Key saved</span><button type="button" id="byok-key-replace" class="btn quiet small">Replace</button><button type="button" id="byok-key-remove" class="btn quiet small remove">Remove</button></div>
-        </div>
-        <div class="field-row byok-field"><label for="byok-conductor">Conversation model</label><input id="byok-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1"></div>
-        <div class="field-row byok-field"><label for="byok-worker">Model for tasks (must understand images)</label><input id="byok-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation"></div>
-        <details class="fold byok-advanced byok-field" id="byok-fold">
-          <summary>Advanced</summary>
-          <label class="choice"><span>Wire API</span><select id="byok-wire"><option value="">Chat completions</option><option value="responses">Responses</option></select></label>
-          <div class="field-row" id="byok-azure-row"><label for="byok-azure">Azure API version</label><input id="byok-azure" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder="2024-10-21"></div>
-        </details>
-        <div class="agent-actions byok-field"><button type="button" id="byok-test" class="btn quiet">Test connection</button></div>
-      </div>
-      <p class="hint byok-msg" id="byok-msg" role="status" aria-live="polite"></p>
-      <p class="hint" id="byok-hint"></p>
-      <p class="hint" data-key-held="ask">Ask Ember anything with <span class="chord" data-shortcut="ask"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd></span>.</p>
-      <p class="hint" data-key-taken="ask" hidden>Another app has Ember's ask shortcut: ask with Ask Ember… on Home, or from Ember's handle.</p>
     </section>
 
     <section class="after-setup" data-pane="memory" aria-labelledby="memory-h">
@@ -312,7 +333,23 @@
       </div>
       <p class="hint" id="memory-questions-hint"></p>
       <p id="memory-error" class="hint" role="alert"></p>
+      <form class="memory-correction group" id="memory-correction" aria-labelledby="memory-correction-title" hidden>
+        <h3 id="memory-correction-title" class="sub"></h3>
+        <p id="memory-correction-original"></p>
+        <p class="hint" id="memory-correction-source"></p>
+        <label for="memory-correction-text" id="memory-correction-label"></label>
+        <textarea id="memory-correction-text" maxlength="400" rows="3" required aria-describedby="memory-correction-hint memory-correction-status"></textarea>
+        <p class="hint" id="memory-correction-hint"></p>
+        <div class="agent-actions"><button type="submit" class="btn quiet" id="memory-correction-save"></button><button type="button" class="btn quiet" id="memory-correction-cancel"></button></div>
+      </form>
+      <p class="hint" id="memory-correction-status" role="status"></p>
+      <div class="memory-filters" id="memory-filters">
+        <label><span id="memory-query-label"></span><input type="search" id="memory-query" maxlength="200" autocomplete="off" spellcheck="false" aria-controls="memory-list" aria-describedby="memory-count"></label>
+        <label><span id="memory-source-label"></span><select id="memory-source" aria-controls="memory-list"></select></label>
+      </div>
+      <p class="hint" id="memory-count" role="status"></p>
       <ul class="plain-list memory-list" id="memory-list" aria-labelledby="memory-h"></ul>
+      <div class="agent-actions"><button type="button" id="memory-more" class="btn quiet" hidden></button></div>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
       <p class="hint" id="memory-owner" role="status" hidden></p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
@@ -335,8 +372,16 @@
         </div>
       </div>
       <ul class="plain-list" id="routines-list" aria-labelledby="routines-h"></ul>
+      <h3 class="sub" id="reminders-h">Upcoming reminders</h3>
+      <button type="button" id="reminders-refresh" class="btn quiet small">Refresh list</button>
+      <ul class="plain-list" id="reminders-list" aria-labelledby="reminders-h" tabindex="-1"></ul>
       <p class="hint" id="routines-hint">Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and Ember still asks before anything risky.</p>
       <div class="agent-actions"><button type="button" id="routines-forget-all" class="btn quiet" hidden>Delete all routines and reminders</button></div>
+      <div id="routines-delete-confirm" class="consent" role="group" aria-labelledby="routines-delete-scope" hidden>
+        <p id="routines-delete-scope"></p>
+        <div class="agent-actions"><button type="button" id="routines-delete-yes" class="btn quiet">Delete all</button><button type="button" id="routines-delete-no" class="btn quiet">Keep them</button></div>
+      </div>
+      <p id="routines-message" class="hint" role="status"></p>
     </section>
 
     <section class="after-setup" data-pane="voice" aria-labelledby="voice-h">
@@ -374,8 +419,12 @@
           <p class="row-note" id="suggest-hint"></p>
         </div>
         <div id="natural-row" hidden>
-          <label class="switch-row"><input type="checkbox" id="natural" role="switch" aria-describedby="natural-text"><span>Use a more natural voice</span></label>
-          <p class="hint" id="natural-text">Kokoro: downloads 350 MB once, and speaks only where this computer is fast enough for it (otherwise Ember's usual voice does).</p>
+          <label class="switch-row"><input type="checkbox" id="natural" role="switch" aria-describedby="natural-model-hint natural-text"><span>Use a more natural voice</span></label>
+          <label class="choice"><span>Natural voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kokoro">Kokoro · 350 MB</option><option value="kitten">Kitten Nano · 63.8 MB</option></select></label>
+          <p class="hint" id="natural-model-hint">Kokoro: downloads 350 MB when enabled. Speech stays on this computer. Ember checks its speed and keeps its usual voice if needed.</p>
+          <p class="hint" id="natural-choice-status" role="status"></p>
+          <div class="agent-actions"><button type="button" id="natural-use" class="btn quiet" hidden>Save voice choice</button></div>
+          <p class="hint" id="natural-text">Off. Choose a voice, then turn on Use a more natural voice to download and use it.</p>
           <div class="agent-actions"><button type="button" id="natural-retry" class="btn quiet" aria-describedby="natural-text" hidden>Try again</button></div>
         </div>
         <div class="choice">

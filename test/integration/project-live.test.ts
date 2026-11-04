@@ -18,6 +18,8 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
   fs.mkdirSync(userData);
   const source = path.join(dir, "greeting.ts");
   const neighbour = path.join(dir, "other.ts");
+  const context = Array.from({ length: 4 }, (_, index) => path.join(dir, `context-${index + 1}.ts`));
+  for (const file of context) fs.writeFileSync(file, "export const context = true;\n");
   fs.writeFileSync(source, "export const greeting = 'chosen-file-marker';\n");
   fs.writeFileSync(neighbour, "export const secret = 'neighbour-file-marker';");
   fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
@@ -29,7 +31,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
   memory.save(saved);
   const diff = "--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-export const greeting = 'chosen-file-marker';\n+export const greeting = 'updated-file-marker';";
   const draft = ["```diff", diff, "```"].join("\n");
-  const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: draft }) });
+  const mock = await startMockLlm({ delayMs: 800, respond: () => ({ text: draft }) });
   let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
   try {
     app = await _electron.launch({
@@ -39,22 +41,54 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
     });
     // Stub the OS dialogs. The renderer, IPC, Copilot runtime and filesystem changes are real.
     await app.evaluate(({ dialog }, selected) => {
-      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
-    }, source);
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: selected });
+    }, [source, neighbour, ...context]);
     const settingsPage = () => app?.windows().find(page => page.url().includes("/renderer/home/index.html"));
     await expect.poll(() => !!settingsPage(), { timeout: 20_000 }).toBe(true);
     const home = settingsPage()!;
-    await home.locator('a[href="#copilot-h"]').click({ timeout: 15_000 });
+    await home.locator('a[href="#project-h"]').click({ timeout: 15_000 });
     const request = "Draft a patch to rename the greeting.";
     await home.locator("#project-pick").click({ timeout: 30_000 });
     await home.locator("#project-files").waitFor({ state: "visible" });
-    expect(await home.locator("#project-files").innerText()).toBe("greeting.ts");
+    expect(await home.locator("#project-files").innerText()).toContain("greeting.ts");
+    expect(await home.locator("#project-selection").innerText()).toContain("6 of 6 files");
+    await home.locator("#project-question").fill(request);
+    await home.getByRole("button", { name: "Remove other.ts", exact: true }).click();
+    await expect.poll(() => home.locator("#project-selection").innerText()).toContain("5 of 6 files");
+    expect(await home.locator("#project-question").inputValue()).toBe(request);
+    expect(await home.locator("#project-files").innerText()).not.toContain("other.ts");
     expect(JSON.stringify(mock.requests)).not.toContain("chosen-file-marker");
     await home.locator("#project-mode").selectOption("patch");
     await home.locator("#project-question").fill(request);
     await home.locator("#project-send").click();
+    expect(await home.locator("#project-running").innerText()).toContain(request);
+    expect(await home.locator("#project-running").innerText()).toContain("greeting.ts");
+    expect(await home.locator("#project-running").innerText()).not.toContain("other.ts");
+    await home.locator("#project-question").fill("A draft for my next request.");
+    expect(await home.locator("#project-running").innerText()).toContain(request);
     await home.locator("#project-answer").waitFor({ state: "visible", timeout: 30_000 });
-    expect(await home.locator("#project-answer").innerText()).toBe(draft);
+    expect(await home.locator("#project-answer").innerText()).toContain(diff);
+    expect(await home.locator("#project-question").inputValue()).toBe("A draft for my next request.");
+    await home.locator("#project-answer").getByRole("button", { name: "Copy code", exact: true }).click();
+    await expect.poll(() => home.locator("#project-output-status").innerText()).toBe("Project code copied.");
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(diff);
+    await home.locator("#project-copy-answer").click();
+    await expect.poll(() => home.locator("#project-output-status").innerText()).toBe("Project answer copied.");
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(draft);
+    await app.evaluate(({ dialog }) => {
+      dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+    });
+    await home.locator("#project-pick").click();
+    await expect.poll(() => home.locator("#project-apply").isEnabled()).toBe(true);
+    expect(await home.locator("#project-answer").innerText()).toContain(diff);
+    expect(await home.locator("#project-selection").innerText()).toContain("total");
+    const exportedAnswer = path.join(dir, "answer.txt");
+    await app.evaluate(({ dialog }, destination) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
+    }, exportedAnswer);
+    await home.locator("#project-export-answer").click();
+    await expect.poll(() => home.locator("#project-output-status").innerText()).toBe("Project answer exported.");
+    expect(fs.readFileSync(exportedAnswer, "utf8")).toBe(draft);
     const sent = JSON.stringify(mock.requests);
     expect(sent).toContain(request);
     expect(sent).toContain("chosen-file-marker");
@@ -63,6 +97,35 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
     await home.locator("#project-patch summary").focus();
     await home.keyboard.press("Enter");
     expect(await home.locator("#project-diff").innerText()).toBe(diff);
+    await home.locator("#project-copy-diff").click();
+    await expect.poll(() => home.locator("#project-output-status").innerText()).toBe("Project diff copied.");
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(diff);
+    const exportedDiff = path.join(dir, "answer.diff");
+    await app.evaluate(({ dialog }, destination) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
+    }, exportedDiff);
+    await home.locator("#project-export-diff").click();
+    await expect.poll(() => fs.existsSync(exportedDiff)).toBe(true);
+    expect(fs.readFileSync(exportedDiff, "utf8")).toBe(diff);
+    for (const [width, textSize, forcedColors] of [[1000, "default", "none"], [420, "larger", "none"], [560, "larger", "active"], [728, "larger", "none"]] as const) {
+      await app.evaluate(({ BrowserWindow }, width) => {
+        const win = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes("/renderer/home/"))!;
+        win.setMinimumSize(320, 400);
+        win.setContentSize(width, 900);
+      }, width);
+      await home.evaluate(size => { document.documentElement.dataset.textSize = size; }, textSize);
+      await home.emulateMedia({ forcedColors });
+      const dimensions = await home.evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }));
+      expect(dimensions.content, `${width}px ${textSize} ${forcedColors}`).toBeLessThanOrEqual(dimensions.width);
+      await home.locator("#project-copy-diff").focus();
+      expect(await home.locator("#project-copy-diff").evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(24);
+      if (process.env.EMBER_UI_EVIDENCE) {
+        fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+        await home.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `projects-${width}-${textSize}-${forcedColors}.png`), fullPage: true });
+      }
+    }
+    await home.emulateMedia({ forcedColors: "none" });
+    expect(fs.readFileSync(source, "utf8")).toContain("chosen-file-marker");
     await app.evaluate(({ dialog }) => {
       dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false });
     });
@@ -76,11 +139,31 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
     await expect.poll(() => home.locator("#project-status").innerText()).toBe("Patch applied to greeting.ts.");
     expect(fs.readFileSync(source, "utf8")).toBe("export const greeting = 'updated-file-marker';\n");
     expect(fs.readFileSync(neighbour, "utf8")).toContain("neighbour-file-marker");
+    expect(await home.locator("#project-patch-summary").innerText()).toBe("Applied diff");
+    expect(await home.locator("#project-apply").isHidden()).toBe(true);
+    fs.writeFileSync(source, "x".repeat(24 * 1024 + 1));
+    await home.locator("#project-send").click();
+    await expect.poll(() => home.locator("#project-status").innerText()).toContain("Previous output is still shown");
+    expect(await home.locator("#project-answer").innerText()).toContain(diff);
+    expect(await home.locator("#project-diff").innerText()).toBe(diff);
+    expect(await home.locator("#project-apply").isHidden()).toBe(true);
+    expect(await home.locator("#project-question").inputValue()).toBe("A draft for my next request.");
     const auditDir = path.join(userData, "audit");
     const events = fs.readdirSync(auditDir).filter(name => name.endsWith(".jsonl"))
       .flatMap(name => fs.readFileSync(path.join(auditDir, name), "utf8").trim().split("\n").map(line => JSON.parse(line)));
     expect(events).toContainEqual(expect.objectContaining({ event: "confirm", kind: "project-patch", answer: "once" }));
     expect(events).toContainEqual(expect.objectContaining({ event: "action", kind: "project-patch", ok: true }));
+    const selectedCount = await home.locator("#project-files li").count();
+    for (let remaining = selectedCount; remaining > 0; remaining--) {
+      const remove = home.locator("#project-files button").first();
+      await remove.focus();
+      await home.keyboard.press("Enter");
+      await expect.poll(() => home.locator("#project-files li").count()).toBe(remaining - 1);
+      await expect.poll(() => home.evaluate(() => document.activeElement?.id || document.activeElement?.getAttribute("aria-label"))).toBe(
+        remaining === 1 ? "project-pick" : await home.locator("#project-files button").first().getAttribute("aria-label"),
+      );
+      expect(await home.locator("#project-question").inputValue()).toBe("A draft for my next request.");
+    }
     await home.locator("#project-clear").click();
     expect(await home.locator("#project-answer").isHidden()).toBe(true);
     expect(await home.locator("#project-files").isHidden()).toBe(true);
@@ -123,7 +206,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("reviews, declines, and runs p
     const page = (name: string) => app?.windows().find(win => win.url().includes("/renderer/" + name + "/index.html"));
     await expect.poll(() => !!page("home"), { timeout: 20_000 }).toBe(true);
     const home = page("home")!;
-    await home.locator('a[href="#copilot-h"]').click({ timeout: 15_000 });
+    await home.locator('a[href="#project-h"]').click({ timeout: 15_000 });
     await home.locator("#project-commands summary").click();
     await home.locator("#project-folder-pick").click({ timeout: 30_000 });
     await expect.poll(() => home.locator("#project-folder").innerText()).toBe(fs.realpathSync(folder));
@@ -223,7 +306,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("resumes a saved workspace aft
     const page = () => app?.windows().find(win => win.url().includes("/renderer/home/index.html"));
     await expect.poll(() => !!page(), { timeout: 20_000 }).toBe(true);
     const home = page()!;
-    await home.locator('a[href="#copilot-h"]').click({ timeout: 15_000 });
+    await home.locator('a[href="#project-h"]').click({ timeout: 15_000 });
     await expect.poll(() => home.locator("#project-pick").isEnabled(), { timeout: 30_000 }).toBe(true);
     return home;
   };
@@ -258,7 +341,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("resumes a saved workspace aft
     await home.locator("#project-workspaces summary").click();
     const sent = mock.requests.length;
     await home.locator("#project-workspace-open").click();
-    await expect.poll(() => home.locator("#project-files").innerText()).toBe("resume.ts");
+    await expect.poll(() => home.locator("#project-files").innerText()).toContain("resume.ts");
     expect(await home.locator("#project-answer").innerText()).toContain("Previous plan marker");
     expect(await home.locator("#project-question").inputValue()).toBe("");
     expect(await home.locator("#project-include-previous").isChecked()).toBe(true);
@@ -291,6 +374,72 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("resumes a saved workspace aft
     await app?.close();
     await mock.close();
     await other.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps personalisation optional while consent and Stop guidance remain in the short first-run route", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-welcome-short-"));
+  const userData = path.join(dir, "profile");
+  fs.mkdirSync(userData);
+  fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, wakeWord: false, speak: false }));
+  const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Ready." }) });
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  try {
+    app = await _electron.launch({
+      executablePath: createRequire(import.meta.url)("electron") as string,
+      args: [process.cwd(), "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
+      env: { ...process.env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: mock.baseUrl },
+    });
+    const settingsPage = () => app?.windows().find(page => page.url().includes("/renderer/home/index.html"));
+    await expect.poll(() => !!settingsPage(), { timeout: 20_000 }).toBe(true);
+    const home = settingsPage()!;
+    await home.locator("#welcome").waitFor({ state: "visible", timeout: 30_000 });
+    await expect.poll(() => home.locator("#w-count").innerText()).toBe("Step 1 of 6");
+    await home.locator("#w-alt").click();
+    expect(await home.locator("#w-count").innerText()).toBe("Optional · Character");
+    await home.locator("#w-back").click();
+    await home.locator("#w-next").click();
+    expect(await home.locator("#welcome").getAttribute("data-step")).toBe("consent");
+    expect(await home.evaluate(() => window.ember.projectRun({ mode: "review", question: "Must stay blocked." }))).toEqual({ error: "Project work is unavailable right now." });
+    expect(mock.requests).toHaveLength(0);
+    await home.locator("#w-alt").click();
+    expect(await home.locator("#welcome").getAttribute("data-step")).toBe("consent");
+    expect(await home.locator("#w-consent-note").innerText()).toContain("nothing is read, heard or sent");
+    expect(JSON.parse(fs.readFileSync(path.join(userData, "settings.json"), "utf8")).consent?.version ?? 0).toBeLessThan(CONSENT_VERSION);
+    await home.locator("#w-next").click();
+    await expect.poll(() => home.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
+    await expect.poll(() => home.locator("#w-next").getAttribute("aria-disabled"), { timeout: 30_000 }).not.toBe("true");
+    await home.locator("#w-next").click();
+    await expect.poll(() => home.locator("#welcome").getAttribute("data-step")).toBe("checks");
+    await home.locator("#w-next").click();
+    expect(await home.locator("#welcome").getAttribute("data-step")).toBe("try");
+    expect(await home.locator("#w-try-stop").isVisible()).toBe(true);
+    await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes("/renderer/home/"))!;
+      win.setMinimumSize(320, 400); win.setContentSize(420, 900);
+    });
+    await home.evaluate(() => { document.documentElement.dataset.textSize = "larger"; });
+    expect(await home.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await home.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "welcome-try-420-larger.png"), fullPage: true });
+    }
+    await home.locator("#w-stop").click();
+    await expect.poll(() => home.locator("#w-try-stop").getAttribute("class")).toContain("done");
+    await home.locator("#w-alt").click();
+    expect(await home.locator("#w-count").innerText()).toBe("Optional · About you");
+    await home.locator("#w-back").click();
+    await home.locator("#w-next").click();
+    expect(await home.locator("#w-count").innerText()).toBe("Step 6 of 6");
+    await home.locator("#w-next").click();
+    await home.locator("#welcome").waitFor({ state: "hidden" });
+    const settings = JSON.parse(fs.readFileSync(path.join(userData, "settings.json"), "utf8"));
+    expect(settings).toMatchObject({ onboarded: true, consent: { version: CONSENT_VERSION }, memory: { on: false } });
+    expect(mock.requests).toHaveLength(0);
+  } finally {
+    await app?.close();
+    await mock.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }, 120_000);

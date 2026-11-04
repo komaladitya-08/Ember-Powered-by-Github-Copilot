@@ -94,6 +94,6 @@ describe("the card's page", () => {
 
   it("is checked on a real X server in CI's RHEL 8 job", () => {
     const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-    expect(ci).toMatch(/EMBER_ATSPI_TEST=1 \\\n.*npm run test:integration -- .*test\/integration\/handle-card-whole-live\.test\.ts/);
+    expect(ci).toMatch(/EMBER_ATSPI_TEST=1[^\n]* \\\n.*npm run test:integration -- .*test\/integration\/handle-card-whole-live\.test\.ts/);
   });
 });

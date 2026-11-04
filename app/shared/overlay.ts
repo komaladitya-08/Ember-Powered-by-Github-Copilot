@@ -16,6 +16,8 @@ export const OVERLAY = {
   state: "overlay:state",
   interactive: "overlay:interactive",
   bubbleAction: "overlay:bubble-action",
+  taskReading: "overlay:task-reading",
+  pointerHeld: "overlay:pointer-held",
   handleMenu: "handle:menu",
   /** The fallback card's content height, so the card fits what it shows. */
   handleFit: "handle:fit",
@@ -31,6 +33,9 @@ export const OVERLAY = {
    */
   view: "overlay:view",
 } as const;
+
+/** A dead/hidden renderer cannot hold a result indefinitely; visible readers renew every five seconds. */
+export const TASK_READING_LEASE_MS = 15_000;
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
@@ -196,6 +201,8 @@ export interface OverlayApi {
   onState(fn: (s: EmberState) => void): void;
   setInteractive(rects: Rect[]): void;
   bubbleAction(id: string): void;
+  taskReading(id: string, reading: boolean): void;
+  pointerHeld(held: boolean): void;
   /** The task cards' area in global DIP (null: no cards on this display). */
   setCards(rect: Rect | null): void;
   /** The desktop's reduce-motion preference changed while Ember runs (true: less motion). */

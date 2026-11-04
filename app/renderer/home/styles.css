@@ -303,6 +303,19 @@ progress[hidden] { display: none; }
    scroll box of its own, UI audit #1): its latest messages, with the earlier ones a button away. ───── */
 .convo { display: grid; gap: 8px; }
 .convo .earlier { justify-self: center; }
+.conversation-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.conversation-search label { font: var(--type-footnote); }
+.conversation-search input { flex: 1 1 180px; min-width: 0; }
+.conversation-search .hint { flex-basis: 100%; }
+.conversation-compose { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-1); }
+.conversation-compose label { font-weight: 600; }
+.conversation-compose textarea { width: 100%; min-width: 0; box-sizing: border-box; resize: vertical; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 8px; }
+.conversation-compose .hint { margin: 0; }
+.conversation-compose-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.conversation-message-actions { order: 3; flex-basis: 100%; display: flex; gap: 4px; padding: 2px 6px; }
+.conversation li.you .conversation-message-actions { justify-content: flex-end; }
+.conversation li[hidden] { display: none; }
+.conversation-limit { order: 4; flex-basis: 100%; color: var(--muted); font: var(--type-footnote); }
 .conversation { list-style: none; margin: 0; padding: 10px 0; display: grid; gap: 2px; }
 .conversation:empty::before { content: attr(data-empty); display: block; padding: 4px 16px; color: var(--muted); }
 /* Who and when on one line, then the words on their own line (the zero-height ::before breaks the line). */
@@ -948,3 +961,72 @@ html.calm .w-card > * { transition-delay: 0s; }
   .w-tick { border: 1.5px solid CanvasText; }
   .w-try.done .w-tick { border: 0; }
 }
+.reminder-words { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.reminder-words time { color: var(--label-2); }
+.reminder-edit { display: grid; gap: 10px; width: 100%; }
+.reminder-edit[hidden], .agent-actions[hidden] { display: none; }
+.reminder-edit label { display: grid; gap: 6px; }
+#conversation-search, .reminder-edit input {
+  box-sizing: border-box; min-width: 0; min-height: calc(28px * var(--text-scale)); width: 100%; padding: 4px 8px;
+  font: var(--type-body); background: var(--surface-2); color: var(--label); border: 1px solid var(--control-edge); border-radius: var(--r-sm);
+}
+#conversation-search:focus-visible, .reminder-edit input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@media (forced-colors: active) {
+  #conversation-search, .reminder-edit input { border-color: ButtonText; }
+}
+#reminders-list li { flex-wrap: wrap; }
+
+/* Retrieval stays in the local settings surface, with native labelled controls and selectable search matches. */
+.memory-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.memory-filters label { display: grid; gap: 4px; min-width: 0; font: var(--type-callout); color: var(--muted); }
+.memory-filters label:first-child { flex: 1 1 180px; }
+.memory-filters input, .memory-filters select { width: 100%; min-width: 0; min-height: calc(28px * var(--text-scale)); padding: 4px 8px; border: 1px solid var(--control-edge); border-radius: var(--r-sm); background: var(--panel); color: var(--fg); font: var(--type-callout); }
+.search-results { list-style: none; padding: 4px; margin: 0 0 8px; max-height: 45vh; overflow-y: auto; overscroll-behavior: contain; border-radius: var(--r-sm); background: var(--panel); box-shadow: var(--group-edge); }
+.search-results li + li { border-top: 1px solid var(--line); }
+.search-result { display: block; width: 100%; min-height: calc(36px * var(--text-scale)); border: 0; border-radius: var(--r-xs); padding: 8px; color: var(--fg); background: transparent; font: var(--type-callout); text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.search-result:hover { background: var(--surface-2); }
+.search-result:focus-visible, .memory-filters input:focus-visible, .memory-filters select:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.learned-undo-note:empty { display: none; }
+.memory-correction { gap: 8px; padding-block: 12px; }
+.memory-correction > * { min-height: 0; padding: 0; border-top: 0; }
+.memory-correction textarea { width: 100%; resize: vertical; padding: 8px; border: 1px solid var(--control-edge); border-radius: var(--r-sm); background: var(--surface-2); color: var(--fg); font: var(--type-body); }
+.memory-correction textarea:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.memory-correction p { overflow-wrap: anywhere; }
+@media (max-width: 639px) {
+  .search-results { position: fixed; top: 66px; left: 24px; right: 24px; z-index: 10; max-height: 50vh; }
+}
+@media (forced-colors: active) {
+  .search-result { border: 1px solid ButtonText; }
+  .memory-filters input, .memory-filters select, .memory-correction textarea, .search-results { border: 1px solid ButtonText; }
+}
+
+/* Project context stays inspectable and removable without clearing the authored request. */
+#project-files { list-style: none; padding-inline: 0; }
+#project-files li { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding-block: 6px; }
+#project-files li + li { border-top: 1px solid var(--line); }
+#project-files li > span { min-width: 0; overflow-wrap: anywhere; }
+#project-files .remove { flex: 0 0 auto; color: var(--red-text); }
+.project-request { white-space: pre-wrap; }
+#project-answer { font: var(--type-body); line-height: 1.6; }
+#project-diff { font-family: var(--ember-mono); font-size: inherit; line-height: 1.6; }
+#project-patch[open] > * + * { margin-top: 12px; }
+#project-patch > summary { min-height: 28px; padding-block: 4px; }
+.jump a[href="#project-h"] { --tile: var(--blue); --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E"); }
+@media (forced-colors: active) {
+  #project-files li + li { border-color: CanvasText; }
+  #project-patch > summary { outline: 1px solid ButtonText; outline-offset: -1px; }
+}
+#project-answer { max-height: none; }
+#project-answer > p { margin: 0; white-space: pre-wrap; }
+#project-answer > * + * { margin-top: 12px; }
+.project-code { background: var(--surface-2); border-radius: var(--r-xs); padding: 10px; }
+.project-code-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--muted); font: var(--type-footnote); }
+.project-code pre { margin: 8px 0 0; max-height: 22em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.project-code code { font-family: var(--ember-mono); font-size: inherit; }
+@media (forced-colors: active) { .project-code { outline: 1px solid CanvasText; outline-offset: -1px; } }
+@media (max-width: 560px) {
+  .w-try { flex-wrap: wrap; }
+  .w-try-text { flex-basis: calc(100% - 32px); }
+  .w-try > .btn { margin-inline-start: 32px; }
+}
+#natural-row { display: grid; gap: 8px; }

@@ -118,7 +118,12 @@ export class RoutineBook {
   private write(next: Data): void {
     this.o.file.save(next);
     this.data = next;
-    this.o.onChange?.();
+    this.notify();
+  }
+
+  /** An observer cannot roll back a committed book or prevent its live reminders from catching up. */
+  private notify(): void {
+    try { this.o.onChange?.(); } catch { /* The next explicit list read reconciles a detached view. */ }
   }
 
   list(): Routine[] {
@@ -161,9 +166,9 @@ export class RoutineBook {
 
   /** Forgets every routine and lasting reminder, and the file. */
   forgetAll(): void {
-    this.data = EMPTY();
     this.o.file.erase();
-    this.o.onChange?.();
+    this.data = EMPTY();
+    this.notify();
   }
 
   /** The reminders kept for the next run. */
