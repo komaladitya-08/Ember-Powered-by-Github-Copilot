@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryService } from "../../app/main/memory/service";
 import { memoryFile } from "../../app/main/memory/store";
 import { SemanticMemory, vectorFile } from "../../app/main/memory/embed";
+import { MemoryLearning } from "../../app/main/memory/learning";
 
 const dirs: string[] = [];
 const failure = () => { throw Object.assign(new Error("read-only filesystem"), { code: "EROFS" }); };
@@ -68,6 +69,64 @@ describe("durable memory deletion", () => {
     expect(s.memory.list().map(f => f.text)).toEqual(["Lives in York"]);
     spy.mockRestore(); s.memory.forget(id);
     expect(new MemoryService({ dir: s.dir, log: s.log }).list().map(f => f.text)).toEqual(["Lives in Leeds"]);
+    s.memory.stop();
+  });
+
+  it.each(["index", "view"])("acknowledges a durable individual deletion when its post-commit %s callback fails", async target => {
+    vi.useFakeTimers(); const s = setup(), id = await seed(s);
+    if (target === "index") vi.spyOn(s.semantic, "changed").mockImplementation(() => { throw new Error("detached index"); });
+    else s.onChange.mockImplementation(() => { throw new Error("detached view"); });
+    expect(s.memory.forget(id)).toBe(true);
+    expect(s.memory.list()).toEqual([]);
+    expect(new MemoryService({ dir: s.dir, log: s.log }).list()).toEqual([]);
+    expect(fs.existsSync(s.vectors.path)).toBe(false);
+    expect(s.log.info).toHaveBeenCalledWith("memory.forgot", { count: 1, reopened: 0 });
+    s.memory.stop();
+  });
+
+  it("acknowledges complete durable erasure when its view callback fails", async () => {
+    vi.useFakeTimers(); const s = setup(); await seed(s);
+    s.onChange.mockImplementation(() => { throw new Error("detached view"); });
+    expect(() => s.memory.forgetAll()).not.toThrow();
+    expect(s.memory.list()).toEqual([]);
+    expect(fs.existsSync(s.file.path)).toBe(false);
+    expect(fs.existsSync(s.vectors.path)).toBe(false);
+    expect(new MemoryService({ dir: s.dir, log: s.log }).list()).toEqual([]);
+    s.memory.stop();
+  });
+
+  it.each(["one", "all"])("preserves the truthful %s deletion failure even when optional index recovery also fails", async scope => {
+    vi.useFakeTimers(); const s = setup(), id = await seed(s), original = s.memory.list();
+    vi.spyOn(s.semantic, "changed").mockImplementation(() => { throw new Error("detached index"); });
+    const persist = scope === "one" ? vi.spyOn(s.file, "save").mockImplementation(failure) : vi.spyOn(s.file, "erase").mockImplementation(failure);
+    expect(() => scope === "one" ? s.memory.forget(id) : s.memory.forgetAll()).toThrow(/couldn't finish deleting/);
+    expect(s.memory.list()).toEqual(original);
+    expect(new MemoryService({ dir: s.dir, log: s.log }).list()).toEqual(original);
+    expect(s.onChange).not.toHaveBeenCalled();
+    persist.mockRestore(); s.memory.stop();
+  });
+
+  it("retires learned lines and recent facts after durable deletion even if their observers fail", () => {
+    vi.useFakeTimers(); const s = setup();
+    const forgot = vi.fn(() => { throw new Error("detached learned line"); });
+    const forgotAll = vi.fn(() => { throw new Error("detached conversation"); });
+    const l = new MemoryLearning({ memory: s.memory, inForce: () => true, questionsOn: () => false, askedAt: () => null, setAskedAt: () => undefined,
+      idle: () => false, locked: () => false, say: () => false, onForgot: forgot, onForgotAll: forgotAll, log: s.log });
+    l.introduce({ name: "Ram" }); s.memory.flush();
+    const id = s.memory.list()[0].id;
+    expect(l.forget(id)).toBe(true);
+    expect(forgot).toHaveBeenCalledWith(id);
+    expect(l.intent("forget that", { own: true })).toBeNull();
+    l.introduce({ work: "Artist" }); s.memory.flush();
+    const original = s.memory.list(), erase = vi.spyOn(s.file, "erase").mockImplementation(failure);
+    expect(() => l.forgetAll()).toThrow(/couldn't finish deleting/);
+    expect(forgotAll).not.toHaveBeenCalled();
+    expect(s.memory.list()).toEqual(original);
+    erase.mockRestore();
+    expect(() => l.forgetAll()).not.toThrow();
+    expect(forgotAll).toHaveBeenCalledOnce();
+    expect(s.memory.list()).toEqual([]);
+    expect(l.intent("forget that", { own: true })).toBeNull();
     s.memory.stop();
   });
 

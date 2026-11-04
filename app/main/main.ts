@@ -17,7 +17,7 @@ import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
-import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type SettingsPatch } from "./settings";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
 import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
@@ -60,11 +60,16 @@ import { freshAskPress, holdShortcuts } from "./hotkey";
 import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type ShortcutDef, type ShortcutId } from "../shared/shortcuts";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
+import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands, type TranscriptEntry } from "./agent/host";
-import { projectCommandFolder, projectCommandText, projectNames, projectPrompt, projectTurnRequest, ProjectInputError, type ProjectSource } from "./agent/project";
+import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
+import { projectCommandFolder, projectCommandText, projectNames, projectSelection, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, type ProjectSource } from "./agent/project";
+import { exportProjectText } from "./agent/project-export";
+import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
 import { ProjectWorkspaceStore, workspaceAction, type ProjectExchange } from "./agent/project-workspaces";
 import { memoryRefusal } from "./memory/guard";
+import { correctMemoryRequest } from "./memory/correction";
 import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
@@ -112,7 +117,8 @@ import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, routinesFile } from "./agent/routines";
-import { reminderNotification } from "./agent/reminders";
+import { reminderNotification, type Reminder } from "./agent/reminders";
+import { ReminderChangeSchema } from "../shared/reminders";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { pushLater } from "./push-later";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
@@ -423,8 +429,9 @@ function start(): void {
   let projectPatch: ProjectPatch | null = null;
   let projectFolder: ReturnType<typeof projectCommandFolder> | null = null;
   let projectExchange: ProjectExchange | null = null;
+  let projectOutput: { answer: string; diff?: string } | null = null;
   const projectWorkspaces = new ProjectWorkspaceStore(userData, safeStorage, platform.os === "darwin");
-  const clearProject = () => { projectFiles = []; projectPatch = null; projectFolder = null; projectExchange = null; projectJob?.abort(); };
+  const clearProject = () => { projectFiles = []; projectPatch = null; projectFolder = null; projectExchange = null; projectOutput = null; projectJob?.abort(); };
   /** First run's "Hey Ember" try is showing: the microphone's level goes to the settings window too (IPC.watchLevel). */
   let homeWantsLevel = false;
   /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
@@ -966,6 +973,7 @@ function start(): void {
     // The voice process hears a short "no" in a follow-up window as an answer while a question is up (engine.ts).
     voice?.questionUp(q !== null);
     targets?.questionChanged(q);
+    presenceChanged();
     stepAside();
     if (!q) {
       for (const k of QUESTION_KEYS) for (const accel of [sc[k.id].accel, fb[k.id].accel]) if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
@@ -1002,7 +1010,8 @@ function start(): void {
    * Speak replies: always, or while a screen reader runs (Orca, Narrator, VoiceOver; the default), or never, as the user
    * chose (review #55); never when the organisation turned speaking off.
    */
-  const maySpeak = () => policy.features.speak !== false && !screenLock?.locked && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn());
+  let accountErasures = 0;
+  const maySpeak = () => accountErasures === 0 && policy.features.speak !== false && !screenLock?.locked && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn());
   /**
    * The answer being spoken as it streams: each message's first sentence cuts off whatever Ember was saying (as a new
    * answer always did), the rest follow it.
@@ -1118,6 +1127,8 @@ function start(): void {
   let targets: (TargetsRuntime & TargetsRuntimeExtra) | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
+  let availableNaturalModels = naturalVoiceChoices(sys.voice.naturalVoice && process.env.EMBER_VOICE_BACKEND !== "wasm", false);
+  const naturalVoiceOn = (s: Settings) => naturalVoiceWanted(s.voice, availableNaturalModels);
   /** This computer's screen lock (review #81): while locked, Ember doesn't listen, speak or take requests. */
   let screenLock: ScreenLock | null = null;
   /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
@@ -1370,6 +1381,7 @@ function start(): void {
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
     match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips },
     ...(voice ? { natural: voice.naturalStatus } : {}),
+    naturalModels: availableNaturalModels,
   });
   let lastListenStatus = "";
   const syncListenOnce = () => {
@@ -1402,6 +1414,7 @@ function start(): void {
   // organisation allows it. Settings lists it; nothing is read from the file until something asks.
   const memoryAllowed = () => policy.features.memory !== false;
   const memoryOwner = new MemoryOwner(userData);
+  let memoryEpoch = 0;
   // Better recall (memory/better-recall.ts): matching by meaning once the user downloads its model in Settings › Memory,
   // in the "Ember memory" utility process, used only while memory is on.
   const memoryConfigured = () => consented() && memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
@@ -1420,13 +1433,13 @@ function start(): void {
   settings.onChange(() => {
     const before = memoryOwner.state;
     memoryOwner.refresh(memoryConfigured());
-    if (before !== memoryOwner.state) publishMemoryOwner();
+    if (before !== memoryOwner.state) { memoryEpoch++; publishMemoryOwner(); }
     if (!memoryOn()) learningRef?.stopNow();
     betterRecall.settingsChanged();
   });
   const memoryView = () => ({
     rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
-    ownership: memoryOwner.state,
+    ownership: memoryOwner.state, epoch: memoryEpoch,
   });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
@@ -1494,11 +1507,12 @@ function start(): void {
       learning.forgetAll();
       memoryOwner.clear();
       memoryOwner.pause();
+      memoryEpoch++;
       publishMemoryOwner();
     },
     resolveAccountId: (token: string, login: string) => githubMemoryAccount((url, init) => net.fetch(url, init), token, login),
-    verifyAccount: (id: number | null) => { memoryOwner.verify(id, memoryConfigured()); publishMemoryOwner(); },
-    pauseAccount: () => { memoryOwner.pause(); publishMemoryOwner(); },
+    verifyAccount: (id: number | null) => { memoryEpoch++; memoryOwner.verify(id, memoryConfigured()); publishMemoryOwner(); },
+    pauseAccount: () => { memoryEpoch++; memoryOwner.pause(); publishMemoryOwner(); },
     accountReady: memoryOn,
     useModel: (model: OneShot | null) => learning.setModel(model),
     taskDone: (title: string, result: string) => learning.taskDone(title, result),
@@ -1537,6 +1551,13 @@ function start(): void {
     file: routinesFile(userData, err => log.warn("routines.file_broken", { err: err instanceof Error ? err.message : String(err) })),
     onChange: () => broadcast(IPC.routinesChanged, routineRows()),
   });
+  const reminderRows = (rows = agent?.reminders.list() ?? []) => {
+    if (!hasConsent(settings.get())) return [];
+    let kept: Reminder[] = [];
+    try { kept = routineBook.reminders(); } catch { /* The live reminders remain visible if the saved book can't be read. */ }
+    return rows.map(r => ({ id: r.id, text: r.text, at: r.at, created: r.created,
+      kept: kept.some(k => k.id === r.id && k.text === r.text && k.at === r.at && k.created === r.created) }));
+  };
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
   /**
    * "Work without asking" turned on or off is an audit entry (security review of #127): by voice or typed words (the host's
@@ -1795,29 +1816,52 @@ function start(): void {
 
   ipcMain.handle(IPC.agentStatus, guard(() => agent?.getStatus() ?? null));
   ipcMain.handle(IPC.conversation, guard(() => conversationNow()));
+  ipcMain.handle(IPC.conversationSend, guard((input: unknown) => {
+    const text = conversationRequest(input);
+    if (!text) throw new Error("Enter a request of up to 2,000 characters.");
+    if (!consented()) throw new Error("Finish setup before sending a request.");
+    if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");
+    if (agent?.getStatus().phase !== "ready") throw new Error("Connect Ember in Models & connections, then send again.");
+    // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
+    void askEmber(text, {}, Promise.resolve(null));
+  }));
+  ipcMain.handle(IPC.conversationStop, guard(async () => {
+    resetAnswerSpeech();
+    await agent?.stopAnswer();
+  }));
   // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
   ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
+  ipcMain.handle(IPC.openApproval, guard(() => targets?.openApproval() ?? false));
+  ipcMain.handle(IPC.taskControl, guard((raw: unknown) => taskControl(agent, raw)));
   const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });
   tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };
   ipcMain.handle(IPC.signOut, guard(async () => {
     signOuts++;
+    accountErasures++;
+    resetAnswerSpeech();
     signInAbort?.abort();
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
     try {
       await agent?.forgetConversation();
     } finally {
       // Failed memory erasure must not leave a signed-in account or provider key active.
-      currentToken = null;
-      keeper.use(null);
-      try { tokens?.clear(); }
-      finally {
-        try { providers.forget(); }
+      try {
+        currentToken = null;
+        keeper.use(null);
+        try { tokens?.clear(); }
         finally {
-          refusedTokens.clear();
-          askHistory = [];
-          await agent?.start(null);
+          try { providers.forget(); }
+          finally {
+            refusedTokens.clear();
+            askHistory = [];
+            await agent?.start(null);
+          }
         }
+      } finally {
+        // A task result or late runtime turn during teardown must not seed the next account's playback.
+        resetAnswerSpeech();
+        accountErasures--;
       }
     }
   }));
@@ -1826,10 +1870,10 @@ function start(): void {
   let signInPage: string | null = null;
   const openSignInPage = () => { if (signInPage && mayOpenSignInPage(signInPage)) void shell.openExternal(signInPage); };
   ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
-  // The sign-in code and a setup command's Copy: every web permission stays denied (the clipboard's too), so main
-  // writes it. Plain text from the settings window only, and short.
+  // Explicit Copy from Home (codes, setup commands and retained answers): every web permission stays denied, including
+  // the clipboard's. Main writes only plain text from this window, within the session's per-message bound.
   ipcMain.handle(IPC.copyText, guard((text: unknown) => {
-    if (typeof text !== "string" || !text || text.length > 4096) throw new Error("Nothing to copy.");
+    if (typeof text !== "string" || !text || text.length > CONVERSATION_TEXT_LIMIT) throw new Error("Nothing to copy.");
     clipboard.writeText(text);
   }));
   /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
@@ -1918,8 +1962,8 @@ function start(): void {
   }));
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
   // Only while the setting, with the organisation's policy applied, wants it (off where voice or speech is: admin.ts).
-  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => { if (sys.voice.naturalVoice && settings.get().voice.natural) voice?.retryNaturalVoice(); }));
-  const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay });
+  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => { if (naturalVoiceOn(settings.get())) voice?.retryNaturalVoice(); }));
+  const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay, approval: confirmer?.waiting ?? false });
   presenceChanged = () => broadcast(IPC.presenceChanged, presence());
   ipcMain.handle(IPC.presence, guard(presence));
   ipcMain.handle(IPC.setPresence, guard((p: unknown) => {
@@ -1940,20 +1984,62 @@ function start(): void {
     if (!owner || !projectAvailable() || projectPicking || projectJob) return { names, error: "Project work is unavailable right now." };
     const previous = projectFiles;
     projectPicking = true;
-    projectPatch = null;
     try {
       const selected = await dialog.showOpenDialog(owner, { title: "Choose project files", properties: ["openFile", "multiSelections"] });
       if (home !== owner || projectFiles !== previous || !projectAvailable()) return { names: [] };
-      if (selected.canceled) return { names };
-      const next = projectNames(selected.filePaths);
+      if (selected.canceled) return await projectSelection(previous);
+      const next = await projectSelection(selected.filePaths);
+      if (home !== owner || projectFiles !== previous || !projectAvailable()) return { names: [] };
       projectFiles = selected.filePaths;
+      projectPatch = null;
       projectExchange = null;
-      return { names: next, changed: true };
+      projectOutput = null;
+      return { ...next, changed: true };
     } catch (err) {
       return { names: home === owner && projectFiles === previous ? names : [], error: err instanceof ProjectInputError ? err.message : "Couldn't choose project files." };
     } finally {
       projectPicking = false;
     }
+  }));
+  ipcMain.handle(IPC.projectRemove, guard(async (name: unknown): Promise<ProjectSelection> => {
+    const files = projectFiles;
+    if (!projectAvailable() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: "Project work is unavailable right now." };
+    projectPicking = true;
+    try {
+      const next = removeProjectFile(files, name);
+      const selection = await projectSelection(next);
+      if (projectFiles !== files || !projectAvailable()) return { names: [] };
+      projectFiles = next;
+      projectPatch = null;
+      projectExchange = null;
+      return { ...selection, changed: true };
+    } catch (err) {
+      return { names: files.length ? projectNames(files) : [], error: err instanceof ProjectInputError ? err.message : "Couldn't remove the file." };
+    } finally { projectPicking = false; }
+  }));
+  ipcMain.handle(IPC.projectExport, guard(async (kind: unknown): Promise<{ message: string }> => {
+    const output = projectOutput;
+    const owner = home;
+    if ((kind !== "answer" && kind !== "diff") || !output || !owner || !projectAvailable() || projectPicking || projectJob) {
+      return { message: "Choose an available project answer or diff to export." };
+    }
+    const text = kind === "diff" ? output.diff : output.answer;
+    if (!text) return { message: "No project diff is available to export." };
+    projectPicking = true;
+    const current = () => projectOutput === output && home === owner && projectAvailable() === true;
+    try {
+      const result = await dialog.showSaveDialog(owner, {
+        title: kind === "diff" ? "Export project diff" : "Export project answer",
+        defaultPath: kind === "diff" ? "ember-project.diff" : "ember-project-answer.txt",
+        filters: [{ name: kind === "diff" ? "Unified diff" : "Plain text", extensions: [kind === "diff" ? "diff" : "txt"] }],
+        properties: ["showOverwriteConfirmation", "createDirectory"],
+      });
+      if (result.canceled || !result.filePath || !current()) return { message: "Project export cancelled." };
+      exportProjectText(result.filePath, text, userData, current, projectFiles);
+      return { message: kind === "diff" ? "Project diff exported. Exporting does not apply changes." : "Project answer exported." };
+    } catch (err) {
+      return { message: err instanceof ProjectInputError ? err.message : "Couldn't export the project output. Choose another destination." };
+    } finally { projectPicking = false; }
   }));
   ipcMain.handle(IPC.projectRun, guard(async (request: unknown): Promise<ProjectResult> => {
     const input = projectTurnRequest.safeParse(request);
@@ -1975,6 +2061,7 @@ function start(): void {
       projectPatch = mode === "patch" ? draftProjectPatch(answer, sources) : null;
       const shown = answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer;
       projectExchange = memoryRefusal(answer) ? null : { mode, question, answer: shown };
+      projectOutput = { answer: shown, ...(projectPatch ? { diff: projectPatch.diff } : {}) };
       return {
         answer: shown, canContinue: projectExchange !== null,
         ...(projectPatch ? { patch: { name: projectPatch.source.name, diff: projectPatch.diff } } : {}),
@@ -2081,7 +2168,8 @@ function start(): void {
         await projectWorkspaces.write(scope, other, current);
         return { names: other.map(saved => saved.name), message: `Forgot workspace “${name}”.` };
       }
-      const files = entry.files.length ? projectNames(entry.files) : [];
+      const selection = await projectSelection(entry.files);
+      if (!current()) return { message: "Workspace request cancelled." };
       let folder: typeof projectFolder = null;
       if (entry.folder) {
         try { folder = projectCommandFolder(entry.folder, userData); }
@@ -2090,9 +2178,10 @@ function start(): void {
       projectFiles = entry.files;
       projectFolder = folder;
       projectExchange = entry.exchange;
+      projectOutput = entry.exchange ? { answer: entry.exchange.answer } : null;
       projectPatch = null;
       return {
-        names, opened: { files, folder: folder?.path ?? null, previous: projectExchange },
+        names, opened: { files: selection.names, sizes: selection.sizes, folder: folder?.path ?? null, previous: projectExchange },
         message: entry.folder && !folder ? `Opened workspace “${name}”. Choose the command folder again.` : `Opened workspace “${name}”.`,
       };
     } catch (err) {
@@ -2153,15 +2242,21 @@ function start(): void {
   ipcMain.handle(IPC.voiceForgetWords, guard(() => { personal.forgetWords(); log.info("voice.words_forgotten"); }));
   ipcMain.handle(IPC.memoryList, guard(memoryView));
   ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
-    if (!memoryOwner.ready || typeof id !== "string" || !id || id.length > 40) return;
+    if (!memoryOwner.ready) throw new Error("Ember couldn't finish deleting this memory. Wait until your saved memory is available, then try Undo or Forget again.");
+    if (typeof id !== "string" || !id || id.length > 40) throw new Error("Ember couldn't finish deleting this memory. Try Forget again.");
     // Through learning: its "Ember learned" line and "forget that" let go of it too.
     learning.forget(id);
   }));
+  // A correction stays bound to the exact fact and current account view, without changing its source authority.
+  ipcMain.handle(IPC.memoryCorrect, guard((change: unknown) => correctMemoryRequest(change, {
+    ready: memoryOwner.ready, inForce: memoryOn(), epoch: memoryEpoch, correct: (expected, text) => learning.correct(expected, text),
+  })));
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(() => {
     learning.forgetAll();
     memoryOwner.clear();
     memoryOwner.refresh(memoryConfigured());
+    memoryEpoch++;
     publishMemoryOwner();
   }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
@@ -2174,12 +2269,33 @@ function start(): void {
     catch (err) { throw new Error("Ember couldn't finish deleting Better recall's saved data. Try Remove again.", { cause: err }); }
   }));
   ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
+  ipcMain.handle(IPC.remindersList, guard(() => reminderRows()));
+  ipcMain.handle(IPC.reminderChange, guard((value: unknown) => {
+    const parsed = ReminderChangeSchema.safeParse(value);
+    if (!parsed.success || !hasConsent(settings.get())) throw new Error("Couldn't change this reminder. Refresh the list and try again.");
+    const { expected, replacement } = parsed.data;
+    try {
+      const changed = agent?.reminders.change(expected, replacement, next => {
+        const r = settings.get().routines;
+        if (routinesAllowed() && r.on && r.consent.version >= FEATURE_CONSENT_VERSION.routines) routineBook.setReminders(next);
+        else {
+          // A reminder already kept must not reappear after a successful cancellation/edit while the mode changes.
+          const kept = routineBook.reminders();
+          if (kept.some(k => k.id === expected.id)) routineBook.setReminders(kept.filter(k => k.id !== expected.id));
+        }
+      });
+      if (!changed) throw new Error("This reminder changed or is already due. Refresh the list and try again.");
+    } catch (err) {
+      if (err instanceof Error && /^(This reminder|Choose reminder)/.test(err.message)) throw err;
+      throw new Error("Couldn't save the reminder change. The original reminder is still waiting.", { cause: err });
+    }
+  }));
   ipcMain.handle(IPC.routinesForget, guard((id: unknown) => {
     if (typeof id !== "string" || !id || id.length > 20) return;
     routineBook.forget(id);
   }));
   // Everything kept goes, and so do the reminders waiting this run (they would be kept again at their next change).
-  ipcMain.handle(IPC.routinesForgetAll, guard(() => { agent?.reminders.clear(); routineBook.forgetAll(); }));
+  ipcMain.handle(IPC.routinesForgetAll, guard(() => { routineBook.forgetAll(); agent?.reminders.clear(); }));
   // Extensions, plugins and connectors (Home's Extensions section): the settings window's own page only, as guard. With
   // no runtime the section says extensions aren't available yet; EMBER_TEST_EXTENSIONS shows a pretend one, which opens
   // nothing in the browser.
@@ -2238,6 +2354,15 @@ function start(): void {
   });
   /** From the handle's page (a handle closed or crashed is no one: a check on it must not throw for the overlay's clicks). */
   const isHandle = (sender: Electron.WebContents) => !!handle && !handle.win.isDestroyed() && sender === handle.win.webContents;
+  ipcMain.on(OVERLAY.pointerHeld, (event, held: unknown) => {
+    if (overlay?.owns(event.sender) && typeof held === "boolean") overlay.pointerHeld(event.sender, held);
+  });
+  ipcMain.on(OVERLAY.taskReading, (event, raw: unknown) => {
+    if (!overlay?.owns(event.sender) || !raw || typeof raw !== "object") return;
+    const r = raw as { id?: unknown; reading?: unknown };
+    if (typeof r.id !== "string" || r.id.length > 120 || typeof r.reading !== "boolean") return;
+    agent?.tasks?.reading(r.id, event.sender.id, r.reading);
+  });
   ipcMain.on(OVERLAY.bubbleAction, (event, id: unknown) => {
     const fromHandle = isHandle(event.sender);
     if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string" || id.length > 120) return;
@@ -2692,6 +2817,7 @@ function start(): void {
       windowId: w => ownId(w),
       // Its bar grows with the text size (review #57).
       textScale: () => textScale(settings.get().textSize),
+      canRead: () => hasConsent(settings.get()) && screenLock?.locked === false,
     });
     deskViewRef = deskView;
     let deskPlace: Promise<DeskPlace> | null = null;
@@ -2836,6 +2962,11 @@ function start(): void {
       // Their views go to the overlay apart from the state (coalesced diffs, none while Ember is hidden).
       showView: (id, view) => overlay?.setView(id, view),
       readTime,
+      taskWindow: createTaskWindowControl({
+        list: () => shownWindows().filter(w => w.pid !== process.pid),
+        blocked: () => !inputRef || !!screenLock?.locked || !!borrowRef?.driving,
+        activate: id => inputRef?.activate(id),
+      }),
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),
       userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secrets()).child("agent"), setState, provider: providerNow, admin: () => policy, signInWith: signInWith(),
@@ -2893,7 +3024,11 @@ function start(): void {
       },
       onTranscript: entries => {
         // Forgotten (sign-out, another account): the "Ember learned" lines go with it.
-        if (!entries.length) learnedLines = [];
+        if (!entries.length) {
+          resetAnswerSpeech();
+          learnedLines = [];
+          broadcast(IPC.conversationForgotten, null);
+        }
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
@@ -2905,6 +3040,7 @@ function start(): void {
         // A notification shows on the lock screen: while it is locked, it says only that one is due.
         if (userAway()) notify("Ember: reminder", reminderNotification(r, screenLock?.locked ?? false));
       },
+      onRemindersChanged: rows => broadcast(IPC.remindersChanged, reminderRows(rows)),
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
       // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
@@ -2999,6 +3135,7 @@ function start(): void {
     if (speechModels.bundled) log.info("voice.models_bundled", { root: speechModels.root });
     // Native speech through sherpa-onnx's C API on Linux (resources/voice-native), WebAssembly where it can't run.
     const speech = nativeSpeech();
+    availableNaturalModels = naturalVoiceChoices(sys.voice.naturalVoice && process.env.EMBER_VOICE_BACKEND !== "wasm", speech.choice?.backend === "native" && !!speech.capiDir);
     if (speech.choice) log.info("voice.backend", { backend: speech.choice.backend, why: speech.choice.why });
     voice = new VoiceService({
       log: log.child("voice"),
@@ -3025,9 +3162,9 @@ function start(): void {
       },
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
-      // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
-      // Never on Linux, where settings has no switch for it: native speech there fetches nothing more.
-      naturalVoice: sys.voice.naturalVoice && settings.get().voice.natural,
+      // Kokoro stays on its existing platforms; the compact Kitten choice also supports Linux's native C API.
+      naturalVoice: naturalVoiceOn(settings.get()),
+      naturalModel: settings.get().voice.naturalModel,
       // Whatever became of turning it on shows under its switch (never only in the log).
       onNatural: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       voiceprint: ownerPrint,
@@ -3111,7 +3248,7 @@ function start(): void {
       learning = on;
       voice?.setLearning(on);
     });
-    settings.onChange(next => voice?.setNaturalVoice(sys.voice.naturalVoice && next.voice.natural));
+    settings.onChange(next => applyNaturalVoicePreference(voice, next.voice, availableNaturalModels));
     settings.onChange(next => {
       // macOS asks for the microphone once listening is agreed to, so its prompt comes with that context.
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));

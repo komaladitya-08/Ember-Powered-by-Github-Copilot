@@ -18,7 +18,7 @@ import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, ty
 import { ReasoningBubble, onPress, plainStream, snapToDevice } from "@ember/bubble";
 import { canvasSize, watchPixels } from "../shared/pixels";
 import { LEVEL_STEPS } from "../../shared/level";
-import { TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
+import { TASK_READING_LEASE_MS, TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, cardLines, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { ArmClock, TASK_ARM_MS } from "../handle/arm";
@@ -383,6 +383,26 @@ const DETAILS = "ui:details";
 /** Cards whose details the user opened (by task id): closed until then, so one card never folds the others away. */
 const detailsOpen = new Map<string, boolean>();
 const isOpen = (t: TaskCard) => detailsOpen.get(t.id) ?? false;
+/** Visible readers renew short leases, so a crashed or closed overlay releases its cards without a global timeout. */
+const readingCards = new Set<string>();
+// Keep hover-based native input routing stable through a captured gesture, including outside the hit region.
+document.addEventListener("pointerdown", e => { if (e.button === 0) api.pointerHeld(true); }, true);
+for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) document.addEventListener(event, () => api.pointerHeld(false), true);
+document.addEventListener("visibilitychange", () => { if (document.hidden) api.pointerHeld(false); });
+function reportReading(): void {
+  const next = new Set<string>();
+  if (!document.hidden) for (const [id, c] of cards) {
+    if (c.card && c.li.isConnected && !c.li.hidden && (isOpen(c.card) || c.li.matches(":hover") || c.li.contains(document.activeElement))) next.add(id);
+  }
+  for (const id of readingCards) if (!next.has(id)) api.taskReading(id, false);
+  for (const id of next) api.taskReading(id, true);
+  readingCards.clear();
+  for (const id of next) readingCards.add(id);
+}
+setInterval(reportReading, TASK_READING_LEASE_MS / 3);
+document.addEventListener("visibilitychange", reportReading);
+window.addEventListener("pagehide", () => { for (const id of readingCards) api.taskReading(id, false); readingCards.clear(); });
+
 /** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
 const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
 const cards = new Map<string, CardEls>();
@@ -625,6 +645,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
       li.append(state, where, title, hand, live, detail, tele, sum, plan, view, rows, actions);
       c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0, hand, plan, view, planKey: "", views: null,
         live, tele, teleState, teleStep, clock, teleExtra, sum, rows, rowsKey: "", card: null };
+      for (const event of ["pointerenter", "pointerleave", "focusin", "focusout"]) li.addEventListener(event, () => queueMicrotask(reportReading));
       cards.set(t.id, c);
     }
     // Just finished: its tick settles in once (styles.css tick-pop); a card moved in the stack later doesn't play it again.
@@ -679,6 +700,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
             showRows(card);
             fitTasks();
             measureTasks();
+            reportReading();
           });
           return b;
         }
@@ -706,6 +728,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
   fitTasks();
   ticking();
   if (before) slideCards(before);
+  reportReading();
   return true;
 }
 

@@ -10,7 +10,8 @@ import type { Logger } from "../../app/main/logger";
 
 type Area = { x: number; y: number; width: number; height: number };
 /** `displays`: the work areas of the displays, the primary first (one 1920 × 1080 display unless a test says otherwise). */
-const h = vi.hoisted(() => ({ ipc: null as unknown as import("node:events").EventEmitter, windows: [] as unknown[], displays: [] as Area[] }));
+const h = vi.hoisted(() => ({ ipc: null as unknown as import("node:events").EventEmitter, windows: [] as unknown[], displays: [] as Area[],
+  handlers: new Map<string, (event: { sender: object }) => unknown>() }));
 
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
@@ -43,7 +44,7 @@ vi.mock("electron", async () => {
   const matching = (b: Area) => h.displays.reduce((best, d) => (overlap(b, d) > overlap(b, best) ? d : best), h.displays[0]!);
   return {
     BrowserWindow,
-    ipcMain: { on: (ch: string, fn: (...a: unknown[]) => void) => h.ipc.on(ch, fn) },
+    ipcMain: { on: (ch: string, fn: (...a: unknown[]) => void) => h.ipc.on(ch, fn), handle: (ch: string, fn: (event: { sender: object }) => unknown) => h.handlers.set(ch, fn) },
     screen: { getPrimaryDisplay: () => ({ workArea: h.displays[0] }), getDisplayMatching: (b: Area) => ({ workArea: matching(b) }) },
   };
 });
@@ -100,6 +101,7 @@ describe("desk view", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     h.ipc.removeAllListeners();
+    h.handlers.clear();
     h.windows.length = 0;
     h.displays = [{ x: 0, y: 0, width: 1920, height: 1080 }];
     control = [];
@@ -114,6 +116,43 @@ describe("desk view", () => {
     win.emit("ready-to-show");
     return p;
   };
+
+  it("reads text only for its own visible viewer with consent and a known unlocked screen (UX14)", async () => {
+    let allowed = false, reads = 0;
+    view = new DeskView(quiet, () => undefined, { canRead: () => allowed });
+    const p = open();
+    Object.assign(p.place, { perception: { read: async () => {
+      reads++;
+      return { window: { name: "Draft" }, nodes: [], blocked: false, ember: false, busy: false, truncated: null };
+    } } });
+    const read = (sender: object = win.webContents) => Promise.resolve(h.handlers.get(DESK.describe)!({ sender }));
+    await expect(read({})).rejects.toThrow(/can't read/);
+    expect((await read() as { rows: unknown[] }).rows).toEqual([]);
+    expect(reads).toBe(0);
+    allowed = true;
+    expect((await read() as { title: string }).title).toBe("Draft");
+    expect(reads).toBe(1);
+    view.hide();
+    expect((await read() as { rows: unknown[] }).rows).toEqual([]);
+    expect(reads).toBe(1);
+  });
+
+  it("discards an in-flight desk read when lock state changes or the viewer hides (UX14)", async () => {
+    let allowed = true;
+    view = new DeskView(quiet, () => undefined, { canRead: () => allowed });
+    const p = open();
+    let finish!: (value: unknown) => void;
+    Object.assign(p.place, { perception: { read: () => new Promise(resolve => { finish = resolve; }) } });
+    const pending = Promise.resolve(h.handlers.get(DESK.describe)!({ sender: win.webContents }));
+    allowed = false;
+    finish({ window: { name: "Private after lock" }, nodes: [], blocked: false, busy: false, truncated: null });
+    expect(await pending).toMatchObject({ title: "", rows: [] });
+    allowed = true;
+    const hidden = Promise.resolve(h.handlers.get(DESK.describe)!({ sender: win.webContents }));
+    view.hide();
+    finish({ window: { name: "Hidden snapshot" }, nodes: [], blocked: false, busy: false, truncated: null });
+    expect(await hidden).toMatchObject({ title: "", rows: [] });
+  });
 
   it("hands control back when the view is closed while the user has it", () => {
     open();

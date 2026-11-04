@@ -190,6 +190,7 @@ function bindCapi(dir: string): Sherpa {
     createTts(s, run, maxNumSentences) {
       const model = s.kind === "vits"
         ? { vits: { model: s.model, tokens: s.tokens, data_dir: s.dataDir, noise_scale: s.noiseScale, noise_scale_w: s.noiseScaleW, length_scale: s.lengthScale } }
+        : s.kind === "kitten" ? { kitten: { model: s.model, voices: s.voices, tokens: s.tokens, data_dir: s.dataDir, length_scale: s.lengthScale } }
         : { kokoro: { model: s.model, voices: s.voices, tokens: s.tokens, data_dir: s.dataDir, lexicon: s.lexicon, lang: s.lang, length_scale: s.lengthScale } };
       const h = made("voice", c.createTts({ model: { ...model, num_threads: run.numThreads, provider: run.provider, debug: 0 }, max_num_sentences: maxNumSentences }));
       return {

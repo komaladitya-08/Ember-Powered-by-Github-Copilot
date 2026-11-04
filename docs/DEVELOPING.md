@@ -102,7 +102,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above (the test starts its windows with `ACCESSIBILITY_ENABLED=1`, as Chromium joins the accessibility bus only when asked); CI runs it with them on `rockylinux:8` |
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
-| `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--tts-voice` also fetches a test-only TTS voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesizes new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
+| `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--kitten` explicitly adds the verified optional Kitten voice (63.8 MB) for native integration tests; the default download excludes it. `--tts-voice` also fetches a test-only TTS voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesizes new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
 | `node scripts/voice/match-bench.mjs <speakers> [--cache <file>]` | Voice Match that keeps learning (docs/ASSISTANT.md §7): false rejects and accepts before and after learning, in the enrolment's room and on another microphone, and the drift attack, on a folder of speakers' 16 kHz clips (LibriSpeech dev-clean through ffmpeg, as its header says). `--cache` keeps the voiceprints (numbers only) for trying other limits. Needs the speech models |
 | `node scripts/voice/words-bench.mjs [--show]` | Personal vocabulary for recognition (docs/ASSISTANT.md §7): word error rate of the voice clips and of synthesised requests with app and people's names, raw, corrected against a lexicon, and with corrections taught from a first take. Needs `node scripts/voice/prepare.mjs --tts-voice --voice ryan` |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
@@ -112,9 +112,16 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
 cache (test/temp-folder.ts).
 
+After building, CI also runs the Ask, conversation, memory, reminders/desk and natural-voice renderer journeys with
+`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_MEMORY_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
+and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium. The exact file list is in `.github/workflows/ci.yml`.
+The same workflow enables `EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1` for native approval and task-card
+journeys on X11. `EMBER_KITTEN_TEST=1` adds the verified optional Kitten model to native speech integration tests;
+prepare it first with `node scripts/voice/prepare.mjs --kitten`. It requires a supported native sherpa runtime and does not enable or download that voice in the app.
+
 ### Using Ember
 
-- **First run** is seven steps in the settings window, one decision each (`app/renderer/home/welcome.ts`, its words
+- **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**) and **Agree and continue**, or **Not now**, which keeps Ember off
   and offers **Quit Ember**; you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service, or under its lockdown, there is nothing to sign in to and the step only goes on; or **Skip for now**); the setup check shows only
@@ -132,12 +139,12 @@ cache (test/temp-folder.ts).
 - The shortcuts here are Linux's: Windows uses Win+Alt+… and macOS Control+Shift+Command+… with the same letters.
 - **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
   will look at, and ↑/↓ bring back earlier questions.
-- **The settings window** shows one pane at a time, picked in its sidebar as System Settings does: **Home**, **Copilot**,
+- **The settings window** shows one pane at a time, picked in its sidebar as System Settings does: **Home**, **Projects**, **Models & connections**,
   **Voice**, **Your Ember** (character, size, start at login, and **Ember on screen**: **Handle position**, **Follow my
   cursor**, **Hide Ember until it needs me**, **Quit Ember**), **Memory** (with routines and reminders), **Apps &
   privacy**, **Comfort & access**, **Computers** and **Commands** (once available), **Extensions**, and **Setup &
   about**. **Search settings** at the top of the sidebar narrows it to the panes that hold the words typed; Enter goes
-  to the first setting found. The window reopens on the pane you last viewed (kept in the page's own storage).
+  to a selected labelled result (ArrowDown/Tab enters results; Escape clears them). The window reopens on the pane you last viewed (kept in the page's own storage).
   - **Home** is a status panel (Ember's still presence ring, its state in a few words, which of listening, memory and
     commands are on, today's tasks and approvals, **Ask Ember…** and **Stop everything** with the stop chord), then the
     **Conversation**, **Task activity** and the folded **What Ember did**.
@@ -183,7 +190,7 @@ cache (test/temp-folder.ts).
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
     idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
     fact shows in the conversation as "Ember learned: …" with **Undo**. The kill switch stops all of it (`memory`).
-  - **Tell Ember about you** (Settings › Memory, and first run's optional step 7 of 8): what to call you, your role
+  - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
     from its speakers isn't kept.
@@ -268,8 +275,9 @@ out loud; **Never** keeps it quiet even for a screen reader. Buttons that send, 
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
 for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks), how long it has worked and which step of its plan it is on, and shows what it did
-under **Details**; a failed card goes on its own after about a minute (the settings window's Conversation section keeps
-what went wrong), and its **Try again** starts the latest accepted request again, retaining any changed instructions,
+under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
+what went wrong). More time multiplies the lifetime by ten; expanded Details, hover or keyboard focus pauses expiry,
+with at least five seconds to move on after the last reader leaves. Its **Try again** starts the latest accepted request again, retaining any changed instructions,
 restrictions and the original computer and window, and asking every question again. A change the worker could not accept
 does not replace that retry request. Conversation requests are dispatched in order even when memory recall finishes out
 of order; each turn keeps its own words, screen context and voice provenance. An unmatched runtime message cannot start
@@ -553,24 +561,26 @@ job runs `test/integration/voice.test.ts` on RHEL 8's glibc twice, with `EMBER_V
 `ember doctor` says "On this computer (native)". A model the
 native build can't make (the C API gives no handle) is tried on WebAssembly before it counts as damaged.
 
-**The natural voice (Kokoro).** Settings › Voice › **Use a more natural voice** (`voice.natural`, off by default;
-shown on Windows and macOS) lets Ember fetch Kokoro v1.0 (`kokoro-multi-lang-v1_0`, fp32, its `af_heart` voice in US
-English, Apache-2.0, 350 MB, pinned by SHA-256) into the user's models folder. It is fetched only where Ember's voice
-runs natively on the Piper voice at no more than 0.143 of real time (Kokoro is about 3.5 times the work:
-`NATURAL_COST` in `app/voice/tts.ts`; `voice.natural_fetching`, `voice.natural_ready`), and the speech process starts
-again with it once it has nothing to say. Unless a too-slow result for this model/provider/thread configuration was
-recorded within the last week, Kokoro is loaded and timed on a sentence (on up to 4 threads, and
-against CoreML on macOS: the one model a GPU is tried for): at more than 0.5 of real time (`NATURAL_MAX_RTF`) the Piper
-voice speaks instead and the slow verdict is kept for a week; `voice.tts_ready` says why (`natural`, including
-“timed before” when cached). Damaged, future-dated and expired entries are ignored. Turning the switch on
-decides at once, not at some later reply: the Piper voice running then (or started for it) times the computer, the
-download starts, and once it is in the speech process starts again with Kokoro straight away. Every outcome shows under
-the switch (`VoiceService.naturalStatus`, `naturalVoiceView` in app/renderer/home/copy.ts): checking, the download's
-percentage, ready, on, too slow, wouldn't load, needs Ember's faster (native) speech, needs Ember's own voice first, or
-a failed download with **Try again** (`voice:natural-retry`). No package carries
-Kokoro. The int8 Kokoro builds aren't used: onnxruntime made them slower on x86 (below). `node scripts/voice/bench.mjs
---kokoro` times listening, the Piper voice and Kokoro on the computer it runs on (both builds, every thread count and
-provider Ember would try), as a table and as JSON.
+**Optional native voices.** Settings › Voice › **Use a more natural voice** (`voice.natural`, off by default)
+keeps Kokoro as the existing model choice; **Lightweight (Kitten Nano)** is an explicit alternative. Model selection
+while off does not enable speech or start a download. Switching an enabled model names its download size and waits
+for explicit Apply. Kokoro v1.0 FP32 (`af_heart`, Apache-2.0) downloads about 350 MB. Kitten Nano 0.8 FP32 downloads
+63.8 MB (the complete archive, including matching style tables and phonemiser; Apache-2.0), runs on one CPU thread,
+and is also available through the verified Linux C API. Only models supported by the current native backend are
+offered. Both use the measured `NATURAL_MAX_RTF` <= 0.5 gate and Piper fallback; a slow verdict is kept for a week
+per model/provider/thread configuration. Corrupt, future and expired verdicts are ignored.
+
+The selected enum `voice.naturalModel` defaults to `kokoro` for older settings. Startup and live changes select the
+model before enabling it; pending speech finishes before switching, and obsolete downloads cannot reactivate an old
+choice. Home shows the selected model, actual readiness/active model, download and retry outcomes. Turning the feature
+off, policy restrictions and shutdown prevent late downloads from restarting speech. No package carries these optional
+models. Speech generation releases its utility process after two minutes without pending generation and rewarms on the
+next wake; queued playback retains its own ownership. Captured audio remains in memory and on the device.
+
+`node scripts/voice/bench.mjs --kokoro --kitten` compares the installed models in fresh processes, including loaded/peak
+process RSS, CPU work, first-chunk latency and real-time factor. An explicit optional flag may fetch its pinned archive
+for this development benchmark. Do not interpret process RSS as total application PSS or a speed result as a naturalness
+score. The 4 November research and targeted recognition results are in [the speech follow-up](voice-review-2026-11-04.md).
 
 Measured in a Linux container (2.1 GHz Xeon, 4 vCPUs) with `sherpa-onnx-linux-x64`, the same addon as Windows' and
 macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/voice-backends.mjs`), and in Node
@@ -762,7 +772,7 @@ managers and polkit are listed by default).
 Removing a key, signing out, or changing the provider settings invalidates keyring work already in progress.
 A late keyring answer cannot restore a removed key or reconnect an old endpoint.
 
-Home › Copilot › **Model provider** lets a user point Ember at a model service of their own instead of GitHub Copilot
+Home › Models & connections › **Model provider** lets a user point Ember at a model service of their own instead of GitHub Copilot
 (`settings.provider`, off by default; app/main/provider.ts): **Provider** (OpenAI-compatible, Azure OpenAI or
 Anthropic), **Endpoint** (https, or plain http only for a server on this computer: `localhost`, `127.0.0.1`, `::1`,
 such as Ollama at `http://localhost:11434/v1` or LM Studio at `http://localhost:1234/v1`), **API key**, the
@@ -840,7 +850,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 
 | Key | Effect |
 |---|---|
-| `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the natural voice (Kokoro) off and its 350 MB download from starting, shown as managed |
+| `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, shown as managed |
 | `features.actions` | Ember answers and guides ("show me") but never acts in apps |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model |
@@ -854,7 +864,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `features.autonomy` | `false`: "Work without asking" is off and managed; Ember asks before a first step in an app, a borrow and moving text between apps, as before. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN turn it off too. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`). It always wins over a user's own provider, which Home then shows as managed |
-| `features.userProvider` | `false`: users can't point Ember at a model service of their own ("Use my own model provider" in Home › Copilot is off and managed; a key already saved stays unused until signing out or Remove deletes it). Allowed when absent; the organisation's own `provider` and LOCKDOWN turn it off too, and `models.allowed` and pinned models still hold for the user's model ids. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
+| `features.userProvider` | `false`: users can't point Ember at a model service of their own ("Use my own model provider" in Home › Models & connections is off and managed; a key already saved stays unused until signing out or Remove deletes it). Allowed when absent; the organisation's own `provider` and LOCKDOWN turn it off too, and `models.allowed` and pinned models still hold for the user's model ids. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `auditRetentionDays` | How long the audit log is kept (default 30; nothing is deleted while Ember is locked down) |
 | `features.wsl` / `features.ssh` | No WSL / no connecting to other computers over SSH |
 | `commands` | Commands on this computer, in WSL and over SSH: `"on"`, `"ask"` (every command asks) or `"off"` |
@@ -1852,7 +1862,7 @@ added later has the same effect on the Embers before it: say so in the release n
 
 ### 14.7 Copilot project work
 
-In Home under Copilot, choose up to six source files, then send a review, plan or patch request. The
+In Home under Projects, choose up to six source files, then send a review, plan or patch request. The
 connected model sees only the files you send. For an exact patch to one existing UTF-8 file with a final
 newline, Ember shows the diff in **Review changes before applying**. Check it, choose **Apply patch** and
 confirm the destination. If the source has changed since you sent it, draft the patch again. Ember keeps

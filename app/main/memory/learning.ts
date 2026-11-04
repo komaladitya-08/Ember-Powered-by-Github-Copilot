@@ -21,7 +21,7 @@ import {
   looksLikeRequest,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
-import { ownFact, type AboutRef, type MemoryLog, type MemoryService } from "./service";
+import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
 import { fold } from "./text";
 
 /** Idle this long (no turn, no task, screen unlocked) before the sleep-time pass or a question (ms). */
@@ -193,8 +193,23 @@ export class MemoryLearning {
     ++this.recallRevision;
     const had = this.d.memory.forget(id);
     this.recent = this.recent.filter(r => r.id !== id);
-    if (had) this.d.onForgot?.(id);
+    if (had) {
+      try { this.d.onForgot?.(id); } catch { this.d.log.warn("memory.delete_notice_failed"); }
+    }
     return had;
+  }
+
+  /** An explicit local correction retires readers and learned lines that still describe the old wording. */
+  correct(expected: MemoryItem, text: string): MemoryItem {
+    if (!this.d.inForce()) throw new Error("Ember couldn't save this correction. Turn on memory and try again.");
+    this.refining?.abort();
+    ++this.recallRevision;
+    const corrected = this.d.memory.correct(expected, text);
+    // An extraction of the earlier conversation must not put the old sentence back after this explicit correction.
+    this.learner.stop();
+    this.recent = this.recent.filter(row => row.id !== expected.id);
+    try { this.d.onForgot?.(expected.id); } catch { this.d.log.warn("memory.correction_notice_failed"); }
+    return corrected;
   }
 
   /** Everything is forgotten (sign-out, Forget everything): what waits to be learned goes too. */
@@ -204,7 +219,7 @@ export class MemoryLearning {
     this.gaps.clear();
     this.recent = [];
     // The "Ember learned" lines and their Undo go too.
-    this.d.onForgotAll?.();
+    try { this.d.onForgotAll?.(); } catch { this.d.log.warn("memory.delete_notice_failed"); }
   }
 
   /** A task finished: learn from its result (source `task`). */

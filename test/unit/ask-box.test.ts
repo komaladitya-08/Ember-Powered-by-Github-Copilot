@@ -1,17 +1,14 @@
 /**
- * The ask box's own words, its field, and the notification text: the placeholder's example is a change Ember can make
- * on every OS (reviews #71, #234); the field keeps a pasted text's lines, grows to four, and says when a paste was cut
+ * The ask box's own words, its field, and the notification text: the concise placeholder leaves room for Send;
+ * the field keeps a pasted text's lines, grows to four, and says when a paste was cut
  * (review #70); the line under it says all a request carries, whole in its tooltip and to a screen reader, and where it
  * goes with that computer's state (reviews #72, #74, #53); a long notification is cut at a word (review #234).
  */
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { SETTINGS } from "../../app/main/hands/system";
-import { DARWIN_SETTINGS } from "../../app/main/platform/darwin/system/settings";
-import { win32Settings } from "../../app/main/platform/win32/system/settings";
 import { notificationBody } from "../../app/main/notification";
-import { CUT_NOTE, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "../../app/renderer/ask/field";
+import { CUT_NOTE, atLimit, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "../../app/renderer/ask/field";
 import { liveWords, seesView } from "../../app/renderer/ask/chips";
 import { targetChip, targetChipParts } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
@@ -22,11 +19,10 @@ import type { TargetSummary } from "../../app/shared/targets";
 const ASK_HTML = readFileSync(new URL("../../app/renderer/ask/index.html", import.meta.url), "utf8");
 
 describe("the ask box's placeholder", () => {
-  it("gives an example every OS can do: dark mode, not GNOME's Night Light", () => {
+  it("keeps its prompt concise beside Send and retains the full accessible label", () => {
     const placeholder = /placeholder="([^"]*)"/.exec(ASK_HTML)?.[1] ?? "";
-    expect(placeholder).toBe("Ask or tell Ember… e.g. “turn on dark mode”");
-    expect(placeholder).not.toMatch(/night/i);
-    for (const offered of [SETTINGS, DARWIN_SETTINGS, win32Settings({ api: () => null }).available]) expect(offered).toHaveProperty("dark_style");
+    expect(placeholder).toBe("Ask Ember…");
+    expect(ASK_HTML).toContain('<label for="q" class="sr">Ask or tell Ember</label>');
   });
 });
 
@@ -64,6 +60,18 @@ describe("the ask box's field", () => {
     expect(enterAction({ shiftKey: false, isComposing: false })).toBe("send");
     expect(enterAction({ shiftKey: true, isComposing: false })).toBe("newline");
     expect(enterAction({ shiftKey: false, isComposing: true })).toBe("compose");
+  });
+
+  it("offers an explicit submit control and budgets every wrapped suggestion and Listen once row", () => {
+    expect(ASK_HTML).toContain('<button id="send" class="send" type="submit" disabled>Send</button>');
+    for (const scale of [1, 1.15, 1.3]) {
+      expect(auxiliaryRows(0, scale)).toBe(0);
+      expect(auxiliaryRows(28 * scale + 14, scale)).toBe(2);
+      const suggestions = auxiliaryRows(112 * scale, scale);
+      expect(suggestions).toBeGreaterThan(1);
+      expect(suggestions * 24 * scale).toBeGreaterThanOrEqual(112 * scale + 4);
+      expect(boxRows(1, false, false, suggestions, 2)).toBe(3 + suggestions);
+    }
   });
 
   it("goes through earlier questions only from the first line (↑) or the last (↓)", () => {

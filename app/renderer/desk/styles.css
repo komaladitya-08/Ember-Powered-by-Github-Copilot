@@ -35,6 +35,15 @@ body.control #screen:focus-visible { outline: none; }
 /* No picture until the first frame: an <img> without one shows a broken-image icon. */
 body:not(.live) #screen { visibility: hidden; }
 body.control #screen { cursor: crosshair; }
+#desk-reading { flex: none; max-height: 65%; overflow: auto; background: var(--surface-0); color: var(--label); user-select: text; }
+#desk-reading summary { cursor: pointer; min-height: calc(28px * var(--text-scale)); padding: 4px 10px; box-sizing: border-box; }
+#desk-reading summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.reading-body { padding: 0 10px 10px; }
+.reading-body p { margin: 8px 0; overflow-wrap: anywhere; }
+#read-contents { margin: 8px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+#read-contents dt { font-weight: 600; }
+#read-contents dd { margin: 4px 0 12px 12px; color: var(--label-2); }
+#read-contents:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): the bar's words and buttons grow with the type,
    and main's view.ts grows the window by the bar (deskViewBounds). */

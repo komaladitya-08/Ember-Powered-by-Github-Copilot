@@ -9,7 +9,11 @@ export const DESK = {
   input: "desk:input",
   /** The view lost the keyboard or went hidden: let go of everything held on the desk. */
   release: "desk:release",
+  describe: "desk:describe",
 } as const;
+
+/** App content is inert text, distinct from the trusted desk controls and action approvals. */
+export interface DeskReading { at: number; title: string; message: string; rows: { role: string; name: string; text: string }[] }
 
 export type DeskInput =
   | { type: "move"; x: number; y: number }
@@ -27,4 +31,5 @@ export interface DeskViewApi {
   hide(): void;
   input(e: DeskInput): void;
   release(): void;
+  describe(): Promise<DeskReading>;
 }

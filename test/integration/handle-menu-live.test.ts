@@ -159,10 +159,10 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
         // The window's name keeps the room it aims for (or all it needs), and nothing is pushed off the line.
         expect.soft(r.name, label).toBeGreaterThanOrEqual(Math.min(160, r.nameWhole));
         expect.soft(r.overflow, label).toBe(0);
-        // The cut note and Listen once each get a row under the four lines of text.
+        // The cut note gets a row and the comfortable Listen once group gets two under the four lines of text.
         expect.soft(r.cut, label).toBe(!!text);
         expect.soft(r.cutOnLine, label).toBe(false);
-        if (text) expect.soft(r.height, label).toBe(askHeight("default", 6));
+        if (text) expect.soft(r.height, label).toBe(askHeight("default", 7));
         if ("target" in ctx) expect.soft(r.state, label).toBe(" (lost)");
       }
     }
@@ -184,7 +184,7 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
       }
       // A paste cut at Larger: four lines, the cut note and Listen once.
       const cut = await openAskAt(inEmber, "larger", "x".repeat(2000));
-      expect.soft(cut, JSON.stringify(cut)).toMatchObject({ width: 728, height: askHeight("larger", 6), clipped: false });
+      expect.soft(cut, JSON.stringify(cut)).toMatchObject({ width: 728, height: askHeight("larger", 7), clipped: false });
       expect.soft(cut.room, JSON.stringify(cut)).toBeGreaterThanOrEqual(8);
     } finally {
       await closeAsk(inEmber);

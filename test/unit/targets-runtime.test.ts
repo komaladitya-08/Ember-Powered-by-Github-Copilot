@@ -132,7 +132,7 @@ function rig(o: RigOptions = {}) {
   const osName: OS = o.os ?? "linux";
   const audit = { tag: "audit" } as unknown as Hands["audit"];
   const answers: { id: string; via: string; proof?: { sha256: string } }[] = [];
-  const confirmer = { waiting: false, answer: vi.fn((id: string, via: string, proof?: { sha256: string }) => { answers.push({ id, via, ...(proof ? { proof } : {}) }); return true; }) } as unknown as Hands["confirmer"];
+  const confirmer = { waiting: false, wholeSeen: vi.fn(() => true), answer: vi.fn((id: string, via: string, proof?: { sha256: string }) => { answers.push({ id, via, ...(proof ? { proof } : {}) }); return true; }) } as unknown as Hands["confirmer"];
   const activeWindow = vi.fn(() => ({ app: "gnome-terminal-server", title: "deploy@build-01: ~" }));
   const hands: Hands | null = o.hands === undefined ? {
     perception: { tag: "perception" } as unknown as PerceptionPort, sidecar: { tag: "sidecar" } as unknown as SidecarPort,
@@ -142,6 +142,7 @@ function rig(o: RigOptions = {}) {
   const local = fakeRunner("local");
   const wslRunners = new Map<string, ReturnType<typeof fakeRunner>>();
   let onAnswer: ((a: { n: number; answer: "once" | "deny"; sha256: string }) => boolean | void) | null = null;
+  let onApproval: ((n: number, answer?: string) => boolean) | null = null;
   let onConsent: ((a: { n: number; answer: "once" | "deny"; sha256: string }) => void) | null = null;
   const cw = {
     showCard: vi.fn(), hideCard: vi.fn(), cardReady: vi.fn(() => true), announce: vi.fn(async () => true), cancelAnnounce: vi.fn(), attach: vi.fn(),
@@ -157,6 +158,7 @@ function rig(o: RigOptions = {}) {
       if (mode === "unshown") return { id: card.id, ok: false, refused: true };
       return { id: card.id, ok: true, sha256: mode === "forged" ? "0".repeat(64) : card.consent?.sha256 };
     }),
+    showApproval: vi.fn(), hideApproval: vi.fn(), onApproval: vi.fn((fn: typeof onApproval) => { onApproval = fn; return () => undefined; }),
     dismiss: vi.fn(), showConsent: vi.fn(), hideConsent: vi.fn(), consentReady: vi.fn(() => false), dispose: vi.fn(), show: vi.fn(),
     onConsent: vi.fn((fn: typeof onConsent) => { onConsent = fn; return () => undefined; }),
   };
@@ -278,7 +280,7 @@ function rig(o: RigOptions = {}) {
     runnerOpts: () => runnerOpts!,
     cwOpts: () => cwOpts!,
     pwOpts: () => pwOpts!,
-    onAnswer: () => onAnswer, onConsent: () => onConsent,
+    onApproval: () => onApproval, onAnswer: () => onAnswer, onConsent: () => onConsent,
     failConnect: (e: Error | null) => { connectFail = e; },
     holdConnect: () => { let release!: () => void; connectGate = new Promise(r => { release = r; }); return () => { connectGate = null; release(); }; },
     invoke: async (channel: string, sender: WebContentsLike, ...args: unknown[]) => handlers.get(channel)!({ sender }, ...args),
@@ -1315,6 +1317,33 @@ describe("question panels (§3.9)", () => {
   const commandQ: Question = { title: "May I run a command?", prompt: "On build-01: Deletes build", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], panel: { kind: "command", card } };
   const consent = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false } });
   const consentQ: Question = { title: "Turn on commands on this computer?", prompt: "x", options: [{ id: "once", label: "Turn on", primary: true }, { id: "deny", label: "Not now" }], panel: { kind: "consent", consent }, clickOnly: true };
+
+  it("Home opens only the exact current approval, without passively opening ordinary questions", () => {
+    const r = rig();
+    const q: Question = { title: "May I?", prompt: "Send exact words?", detail: "exact words", options: [{ id: "once", label: "Allow" }, { id: "deny", label: "Not now" }] };
+    expect(r.t.openApproval()).toBe(false);
+    r.t.questionChanged({ n: 7, question: q });
+    expect(r.pw.showApproval).not.toHaveBeenCalled();
+    expect(r.t.openApproval()).toBe(true);
+    expect(r.pw.showApproval).toHaveBeenCalledWith({ ...q, id: "approval-7", kind: "approval", n: 7 });
+    expect(r.onApproval()!(6, "once")).toBe(false);
+    expect(r.onApproval()!(7, "made up")).toBe(false);
+    expect(r.onApproval()!(7)).toBe(true);
+    expect(r.confirmer.wholeSeen).toHaveBeenCalledWith(7);
+    expect(r.onApproval()!(7, "once")).toBe(true);
+    expect(r.answers).toContainEqual({ id: "q7:once", via: "bubble" });
+    r.t.questionChanged({ n: 8, question: commandQ });
+    expect(r.pw.hideApproval).toHaveBeenCalledWith(7);
+    expect(r.onApproval()!(7, "once")).toBe(false);
+    expect(r.onApproval()!(8, "once")).toBe(false); // command still needs its hashed panel
+    expect(r.t.openApproval()).toBe(true);
+    expect(r.cw.showCard).toHaveBeenLastCalledWith(8, card);
+    r.t.questionChanged({ n: 9, question: consentQ });
+    expect(r.t.openApproval()).toBe(true);
+    expect(r.pw.showConsent).toHaveBeenLastCalledWith(9, consent, true);
+    r.t.questionChanged(null);
+    expect(r.t.openApproval()).toBe(false);
+  });
 
   it("shows a command question's card and hides it when the question goes; the chord's guard is the card's", () => {
     const r = rig();

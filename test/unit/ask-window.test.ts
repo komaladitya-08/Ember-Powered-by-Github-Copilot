@@ -155,9 +155,9 @@ describe("the ask box", () => {
     const [win] = made;
     win.emit("ready-to-show");
     const one = { ...win.bounds };
-    expect(one.height).toBe(116);
+    expect(one.height).toBe(140);
     win.heard.get("agent:ask-fit")!({}, 4);
-    expect(win.bounds).toEqual({ ...one, height: 164, y: one.y - 48 });
+    expect(win.bounds).toEqual({ ...one, height: 164, y: one.y - 24 });
     // Nothing from the page that isn't a number of lines.
     win.heard.get("agent:ask-fit")!({}, "9");
     expect(win.bounds.height).toBe(164);

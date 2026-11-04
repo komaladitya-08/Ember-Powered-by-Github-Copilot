@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
 import {
   CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, aboutNext, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
   gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
@@ -17,15 +18,22 @@ const MAIN = read("main/main.ts");
 const HOME = read("renderer/home/main.ts");
 
 describe("first run's steps", () => {
-  it("go hello, character, consent, sign-in, checks, try, about you, done, one decision each", () => {
-    expect([...WELCOME_STEPS]).toEqual(["hello", "character", "consent", "sign-in", "checks", "try", "about", "done"]);
-    expect(stepCount("hello")).toBe("Step 1 of 8");
-    expect(stepCount("done")).toBe("Step 8 of 8");
+  it("keeps the essential route short and offers personalisation as optional detours", () => {
+    expect([...WELCOME_STEPS]).toEqual(["hello", "consent", "sign-in", "checks", "try", "done"]);
+    expect(stepCount("hello")).toBe("Step 1 of 6");
+    expect(stepCount("done")).toBe("Step 6 of 6");
     expect(stepBefore("hello")).toBeNull();
     expect(stepAfter("done")).toBeNull();
     expect(stepAfter("consent")).toBe("sign-in");
     expect(stepBefore("sign-in")).toBe("consent");
-    expect(stepAfter("try")).toBe("about");
+    expect(stepAfter("try")).toBe("done");
+    expect(stepAfter("hello")).toBe("consent");
+    expect(stepAfter("character")).toBe("consent");
+    expect(stepBefore("character")).toBe("hello");
+    expect(stepAfter("about")).toBe("done");
+    expect(stepBefore("about")).toBe("try");
+    expect(stepCount("character")).toBe("Optional · Character");
+    expect(stepCount("about")).toBe("Optional · About you");
   });
 
   it("offers the about-you step as optional: its button skips until memory is on and something is answered", () => {
@@ -41,7 +49,7 @@ describe("first run's steps", () => {
   });
 
   it("can't pass the consent step without agreement, whichever step is asked for (M8.8)", () => {
-    for (const s of ["sign-in", "checks", "try", "done"] as const) expect(gated(s, false), s).toBe("consent");
+    for (const s of ["sign-in", "checks", "try", "about", "done"] as const) expect(gated(s, false), s).toBe("consent");
     for (const s of ["hello", "character", "consent"] as const) expect(gated(s, false), s).toBe(s);
     for (const s of WELCOME_STEPS) expect(gated(s, true), s).toBe(s);
     // Agreed in an earlier run that didn't finish: it opens at sign-in, with Back to what came before.
@@ -215,7 +223,7 @@ describe("the try step", () => {
   it("hears the stop shortcut and the microphone's level from main, never audio", () => {
     expect(MAIN).toContain("sendToHome(IPC.homeStopped, source);");
     expect(MAIN).toContain("ipcMain.handle(IPC.watchLevel, guard((on: unknown) => { homeWantsLevel = on === true; }));");
-    expect(SCRIPT).toContain("if (!active || step !== \"try\" || source !== \"hotkey\" || tried.stop) return;");
+    expect(SCRIPT).toContain("if (!active || step !== \"try\" || tried.stop) return;");
     // The meter asks for levels only on the try step while Ember listens, stops when it leaves, and asks main only
     // when that changes; main sends nothing to a hidden or minimised window.
     expect(SCRIPT).toContain("wantLevel(step === \"try\" && voiceState() === \"listening\");");
@@ -249,11 +257,12 @@ describe("“Your Ember”", () => {
 
   it("shows when copying failed, and draws the setup rows again only when they change (review of #124)", () => {
     expect(SCRIPT).toContain("() => { copy.textContent = \"Couldn't copy\"; }");
-    // Pages have no clipboard permission: main copies, for the settings window only, plain short text.
+    // Pages have no clipboard permission: main copies bounded plain text, including retained answers, from Home only.
     expect(SCRIPT).toContain("window.ember.copyText(text)");
     expect(HOME).not.toContain("navigator.clipboard");
     expect(MAIN).toContain("ipcMain.handle(IPC.copyText, guard((text: unknown) => {");
-    expect(MAIN).toContain("if (typeof text !== \"string\" || !text || text.length > 4096) throw new Error(\"Nothing to copy.\");");
+    expect(CONVERSATION_TEXT_LIMIT).toBe(128 * 1024);
+    expect(MAIN).toContain("if (typeof text !== \"string\" || !text || text.length > CONVERSATION_TEXT_LIMIT) throw new Error(\"Nothing to copy.\");");
     expect(SCRIPT).toContain("if (key === shownChecks) return checksNext(rows);");
     // Calm shows the summary at once: no stagger delay is left behind.
     expect(read("renderer/home/styles.css")).toContain("html.calm .w-card > * { transition-delay: 0s; }");

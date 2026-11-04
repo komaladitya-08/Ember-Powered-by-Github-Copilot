@@ -32,6 +32,8 @@ interface Overlay {
   display: Display;
   interactive: Rect[];
   clickThrough: boolean;
+  /** A renderer pointer capture keeps native hover routing until release; bounded if its page disappears. */
+  pointerUntil: number;
   /** The input region is set to the clickable rectangles (clicks elsewhere pass through at X, not by hover polling). */
   shaped: boolean;
   /** The task cards on this display (global DIP). */
@@ -99,6 +101,7 @@ export class OverlayManager {
   setHidden(on: boolean): void {
     const shows = this.hidden && !on;
     this.hidden = on;
+    if (on) for (const o of this.overlays.values()) o.pointerUntil = 0;
     // Levels were dropped while hidden: the meters start from nothing rather than show one from before it hid.
     if (shows) this.setLevel({ ...NO_LEVEL });
     this.views.setVisible(!on);
@@ -194,6 +197,7 @@ export class OverlayManager {
 
   setBorrowing(on: boolean): void {
     this.borrowing = on;
+    if (on) for (const o of this.overlays.values()) o.pointerUntil = 0;
     for (const o of this.overlays.values()) this.applyHits(o);
   }
 
@@ -264,6 +268,13 @@ export class OverlayManager {
   }
 
   /** Called by IPC when a renderer reports where its clickable parts are. */
+  pointerHeld(sender: Electron.WebContents, held: boolean): void {
+    for (const o of this.overlays.values()) if (o.win.webContents === sender) {
+      o.pointerUntil = held && !this.hidden && !this.borrowing ? Date.now() + 30_000 : 0;
+      if (o.pointerUntil && !o.shaped) { o.clickThrough = false; o.win.setIgnoreMouseEvents(false); }
+    }
+  }
+
   setInteractive(sender: Electron.WebContents, rects: Rect[]): void {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) {
       o.interactive = rects;
@@ -362,7 +373,7 @@ export class OverlayManager {
     win.setAlwaysOnTop(true, "screen-saver");
     applyAllWorkspaces(win, floating.allWorkspaces);
     this.passThrough(win);
-    const overlay: Overlay = { win, display, interactive: [], clickThrough: true, shaped: false, cards: null };
+    const overlay: Overlay = { win, display, interactive: [], clickThrough: true, pointerUntil: 0, shaped: false, cards: null };
     this.overlays.set(display.id, overlay);
     // Every load (also after a crash and reload) gets the current picture.
     win.webContents.on("did-finish-load", () => {
@@ -437,7 +448,7 @@ export class OverlayManager {
       // through, which is why live clicks on Allow/Stop missed the overlay on X11 until the shape was used.
       if (o.shaped) continue;
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
-      const over = !this.borrowing && takesPointer(!o.clickThrough, contains(o.display.bounds, cursor) ? local : null, o.interactive, cursor.buttons ?? 0);
+      const over = !this.borrowing && (o.pointerUntil > now || takesPointer(!o.clickThrough, contains(o.display.bounds, cursor) ? local : null, o.interactive, cursor.buttons ?? 0));
       if (over === o.clickThrough) {
         o.clickThrough = !over;
         if (over) o.win.setIgnoreMouseEvents(false); else this.passThrough(o.win);

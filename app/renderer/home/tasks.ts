@@ -6,7 +6,7 @@
  * answered. Groups are rebuilt only when what they show changed, and a row the user opened stays open.
  */
 
-import type { TaskEntry } from "../../shared/activity";
+import type { TaskControlAction, TaskEntry } from "../../shared/activity";
 import { PLAN_WORD, type PlanStep } from "../../shared/view";
 import { STATUS_WORDS, ROW_WORD } from "../../shared/activity";
 import { renderView } from "../shared/view-dom";
@@ -36,6 +36,23 @@ let listeners: ((tasks: TaskEntry[]) => void)[] = [];
 /** Where a waiting question is answered: moved into the waiting task's group (kept here: a rebuilt group drops it). */
 const askingNote = $("tasks-asking");
 let latest: TaskEntry[] = [];
+/** A pushed view or newer read supersedes pending IPC snapshots; account erasure retires pending actions too. */
+let readEpoch = 0;
+let accountEpoch = 0;
+let awaitingAccount = false;
+let focusedAction: { account: number } | null = null;
+
+async function refreshTasks(emptyOnFailure = false): Promise<void> {
+  const read = ++readEpoch, account = accountEpoch;
+  try {
+    const entries = await window.ember.tasks();
+    if (read === readEpoch && account === accountEpoch && !awaitingAccount) render(entries);
+  } catch (error) {
+    if (read !== readEpoch || account !== accountEpoch || awaitingAccount) return;
+    if (emptyOnFailure) render([]);
+    else throw error;
+  }
+}
 
 function planList(plan: readonly PlanStep[]): HTMLOListElement {
   const ol = el("ol", "plan-list");
@@ -82,6 +99,63 @@ function rowItem(taskId: string, r: TimelineRow): HTMLLIElement {
   return li;
 }
 
+/** Native controls use the exact ID from main; a rejected stale action refreshes its capabilities. */
+function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
+  const group = el("div", "agent-actions");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", `Actions for ${t.title}`);
+  const status = el("p", "hint");
+  status.id = `task-${t.id}-control-status`;
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  status.hidden = true;
+  const action = (label: string, kind: TaskControlAction, available: boolean) => {
+    const button = el("button", "btn quiet small", label);
+    button.type = "button";
+    button.setAttribute("aria-label", `${label}: ${t.title}`);
+    button.disabled = !available;
+    button.addEventListener("click", () => {
+      const wasFocused = document.activeElement === button;
+      const account = accountEpoch;
+      const focus = wasFocused ? { account } : null;
+      if (focus) focusedAction = focus;
+      button.disabled = true;
+      void window.ember.taskControl(t.id, kind).then(async accepted => {
+        if (account !== accountEpoch) return;
+        await refreshTasks();
+        if (account !== accountEpoch) return;
+        const keepFocus = wasFocused && kind !== "window" && (document.activeElement === document.body || group.contains(document.activeElement));
+        const feedback = document.getElementById(status.id) ?? status;
+        feedback.hidden = false;
+        const stopped = latest.find(task => task.id === t.id)?.status === "stopped";
+        feedback.textContent = accepted ? kind === "stop" ? stopped ? "This task stopped." : "Stopping this task…" : kind === "retry" ? "A new attempt started." : "App window opened." : "This action is no longer available.";
+        if (keepFocus) {
+          const heading = document.getElementById(`task-${t.id}-t`);
+          const summary = heading?.closest("summary");
+          if (summary) summary.focus();
+          else if (heading) { heading.tabIndex = -1; heading.focus(); }
+        }
+      }).catch(() => {
+        if (account !== accountEpoch) return;
+        status.hidden = false; status.textContent = "I couldn't update this task. Try again."; button.disabled = !available;
+      }).finally(() => { if (focusedAction === focus) focusedAction = null; });
+    });
+    group.append(button);
+  };
+  if (!ended(t)) action("Stop task", "stop", t.controls?.stop === true);
+  if (t.status === "failed") action("Try again", "retry", t.controls?.retry === true);
+  if (t.controls?.window) action("Show app", "window", true);
+  if (result) {
+    const show = el("button", "btn quiet small", "View result");
+    show.type = "button";
+    show.setAttribute("aria-label", `View result: ${t.title}`);
+    show.addEventListener("click", () => { result.scrollIntoView({ block: "nearest" }); result.focus({ preventScroll: true }); });
+    group.append(show);
+  }
+  group.append(status);
+  return group;
+}
+
 /** A task that ended folds to its title and summary line until opened (UI audit #1: groups were long). */
 const ended = (t: TaskEntry) => t.status === "done" || t.status === "failed" || t.status === "stopped";
 
@@ -115,9 +189,14 @@ function group(t: TaskEntry, now: number): { node: HTMLElement; meta: HTMLElemen
     body.append(ol);
   }
   // How it ended: the worker's summary (unless a problem row already says the same), and what it found or made.
+  let resultNode: HTMLElement | null = null;
   const said = t.activity.items.some(i => i.kind === "problem" && i.words === t.summary);
   if ((t.summary && !said) || t.view) {
     const result = el("div", "task-result");
+    result.tabIndex = -1;
+    result.setAttribute("role", "group");
+    result.setAttribute("aria-label", `Result: ${t.title}`);
+    resultNode = result;
     if (t.summary && !said) result.append(el("p", "summary", t.summary));
     if (t.view) {
       const view = el("div", "task-view");
@@ -126,6 +205,7 @@ function group(t: TaskEntry, now: number): { node: HTMLElement; meta: HTMLElemen
     }
     body.append(result);
   }
+  body.prepend(taskControls(t, resultNode));
   if (fold) {
     // Opened by the user, it stays open across updates.
     const key = `${t.id}:`;
@@ -246,7 +326,33 @@ export function revealAsking(): HTMLElement | null {
 /** Starts Task activity: the list now, and again whenever main pushes it. `onChange` hears every list (the status panel). */
 export function startTasks(onChange?: (tasks: TaskEntry[]) => void): void {
   if (onChange) listeners = [...listeners, onChange];
-  void window.ember.tasks().then(render, () => render([]));
-  window.ember.onTasks(render);
+  void refreshTasks(true);
+  window.ember.onTasks(entries => {
+    readEpoch++;
+    // Old-manager updates can arrive while sign-out drains. The next ready connection is read afresh.
+    if (!awaitingAccount) render(entries);
+  });
+  window.ember.onConversationForgotten?.(() => {
+    const list = $("tasks"), bar = $("task-filter");
+    const focused = document.activeElement;
+    const hadFocus = !!focused && (list.contains(focused) || bar.contains(focused) || (focused === document.body && focusedAction?.account === accountEpoch));
+    accountEpoch++;
+    readEpoch++;
+    awaitingAccount = true;
+    focusedAction = null;
+    opened.clear(); said.clear();
+    $("tasks-live").textContent = "";
+    render([]);
+    if (hadFocus && (document.activeElement === document.body || list.contains(document.activeElement) || bar.contains(document.activeElement))) {
+      const heading = document.getElementById("tasks-h") ?? list;
+      heading.tabIndex = -1;
+      heading.focus();
+    }
+  });
+  window.ember.onAgentStatus?.(status => {
+    if (!awaitingAccount || status.phase !== "ready") return;
+    awaitingAccount = false;
+    void refreshTasks(true);
+  });
   setInterval(() => { if (latest.some(t => t.activity.endedAt === undefined)) tick(); }, 1000);
 }

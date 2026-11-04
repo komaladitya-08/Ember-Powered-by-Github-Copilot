@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
+import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
@@ -20,6 +20,8 @@ const api: EmberHomeApi = {
   applyFix: fix => ipcRenderer.invoke(IPC.applyFix, fix),
   agentStatus: () => ipcRenderer.invoke(IPC.agentStatus),
   projectPick: () => ipcRenderer.invoke(IPC.projectPick),
+  projectRemove: name => ipcRenderer.invoke(IPC.projectRemove, name),
+  projectExport: kind => ipcRenderer.invoke(IPC.projectExport, kind),
   projectRun: request => ipcRenderer.invoke(IPC.projectRun, request),
   projectClear: () => ipcRenderer.invoke(IPC.projectClear),
   projectCancel: () => ipcRenderer.invoke(IPC.projectCancel),
@@ -50,12 +52,16 @@ const api: EmberHomeApi = {
   onMemory: fn => listen(IPC.memoryChanged, fn),
   forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
   forgetAllMemory: () => ipcRenderer.invoke(IPC.memoryForgetAll),
+  correctMemory: change => ipcRenderer.invoke(IPC.memoryCorrect, change),
   introduceMe: answers => ipcRenderer.invoke(IPC.memoryIntroduce, answers),
   memoryModel: () => ipcRenderer.invoke(IPC.memoryModel),
   onMemoryModel: fn => listen<MemoryModelStatus>(IPC.memoryModelChanged, fn),
   downloadMemoryModel: () => ipcRenderer.invoke(IPC.memoryModelDownload),
   removeMemoryModel: () => ipcRenderer.invoke(IPC.memoryModelRemove),
   routines: () => ipcRenderer.invoke(IPC.routinesList),
+  reminders: () => ipcRenderer.invoke(IPC.remindersList),
+  onReminders: fn => listen<ReminderRow[]>(IPC.remindersChanged, fn),
+  changeReminder: change => ipcRenderer.invoke(IPC.reminderChange, change),
   onRoutines: fn => listen<RoutineRow[]>(IPC.routinesChanged, fn),
   forgetRoutine: id => ipcRenderer.invoke(IPC.routinesForget, id),
   forgetAllRoutines: () => ipcRenderer.invoke(IPC.routinesForgetAll),
@@ -65,9 +71,14 @@ const api: EmberHomeApi = {
   cancelSignIn: () => ipcRenderer.invoke(IPC.cancelSignIn),
   openSignInPage: () => ipcRenderer.invoke(IPC.openSignInPage),
   tasks: () => ipcRenderer.invoke(IPC.tasks),
+  openApproval: () => ipcRenderer.invoke(IPC.openApproval),
+  taskControl: (id, action) => ipcRenderer.invoke(IPC.taskControl, { id, action }),
   onTasks: fn => listen<TaskEntry[]>(IPC.tasksChanged, fn),
   conversation: () => ipcRenderer.invoke(IPC.conversation),
+  conversationSend: text => ipcRenderer.invoke(IPC.conversationSend, text),
+  conversationStop: () => ipcRenderer.invoke(IPC.conversationStop),
   onConversation: fn => listen<TranscriptEntry[]>(IPC.conversationChanged, fn),
+  onConversationForgotten: fn => listen<unknown>(IPC.conversationForgotten, () => fn()),
   onFocusSection: fn => listen<string>(IPC.focusSection, fn),
   presence: () => ipcRenderer.invoke(IPC.presence),
   setPresence: p => ipcRenderer.invoke(IPC.setPresence, p),

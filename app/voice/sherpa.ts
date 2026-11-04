@@ -7,6 +7,7 @@
  */
 
 import path from "node:path";
+import { isNumberWord } from "../shared/number-words";
 import { MIN_TRANSCRIBE_SAMPLES, Ring, SAMPLE_RATE, type VoiceBackend } from "./engine";
 import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type KwsStream, type OfflineStream, type ProviderCache, type ProviderTry, type RuntimeOptions, type Sherpa } from "./runtime";
 
@@ -100,9 +101,12 @@ export function recognizerPieces(samples: Float32Array): Float32Array[] {
  * The recognizer's words with a looping repeat taken out: on a short clip Moonshine v2 can repeat what it heard until
  * its token limit ("pay embers pay embers pay embers pay em"), or say a whole sentence twice. Keep one copy of a run
  * of three or more repeats, including a cut-off repeat at the very end. Keep a doubled phrase inside a request
- * ("Find the New York, New York office").
+ * ("Find the New York, New York office"). Dictated words and quantities stay as heard: a repeated digit or a request
+ * to type "ha ha ha" is meaningful, even when the same pattern could also be a model loop. Keyword checks still
+ * remove loops so they can hear a repeated stop phrase.
  */
 export function withoutRepeats(text: string, purpose?: "keyword"): string {
+  if (purpose !== "keyword" && /\b(?:say|write|right|type|spell|repeat|dictate|transcribe|quote|named|called)\b/i.test(text)) return text;
   const words = text.split(/\s+/).filter(Boolean);
   const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
   const same = (a: number, b: number, k: number) => { for (let j = 0; j < k; j++) if (norm(words[a + j]) !== norm(words[b + j])) return false; return true; };
@@ -116,6 +120,7 @@ export function withoutRepeats(text: string, purpose?: "keyword"): string {
       while (end + j < words.length && j < k && norm(words[i + j]).startsWith(norm(words[end + j])) && (norm(words[end + j]) === norm(words[i + j]) || end + j === words.length - 1)) j++;
       if (end + j === words.length) end += j;
       if (purpose !== "keyword" && n === 2 && (i !== 0 || end !== words.length)) continue;
+      if (purpose !== "keyword" && words.slice(i, i + k).every(isNumberWord)) continue;
       words.splice(i + k, end - (i + k));
     }
   }

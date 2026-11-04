@@ -79,6 +79,23 @@ describe("withoutRepeats", () => {
   it.each(["Find the New York, New York office.", "Find the New York New York office.", "Write go team go team in the note."])(
     "keeps an intentional phrase repeated inside a request: %s", text => expect(withoutRepeats(text)).toBe(text),
   );
+
+  it.each([
+    "Write ha ha ha in the note.", "Right go team go team go team in the note.", "Say no no no.",
+    "Type five five five.", "The code is five five five.", "The extension is 2 2 2.",
+    "Search for twenty-five twenty-five twenty-five.", "Find the second second second entry.",
+    "Open the folder called hey hey hey.",
+  ])("preserves dictated repeats and quantities: %s", text => expect(withoutRepeats(text)).toBe(text));
+
+  it("still removes loops during keyword verification, including words used in dictation", () => {
+    expect(withoutRepeats("Ember stop. Ember stop. Ember stop.", "keyword")).toBe("Ember stop.");
+    expect(withoutRepeats("say say say say", "keyword")).toBe("say");
+  });
+
+  it("still removes a whole sentence loop when it happens to contain a quantity", () => {
+    expect(withoutRepeats("Set a timer for 15 minutes. Set a timer for 15 minutes. Set a timer for 1")).toBe("Set a timer for 15 minutes.");
+    expect(withoutRepeats("Set up a call with Kofi set up a call with Kofi set up")).toBe("Set up a call with Kofi");
+  });
 });
 
 describe("recognizerPieces", () => {

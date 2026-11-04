@@ -16,6 +16,7 @@ import {
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { Logger } from "../../app/main/logger";
 import type { ConsentPanel } from "../../app/shared/consent";
+import { Confirmer } from "../../app/main/agent/confirm";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -605,5 +606,50 @@ describe("the page's semantics", () => {
     expect(dialog?.[0]).toMatch(/aria-describedby="body"/);
     expect(html.indexOf(main)).toBeLessThan(html.indexOf(dialog![0]));
     expect(html.indexOf(dialog![0])).toBeLessThan(html.indexOf("</main>"));
+  });
+});
+
+
+describe("focusable ordinary approvals", () => {
+  it("opens explicitly, shows exact text/options, and keeps arming, full-read, freshness and sender gates", async () => {
+    vi.useFakeTimers();
+    const { ctl, ipc, windows, win, page } = setup();
+    let n = 0;
+    const c = new Confirmer(() => undefined, { armMs: 500, gapMs: 0, onChange: q => {
+      if (!q) ctl.hideApproval(n); else n = q.n;
+    } });
+    ctl.onApproval((question, answer) => {
+      if (answer === undefined) { c.wholeSeen(question); return true; }
+      return c.answer(`q${question}:${answer}`, "bubble");
+    });
+    const q = { title: "May I?", prompt: "Type this exact text?", detail: "A long, exact message", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] };
+    const result = c.ask(q);
+    expect(windows).toHaveLength(0); // no passive focus stealing
+    ctl.showApproval({ ...q, id: `approval-${n}`, n, kind: "approval" });
+    expect(win().focused).toBe(true);
+    expect(win().shown()).toMatchObject({ n, title: q.title, prompt: q.prompt, detail: q.detail, options: q.options });
+    const invoke = (raw: unknown, sender: WebContentsLike = page()) => ipc.handles.get(PROMPT_IPC.approval)!({ sender }, raw);
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // arming
+    await vi.advanceTimersByTimeAsync(500);
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // unread
+    expect(invoke({ id: `approval-${n}` }, { id: 999, send() {} })).toBe(false);
+    expect(invoke({ id: `approval-${n}` })).toBe(true);
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // rearmed after full text
+    await vi.advanceTimersByTimeAsync(500);
+    expect(invoke({ id: `approval-${n}`, answer: "made-up" })).toBe(false);
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(true);
+    await expect(result).resolves.toBe("once");
+    expect(win().visible).toBe(false);
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false);
+    ctl.dispose();
+  });
+  it("cannot accept ordinary approvals through the SSH/consent answer channel", () => {
+    const { ctl, ipc, page } = setup();
+    const answer = vi.fn(() => true);
+    ctl.onApproval(answer);
+    ctl.showApproval({ id: "approval-4", n: 4, kind: "approval", title: "May I?", prompt: "Save?", options: [{ id: "once", label: "Allow" }] });
+    ipc.send(PROMPT_IPC.answer, page(), { id: "approval-4", ok: true });
+    expect(answer).not.toHaveBeenCalled();
+    ctl.hideApproval(4); ctl.dispose();
   });
 });

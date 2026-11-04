@@ -86,6 +86,14 @@ async function hashShown(c: { title: string; body: string[] }): Promise<string |
 
 async function press(b: ButtonView): Promise<void> {
   if (!card || sent) return;
+  if (card.kind === "approval") {
+    const shown = card;
+    if (b.id !== "deny" && shown.detail && !seenNow()) return;
+    // The Confirmer alone arms and accepts the exact current question. Rejected early presses leave it answerable.
+    const accepted = await api.approval(shown.id, b.id);
+    if (card === shown && accepted) { sent = true; for (const button of buttons) button.el.disabled = true; }
+    return;
+  }
   const r = pressResult(card, b, field, Date.now(), shownAt, seenNow());
   if (r.kind === "wait") { if (r.focusField) field.focus(); return; }
   sent = true;
@@ -98,6 +106,9 @@ function paintArmed(): void {
   const armed = Date.now() >= shownAt + PROMPT_ARM_MS;
   // A consent card's yes also waits until all its words have been in view.
   const unread = !!card && isConsent(card) && !seenNow();
+  if (card?.kind === "approval") {
+    for (const b of buttons) b.el.disabled = sent || (b.view.id !== "deny" && !!card.detail && !seenNow());
+  }
   for (const b of buttons) if (b.view.armed) b.el.disabled = sent || !armed || unread;
   if (!armed && !armTimer) armTimer = setTimeout(() => { armTimer = null; paintArmed(); }, shownAt + PROMPT_ARM_MS - Date.now() + 5);
 }
@@ -112,12 +123,13 @@ function judge(): void {
   // does a fit at another text size: main may set it just after the first card is drawn (cross-review X7).
   gate = judgeRead(gate, m, fontsLoaded, layoutNow());
   const seen = seenNow();
+  if (seen && card.kind === "approval" && card.detail) void api.approval(card.id);
   const more = moreBelow(m);
   words.classList.toggle("more", more);
   // Words that scroll can be scrolled from the keyboard too (Tab to them, then the arrow keys or Page Down).
   if (m.scrollHeight > m.clientHeight + 1) words.tabIndex = 0;
   else words.removeAttribute("tabindex");
-  const h = promptHint({ consent: isConsent(card), seen, more, field: !$("form").hidden, focused: document.hasFocus(), sinceShownMs: Date.now() - shownAt });
+  const h = promptHint({ consent: isConsent(card) || (card.kind === "approval" && !!card.detail), seen, more, field: !$("form").hidden, focused: document.hasFocus(), sinceShownMs: Date.now() - shownAt });
   if (hint.textContent !== h) hint.textContent = h;
   hint.hidden = !h;
   paintArmed();
@@ -192,7 +204,7 @@ window.addEventListener("keydown", e => {
   if (!card) return;
   if (e.key === "Escape") {
     e.preventDefault();
-    const c = buttons.find(b => b.view.id === "cancel");
+    const c = buttons.find(b => b.view.id === "cancel" || (card?.kind === "approval" && b.view.id === "deny"));
     if (c) void press(c.view);
   }
 });

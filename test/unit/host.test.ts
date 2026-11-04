@@ -105,6 +105,7 @@ import { SettingsStore } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { MemoryOwner } from "../../app/main/memory/owner";
 import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
+import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const TOKEN = "gho_" + "t".repeat(36); // not a real token
@@ -150,6 +151,27 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe("connecting and signing in", () => {
+  it("retains the complete long answer for Home and Read all, bounded to the current session", async () => {
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain this thoroughly");
+    const answer = "The full answer. ".repeat(600) + "Final retained sentence.";
+    conductorSession().emit("assistant.message", { content: answer });
+    conductorSession().emit("session.idle");
+    expect(host.lastAnswer()).toBe(answer);
+    expect(host.getTranscript().find(e => e.who === "ember")).toMatchObject({ text: answer });
+    expect(host.getTranscript().find(e => e.who === "ember")?.truncated).toBeUndefined();
+    // Exercise the host's actual transcript boundary without creating 60 model turns.
+    for (let i = 0; i < CONVERSATION_LIMIT; i++) (host as any).remember("ember", `answer ${i}`);
+    expect(host.getTranscript()).toHaveLength(CONVERSATION_LIMIT);
+    expect(host.getTranscript()[0].text).toBe("answer 0");
+    (host as any).remember("ember", "a".repeat(CONVERSATION_TEXT_LIMIT + 1));
+    expect(host.lastAnswer()).toHaveLength(CONVERSATION_TEXT_LIMIT);
+    expect(host.getTranscript().at(-1)?.truncated).toBe(true);
+    await host.forgetConversation();
+    expect(host.getTranscript()).toEqual([]);
+    await host.stop();
+  });
   it("keeps a manually opened spoken request with its own queued turn", async () => {
     const started: { text: string; spoken: boolean; manual?: true }[] = [];
     const { host } = makeHost({ onTurnStart: turn => started.push(turn) });

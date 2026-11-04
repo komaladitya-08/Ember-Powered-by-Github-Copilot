@@ -8,11 +8,37 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONVERSATION_SHOWN, conversationChange, conversationShown, earlierLabel } from "../../app/renderer/home/conversation-view";
 import { pushLater } from "../../app/main/push-later";
 import { askedWhere } from "../../app/renderer/home/tasks-copy";
+import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT, conversationRequest, retainedConversationText } from "../../app/shared/conversation";
+import { CONVERSATION_RETENTION, conversationMatchesText, conversationSearchCount } from "../../app/renderer/home/copy";
 
 const msg = (i: number) => ({ t: `2026-11-02T10:${String(i).padStart(2, "0")}:00.000Z`, who: i % 2 ? "ember" : "you", text: `message ${i}` });
 const range = (from: number, to: number) => Array.from({ length: to - from }, (_, k) => msg(from + k));
 
 describe("Home's conversation", () => {
+  it("keeps full long answers within an explicit bounded session, and discloses overflow", () => {
+    const answer = "A useful answer with its ending. ".repeat(300);
+    expect(answer.length).toBeGreaterThan(4000);
+    expect(retainedConversationText(answer)).toEqual({ text: answer });
+    expect(retainedConversationText("a".repeat(CONVERSATION_TEXT_LIMIT))).toEqual({ text: "a".repeat(CONVERSATION_TEXT_LIMIT) });
+    const overflow = retainedConversationText("a".repeat(CONVERSATION_TEXT_LIMIT - 1) + "😀ending");
+    expect(overflow).toEqual({ text: "a".repeat(CONVERSATION_TEXT_LIMIT - 1), truncated: true });
+    expect(CONVERSATION_LIMIT).toBe(60);
+    expect(CONVERSATION_RETENTION).toContain("latest 60 messages");
+    expect(CONVERSATION_RETENTION).toContain("Older messages are forgotten");
+  });
+
+  it("validates a fresh explicit request without coercing values or silently cutting text", () => {
+    expect(conversationRequest("  Ask a follow-up\nwith details  ")).toBe("Ask a follow-up\nwith details");
+    for (const bad of [null, {}, 7, " \n ", "a".repeat(2001)]) expect(conversationRequest(bad)).toBeNull();
+    expect(conversationRequest("a".repeat(2000))).toHaveLength(2000);
+  });
+
+  it("finds retained text without markup interpretation, including earlier messages and multiline code", () => {
+    expect(conversationMatchesText("Earlier <script>message</script>\nconst answer = 42;", " SCRIPT ")).toBe(true);
+    expect(conversationMatchesText("Earlier message", "missing")).toBe(false);
+    expect(conversationSearchCount(0)).toBe("0 matching messages in this session.");
+    expect(conversationSearchCount(1)).toBe("1 matching message in this session.");
+  });
   it("shows the latest thirty messages, or every one once asked", () => {
     expect(CONVERSATION_SHOWN).toBe(30);
     expect(conversationShown(range(0, 45), false)).toEqual(range(15, 45));
@@ -39,6 +65,12 @@ describe("Home's conversation", () => {
   it("starts again when the conversation was forgotten (sign-out, another account)", () => {
     expect(conversationChange(range(0, 5), [])).toEqual({ drop: 5, add: [] });
     expect(conversationChange(range(0, 5), [{ t: "x", who: "you", text: "new" }])).toEqual({ drop: 5, add: [{ t: "x", who: "you", text: "new" }] });
+  });
+
+  it("refreshes the disclosure if a replaced problem reaches its retention bound", () => {
+    const line = { ...msg(1), who: "problem" };
+    const bounded = { ...line, truncated: true };
+    expect(conversationChange([line], [bounded])).toEqual({ drop: 1, add: [bounded] });
   });
 });
 

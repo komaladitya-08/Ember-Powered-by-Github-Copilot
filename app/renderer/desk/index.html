@@ -14,6 +14,16 @@
     <button type="button" id="control">Take over</button>
     <button type="button" id="hide" aria-label="Hide">✕</button>
   </header>
+  <details id="desk-reading">
+    <summary>Read desk contents</summary>
+    <div class="reading-body">
+      <p>Read app text and control names without taking over. This view doesn't provide interactive app controls.</p>
+      <button type="button" id="read-refresh">Refresh contents</button>
+      <p id="read-status" role="status"></p>
+      <p id="read-title"></p>
+      <dl id="read-contents" tabindex="0" aria-label="Read-only app contents"></dl>
+    </div>
+  </details>
   <img id="screen" alt="What Ember is doing on its desk" draggable="false">
   <p id="live" class="sr" role="status"></p>
   <script src="main.js"></script>

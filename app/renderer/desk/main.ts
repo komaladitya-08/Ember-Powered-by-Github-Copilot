@@ -12,10 +12,33 @@ const control = document.getElementById("control") as HTMLButtonElement;
 const live = document.getElementById("live")!;
 let deskSize = { width: 1280, height: 800 };
 let inControl = false;
+let readingGeneration = 0;
+const refresh = document.getElementById("read-refresh") as HTMLButtonElement;
+const readingStatus = document.getElementById("read-status")!;
+const contents = document.getElementById("read-contents")!;
+const readingTitle = document.getElementById("read-title")!;
+const clearReading = () => { readingGeneration++; contents.replaceChildren(); readingTitle.textContent = ""; readingStatus.textContent = "Refresh to read the current app."; };
+refresh.addEventListener("click", async () => {
+  const generation = ++readingGeneration;
+  refresh.disabled = true; readingStatus.textContent = "Reading app contents…";
+  try {
+    const read = await api.describe();
+    if (generation !== readingGeneration) return;
+    contents.replaceChildren(...read.rows.flatMap(row => {
+      const name = document.createElement("dt"), text = document.createElement("dd");
+      name.textContent = [row.role, row.name].filter(Boolean).join(": "); text.textContent = row.text;
+      return [name, text];
+    }));
+    readingTitle.textContent = read.title;
+    readingStatus.textContent = `${read.message} Updated ${new Date(read.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`;
+  } catch { if (generation === readingGeneration) readingStatus.textContent = "Couldn't read app contents. Try Refresh again."; }
+  finally { refresh.disabled = false; }
+});
 /** Mouse buttons pressed on the desk picture (MouseEvent.button). */
 const pressed = new Set<number>();
 
 api.onFrame(f => {
+  if (document.getElementById("title")!.textContent !== f.title) clearReading();
   img.src = f.url;
   // The picture shows from the first frame on (never an empty, broken image).
   document.body.classList.add("live");
@@ -90,3 +113,4 @@ for (const t of ["keydown", "keyup"] as const) {
 }
 window.addEventListener("blur", letGo);
 document.addEventListener("visibilitychange", () => { if (document.hidden) letGo(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) clearReading(); });

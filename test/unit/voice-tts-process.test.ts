@@ -13,7 +13,7 @@ import type { Sherpa, Tts, TtsSpec } from "../../app/voice/runtime";
 /** The stand-in build: `cost` is the seconds a voice takes per second of speech (its clock moves on by that). */
 const fake = vi.hoisted(() => ({
   backend: "native" as "native" | "wasm",
-  cost: { vits: 0.05, kokoro: 0.3 } as Record<string, number>,
+  cost: { vits: 0.05, kokoro: 0.3, kitten: 0.25 } as Record<string, number>,
   failKokoro: false,
   emptyText: "",
   failText: "",
@@ -67,13 +67,13 @@ async function speechProcess() {
   (process as unknown as { parentPort: unknown }).parentPort = parent;
   await import("../../app/voice/tts-process");
   return {
-    init: (o: { natural?: string | null; wasm?: boolean } = {}) => parent.emit("message", { data: { type: "init", model: folder("vits-piper-en_US-kristin-medium", ["en_US-kristin-medium.onnx", "tokens.txt"]), ...o } }),
+    init: (o: { natural?: string | null; naturalModel?: "kokoro" | "kitten"; wasm?: boolean } = {}) => parent.emit("message", { data: { type: "init", model: folder("vits-piper-en_US-kristin-medium", ["en_US-kristin-medium.onnx", "tokens.txt"]), ...o } }),
     sent: () => parent.postMessage.mock.calls.map(c => c[0] as { type: string; voice?: Record<string, unknown>; rate?: number }),
   };
 }
 
 beforeEach(() => {
-  fake.backend = "native"; fake.cost = { vits: 0.05, kokoro: 0.3 }; fake.failKokoro = false; fake.made = []; fake.clock = 0;
+  fake.backend = "native"; fake.cost = { vits: 0.05, kokoro: 0.3, kitten: 0.25 }; fake.failKokoro = false; fake.made = []; fake.clock = 0;
   fake.emptyText = ""; fake.failText = "";
   fake.providers = ["cpu"]; fake.speedup = { cpu: 1, coreml: 1 };
   vi.spyOn(performance, "now").mockImplementation(() => fake.clock);
@@ -109,6 +109,27 @@ describe("Ember's voice process", () => {
     p.init({ natural: folder("kokoro-en-v0_19", ["model.onnx", "voices.bin", "tokens.txt"]) });
     expect(p.sent().find(m => m.type === "ready")).toMatchObject({ rate: 24_000, voice: { voice: "kokoro", backend: "native", rtf: 0.3 } });
     expect(fake.made.map(m => m.kind)).toEqual(["kokoro"]);
+  });
+
+  it("uses the selected Kitten model on one thread only when it meets the real-time cap", async () => {
+    const kitten = folder("kitten-nano-en-v0_8-fp32", ["model.fp32.onnx", "voices.bin", "tokens.txt"]);
+    let p = await speechProcess();
+    p.init({ natural: kitten, naturalModel: "kitten" });
+    expect(p.sent().find(m => m.type === "ready")).toMatchObject({ voice: { voice: "kitten", backend: "native", threads: 1, rtf: 0.25 } });
+    expect(fake.made.map(m => m.kind)).toEqual(["kitten"]);
+    fake.cost.kitten = 0.9;
+    fake.made = [];
+    p = await speechProcess();
+    p.init({ natural: kitten, naturalModel: "kitten" });
+    expect(p.sent().find(m => m.type === "ready")).toMatchObject({ voice: { voice: "piper", naturalWhy: "slow" } });
+    expect(fake.made.map(m => m.kind)).toEqual(["kitten", "vits"]);
+  });
+
+  it("keeps Kitten out of WebAssembly, with a usable Piper fallback", async () => {
+    const p = await speechProcess();
+    p.init({ natural: folder("kitten-nano-en-v0_8-fp32", ["model.fp32.onnx", "voices.bin", "tokens.txt"]), naturalModel: "kitten", wasm: true });
+    expect(p.sent().find(m => m.type === "ready")).toMatchObject({ voice: { voice: "piper", naturalWhy: "native" } });
+    expect(fake.made.map(m => m.kind)).toEqual(["vits"]);
   });
 
   it("times CoreML against the CPU (macOS) and keeps the faster, saying what each took", async () => {

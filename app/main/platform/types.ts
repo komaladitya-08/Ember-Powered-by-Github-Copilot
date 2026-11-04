@@ -476,8 +476,8 @@ export interface VoicePlatform {
    */
   nativeSpeechDir(resourcesPath: string): string | null;
   /**
-   * Whether the natural voice (Kokoro, voice.natural) may be fetched and used: win32/darwin true; linux false (no
-   * setting for it there, so a settings file that turns it on fetches nothing).
+   * Whether the native-addon natural voices are supported: win32/darwin true, Linux false. Main separately offers
+   * Kitten on Linux only when the C API backend is selected; Kokoro retains this original platform boundary.
    */
   readonly naturalVoice: boolean;
 }

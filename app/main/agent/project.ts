@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import { memoryRefusal } from "../memory/guard";
-import type { ProjectMode } from "../../shared/ipc";
+import type { ProjectMode, ProjectSelection } from "../../shared/ipc";
 import type { ProjectExchange } from "./project-workspaces";
 
 export const PROJECT_FILES = 6;
@@ -60,6 +60,24 @@ export function projectNames(files: readonly string[]): string[] {
     throw new ProjectInputError("Choose files with different names so the answer can identify them.");
   }
   return names;
+}
+
+/** Selection metadata only; source contents are still read exclusively on Send. Missing/moved files remain visible. */
+export async function projectSelection(files: readonly string[]): Promise<ProjectSelection> {
+  const names = files.length ? projectNames(files) : [];
+  const sizes = await Promise.all(files.map(async file => {
+    try { const stat = await fs.lstat(file); return stat.isFile() ? stat.size : null; }
+    catch { return null; }
+  }));
+  return { names, sizes };
+}
+
+/** Remove only an exact, uniquely selected basename; renderer input never selects a new path. */
+export function removeProjectFile(files: readonly string[], name: unknown): string[] {
+  if (typeof name !== "string" || !files.length || !projectNames(files).includes(name)) {
+    throw new ProjectInputError("Choose a selected file to remove.");
+  }
+  return files.filter(file => path.basename(file) !== name);
 }
 
 export interface ProjectSource { name: string; file: string; resolved: string; text: string; stat: Stats; digest: string; bom: boolean }

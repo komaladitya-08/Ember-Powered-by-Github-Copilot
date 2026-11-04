@@ -23,6 +23,11 @@ export function kokoroSpec(dir: string): TtsSpec {
   return { kind: "kokoro", model: path.join(dir, model), voices: path.join(dir, "voices.bin"), tokens: path.join(dir, "tokens.txt"), dataDir: path.join(dir, "espeak-ng-data"), lexicon: multi ? lexicon : "", lang: multi ? "en-us" : "", lengthScale: 1.0 };
 }
 
+/** The pinned Kitten Nano 0.8 FP32 export, with the compatible style table supplied in the same archive. */
+export function kittenSpec(dir: string): TtsSpec {
+  return { kind: "kitten", model: path.join(dir, "model.fp32.onnx"), voices: path.join(dir, "voices.bin"), tokens: path.join(dir, "tokens.txt"), dataDir: path.join(dir, "espeak-ng-data"), lengthScale: 1.0 };
+}
+
 /** Kokoro's speaker (af_heart in kokoro-multi-lang v1.0's voices.bin; af_bella in kokoro-en v0.19's). */
 const KOKORO_SID: Record<string, number> = { "kokoro-int8-multi-lang-v1_0": 3, "kokoro-multi-lang-v1_0": 3, "kokoro-en-v0_19": 1, "kokoro-int8-en-v0_19": 1 };
 

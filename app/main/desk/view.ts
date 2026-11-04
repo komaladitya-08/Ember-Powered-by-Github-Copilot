@@ -7,7 +7,8 @@
 
 import { BrowserWindow, ipcMain, screen } from "electron";
 import path from "node:path";
-import { DESK, type DeskInput } from "../../shared/desk";
+import { DESK, type DeskInput, type DeskReading } from "../../shared/desk";
+import { deskReading } from "./reading";
 import { SHORTCUT_MODIFIERS, planKey } from "./keys";
 import type { DeskPlace } from "./place";
 import type { Logger } from "../logger";
@@ -120,6 +121,8 @@ export class DeskView {
   private focusBack: (() => void) | null = null;
   /** The text's scale the window was last sized for (fitText resizes it when the setting changes). */
   private sizedFor = 1;
+  private reading = false;
+  private readingEpoch = 0;
 
   /**
    * `handleBounds`: where Ember's handle is now (global DIP), so the view keeps clear of it (the card without a
@@ -133,12 +136,14 @@ export class DeskView {
     private o: {
       lingerMs?: number; handleBounds?: () => Box | null; userFocus?: () => () => void; windowId?: (w: BrowserWindow) => number;
       textScale?: () => number;
+      canRead?: () => boolean;
     } = {}) {
     ipcMain.on(DESK.takeOver, e => { if (this.owns(e.sender) && !this.driving) this.setControl(true); });
     ipcMain.on(DESK.handBack, e => { if (this.owns(e.sender)) this.setControl(false); });
     ipcMain.on(DESK.hide, e => { if (this.owns(e.sender) && !this.driving) this.hide(); });
     ipcMain.on(DESK.release, e => { if (this.owns(e.sender)) this.releaseAll(); });
     ipcMain.on(DESK.input, (e, input: DeskInput) => { if (this.owns(e.sender) && this.control && !this.driving) this.forward(input); });
+    ipcMain.handle(DESK.describe, e => this.owns(e.sender) ? this.describe() : Promise.reject(new Error("This window can't read Ember's desk.")));
   }
 
   /** True while the user is using the desk: Ember must not act there. */
@@ -162,6 +167,7 @@ export class DeskView {
     this.users.set(place, (this.users.get(place) ?? 0) + 1);
     this.clearHide();
     if (this.place !== place) {
+      this.readingEpoch++;
       this.releaseAll();
       this.place = place;
       place.onDead(() => this.lost(place));
@@ -213,6 +219,7 @@ export class DeskView {
   }
 
   hide(): void {
+    this.readingEpoch++;
     this.setControl(false);
     this.clearHide();
     this.stopFrames();
@@ -328,6 +335,23 @@ export class DeskView {
     this.clearRestore();
     this.hide();
     this.place = null;
+  }
+
+  /** A user-invoked read only; no background scan, image, network call or mutation is introduced. */
+  private async describe(): Promise<DeskReading> {
+    const place = this.place, epoch = this.readingEpoch;
+    const unavailable = (): DeskReading => ({ at: Date.now(), title: "", message: "Desk text isn't available right now. Try again when the desk is open.", rows: [] });
+    const allowed = () => !!place && !place.dead && place === this.place && epoch === this.readingEpoch
+      && !this.driving && !!this.win && !this.win.isDestroyed() && this.win.isVisible() && this.o.canRead?.() === true;
+    if (this.reading || !allowed() || !place) return unavailable();
+    this.reading = true;
+    try {
+      // keep:false leaves the ids used by the worker's pending policy/approval untouched.
+      const active = place.x11.activeWindow();
+      const seen = await place.perception.read(active ? { pid: active.pid ?? undefined, title: active.title } : {}, active, undefined, { keep: false });
+      return allowed() ? deskReading(seen) : unavailable();
+    } catch { return unavailable(); }
+    finally { this.reading = false; }
   }
 
   private armHide(): void {

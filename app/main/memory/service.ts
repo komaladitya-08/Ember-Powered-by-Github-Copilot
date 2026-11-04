@@ -12,7 +12,8 @@
 import { consolidateInSlices } from "./consolidate";
 import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
-import { ENTITY_KINDS, type AddResult, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
+import { ENTITY_KINDS, MAX_FACT_CHARS, type AddResult, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
+import { memoryRefusal } from "./guard";
 import { recall, type Recalled } from "./recall";
 import { memoryFile, type MemoryFile } from "./store";
 import { samePolarity, terms } from "./text";
@@ -27,7 +28,10 @@ export const CONTEXT_FACTS = 6;
 export const OWN_WORDS = 0.6;
 
 /** One remembered fact as Settings lists it. */
-export interface MemoryItem { id: string; text: string; source: Source; at: string }
+export interface MemoryItem { id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string }
+
+const memoryItem = (f: Fact): MemoryItem => ({ id: f.id, text: f.text, source: f.source, at: f.validAt,
+  ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }) });
 
 export interface MemoryLog { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void }
 
@@ -108,11 +112,9 @@ export class MemoryService {
   /** Better recall's model came (or changed): the vectors catch up with what is remembered, in the background. */
   index(): void {
     // Not loaded yet (Ember starting): memory.json is read when something first needs it, and the index catches up then.
-    if (!this.graph) { this.indexPending = true; return; }
+    if (!this.graph) return;
     this.o.semantic?.changed(this.graph);
   }
-  /** index() came before memory.json was read: the first request catches the index up. */
-  private indexPending = false;
 
   /**
    * The model saves a fact. `said`: what the user said in this turn (whose words make it theirs). The answer is for the
@@ -144,10 +146,44 @@ export class MemoryService {
    */
   async context(request: string, history = false, allowed: () => boolean = () => true): Promise<string> {
     if (!allowed()) return "";
-    if (this.indexPending) { this.indexPending = false; this.o.semantic?.changed(this.g); }
-    const semantic = await this.o.semantic?.seeds(request);
+    // A restart may leave an older derived index beside a durable correction. Bind its hashes to the current graph
+    // before the first query, even when the model became ready before index() could attach a lazy graph.
+    let semantic: Map<string, number> | undefined;
+    try { this.o.semantic?.changed(this.g); semantic = await this.o.semantic?.seeds(request); }
+    catch { this.o.log.warn("memory.semantic_unavailable"); }
     if (!allowed()) return "";
     return memoryBlock(this.recall(request, CONTEXT_FACTS, history, semantic));
+  }
+
+  /** Corrects exactly the shown open fact after a durable write, preserving its subject, provenance and authority. */
+  correct(expected: MemoryItem, text: string): MemoryItem {
+    const current = this.g.fact(expected.id);
+    if (!current || current.invalidAt || current.text !== expected.text || current.source !== expected.source
+      || current.validAt !== expected.at || (current.revision ?? 0) !== (expected.revision ?? 0)) {
+      throw new Error("This memory changed. Close this edit and open it again before saving.");
+    }
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (!clean || clean.length > MAX_FACT_CHARS) throw new Error(`Keep the correction between 1 and ${MAX_FACT_CHARS} characters.`);
+    if (memoryRefusal(clean)) throw new Error("This correction holds a secret, so Ember hasn't saved it.");
+    const revision = (current.revision ?? 0) + 1;
+    if (!Number.isSafeInteger(revision)) throw new Error("This memory changed. Close this edit and open it again before saving.");
+    const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
+    const corrected = { ...next.fact(current.id)!, text: clean, revision, correctedAt: this.now().toISOString() };
+    next.replaceFact(corrected);
+    try { this.file.save(next); }
+    catch (err) {
+      this.o.log.warn("memory.correction_failed", { err: err instanceof Error ? err.message : String(err) });
+      throw new Error("Ember couldn't save this correction. The original memory is unchanged. Try again.", { cause: err });
+    }
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    this.cancelUpkeep();
+    this.graph = next;
+    this.changed = true;
+    // Derived indexing and a view notification cannot turn an already committed correction into a reported failure.
+    try { this.o.semantic?.changed(next); } catch { this.o.log.warn("memory.correction_index_failed"); }
+    this.o.log.info("memory.corrected", { source: corrected.source, chars: corrected.text.length });
+    try { this.o.onChange?.(); } catch { this.o.log.warn("memory.correction_notify_failed"); }
+    return memoryItem(corrected);
   }
 
   /** Forgets one fact by id, and reopens what it had replaced (Undo puts the old value back). True if it was there. */
@@ -165,7 +201,7 @@ export class MemoryService {
       this.o.semantic?.forget(id);
       this.file.save(next);
     } catch (err) {
-      this.o.semantic?.changed(this.g);
+      try { this.o.semantic?.changed(this.g); } catch { this.o.log.warn("memory.delete_index_recovery_failed"); }
       this.o.log.warn("memory.erase_failed", { err: err instanceof Error ? err.message : String(err) });
       throw new Error("Ember couldn't finish deleting this memory. It is still listed; try Forget again.", { cause: err });
     }
@@ -173,9 +209,10 @@ export class MemoryService {
     this.cancelUpkeep();
     this.graph = next;
     this.changed = true;
-    this.o.semantic?.changed(next);
+    // The deletion is durable; derived work and view notifications cannot reverse its acknowledgement.
+    try { this.o.semantic?.changed(next); } catch { this.o.log.warn("memory.delete_index_failed"); }
     this.o.log.info("memory.forgot", { count: 1, reopened });
-    this.o.onChange?.();
+    try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
     return true;
   }
 
@@ -186,23 +223,24 @@ export class MemoryService {
       this.o.semantic?.forgetAll();
       this.file.erase();
     } catch (err) {
-      if (this.graph) this.o.semantic?.changed(this.graph);
+      if (this.graph) {
+        try { this.o.semantic?.changed(this.graph); } catch { this.o.log.warn("memory.delete_index_recovery_failed"); }
+      }
       this.o.log.warn("memory.erase_failed", { err: err instanceof Error ? err.message : String(err) });
       throw new Error("Ember couldn't finish deleting memory from this computer. It is still listed; try Forget everything again.", { cause: err });
     }
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     this.graph?.clear();
-    this.indexPending = false;
     this.changed = false;
     this.o.log.info("memory.forgot_all");
-    this.o.onChange?.();
+    try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
   }
 
   /** What Ember remembers now, newest first (what still holds). */
   list(): MemoryItem[] {
     return this.g.allFacts(true)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
-      .map((f: Fact) => ({ id: f.id, text: f.text, source: f.source, at: f.validAt }));
+      .map(memoryItem);
   }
 
   /** Joins the current sleep-time pass. False if it was cancelled or no longer allowed. */

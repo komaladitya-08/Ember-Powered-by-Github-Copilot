@@ -14,6 +14,18 @@ import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefau
 import { onboardingRest } from "./computers-copy";
 import { needsUser, type SetupRow } from "../../shared/setup-attention";
 import { sideOf, type HandlePosition } from "../../shared/handle-place";
+import { CONVERSATION_LIMIT } from "../../shared/conversation";
+
+export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
+export const CONVERSATION_SCOPE = "Sends your message without reading a window. Use Ask Ember to include the app you’re working in. Existing conversation context still applies.";
+export const CONVERSATION_EDIT = "Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.";
+export const CONVERSATION_TRUNCATED = "This message exceeded the session limit of 131,072 characters. Only the text shown here is retained and copied.";
+export function conversationMatchesText(text: string, query: string): boolean {
+  return text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+}
+export function conversationSearchCount(matches: number): string {
+  return matches === 1 ? "1 matching message in this session." : `${matches} matching messages in this session.`;
+}
 
 /** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */
 export const NEVER_LOOK_DEFAULTS: readonly string[] = NEVER_LOOK_BY_OS.linux;
@@ -59,6 +71,9 @@ export function memoryDeleteFailedText(err: unknown): string {
   const said = ipcErrorText(err);
   return /^Ember couldn't finish deleting /.test(said) ? said : "Ember couldn't finish deleting memory. Try Forget again.";
 }
+
+/** The same safe deletion failure, naming the action beside the learned line. */
+export function learnedUndoFailedText(err: unknown): string { return memoryDeleteFailedText(err).replace(/(try|Try) Forget again/g, "$1 Undo again"); }
 
 /** Token counts that read naturally: "312", "1.2k", "48k". */
 export function tokens(n: number): string {
@@ -200,7 +215,8 @@ export function dayLabel(t: string, now = new Date()): string {
  * this OS writes it, "" while it holds neither its default nor its fallback (D-45b).
  */
 export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): string {
-  return askLabel ? `Nothing yet. Press ${askLabel} and ask Ember something.` : "Nothing yet. Use Ask Ember… at the top of Home to ask Ember something.";
+  return askLabel ? `No messages yet. Write to Ember below, or press ${askLabel} to open Ask Ember.`
+    : "No messages yet. Write to Ember below, or use Ask Ember… at the top of Home.";
 }
 
 /**
@@ -272,8 +288,45 @@ export function memorySourceLabel(source: string): string {
 /** The conversation's line when Ember keeps something new on its own, and its Undo button's name for screen readers. */
 export const learnedLine = (text: string) => `Ember learned: ${text}`;
 export const undoLearnedLabel = (text: string) => `Undo: forget “${text}”`;
-/** The line's button once it has been pressed. */
+/** The line's button once main confirms the deletion. */
 export const LEARNED_UNDONE = "Forgotten";
+export const UNDO_LEARNED = "Undo";
+export const MEMORY_FORGETTING = "Forgetting…";
+export const MEMORY_SEARCH_LABEL = "Search memory";
+export const MEMORY_SOURCE_LABEL = "Source";
+export const MEMORY_ALL_SOURCES = "All sources";
+export const MEMORY_SHOW_MORE = "Show more memories";
+export const MEMORY_NO_MATCHES = "No memories match. Try another word or source.";
+export const WORD_DELETE_FAILED = "Couldn't forget that correction. Try again.";
+export const WORDS_DELETE_FAILED = "Couldn't forget the corrections. Try again.";
+
+/** The visible page and all matching memories, without suggesting that hidden pages have been removed. */
+export function memoryCountText(shown: number, matched: number, all: number): string {
+  return matched === all ? `${shown} of ${all} ${all === 1 ? "memory" : "memories"}` : `${shown} of ${matched} matching ${matched === 1 ? "memory" : "memories"} (${all} total)`;
+}
+
+/** A selectable settings result carries its section as context, including repeated words such as “Download”. */
+export function settingsResultText(section: string, text: string): string { return `${section}: ${text.trim().replace(/\s+/g, " ")}`; }
+export const SETTINGS_MORE_RESULTS = "Show more results";
+export const SETTINGS_RESULTS_LABEL = "Settings search results";
+export const MEMORY_CORRECTION = {
+  correct: "Correct…", title: "Correct this memory", label: "Corrected memory", save: "Save correction", cancel: "Cancel",
+  hint: "The original source stays recorded. Correcting a memory doesn't give it more authority over what Ember does.",
+  saved: "Memory corrected.", saving: "Saving correction…",
+  finish: "Finish or cancel the current correction first. Your words are still here.",
+  stale: "This memory changed while you were editing. Your words are still here. Cancel and reopen the correction to review it.",
+  gone: "That memory is no longer saved. The correction has been closed.",
+  off: "Turn on memory for your verified account before saving a correction.",
+  failed: "Ember couldn't save this correction. Your words are still here; try again.",
+} as const;
+/** A corrected sentence still names its original source, including its original authority. */
+export function memoryProvenanceLabel(source: string, correctedAt?: string): string { return `${memorySourceLabel(source)}${correctedAt ? " · Corrected by you" : ""}`; }
+export const correctMemoryLabel = (text: string) => `Correct memory: ${text}`;
+/** Correction failures use main's plain bounded sentences; arbitrary IPC/filesystem details remain private. */
+export function memoryCorrectionFailedText(error: unknown): string {
+  const said = ipcErrorText(error);
+  return /^(?:This memory changed|Keep the correction|This correction holds a secret|Ember couldn't save this correction)/.test(said) ? said : MEMORY_CORRECTION.failed;
+}
 
 /**
  * "Tell Ember about you" (Settings › Memory and first run's optional step): every question can be left empty, and only
@@ -887,7 +940,7 @@ export const NATURAL_HINT = "Kokoro: downloads 350 MB once, and speaks only wher
  * The natural voice's row under its switch (Voice): what became of turning it on, so the switch never stays on with
  * nothing happening and nothing said. `retry`: the download failed, and its Try again button shows.
  */
-export function naturalVoiceView(s: NaturalVoiceStatus | undefined): { text: string; retry: boolean; busy: boolean } {
+export function naturalVoiceView(s: NaturalVoiceStatus | undefined, hint = NATURAL_HINT): { text: string; retry: boolean; busy: boolean } {
   switch (s?.state) {
     case "later": return { text: "On: Ember switches to it the next time it speaks, if this computer is fast enough for it.", retry: false, busy: false };
     case "checking": return { text: "Checking whether this computer is fast enough for the natural voice…", retry: false, busy: true };
@@ -899,6 +952,22 @@ export function naturalVoiceView(s: NaturalVoiceStatus | undefined): { text: str
     case "wont-load": return { text: "The natural voice wouldn't load on this computer, so Ember keeps its usual voice.", retry: false, busy: false };
     case "needs-native": return { text: "Needs Ember's faster speech, which didn't load on this computer, so Ember keeps its usual voice.", retry: false, busy: false };
     case "failed": return { text: `Couldn't download the natural voice. ${s.detail}`.trim(), retry: true, busy: false };
-    default: return { text: NATURAL_HINT, retry: false, busy: false };
+    default: return { text: hint, retry: false, busy: false };
   }
+}
+
+/** Plain, local-only feedback and labels for the upcoming reminder inventory. */
+export const REMINDER_WORDS = {
+  gone: "That reminder is no longer waiting.", edit: "Edit", cancel: "Cancel reminder", words: "Reminder words",
+  time: "Due on this computer's local time", save: "Save reminder", discard: "Discard edit",
+  updated: "Reminder updated.", cancelled: "Reminder cancelled.",
+  failed: "Couldn't change that reminder. Your edit is still here. If it changed or is already due, discard the edit and refresh the list.",
+  future: "Choose a future local time within one week.", kept: "Kept on this computer after Ember closes.", transient: "Until Ember closes.",
+  empty: "No reminders waiting.", deleted: "All routines and waiting reminders deleted.",
+  deleteFailed: "Couldn't delete the routines and reminders. Try again.", loadFailed: "Couldn't load reminders. Try Refresh list again.",
+} as const;
+
+/** Bulk deletion always names both visible record types and includes saved reminders in its scope. */
+export function reminderDeleteScope(routines: number, reminders: number): string {
+  return `Delete all ${routines} routines and ${reminders} waiting reminders? This removes saved reminders too.`;
 }

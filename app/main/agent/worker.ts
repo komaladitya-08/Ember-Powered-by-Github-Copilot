@@ -17,7 +17,8 @@ import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfi
 import { z } from "zod";
 import { PlanSchema, ViewInputSchema, checkView, viewCatalogPrompt, type ViewCheck, type ViewContext } from "./view-schema";
 import { ViewOpsSchema, applyViewOps } from "./view-doc";
-import { VIEW_LIMITS, planSteps, viewCounts, type PlanStep, type TaskHand, type ViewDoc } from "../../shared/view";
+import type { TaskUpdate } from "./tasks";
+import { VIEW_LIMITS, planSteps, viewCounts, type ViewDoc } from "../../shared/view";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import type { ReasoningEffort } from "./models";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
@@ -117,7 +118,7 @@ export interface WorkerDeps {
   flyTo: (bounds: Bounds | null) => void;
   onProgress: (text: string) => void;
   /** Its plan, how it works now, or its live view changed: its card shows them (docs/DESIGN.md "Two bodies", "Views"). */
-  onUpdate?: (u: { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc }) => void;
+  onUpdate?: (u: TaskUpdate) => void;
   /**
    * What the task did and is doing, for its card (app/main/agent/activity.ts): its steps as its tools and the app name
    * them, its questions and their answers, refusals, retries and its own notes. Never arguments, reasoning or screen text.
@@ -2238,6 +2239,13 @@ export class Worker {
     this.axScale = p.axScale ?? 1;
     // The window's own key (process and accessible path): later reads stay on exactly this window.
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
+    // Home can show only a window this worker actually read, by its native ID and process, never by screen text alone.
+    if (!this.place) {
+      const native = p.x11Window && p.x11Window.pid === p.window.pid && p.x11Window.title === p.window.name
+        ? p.x11Window : this.perception.nativeWindow?.(p.window);
+      this.d.onUpdate?.({ window: native && native.pid !== null && native.pid > 0
+        ? { id: native.id, pid: native.pid, title: native.title, ...(native.wmClass ? { wmClass: native.wmClass } : {}) } : null });
+    }
     if (!this.home && !DIALOG_ROLES.has(p.window.role ?? "")) this.home = { pid: p.window.pid ?? null, path: p.window.path, title: p.window.name, app: p.window.app, others: [], listed: false };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     // Only a whole read says every control a dialog holds (dialogAround's `whole`).

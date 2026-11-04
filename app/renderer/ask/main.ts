@@ -6,7 +6,7 @@ import type { AskContext, EmberAskApi } from "../../shared/ipc";
 import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
-import { CUT_NOTE, FIELD, WAIT_TIP, atLimit, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "./field";
+import { CUT_NOTE, WAIT_TIP, atLimit, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "./field";
 import { liveWords, seesView, type SeesView } from "./chips";
 import { watchPixels } from "../shared/pixels";
 import { mountListenOnce } from "../shared/listen-once";
@@ -23,6 +23,7 @@ document.documentElement.classList.toggle("opaque", query.has("opaque"));
 document.getElementById("key-send")!.textContent = sendKey(query.get("os"));
 
 const input = document.getElementById("q") as HTMLTextAreaElement;
+const send = document.getElementById("send") as HTMLButtonElement;
 const sees = document.getElementById("sees")!;
 const where = document.getElementById("where")!;
 const cut = document.getElementById("cut")!;
@@ -70,10 +71,11 @@ let said = "";
 const form = document.getElementById("form") as HTMLFormElement;
 const field = input.parentElement!;
 const listenRow = document.getElementById("listen-once-row")!;
+let suggested: string[] = [];
 /**
- * The window opens with one field row and one Listen once row, plus the wait tip when present.
+ * The window opens with one field row and two rows for the comfortable Listen once control, plus any wait tip.
  */
-let shownRows = 2;
+let shownRows = 3;
 /**
  * The field as tall as its text (one line to four, then it scrolls), the note on a line of its own when the text
  * reached the most that is sent (a longer paste was cut at the limit), the tip while it shows, and the window with all;
@@ -81,15 +83,20 @@ let shownRows = 2;
  */
 function fit(): void {
   const s = scale();
+  send.disabled = !input.value.trim();
+  syncSuggestions();
   field.style.flexBasis = `${fieldHeight(1, s)}px`;
   const lines = fieldLines(input.scrollHeight, s);
   field.style.flexBasis = `${fieldHeight(lines, s)}px`;
   input.classList.toggle("scrolls", input.scrollHeight > fieldHeight(lines, s) + 1);
   const full = atLimit(input.value);
   if (cut.hidden === full) { cut.hidden = !full; cut.textContent = full ? CUT_NOTE : ""; }
-  const listenRows = Math.max(1, Math.ceil((listenRow.offsetHeight + 4) / (FIELD.line * s)));
-  const rows = boxRows(lines, full, !tip.hidden, !suggest.hidden, listenRows);
+  // Layout heights: the opening animation's scale must not make the window too short for its final contents.
+  const listenRows = auxiliaryRows(listenRow.offsetHeight, s);
+  const suggestRows = auxiliaryRows(suggest.offsetHeight, s);
+  const rows = boxRows(lines, full, !tip.hidden, suggestRows, listenRows);
   if (rows !== shownRows) { shownRows = rows; window.emberAsk.fit?.(rows); }
+  form.classList.toggle("constrained", form.scrollHeight > form.clientHeight + 1);
 }
 const showListenOnce = mountListenOnce(
   document.getElementById("listen-once") as HTMLButtonElement,
@@ -103,7 +110,6 @@ window.emberAsk.onListenOnce(showListenOnce);
  * Ember's suggestions of what to ask next (each opening brings them, or none): chips that send their words as if typed.
  * They show only while the field is empty, so they never sit beside a request being written.
  */
-let suggested: string[] = [];
 function showSuggestions(list: string[]): void {
   suggested = list.slice(0, 3);
   for (const b of [...suggest.querySelectorAll("button")]) b.remove();
@@ -143,9 +149,11 @@ input.addEventListener("keydown", e => {
   input.setSelectionRange(input.value.length, input.value.length);
   fit();
 });
-input.addEventListener("input", () => { syncSuggestions(); fit(); });
+input.addEventListener("input", fit);
 // The text size changed (main sets it on the page, the box hidden meanwhile): the field is measured again at it.
 new MutationObserver(fit).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
+// A small work area can narrow the window independently of the text size; measure every wrapped row again.
+new ResizeObserver(() => { fitMeta(); fit(); }).observe(form);
 window.addEventListener("keydown", e => { if (e.key === "Escape") window.emberAsk.close(); });
 window.addEventListener("focus", () => input.focus());
 // The box went away: what was left in it (after Esc, or a click away) is selected, so typing replaces it when it opens
@@ -189,7 +197,7 @@ window.emberAsk.onContext(c => {
     setTimeout(grown, 250);
     tip.hidden = c.tip !== true;
     tip.textContent = tip.title = c.tip === true ? WAIT_TIP : "";
-    shownRows = boxRows(1, false, c.tip === true, !!c.suggestions?.length, 1);
+    shownRows = boxRows(1, false, c.tip === true, c.suggestions?.length ? 1 : 0, 2);
     showSuggestions(c.suggestions ?? []);
   }
   if (c.listenOnce) showListenOnce(c.listenOnce);

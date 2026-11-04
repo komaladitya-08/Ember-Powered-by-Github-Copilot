@@ -57,6 +57,7 @@ import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autono
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, statusQuestion, statusReply } from "./status";
+import { CONVERSATION_LIMIT, retainedConversationText } from "../../shared/conversation";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -149,7 +150,7 @@ export interface AgentStatus {
  * which userWordsOf reads), with the fact's id for its Undo. `heardId`: a request Ember heard, as voice personalisation
  * knows it (app/main/personal/service.ts heard()).
  */
-export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; fact?: string; heardId?: number }
+export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number }
 
 export interface HostOptions {
   userData: string;
@@ -172,6 +173,8 @@ export interface HostOptions {
   };
   /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
   onReminder?: (r: Reminder) => void;
+  /** Live reminder list for Home, including transient reminders while lasting routines are off. */
+  onRemindersChanged?: (rows: Reminder[]) => void;
   /** Routines and lasting reminders (routines.ts): used only while the user has them on, agreed and allowed. */
   routines?: RoutineBook;
   /**
@@ -298,6 +301,7 @@ export interface HostOptions {
   targets?: TargetsForAgent;
   /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
   taskBase?: { audit: AuditLog; confirmer: Confirmer };
+  taskWindow?: (task: Task, focus: boolean) => boolean;
   /** Ember's own pids now (app.getAppMetrics() and its helpers'), for commands on this computer (D4.5, live). */
   emberPids?: () => number[];
   /** A task announced a command the user asked for (D4.4): main speaks it when replies are spoken. */
@@ -462,7 +466,7 @@ const TRANSIENT_DETAIL = "Copilot had a problem on its side while Ember connecte
 const NO_MODEL = /^(None of the models|Copilot lists no models|Enter the model)/;
 
 /** The user's own provider is on with no model named (Home › Copilot's Model fields). */
-export const USER_PROVIDER_NO_MODEL = "Enter the model your provider should use in Ember's settings, under Copilot.";
+export const USER_PROVIDER_NO_MODEL = "Enter the model your provider should use in Ember's settings, under Models & connections.";
 /** Every model the user named for their own provider is outside the administrator's allowed list. */
 export const USER_PROVIDER_NOT_ALLOWED = "None of the models you entered for your provider are allowed by your administrator.";
 /** A request held because the model service changed while a turn or a task was under way (it never goes to the one before). */
@@ -868,7 +872,7 @@ export class AgentHost {
    * The user's reminders (reminders.ts): set only from their own words, kept in memory only, and when one is due it is
    * shown in the bubble (main also says it and notifies): it never starts anything.
    */
-  readonly reminders = new Reminders({ onDue: r => this.reminderDue(r) });
+  readonly reminders = new Reminders({ onDue: r => this.reminderDue(r), onList: rows => this.o.onRemindersChanged?.(rows) });
 
   private reminderDue(r: Reminder): void {
     this.o.log.info("agent.reminder_due", { late: Math.max(0, Date.now() - r.at) });
@@ -1055,7 +1059,7 @@ export class AgentHost {
     return [...this.transcript];
   }
 
-  /** The last thing Ember said, in full. */
+  /** The last retained answer. Home discloses if the explicit per-message memory bound was reached. */
   lastAnswer(): string | null {
     return [...this.transcript].reverse().find(e => e.who === "ember")?.text ?? null;
   }
@@ -1086,7 +1090,8 @@ export class AgentHost {
     const agreed: Agreement[] = [];
     const log = this.transcript;
     const apart = (a: TranscriptEntry, b: TranscriptEntry) => Date.parse(a.t) - Date.parse(b.t);
-    let at = log.map(e => e.who === "you" && e.text === r.words.slice(0, 4000)).lastIndexOf(true);
+    const requestText = retainedConversationText(r.words).text;
+    let at = log.map(e => e.who === "you" && e.text === requestText).lastIndexOf(true);
     for (let n = 0; at > 0 && n < 3; n++) {
       const reply = log[at].text;
       const last = log[at - 1];
@@ -1120,9 +1125,9 @@ export class AgentHost {
   }
 
   private remember(who: TranscriptEntry["who"], text: string, heardId?: number): TranscriptEntry {
-    const entry: TranscriptEntry = { t: new Date().toISOString(), who, text: text.slice(0, 4000), ...(heardId ? { heardId } : {}) };
+    const entry: TranscriptEntry = { t: new Date().toISOString(), who, ...retainedConversationText(text), ...(heardId ? { heardId } : {}) };
     this.transcript.push(entry);
-    if (this.transcript.length > 60) this.transcript.splice(0, this.transcript.length - 60);
+    if (this.transcript.length > CONVERSATION_LIMIT) this.transcript.splice(0, this.transcript.length - CONVERSATION_LIMIT);
     this.o.onTranscript?.(this.getTranscript());
     return entry;
   }
@@ -1134,10 +1139,11 @@ export class AgentHost {
    */
   private rememberProblem(text: string): void {
     const last = this.transcript.at(-1);
-    const said = text.slice(0, 4000);
+    const retained = retainedConversationText(text);
+    const said = retained.text;
     // (Only the same request's: two requests sent together that both fail get a line each.)
     if (last?.who === "problem" && this.problemTurn === this.turn && (last.text === said || Date.now() - Date.parse(last.t) < 3000)) {
-      this.transcript[this.transcript.length - 1] = { ...last, text: said };
+      this.transcript[this.transcript.length - 1] = { ...last, ...retained, truncated: retained.truncated };
       this.o.onTranscript?.(this.getTranscript());
       return;
     }
@@ -1349,6 +1355,8 @@ export class AgentHost {
         && this.o.admin?.().features.screenImages !== false;
       this.tasks = hands || (targets && this.targetsTakeTasks()) ? new TaskManager({
         log: this.o.log.child("tasks"),
+        ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
+        ...(this.o.taskWindow ? { taskWindow: this.o.taskWindow } : {}),
         currentWindow: hands?.currentWindow ?? (() => null),
         setCards: cards => this.o.setState({ tasks: cards }),
         onView: (id, view) => this.o.showView?.(id, view),

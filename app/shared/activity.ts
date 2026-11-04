@@ -75,6 +75,8 @@ export type AskedIn = "bubble" | "command" | "card";
  * state, plan, where it works and how it ended). Kept in memory only, for the tasks with a card and the twenty newest
  * finished ones besides, and gone when Ember quits. `summary`, the plan's and the view's words are the worker's own.
  */
+export type TaskControlAction = "stop" | "retry" | "window";
+
 export interface TaskEntry {
   id: string;
   title: string;
@@ -88,6 +90,8 @@ export interface TaskEntry {
   summary?: string;
   /** What it shows: its live view while it works (show_view), what it found or made once it ended. */
   view?: ViewDoc;
+  /** Main's current capabilities; every activation rechecks the exact task ID. Historical rows have none. */
+  controls?: { stop: boolean; retry: boolean; window: boolean };
   activity: TaskActivity;
 }
 

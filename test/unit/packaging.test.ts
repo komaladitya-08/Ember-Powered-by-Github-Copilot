@@ -791,6 +791,17 @@ describe("the Windows and macOS CI jobs", () => {
     expect(steps(job("macos"))[0]).toMatch(/^name: Runner facts[\s\S]*sw_vers[\s\S]*uname -m[\s\S]*TCC\.db/);
   });
 
+  it("fetches the optional pinned Kitten model before each required native speech gate, keeping default preparations small", () => {
+    for (const name of ["el8", "windows", "macos"]) {
+      const native = job(name);
+      expect(native, name).toContain("node scripts/voice/prepare.mjs --kitten");
+      expect(native.indexOf("node scripts/voice/prepare.mjs --kitten"), name).toBeLessThan(native.indexOf("EMBER_KITTEN_TEST"));
+    }
+    for (const name of ["checks", "package", "voice-e2e", "eval", "macos-x64"]) {
+      expect(job(name), name).not.toContain("node scripts/voice/prepare.mjs --kitten");
+    }
+  });
+
   it("compile the bridge by running it as Ember runs it, stdin closed, on every run (W21)", () => {
     const windows = job("windows");
     expect(windows).not.toMatch(/Add-Type -Path sidecar|-ReferencedAssemblies UIAutomationClient/);

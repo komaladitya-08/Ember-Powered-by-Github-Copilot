@@ -65,6 +65,9 @@ export const FactSchema = z.object({
   /** The last time recall returned it, and how often it has (or was reinforced). */
   lastUsedAt: Iso.nullable(),
   uses: z.number().int().min(0),
+  /** Explicit local corrections change the sentence, never its source or authority. Legacy facts omit these. */
+  revision: z.number().int().safe().min(0).optional(),
+  correctedAt: Iso.optional(),
 });
 export type Fact = z.infer<typeof FactSchema>;
 
@@ -281,7 +284,12 @@ export class MemoryGraph {
 
   /** Replaces a fact in place (consolidation's merges). */
   replaceFact(f: Fact): void {
-    if (this.facts.has(f.id)) this.facts.set(f.id, f);
+    const current = this.facts.get(f.id);
+    if (!current) return;
+    this.facts.set(f.id, { ...f,
+      ...(current.revision === undefined && f.revision === undefined ? {} : { revision: Math.max(current.revision ?? 0, f.revision ?? 0) }),
+      ...(current.correctedAt === undefined && f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt ?? current.correctedAt }),
+    });
   }
 
   /** Folds entity `from` into `into`: its names become aliases, and its facts move over. */

@@ -8,6 +8,9 @@
 
 import { speechMarkupOpen, spokenText } from "./spoken";
 
+/** The optional native voices; Kokoro remains the existing choice until the user selects Kitten. */
+export type NaturalVoiceModel = "kokoro" | "kitten";
+
 /**
  * The natural voice (Kokoro) speaks only where it is made at most this fast (0.5: a second of speech in half a second),
  * so a reply streams sentence by sentence without gaps and its first words come within about half a second.

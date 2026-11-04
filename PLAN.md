@@ -585,6 +585,24 @@ organisation has them off. "Status?" says a task waits for the user's answer or 
 
 ## 10. Progress
 
+### UI, accessibility and speech follow-up (2026-11-04)
+
+The owner authorised the entire UI review and its implementation. Home now provides an inline transient
+conversation composer, explicit edit/send and scoped Stop, searchable full retained answers, Projects as a separate
+work destination, selectable settings results, stable searchable memory controls, and an inspectable reminder list.
+Ask has a visible Send action and measured wrapping controls. Approvals activate on release inside a stable target;
+Open approval opens the exact live main-owned question without passive focus stealing or new action authority.
+Task result reading leases and More time keep decisions/results available. The desk adds explicit bounded inert
+accessibility text with existing secret, consent, lock and action-ID protection; interactive semantic takeover is
+not claimed. Export remains a separate user-selected local action and cannot bypass reviewed patch application.
+
+Literal dictated repeats/numbers are retained while whole-sentence model-loop recovery stays enabled. Neural
+speech releases after two idle minutes. Optional Kitten Nano 0.8 FP32 uses the pinned native runtime, explicit
+model/download choice, measured speed gate and Piper fallback; Piper and existing Kokoro defaults are preserved.
+Audio remains local and transient. See docs/DESIGN.md, docs/ASSISTANT.md and the UI review for exact acceptance
+coverage; native assistive-technology, physical microphone and listening-quality checks remain separate gates.
+
+
 Task orchestration review (2026-11-03, M2/M4.1): retries retain accepted steering and restrictions with the original
 target binding; concurrent memory recall cannot reorder dispatched requests. Turns correlate against the exact sent
 prompt, retaining their user/command words and voice provenance; unmatched messages cannot start or steer tasks.

@@ -26,7 +26,7 @@ vi.mock("electron", () => {
   const area = { x: 0, y: 0, width: 1920, height: 1080 };
   return {
     BrowserWindow,
-    ipcMain: { on: () => undefined },
+    ipcMain: { on: () => undefined, handle: () => undefined },
     screen: { getPrimaryDisplay: () => ({ workArea: area }), getDisplayMatching: () => ({ workArea: area }) },
   };
 });

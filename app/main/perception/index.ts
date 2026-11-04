@@ -299,6 +299,16 @@ export class Perception {
     return k;
   }
 
+  /** The native identity of an accessibility window just read; exact process, title and geometry, never title alone. */
+  nativeWindow(window: AxWindow): (X11Window & { wmClass: string }) | null {
+    if (window.pid === null || window.pid <= 0 || window.pid === this.ownPid || this.isPrivate(window.app, window.name, this.o.neverLook())) return null;
+    const stack = this.stackNow();
+    const matched = stack && matchFrame(window, stack)?.window;
+    if (!matched || matched.pid !== window.pid || matched.title !== window.name) return null;
+    return { id: matched.client, pid: matched.pid, title: matched.title, wmClass: matched.wmClass,
+      x: matched.x, y: matched.y, width: matched.width, height: matched.height };
+  }
+
   /** The X11 top-level windows, bottom to top (null without X11 or when it fails). */
   private stackNow(): StackedWindow[] | null {
     if (!this.o.x11) return null;

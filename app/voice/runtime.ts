@@ -43,6 +43,7 @@ export interface MoonshineSpec { encoder: string; mergedDecoder: string; tokens:
 /** A voice: a Piper (VITS) voice, or Kokoro (native only: in WebAssembly it is several times slower than real time). */
 export type TtsSpec =
   | { kind: "vits"; model: string; tokens: string; dataDir: string; noiseScale: number; noiseScaleW: number; lengthScale: number }
+  | { kind: "kitten"; model: string; voices: string; tokens: string; dataDir: string; lengthScale: number }
   | { kind: "kokoro"; model: string; voices: string; tokens: string; dataDir: string; lexicon: string; lang: string; lengthScale: number };
 
 /** How a model runs: onnxruntime's execution provider and its CPU threads. */
@@ -159,7 +160,7 @@ function wasmSherpa(detail: string): Sherpa {
       }));
     },
     createTts(s, _run, maxNumSentences) {
-      if (s.kind !== "vits") throw new Error("Kokoro needs the native build");
+      if (s.kind !== "vits") throw new Error(`${s.kind === "kitten" ? "Kitten" : "Kokoro"} needs the native build`);
       const tts = made("voice", w.createOfflineTts({
         offlineTtsModelConfig: {
           offlineTtsVitsModelConfig: { model: s.model, tokens: s.tokens, dataDir: s.dataDir, noiseScale: s.noiseScale, noiseScaleW: s.noiseScaleW, lengthScale: s.lengthScale },
@@ -239,6 +240,7 @@ function nativeSherpa(a: any): Sherpa {
     createTts(s, run, maxNumSentences) {
       const model = s.kind === "vits"
         ? { vits: { model: s.model, tokens: s.tokens, dataDir: s.dataDir, noiseScale: s.noiseScale, noiseScaleW: s.noiseScaleW, lengthScale: s.lengthScale } }
+        : s.kind === "kitten" ? { kitten: { model: s.model, voices: s.voices, tokens: s.tokens, dataDir: s.dataDir, lengthScale: s.lengthScale } }
         : { kokoro: { model: s.model, voices: s.voices, tokens: s.tokens, dataDir: s.dataDir, lexicon: s.lexicon, lang: s.lang, lengthScale: s.lengthScale } };
       const h = a.createOfflineTts({ model: { ...model, numThreads: run.numThreads, provider: run.provider, debug: 0 }, maxNumSentences });
       if (!h) throw new Error("the voice couldn't be made");

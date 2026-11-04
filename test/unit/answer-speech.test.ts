@@ -6,50 +6,131 @@ import { SpeechStream } from "../../app/voice/tts";
 import { endsWithQuestion, spokenText } from "../../app/voice/spoken";
 import { TurnLatency } from "../../app/main/turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "../../app/main/acknowledge";
+import { speaksAloud } from "../../app/shared/speech";
+import { IPC } from "../../app/shared/ipc";
 
 function wiring() {
   const source = fs.readFileSync("app/main/main.ts", "utf8");
-  const speech = source.slice(source.indexOf("  const answerSpeech ="), source.indexOf("  // ───── Copilot brain"));
+  const speech = source.slice(source.indexOf("  let accountErasures ="), source.indexOf("  // ───── Copilot brain"));
   const callbacks = source.slice(source.indexOf("      onTurnStart: turn =>"), source.indexOf("      onStatus: status =>", source.indexOf("      onTurnStart: turn =>")));
   const taskCallback = source.slice(source.indexOf("      onTaskFinished: t =>"), source.indexOf("      isOnline:", source.indexOf("      onTaskFinished: t =>")));
+  const transcriptCallback = source.slice(source.indexOf("      onTranscript: entries =>"), source.indexOf("      // Another account signed in:", source.indexOf("      onTranscript: entries =>")));
+  const learnedForgot = source.slice(source.indexOf("    onForgotAll: () => {"), source.indexOf("    // One fact forgotten", source.indexOf("    onForgotAll: () => {")));
+  const signOut = source.slice(source.indexOf("  ipcMain.handle(IPC.signOut,"), source.indexOf("  ipcMain.handle(IPC.cancelSignIn,"));
   expect(speech.length).toBeGreaterThan(500);
   expect(callbacks.length).toBeGreaterThan(500);
   const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), micState: "waiting" };
-  const agent = { answerOpen: false, tasks: null, pauseAnswer: vi.fn() };
+  const agent = { answerOpen: false, tasks: null, pauseAnswer: vi.fn(), forgetConversation: vi.fn(async (): Promise<void> => undefined), start: vi.fn(async (): Promise<void> => undefined) };
+  const broadcast = vi.fn();
+  const voicePreference = { natural: true, naturalModel: "kitten" };
   const confirmer = { waiting: false };
   const personal = { answered: vi.fn(() => null) };
   const code = ts.transpile(`
     let lastAskByVoice = false, turnAnswer = "", lastReply = "";
-    const log = { info() {} }, maySpeak = () => true;
+    const log = { info() {} }, policy = { features: {} }, screenLock = null;
+    const sys = { a11y: { screenReaderOn: () => true } };
     let askedAt = 0;
     let manualCall = null;
     const syncListenOnce = () => {};
     const lastState = { bubble: { visible: false } }, showState = () => {};
-    const settings = { get: () => ({ speakResults: true }) }, userAway = () => false, notify = () => {};
+    const settings = { get: () => ({ speak: "always", speakResults: true, voice: voicePreference }) }, userAway = () => false, notify = () => {};
+    let signOutHandler;
+    const ipcMain = { handle: (_channel, callback) => { signOutHandler = callback; } }, guard = fn => fn;
+    let signOuts = 0, currentToken = null, askHistory = [], learnedLines = [];
+    const signInAbort = { abort() {} }, keeper = { use() {} }, tokens = { clear() {} }, providers = { forget() {} }, refusedTokens = new Set();
+    const conversationNow = (entries = []) => entries;
     ${speech}
+    ${signOut}
     return {
-      ${callbacks} ${taskCallback} interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech,
+      ${callbacks} ${taskCallback} ${transcriptCallback} ${learnedForgot}
+      interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech, signOut: () => signOutHandler(),
       manualListening: on => { manualCall = on ? { source: "ask" } : null; },
     };
   `, { target: ts.ScriptTarget.ES2022 });
-  const run = new Function("SpeechStream", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "voice", "personal", "agent", "confirmer", code);
-  const callbacksUnderTest = run(SpeechStream, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, voice, personal, agent, confirmer) as {
+  const run = new Function("SpeechStream", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", code);
+  const callbacksUnderTest = run(SpeechStream, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, IPC, broadcast, voicePreference, voice, personal, agent, confirmer) as {
     onTurnStart(turn: { text: string; spoken: boolean; manual?: true }): void;
     onAnswerDelta(text: string): void;
     onAnswer(text: string): void;
     onAnswerEnd(text: string): void;
     onTurnEnd(aborted: boolean): void;
     onTaskFinished(task: { title: string; status: string; text: string; summary: string }): void;
+    onTranscript(entries: unknown[]): void;
+    onForgotAll(): void;
+    signOut(): Promise<void>;
     interrupt(): void;
     pause(): void;
     manualListening(on: boolean): void;
   };
-  return { ...callbacksUnderTest, voice, personal, agent, confirmer };
+  return { ...callbacksUnderTest, voice, personal, agent, confirmer, broadcast, voicePreference };
 }
 
 afterEach(() => vi.useRealTimers());
 
 describe("main's answer speech ownership", () => {
+  it("retires queued acknowledgement and late old-account speech before asynchronous sign-out work", async () => {
+    vi.useFakeTimers();
+    const w = wiring();
+    let finish!: () => void;
+    w.agent.forgetConversation.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    w.onTurnStart({ text: "Open the document", spoken: true });
+    w.onAnswerDelta("A private unfinished sentence");
+    const hushes = w.voice.hush.mock.calls.length;
+    const signingOut = w.signOut();
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
+    expect(w.agent.forgetConversation).toHaveBeenCalledOnce();
+    // Runtime/task callbacks arriving while teardown waits cannot begin new playback or another acknowledgement.
+    w.onTurnStart({ text: "Another old queued request", spoken: true });
+    w.onAnswerDelta("Private old words. Another private sentence.");
+    w.onAnswer("The late old answer.");
+    w.onTaskFinished({ title: "Old private task", status: "done", text: "Private result.", summary: "Done" });
+    vi.advanceTimersByTime(ACK_MS + 1);
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    finish();
+    await signingOut;
+    w.onAnswerDelta("An old delta after sign-out.");
+    w.onAnswerEnd("The old final message.");
+    w.onTurnEnd(false);
+    vi.advanceTimersByTime(ACK_MS + 1);
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    expect(w.voice.followUp).not.toHaveBeenCalled();
+    expect(w.voicePreference).toEqual({ natural: true, naturalModel: "kitten" });
+    w.onTurnStart({ text: "The new account’s own request", spoken: false });
+    w.onAnswer("Only the new reply.");
+    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Only the new reply.", { append: false });
+  });
+
+  it("hushes authoritative account erasure, while an ordinary empty learned-fact view preserves speech", () => {
+    vi.useFakeTimers();
+    const w = wiring();
+    w.onTurnStart({ text: "Open the document", spoken: true });
+    const hushes = w.voice.hush.mock.calls.length;
+    w.onForgotAll();
+    expect(w.broadcast).toHaveBeenLastCalledWith(IPC.conversationChanged, []);
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes);
+    w.onTranscript([{ who: "you", text: "Open the document" }]);
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes);
+    w.onTranscript([]);
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
+    expect(w.broadcast).toHaveBeenCalledWith(IPC.conversationForgotten, null);
+    w.onAnswer("The erased account’s answer.");
+    vi.advanceTimersByTime(ACK_MS + 1);
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    expect(w.voicePreference).toEqual({ natural: true, naturalModel: "kitten" });
+  });
+
+  it("keeps the failed sign-out’s speech retired and lets a later account’s own turn speak", async () => {
+    const w = wiring();
+    w.agent.forgetConversation.mockRejectedValue(new Error("Erasure failed"));
+    w.onTurnStart({ text: "Old request", spoken: true });
+    await expect(w.signOut()).rejects.toThrow("Erasure failed");
+    w.onAnswer("The old answer after failed erasure.");
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    w.onTurnStart({ text: "Another account’s request", spoken: false });
+    w.onAnswer("The current account’s answer.");
+    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("The current account’s answer.", { append: false });
+    expect(w.voicePreference).toEqual({ natural: true, naturalModel: "kitten" });
+  });
   it("preserves spoken ownership through a formal question and speaks its post-approval completion", () => {
     vi.useFakeTimers();
     const w = wiring();

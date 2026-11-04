@@ -7,25 +7,29 @@ import type { MemoryItem } from "../main/memory/service";
 import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { MemoryOwnership } from "../main/memory/owner";
+import type { MemoryCorrection } from "./memory-correction";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
+/** A waiting reminder and whether its exact current version is retained after quit. */
+export interface ReminderRow { id: string; text: string; at: number; created: number; kept: boolean }
+export interface ReminderChange { expected: Omit<ReminderRow, "kept">; replacement: { text: string; at: number } | null }
 export type ProjectMode = "review" | "plan" | "patch";
-export interface ProjectSelection { names: string[]; changed?: boolean; error?: string }
+export interface ProjectSelection { names: string[]; sizes?: (number | null)[]; changed?: boolean; error?: string }
 export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; canContinue: boolean } | { error: string };
 export type ProjectWorkspaceAction = { action: "list" } | { action: "save" | "open" | "forget"; name: string };
 export interface ProjectWorkspaceReply {
   names?: string[];
   message?: string;
-  opened?: { files: string[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
+  opened?: { files: string[]; sizes?: (number | null)[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
 }
-export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership }
+export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number }
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
 import type { TargetSummary } from "./targets";
 import type { Installed, MarketplaceEntry } from "./extensions";
-import type { TaskEntry } from "./activity";
+import type { TaskControlAction, TaskEntry } from "./activity";
 
 /** Main pushes Home's Task activity at most this often (a task's steps can come many a second). */
 export const TASKS_PUSH_MS = 500;
@@ -68,7 +72,12 @@ export const IPC = {
   openSignInPage: "agent:open-sign-in-page",
   conversation: "agent:conversation",
   conversationChanged: "agent:conversation-changed",
+  conversationForgotten: "agent:conversation-forgotten",
+  conversationSend: "agent:conversation-send",
+  conversationStop: "agent:conversation-stop",
   projectPick: "project:pick",
+  projectRemove: "project:remove",
+  projectExport: "project:export",
   projectRun: "project:run",
   projectClear: "project:clear",
   projectCancel: "project:cancel",
@@ -81,6 +90,7 @@ export const IPC = {
   memoryChanged: "memory:changed",
   memoryForget: "memory:forget",
   memoryForgetAll: "memory:forget-all",
+  memoryCorrect: "memory:correct",
   /** "Tell Ember about you": the answers, checked whole in main (IntroSchema) and kept as the user's own facts. */
   memoryIntroduce: "memory:introduce",
   /** Better recall's model (memory/better-recall.ts): its state and changes to it, Download and Remove. */
@@ -93,6 +103,9 @@ export const IPC = {
   routinesChanged: "routines:changed",
   routinesForget: "routines:forget",
   routinesForgetAll: "routines:forget-all",
+  remindersList: "reminders:list",
+  remindersChanged: "reminders:changed",
+  reminderChange: "reminders:change",
   /**
    * Main asks the settings window to show one of its sections ("conversation", "copilot", "privacy"), or a control in
    * one ("computers:host", "computers:wsl"; renderer/home/section-request.ts).
@@ -125,6 +138,8 @@ export const IPC = {
    * the same list when it changes (at most every TASKS_PUSH_MS, only to the settings window).
    */
   tasks: "tasks:activity",
+  openApproval: "ember:open-approval",
+  taskControl: "tasks:control",
   tasksChanged: "tasks:activity-changed",
   /** Everything was stopped (first run's stop rehearsal hears the shortcut): the source, "hotkey" for the keys. */
   homeStopped: "ember:home-stopped",
@@ -164,8 +179,10 @@ export interface VoiceStatus {
   speechMissing?: boolean;
   /** Voice Match: whether a voiceprint is kept (`enrolled`) and in use (`on`), and enrolment's progress while it runs. */
   match?: VoiceMatchStatus;
-  /** The natural voice (Kokoro, Windows and macOS): what became of turning it on, shown under its switch. */
+  /** The selected natural voice: what became of turning it on, shown under its switch. */
   natural?: NaturalVoiceStatus;
+  /** Optional voices supported by this computer's selected native backend. No model is downloaded by listing them. */
+  naturalModels?: Settings["voice"]["naturalModel"][];
   listenOnce?: ListenOnceStatus;
 }
 
@@ -300,6 +317,8 @@ export interface EmberHomeApi {
   applyFix(fix: NonNullable<EnvReport["checks"][number]["fix"]>): Promise<EnvReport>;
   agentStatus(): Promise<AgentStatus>;
   projectPick(): Promise<ProjectSelection>;
+  projectRemove(name: string): Promise<ProjectSelection>;
+  projectExport(kind: "answer" | "diff"): Promise<{ message: string }>;
   projectRun(request: { mode: ProjectMode; question: string; includePrevious?: boolean }): Promise<ProjectResult>;
   projectClear(): Promise<void>;
   projectCancel(): Promise<void>;
@@ -336,6 +355,8 @@ export interface EmberHomeApi {
   onMemory(fn: (view: MemoryView) => void): () => void;
   forgetMemory(id: string): Promise<void>;
   forgetAllMemory(): Promise<void>;
+  /** Saves one explicit local correction without changing the fact's original source authority. */
+  correctMemory(change: MemoryCorrection): Promise<MemoryItem>;
   /** Keeps "Tell Ember about you"'s answers; how many were kept, or null while memory is off. */
   introduceMe(answers: Intro): Promise<number | null>;
   /** Better recall's model: whether it is here, and changes; the user's Download (the agreement to fetch it) and Remove. */
@@ -345,6 +366,9 @@ export interface EmberHomeApi {
   removeMemoryModel(): Promise<void>;
   /** The routines kept, and changes to them; deleting one, or all of them with the lasting reminders. */
   routines(): Promise<RoutineRow[]>;
+  reminders(): Promise<ReminderRow[]>;
+  onReminders(fn: (rows: ReminderRow[]) => void): () => void;
+  changeReminder(change: ReminderChange): Promise<void>;
   onRoutines(fn: (rows: RoutineRow[]) => void): () => void;
   forgetRoutine(id: string): Promise<void>;
   forgetAllRoutines(): Promise<void>;
@@ -372,23 +396,31 @@ export interface EmberHomeApi {
   watchLevel(on: boolean): Promise<void>;
   /** The microphone's level (0–LEVEL_STEPS) while Ember hears a request, and null when it stops hearing. */
   onLevel(fn: (level: number | null) => void): () => void;
-  /** Puts `text` (a sign-in code or a setup command, at most 4096 characters) on the clipboard. */
+  /** Copies plain text, bounded by the session conversation's per-message limit. */
   copyText(text: string): Promise<void>;
   cancelSignIn(): Promise<void>;
   /** Opens GitHub's page where the sign-in code is entered (again). */
   openSignInPage(): Promise<void>;
   /** What each task this session did and is doing, newest first (kept in memory only), and changes to it. */
   tasks(): Promise<TaskEntry[]>;
+  openApproval(): Promise<boolean>;
+  taskControl(id: string, action: TaskControlAction): Promise<boolean>;
   onTasks(fn: (tasks: TaskEntry[]) => void): () => void;
   /** This session's conversation (kept in memory only). */
   conversation(): Promise<TranscriptEntry[]>;
+  /** Explicit typed request from Home, without capturing its foreground window. */
+  conversationSend(text: string): Promise<void>;
+  /** Ends the current response and queued requests; independently running tasks continue. */
+  conversationStop(): Promise<void>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
+  /** Explicit account/session erasure, distinct from a list made empty by forgetting learned facts. */
+  onConversationForgotten(fn: () => void): () => void;
   onFocusSection(fn: (section: string) => void): () => void;
   /** The window was minimised or hidden (false), or shown again (true): nothing is drawn while it can't be seen. */
   onVisibility(fn: (visible: boolean) => void): () => void;
 }
 
-export interface Presence { hidden: boolean; paused: boolean; overlay: boolean }
+export interface Presence { hidden: boolean; paused: boolean; overlay: boolean; approval?: boolean }
 
 /** What the ask box shows: where Ember will look, and the user's recent questions (newest last). */
 export interface AskContext {
