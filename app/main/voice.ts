@@ -15,13 +15,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { COMPACT_VOICE, ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
+import { ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
 import type { ModelPaths } from "../voice/sherpa";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import type { TtsProcessMessage, VoiceInfo } from "../voice/tts-process";
 import { nativePackage } from "../voice/runtime";
-import { NATURAL_COST, NATURAL_MAX_RTF, speechChunks, type NaturalVoiceModel } from "../voice/tts";
+import { speechChunks, type NaturalVoiceModel } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
 import { readLevel, type SoundLevel } from "../shared/level";
@@ -96,19 +96,18 @@ export interface VoiceOptions {
   /** Speak in Ember's own neural voice once its model is in (app/voice/tts.ts); otherwise always the system's voice. */
   neuralVoice?: boolean;
   /**
-   * The user turned on the natural voice (Kokoro, models.ts NATURAL_VOICE): it is fetched in the background and
-   * speaks where speech runs natively and the Piper voice shows this computer is fast enough for it. Changed later
-   * with setNaturalVoice.
+   * Explicit optional Kokoro override. Kitten is always the baseline neural voice; false never disables it.
    */
   naturalVoice?: boolean;
-  /** Which optional voice to fetch and time, only while naturalVoice is wanted. Kokoro preserves the existing default. */
+  /** Legacy preference compatibility: only true + Kokoro requests the optional voice; Kitten uses the baseline. */
   naturalModel?: NaturalVoiceModel;
+  /** The optional Kokoro capability on this platform; false preserves its saved choice without loading/fetching it. */
+  naturalSupported?: boolean;
   /** What became of the natural voice changed (naturalStatus): Home shows it under its switch. */
   onNatural?: (s: NaturalVoiceStatus) => void;
   /**
-   * A folder with sherpa-onnx's C API libraries (app/voice/capi.ts): speech runs natively through them (Linux), and
-   * falls back to WebAssembly as the addon does if a process dies loading. Development builds only, for now
-   * (EMBER_SHERPA_CAPI, filled by scripts/voice/fetch-capi.mjs).
+   * A folder with sherpa-onnx's C API libraries (app/voice/capi.ts). ASR may fall back to WebAssembly; neural speech
+   * uses the local system voice when native synthesis fails.
    */
   capiDir?: string;
   /**
@@ -243,21 +242,24 @@ export class VoiceService {
   private ttsPending = new Map<number, { text: string; remaining: string; send: PageSend }>();
   /** Enrolment (Voice Match) is under way in the voice process. */
   private enrolling = false;
-  /** The voice and speech processes run on WebAssembly: one died loading natively (reset when the models change). */
-  private wasmOnly = { voice: false, speech: false };
+  /** ASR may retry through WebAssembly. Neural synthesis is native-only and falls back to the local system voice. */
+  private wasmOnly = { voice: false };
   /**
    * The natural voice: being fetched, or not to be used this session (it was too slow here, or couldn't be fetched);
    * `switchVoice`: fetched, so the speech process starts again with it once it has nothing left to say.
    */
   private naturalFetch: Promise<void> | null = null;
-  private naturalFetchModel: NaturalVoiceModel | null = null;
-  /** The natural voice is wanted (the setting). */
+  private naturalAbort: AbortController | null = null;
+  private naturalEpoch = 0;
+  private naturalRetiring = false;
+  /** The explicit optional Kokoro override; Kitten needs no toggle or separate download. */
   private naturalWanted: boolean;
-  private naturalModel: NaturalVoiceModel;
+  private currentVoice: "kitten" | "kokoro" | "system" = "system";
   private naturalOff = false;
   private switchVoice = false;
   /** What became of the natural voice, as Home shows it while it is wanted (naturalStatus). */
   private natural: NaturalVoiceStatus = { state: "off" };
+  private naturalPublished = "";
   /** How the speech process that is running now said it speaks (its "ready"), so turning the natural voice on decides at once. */
   private ttsInfo: VoiceInfo | null = null;
   /** How much of the natural voice's download has arrived (percent). */
@@ -268,12 +270,12 @@ export class VoiceService {
   private speakingPage: "mic" | "speaker" | null = null;
 
   constructor(private o: VoiceOptions) {
-    this.naturalWanted = !!o.naturalVoice;
-    this.naturalModel = o.naturalModel ?? "kokoro";
+    this.naturalWanted = !!o.naturalVoice && (o.naturalModel ?? "kokoro") === "kokoro";
+    this.naturalOff = this.naturalWanted && o.naturalSupported === false;
     this.bundledRoot = o.bundled ? o.modelsRoot : null;
     this.userRoot = o.bundled?.userRoot ?? o.modelsRoot;
     // On at start: decided the next time Ember speaks (Ember's voice loads only then), unless it can't be at all.
-    if (this.naturalWanted) this.natural = this.naturalBlocked() ?? { state: "later" };
+    this.natural = this.naturalBlocked() ?? { state: "later" };
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
       if (!this.mic || e.sender !== this.mic.webContents) return;
       const capturing = s.state === "capturing" && s.context === "running";
@@ -514,7 +516,7 @@ export class VoiceService {
     if (!on) {
       void this.start();
       // The natural voice turned on while locked is decided now.
-      if (this.naturalOnUnlock) { this.naturalOnUnlock = false; if (this.naturalWanted) this.checkNatural(); }
+      if (this.naturalOnUnlock) { this.naturalOnUnlock = false; this.checkNatural(); }
       return;
     }
     this.hush();
@@ -543,7 +545,8 @@ export class VoiceService {
           for (const id of ids) this.notBundled.delete(id); // (the user's own copy is used: it verified)
           if (ids.includes("tts")) this.ttsFailures = 0;
           // New models: the native build is tried again (one that died loading may have died on a damaged model).
-          this.wasmOnly = { voice: false, speech: false };
+          this.wasmOnly = { voice: false };
+          this.setNatural(this.naturalBlocked() ?? { state: "later" });
         })
         .catch((err: unknown) => {
           // Never left on "Downloading…": back to what it was, saying why (the download button offers a retry).
@@ -665,12 +668,17 @@ export class VoiceService {
   setNaturalVoice(on: boolean): void {
     if (on === this.naturalWanted) return;
     this.naturalWanted = on;
-    this.naturalOff = false;
+    this.naturalOff = on && this.o.naturalSupported === false;
+    this.ttsFailures = 0;
     this.o.log.info("voice.natural_wanted", { on });
     if (!on) {
-      this.setNatural({ state: "off" });
-      // Kokoro speaking (or loaded): the speech process starts again without it once it has nothing to say.
-      if (this.ttsInfo?.voice !== "piper") { this.switchVoice = true; this.switchWhenIdle(); }
+      this.cancelNaturalDownload();
+      this.switchVoice = false;
+      if (this.ttsInfo?.voice === "kitten") this.setNatural({ state: "on" });
+      else {
+        this.setNatural(this.naturalBlocked() ?? { state: this.tts ? "checking" : "later" });
+        if (this.tts) { this.switchVoice = true; this.switchWhenIdle(); }
+      }
       return;
     }
     this.checkNatural();
@@ -678,52 +686,64 @@ export class VoiceService {
 
   /** Selects the optional model; choosing it while off downloads nothing. An in-flight old model never changes this choice. */
   setNaturalModel(model: NaturalVoiceModel): void {
-    if (this.naturalModel === model) return;
-    this.naturalModel = model;
-    this.naturalOff = false;
-    this.naturalPercent = 0;
-    this.switchVoice = true;
-    this.switchWhenIdle();
-    if (this.naturalWanted) this.checkNatural();
+    if (model === "kitten") this.setNaturalVoice(false);
   }
 
-  private get naturalFile(): ModelFile {
-    return this.naturalModel === "kitten" ? COMPACT_VOICE : NATURAL_VOICE;
+  private get selectedVoice(): NaturalVoiceModel {
+    return this.naturalWanted ? "kokoro" : "kitten";
   }
 
   private get naturalPath(): string | null {
-    const file = this.naturalFile, root = this.rootOf(file.id);
-    return root === null ? null : path.join(root, file.target);
+    const root = this.rootOf("natural");
+    return root === null ? null : path.join(root, NATURAL_VOICE.target);
   }
 
-  /** What became of the natural voice (Home shows it under its switch); `off` while it isn't wanted. */
+  /** Effective requested model and actual local engine, including baseline Kitten when the legacy toggle is false. */
   get naturalStatus(): NaturalVoiceStatus {
-    return this.naturalWanted ? this.natural : { state: "off" };
+    return { ...this.natural, model: this.selectedVoice, voice: this.currentVoice };
   }
 
   /** Try again after the natural voice's download failed (Home's button): the check and the download start again now. */
   retryNaturalVoice(): void {
-    if (!this.naturalWanted || this.naturalFetch) return;
-    this.naturalOff = false;
+    if (this.naturalFetch) return;
+    this.naturalOff = this.naturalWanted && this.o.naturalSupported === false;
+    this.ttsFailures = 0;
     this.checkNatural();
   }
 
+  private cancelNaturalDownload(): void {
+    this.naturalEpoch++;
+    this.naturalAbort?.abort();
+    this.naturalAbort = null;
+    // ensureModel owns shared download/staging paths until its cleanup settles. Never start a replacement early.
+    this.naturalRetiring = this.naturalFetch !== null;
+    this.naturalPercent = 0;
+  }
+
   /**
-   * The natural voice is wanted: decided now, not at some later reply. Already downloaded: the speech process starts
-   * again with it once it has nothing to say (and times it). Otherwise the Piper voice running now says whether this
-   * computer is fast enough to fetch it; with none running, it is started to tell.
+   * An explicit Kokoro choice loads its existing cache or fetches that optional model. Kitten always uses the base
+   * speech-model download. Each model's native runtime probe decides whether it can speak fast enough.
    */
   private checkNatural(): void {
     const blocked = this.naturalBlocked();
     if (blocked) { this.setNatural(blocked); return; }
+    if (!this.naturalWanted) {
+      if (this.ttsInfo?.voice === "kitten") { this.setNatural({ state: "on" }); return; }
+      if (this.tts) this.switchVoice = true;
+      this.switchWhenIdle();
+      if (this.locked) { this.naturalOnUnlock = true; this.setNatural({ state: "later" }); return; }
+      this.setNatural({ state: "checking" });
+      this.warmVoice();
+      return;
+    }
     // Turned off and on again while it downloads: the download carries on.
-    if (this.naturalFetch) { this.setNatural(this.naturalFetchModel === this.naturalModel ? { state: "downloading", percent: this.naturalPercent } : { state: "checking" }); return; }
+    if (this.naturalFetch) { this.setNatural(this.naturalRetiring ? { state: "checking" } : { state: "downloading", percent: this.naturalPercent }); return; }
     if (this.naturalPath !== null) {
-      if (this.ttsInfo?.voice === this.naturalModel) { this.setNatural({ state: "on" }); return; }
+      if (this.ttsInfo?.voice === "kokoro") { this.setNatural({ state: "on" }); return; }
       this.switchVoice = true;
       this.switchWhenIdle();
       if (this.tts) { this.setNatural({ state: "checking" }); return; }
-    } else if (this.ttsInfo?.voice === "piper") { this.decideNatural(this.ttsInfo); return; }
+    } else if (this.ttsInfo?.voice === "kitten") { this.decideNatural(this.ttsInfo); return; }
     else if (this.ttsInfo) { this.switchVoice = true; this.switchWhenIdle(); if (this.tts) { this.setNatural({ state: "checking" }); return; } }
     // Nothing speaks while the screen is locked, so nothing can tell: "later", and it is decided once it is unlocked
     // (setLocked), never "Checking…" for as long as the lock lasts (review of #143).
@@ -735,14 +755,17 @@ export class VoiceService {
 
   /** Why the natural voice can't be had at all here, or null: speech doesn't run natively, or Ember's own voice isn't in. */
   private naturalBlocked(): NaturalVoiceStatus | null {
-    if (!this.native || this.wasmOnly.speech) return { state: "needs-native" };
-    if (!this.neuralVoice) return { state: "needs-voice" };
+    if (!this.native || (this.naturalWanted && this.o.naturalSupported === false)) return { state: "needs-native" };
+    if (!this.o.neuralVoice || (this.rootOf("tts") === null && !this.optionalVoiceReady)) return { state: "needs-voice" };
+    if (this.ttsFailures >= VOICE_FAILURES) return { state: "wont-load" };
     return null;
   }
 
   private setNatural(s: NaturalVoiceStatus): void {
-    if (JSON.stringify(s) === JSON.stringify(this.natural)) return;
     this.natural = s;
+    const next = JSON.stringify(this.naturalStatus);
+    if (next === this.naturalPublished) return;
+    this.naturalPublished = next;
     this.o.onNatural?.(this.naturalStatus);
   }
 
@@ -776,7 +799,10 @@ export class VoiceService {
    * memory. After a conversation it is released (VOICE_IDLE_MS), and the next wake warms it again.
    */
   warmVoice(): void {
-    if (this.neuralVoice && !this.locked) { this.voiceProcess(); this.idleVoice(); }
+    if (this.neuralVoice && !this.locked) {
+      if (!this.tts && !this.naturalFetch && (!this.naturalWanted || !this.naturalOff)) this.setNatural({ state: "checking" });
+      this.voiceProcess(); this.idleVoice();
+    }
   }
 
   private cancelVoiceIdle(): void {
@@ -813,7 +839,11 @@ export class VoiceService {
 
   /** Whether replies are said in Ember's own voice: wanted, its model is in, and it hasn't failed this session. */
   private get neuralVoice(): boolean {
-    return !!this.o.neuralVoice && this.ttsFailures < VOICE_FAILURES && this.rootOf("tts") !== null;
+    return !!this.o.neuralVoice && this.native && this.ttsFailures < VOICE_FAILURES && (this.rootOf("tts") !== null || this.optionalVoiceReady);
+  }
+
+  private get optionalVoiceReady(): boolean {
+    return this.naturalWanted && this.o.naturalSupported !== false && !this.naturalOff && this.naturalPath !== null;
   }
 
   /** The page that speaks now: the mic window while listening, otherwise one that only speaks (listening is off). */
@@ -835,7 +865,7 @@ export class VoiceService {
 
   /** Speech can run natively here (runtime.ts). */
   private get native(): boolean {
-    return this.o.native ?? (nativePackage() !== null || !!this.o.capiDir);
+    return process.env.EMBER_VOICE_BACKEND !== "wasm" && (this.o.native ?? (nativePackage() !== null || !!this.o.capiDir));
   }
 
   /** Ember's voice process, started (and its voice loaded) on first use. */
@@ -847,14 +877,10 @@ export class VoiceService {
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.tts_stderr", { line: d.toString().slice(0, 300) }));
     proc.on("exit", code => {
       if (this.tts !== tts) return;
+      const used = this.ttsInfo?.voice;
       this.ttsInfo = null;
-      if (!tts.ready && this.native && !this.wasmOnly.speech) {
-        // It died loading, natively: started again on WebAssembly, with what it had to say.
-        this.o.log.warn("voice.tts_native_failed", { code });
-        this.wasmOnly.speech = true;
-        this.tts = null;
-        const next = this.voiceProcess();
-        for (const [id, p] of this.ttsPending) next.postMessage({ type: "say", id, text: p.text });
+      if ((used === "kokoro" || (!tts.ready && this.naturalWanted && this.naturalPath && !this.naturalOff)) && this.native) {
+        this.kokoroFailed();
         return;
       }
       this.o.log.warn("voice.tts_exit", { code });
@@ -864,11 +890,11 @@ export class VoiceService {
     proc.on("message", (m: TtsProcessMessage) => {
       if (this.tts !== tts) return;
       if (m.type === "ready") { tts.ready = true; this.voiceReady(m.loadMs, m.rate, m.voice); return; }
-      if (m.type === "error") { this.o.log.error("voice.tts_error", { message: m.message }); this.ttsFailures = VOICE_FAILURES; this.voiceFailed(); return; }
+      if (m.type === "error") { this.o.log.error("voice.tts_error", { message: m.message }); this.voiceFailed(m.reason); return; }
       const pending = this.ttsPending.get(m.id);
       if (m.id <= this.ttsHushed || !pending) return;
       if (m.type === "audio") { pending.remaining = m.remaining; pending.send(VOICE.audio, { id: m.id, samples: m.samples, rate: m.rate } satisfies SpeechAudio); return; }
-      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); this.voiceFailed(); return; }
+      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro") this.kokoroFailed(); else this.voiceFailed(); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
       if (!this.saidSpeaking) { this.awaitingSpeechStart = true; this.speakingUntil = Date.now() + SPEECH_START_MS; }
@@ -876,83 +902,80 @@ export class VoiceService {
       this.switchWhenIdle();
       this.idleVoice();
     });
-    const natural = this.naturalWanted && this.native && !this.naturalOff ? this.naturalPath : null;
-    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.naturalModel !== "kokoro" ? { naturalModel: this.naturalModel } : {}), ...(this.wasmOnly.speech ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) });
+    const natural = this.optionalVoiceReady ? this.naturalPath : null;
+    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.o.capiDir ? { capiDir: this.o.capiDir } : {}) });
     return proc;
   }
 
   /**
-   * Ember's voice loaded: which voice, on which build and how fast (logged). Where it runs natively on the Piper voice
-   * fast enough for the natural voice, that is fetched (once a session).
+   * Ember's voice loaded: actual model, runtime and speed. Engine-only fallback changes are published too.
    */
   private voiceReady(loadMs: number, rate: number, v: VoiceInfo | undefined): void {
     this.o.log.info("voice.tts_ready", { loadMs, rate, ...(v ? { voice: v.voice, backend: v.backend, detail: v.detail, provider: v.provider, threads: v.threads, rtf: v.rtf, tried: v.tried, natural: v.natural } : {}) });
     this.ttsInfo = v ?? null;
+    this.currentVoice = v?.voice ?? "kitten";
     if (v) this.decideNatural(v);
+    else if (!this.naturalWanted) this.setNatural({ state: "on" });
+    this.setNatural(this.natural);
     this.idleVoice();
   }
 
   /**
-   * What the speech process that just loaded (`v`) says of the natural voice, while it is wanted: Kokoro speaks; or it
-   * was downloaded but is too slow here, wouldn't load, or needs the native build (the Piper voice speaks for the rest
-   * of the session); or, timed on the Piper voice natively, this computer is fast enough to fetch it (once a session).
-   * Every outcome is shown in Home (naturalStatus), never only logged.
+   * Kokoro is used only as an explicit supported override. Its failed probe keeps Kitten; baseline failures keep the
+   * local system voice. Merely selecting baseline Kitten never fetches an optional model.
    */
   private decideNatural(v: VoiceInfo): void {
-    if (!this.naturalWanted || this.naturalFetch) return;
-    if (v.voice === this.naturalModel) { this.setNatural({ state: "on" }); return; }
-    if (v.voice !== "piper") { this.switchVoice = true; this.switchWhenIdle(); return; }
+    if (v.backend !== "native") { this.voiceFailed("native"); return; }
+    if (this.naturalWanted && this.o.naturalSupported === false) { this.naturalOff = true; this.setNatural({ state: "needs-native" }); return; }
+    if (v.voice === this.selectedVoice) { this.setNatural({ state: "on" }); return; }
+    if (!this.naturalWanted) { this.setNatural({ state: "checking" }); this.switchVoice = true; this.switchWhenIdle(); return; }
+    if (this.naturalFetch) return;
     if (this.naturalOff) return;
-    // Downloaded, but too slow here or it wouldn't load: the Piper voice speaks for the rest of the session.
+    // Optional Kokoro failed its real probe; keep baseline Kitten for this session.
     if (v.natural) {
       this.naturalOff = true;
       this.setNatural({ state: v.naturalWhy === "native" ? "needs-native" : v.naturalWhy === "load" ? "wont-load" : "too-slow" });
       return;
     }
-    if (v.backend !== "native" || v.rtf === undefined) { this.setNatural({ state: "needs-native" }); return; }
-    // Kitten FP32 took about 1.6x Piper's CPU work on the same sentences; 2x leaves headroom before the real probe.
-    const cost = this.naturalModel === "kitten" ? 2 : NATURAL_COST;
-    if (v.rtf * cost > NATURAL_MAX_RTF) {
-      this.o.log.info("voice.natural_skipped", { rtf: v.rtf, needs: Math.round((NATURAL_MAX_RTF / cost) * 1000) / 1000 });
-      this.naturalOff = true;
-      this.setNatural({ state: "too-slow" });
-      return;
-    }
     // Downloaded already (and not loaded by this process: it started before): it starts again with it once idle.
     if (this.naturalPath !== null) { this.setNatural({ state: "ready" }); this.switchVoice = true; this.switchWhenIdle(); return; }
-    const file = this.naturalFile, model = this.naturalModel;
-    this.o.log.info("voice.natural_fetching", { rtf: v.rtf, bytes: file.bytes, model });
+    const file = NATURAL_VOICE, epoch = ++this.naturalEpoch, abort = new AbortController();
+    this.naturalAbort = abort;
+    this.o.log.info("voice.natural_fetching", { bytes: file.bytes, model: "kokoro" });
     this.setNatural({ state: "downloading", percent: 0 });
     // Into the user's own models folder (one that came with Ember is never changed).
     this.naturalPercent = 0;
-    this.naturalFetchModel = model;
     const progress = (bytes: number) => {
-      if (this.naturalModel !== model) return;
+      if (epoch !== this.naturalEpoch || !this.naturalWanted) return;
       const percent = Math.min(99, Math.floor((bytes / file.bytes) * 100));
       if (percent === this.naturalPercent) return;
       this.naturalPercent = percent;
       if (this.naturalWanted) this.setNatural({ state: "downloading", percent });
     };
-    this.naturalFetch = ensureModel(this.userRoot, file, this.o.downloader ?? electronDownloader, progress)
+    const transfer: Promise<void> = ensureModel(this.userRoot, file, this.o.downloader ?? electronDownloader, progress, abort.signal)
       .then(() => {
+        if (epoch !== this.naturalEpoch || !this.naturalWanted) return;
         this.o.log.info("voice.natural_ready", { root: this.userRoot });
-        this.naturalFetch = null;
-        this.naturalFetchModel = null;
-        if (!this.naturalWanted) return;
-        if (this.naturalModel !== model) { this.checkNatural(); return; }
         this.setNatural({ state: "ready" });
         this.switchVoice = true;
         this.switchWhenIdle();
       })
       .catch((err: unknown) => {
+        if (epoch !== this.naturalEpoch || !this.naturalWanted) return;
         const message = err instanceof Error ? err.message : String(err);
-        this.naturalFetch = null;
-        this.naturalFetchModel = null;
-        if (this.naturalModel !== model) { if (this.naturalWanted) this.checkNatural(); return; }
         this.naturalOff = true;
         this.o.log.warn("voice.natural_download_failed", { message });
         this.setNatural({ state: "failed", detail: downloadHelp(message, file.bytes) });
+      })
+      .finally(() => {
+        if (this.naturalFetch !== transfer) return;
+        const retired = this.naturalRetiring;
+        this.naturalFetch = null;
+        this.naturalAbort = null;
+        this.naturalRetiring = false;
+        if (retired && this.naturalWanted && !this.naturalOff) this.checkNatural();
       });
+    this.naturalFetch = transfer;
   }
 
   /**
@@ -965,9 +988,12 @@ export class VoiceService {
     if (this.ttsPending.size) return;
     this.switchVoice = false;
     this.releaseVoice();
-    if (this.naturalWanted) {
+    if (!this.locked && this.neuralVoice) {
       if (this.natural.state === "ready") this.setNatural({ state: "checking" });
       this.warmVoice();
+    } else if (!this.neuralVoice) {
+      this.currentVoice = "system";
+      this.setNatural(this.naturalBlocked() ?? { state: "wont-load" });
     }
   }
 
@@ -975,8 +1001,11 @@ export class VoiceService {
    * Retire a failed synthesiser for this session. The page drains already generated audio before the local system
    * voice says only the remaining chunks. Later streamed sentences use that same engine, never overlap it.
    */
-  private voiceFailed(): void {
+  private voiceFailed(reason: "slow" | "load" | "native" = "load"): void {
     this.ttsFailures = VOICE_FAILURES;
+    this.switchVoice = false;
+    this.currentVoice = "system";
+    this.setNatural({ state: reason === "native" ? "needs-native" : reason === "slow" ? "too-slow" : "wont-load" });
     this.releaseVoice();
     const pending = [...this.ttsPending.entries()];
     this.ttsPending.clear();
@@ -990,6 +1019,25 @@ export class VoiceService {
       if (text) p.send(VOICE.speak, { text, append: true } satisfies SpeakRequest);
     }
     this.openFollowUp();
+  }
+
+  /** Retire optional Kokoro and append only its ungenerated suffix through baseline Kitten. */
+  private kokoroFailed(): void {
+    this.naturalOff = true;
+    this.switchVoice = false;
+    this.cancelNaturalDownload();
+    this.releaseVoice();
+    this.currentVoice = "system";
+    this.setNatural({ state: this.naturalWanted ? "wont-load" : "checking" });
+    const pending = [...this.ttsPending.entries()];
+    this.ttsPending.clear();
+    for (const [id, p] of pending) {
+      p.send(VOICE.audioDone, id);
+      if (!p.remaining.trim()) continue;
+      const next = ++this.ttsId, text = p.remaining;
+      this.ttsPending.set(next, { text, remaining: text, send: p.send });
+      this.voiceProcess().postMessage({ type: "say", id: next, text });
+    }
   }
 
   /** The mic page's address and its development audio options. */
@@ -1079,7 +1127,7 @@ export class VoiceService {
           }
           this.o.onModels?.();
           // Other copies of the models: the native build is tried again.
-          this.wasmOnly = { voice: false, speech: false };
+          this.wasmOnly = { voice: false };
           if (this.modelsReady) void this.start(); // the user's own copy is there: it's tried
           else this.setState("needs-models", "The speech models look damaged. Download them again.");
           return;
@@ -1269,6 +1317,9 @@ export class VoiceService {
   stop(): void {
     this.wanted = false;
     this.naturalWanted = false;
+    this.cancelNaturalDownload();
+    this.currentVoice = "system";
+    this.setNatural({ state: "off" });
     this.cancelRetry();
     this.teardown();
     this.closeSpeaker();

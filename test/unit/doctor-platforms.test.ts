@@ -38,17 +38,17 @@ describe("ember doctor's Speech models row", () => {
   const row = (over: Partial<DoctorProbes>) => byId(doctorChecks(base(over)), "voice-models")!;
 
   it("warns only while listening's own models are missing, giving the size of what's missing", () => {
-    expect(row({ voiceModels: "missing" })).toMatchObject({ status: "warn", fix: expect.stringContaining("(142 MB, once)") });
-    expect(row({ voiceModels: "missing", voiceModelsMissing: ["asr", "tts", "speaker"] })).toMatchObject({ status: "warn", fix: expect.stringContaining("(124 MB, once)") });
+    expect(row({ voiceModels: "missing" })).toMatchObject({ status: "warn", fix: expect.stringContaining("(138 MB, once)") });
+    expect(row({ voiceModels: "missing", voiceModelsMissing: ["asr", "tts", "speaker"] })).toMatchObject({ status: "warn", fix: expect.stringContaining("(120 MB, once)") });
   });
 
   it("is fine without Ember's voice or Voice Match, saying what's missing and its size", () => {
     expect(row({ voiceModels: "bundled" })).toMatchObject({ status: "ok", detail: "Installed with Ember." });
     expect(row({ voiceModels: "downloaded", voiceModelsMissing: [] })).toMatchObject({ status: "ok", detail: "Downloaded." });
     expect(row({ voiceModels: "bundled", voiceModelsMissing: ["tts"] })).toEqual({ id: "voice-models", status: "ok", label: "Speech models",
-      detail: "Installed with Ember. Without Ember's own voice (replies use the system's voice) until it's downloaded in Ember's settings (67 MB)." });
+      detail: "Installed with Ember. Without Ember's own voice (replies use the system's voice) until it's downloaded in Ember's settings (64 MB)." });
     expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).toBe("Downloaded. Without Voice Match (Ember answers anyone) until it's downloaded in Ember's settings (27 MB).");
-    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["tts", "speaker"] }).detail).toMatch(/Ember's own voice .* and Voice Match .* until they're downloaded in Ember's settings \(94 MB\)\.$/);
+    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["tts", "speaker"] }).detail).toMatch(/Ember's own voice .* and Voice Match .* until they're downloaded in Ember's settings \(90 MB\)\.$/);
   });
 });
 
@@ -59,9 +59,9 @@ describe("ember doctor's Speech row (which build runs speech on Linux)", () => {
     expect(formatDoctor(checks)).toMatch(/^ok {4}Speech {2,}On this computer \(native\)\.$/m);
   });
 
-  it("says it runs on WebAssembly, and why, without warning: it still works", () => {
+  it("distinguishes WebAssembly recognition from the system voice fallback", () => {
     expect(byId(doctorChecks(base({ speechBackend: { backend: "wasm", why: "this processor lacks avx2" } })), "speech-engine"))
-      .toEqual({ id: "speech-engine", status: "ok", label: "Speech", detail: "On this computer (WebAssembly: this processor lacks avx2)." });
+      .toEqual({ id: "speech-engine", status: "ok", label: "Speech", detail: "Recognition uses WebAssembly (this processor lacks avx2). Replies use the system's voice." });
   });
 
   it("is left out where the Node addon runs speech (Windows, macOS), so their report is unchanged", () => {

@@ -1,13 +1,15 @@
 # Towards a Jarvis-like Ember: voice, recognition and footprint
 
 Research began on 2026-11-01. The dated phase entries record implementation and measurements; the 4 November
-follow-up below covers recognition cleanup, idle release and the optional lightweight voice. Companion to docs/MEMORY.md (what Ember knows about you).
+follow-up below covers recognition cleanup and idle release; §9 records the later user-chosen Kitten default.
+Companion to docs/MEMORY.md (what Ember knows about you).
 
 The goal: an assistant you talk to like a person. It hears you first time, answers before the silence feels long,
 sounds natural, can be interrupted, knows you, and costs almost nothing while it waits. Every choice below has to
-hold on Ember's hardest target: a RHEL 8 desktop with no GPU, glibc 2.28, and speech on one WebAssembly thread.
+hold on Ember's hardest target: a RHEL 8 desktop with no GPU and glibc 2.28. Listening retains its one-thread
+WebAssembly fallback; the current native-only neural voices use a local system voice when they cannot run.
 
-## 1. Where Ember is today (measured)
+## 1. Baseline measurements
 
 **Latency, from the end of your sentence to Ember's first word.** Figures are from docs/DEVELOPING.md "Voice", on a
 2.1 GHz Xeon.
@@ -165,7 +167,7 @@ reported in every PR that touches it.
   also writes JSON for CI's `el8` job to keep as an artifact. It fails only on a large regression, never on noise.
 - `voice.latency` logs transcription time and the steps from transcript arrival to the first speaking report. `voice.hush_ack`
   logs how long the speaking renderer took to acknowledge cancellation. The logs contain no words (CLAUDE.md privacy).
-  See the [timing fields in the development guide](DEVELOPING.md#how-speech-runs-natively-or-on-webassembly).
+  See the [timing fields in the development guide](DEVELOPING.md#how-speech-runs-native-synthesis-native-or-webassembly-listening).
 - A recognition set: the user can record 20 of their own phrases, kept only on their machine, to measure word error
   rate before and after each change. CI keeps using the synthesized clips.
 
@@ -243,7 +245,7 @@ reported in every PR that touches it.
    the bench, never by default on the reference machine.
 5. **Voice Match stays the gate** for "only my voice". Its threshold is tuned on the phrase set.
 
-### Phase 4: sound natural
+### Phase 4: sound natural (original proposal, superseded by §9)
 
 1. **Kokoro on Linux** once native (phase 1.1), behind the existing "Use a more natural voice" setting and its
    real-time check (`NATURAL_MAX_RTF`). Piper stays the default on slow machines.
@@ -429,9 +431,31 @@ loop recovery. A synthetic repeat/number subset improved from 64 to 35 edits ove
 additional model insertion tokens remain. Names on that subset were unchanged. This is not a general microphone
 accuracy claim, and wake/Stop/Voice Match/action thresholds are unchanged.
 
-Piper Kristin remains the default voice. Kitten Nano 0.8 FP32 is an explicit native alternative to Kokoro, with a
-63.8 MB verified complete download, one CPU thread, measured speed gate and Piper fallback. The INT8 candidate
-used more CPU here despite its smaller weights and was not selected. Native capability, saved choice and current
+At this research checkpoint, Piper Kristin remained the default voice. Kitten Nano 0.8 FP32 was an explicit native
+alternative to Kokoro, with a 63.8 MB verified complete download, one CPU thread, measured speed gate and Piper
+fallback. The later decision in §9 supersedes that model selection; these measurements remain historical evidence.
+The INT8 candidate used more CPU here despite its smaller weights and was not selected. Native capability, saved choice and current
 readiness are distinct in Home; saving a model while off never enables it. A lost native backend leaves the saved
 preference inspectable and switchable off. Speech utilities release after two minutes without pending synthesis.
 Queued audio and model benchmarks do not establish actual silence, naturalness or real-device recognition quality.
+
+
+## 9. Kitten becomes the default on 4 November
+
+After reviewing the comparisons, the owner explicitly chose Kitten Nano 0.8 FP32 as Ember's default voice and removed
+Piper from the production model manifest and synthesis/fallback paths. This is a user-directed product choice, not a
+new claim that the measurements prove Kitten sounds better. Earlier Piper timing, footprint and ASR-fixture results
+above remain intact and should not be read as the current runtime policy.
+
+`DEFAULT_VOICE` is the verified Kitten archive with model id `tts`, Apache-2.0 licensing and a complete 63,815,222-byte
+download (about 63.8 MB). The standard model downloads now total 138,478,723 bytes (about 138.5 MB), including the
+unchanged listening and Voice Match models. Preparation and bundled-model staging use this standard manifest.
+Kitten runs on one native CPU thread and must meet the measured real-time factor cap of 0.5. Unsupported, missing,
+slow or failed Kitten uses an installed local system voice; there is no production Piper or neural WebAssembly
+fallback. WebAssembly ASR remains available. Kokoro remains an explicit optional native choice, with its own download
+confirmation and the same speed gate; it falls back to Kitten, then the system voice if necessary.
+
+The two-minute idle release, local audio boundary, Stop semantics, consent and policy gates are unchanged. Separate
+pinned Piper Amy/Ryan models may still synthesise ASR/evaluation fixtures; they are test-only and never production
+speech models. Their use does not justify deleting bundled sherpa/eSpeak NG/phonemiser licence notices. Real-device
+recognition, audible Stop timing and blinded voice listening remain separate acceptance work.

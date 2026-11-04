@@ -431,7 +431,7 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   if (!platform) useAppNames(p.os);
   platform = p;
   for (const patch of homePatches(p)) applyPatch(patch);
-  // Retain the enabled preference's Off control when a native backend becomes unavailable.
+  // Keep the voice choice available while platform capabilities are refreshed.
   renderNatural();
   const muted = micOffText(p.shortcuts.mute.label);
   if (VOICE_TEXT.muted !== muted) { VOICE_TEXT.muted = muted; if (voice) renderVoice(voice); }
@@ -501,7 +501,7 @@ function renderAdmin(a: Status["admin"]): void {
   }
   const service = document.querySelector<HTMLElement>("#w-full #model-service");
   if (a.provider && !sendLine && service) service.textContent = `your organisation's model service (${new URL(a.provider).host})`;
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -1738,12 +1738,12 @@ $("consent-yes").addEventListener("click", () => {
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
-/** The model choice discloses its download before an enabled voice is changed. */
+/** The voice choice discloses the optional Kokoro download before switching. */
 const naturalUI = mountNaturalVoice({ save, live: voiceLive, managed: () => managed.has("naturalVoice") });
 function renderNatural(): void {
-  const models = voice?.naturalModels ?? (platform?.os === "linux" ? [] : ["kokoro", "kitten"] as const);
-  $("natural-row").hidden = !settings?.voice.natural && !models.length;
-  naturalUI.status(voice?.natural, models);
+  // Kitten remains the baseline choice even when speech must use the system voice.
+  $("natural-row").hidden = false;
+  naturalUI.status(voice?.natural, voice?.naturalModels ?? []);
 }
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });

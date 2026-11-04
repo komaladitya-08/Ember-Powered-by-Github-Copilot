@@ -24,6 +24,16 @@ import { REASONING_EFFORTS } from "./agent/models";
 /** This OS's never-look defaults (read once at load: renderers import this module only for its types). */
 const neverLookDefault = () => [...NEVER_LOOK_DEFAULTS[HOST_OS]];
 
+/** Preserve explicit legacy Kokoro, while the former default voice and Kitten preferences use the new baseline. */
+const migrateVoiceChoice = (value: unknown): unknown => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const voice = value as Record<string, unknown>;
+  if (voice.natural !== undefined && typeof voice.natural !== "boolean") return value;
+  if (voice.natural === true && voice.naturalModel === undefined) return { ...voice, naturalModel: "kokoro" };
+  if (voice.naturalModel === "kitten" || (voice.natural !== true && voice.naturalModel === "kokoro")) return { ...voice, natural: false, naturalModel: "kitten" };
+  return value;
+};
+
 export const CHARACTERS = ["cinder", "wisp", "glassling", "glint"] as const;
 
 /** A first-use consent card's record (§7.4): the card's version the user said yes to (0: not yet) and when. */
@@ -105,7 +115,7 @@ export const SettingsSchema = z.object({
   speakResults: z.boolean().default(true),
   /** Listen for "Hey Ember". */
   wakeWord: z.boolean().default(true),
-  voice: z.object({
+  voice: z.preprocess(migrateVoiceChoice, z.object({
     /** The user agreed to the microphone disclosure (nothing listens before this). */
     consent: z.boolean().default(false),
     /** Ignore "Hey Ember" when it comes out of the speakers (needs parec). */
@@ -115,12 +125,12 @@ export const SettingsSchema = z.object({
     /** Voice Match: answer only the owner's voice (its voiceprint is kept apart, in voiceprint.json: voiceprint-store.ts). */
     match: z.boolean().default(false),
     /**
-     * Ember's selected natural voice, downloaded only when this is turned on. Kokoro uses the Windows/macOS native
-     * backend; Kitten also supports Linux's native C API. Both keep the usual voice when too slow or unavailable.
+     * Explicit optional Kokoro override. False uses baseline Kitten; both use the local system voice when native
+     * synthesis is unavailable. Microphone consent, muting and speaking preferences are independent.
      */
     natural: z.boolean().default(false),
-    /** Explicit local voice choice; old installations keep Kokoro and no optional model downloads while off. */
-    naturalModel: z.enum(["kokoro", "kitten"]).default("kokoro"),
+    /** Kitten is the baseline; only natural:true with Kokoro opts into its separate download. */
+    naturalModel: z.enum(["kokoro", "kitten"]).default("kitten"),
     /**
      * Voice Match keeps learning: the voiceprint follows the owner's voice slowly, from their own requests it is sure of
      * (app/voice/adapt.ts; kept in voiceprint.json). In force only while Voice Match is on.
@@ -130,7 +140,7 @@ export const SettingsSchema = z.object({
     words: z.boolean().default(true),
     /** Suggest what I might say next: chips under the bubble and in the Ask box (app/main/personal/predict.ts). */
     suggest: z.boolean().default(true),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true }),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true })),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),
@@ -353,7 +363,7 @@ export function repairSettings(partial: Record<string, unknown>): Settings {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(SettingsSchema.shape) as (keyof Shape)[]) {
     const field = SettingsSchema.shape[key];
-    const v = partial[key];
+    const v = key === "voice" ? migrateVoiceChoice(partial[key]) : partial[key];
     if (field.safeParse(v).success) { out[key] = v; continue; }
     if (v && typeof v === "object" && !Array.isArray(v)) {
       const fixed = repairObject(key, v as Record<string, unknown>);

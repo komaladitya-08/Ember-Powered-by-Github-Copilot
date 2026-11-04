@@ -42,8 +42,9 @@ if (job.kind === "listening") {
 } else {
   const sherpa = m.sherpaRuntime(runtime);
   if (sherpa.backend !== job.build) throw new Error(`${job.build} unavailable: ${sherpa.detail}`);
-  const natural = job.kind === "kokoro", compact = job.kind === "kitten";
-  const spec = compact ? m.kittenSpec(path.join(models, m.COMPACT_VOICE.target)) : natural ? m.kokoroSpec(paths.natural) : m.piperSpec(paths.tts);
+  if (job.kind !== "kitten" && job.kind !== "kokoro") throw new Error(`unknown speech benchmark ${job.kind}`);
+  const natural = job.kind === "kokoro";
+  const spec = natural ? m.kokoroSpec(paths.natural) : m.kittenSpec(paths.tts);
   const speaker = natural ? m.kokoroSpeaker(paths.natural) : 0;
   const tts = sherpa.createTts(spec, { provider: job.provider, numThreads: job.threads }, 1);
   const loadMs = Math.round(performance.now() - t0), loadCpuMs = cpuMs(c0);
@@ -58,7 +59,7 @@ if (job.kind === "listening") {
       firstMs ??= Math.round(took);
       ms += took; seconds += out.samples.length / out.sampleRate;
     }
-    row = { what: compact ? "optional voice (Kitten Nano 0.8 FP32)" : natural ? `natural voice (Kokoro ${path.basename(paths.natural)})` : "Ember's voice (Piper Kristin)",
+    row = { what: natural ? `optional voice (Kokoro ${path.basename(paths.natural)})` : `default voice (${m.DEFAULT_VOICE.name})`,
       build: sherpa.backend, provider: job.provider, threads: job.threads, speaker, rtf: ms / 1000 / seconds, cpuMs: cpuMs(cpu), audioSeconds: round(seconds), firstMs, loadMs, loadCpuMs, loadedRssMiB };
   } finally { tts.free(); }
 }

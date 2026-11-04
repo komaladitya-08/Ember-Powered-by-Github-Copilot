@@ -42,7 +42,7 @@ Ember ships as an RPM and an AppImage built on EL8, whose every binary must run 
   - build-app.mjs copies it to `renderer/fonts/`;
   - stage.mjs checks it;
   - `OFL-1.1` stays in `License:`.
-- **Speech models.** Pin each one in app/voice/models.ts with its URL, SHA-256 and licence. The download is checked against the hash before use.
+- **Speech models.** Pin each one in app/voice/models.ts with its URL, SHA-256 and licence. The download is checked against the hash before use. The standard manifest includes Kitten Nano 0.8 FP32 as `DEFAULT_VOICE` (`id: "tts"`, Apache-2.0); preparation and staging iterate that manifest. Kokoro remains an explicit optional download. Do not ship a Piper production voice or use one as a runtime fallback. Pinned Piper Amy/Ryan voices used only to synthesise test fixtures remain test-only, and sherpa/eSpeak NG/phonemiser licence notices still ship where their libraries are bundled.
 - **Native speech libraries (Linux).** Their notices (sherpa-onnx's Apache-2.0 with what it is built from, ONNX Runtime's MIT licence and notices, and eSpeak NG's) go into THIRD_PARTY_NOTICES from stage.mjs's `capiNotice()`, from the texts in packaging/licences/.
 
 ## Releases and the npm launcher

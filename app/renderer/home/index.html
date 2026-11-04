@@ -418,13 +418,13 @@
           <label class="switch-row"><input type="checkbox" id="suggest-on" role="switch" aria-describedby="suggest-hint"><span id="suggest-label">Suggest what I might say next</span></label>
           <p class="row-note" id="suggest-hint"></p>
         </div>
-        <div id="natural-row" hidden>
-          <label class="switch-row"><input type="checkbox" id="natural" role="switch" aria-describedby="natural-model-hint natural-text"><span>Use a more natural voice</span></label>
-          <label class="choice"><span>Natural voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kokoro">Kokoro · 350 MB</option><option value="kitten">Kitten Nano · 63.8 MB</option></select></label>
-          <p class="hint" id="natural-model-hint">Kokoro: downloads 350 MB when enabled. Speech stays on this computer. Ember checks its speed and keeps its usual voice if needed.</p>
+        <div id="natural-row">
+          <label class="choice"><span>Voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kitten">Kitten Nano (default)</option><option value="kokoro">Kokoro · 350 MB</option></select></label>
+          <p class="hint" id="natural-model-hint">Kitten Nano is the default voice, included in Ember's speech models. Its voice files are 63.8 MB. Speech stays on this computer; the system voice is used if Kitten cannot run fast enough.</p>
           <p class="hint" id="natural-choice-status" role="status"></p>
-          <div class="agent-actions"><button type="button" id="natural-use" class="btn quiet" hidden>Save voice choice</button></div>
-          <p class="hint" id="natural-text">Off. Choose a voice, then turn on Use a more natural voice to download and use it.</p>
+          <div class="agent-actions"><button type="button" id="natural-use" class="btn quiet" hidden>Use Kitten Nano</button></div>
+          <p class="hint" id="natural-text">Kitten Nano is selected. Checking voice availability…</p>
+          <div class="agent-actions" id="natural-download-row" hidden><button type="button" id="natural-download" class="btn quiet">Show speech model download</button></div>
           <div class="agent-actions"><button type="button" id="natural-retry" class="btn quiet" aria-describedby="natural-text" hidden>Try again</button></div>
         </div>
         <div class="choice">

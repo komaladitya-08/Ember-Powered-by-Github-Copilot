@@ -1,5 +1,4 @@
-// Downloads Ember's speech models (verified) for the voice tests and demos.
-//   --kitten           also fetches the optional pinned Kitten voice for required native integration tests.
+// Downloads Ember's default speech models (verified), including Kitten Nano, for the voice tests and packages.
 //   --tts-voice        also fetches a TTS voice (test-only; never shipped). With it the evaluation's missed-wakes gate
 //                      speaks enough renderings of "Hey Ember" (in memory, new ones every run) to be measured.
 //   --clips            also (with the TTS voice) synthesizes new test clips into <dir>/clips, a scratch folder.
@@ -11,7 +10,7 @@
 //                      test/fixtures/voice puts the old ones back); the committed clips keep the tests repeatable.
 // Downloads (Node's https, honouring HTTPS_PROXY/NO_PROXY) and unpacking (app/voice/untar.ts) are the app's own, so
 // no system curl, tar or bzip2 is needed on any OS.
-// usage: node scripts/voice/prepare.mjs [dir] [--kitten] [--tts-voice] [--voice amy|ryan] [--clips | --update-fixtures]   (default dir: .cache/voice)
+// usage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--voice amy|ryan] [--clips | --update-fixtures]   (default dir: .cache/voice)
 import { build } from "esbuild";
 import fs from "node:fs";
 import path from "node:path";
@@ -19,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const USAGE = "usage: node scripts/voice/prepare.mjs [dir] [--kitten] [--tts-voice] [--voice amy|ryan] [--clips | --update-fixtures]";
+const USAGE = "usage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--voice amy|ryan] [--clips | --update-fixtures]";
 // TTS voices to speak the test lines (test-only; not shipped). The evaluation looks for amy's in <dir>.
 const TTS_VOICES = {
   amy: {
@@ -34,7 +33,7 @@ const TTS_VOICES = {
   },
 };
 const args = process.argv.slice(2);
-const FLAGS = ["--kitten", "--tts-voice", "--clips", "--update-fixtures", "--voice"];
+const FLAGS = ["--tts-voice", "--clips", "--update-fixtures", "--voice"];
 const voiceAt = args.indexOf("--voice");
 const voiceName = voiceAt >= 0 ? args[voiceAt + 1] : "amy";
 const unknown = args.filter(a => a.startsWith("--") && !FLAGS.includes(a));
@@ -53,15 +52,13 @@ fs.mkdirSync(dir, { recursive: true });
 
 const bundle = path.join(dir, "models.cjs");
 await build({ entryPoints: [path.join(root, "app/voice/models.ts")], outfile: bundle, bundle: true, platform: "node", format: "cjs", logLevel: "error" });
-const { ensureModels, ensureModel, fetchModel, httpsDownloader, COMPACT_VOICE } = require(bundle);
+const { ensureModels, fetchModel, httpsDownloader } = require(bundle);
 const models = path.join(dir, "models");
 let last = -1;
 await ensureModels(models, httpsDownloader, (done, total) => {
   const pct = Math.floor((done / total) * 100);
   if (pct !== last && pct % 10 === 0) { last = pct; console.log(`models ${pct}%`); }
 });
-// Optional native-test data stays out of the default download and packaged speech model set.
-if (args.includes("--kitten")) await ensureModel(models, COMPACT_VOICE, httpsDownloader);
 
 if (!ttsVoice) {
   console.log(`models in ${models}`);

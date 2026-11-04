@@ -1,28 +1,19 @@
 /**
- * Ember's own voice: a neural (VITS/Piper) voice run by sherpa-onnx in its own utility process (app/voice/tts-process.ts;
- * natively on Windows and macOS, where Kokoro, more natural, can speak instead), so speaking never holds up listening. A reply is spoken sentence by sentence as it is
- * made, and a streamed answer as its sentences arrive (SpeechStream): the first words play within about half a second.
- * Without the voice's model (not downloaded yet), or should it fail, the system's voice speaks (speechSynthesis).
- * Pure helpers here; nothing in this file loads a model.
+ * Ember's Kitten Nano voice runs natively in its own utility process, so speaking never holds up listening. Optional
+ * Kokoro uses that same path. Replies stream as clauses and sentences; when native speech is unavailable, too slow
+ * or fails, a voice that runs locally on the operating system speaks instead. Pure helpers; no model loads here.
  */
 
 import { speechMarkupOpen, spokenText } from "./spoken";
 
-/** The optional native voices; Kokoro remains the existing choice until the user selects Kitten. */
+/** Persisted preference names; Kitten is the default, with Kokoro as the optional alternative. */
 export type NaturalVoiceModel = "kokoro" | "kitten";
 
-/**
- * The natural voice (Kokoro) speaks only where it is made at most this fast (0.5: a second of speech in half a second),
- * so a reply streams sentence by sentence without gaps and its first words come within about half a second.
- */
+/** Neural speech must be made in at most half its playback duration, keeping streamed sentences ahead of playback. */
 export const NATURAL_MAX_RTF = 0.5;
-/**
- * About how much more work Kokoro is than the Piper voice, natively: Ember fetches Kokoro only where the Piper voice
- * runs at most NATURAL_MAX_RTF / NATURAL_COST of real time. Measured on a 2.1 GHz Xeon (4 vCPUs): Piper at 0.13 of real
- * time on its one thread (in WebAssembly: 0.36–0.49), Kokoro v1.0 (fp32) at 0.41 on 3 threads and 0.38 on 4.
- */
+/** Approximate preflight cost of optional Kokoro relative to Kitten; Kokoro's own probe still decides before use. */
 export const NATURAL_COST = 3.5;
-/** A laptop timed on battery or while busy gets another try after a week, without loading slow Kokoro every start. */
+/** A laptop timed on battery or while busy gets another try after a week, without loading a slow model every start. */
 export const NATURAL_RECHECK_MS = 7 * 24 * 3_600_000;
 
 /** The cached slow voice's real-time factor, or null when the verdict is missing, damaged, future-dated or expired. */
@@ -39,10 +30,8 @@ export function slowVerdict(rtf: number, now: number): string {
 }
 
 /**
- * A first chunk longer than FIRST_SOON is cut at its first comma (or semicolon, colon or dash) between FIRST_MIN and
- * FIRST_MAX characters: its sound comes sooner. The voice makes about 18 ms of work a character in WebAssembly (Piper
- * Kristin, scripts/perf/latency.mjs), so a 90-character first sentence held the first sound back by 1.7 s, and its
- * first clause ("I can't do that one,") came 1.2 s sooner.
+ * Cut a long first sentence at an early clause break: useful speech can start before the entire sentence is made.
+ * Keep the first clause substantial enough to sound complete. scripts/voice/bench.mjs measures the current voice.
  */
 const FIRST_SOON = 48;
 const FIRST_MAX = 90;
@@ -55,8 +44,7 @@ const CHUNK_MAX = 240;
 const CHUNK_MIN = 12;
 
 /**
- * The most of one answer Ember says aloud, in characters of speech: about 45 seconds (the Piper voice says about 15
- * characters a second). Past it, the rest is left to the bubble, which shows all of it, as voice assistants summarise
+ * The most of one answer Ember says aloud, in characters of speech: roughly a minute. Past it, the rest is left to the bubble, which shows all of it, as voice assistants summarise
  * rather than read a page out. Ember's persona keeps replies short, so this is for the long ones that slip through.
  */
 export const SPOKEN_MAX = 700;

@@ -585,6 +585,21 @@ organisation has them off. "Status?" says a task waits for the user's answer or 
 
 ## 10. Progress
 
+### Default speech voice: explicit owner override (2026-11-04)
+
+After the UI/speech review, the owner explicitly chose Kitten Nano 0.8 FP32 as Ember's default and asked to remove
+Piper from the production voice path. This supersedes the earlier §2/Piper decision and the optional-Kitten choice
+recorded below. The pinned Kitten archive is the `tts` entry in `VOICE_MODELS`, so preparation and packaged models
+use the same default. The standard model set is 138,478,723 bytes (about 138.5 MB); Kitten itself is 63,815,222 bytes.
+Optional Kokoro remains a separate explicit choice. Its failure falls back to Kitten; unsupported, failed or
+too-slow default neural speech uses a local system voice. WebAssembly recognition remains supported, with no neural
+speech on that backend. Native synthesis keeps the measured 0.5 real-time-factor gate and one-thread Kitten policy.
+
+Historical Piper benchmark rows and synthetic Amy/Ryan recognition fixtures remain historical/test-only evidence;
+they no longer define the shipped default. Transitive sherpa/eSpeak/piper-phonemize licence notices remain required.
+This is a user-selected default change, not a new claim of measured listening preference, and does not bump a
+version or publish a release. Audio handling, consent and action authority are unchanged.
+
 ### UI, accessibility and speech follow-up (2026-11-04)
 
 The owner authorised the entire UI review and its implementation. Home now provides an inline transient

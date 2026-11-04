@@ -1,58 +1,72 @@
-/**
- * The natural voice's row in Home (Voice): what became of turning it on, in words, so the switch never stays on with
- * nothing happening and nothing said (owner report of 2026-11-03: on Windows it did nothing).
- */
-
+/** Voice selection defaults to the included Kitten voice and discloses optional Kokoro downloads and actual fallback. */
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { NATURAL_CHOICES, naturalModelHint, naturalUseLabel } from "../../app/renderer/home/natural-copy";
+import { effectiveVoiceModel, NATURAL_CHOICES, naturalModelHint, naturalUseLabel } from "../../app/renderer/home/natural-copy";
 import { NATURAL_HINT, naturalVoiceView } from "../../app/renderer/home/copy";
 
-describe("naturalVoiceView", () => {
-  it("says what became of turning the natural voice on, for every outcome", () => {
-    expect(naturalVoiceView(undefined)).toEqual({ text: NATURAL_HINT, retry: false, busy: false });
-    expect(naturalVoiceView({ state: "off" }).text).toBe(NATURAL_HINT);
-    expect(naturalVoiceView({ state: "downloading", percent: 45 })).toEqual({ text: "Downloading the natural voice… 45%", retry: false, busy: true });
-    expect(naturalVoiceView({ state: "ready" }).text).toBe("Ready: Ember will use it from its next reply.");
-    expect(naturalVoiceView({ state: "on" }).text).toBe("On: Ember speaks in the natural voice.");
-    expect(naturalVoiceView({ state: "too-slow" }).text).toBe("This computer is too slow for the natural voice, so Ember keeps its usual voice.");
-    expect(naturalVoiceView({ state: "needs-native" }).text).toBe("Needs Ember's faster speech, which didn't load on this computer, so Ember keeps its usual voice.");
-    expect(naturalVoiceView({ state: "wont-load" }).text).toBe("The natural voice wouldn't load on this computer, so Ember keeps its usual voice.");
-    expect(naturalVoiceView({ state: "checking" })).toEqual({ text: "Checking whether this computer is fast enough for the natural voice…", retry: false, busy: true });
-    expect(naturalVoiceView({ state: "later" }).text).toBe("On: Ember switches to it the next time it speaks, if this computer is fast enough for it.");
-    expect(naturalVoiceView({ state: "needs-voice" }).text).toBe("Ember's own voice needs to be downloaded first (Download the speech models, above).");
+describe("the default voice choice", () => {
+  it("uses Kitten for new and former baseline preferences and preserves only explicitly enabled Kokoro", () => {
+    expect(effectiveVoiceModel()).toBe("kitten");
+    expect(effectiveVoiceModel({ natural: false, naturalModel: "kokoro" })).toBe("kitten");
+    expect(effectiveVoiceModel({ natural: false, naturalModel: "kitten" })).toBe("kitten");
+    expect(effectiveVoiceModel({ natural: true, naturalModel: "kitten" })).toBe("kitten");
+    expect(effectiveVoiceModel({ natural: true, naturalModel: "kokoro" })).toBe("kokoro");
   });
 
-  it("offers Try again only after the download failed, saying why", () => {
-    const failed = naturalVoiceView({ state: "failed", detail: "Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again." });
-    expect(failed).toEqual({ text: "Couldn't download the natural voice. Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again.", retry: true, busy: false });
-    for (const state of ["off", "later", "checking", "ready", "on", "too-slow", "wont-load", "needs-native", "needs-voice"] as const) expect(naturalVoiceView({ state }).retry, state).toBe(false);
-  });
-
-  it("never shows more than 99% while the download is under way (100% is “Ready”)", () => {
-    expect(naturalVoiceView({ state: "downloading", percent: 100 }).text).toBe("Downloading the natural voice… 99%");
-  });
-
-  it("has a Try again button in the page, described by the row's words, and the page starts with the hint", () => {
+  it("includes Kitten in the base speech models and names the optional Kokoro download before use", () => {
+    expect(NATURAL_CHOICES.kitten.size).toBe("63.8 MB");
+    expect(naturalModelHint("kitten")).toContain("default voice, included in Ember's speech models");
+    expect(naturalModelHint("kitten")).not.toContain("when enabled");
+    expect(naturalModelHint("kokoro")).toContain("downloads 350 MB when you choose Use Kokoro");
+    expect(naturalModelHint("kokoro")).toContain("Kitten Nano, or the system voice");
+    expect(NATURAL_HINT).toBe(naturalModelHint("kitten"));
+    expect(naturalUseLabel("kitten")).toBe("Use Kitten Nano");
+    expect(naturalUseLabel("kokoro")).toBe("Use Kokoro (350 MB download)");
     const html = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
-    expect(html).toContain(`<button type="button" id="natural-retry" class="btn quiet" aria-describedby="natural-text" hidden>Try again</button>`);
-    expect(html).toContain(`<p class="hint" id="natural-model-hint">${naturalModelHint("kokoro")}</p>`);
-    expect(html).toContain('id="natural-model" aria-describedby="natural-model-hint natural-choice-status"');
-    expect(html).toContain('<option value="kitten">Kitten Nano · 63.8 MB</option>');
+    expect(html).toContain('<div id="natural-row">');
+    expect(html).toContain('<option value="kitten">Kitten Nano (default)</option>');
+    expect(html).toContain(`<p class="hint" id="natural-model-hint">${NATURAL_HINT}</p>`);
+    expect(html).not.toContain('id="natural"');
+    expect(html).not.toContain("Use a more natural voice");
   });
 });
 
+describe("effective voice status", () => {
+  it("shows the selected/default voice even when the legacy optional switch is false", () => {
+    expect(naturalVoiceView(undefined).text).toContain("Kitten Nano is selected");
+    expect(naturalVoiceView({ state: "on", model: "kitten", voice: "kitten" }).text).toBe("Ember speaks in Kitten Nano.");
+    expect(naturalVoiceView({ state: "ready", model: "kitten" }).text).toContain("Kitten Nano is ready");
+    expect(naturalVoiceView({ state: "checking", model: "kitten" })).toEqual({ text: "Checking Kitten Nano on this computer…", retry: false, busy: true });
+    expect(naturalVoiceView({ state: "later", model: "kitten" }).text).toContain("next time Ember speaks");
+    expect(naturalVoiceView({ state: "off", model: "kitten", voice: "system" }).text).toContain("system voice");
+  });
 
-describe("natural voice choice disclosure", () => {
-  it("names each local download and makes changing an enabled voice an explicit action", () => {
-    expect(NATURAL_CHOICES.kokoro.size).toBe("350 MB");
-    expect(NATURAL_CHOICES.kitten.size).toBe("63.8 MB");
-    expect(naturalModelHint("kitten")).toContain("downloads 63.8 MB when enabled");
-    expect(naturalModelHint("kitten")).toContain("Speech stays on this computer");
-    expect(naturalModelHint("kitten")).toContain("keeps its usual voice if needed");
-    expect(naturalUseLabel("kitten", false)).toBe("Save voice choice");
-    expect(naturalUseLabel("kitten", true)).toBe("Use Kitten Nano (63.8 MB download)");
-    expect(naturalVoiceView(undefined, naturalModelHint("kitten")).text).not.toContain("Kokoro");
+  it("reports the actual fallback for missing, unsupported, slow and broken voices", () => {
+    for (const state of ["too-slow", "wont-load", "needs-native"] as const) {
+      const kitten = naturalVoiceView({ state, model: "kitten", voice: "system" });
+      expect(kitten.text).toContain("Kitten Nano");
+      expect(kitten.text).toContain("this computer's system voice");
+      const kokoro = naturalVoiceView({ state, model: "kokoro", voice: "kitten" }, "kokoro");
+      expect(kokoro.text).toContain("Kokoro");
+      expect(kokoro.text).toContain("Ember uses Kitten Nano.");
+      expect(naturalVoiceView({ state, model: "kokoro", voice: "system" }, "kokoro").text).toContain("this computer's system voice");
+    }
+    const missing = naturalVoiceView({ state: "needs-voice", model: "kitten", voice: "system" });
+    expect(missing.text).toContain("Show speech model download");
+    expect(missing.text).toContain("Kitten Nano is included");
+    expect(missing.retry).toBe(false);
+    expect(naturalVoiceView({ state: "on", model: "kokoro", voice: "kitten" }, "kokoro").text).toContain("Ember uses Kitten Nano.");
+  });
+
+  it("offers optional download retry only for Kokoro and never displays more than 99% while downloading", () => {
+    const failed = naturalVoiceView({ state: "failed", model: "kokoro", voice: "kitten", detail: "Check the network." }, "kokoro");
+    expect(failed).toEqual({ text: "Couldn't download Kokoro. Check the network. Ember uses Kitten Nano.", retry: true, busy: false });
+    expect(naturalVoiceView({ state: "failed", model: "kitten", voice: "system", detail: "Missing files." }).retry).toBe(false);
+    expect(naturalVoiceView({ state: "downloading", model: "kokoro", percent: 100 }, "kokoro").text).toBe("Downloading Kokoro… 99%");
+  });
+
+  it("never relabels a stale previous model's status as the new selection", () => {
+    expect(naturalVoiceView({ state: "on", model: "kitten", voice: "kitten" }, "kokoro")).toEqual({ text: "Kokoro is selected. Checking voice availability…", retry: false, busy: true });
   });
 });

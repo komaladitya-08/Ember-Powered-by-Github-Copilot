@@ -4,6 +4,15 @@
 
 Reliability beta, prepared for validation before publication.
 
+### Default voice override on 4 November
+
+- Kitten Nano 0.8 FP32 is now the default voice and replaces Piper in the production model/runtime path. Optional
+  Kokoro remains an explicit choice; unsupported, failed or too-slow default neural speech uses a local system voice.
+- Default preparation and packages use the same pinned 63.8 MB Kitten archive (about 138.5 MB for the complete
+  standard model set). WebAssembly recognition remains available; neural speech requires the native runtime.
+- Existing speech benchmarks remain historical evidence, and test-only Amy/Ryan fixture synthesis remains separate.
+  No version bump or release is made by this default change; listening-quality acceptance remains outstanding.
+
 ### UI and speech follow-up on 4 November
 
 - Ask provides a visible Send action, comfortable scaled controls, wrapping suggestions and scrolling in small work areas.
@@ -14,7 +23,7 @@ Reliability beta, prepared for validation before publication.
 - Upcoming reminders show their words, local due time and persistence state. Edits preserve timers on failed saves, text-only changes preserve seconds, and bulk deletion names its scope before confirmation.
 - The desk offers explicit read-only app text with private fields omitted. It retains consent, lock and action-identity protection; interactive semantic takeover is not claimed.
 - Recognition preserves intended dictated repeats and numeric sequences while retaining whole-sentence loop recovery. Neural voices release after two idle minutes.
-- Lightweight Kitten Nano FP32 is an opt-in native voice with a named 63.8 MB download, speed checks and Piper fallback. Existing Piper/Kokoro defaults remain; speech quality still needs listening evaluation.
+- The initial optional-Kitten choice from this review was superseded by the explicit default-voice override above.
 
 
 - Remote command output cannot replace the real process's exit code or signal.

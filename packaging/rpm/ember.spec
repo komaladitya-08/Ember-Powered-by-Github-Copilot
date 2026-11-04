@@ -24,6 +24,8 @@ Summary:        A cursor companion that works visibly in your apps, powered by G
 # BSD-3-Clause, Zlib), zlib-ng (Zlib), freetype (FTL), libpng (libpng-2.0), libtiff (libtiff), fontconfig
 # (HPND-sell-variant), and more under MIT and LGPL-3.0-or-later (its README.md, shipped as %%license).
 # The Inter typeface Ember's windows use is under the SIL Open Font License 1.1 (OFL-1.1).
+# The default Kitten Nano speech model is Apache-2.0. Removing the Piper voice does not remove sherpa's bundled
+# piper-phonemize/eSpeak dependencies or their licence obligations above.
 # sherpa-onnx's prebuilt C API (resources/voice-native, native speech loaded with koffi) is Apache-2.0, with
 # Eigen (MPL-2.0), KISS FFT (BSD-3-Clause), piper-phonemize and nlohmann/json (MIT) and eSpeak NG in it, and
 # ONNX Runtime 1.28.2 (MIT) beside it. This tag is the one list for every target: the Windows and macOS

@@ -241,6 +241,7 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
     /** The bare name ("Ember, …"), a wake of its own (KEYWORDS): measured on its own, so "Hey Ember"'s figure stays comparable. */
     const named: Float32Array[] = ["name_wake"].map(clip);
     const negatives: Float32Array[] = ["amber", "remember", "chat", "bigger", "followup", "embers"].map(clip);
+    // An independent synthetic test speaker, never Ember's shipped voice or part of its default model download.
     const ttsDir = path.join(voiceDir, "vits-piper-en_US-amy-low");
     let corpus = "3 positive and 6 negative test clips";
     if (fs.existsSync(ttsDir)) {

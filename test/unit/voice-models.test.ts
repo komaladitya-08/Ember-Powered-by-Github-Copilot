@@ -10,7 +10,7 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { LISTENING_MODELS, VOICE_MODELS, VOICE_MODELS_BYTES, createHttpsDownloader, ensureModels, forgetModels, missingModels, modelReady, modelsBytes, modelsReady, type Downloader, type ModelId } from "../../app/voice/models";
+import { DEFAULT_VOICE, LISTENING_MODELS, VOICE_MODELS, VOICE_MODELS_BYTES, createHttpsDownloader, ensureModels, forgetModels, missingModels, modelReady, modelsBytes, modelsReady, modelPaths, type Downloader, type ModelId } from "../../app/voice/models";
 import { modelsDownloadLabel } from "../../app/renderer/home/copy";
 import { matchNoModelText } from "../../app/renderer/home/match-copy";
 import { bzip2Compress, randomBytes, tarArchive, tarEntry } from "../fixtures/voice-archive/make";
@@ -79,6 +79,27 @@ function withModels(root: string, ids: readonly ModelId[] = VOICE_MODELS.map(m =
 const byId = (id: ModelId) => VOICE_MODELS.find(m => m.id === id)!;
 
 describe("which models are needed", () => {
+  it("uses the pinned Kitten archive as the default speech model", () => {
+    expect(VOICE_MODELS.find(m => m.id === "tts")).toBe(DEFAULT_VOICE);
+    expect(DEFAULT_VOICE).toMatchObject({ id: "tts", license: "Apache-2.0", bytes: 63_815_222, target: "kitten-nano-en-v0_8-fp32" });
+    expect(VOICE_MODELS.some(m => /piper/i.test(`${m.name} ${m.url} ${m.target}`))).toBe(false);
+    expect(modelPaths("/models").tts).toBe(path.join("/models", DEFAULT_VOICE.target));
+  });
+
+  it("never treats an old Piper directory or pin as the default voice", () => {
+    const root = withModels(tmpRoot(), ["kws", "vad", "asr", "speaker"]);
+    const old = "vits-piper-en_US-kristin-medium", oldHash = "c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7";
+    fs.mkdirSync(path.join(root, old));
+    fs.writeFileSync(path.join(root, `.${old}.ok`), `${oldHash}\n`);
+    expect(modelReady(root, "tts")).toBe(false);
+    expect(missingModels([root]).map(m => m.id)).toEqual(["tts"]);
+    fs.mkdirSync(path.join(root, DEFAULT_VOICE.target));
+    fs.writeFileSync(path.join(root, `.${DEFAULT_VOICE.target}.ok`), `${oldHash}\n`);
+    expect(modelReady(root, "tts")).toBe(false);
+    fs.writeFileSync(path.join(root, `.${DEFAULT_VOICE.target}.ok`), `${DEFAULT_VOICE.sha256}\n`);
+    expect(modelReady(root, "tts")).toBe(true);
+  });
+
   it("listening needs only the wake word, voice activity and speech recognition", () => {
     expect(LISTENING_MODELS).toEqual(["kws", "vad", "asr"]);
     expect(modelsReady(withModels(tmpRoot(), ["kws", "vad", "asr"]))).toBe(true);
@@ -141,11 +162,11 @@ describe("ensureModels for some of them", () => {
 describe("the download button and Voice Match's note", () => {
   it("says what's missing and its size", () => {
     const all = VOICE_MODELS.map(m => m.id);
-    expect(modelsDownloadLabel(all, VOICE_MODELS_BYTES)).toBe("Download speech models (142 MB)");
-    expect(modelsDownloadLabel(["asr", "tts"], byId("asr").bytes + byId("tts").bytes)).toBe("Download speech models (97 MB)");
-    expect(modelsDownloadLabel(["tts"], byId("tts").bytes)).toBe("Download Ember's voice (67 MB)");
+    expect(modelsDownloadLabel(all, VOICE_MODELS_BYTES)).toBe("Download speech models (138 MB)");
+    expect(modelsDownloadLabel(["asr", "tts"], byId("asr").bytes + byId("tts").bytes)).toBe("Download speech models (94 MB)");
+    expect(modelsDownloadLabel(["tts"], byId("tts").bytes)).toBe("Download Kitten Nano (63.8 MB)");
     expect(modelsDownloadLabel(["speaker"], byId("speaker").bytes)).toBe("Download Voice Match (27 MB)");
-    expect(modelsDownloadLabel(["tts", "speaker"], byId("tts").bytes + byId("speaker").bytes)).toBe("Download Ember's voice and Voice Match (94 MB)");
+    expect(modelsDownloadLabel(["tts", "speaker"], byId("tts").bytes + byId("speaker").bytes)).toBe("Download Kitten Nano and Voice Match (90 MB)");
   });
 
   it("explains Voice Match without its model: off for now with a voiceprint kept, or not yet teachable", () => {

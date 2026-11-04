@@ -102,7 +102,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above (the test starts its windows with `ACCESSIBILITY_ENABLED=1`, as Chromium joins the accessibility bus only when asked); CI runs it with them on `rockylinux:8` |
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
-| `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--kitten` explicitly adds the verified optional Kitten voice (63.8 MB) for native integration tests; the default download excludes it. `--tts-voice` also fetches a test-only TTS voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesizes new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
+| `node scripts/voice/prepare.mjs` | Downloads the standard verified speech models into `.cache/voice`, including the default Kitten Nano voice (63.8 MB), for the voice tests and tour. `--tts-voice` also fetches a separate test-only Piper Amy/Ryan voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesises new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
 | `node scripts/voice/match-bench.mjs <speakers> [--cache <file>]` | Voice Match that keeps learning (docs/ASSISTANT.md §7): false rejects and accepts before and after learning, in the enrolment's room and on another microphone, and the drift attack, on a folder of speakers' 16 kHz clips (LibriSpeech dev-clean through ffmpeg, as its header says). `--cache` keeps the voiceprints (numbers only) for trying other limits. Needs the speech models |
 | `node scripts/voice/words-bench.mjs [--show]` | Personal vocabulary for recognition (docs/ASSISTANT.md §7): word error rate of the voice clips and of synthesised requests with app and people's names, raw, corrected against a lexicon, and with corrections taught from a first take. Needs `node scripts/voice/prepare.mjs --tts-voice --voice ryan` |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
@@ -116,8 +116,9 @@ After building, CI also runs the Ask, conversation, memory, reminders/desk and n
 `EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_MEMORY_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
 and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium. The exact file list is in `.github/workflows/ci.yml`.
 The same workflow enables `EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1` for native approval and task-card
-journeys on X11. `EMBER_KITTEN_TEST=1` adds the verified optional Kitten model to native speech integration tests;
-prepare it first with `node scripts/voice/prepare.mjs --kitten`. It requires a supported native sherpa runtime and does not enable or download that voice in the app.
+journeys on X11. `EMBER_KITTEN_TEST=1` requires actual synthesis with the verified default Kitten model in native
+speech integration tests. `node scripts/voice/prepare.mjs` includes it; the gate needs a supported native sherpa
+runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
@@ -448,9 +449,10 @@ the reply remains readable in the bubble. It never submits speech to an unspecif
 
 
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
-the speech models (142 MB, once; agreeing to the microphone note starts the download). Then say “Ember, …” (or “Hey
-Ember, …”) with your request. You can say it in one breath, or pause after the name. Ember answers out loud in its own
-neural voice (it comes with the speech models; until then, the system's voice), sentence by sentence as the answer
+the standard speech models (about 138.5 MB of downloads, once; agreeing to the microphone note starts the download).
+Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name.
+Ember answers out loud in the default Kitten voice when its native runtime and model are ready, or a local system
+voice otherwise, sentence by sentence as the answer
 arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Match)** under it and say the four
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
 voice** deletes your voiceprint. With **Keep learning my voice** (on by default once Voice Match knows you), the
@@ -512,75 +514,75 @@ listens. A request ends
 when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
 quiet room); when a longer one is cut, Ember says it only caught the first part.
 
-### How speech runs (natively, or on WebAssembly)
+### How speech runs (native synthesis, native or WebAssembly listening)
 
-Listening (the wake word, the two voice detectors and Moonshine) and Ember's voice run on sherpa-onnx 1.13.8, each in a
-utility process of its own (`app/voice/process.ts`, `app/voice/tts-process.ts`), through `app/voice/runtime.ts`:
+Listening (the wake word, the two voice detectors and Moonshine) and neural synthesis use sherpa-onnx 1.13.8,
+each in a utility process (`app/voice/process.ts`, `app/voice/tts-process.ts`), through `app/voice/runtime.ts`.
+Kitten Nano 0.8 FP32 is the default production voice, `DEFAULT_VOICE` with model id `tts`; Piper is no longer a
+production model or fallback. Listening still works through WebAssembly when the native runtime is unavailable.
+Neural synthesis needs the native runtime; otherwise replies use an installed local system voice.
 
 | | Linux | Windows, macOS |
 |---|---|---|
-| Build | sherpa-onnx's prebuilt C API (`libsherpa-onnx-c-api.so` and `libonnxruntime.so`, in `resources/voice-native`) through koffi (`app/voice/capi.ts`); WebAssembly (`sherpa-onnx`: one thread, no GPU) where it can't run | The native addon (`sherpa-onnx-win-<arch>`, `sherpa-onnx-darwin-<arch>`: the binaries `sherpa-onnx-node` loads), WebAssembly if it doesn't load |
-| Threads | As on Windows and macOS (WebAssembly: 1) | Moonshine 2, the Piper voice 1 (a second thread made it slower on a busy computer), Kokoro up to 4, leaving a core free; the per-frame models 1 |
-| GPU | — | macOS: CoreML for Kokoro only, kept when it is faster than the CPU on that Mac (both are timed the first time it loads, and the verdict is kept in `ember-voice-providers.json` in the user's temporary folder). Moonshine and Piper run on the CPU: CoreML lost to it on CI's Macs, and compiling for it held up the first load by seconds (`EMBER_VOICE_PROVIDER=coreml` tries it for every model). Windows: none: the prebuilt addon's `onnxruntime.dll` has no DirectML (it imports neither `DirectML.dll` nor `d3d12.dll`, and sherpa-onnx quietly uses the CPU when asked for it) |
-| Voice | Piper "Kristin" | Piper "Kristin", or Kokoro (below) |
+| Native build | sherpa-onnx's prebuilt C API (`libsherpa-onnx-c-api.so` and `libonnxruntime.so`, in `resources/voice-native`) through koffi (`app/voice/capi.ts`) | The native addon (`sherpa-onnx-win-<arch>`, `sherpa-onnx-darwin-<arch>`: the binaries `sherpa-onnx-node` loads) |
+| Listening fallback | WebAssembly (`sherpa-onnx`: one thread, no GPU) | WebAssembly if the addon cannot load |
+| Threads | As on Windows and macOS (WebAssembly listening: 1) | Moonshine 2, Kitten 1, Kokoro up to 4 leaving a core free; the per-frame models 1 |
+| GPU | None required | macOS may probe CoreML for optional Kokoro and keep it only when faster than CPU; Kitten and Moonshine use CPU. Windows has no supported DirectML backend in the pinned addon. |
+| Spoken replies | Default Kitten, explicitly selected optional Kokoro, or the installed local system voice | The same choices |
 
 **Which build on Linux.** At start, main asks `capiChoice()` (app/voice/runtime.ts) and logs its answer as
-`voice.backend` (`backend`, `why`); `ember doctor` shows it as **Speech**: "On this computer (native)." or "On this
-computer (WebAssembly: <why>).". It is native when the libraries are in `resources/voice-native` (an RPM's
-`/opt/ember/resources/voice-native`, or inside the AppImage) and the processor has every feature they need
-(`CAPI_CPU_NEEDS` in app/voice/capi.ts, read from `/proc/cpuinfo`, which counts as lacking them when unreadable). 1.13.8's
-libraries need none beyond x86-64: disassembled, every AVX, AVX2 and AVX-512 instruction in `libonnxruntime.so` is in
-the MLAS kernels onnxruntime picks from CPUID at run time, and `libsherpa-onnx-c-api.so` has none. Otherwise, and with
-`EMBER_VOICE_BACKEND=wasm`, it is WebAssembly. Natively, a library that doesn't load still gives WebAssembly in that
-process, and a process that dies loading is started again on WebAssembly (below). A development build uses the C API
-only with `EMBER_SHERPA_CAPI` (below). The natural voice stays off on Linux (`VoicePlatform.naturalVoice`), so native
-speech fetches nothing more.
+`voice.backend` (`backend`, `why`); `ember doctor` shows it under **Speech**. The native libraries must be present
+in `resources/voice-native` (an RPM's `/opt/ember/resources/voice-native`, or inside the AppImage), and the processor
+must have `CAPI_CPU_NEEDS` (app/voice/capi.ts, checked through `/proc/cpuinfo`, with an unreadable result treated as
+unavailable). The pinned libraries need no features beyond x86-64: their AVX, AVX2 and AVX-512 implementations are
+selected by ONNX Runtime's CPU probes. A development build uses this C API only with `EMBER_SHERPA_CAPI`.
 
-Ember depends on the platform packages directly (`optionalDependencies`, so npm installs only the computer's own):
-`sherpa-onnx-node`'s JavaScript would bring `sherpa-onnx-linux-x64` too, which needs glibc 2.32 and would fail
-`npm run check:symvers`. No Linux package carries the addon (`scripts/package/layout.mjs`; CI checks the staged Linux
-folder has no `sherpa-onnx-*`): they carry the C API's libraries, which need only GLIBC_2.17, GLIBCXX_3.4.19 and
-CXXABI_1.3.7. The log says which build each process runs: `voice.ready` and `voice.tts_ready`
-carry `backend` (`native` or `wasm`), `detail` (the addon's and onnxruntime's versions, or why WebAssembly runs),
-`provider`, `threads` and `tried` (each provider's probe time); `voice.tts_ready` also has the voice and its measured
-real-time factor (`rtf`).
+Ember depends on the platform packages directly (`optionalDependencies`, so npm installs only this computer's own).
+`sherpa-onnx-node` would also install `sherpa-onnx-linux-x64`, which needs glibc 2.32 and would fail
+`npm run check:symvers`. No Linux package carries that addon (`scripts/package/layout.mjs`); Linux carries the C API
+libraries, which need only GLIBC_2.17, GLIBCXX_3.4.19 and CXXABI_1.3.7. `voice.ready` and `voice.tts_ready` record the
+backend, provider, threads and attempted provider timings; neural readiness includes its measured real-time factor.
 
-**Falling back.** A model the native build (the addon, or Linux's C API) can't make throws, and WebAssembly is used
-as before. A damaged model file aborts its onnxruntime instead (an uncaught C++ exception, which ends the process), so a voice or speech process that
-dies before it is ready is started again at once on WebAssembly (`voice.native_failed`, `voice.tts_native_failed`),
-which then says the models are damaged and Ember downloads them again; after that, the native build is tried again.
-`EMBER_VOICE_BACKEND=wasm` forces WebAssembly and `EMBER_VOICE_PROVIDER=cpu` turns CoreML off (both honoured by an
-installed Ember: neither loads code). `npx electron test/smoke/voice-backends.mjs` (after `npm run build` and
-`node scripts/voice/prepare.mjs`) starts both processes in Electron, has them hear a clip and speak a reply on the
-build Ember picks and then on WebAssembly, and prints each one's build, load time and latency; CI runs it on Windows
-and macOS, after `test/integration/voice.test.ts` (which runs on the picked build too; `EMBER_SHERPA_ADDON=<a
-sherpa-onnx.node>` tries an addon where none is installed, such as `sherpa-onnx-linux-x64`'s on a newer Linux, and
-`EMBER_SHERPA_CAPI=<folder>` runs it on the C API, with the folder `scripts/voice/fetch-capi.mjs` prints). CI's `el8`
-job runs `test/integration/voice.test.ts` on RHEL 8's glibc twice, with `EMBER_VOICE_BACKEND=wasm` and with
-`EMBER_SHERPA_CAPI`; its `package` job checks that the installed RPM and the AppImage log `voice.backend` native and that
-`ember doctor` says "On this computer (native)". A model the
-native build can't make (the C API gives no handle) is tried on WebAssembly before it counts as damaged.
+**Fallbacks.** A listening process that cannot load natively, or dies before readiness, is retried on WebAssembly
+(`voice.native_failed`). That path retains ASR coverage. Kitten and Kokoro have no neural WebAssembly fallback:
+unsupported, slow, missing or failed default Kitten uses the installed local system voice. Only local system voices
+are allowed, so this fallback does not send speech elsewhere. `EMBER_VOICE_BACKEND=wasm` forces the listening
+fallback and leaves neural replies to that system voice; `EMBER_VOICE_PROVIDER=cpu` turns CoreML off. These switches
+load no external code and are honoured by an installed Ember.
 
-**Optional native voices.** Settings › Voice › **Use a more natural voice** (`voice.natural`, off by default)
-keeps Kokoro as the existing model choice; **Lightweight (Kitten Nano)** is an explicit alternative. Model selection
-while off does not enable speech or start a download. Switching an enabled model names its download size and waits
-for explicit Apply. Kokoro v1.0 FP32 (`af_heart`, Apache-2.0) downloads about 350 MB. Kitten Nano 0.8 FP32 downloads
-63.8 MB (the complete archive, including matching style tables and phonemiser; Apache-2.0), runs on one CPU thread,
-and is also available through the verified Linux C API. Only models supported by the current native backend are
-offered. Both use the measured `NATURAL_MAX_RTF` <= 0.5 gate and Piper fallback; a slow verdict is kept for a week
-per model/provider/thread configuration. Corrupt, future and expired verdicts are ignored.
+After `npm run build` and `node scripts/voice/prepare.mjs`, `npx electron test/smoke/voice-backends.mjs` checks the
+supported native and WebAssembly paths and reports backend, load time and latency. CI keeps WebAssembly listening
+tests and separately requires real native synthesis with the default Kitten model. `EMBER_SHERPA_ADDON=<a
+sherpa-onnx.node>` can exercise a native addon on a development host; `EMBER_SHERPA_CAPI=<folder>` uses the verified
+C API directory printed by `scripts/voice/fetch-capi.mjs`. Package checks still require installed RPM/AppImage native
+speech capability where that runtime is supported.
 
-The selected enum `voice.naturalModel` defaults to `kokoro` for older settings. Startup and live changes select the
-model before enabling it; pending speech finishes before switching, and obsolete downloads cannot reactivate an old
-choice. Home shows the selected model, actual readiness/active model, download and retry outcomes. Turning the feature
-off, policy restrictions and shutdown prevent late downloads from restarting speech. No package carries these optional
-models. Speech generation releases its utility process after two minutes without pending generation and rewarms on the
-next wake; queued playback retains its own ownership. Captured audio remains in memory and on the device.
+**Default and optional voices.** Kitten Nano 0.8 FP32 downloads 63.8 MB as part of the standard model manifest. Its
+complete Apache-2.0 archive includes the matching style tables and phonemiser data. It uses one CPU thread and the
+measured `NATURAL_MAX_RTF` <= 0.5 gate; a slow verdict is kept for a week per model/provider/thread configuration.
+Corrupt, future and expired verdicts are ignored. A failed gate uses the local system voice.
 
-`node scripts/voice/bench.mjs --kokoro --kitten` compares the installed models in fresh processes, including loaded/peak
-process RSS, CPU work, first-chunk latency and real-time factor. An explicit optional flag may fetch its pinned archive
-for this development benchmark. Do not interpret process RSS as total application PSS or a speed result as a naturalness
-score. The 4 November research and targeted recognition results are in [the speech follow-up](voice-review-2026-11-04.md).
+Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) remains an explicit optional download in Voice settings. Saving
+a choice while off does not enable speech or start that download. Enabling or changing the optional model names the
+download size and waits for confirmation. Kokoro uses the same real-time gate and falls back to Kitten when unavailable
+or too slow; if Kitten cannot run either, the system voice speaks. Saved preferences remain inspectable. Policy,
+consent and speaking controls still apply, and a late or obsolete download cannot restart a cancelled choice.
+
+The standard `VOICE_MODELS` manifest and bundled-model staging include Kitten; optional Kokoro is not packaged.
+Pinned Piper Amy/Ryan voices may still generate ASR/evaluation test fixtures, but are not production voices or shipped
+speech models. Keep the bundled sherpa, eSpeak NG and phonemiser licence notices: removing Piper as a model does not
+remove those transitive library obligations. The neural synthesis utility releases after two minutes without pending
+generation and rewarms on the next wake; queued playback retains its own ownership. Captured audio remains in memory
+and on the device.
+
+`node scripts/voice/bench.mjs --kokoro <models-directory>` compares default Kitten with explicitly requested Kokoro in
+fresh processes, including loaded/peak process RSS, CPU work, first-chunk latency and real-time factor. The optional
+flag may fetch Kokoro's pinned archive for this development benchmark. Process RSS is not total application PSS, and
+speed does not establish naturalness. The 4 November research and recognition results are in
+[the speech follow-up](voice-review-2026-11-04.md).
+
+**Historical measurements, before the Kitten default.** The table below preserves the earlier Piper/Kokoro baseline;
+it does not describe the current production model selection or promise a neural WebAssembly path.
 
 Measured in a Linux container (2.1 GHz Xeon, 4 vCPUs) with `sherpa-onnx-linux-x64`, the same addon as Windows' and
 macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/voice-backends.mjs`), and in Node
@@ -1243,7 +1245,7 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | Start menu shortcut (packaged Ember) | `Ember.lnk` in the user's Start menu programs folder |
 | **Start Ember when I log in** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `io.github.komaladitya08.ember` |
 
-Ember keeps its data out of the roaming profile: Chromium's caches, Copilot's session state and 142 MB of speech
+Ember keeps its data out of the roaming profile: Chromium's caches, Copilot's session state and speech
 models would bloat it. Windows ignores the 0700 and 0600 modes Ember sets on Linux, so privacy rests on
 `%LOCALAPPDATA%`'s per-user permissions: don't point `EMBER_USER_DATA` at a shared folder. Saving settings tries again
 when an antivirus scan or a sync client holds the file.

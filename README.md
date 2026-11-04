@@ -2,7 +2,8 @@
 
 A small, expressive companion that lives next to your cursor, listens for "Hey Ember",
 and does the work in your real apps where you can watch, without taking over your mouse.
-The agent loop runs on the GitHub Copilot SDK.
+The agent loop runs on the GitHub Copilot SDK. Spoken replies use the native Kitten Nano 0.8 voice by default;
+Kokoro is an explicit optional download, and unavailable or failed neural speech uses an installed local system voice.
 
 Ember runs on:
 - **RHEL 8.4** and the rest of the RHEL 8 family (Rocky, Alma, Oracle Linux 8) with GNOME on Xorg, its first platform;
@@ -53,12 +54,13 @@ true`), restart the apps that were already open, or log out and in, so Ember can
 are silent, settings shows a **Speaking** row and a note under **Speak**: run `sudo dnf install speech-dispatcher
 speech-dispatcher-espeak-ng`, then restart Ember.
 
-The RPM carries Ember's speech models (142 MB in all: the wake word and speech recognition, 48 MB, which listening
-needs; Ember's own voice, 67 MB; and Voice Match, 27 MB), so nothing is downloaded when voice is turned on. Both the
-RPM and the AppImage also carry the libraries that run speech natively on this computer (sherpa-onnx and ONNX Runtime:
-32 MB installed, about 9 MB of each download), so Ember hears and answers about as fast as on Windows and macOS; on a
-processor or system where they can't run, speech runs on the slower WebAssembly build instead (`ember doctor` shows
-which, under **Speech**).
+The RPM carries Ember's verified speech models, so nothing is downloaded when voice is turned on. The standard
+model downloads total about 138.5 MB: listening needs 48.1 MB, the default Kitten Nano 0.8 voice 63.8 MB, and Voice
+Match 26.5 MB. These are download sizes; the archives expand when installed. Kitten runs locally on one CPU thread;
+Kokoro remains an explicit optional voice download in Voice settings. Both the RPM and the AppImage also carry the
+libraries that run speech natively on this computer (sherpa-onnx and ONNX Runtime: 32 MB installed, about 9 MB of each
+download). On a processor or system where they can't run, listening uses WebAssembly and spoken replies use an
+installed local system voice (`ember doctor` shows the speech backend).
 
 Or run `Ember-0.1.1-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
 system packages the RPM would bring for reading apps:
@@ -71,9 +73,9 @@ chmod +x Ember-0.1.1-x86_64.AppImage
 ./Ember-0.1.1-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
 
-The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): 142 MB, of which
-listening needs 48 MB. Should Ember's voice (67 MB) or Voice Match (27 MB) be missing or damaged, Ember still listens,
-replies in the system's voice or answers anyone meanwhile, and settings offers just that one to download. Where user
+The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): about 138.5 MB,
+of which listening needs 48.1 MB. Should Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still
+listens, replies in the system's voice or answers anyone meanwhile, and settings offers just that one to download. Where user
 namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, quit Ember, then install the new RPM the same way (`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`,

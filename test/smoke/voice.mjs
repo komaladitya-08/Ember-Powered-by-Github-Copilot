@@ -21,8 +21,8 @@
 // clips (node scripts/voice/prepare.mjs --voice ryan --clips); a development build (npm run build).
 // EMBER_VOICE_E2E_MODELS and EMBER_VOICE_E2E_OTHER override where those are (.cache/voice/models,
 // .cache/voice/clips-ryan); EMBER_VOICE_E2E_VERBOSE=1 shows Ember's log as it comes. EMBER_VOICE_E2E_BACKEND (native or
-// wasm) makes the reply scenario check that listening (voice.ready) and Ember's voice (voice.tts_ready) loaded on that
-// build: voice.backend is only the choice, logged before anything loads.
+// wasm) checks actual listening readiness. Native speech must use default Kitten with real neural audio; WASM
+// recognition uses local system speech whose renderer start/completion is required, with no neural ready/audio.
 // usage: node test/smoke/voice.mjs [scenario...]   (default: all of reply, name, multi, stop, match)
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -31,7 +31,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { startMockLlm } from "../mock-llm/server.mjs";
-import { voiceConversation, voiceStop } from "./voice-checks.mjs";
+import { voiceConversation, voiceStop, voiceSystemSpeech } from "./voice-checks.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const fixtures = path.join(root, "test/fixtures/voice");
@@ -256,11 +256,15 @@ const lastUser = r => {
 const asked = (from, words) => mock.requests.slice(from).some(r => words.test(lastUser(r)));
 const askedText = from => JSON.stringify(mock.requests.slice(from).map(lastUser));
 
-/** Speech starts, its audio reaches the page, and it ends: [on, first audio, off] indexes from `from`. */
+/** Native-only default speech cannot accompany a WASM recogniser; its replies use the local system voice. */
+const systemSpeech = inst => wantBackend === "wasm" || inst.log.find(e => e.msg === "voice.ready")?.backend === "wasm";
+
+/** Speech must actually start and finish; neural speech also proves audio reached the page. */
 async function spoken(inst, from, ms = 30_000) {
   const on = await waitFor(inst, e => e.msg === "voice.self_speaking" && e.on, ms, "Ember to start speaking (voice.self_speaking on)", from);
-  const audio = await waitFor(inst, e => e.msg === "voice.audio_played", 5_000, "the reply's audio to reach the page (voice.audio_played)", from);
+  const audio = systemSpeech(inst) ? null : await waitFor(inst, e => e.msg === "voice.audio_played", 5_000, "the reply's audio to reach the page (voice.audio_played)", from);
   const off = await waitFor(inst, e => e.msg === "voice.self_speaking" && !e.on, 60_000, "Ember to finish speaking (voice.self_speaking off)", on);
+  if (systemSpeech(inst)) voiceSystemSpeech(inst.log, from);
   return { on, audio, off };
 }
 
@@ -286,7 +290,8 @@ const scenarios = {
       const heard = await waitFor(inst, e => e.msg === "voice.utterance" && e.window === "manual", 15_000, "the temporary request", mic);
       expect(await evaluateInSettings(inst, "window.ember.voiceStatus().then(v => v.state === 'off')"), "the microphone did not close after recognition");
       const answer = await spoken(inst, heard);
-      expect(inst.log[answer.audio].page === "speaker", "the answer played from the microphone window");
+      if (answer.audio !== null) expect(inst.log[answer.audio].page === "speaker", "the answer played from the microphone window");
+      else expect(inst.log[answer.on].listening === false, "system speech reopened microphone capture");
       if (wantBackend) expect(inst.log[ready].backend === wantBackend, "temporary recognition did not use the requested backend");
       expect(asked(sent, /do not disturb/i), "the model did not receive the temporary request");
       expect(all(inst, "voice.utterance").length === 1 && index(inst, "voice.wake") < 0 && index(inst, "voice.follow_up") < 0, "the temporary request left listening open");
@@ -321,7 +326,8 @@ const scenarios = {
       if (wantBackend) {
         expect(inst.log[ready].backend === wantBackend, `listening ran on ${inst.log[ready].backend}, expected ${wantBackend}`);
         const tts = index(inst, "voice.tts_ready");
-        expect(tts >= 0 && inst.log[tts].backend === wantBackend, `speech did not load on ${wantBackend}`);
+        if (systemSpeech(inst)) voiceSystemSpeech(inst.log, heard);
+        else expect(tts >= 0 && inst.log[tts].backend === "native" && inst.log[tts].voice === "kitten", "default Kitten speech did not load natively");
       }
       expect(asked(sent, /do not disturb/i), "the model did not receive the request about Do Not Disturb");
       expect(await evaluateInSettings(inst, `window.ember.conversation().then(rows => rows.some(row => row.who === "ember" && row.text.includes(${JSON.stringify(reply)})))`), "the model's reply wasn't in the conversation");
@@ -341,27 +347,28 @@ const scenarios = {
       await waitFor(inst, e => e.msg === "voice.utterance", 40_000, "the request (voice.utterance)");
       const { on, off } = await spoken(inst, 0);
       const followUp = await waitFor(inst, e => e.msg === "voice.follow_up", 10_000, "the follow-up window (voice.follow_up)");
-      // The log, in order. Ember's voice starts loading at the wake (it's warmed then), so its tts_ready may come before
-      // or after the request's end: it's checked to come after the wake and before any of its audio.
-      const [ready, wake, , audio] = inOrder(inst, [["voice.ready"], ["voice.wake", e => e.keyword === "hey_ember"], ["voice.utterance", e => e.window === "wake"], ["voice.audio_played"]]);
-      const tts = index(inst, "voice.tts_ready");
-      expect(tts > wake && tts < audio, `voice.tts_ready (#${tts}) should come after the wake (#${wake}) and before the reply's audio (#${audio})`);
+      const system = systemSpeech(inst);
+      const [ready, wake] = inOrder(inst, [["voice.ready"], ["voice.wake", e => e.keyword === "hey_ember"], ["voice.utterance", e => e.window === "wake"]]);
       expect(ready < wake, "voice.ready came after the wake");
       expect(asked(sent, /night ?light/i), `the model wasn't asked about night light (it was asked ${askedText(sent)})`);
-      console.log(`ok   reply: voice.ready → voice.wake → voice.utterance (${askedText(sent)}) → voice.tts_ready → audio on the page`);
-      if (wantBackend) {
-        for (const k of [ready, tts]) expect(inst.log[k].backend === wantBackend, `${inst.log[k].msg} ran on ${inst.log[k].backend ?? "an unnamed build"} (${inst.log[k].detail ?? "no detail"}), not ${wantBackend}`);
-        console.log(`ok   reply: listening and Ember's voice both loaded on ${wantBackend} (${inst.log[ready].detail})`);
+      if (wantBackend) expect(inst.log[ready].backend === wantBackend, `listening ran on ${inst.log[ready].backend}, expected ${wantBackend}`);
+      if (system) {
+        voiceSystemSpeech(inst.log);
+        console.log("ok   reply: WASM listening, local system speech actually started/completed, no neural ready/audio");
+      } else {
+        // A cached optional model cannot pass this baseline default-voice gate.
+        const audio = index(inst, "voice.audio_played"), tts = index(inst, "voice.tts_ready");
+        expect(tts > wake && tts < audio, `voice.tts_ready (#${tts}) should follow wake (#${wake}) and precede audio (#${audio})`);
+        expect(inst.log[tts].backend === "native" && inst.log[tts].voice === "kitten", "the reply did not use native default Kitten");
+        const played = all(inst, "voice.audio_played");
+        const seconds = played.reduce((n, e) => n + e.seconds, 0);
+        expect(seconds > 2, `only ${seconds} s of the reply reached the page`);
+        expect(on < audio + 2 && audio < off, "self-speaking didn't span the reply's audio");
+        const lastAudio = inst.log.findLastIndex(e => e.msg === "voice.audio_played");
+        expect(lastAudio < off, "audio reached the page after Ember said it had finished speaking");
+        console.log(`ok   reply: ${played.length} chunk(s), ${seconds.toFixed(1)} s of native Kitten played; self-speaking on for ${(ms(inst, on, off) / 1000).toFixed(1)} s`);
       }
-      // Both sentences were played, and the voice process was told while they were.
-      const played = all(inst, "voice.audio_played");
-      const seconds = played.reduce((n, e) => n + e.seconds, 0);
-      expect(seconds > 2, `only ${seconds} s of the reply reached the page`);
       expect(inst.log[on].listening === true, "the voice process wasn't running to be told Ember speaks");
-      expect(on < audio + 2 && audio < off, "self-speaking didn't span the reply's audio");
-      const lastAudio = inst.log.findLastIndex(e => e.msg === "voice.audio_played");
-      expect(lastAudio < off, "audio reached the page after Ember said it had finished speaking");
-      console.log(`ok   reply: ${played.length} chunk(s), ${seconds.toFixed(1)} s of Ember's voice played; self-speaking on for ${(ms(inst, on, off) / 1000).toFixed(1)} s`);
       // The follow-up window opens only once Ember has finished speaking.
       expect(followUp > off, `the follow-up window opened (#${followUp}) before Ember finished speaking (#${off})`);
       expect(index(inst, "voice.follow_up") === followUp, "a follow-up window opened twice");
@@ -377,7 +384,7 @@ const scenarios = {
     try {
       await waitFor(inst, e => e.msg === "voice.utterance", 40_000, "the request after the bare name (voice.utterance)");
       await spoken(inst, 0);
-      inOrder(inst, [["voice.ready"], ["voice.wake", e => e.keyword === "ember"], ["voice.utterance", e => e.window === "wake"], ["voice.audio_played"]]);
+      inOrder(inst, [["voice.ready"], ["voice.wake", e => e.keyword === "ember"], ["voice.utterance", e => e.window === "wake"], [systemSpeech(inst) ? "voice.self_speaking" : "voice.audio_played", e => !systemSpeech(inst) || e.on === true]]);
       expect(asked(sent, /night ?light/i), `the model wasn't asked about night light (it was asked ${askedText(sent)})`);
       console.log("ok   name: \"Ember, …\" woke Ember (keyword ember), was heard and answered aloud");
     } finally { await finish(inst); }
@@ -433,7 +440,7 @@ const scenarios = {
         await waitFor(inst, e => e.msg === "voice.event" && e.type === "listening", 5_000, "the follow-up window to listen", followUp + 1);
         from = followUp + 1;
       }
-      const turns = voiceConversation(inst.log, ["wake", "follow-up", "follow-up"]);
+      const turns = voiceConversation(inst.log, ["wake", "follow-up", "follow-up"], systemSpeech(inst));
       const requests = mock.requests.slice(sent).map(lastUser);
       expect(requests.length === 3 && [/night ?light/i, /do not disturb/i, /text.*bigger/i].every((words, i) => words.test(requests[i])),
         `the model did not receive the three requests in order (it was asked ${askedText(sent)})`);
@@ -460,7 +467,7 @@ const scenarios = {
       expect(inst.log[rejected].reason === "voice", `the other voice was rejected for "${inst.log[rejected].reason}", not its voice`);
       const owner = await waitFor(inst, e => e.msg === "voice.utterance", 30_000, "the owner's request after the other voice (voice.utterance)", rejected);
       expect(index(inst, "voice.utterance", () => true, enrolled) === owner, "the other voice's request got through");
-      await waitFor(inst, e => e.msg === "voice.audio_played", 30_000, "the owner's reply to be spoken", owner);
+      await spoken(inst, owner);
       console.log(`ok   match: another voice was turned away (voice.rejected reason voice, score ${inst.log[rejected].score}); the owner's request was heard and answered`);
     } finally { await finish(inst); }
   },
