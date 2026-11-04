@@ -234,7 +234,8 @@ sherpa-onnx's project built and published them. Their source, and the scripts th
 - piper-phonemize, which calls it:
   https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip
   (SHA-256 d9cca4e2bdc7d6dd8dffb96a4668283dbd3f77a9c194a3e530c1e8eba9406a5d)
-If any of these can't be reached, ask for the source in an issue at
+Each release on https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases carries these archives
+too, as source-*.zip, beside the packages. If any of these can't be reached, ask for the source in an issue at
 https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues and it will be sent to you.
 
 --- ONNX Runtime's LICENSE ---

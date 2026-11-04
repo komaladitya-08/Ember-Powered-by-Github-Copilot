@@ -177,6 +177,13 @@ Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Termin
 open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --doctor; cat ~/ember-doctor.txt
 ```
 
+## Hear about new versions
+
+Ember doesn't update itself. To hear when a new version is out, turn on **Tell me when a new version is out** under
+**Updates** in its settings and agree to its note. Once a day Ember then asks GitHub, sends nothing about you, and tells
+you once. It never downloads or installs anything: you install the new version as above. The source of the voice's
+GPL-licensed part is on each release, as `source-*.zip`.
+
 ## Computers without internet access
 
 Everything Ember hears and says is worked out on the computer itself: the wake word, speech recognition, Ember's

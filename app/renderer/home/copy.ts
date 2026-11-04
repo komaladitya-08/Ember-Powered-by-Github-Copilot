@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform } from "../../shared/ipc";
+import type { ActivityEntry, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -414,6 +414,21 @@ export function elevationOf(checks: readonly { id: string; label: string; status
 
 /** The routines note (FEATURE_CONSENT_VERSION.routines): change it only with a bump of that version. */
 export const ROUTINES_CONSENT_TEXT = "Ember will keep the routines you name and the reminders you set after it closes, in your own words. It keeps them on this computer only, in its data folder, where only you can read it. When you say a routine's name, its steps go to Copilot as if you had just asked each one, and Ember still asks before anything risky. You can see and delete them here, and signing out deletes them all.";
+
+/** The update note (FEATURE_CONSENT_VERSION.updates): change it only with a bump of that version. */
+export const UPDATES_CONSENT_TEXT = "Once a day, Ember will ask GitHub whether a newer version is out. GitHub sees your internet address and that someone asked, and nothing else: no sign-in, and nothing about you or what you do. Ember only tells you. It never downloads or installs anything by itself.";
+
+/** Where the update check stands, in a sentence; nothing while it is off. */
+export function updateStatusText(s: UpdateStatus): string {
+  switch (s.phase) {
+    case "available": return `Ember ${s.latest} is out.`;
+    case "current": return "You have the latest version.";
+    case "checking": return "Checking…";
+    case "failed": return "Couldn't check for updates. Ember will try again tomorrow.";
+    case "idle": return "Ember will check shortly.";
+    default: return "";
+  }
+}
 
 /** The routines list when it's empty: what to say to make one, or that routines are off. */
 export function routinesEmptyText(on: boolean): string {

@@ -577,6 +577,20 @@
       </details>
     </section>
 
+    <section class="after-setup" data-pane="checks" aria-labelledby="updates-h">
+      <h2 id="updates-h" tabindex="-1">Updates</h2>
+      <div class="group">
+        <label class="switch-row"><input type="checkbox" id="updates-on" role="switch" aria-describedby="updates-hint"><span>Tell me when a new version is out</span></label>
+        <div id="updates-consent" class="consent" role="group" aria-label="Before Ember checks for new versions" hidden>
+          <p id="updates-consent-text"></p>
+          <div class="agent-actions"><button type="button" id="updates-yes" class="btn" aria-describedby="updates-consent-text">I agree, check</button><button type="button" id="updates-no" class="btn quiet">Not now</button></div>
+        </div>
+      </div>
+      <p class="hint" id="updates-status" role="status"></p>
+      <div class="agent-actions"><button type="button" id="updates-open" class="btn small" hidden>See what's new…</button><button type="button" id="updates-check" class="btn quiet small" hidden>Check now</button></div>
+      <p class="hint" id="updates-hint">Off, Ember never asks. On, it tells you once when a new version is out, and you install it yourself.</p>
+    </section>
+
     <section class="after-setup fold-section" data-pane="checks" aria-labelledby="about-h">
       <details class="fold" id="about-fold" aria-labelledby="about-h">
         <summary><h2 id="about-h">About this build</h2><span class="fold-note" id="about-note"></span></summary>

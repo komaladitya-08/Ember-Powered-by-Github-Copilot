@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
+import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
@@ -58,6 +58,10 @@ const api: EmberHomeApi = {
   onMemoryModel: fn => listen<MemoryModelStatus>(IPC.memoryModelChanged, fn),
   downloadMemoryModel: () => ipcRenderer.invoke(IPC.memoryModelDownload),
   removeMemoryModel: () => ipcRenderer.invoke(IPC.memoryModelRemove),
+  updates: () => ipcRenderer.invoke(IPC.updatesStatus),
+  onUpdates: fn => listen<UpdateStatus>(IPC.updatesChanged, fn),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.updatesCheck),
+  openUpdate: () => ipcRenderer.invoke(IPC.updatesOpen),
   routines: () => ipcRenderer.invoke(IPC.routinesList),
   reminders: () => ipcRenderer.invoke(IPC.remindersList),
   onReminders: fn => listen<ReminderRow[]>(IPC.remindersChanged, fn),

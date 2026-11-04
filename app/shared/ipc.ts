@@ -11,6 +11,8 @@ import type { MemoryCorrection } from "./memory-correction";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
+/** Whether a newer Ember is out (app/main/updates.ts): "off" until the user turned it on and agreed to its note. */
+export interface UpdateStatus { phase: "off" | "idle" | "checking" | "current" | "available" | "failed"; latest: string | null; checkedAt: string | null }
 /** A waiting reminder and whether its exact current version is retained after quit. */
 export interface ReminderRow { id: string; text: string; at: number; created: number; kept: boolean }
 export interface ReminderChange { expected: Omit<ReminderRow, "kept">; replacement: { text: string; at: number } | null }
@@ -98,6 +100,11 @@ export const IPC = {
   memoryModelChanged: "memory:model-changed",
   memoryModelDownload: "memory:model-download",
   memoryModelRemove: "memory:model-remove",
+  /** Telling the user a newer Ember is out (app/main/updates.ts): where it stands, looking now, and opening its page. */
+  updatesStatus: "updates:status",
+  updatesChanged: "updates:changed",
+  updatesCheck: "updates:check",
+  updatesOpen: "updates:open",
   /** Routines and lasting reminders (app/main/agent/routines.ts): the routines kept, and deleting one or all of them. */
   routinesList: "routines:list",
   routinesChanged: "routines:changed",
@@ -369,6 +376,11 @@ export interface EmberHomeApi {
   onMemoryModel(fn: (s: MemoryModelStatus) => void): () => void;
   downloadMemoryModel(): Promise<void>;
   removeMemoryModel(): Promise<void>;
+  /** Whether a newer Ember is out, looking now, and opening its release page. */
+  updates(): Promise<UpdateStatus>;
+  onUpdates(fn: (s: UpdateStatus) => void): () => void;
+  checkForUpdates(): Promise<UpdateStatus>;
+  openUpdate(): Promise<void>;
   /** The routines kept, and changes to them; deleting one, or all of them with the lasting reminders. */
   routines(): Promise<RoutineRow[]>;
   reminders(): Promise<ReminderRow[]>;

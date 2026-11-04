@@ -12,9 +12,9 @@ const read = (p: string) => fs.readFileSync(p, "utf8");
 const version = JSON.parse(read("package.json")).version as string;
 
 describe("release.mjs", () => {
-  it("names the eight files the README downloads", () => {
+  it("names the eight files the README downloads and the three of the GPL source", () => {
     const files = releaseFiles(version);
-    expect(files).toHaveLength(8);
+    expect(files).toHaveLength(11);
     const readme = read("README.md");
     // The README spells these out; the Mac zips and the Intel Mac's files it names as "(or the .zip; mac-x64 …)".
     for (const f of [`ember-${version}-1.el8.x86_64.rpm`, `Ember-${version}-win-x64.zip`, `Ember-${version}-mac-arm64.dmg`, `Ember-voice-models-${version}.zip`]) {

@@ -683,3 +683,7 @@ M12 review: removed the obsolete terminal exit-marker parser, which let command 
 ### Review fixes (2026-11-04)
 
 Nine reviewers read `main` at 6b75bf38; each item here was checked against the code. Memory, the reconnect's account lookup, the workspace library and model calls now fail without losing data or holding Project's controls. The action limit is now one count across tasks, as §5 states it: a runaway task can use up the minute for another task, which is the safer failure. The command reviewer's session runs `verifySessionTools`, `tailscale` is classified, the handle's face rests once dozing and settled, and a question no longer hashes every fact. A short spoken yes on a risky step (the owner decision of 2026-11-03) is unchanged.
+
+### Update notices and the voice's source (2026-11-05)
+
+Owner decision. Opt-in update notices (app/main/updates.ts): one unauthenticated request a day to GitHub's releases list, once `settings.updates` is on with its own consent, off under `features.updates` and LOCKDOWN. It only tells; it installs nothing while packages are unsigned. Each release now also attaches the checked `source-*.zip` archives for sherpa-onnx, eSpeak NG and piper-phonemize (GPL-3.0 section 6), so the source no longer depends on third-party repositories staying up.

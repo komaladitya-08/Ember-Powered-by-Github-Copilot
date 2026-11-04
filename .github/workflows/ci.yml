@@ -1121,6 +1121,8 @@ jobs:
         with:
           name: ember-macos-x64
           path: dist/release
+      - name: The source of the voice's GPL part, checked against its pins (GPL-3.0 section 6)
+        run: node scripts/package/gpl-source.mjs dist/release
       - name: The files the README downloads, the tag's version, and the notes from CHANGELOG.md
         run: |
           ls -l dist/release
@@ -1128,7 +1130,7 @@ jobs:
       - name: SHA256SUMS
         working-directory: dist/release
         run: |
-          sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg > SHA256SUMS
+          sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg source-*.zip > SHA256SUMS
           cat SHA256SUMS
           sha256sum -c SHA256SUMS
       - name: Publish the release with its files and SHA256SUMS

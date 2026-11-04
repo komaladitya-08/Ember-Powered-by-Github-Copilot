@@ -108,6 +108,7 @@ import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
+import { releasePage, UpdateChecker } from "./updates";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
@@ -1812,6 +1813,22 @@ function start(): void {
   const broadcast = (channel: string, value: unknown) => {
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, value);
   };
+  // Telling the user a newer Ember is out (app/main/updates.ts): only once they turned it on and agreed to its note.
+  const updates = new UpdateChecker({
+    fetch: (url, init) => net.fetch(url, init), current: app.getVersion(), log: log.child("updates"),
+    allowed: () => {
+      const u = settings.get().updates;
+      return consented() && policy.features.updates !== false && u.on && u.consent.version >= FEATURE_CONSENT_VERSION.updates;
+    },
+    told: () => settings.get().updates.told,
+    announce: version => {
+      settings.update({ updates: { ...settings.get().updates, told: version } });
+      notify("Ember: a new version is out", `Ember ${version} is out. Open Ember's settings to see what's new.`);
+    },
+    changed: status => broadcast(IPC.updatesChanged, status),
+  });
+  settings.onChange(() => updates.refresh());
+  updates.refresh();
   const progress = (p: SignInProgress) => broadcast(IPC.signInProgress, p);
 
   ipcMain.handle(IPC.agentStatus, guard(() => agent?.getStatus() ?? null));
@@ -2267,6 +2284,12 @@ function start(): void {
   ipcMain.handle(IPC.memoryModelRemove, guard(() => {
     try { betterRecall.remove(); }
     catch (err) { throw new Error("Ember couldn't finish deleting Better recall's saved data. Try Remove again.", { cause: err }); }
+  }));
+  ipcMain.handle(IPC.updatesStatus, guard(() => updates.status));
+  ipcMain.handle(IPC.updatesCheck, guard(() => updates.check()));
+  ipcMain.handle(IPC.updatesOpen, guard(async () => {
+    const page = updates.status.latest ? releasePage(updates.status.latest) : null;
+    if (page) await shell.openExternal(page);
   }));
   ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
   ipcMain.handle(IPC.remindersList, guard(() => reminderRows()));

@@ -7,10 +7,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { GPL_SOURCES } from "./gpl-source.mjs";
 import { artifactNames, layoutFor } from "./layout.mjs";
 
 /**
- * Every file a release attaches besides SHA256SUMS: the README's downloads, in §7's spelling.
+ * Every file a release attaches besides SHA256SUMS: the README's downloads, in §7's spelling, and the GPL source.
  * @param {string} version
  */
 export function releaseFiles(version) {
@@ -19,6 +20,7 @@ export function releaseFiles(version) {
     `Ember-${version}-x86_64.AppImage`,
     `Ember-voice-models-${version}.zip`,
     ...[layoutFor("win32", "x64"), layoutFor("darwin", "arm64"), layoutFor("darwin", "x64")].flatMap(l => artifactNames(l, version)),
+    ...GPL_SOURCES.map(s => s.file),
   ];
 }
 

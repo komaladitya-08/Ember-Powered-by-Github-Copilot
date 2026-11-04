@@ -47,7 +47,7 @@ Ember ships as an RPM and an AppImage built on EL8, whose every binary must run 
 
 ## Releases and the npm launcher
 
-- **Publishing.** A release is a `v<v>` tag on `main` whose version matches package.json's and has a `## <v> (<date>)` section in CHANGELOG.md, which becomes its notes. The tag runs all of ci.yml; its `release` job (the only one with write access) checks the eight files with `scripts/package/release.mjs`, writes `SHA256SUMS` and creates the release (docs/DEVELOPING.md §15). When you rename a package file, change release.mjs, README.md's download section and the launcher together.
+- **Publishing.** A release is a `v<v>` tag on `main` whose version matches package.json's and has a `## <v> (<date>)` section in CHANGELOG.md, which becomes its notes. The tag runs all of ci.yml; its `release` job (the only one with write access) fetches the voice's GPL source (`scripts/package/gpl-source.mjs`, three SHA-256-pinned `source-*.zip`; bumping sherpa-onnx means pinning its new sources there), checks the eleven files with `scripts/package/release.mjs`, writes `SHA256SUMS` and creates the release (docs/DEVELOPING.md §15). When you rename a package file, change release.mjs, README.md's download section and the launcher together.
 - **The launcher.** `packages/npm` has no dependencies and runs on Node 18.17 or later. Bump its `version` with the app's (npm-launcher.test.ts checks they match). `.github/workflows/npm.yml` publishes it after the tag's ci run passes, and skips rather than fails without credentials.
 
 ## Dependencies and CI
