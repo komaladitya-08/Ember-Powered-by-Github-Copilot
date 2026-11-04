@@ -73,8 +73,12 @@ describe("what still asks in a browser, whatever is on", () => {
     asks(edge({ value: "ctrl+shift+y", inPage: true, notEditable: true, element: { role: "document web", name: "YouTube" } }));
   });
 
-  it("a link that says what it does", () => {
-    asks(edge({ kind: "click", inPage: true, element: { role: "link", name: "Delete my account" } }));
+  it.each(["Delete my account", "Delete my account (permanently)", "Delete: my account", "Delete my account - Settings", "Delete Account - Settings", "Delete Repository - GitHub", "Please delete my account", "Buy now | Shop", "Post All - Blog", "Send Money - PayPal"])("a link that says what it does: “%s” (review of #180)", name => {
+    asks(edge({ kind: "click", inPage: true, element: { role: "link", name } }));
+  });
+
+  it.each(["Post Malone - Circles (Official Video)", "How to install Node", "Why people share passwords"])("not a link that only names what it leads to: “%s”", name => {
+    expect(engine(true).decide(edge({ kind: "click", inPage: true, goal: "play a song", element: { role: "link", name } })).verdict).toBe("allow");
   });
 
   it("a button that pays, whatever its label says (“Activate now”, audit of 2026-11-01)", () => {

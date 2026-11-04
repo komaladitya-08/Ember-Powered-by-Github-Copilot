@@ -1972,16 +1972,29 @@ const LEAD_IN = /^([^\p{L}\p{N}]*(yes|ok|okay|sure|please|go ahead|and|click|tap
  * file's name only by its real extension. What it says isn't the user's request either: it never marks a step as not
  * asked for (PolicyEngine.judge).
  */
+/** Words that act on something for good: a link starting with one is never taken for a title. */
+const LINK_ACTS_FOR_GOOD = /^(delete|remove|erase|wipe|destroy|empty|reset|clear|discard|cancel|close|deactivate|unsubscribe|uninstall|install|pay|buy|purchase|order|checkout|transfer|send|submit|confirm|approve|accept|authori[sz]e|sign|log|subscribe|upgrade|activate|donate)$/i;
+/** What a command acts on, as a second word: "Post All - Blog" is a command, whatever its shape. */
+const LINK_OBJECT = /^(my|your|our|this|that|these|those|the|all|everything|account|now|money|payment|data|it)$/i;
+
 /**
- * A page's link that reads as a command ("Delete my account and all my data", "Buy now"): it starts with a risky word or
- * says what it does. A link is otherwise named by what it leads to, a title with parts ("Post Malone - Circles (Official
- * Video)") or one that only mentions a risky word ("How to install Node"), and one such title used to end "Work without
- * asking" for the whole task.
+ * A link that plainly names what it leads to, an allow-list that fails closed (review of #180): an article's title ("How to
+ * install Node"), or a title in parts with a name after its first word ("Post Malone - Circles (Official Video)"), first
+ * word not one that acts for good. Punctuation alone says nothing: "Delete my account (permanently)" and "Delete: my
+ * account" are commands.
  */
-function linkCommands(name: string): boolean {
-  if (/\s[-–—|:(]|[|:(]\s/.test(name)) return false;
-  const label = plainText(name).trim();
-  return riskyTerms(name).some(t => label.startsWith(plainText(t))) || RISKY_ACT_LEAD.test(normalizeLabel(name));
+function linkIsTitle(name: string): boolean {
+  if (/^\s*(how (to|do)|what|why|guide to|review of)\b/i.test(name)) return true;
+  const parts = /^\s*([\p{L}\p{N}']+)\s+([\p{L}\p{N}']+)[^-–—|]*\s[-–—|]\s/u.exec(name);
+  return !!parts && !LINK_ACTS_FOR_GOOD.test(parts[1]) && /^\p{Lu}/u.test(parts[2]) && !LINK_OBJECT.test(parts[2]);
+}
+
+/**
+ * A page's link that may do what it says: judged as any control's name that acts, unless it plainly names what it leads to.
+ * One such title used to end "Work without asking" for the whole task.
+ */
+function linkCommands(name: string, acts: boolean, os: OS): boolean {
+  return riskyContent(name, acts, os) && !linkIsTitle(name);
 }
 
 function riskyContent(name: string, acts: boolean, os: OS): boolean {
@@ -2391,7 +2404,7 @@ export class PolicyEngine {
     const content = CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage);
     const selects = !!r.clickSelects && (r.kind === "click" || r.kind === "cursor_click");
     const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
-    const riskyNamed = (role === "link" && content ? linkCommands(name) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
+    const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = riskyNamed && !opensDialog(role, name);

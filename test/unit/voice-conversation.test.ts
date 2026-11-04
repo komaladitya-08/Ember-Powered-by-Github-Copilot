@@ -121,6 +121,23 @@ describe("a conversation", () => {
     expect(c.e.listening).toBe(true);
   });
 
+  it("keeps a short command said after the name (review of #180)", () => {
+    const c = setup(["Open the calculator.", "Ember, close it.", "Ember, allow."]);
+    c.wake();
+    c.say(20); c.quiet(2);
+    for (let i = 0; i < 2; i++) { c.feed(frame(0.2, 1)); c.say(20); c.quiet(2); }
+    expect(c.utterances().map(u => u.text)).toEqual(["Open the calculator.", "Close it.", "Allow."]);
+  });
+
+  it("sends nothing of the name said alone, however the recognizer wrote it", () => {
+    const c = setup(["Open the calculator.", "Number.", "Andber.", "Day number."]);
+    c.wake();
+    c.say(20); c.quiet(2);
+    for (let i = 0; i < 3; i++) { c.feed(frame(0.2, 1)); c.say(20); c.quiet(2); }
+    expect(c.utterances()).toHaveLength(1);
+    expect(c.e.listening).toBe(true);
+  });
+
   it("takes the name off a request that still says it", () => {
     const c = setup(["Open the calculator.", "Hey Ember, close it please."]);
     c.wake();

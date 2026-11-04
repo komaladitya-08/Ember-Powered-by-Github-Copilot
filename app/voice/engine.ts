@@ -1655,7 +1655,8 @@ export class VoiceEngine {
       return;
     }
     // "Ember?" said again in a conversation, however the recognizer wrote it ("Number.", "Andber."): Ember is listening already.
-    if (conversation && this.now() - this.spottedAt < NAME_HEARD_MS && wordsOf(text).length <= 2) {
+    // Judged on all that was heard, so "Ember, close it" keeps its "Close it", and only on what reads as the name.
+    if (conversation && this.now() - this.spottedAt < NAME_HEARD_MS && wordsOf(heard).length <= 2 && NAME_WRITTEN.test(heard)) {
       this.peak = 0;
       this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
       return;
@@ -1787,6 +1788,8 @@ export function spokenByEmber(heard: string, said: readonly string[]): boolean {
 const NAME_ALONE = /^\W*(?:(?:hey|hi|hay|ok|okay|a|day)\W+)?(?:amber|member|ember|emmer|remember|number)\W*$/i;
 /** Other sound counts as playing this long after the speakers' stream last had any (ms). */
 const OTHER_SOUND_MS = 1500;
+/** How the recognizer ends a name written as a word of its own: "Number.", "Andber.", "Day number.", "Embra." */
+const NAME_WRITTEN = /(?:ber|mer|bra|bro)\W*$/i;
 /** The spotter heard the name this long ago (ms) at most: what the recognizer wrote then holds it. */
 const NAME_HEARD_MS = 3000;
 /**
