@@ -7,7 +7,7 @@
 //          Requests said with a pause in the middle count those cut short, and each is also heard with the transcript
 //          made from the VAD's own segment (transcribeAhead off) on the same audio, to compare.
 //   tts    transcript → first spoken audio: the answer streams from the mock model's fixed pace (--word-ms, 30 ms a
-//          word), SpeechStream picks the first chunk, and Ember's voice (Piper, as the speech process runs it) makes it.
+//          word), SpeechStream picks the first chunk, and Ember's default Kitten Nano voice makes it natively.
 //          Also the voice's cold start (load and warm-up), which a first reply waits for unless it was warmed.
 //   ask    a typed question → the first answer token, through the real Copilot runtime and Ember's Conductor, against
 //          the mock model (test/mock-llm) answering at once: Ember's and the runtime's own overhead.
@@ -57,7 +57,7 @@ fs.writeFileSync(entry, [
   `export { sherpaBackend } from ${at("app/voice/sherpa.ts")};`,
   `export { VoiceEngine } from ${at("app/voice/engine.ts")};`,
   `export { modelPaths } from ${at("app/voice/models.ts")};`,
-  `export { piperSpec } from ${at("app/voice/tts-spec.ts")};`,
+  `export { kittenSpec } from ${at("app/voice/tts-spec.ts")};`,
   `export { SpeechStream, speechChunks } from ${at("app/voice/tts.ts")};`,
   `export { Conductor } from ${at("app/main/agent/conductor.ts")};`,
   `export { Presenter } from ${at("app/main/agent/presenter.ts")};`,
@@ -138,7 +138,14 @@ if (only.has("voice")) {
     const t0 = performance.now();
     const backend = m.sherpaBackend(paths, { monitor: true, runtime });
     row("voice", `listening models load (${backend.info.backend})`, [performance.now() - t0], "once, when listening starts");
-    const say = m.sherpaRuntime({ prefer: "wasm" }).createTts(m.piperSpec(testVoice), { provider: "cpu", numThreads: 1 }, 1);
+    // Independent synthetic test speaker only; these voices are never part of Ember's production voice/downloads.
+    const testModel = fs.readdirSync(testVoice).find(f => f.endsWith(".onnx"));
+    if (!testModel) throw new Error("The synthetic test voice is incomplete.");
+    const say = require("sherpa-onnx").createOfflineTts({
+      offlineTtsModelConfig: { offlineTtsVitsModelConfig: {
+        model: path.join(testVoice, testModel), tokens: path.join(testVoice, "tokens.txt"), dataDir: path.join(testVoice, "espeak-ng-data"),
+      }, numThreads: 1, debug: 0 }, maxNumSentences: 1,
+    });
     const synth = (text, speed) => { const a = say.generate({ text, sid: 0, speed }); return to16k(a.samples, a.sampleRate); };
     const REQUESTS = ["Turn on night light.", "What's on my screen?", "Make the text bigger please.", "Open the files app.", "Turn on do not disturb.", "What time is my next meeting?"];
     const wakeMs = [], endMs = [], oneBreathMs = [], asrMs = [], tailMs = [];
@@ -232,7 +239,8 @@ if (only.has("voice")) {
   }
 }
 
-if (only.has("tts")) {
+const ttsRuntime = only.has("tts") ? m.sherpaRuntime(runtime) : null;
+if (ttsRuntime?.backend === "native") {
   console.log("\nEmber's voice: transcript → first audio");
   const ANSWERS = [
     "It's 3:40 in the afternoon, and your next meeting is at 4.",
@@ -248,8 +256,8 @@ if (only.has("tts")) {
     "That's the latest version of Firefox, so there's nothing to update right now.",
     "Here's what I found: the project builds, but two of the unit tests fail on the date format.",
   ];
-  const sherpa = m.sherpaRuntime(runtime);
-  const spec = m.piperSpec(paths.tts);
+  const sherpa = ttsRuntime;
+  const spec = m.kittenSpec(paths.tts);
   const coldMs = [];
   for (let i = 0; i < Math.min(RUNS, 5); i++) {
     const t0 = performance.now();
@@ -280,6 +288,8 @@ if (only.has("tts")) {
   row("tts", `first chunk → its audio (${sherpa.backend}, warm)`, synthMs);
   row("tts", "first token → first audio", firstMs);
   voice.free?.();
+} else if (ttsRuntime) {
+  console.log("\nKitten Nano synthesis skipped: the native speech runtime is unavailable; Ember uses the local system voice.");
 }
 
 /** The Copilot runtime with the mock model, as the conductor's integration test runs it. */

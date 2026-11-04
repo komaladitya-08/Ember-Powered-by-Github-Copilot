@@ -35,7 +35,7 @@ They share one emotion rig, so switching never changes behaviour.
     (`setQuestion`, whatever emotion it shows) Ember has no pop, hop, fidget or saccade: it holds,
     blinking only;
   - fidgets every 5–10 s in the first minute of idling, then every 8–15 s: rarer, never more insistent;
-  - with Ember's own voice (Piper or Kokoro) the mouth opens with its loudness (the level the
+  - with Ember's own voice (default Kitten Nano or optional Kokoro) the mouth opens with its loudness (the level the
     presence meter uses, ten times a second, smoothed in the rig) and the glow brightens a little
     with it for as long as it plays (past the words: the last sentence is spoken after them). The voice
     sends its level at least every half second, and the rig lets go of one older than 1.5 s, so a voice

@@ -24,7 +24,7 @@ import { extractTarBz2 } from "./untar";
 const RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
 
 export interface ModelFile {
-  id: keyof ModelPaths | "compact";
+  id: keyof ModelPaths;
   name: string;
   url: string;
   sha256: string;
@@ -38,6 +38,14 @@ export interface ModelFile {
 
 /** One of the speech models (not the natural voice, which is optional and fetched on its own: NATURAL_VOICE). */
 export type SpeechModel = ModelFile & { id: Exclude<keyof ModelPaths, "natural"> };
+
+/** Ember's default native voice; the archive carries its compatible style table, phonemiser data and Apache licence. */
+export const DEFAULT_VOICE: SpeechModel = {
+  id: "tts", name: "Ember's voice (Kitten Nano 0.8, US English)", kind: "tar.bz2", license: "Apache-2.0",
+  url: `${RELEASES}/tts-models/kitten-nano-en-v0_8-fp32.tar.bz2`,
+  sha256: "16092117bfe591ddcd58d078e1454603b8e1caea46f85653b2c2efae76bd883e", bytes: 63_815_222,
+  target: "kitten-nano-en-v0_8-fp32",
+};
 
 export const VOICE_MODELS: SpeechModel[] = [
   {
@@ -63,14 +71,7 @@ export const VOICE_MODELS: SpeechModel[] = [
     sha256: "9ec31b342d8fa3240c3b81b8f82e1cf7e3ac467c93ca5a999b741d5887164f8d", bytes: 29_858_559,
     target: "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27",
   },
-  {
-    // Ember's own voice: a neural (VITS/Piper) voice trained on public-domain LibriVox recordings. It speaks at about
-    // 0.45 of real time on one WebAssembly thread, sentence by sentence, so a reply starts within half a second.
-    id: "tts", name: "Ember's voice (Piper neural voice “Kristin”, US English)", kind: "tar.bz2", license: "MIT (voice data: public domain)",
-    url: `${RELEASES}/tts-models/vits-piper-en_US-kristin-medium.tar.bz2`,
-    sha256: "c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7", bytes: 67_259_230,
-    target: "vits-piper-en_US-kristin-medium",
-  },
+  DEFAULT_VOICE,
   {
     // Voice Match (voiceprint.ts): WeSpeaker's ResNet34 speaker model, trained on VoxCeleb. (3D-Speaker's CAM++, smaller,
     // comes out wrong in onnxruntime-web for most lengths of audio: measured against onnxruntime's own CPU build.)
@@ -92,10 +93,10 @@ export const modelsBytes = (models: readonly ModelFile[] = VOICE_MODELS): number
 export const VOICE_MODELS_BYTES = modelsBytes();
 
 /**
- * The natural voice: Kokoro v1.0 (82M, fp32, its af_heart voice in US English), more natural than the Piper voice but
+ * The natural voice: Kokoro v1.0 (82M, fp32, its af_heart voice in US English), an optional alternative to Kitten with
  * several times the work. It isn't one of the speech models (nothing waits for it, and no package carries it): on
  * Windows and macOS, where speech runs natively, Ember fetches it once the user turns it on (Settings › Voice) and the
- * Piper voice shows this computer is fast enough (VoiceService); the speech process uses it only if it is made at most
+ * Kitten voice shows this computer is fast enough (VoiceService); the speech process uses it only if it is made at most
  * at NATURAL_MAX_RTF of real time there. fp32, not kokoro-int8-*: onnxruntime's int8 kernels made it slower. On a
  * 2.1 GHz Xeon (4 vCPUs), on 2 / 3 / 4 threads: this one at 0.52 / 0.41 / 0.38 of real time, kokoro-en v0.19 (fp32) at
  * 0.74 / 0.53 / 0.48, kokoro-int8-multi-lang v1.0 at 1.1–1.3.
@@ -107,19 +108,7 @@ export const NATURAL_VOICE: ModelFile = {
   target: "kokoro-multi-lang-v1_0",
 };
 
-/**
- * Kitten Nano 0.8: an optional smaller native voice. The official sherpa export preserves the upstream style rows.
- * FP32: measured less than half the CPU work of its INT8 export on the same pinned C API. Selected explicitly and
- * timed before use, with the same real-time cap and Piper fallback as Kokoro. Not part of the initial model download.
- */
-export const COMPACT_VOICE: ModelFile = {
-  id: "compact", name: "Kitten Nano 0.8 (US English)", kind: "tar.bz2", license: "Apache-2.0",
-  url: `${RELEASES}/tts-models/kitten-nano-en-v0_8-fp32.tar.bz2`,
-  sha256: "16092117bfe591ddcd58d078e1454603b8e1caea46f85653b2c2efae76bd883e", bytes: 63_815_222,
-  target: "kitten-nano-en-v0_8-fp32",
-};
-
-const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE, COMPACT_VOICE];
+const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE];
 
 /** A pinned download that isn't a speech model (the memory model's files): in place and verified like one. */
 export type PinnedFile = ModelDownload & Pick<ModelFile, "bytes" | "license">;

@@ -1,125 +1,113 @@
 /**
- * Ember's voice process: the neural voice (app/voice/tts.ts) in a utility process of its own, so making speech never
- * holds up listening (the voice process) or Ember's main thread. Main sends what to say, numbered; this process says
- * it chunk by chunk (speechChunks), sending each chunk's audio as soon as it's made, and "done" after the last. A
- * hush drops everything up to the number it names, between chunks (a chunk takes a fraction of a second to make). The
- * audio goes to main, which hands it to the page that plays it (renderer/mic).
- * It runs on sherpa-onnx's native addon on Windows and macOS, its WebAssembly build elsewhere (runtime.ts). Natively,
- * the natural voice (Kokoro, models.ts NATURAL_VOICE) speaks when it is downloaded and this computer makes it fast
- * enough (timed when it loads); otherwise the Piper voice does.
+ * Native neural speech in its own utility process. Kitten Nano is the default; an explicitly downloaded Kokoro may
+ * replace it only when its probe is fast enough. An unavailable, failed or slow default voice reports its reason to
+ * main, which uses a local operating-system voice. Audio chunks and hush numbering keep playback cancellable.
  */
 
-import { NATURAL_MAX_RTF, rememberedSlow, slowVerdict, speechChunks, type NaturalVoiceModel } from "./tts";
-import { kittenSpec, kokoroSpec, kokoroSpeaker, piperSpec } from "./tts-spec";
-import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type ProviderTry, type SherpaBackend, type Tts } from "./runtime";
+import { NATURAL_MAX_RTF, rememberedSlow, slowVerdict, speechChunks } from "./tts";
+import { kittenSpec, kokoroSpec, kokoroSpeaker } from "./tts-spec";
+import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type ProviderTry, type Sherpa, type SherpaBackend, type Tts } from "./runtime";
 
 type FromMain =
-  /** `model`: the Piper voice's folder; `natural`: Kokoro's (when downloaded); `wasm`: run on WebAssembly (a process before this one died loading natively). */
-  | { type: "init"; model: string; natural?: string | null; naturalModel?: NaturalVoiceModel; wasm?: boolean; capiDir?: string }
+  /** `model`: Kitten's folder; optional `natural`: Kokoro's folder. WASM can listen, but cannot make neural speech. */
+  | { type: "init"; model: string; natural?: string | null; wasm?: boolean; capiDir?: string }
   | { type: "say"; id: number; text: string }
   | { type: "hush"; id: number };
 
-/** Which voice speaks, on which build and how, and how fast it is here (`rtf`: seconds to make a second of speech; measured natively only). */
+/** Which voice speaks, its runtime/provider/threads, and measured generation seconds per playback second. */
 export interface VoiceInfo {
-  voice: "piper" | NaturalVoiceModel;
+  voice: "kitten" | "kokoro";
   backend: SherpaBackend;
   detail: string;
   provider: string;
   threads: number;
   tried: ProviderTry[];
   rtf?: number;
-  /** Why the natural voice isn't speaking, when it was downloaded. */
+  /** Why downloaded Kokoro is not speaking, while Kitten remains usable. */
   natural?: string;
-  /** The same as Home says it: too slow here, it wouldn't load, or speech doesn't run natively (main's naturalStatus). */
   naturalWhy?: "slow" | "load" | "native";
 }
 
-/** `audio`: one chunk of `id`'s speech (mono, `rate` Hz); `done`: the last of it was sent; `failed`: it couldn't be said. */
+type UnavailableReason = "slow" | "load" | "native";
+
+/** `audio`: one chunk of `id`'s speech; `done`: all sent; `failed`: recover its ungenerated suffix with the OS voice. */
 export type TtsProcessMessage =
   | { type: "ready"; loadMs: number; rate: number; voice: VoiceInfo }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; reason?: UnavailableReason }
   | { type: "audio"; id: number; samples: Float32Array; rate: number; remaining: string }
   | { type: "done"; id: number }
   | { type: "failed"; id: number; message: string };
 
-/** What a voice is timed on: a warm-up, then a sentence of about three seconds. */
 const WARM_UP = "Hello.";
 const PROBE = "I opened the terminal and ran the tests; all of them passed.";
 
 let tts: Tts | null = null;
 let sid = 0;
-let rate = 22_050;
+let rate = 24_000;
 let hushed = 0;
 const queue: { id: number; chunks: string[] }[] = [];
 let busy = false;
 
 const parent = process.parentPort;
 const send = (m: TtsProcessMessage) => parent.postMessage(m);
+const message = (err: unknown) => (err instanceof Error ? err.message : String(err)).split("\n")[0];
 
-/** Seconds `voice` takes to make a second of speech (after a warm-up: the first run sets up onnxruntime's buffers). */
+class VoiceUnavailable extends Error {
+  constructor(readonly reason: UnavailableReason, detail: string) { super(detail); }
+}
+
+/** Time usable audio after warmup; an empty or damaged result must not be accepted as a fast voice. */
 function realTimeFactor(voice: Tts, speaker: number): number {
   voice.generate({ text: WARM_UP, sid: speaker, speed: 1.0 });
   const t0 = performance.now();
   const audio = voice.generate({ text: PROBE, sid: speaker, speed: 1.0 });
-  const seconds = audio.samples.length / audio.sampleRate;
-  return seconds > 0 ? Math.round(((performance.now() - t0) / 1000 / seconds) * 1000) / 1000 : Infinity;
+  if (!audio.samples.length || !Number.isFinite(audio.sampleRate) || audio.sampleRate <= 0 || !audio.samples.every(Number.isFinite)) throw new Error("The voice produced no usable audio.");
+  return Math.round(((performance.now() - t0) / 1000 / (audio.samples.length / audio.sampleRate)) * 1000) / 1000;
 }
 
-const message = (err: unknown) => (err instanceof Error ? err.message : String(err)).split("\n")[0];
+/** One native model, using its own provider cache and one-week slow verdict keyed by model/provider/thread configuration. */
+function timedVoice(sherpa: Sherpa, voice: VoiceInfo["voice"], folder: string): { voice: Tts; speaker: number; info: VoiceInfo } {
+  const spec = voice === "kitten" ? kittenSpec(folder) : kokoroSpec(folder);
+  // Kitten leaves the other cores for applications; CoreML may compete with the CPU for the larger optional Kokoro.
+  const list = providers(sherpa.backend, process.platform, process.env, { gpu: voice === "kokoro" });
+  const n = threads(sherpa.backend, voice === "kitten" ? 1 : 4);
+  const speaker = voice === "kitten" ? 0 : kokoroSpeaker(folder);
+  const store = providerCache(), key = modelKey(spec.model, list, n);
+  const verdictKey = key && `natural|${key}`;
+  const slow = verdictKey ? rememberedSlow(store.get(verdictKey), Date.now()) : null;
+  if (slow !== null) throw new VoiceUnavailable("slow", `too slow here: ${slow} of real time (at most ${NATURAL_MAX_RTF}; timed before)`);
+  const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: speaker, speed: 1.0 }),
+    { cache: { store, key }, free: v => v.free() });
+  try {
+    const rtf = realTimeFactor(chosen.made, speaker);
+    if (!Number.isFinite(rtf)) throw new Error("The voice could not be timed.");
+    if (rtf > NATURAL_MAX_RTF) {
+      if (verdictKey) store.set(verdictKey, slowVerdict(rtf, Date.now()));
+      throw new VoiceUnavailable("slow", `too slow here: ${rtf} of real time (at most ${NATURAL_MAX_RTF})`);
+    }
+    return { voice: chosen.made, speaker, info: { voice, backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, rtf } };
+  } catch (err) { chosen.made.free(); throw err; }
+}
 
-/** The voice that speaks: Kokoro when it's there and fast enough here (natively), otherwise the Piper voice. */
 function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: number; info: VoiceInfo } {
   const sherpa = sherpaRuntime(m.wasm ? { prefer: "wasm" } : m.capiDir ? { capiDir: m.capiDir } : {});
-  const list = providers(sherpa.backend);
-  let natural: string | undefined;
-  let naturalWhy: VoiceInfo["naturalWhy"];
-  if (m.natural && sherpa.backend === "native") {
-    // Kokoro is the model a GPU helps: CoreML competes with the CPU for it on macOS.
-    const model = m.naturalModel ?? "kokoro";
-    const list = providers(sherpa.backend, process.platform, process.env, { gpu: model === "kokoro" });
-    try {
-      // Kitten runs on one thread to leave the other cores to apps; its own probe still decides whether it is fast enough.
-      const n = threads(sherpa.backend, model === "kitten" ? 1 : 4);
-      const spec = model === "kitten" ? kittenSpec(m.natural) : kokoroSpec(m.natural);
-      const store = providerCache();
-      const key = modelKey(spec.model, list, n);
-      const verdictKey = key && `natural|${key}`;
-      const slow = verdictKey ? rememberedSlow(store.get(verdictKey), Date.now()) : null;
-      if (slow !== null) {
-        natural = `too slow here: ${slow} of real time (at most ${NATURAL_MAX_RTF}; timed before)`;
-      } else {
-        const speaker = model === "kitten" ? 0 : kokoroSpeaker(m.natural);
-        const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: speaker, speed: 1.0 }),
-          { cache: { store, key }, free: v => v.free() });
-        const rtf = realTimeFactor(chosen.made, speaker);
-        const info = { backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, rtf };
-        if (rtf <= NATURAL_MAX_RTF) return { voice: chosen.made, speaker, info: { voice: model, ...info } };
-        chosen.made.free();
-        if (verdictKey && Number.isFinite(rtf)) store.set(verdictKey, slowVerdict(rtf, Date.now()));
-        natural = `too slow here: ${rtf} of real time (at most ${NATURAL_MAX_RTF})`;
-      }
-      naturalWhy = "slow";
-    } catch (err) {
-      natural = `it couldn't be loaded: ${message(err)}`;
-      naturalWhy = "load";
+  if (sherpa.backend !== "native") throw new VoiceUnavailable("native", `Neural speech needs the native speech runtime (${sherpa.detail}).`);
+  let natural: string | undefined, naturalWhy: VoiceInfo["naturalWhy"];
+  if (m.natural) {
+    try { return timedVoice(sherpa, "kokoro", m.natural); }
+    catch (err) {
+      naturalWhy = err instanceof VoiceUnavailable ? err.reason : "load";
+      natural = naturalWhy === "slow" ? message(err) : `it couldn't be loaded: ${message(err)}`;
     }
-  } else if (m.natural) {
-    natural = `it needs the native build (${sherpa.detail})`;
-    naturalWhy = "native";
   }
-  // One thread: on a computer kept busy by other apps, a second made it slower (all 4 cores busy: 0.16 of real time on
-  // two threads, 0.14 on one), and when idle it saved only about 30 ms a sentence (0.10 against 0.13).
-  const n = threads(sherpa.backend, 1);
-  const spec = piperSpec(m.model);
-  const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: 0, speed: 1.0 }),
-    { cache: { store: providerCache(), key: modelKey(spec.model, list, n) }, free: v => v.free() });
-  // Timed natively only (it tells main whether this computer is fast enough for the natural voice): in WebAssembly
-  // the probe would hold up the first reply by two seconds.
-  const rtf = sherpa.backend === "native" ? realTimeFactor(chosen.made, 0) : undefined;
-  return {
-    voice: chosen.made, speaker: 0,
-    info: { voice: "piper", backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, ...(rtf !== undefined ? { rtf } : {}), ...(natural ? { natural, naturalWhy } : {}) },
-  };
+  try {
+    const made = timedVoice(sherpa, "kitten", m.model);
+    if (natural) made.info = { ...made.info, natural, naturalWhy };
+    return made;
+  } catch (err) {
+    if (err instanceof VoiceUnavailable) throw err;
+    throw new VoiceUnavailable("load", `Kitten couldn't be loaded: ${message(err)}`);
+  }
 }
 
 /** Makes the next chunk, then lets messages in (a hush) before the one after. */
@@ -135,7 +123,7 @@ function step(): void {
       if (!audio.samples.length) throw new Error("The voice produced no audio.");
       if (item.id > hushed) send({ type: "audio", id: item.id, samples: audio.samples, rate: audio.sampleRate, remaining: item.chunks.join(" ") });
     } catch (err) {
-      // WebAssembly throws bare numbers: the rest of this reply goes unsaid (main lets the system's voice say it).
+      // Main lets the local system voice say only the ungenerated remainder.
       queue.shift();
       send({ type: "failed", id: item.id, message: err instanceof Error ? err.message : `the voice failed (${String(err)})` });
       setImmediate(step);
@@ -160,7 +148,7 @@ parent.on("message", e => {
       rate = Number(tts.sampleRate) || rate;
       send({ type: "ready", loadMs: Date.now() - t0, rate, voice: made.info });
     } catch (err) {
-      send({ type: "error", message: err instanceof Error ? err.message : "Ember's voice couldn't be loaded." });
+      send({ type: "error", message: err instanceof Error ? err.message : "Ember's voice couldn't be loaded.", reason: err instanceof VoiceUnavailable ? err.reason : "load" });
     }
     if (!busy) { busy = true; setImmediate(step); }
   } else if (m.type === "say") {

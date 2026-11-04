@@ -1,5 +1,11 @@
 # Speech recognition and lightweight voice follow-up
 
+> Superseding owner decision, 4 November 2026: Kitten Nano 0.8 FP32 is now the default production voice, with optional
+> Kokoro and local system-voice fallback when default neural speech is unavailable. Piper is removed from the app's
+> production voice path. The earlier recommendation and measurements below are preserved as historical evidence;
+> statements there that Piper remains the default describe that earlier review, not the current implementation.
+> See PLAN.md §10 and docs/ASSISTANT.md §9. This user override does not establish a new listening-quality result.
+
 4 November 2026. Keep Moonshine v2 Tiny and Piper Kristin as Ember's defaults. Preserve intended words during
 transcript cleanup, release idle synthesis, and offer Kitten Nano 0.8 FP32 as an explicitly chosen native voice.
 Kokoro remains the existing optional default. The actual native speed probe must pass a real-time factor of 0.5

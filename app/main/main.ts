@@ -1128,7 +1128,7 @@ function start(): void {
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
   let availableNaturalModels = naturalVoiceChoices(sys.voice.naturalVoice && process.env.EMBER_VOICE_BACKEND !== "wasm", false);
-  const naturalVoiceOn = (s: Settings) => naturalVoiceWanted(s.voice, availableNaturalModels);
+  const naturalVoiceOn = (s: Settings) => naturalVoiceWanted(s.voice);
   /** This computer's screen lock (review #81): while locked, Ember doesn't listen, speak or take requests. */
   let screenLock: ScreenLock | null = null;
   /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
@@ -3162,9 +3162,10 @@ function start(): void {
       },
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
-      // Kokoro stays on its existing platforms; the compact Kitten choice also supports Linux's native C API.
+      // Kitten is the baseline neural voice. Explicit optional Kokoro retains its existing platform capability.
       naturalVoice: naturalVoiceOn(settings.get()),
       naturalModel: settings.get().voice.naturalModel,
+      naturalSupported: availableNaturalModels.includes("kokoro"),
       // Whatever became of turning it on shows under its switch (never only in the log).
       onNatural: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       voiceprint: ownerPrint,
@@ -3248,7 +3249,7 @@ function start(): void {
       learning = on;
       voice?.setLearning(on);
     });
-    settings.onChange(next => applyNaturalVoicePreference(voice, next.voice, availableNaturalModels));
+    settings.onChange(next => applyNaturalVoicePreference(voice, next.voice));
     settings.onChange(next => {
       // macOS asks for the microphone once listening is agreed to, so its prompt comes with that context.
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));

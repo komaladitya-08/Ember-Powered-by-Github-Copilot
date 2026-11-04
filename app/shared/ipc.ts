@@ -187,16 +187,21 @@ export interface VoiceStatus {
 }
 
 /**
- * The natural voice as Home shows it (VoiceService.naturalStatus): `off` (not wanted); `later` (on since Ember started:
+ * The effective local voice as Home shows it (VoiceService.naturalStatus): `off` (service stopped); `later` (selected at start:
  * decided the next time it speaks); `checking` (Ember's voice is loading to time this computer); `needs-voice` (Ember's own voice isn't downloaded yet, so nothing can be timed);
  * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now);
  * `too-slow`; `failed` (the download failed: Try again); `wont-load` (downloaded, but it wouldn't load); `needs-native`
  * (Ember's faster speech didn't load on this computer, and Kokoro needs it).
  */
-export type NaturalVoiceStatus =
+export type NaturalVoiceStatus = (
   | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
   | { state: "downloading"; percent: number }
-  | { state: "failed"; detail: string };
+  | { state: "failed"; detail: string }) & {
+    /** Effective requested voice; legacy natural:false selects the Kitten baseline. */
+    model?: "kitten" | "kokoro";
+    /** Current/last usable local engine, including an explicit system-voice fallback. */
+    voice?: "kitten" | "kokoro" | "system";
+  };
 
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */
 export type SpeechModelId = "kws" | "vad" | "asr" | "tts" | "speaker";

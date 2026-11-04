@@ -15,6 +15,7 @@ import { onboardingRest } from "./computers-copy";
 import { needsUser, type SetupRow } from "../../shared/setup-attention";
 import { sideOf, type HandlePosition } from "../../shared/handle-place";
 import { CONVERSATION_LIMIT } from "../../shared/conversation";
+import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
 export const CONVERSATION_SCOPE = "Sends your message without reading a window. Use Ask Ember to include the app you’re working in. Existing conversation context still applies.";
@@ -458,12 +459,13 @@ export function forgetMemoryLabel(text: string): string {
 /** Under "Speak replies" once Ember tried to speak and no voice started (review #101); the setup check says how to add one. */
 /**
  * The speech models' download button: what it fetches and its size. Listening's own models missing: "speech models"
- * (everything missing comes with them); otherwise only the optional ones that are (Ember's voice, Voice Match).
+ * (everything missing comes with them); otherwise the voice models that are missing (Kitten Nano, Voice Match).
  */
 export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: number): string {
-  const mb = `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+  const onlyVoice = missing.length === 1 && missing[0] === "tts";
+  const mb = `${Math.max(1, onlyVoice ? Math.round(bytes / 1e5) / 10 : Math.round(bytes / 1e6))} MB`;
   const listening = missing.some(id => id === "kws" || id === "vad" || id === "asr");
-  const parts = listening ? ["speech models"] : [...(missing.includes("tts") ? ["Ember's voice"] : []), ...(missing.includes("speaker") ? ["Voice Match"] : [])];
+  const parts = listening ? ["speech models"] : [...(missing.includes("tts") ? ["Kitten Nano"] : []), ...(missing.includes("speaker") ? ["Voice Match"] : [])];
   return `Download ${parts.length ? parts.join(" and ") : "speech models"} (${mb})`;
 }
 
@@ -933,26 +935,28 @@ export function teachOutcomeText(outcome: "learnt" | "off" | "unknown" | "unlike
   }
 }
 
-/** What the natural voice's row says before it is turned on (and while it is off). */
-export const NATURAL_HINT = "Kokoro: downloads 350 MB once, and speaks only where this computer is fast enough for it (otherwise Ember's usual voice does).";
+/** The baseline voice is included in the speech models; optional choices name their separate download. */
+export const NATURAL_HINT = naturalModelHint("kitten");
 
-/**
- * The natural voice's row under its switch (Voice): what became of turning it on, so the switch never stays on with
- * nothing happening and nothing said. `retry`: the download failed, and its Try again button shows.
- */
-export function naturalVoiceView(s: NaturalVoiceStatus | undefined, hint = NATURAL_HINT): { text: string; retry: boolean; busy: boolean } {
-  switch (s?.state) {
-    case "later": return { text: "On: Ember switches to it the next time it speaks, if this computer is fast enough for it.", retry: false, busy: false };
-    case "checking": return { text: "Checking whether this computer is fast enough for the natural voice…", retry: false, busy: true };
-    case "needs-voice": return { text: "Ember's own voice needs to be downloaded first (Download the speech models, above).", retry: false, busy: false };
-    case "downloading": return { text: `Downloading the natural voice… ${Math.max(0, Math.min(99, Math.round(s.percent)))}%`, retry: false, busy: true };
-    case "ready": return { text: "Ready: Ember will use it from its next reply.", retry: false, busy: false };
-    case "on": return { text: "On: Ember speaks in the natural voice.", retry: false, busy: false };
-    case "too-slow": return { text: "This computer is too slow for the natural voice, so Ember keeps its usual voice.", retry: false, busy: false };
-    case "wont-load": return { text: "The natural voice wouldn't load on this computer, so Ember keeps its usual voice.", retry: false, busy: false };
-    case "needs-native": return { text: "Needs Ember's faster speech, which didn't load on this computer, so Ember keeps its usual voice.", retry: false, busy: false };
-    case "failed": return { text: `Couldn't download the natural voice. ${s.detail}`.trim(), retry: true, busy: false };
-    default: return { text: hint, retry: false, busy: false };
+/** Effective selected voice and actual playback/fallback from the service, without guessing from the old toggle. */
+export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: NaturalModel = "kitten"): { text: string; retry: boolean; busy: boolean } {
+  const name = NATURAL_CHOICES[model].name;
+  const fallback = s?.voice === "kitten" ? "Ember uses Kitten Nano."
+    : s?.voice === "system" || model === "kitten" ? "Ember uses this computer's system voice when available."
+    : "Ember uses Kitten Nano when available, otherwise this computer's system voice.";
+  if (!s || s.model && s.model !== model) return { text: `${name} is selected. Checking voice availability…`, retry: false, busy: true };
+  switch (s.state) {
+    case "later": return { text: `${name} will be checked the next time Ember speaks.`, retry: false, busy: false };
+    case "checking": return { text: `Checking ${name} on this computer…`, retry: false, busy: true };
+    case "needs-voice": return { text: `Kitten Nano is included in the speech models. Use Show speech model download to add it (63.8 MB for this voice). ${fallback}`, retry: false, busy: false };
+    case "downloading": return { text: `Downloading ${name}… ${Math.max(0, Math.min(99, Math.round(s.percent)))}%`, retry: false, busy: true };
+    case "ready": return { text: `${name} is ready for Ember's next reply.`, retry: false, busy: false };
+    case "on": return { text: s.voice && s.voice !== model ? `${name} is selected. ${fallback}` : `Ember speaks in ${name}.`, retry: false, busy: false };
+    case "too-slow": return { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
+    case "wont-load": return { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
+    case "needs-native": return { text: `${name} isn't available on this computer. ${fallback}`, retry: false, busy: false };
+    case "failed": return { text: model === "kokoro" ? `Couldn't download Kokoro. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model === "kokoro", busy: false };
+    default: return { text: `${name} is selected. ${fallback}`, retry: false, busy: false };
   }
 }
 

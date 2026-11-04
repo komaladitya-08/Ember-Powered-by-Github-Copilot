@@ -46,7 +46,7 @@ import { VoiceGate } from "../../app/voice/match";
 import { VoiceService, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
-import { COMPACT_VOICE, NATURAL_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
+import { NATURAL_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
 import type { VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
 
@@ -65,12 +65,12 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "naturalModel" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent">> & { onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "naturalModel" | "naturalSupported" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
-  // Speech runs on WebAssembly unless a test says otherwise (on Windows and macOS the service would default to the addon).
-  const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: e => events.push(e), onState: (s, detail) => states.push({ s, detail }), native: false, ...o } as VoiceOptions);
+  // Neural synthesis is native-only; ASR still defaults to WebAssembly unless explicitly overridden.
+  const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: e => events.push(e), onState: (s, detail) => states.push({ s, detail }), native: o.neuralVoice === true, ...o } as VoiceOptions);
   services.push(v);
   return { v, states, events };
 }
@@ -1348,7 +1348,7 @@ describe("speech models", () => {
       const l = { debug: rec("debug"), info: rec("info"), warn: rec("warn"), error: rec("error"), child: () => l, file: "" } as unknown as Logger;
       return { log: l, lines };
     };
-    const piper = (over: Record<string, unknown> = {}) => ({ voice: "piper", backend: "native", detail: "sherpa-onnx 1.13.8", provider: "cpu", threads: 2, tried: [{ provider: "cpu" }], rtf: 0.05, ...over });
+    const kitten = (over: Record<string, unknown> = {}) => ({ voice: "kitten", backend: "native", detail: "sherpa-onnx 1.13.8", provider: "cpu", threads: 2, tried: [{ provider: "cpu" }], rtf: 0.05, ...over });
 
     it("logs which build and provider the voice process runs on", async () => {
       const { log: l, lines } = recording();
@@ -1403,54 +1403,50 @@ describe("speech models", () => {
       expect(electron.procs).toHaveLength(1);
     });
 
-    it("starts Ember's voice again on WebAssembly when it dies loading natively, with what it had to say", async () => {
+    it("retires an initial native Kitten crash to the system voice without retrying neural WASM", async () => {
       const { v } = service(true, { neuralVoice: true, native: true });
       v.speak("Night Light is on.");
       const [tts] = electron.procs;
       expect(posted(tts, "init")[0]).not.toHaveProperty("wasm");
-      tts.emit("exit", 134);
-      expect(electron.procs).toHaveLength(2);
-      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ wasm: true });
-      expect(posted(electron.procs[1], "say")).toEqual([{ type: "say", id: 1, text: "Night Light is on." }]);
-      // Not a failure of the voice: the system's voice wasn't asked.
+      tts.emit("exit", 134); await flush();
+      expect(electron.procs).toHaveLength(1);
+      expect(v.naturalStatus).toEqual({ state: "wont-load", model: "kitten", voice: "system" });
       const speech = electron.windows.find(w => w.title === "Ember speech")!;
-      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Night Light is on.", append: true });
     });
 
     it("logs which voice speaks, on which build, how fast", async () => {
       const { log: l, lines } = recording();
       const { v } = service(true, { neuralVoice: true, native: true, log: l });
       v.speak("Hello.");
-      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.08 }) });
-      expect(lines.find(x => x.event === "voice.tts_ready")?.data).toMatchObject({ loadMs: 1200, rate: 22_050, voice: "piper", backend: "native", provider: "cpu", threads: 2, rtf: 0.08 });
+      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: kitten({ rtf: 0.08 }) });
+      expect(lines.find(x => x.event === "voice.tts_ready")?.data).toMatchObject({ loadMs: 1200, rate: 22_050, voice: "kitten", backend: "native", provider: "cpu", threads: 2, rtf: 0.08 });
     });
 
-    it("fetches the natural voice in the background where the Piper voice shows the computer is fast enough, once", async () => {
+    it("fetches the natural voice in the background where the Kitten voice shows the computer is fast enough, once", async () => {
       const urls: string[] = [];
       const { log: l, lines } = recording();
       const downloader = vi.fn(async (url: string) => { urls.push(url); throw new Error("HTTP 503"); });
       const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader, log: l });
       v.speak("Hello.");
-      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.05 }) });
+      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: kitten({ rtf: 0.05 }) });
       await vi.waitFor(() => expect(lines.some(x => x.event === "voice.natural_download_failed")).toBe(true));
       expect(urls).toEqual([NATURAL_VOICE.url]);
       // Failed: not tried again this session.
-      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.05 }) });
+      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: kitten({ rtf: 0.05 }) });
       await flush();
       expect(urls).toHaveLength(1);
     });
 
-    it("doesn't fetch it where the Piper voice is too slow for it, on WebAssembly, or when not wanted", async () => {
-      for (const [voice, naturalVoice] of [[piper({ rtf: 0.2 }), true], [piper({ backend: "wasm", rtf: undefined }), true], [piper(), false]] as const) {
+    it("doesn't fetch optional Kokoro when unavailable, on WebAssembly, or when not explicitly wanted", async () => {
+      for (const options of [{ naturalVoice: true, naturalSupported: false, native: true }, { naturalVoice: true, native: false }, { naturalVoice: false, native: true }]) {
         electron.procs.length = 0;
         const downloader = vi.fn(async () => undefined);
-        const { v } = service(true, { neuralVoice: true, naturalVoice, native: true, downloader });
+        const { v } = service(true, { neuralVoice: true, ...options, downloader });
         v.speak("Hello.");
-        electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice });
-        await flush();
-        expect(downloader).not.toHaveBeenCalled();
-        v.stop();
-        fs.rmSync(root, { recursive: true, force: true });
+        electron.procs[0]?.emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        await flush(); expect(downloader).not.toHaveBeenCalled();
+        v.stop(); fs.rmSync(root, { recursive: true, force: true });
       }
     });
 
@@ -1480,7 +1476,7 @@ describe("speech models", () => {
       v.speak("Hello.");
       const [tts] = electron.procs;
       expect(posted(tts, "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
-      tts.emit("message", { type: "ready", loadMs: 3000, rate: 22_050, voice: piper({ natural: "too slow here: 0.9 of real time (at most 0.5)" }) });
+      tts.emit("message", { type: "ready", loadMs: 3000, rate: 22_050, voice: kitten({ natural: "too slow here: 0.9 of real time (at most 0.5)" }) });
       // A process failure retires neural speech for this session, keeping fallback sentences together.
       tts.emit("exit", 1);
       v.speak("Again.");
@@ -1489,165 +1485,240 @@ describe("speech models", () => {
       expect(electron.windows[0].webContents.send).toHaveBeenLastCalledWith(VOICE.speak, { text: "Again." });
     });
 
-    describe("what becomes of turning the natural voice on, shown in Home (owner report of 2026-11-03: it did nothing on Windows)", () => {
+    describe("Kitten baseline and explicit optional Kokoro", () => {
       const withKokoro = () => {
         fs.mkdirSync(path.join(root, NATURAL_VOICE.target));
         fs.writeFileSync(path.join(root, `.${NATURAL_VOICE.target}.ok`), `${NATURAL_VOICE.sha256}\n`);
       };
 
-      it("selects Kitten while off without fetching it, then fetches only the chosen model with its own size", async () => {
-        const urls: string[] = [];
-        const downloader = vi.fn(async (url: string, _dest: string, progress: (bytes: number) => void) => { urls.push(url); progress(COMPACT_VOICE.bytes / 2); throw new Error("HTTP 503"); });
-        const seen: unknown[] = [];
-        const { v } = service(true, { neuralVoice: true, native: true, downloader, onNatural: s => seen.push(s) });
+      it("uses Kitten with the former toggle off, without a separate optional download", () => {
+        const downloader = vi.fn();
+        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader });
+        expect(v.naturalStatus).toEqual({ state: "later", model: "kitten", voice: "system" });
+        v.speak("Baseline reply.");
+        const [tts] = electron.procs;
+        expect(posted(tts, "init")[0]).toMatchObject({ model: path.join(root, VOICE_MODELS.find(m => m.id === "tts")!.target), natural: null });
+        expect(posted(tts, "init")[0]).not.toHaveProperty("naturalModel");
+        tts.emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
         v.setNaturalModel("kitten");
+        v.setNaturalVoice(false);
         expect(downloader).not.toHaveBeenCalled();
-        expect(electron.procs).toHaveLength(0);
-        v.setNaturalVoice(true);
-        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 22_050, voice: piper({ rtf: 0.2 }) });
-        await vi.waitFor(() => expect(v.naturalStatus.state).toBe("failed"));
-        expect(urls).toEqual([COMPACT_VOICE.url]);
-        expect(seen).toContainEqual({ state: "downloading", percent: 50 });
-        expect(v.missingModels.map(m => m.id)).not.toContain("compact");
+        expect(tts.kill).not.toHaveBeenCalled();
       });
 
-      it("switches downloaded native models only after queued synthesis ends, keeping Kokoro as the default", () => {
-        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true });
+      it("doesn't accept an old Piper cache as Kitten, and exposes the explicit base download route", async () => {
+        const downloader = vi.fn();
+        const { v } = service(LISTENING, { neuralVoice: true, native: true, downloader });
+        fs.mkdirSync(path.join(root, "vits-piper-en_US-libritts_r-medium"));
+        fs.writeFileSync(path.join(root, ".vits-piper-en_US-libritts_r-medium.ok"), "old-piper-hash\n");
+        expect(v.modelsReady).toBe(true);
+        expect(v.missingModels.map(m => m.id)).toContain("tts");
+        expect(v.naturalStatus).toEqual({ state: "needs-voice", model: "kitten", voice: "system" });
+        v.speak("Use a local system voice until the user downloads Kitten.");
+        await flush();
+        expect(electron.procs).toHaveLength(0);
+        expect(downloader).not.toHaveBeenCalled();
+        expect(electron.windows[0].webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Use a local system voice until the user downloads Kitten." });
+      });
+
+      it("keeps a working explicitly selected Kokoro cache usable while the new Kitten baseline is missing", () => {
+        const downloader = vi.fn();
+        const { v } = service(LISTENING, { neuralVoice: true, naturalVoice: true, naturalModel: "kokoro", native: true, downloader });
         withKokoro();
-        fs.mkdirSync(path.join(root, COMPACT_VOICE.target));
-        fs.writeFileSync(path.join(root, `.${COMPACT_VOICE.target}.ok`), `${COMPACT_VOICE.sha256}\n`);
-        v.speak("First sentence.");
-        const [first] = electron.procs;
-        expect(posted(first, "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
-        first.emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: piper({ voice: "kokoro", rtf: 0.3 }) });
+        v.speak("The selected installed voice.");
+        expect(posted(electron.procs[0], "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten({ voice: "kokoro" }) });
+        expect(v.naturalStatus).toEqual({ state: "on", model: "kokoro", voice: "kokoro" });
+        expect(downloader).not.toHaveBeenCalled();
+        expect(v.missingModels.map(m => m.id)).toContain("tts");
+      });
+
+      it("never loads or downloads unsupported saved Kokoro, while baseline Kitten remains usable", () => {
+        const downloader = vi.fn();
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, naturalModel: "kokoro", naturalSupported: false, native: true, downloader });
+        withKokoro();
+        v.speak("Supported baseline reply.");
+        expect(posted(electron.procs[0], "init")[0]).toMatchObject({ natural: null });
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        v.retryNaturalVoice();
+        expect(v.naturalStatus).toEqual({ state: "needs-native", model: "kokoro", voice: "kitten" });
+        expect(downloader).not.toHaveBeenCalled();
+      });
+
+      it("cancels optional transfer and ignores its late progress/failure after choosing baseline Kitten", async () => {
+        let rejectOld!: (error: Error) => void, report!: (bytes: number) => void;
+        let signal: AbortSignal | undefined;
+        const downloader = vi.fn((_url: string, _dest: string, progress: (bytes: number) => void, abort?: AbortSignal) => {
+          signal = abort; report = progress; return new Promise<void>((_resolve, reject) => { rejectOld = reject; });
+        });
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader });
+        v.warmVoice();
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        await vi.waitFor(() => expect(signal).toBeDefined());
+        v.setNaturalModel("kitten");
+        expect(signal?.aborted).toBe(true);
+        report(NATURAL_VOICE.bytes / 2); rejectOld(new Error("HTTP 503"));
+        await flush();
+        expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+        expect(downloader.mock.calls.map(c => c[0])).toEqual([NATURAL_VOICE.url]);
+      });
+
+      it("cancels the optional transfer on shutdown and never resurrects synthesis", async () => {
+        let rejectDownload!: (error: Error) => void, signal: AbortSignal | undefined;
+        const downloader = vi.fn((_url: string, _dest: string, _progress: (bytes: number) => void, abort?: AbortSignal) => {
+          signal = abort; return new Promise<void>((_resolve, reject) => { rejectDownload = reject; });
+        });
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader });
+        v.warmVoice();
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        await vi.waitFor(() => expect(signal).toBeDefined());
+        v.stop(); rejectDownload(new Error("HTTP 503")); await flush();
+        expect(signal?.aborted).toBe(true);
+        expect(electron.procs).toHaveLength(1);
+        expect(v.naturalStatus).toEqual({ state: "off", model: "kitten", voice: "system" });
+      });
+
+      it("serializes rapid Kokoro reselection until the cancelled transfer's shared staging cleanup finishes", async () => {
+        let rejectOld!: (error: Error) => void, rejectReplacement!: (error: Error) => void;
+        let oldSignal: AbortSignal | undefined, replacementPath = "";
+        const downloader = vi.fn((_url: string, dest: string, _progress: (bytes: number) => void, signal?: AbortSignal) => {
+          if (!oldSignal) {
+            oldSignal = signal; fs.writeFileSync(dest, "old transfer");
+            return new Promise<void>((_resolve, reject) => { rejectOld = reject; });
+          }
+          replacementPath = dest; fs.writeFileSync(dest, "replacement transfer");
+          return new Promise<void>((_resolve, reject) => { rejectReplacement = reject; });
+        });
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader });
+        v.warmVoice();
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        await vi.waitFor(() => expect(oldSignal).toBeDefined());
+        v.setNaturalModel("kitten"); v.setNaturalVoice(true);
+        expect(oldSignal?.aborted).toBe(true);
+        expect(downloader).toHaveBeenCalledTimes(1);
+        expect(v.naturalStatus).toMatchObject({ state: "checking", model: "kokoro", voice: "kitten" });
+        rejectOld(new Error("Cancelled old transfer"));
+        await vi.waitFor(() => expect(downloader).toHaveBeenCalledTimes(2));
+        await flush();
+        expect(fs.readFileSync(replacementPath, "utf8")).toBe("replacement transfer");
+        rejectReplacement(new Error("HTTP 503"));
+        await vi.waitFor(() => expect(v.naturalStatus).toMatchObject({ state: "failed", model: "kokoro", voice: "kitten" }));
+      });
+
+      it("fetches only explicit Kokoro, shows its own progress/failure and supports retry", async () => {
+        const seen: { state: string }[] = [];
+        const downloader = vi.fn(async (_url: string, _dest: string, progress: (bytes: number) => void) => { progress(NATURAL_VOICE.bytes / 2); throw new Error("HTTP 503"); });
+        const { v } = service(true, { neuralVoice: true, native: true, downloader, onNatural: status => seen.push(status) });
+        v.speak("First baseline reply.");
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        seen.length = 0;
+        v.setNaturalVoice(true);
+        await vi.waitFor(() => expect(v.naturalStatus.state).toBe("failed"));
+        expect(seen.map(status => status.state)).toEqual(["downloading", "downloading", "failed"]);
+        expect(v.naturalStatus).toMatchObject({ model: "kokoro", voice: "kitten", detail: expect.stringMatching(/can.t reach the download site/) });
+        expect(downloader.mock.calls[0][0]).toBe(NATURAL_VOICE.url);
+        v.retryNaturalVoice();
+        await vi.waitFor(() => expect(downloader).toHaveBeenCalledTimes(2));
+      });
+
+      it("switches from Kokoro to baseline only after its pending reply, with no extra baseline fetch", () => {
+        const downloader = vi.fn();
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader });
+        withKokoro();
+        v.speak("A pending optional reply.");
+        const first = electron.procs[0];
+        first.emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten({ voice: "kokoro" }) });
         v.setNaturalModel("kitten");
         expect(first.kill).not.toHaveBeenCalled();
         first.emit("message", { type: "done", id: 1 });
         expect(first.kill).toHaveBeenCalledOnce();
-        expect(posted(electron.procs[1], "init")[0]).toMatchObject({ naturalModel: "kitten", natural: path.join(root, COMPACT_VOICE.target) });
-        electron.procs[1].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: piper({ voice: "kitten", rtf: 0.25 }) });
-        expect(v.naturalStatus).toEqual({ state: "on" });
-        v.setNaturalVoice(false);
-        expect(electron.procs[1].kill).toHaveBeenCalledOnce();
-        expect(v.naturalStatus).toEqual({ state: "off" });
+        expect(posted(electron.procs[1], "init")[0]).toMatchObject({ natural: null });
+        electron.procs[1].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+        expect(downloader).not.toHaveBeenCalled();
       });
 
-      it("ignores an older download's failure after another optional model was selected", async () => {
-        let rejectOld!: (reason: Error) => void;
-        const downloader = vi.fn((url: string) => url === NATURAL_VOICE.url ? new Promise<void>((_resolve, reject) => { rejectOld = reject; }) : Promise.reject(new Error("HTTP 503")));
-        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader });
-        v.warmVoice();
-        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 22_050, voice: piper() });
-        await vi.waitFor(() => expect(rejectOld).toBeTypeOf("function"));
-        v.setNaturalModel("kitten");
-        const next = electron.procs.at(-1)!;
-        next.emit("message", { type: "ready", loadMs: 1000, rate: 22_050, voice: piper() });
-        expect(v.naturalStatus).toEqual({ state: "checking" });
-        rejectOld(new Error("HTTP 503"));
-        await vi.waitFor(() => expect(downloader.mock.calls.map(c => c[0])).toEqual([NATURAL_VOICE.url, COMPACT_VOICE.url]));
-      });
-
-      it("does not resurrect speech after shutdown when an optional download finishes late", async () => {
-        let rejectDownload!: (reason: Error) => void;
-        const downloader = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectDownload = reject; }));
-        const { v } = service(true, { neuralVoice: true, naturalVoice: true, naturalModel: "kitten", native: true, downloader });
-        v.warmVoice();
-        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 22_050, voice: piper() });
-        await vi.waitFor(() => expect(rejectDownload).toBeTypeOf("function"));
-        v.stop();
-        rejectDownload(new Error("HTTP 503"));
-        await flush();
-        expect(electron.procs).toHaveLength(1);
-        expect(v.naturalStatus).toEqual({ state: "off" });
-      });
-
-      it("starts the check and the download at once when turned on after Ember's voice loaded, with its progress, and offers Try again when it fails", async () => {
+      it.each(["failed", "exit"] as const)("recovers optional Kokoro's suffix after %s with Kitten, then only the still-missing suffix with system speech", async how => {
         const seen: unknown[] = [];
-        let calls = 0;
-        const downloader = vi.fn(async (_url: string, _dest: string, progress: (bytes: number) => void) => { calls++; progress(NATURAL_VOICE.bytes / 2); throw new Error("HTTP 503"); });
-        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader, onNatural: s => seen.push(s) });
-        v.speak("Hello.");
-        electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.05 }) });
-        electron.procs[0].emit("message", { type: "done", id: 1 });
-        expect(v.naturalStatus).toEqual({ state: "off" });
-        v.setNaturalVoice(true);
-        // No later reply needed: the Piper voice running now has already timed this computer.
-        await vi.waitFor(() => expect(v.naturalStatus.state).toBe("failed"));
-        expect(calls).toBe(1);
-        expect(seen).toEqual([{ state: "downloading", percent: 0 }, { state: "downloading", percent: 50 }, { state: "failed", detail: expect.stringMatching(/can.t reach the download site/) }]);
-        v.retryNaturalVoice();
-        await vi.waitFor(() => expect(calls).toBe(2));
-      });
-
-      it("loads Ember's voice at once to time this computer when turned on before Ember has spoken", async () => {
-        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn(async () => { throw new Error("HTTP 503"); }) });
-        expect(electron.procs).toHaveLength(0);
-        v.setNaturalVoice(true);
-        expect(electron.procs).toHaveLength(1);
-        expect(v.naturalStatus).toEqual({ state: "checking" });
-        electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.2 }) });
-        expect(v.naturalStatus).toEqual({ state: "too-slow" });
-      });
-
-      it("says “later”, not “Checking…”, when turned on while the screen is locked, and decides once it is unlocked (review of #143)", async () => {
-        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn(async () => { throw new Error("HTTP 503"); }) });
-        v.setLocked(true);
-        v.setNaturalVoice(true);
-        expect(electron.procs).toHaveLength(0);
-        expect(v.naturalStatus).toEqual({ state: "later" });
-        v.setLocked(false);
-        expect(v.naturalStatus).toEqual({ state: "checking" });
-        await vi.waitFor(() => expect(electron.procs.length).toBeGreaterThan(0));
-        electron.procs.at(-1)!.emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.2 }) });
-        expect(v.naturalStatus).toEqual({ state: "too-slow" });
-      });
-
-      it("switches to it now once it is downloaded, and says when it speaks", async () => {
-        const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn() });
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, onNatural: value => seen.push(value) });
         withKokoro();
-        v.speak("Hello.");
-        const [first] = electron.procs;
-        first.emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.05 }) });
-        first.emit("message", { type: "done", id: 1 });
-        v.setNaturalVoice(true);
-        expect(first.kill).toHaveBeenCalled();
-        // Started again straight away (not at some later reply), with Kokoro.
-        expect(electron.procs).toHaveLength(2);
-        expect(posted(electron.procs[1], "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
-        expect(v.naturalStatus).toEqual({ state: "checking" });
-        electron.procs[1].emit("message", { type: "ready", loadMs: 3000, rate: 24_000, voice: piper({ voice: "kokoro", rtf: 0.4 }) });
-        expect(v.naturalStatus).toEqual({ state: "on" });
+        v.speak("Generated sentence. Remaining sentence.");
+        const kokoro = electron.procs[0];
+        kokoro.emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten({ voice: "kokoro" }) });
+        kokoro.emit("message", { type: "audio", id: 1, samples: new Float32Array(4), rate: 24_000, remaining: "Remaining sentence." });
+        if (how === "failed") kokoro.emit("message", { type: "failed", id: 1, message: "Kokoro failed." });
+        else kokoro.emit("exit", 134);
+        const baseline = electron.procs[1];
+        expect(posted(baseline, "init")[0]).toMatchObject({ natural: null });
+        expect(posted(baseline, "say")).toEqual([{ type: "say", id: 2, text: "Remaining sentence." }]);
+        baseline.emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        expect(v.naturalStatus).toEqual({ state: "wont-load", model: "kokoro", voice: "kitten" });
+        expect(seen).toContainEqual({ state: "wont-load", model: "kokoro", voice: "kitten" });
+        baseline.emit("message", { type: "audio", id: 2, samples: new Float32Array(4), rate: 24_000, remaining: "Still missing." });
+        baseline.emit("message", { type: "failed", id: 2, message: "Kitten failed too." });
+        await flush();
+        const speaker = electron.windows.find(w => w.title === "Ember speech")!;
+        expect(speaker.webContents.send.mock.calls.filter(c => c[0] === VOICE.speak).map(c => c[1])).toEqual([{ text: "Still missing.", append: true }]);
+        expect(v.naturalStatus).toEqual({ state: "wont-load", model: "kokoro", voice: "system" });
       });
 
-      it("says why the downloaded voice doesn't speak: too slow, it wouldn't load, or it needs the native build", () => {
-        for (const [naturalWhy, state] of [["slow", "too-slow"], ["load", "wont-load"], ["native", "needs-native"]] as const) {
-          electron.procs.length = 0;
-          const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader: vi.fn() });
-          withKokoro();
-          expect(v.naturalStatus).toEqual({ state: "later" });
-          v.speak("Hello.");
-          electron.procs[0].emit("message", { type: "ready", loadMs: 3000, rate: 22_050, voice: piper({ natural: "not here", naturalWhy }) });
-          expect(v.naturalStatus, naturalWhy).toEqual({ state });
-          v.stop();
-          fs.rmSync(root, { recursive: true, force: true });
+      it("hushes pending fallback synthesis and ignores late audio from both retired voices", async () => {
+        const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true });
+        withKokoro();
+        v.speak("Private queued optional speech.");
+        const kokoro = electron.procs[0];
+        kokoro.emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten({ voice: "kokoro" }) });
+        kokoro.emit("message", { type: "failed", id: 1, message: "Kokoro failed" });
+        const baseline = electron.procs[1];
+        v.hush(); await flush();
+        const speaker = electron.windows.find(w => w.title === "Ember speech")!;
+        speaker.webContents.send.mockClear();
+        for (const [proc, id] of [[kokoro, 1], [baseline, 2]] as const) {
+          proc.emit("message", { type: "audio", id, samples: new Float32Array(4), rate: 24_000, remaining: "Private late suffix." });
+          proc.emit("message", { type: "failed", id, message: "Late failure" });
+        }
+        await flush();
+        expect(speaker.webContents.send).not.toHaveBeenCalledWith(VOICE.audio, expect.anything());
+        expect(speaker.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      });
+
+      it("keeps ASR available on forced WASM while baseline neural speech uses the system voice", async () => {
+        const before = process.env.EMBER_VOICE_BACKEND;
+        process.env.EMBER_VOICE_BACKEND = "wasm";
+        try {
+          const { v } = service(true, { neuralVoice: true, native: true });
+          await v.setWanted(true);
+          expect(electron.procs).toHaveLength(1); // ASR still starts.
+          v.speak("System speech while ASR uses WASM."); await flush();
+          expect(electron.procs).toHaveLength(1); // No neural speech process or WASM TTS retry.
+          expect(v.naturalStatus).toEqual({ state: "needs-native", model: "kitten", voice: "system" });
+          expect(electron.windows[0].webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "System speech while ASR uses WASM." });
+        } finally {
+          if (before === undefined) delete process.env.EMBER_VOICE_BACKEND;
+          else process.env.EMBER_VOICE_BACKEND = before;
         }
       });
 
-      it("says it needs Ember's faster speech where speech runs on WebAssembly, and Ember's own voice where that isn't downloaded", () => {
-        const wasm = service(true, { neuralVoice: true, naturalVoice: false, native: false, downloader: vi.fn() });
-        wasm.v.setNaturalVoice(true);
-        expect(wasm.v.naturalStatus).toEqual({ state: "needs-native" });
-        wasm.v.stop();
-        fs.rmSync(root, { recursive: true, force: true });
-        const fellBack = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader: vi.fn() });
-        fellBack.v.speak("Hello.");
-        electron.procs.at(-1)!.emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ backend: "wasm", rtf: undefined }) });
-        expect(fellBack.v.naturalStatus).toEqual({ state: "needs-native" });
-        fellBack.v.stop();
-        fs.rmSync(root, { recursive: true, force: true });
-        const noVoice = service(LISTENING, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn() });
-        noVoice.v.setNaturalVoice(true);
-        expect(noVoice.v.naturalStatus).toEqual({ state: "needs-voice" });
+      it.each([["slow", "too-slow"], ["load", "wont-load"], ["native", "needs-native"]] as const)("reports default Kitten %s failure and uses system speech without neural WASM", async (reason, state) => {
+        const { v } = service(true, { neuralVoice: true, native: true });
+        v.speak("A local fallback reply.");
+        electron.procs[0].emit("message", { type: "error", message: "Kitten unavailable", reason });
+        await flush();
+        expect(electron.procs).toHaveLength(1);
+        expect(v.naturalStatus).toEqual({ state, model: "kitten", voice: "system" });
+        expect(electron.windows[0].webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "A local fallback reply.", append: true });
+      });
+
+      it("defers an optional choice while locked, then reports its explicit download rather than a silent toggle", async () => {
+        const { v } = service(true, { neuralVoice: true, native: true, downloader: vi.fn(async () => { throw new Error("HTTP 503"); }) });
+        v.setLocked(true); v.setNaturalVoice(true);
+        expect(electron.procs).toHaveLength(0);
+        expect(v.naturalStatus).toMatchObject({ state: "later", model: "kokoro" });
+        v.setLocked(false);
+        expect(v.naturalStatus).toMatchObject({ state: "checking" });
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1000, rate: 24_000, voice: kitten() });
+        await vi.waitFor(() => expect(v.naturalStatus).toMatchObject({ state: "failed", model: "kokoro", voice: "kitten" }));
       });
     });
   });

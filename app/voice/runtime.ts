@@ -40,9 +40,8 @@ export interface VadSpec {
 /** Moonshine (v2: one merged decoder). */
 export interface MoonshineSpec { encoder: string; mergedDecoder: string; tokens: string }
 
-/** A voice: a Piper (VITS) voice, or Kokoro (native only: in WebAssembly it is several times slower than real time). */
+/** The native neural voices. WebAssembly remains available for listening, while unsupported speech uses the local OS voice. */
 export type TtsSpec =
-  | { kind: "vits"; model: string; tokens: string; dataDir: string; noiseScale: number; noiseScaleW: number; lengthScale: number }
   | { kind: "kitten"; model: string; voices: string; tokens: string; dataDir: string; lengthScale: number }
   | { kind: "kokoro"; model: string; voices: string; tokens: string; dataDir: string; lexicon: string; lang: string; lengthScale: number };
 
@@ -108,8 +107,8 @@ export function nativePackage(platform: string = process.platform, arch: string 
 /**
  * The execution providers to try for a model, best first; the last is always "cpu". `gpu`: a model worth a GPU (Kokoro,
  * 82M parameters): on macOS, CoreML is timed against the CPU for it (onnxruntime's macOS build has CoreML). Everything
- * else runs on the CPU: on CI's Macs CoreML lost to the CPU for Moonshine (48–67 ms against 25–41) and Piper (182
- * against 97), and compiling for it held up the first load by seconds; the per-frame models (the spotter and the
+ * else runs on the CPU: on CI's Macs CoreML lost to the CPU for Moonshine (48–67 ms against 25–41), and compiling for
+ * it held up the first load by seconds; the per-frame models (the spotter and the
  * VADs) hand it too little work. DirectML isn't in the prebuilt Windows addon (its onnxruntime.dll imports neither
  * DirectML.dll nor d3d12.dll, and sherpa-onnx quietly runs on the CPU when asked for it), so Windows runs on the CPU.
  * EMBER_VOICE_PROVIDER names a provider to try first for every model ("cpu": the CPU alone).
@@ -159,20 +158,8 @@ function wasmSherpa(detail: string): Sherpa {
         decodingMethod: "greedy_search",
       }));
     },
-    createTts(s, _run, maxNumSentences) {
-      if (s.kind !== "vits") throw new Error(`${s.kind === "kitten" ? "Kitten" : "Kokoro"} needs the native build`);
-      const tts = made("voice", w.createOfflineTts({
-        offlineTtsModelConfig: {
-          offlineTtsVitsModelConfig: { model: s.model, tokens: s.tokens, dataDir: s.dataDir, noiseScale: s.noiseScale, noiseScaleW: s.noiseScaleW, lengthScale: s.lengthScale },
-          numThreads: 1, provider: "cpu", debug: 0,
-        },
-        maxNumSentences,
-      }));
-      return {
-        sampleRate: Number(tts.sampleRate), numSpeakers: Number(tts.numSpeakers ?? 1),
-        generate: o => tts.generate(o),
-        free: () => tts.free(),
-      };
+    createTts(s) {
+      throw new Error(`${s.kind === "kitten" ? "Kitten" : "Kokoro"} needs the native build`);
     },
   };
 }
@@ -238,9 +225,7 @@ function nativeSherpa(a: any): Sherpa {
       };
     },
     createTts(s, run, maxNumSentences) {
-      const model = s.kind === "vits"
-        ? { vits: { model: s.model, tokens: s.tokens, dataDir: s.dataDir, noiseScale: s.noiseScale, noiseScaleW: s.noiseScaleW, lengthScale: s.lengthScale } }
-        : s.kind === "kitten" ? { kitten: { model: s.model, voices: s.voices, tokens: s.tokens, dataDir: s.dataDir, lengthScale: s.lengthScale } }
+      const model = s.kind === "kitten" ? { kitten: { model: s.model, voices: s.voices, tokens: s.tokens, dataDir: s.dataDir, lengthScale: s.lengthScale } }
         : { kokoro: { model: s.model, voices: s.voices, tokens: s.tokens, dataDir: s.dataDir, lexicon: s.lexicon, lang: s.lang, lengthScale: s.lengthScale } };
       const h = a.createOfflineTts({ model: { ...model, numThreads: run.numThreads, provider: run.provider, debug: 0 }, maxNumSentences });
       if (!h) throw new Error("the voice couldn't be made");

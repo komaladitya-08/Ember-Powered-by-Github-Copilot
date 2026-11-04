@@ -109,11 +109,12 @@ spans while recovering whole-sentence decoder loops. Targeted synthetic repeat/n
 on 146 reference words; three additional model insertion tokens remain. That is regression evidence, not general
 microphone WER. Wake/Stop, Voice Match and action thresholds are unchanged.
 
-Piper Kristin remains the default voice. Kitten Nano 0.8 FP32 is an explicit optional native choice with a verified
-63.8 MB complete archive, one CPU thread, a real-time-factor gate and Piper fallback. Kokoro remains available and
-is the existing optional default. Saving a model while off does not enable/download it; changing an enabled model
-requires an explicit named-size choice. Loss of native capability leaves the preference inspectable and switchable
-off. Neural generation releases after two idle minutes. Naturalness still requires listening comparisons.
+The original review kept Piper Kristin as default and made Kitten Nano 0.8 FP32 optional. The owner's later
+explicit override supersedes that choice: pinned Kitten Nano is now the default production voice, on one CPU
+thread with the same real-time-factor gate. Optional Kokoro remains an explicit choice; unavailable or too-slow
+default neural speech uses a local system voice. WebAssembly recognition remains supported without neural speech.
+The preference remains inspectable, model downloads remain explicit and named by size, and idle neural generation
+releases after two minutes. Naturalness still requires listening comparisons; the default change is a user decision.
 
 See [the speech review](voice-review-2026-11-04.md) for exact sources, artifact SHA, comparative metrics and limits.
 

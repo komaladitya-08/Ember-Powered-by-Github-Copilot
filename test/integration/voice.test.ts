@@ -15,7 +15,7 @@ import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
 import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
-import { COMPACT_VOICE, modelPaths, modelReady, modelsReady } from "../../app/voice/models";
+import { DEFAULT_VOICE, modelPaths, modelReady, modelsReady } from "../../app/voice/models";
 import { nativePackage, sherpaRuntime, type RuntimeOptions } from "../../app/voice/runtime";
 import { kittenSpec } from "../../app/voice/tts-spec";
 import { Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
@@ -29,11 +29,11 @@ const addonFile = process.env.EMBER_SHERPA_ADDON ? path.resolve(process.env.EMBE
 // EMBER_SHERPA_CAPI=<the folder scripts/voice/fetch-capi.mjs prints>: the C API through koffi (Linux x64).
 const capiDir = process.env.EMBER_SHERPA_CAPI ? path.resolve(process.env.EMBER_SHERPA_CAPI) : undefined;
 const runtime: RuntimeOptions | undefined = addonFile ? { prefer: "native", addonFile } : capiDir ? { capiDir } : undefined;
-const compactReady = modelReady(path.join(dir, "models"), "compact");
-const compactNative = process.env.EMBER_VOICE_BACKEND !== "wasm" && (!!capiDir || !!addonFile || nativePackage() !== null);
+const defaultVoiceReady = modelReady(path.join(dir, "models"), "tts");
+const defaultVoiceNative = process.env.EMBER_VOICE_BACKEND !== "wasm" && (!!capiDir || !!addonFile || nativePackage() !== null);
 
 // Real recognizers on a loaded CI machine: a clip can take several seconds, so each test gets 20.
-describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real models", { timeout: 20_000 }, () => {
+describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EMBER_KITTEN_TEST !== "1")("voice on real models", { timeout: 20_000 }, () => {
   let backend: ReturnType<typeof sherpaBackend>;
   /**
    * The recognizers the speakers' stream is tested on. Speaker rejection runs only on Linux (it needs parec), which runs
@@ -85,14 +85,14 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(backend.info.threads).toBe(native ? Math.max(1, Math.min(2, os.availableParallelism() - 1)) : 1);
   });
 
-  it.skipIf((!compactReady || !compactNative) && process.env.EMBER_KITTEN_TEST !== "1")("generates finite speech with the pinned optional Kitten model through the production native adapter", () => {
-    expect(compactReady).toBe(true);
+  it.skipIf(!defaultVoiceNative && process.env.EMBER_KITTEN_TEST !== "1")("generates finite speech with the pinned default Kitten model through the production native adapter", () => {
+    expect(defaultVoiceReady).toBe(true);
     const runtimePicked = sherpaRuntime(runtime);
     expect(runtimePicked.backend).toBe("native");
-    const voice = runtimePicked.createTts(kittenSpec(path.join(dir, "models", COMPACT_VOICE.target)), { provider: "cpu", numThreads: 1 }, 1);
+    const voice = runtimePicked.createTts(kittenSpec(path.join(dir, "models", DEFAULT_VOICE.target)), { provider: "cpu", numThreads: 1 }, 1);
     try {
       expect(voice.numSpeakers).toBe(8);
-      expect(fs.readFileSync(path.join(dir, "models", COMPACT_VOICE.target, "LICENSE"), "utf8")).toContain("Apache License");
+      expect(fs.readFileSync(path.join(dir, "models", DEFAULT_VOICE.target, "LICENSE"), "utf8")).toContain("Apache License");
       const out = voice.generate({ text: "Night Light is on.", sid: 0, speed: 1 });
       expect(out.sampleRate).toBe(24_000);
       expect(out.samples.length / out.sampleRate).toBeGreaterThan(0.5);

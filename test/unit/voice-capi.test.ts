@@ -14,7 +14,7 @@ import { CAPI_STRUCTS, CAPI_VERSION } from "../../app/voice/capi-structs";
 import { capiChoice, sherpaRuntime } from "../../app/voice/runtime";
 import { CAPI_CPU_NEEDS, CAPI_LIBS, capiSherpa, cpuLacks, isDuplicateType } from "../../app/voice/capi";
 import { CAPI_RELEASE, modelPaths } from "../../app/voice/models";
-import { piperSpec } from "../../app/voice/tts-spec";
+import { kittenSpec } from "../../app/voice/tts-spec";
 
 const root = path.join(__dirname, "../..");
 const capiDir = path.join(root, `.cache/voice/capi/sherpa-onnx-v${CAPI_VERSION}-linux-x64-shared/lib`);
@@ -133,7 +133,7 @@ describe("capiChoice (which build runs speech on Linux)", () => {
   });
 
   // Loading and running real models takes seconds on a busy CI machine (as in test/integration/voice.test.ts).
-  it.skipIf(!runnable)("runs Ember's own models natively: hears the wake clip's request and speaks with Piper", { timeout: 20_000 }, () => {
+  it.skipIf(!runnable)("runs Ember's own models natively: hears the wake clip's request and speaks with default Kitten", { timeout: 20_000 }, () => {
     const s = sherpaRuntime({ capiDir });
     expect(s.backend).toBe("native");
     expect(s.detail).toMatch(/C API through koffi/);
@@ -148,7 +148,7 @@ describe("capiChoice (which build runs speech on Linux)", () => {
     asr.decode(st);
     expect(asr.getResult(st).text?.toLowerCase()).toMatch(/night light/);
     st.free(); asr.free();
-    const tts = s.createTts(piperSpec(p.tts), { provider: "cpu", numThreads: 1 }, 1);
+    const tts = s.createTts(kittenSpec(p.tts), { provider: "cpu", numThreads: 1 }, 1);
     const out = tts.generate({ text: "Night Light is on.", sid: 0, speed: 1 });
     expect(out.sampleRate).toBe(tts.sampleRate);
     expect(out.samples.length / out.sampleRate).toBeGreaterThan(0.5);
