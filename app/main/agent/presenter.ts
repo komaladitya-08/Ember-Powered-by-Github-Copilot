@@ -563,6 +563,8 @@ export const TOOL_GESTURES: Record<string, Gesture> = {
 
 export class Presenter {
   private answering = false;
+  /** The turn under way is being replaced by a newer request (turnReplaced): it ends without a "Stopped". */
+  private replaced = false;
   private answer = "";
   /** A tool ran since the last reasoning text: the next reasoning starts a new thought. */
   private thoughtBreak = false;
@@ -1084,6 +1086,11 @@ export class Presenter {
   }
 
   /** The user asked something (voice or text). */
+  /** The user said something new over this turn: its end isn't a stop, and the new request's "Thinking…" stays. */
+  turnReplaced(): void {
+    this.replaced = true;
+  }
+
   userPrompt(text: string): void {
     this.cancelHide();
     // Asked while the turn before was answering: that answer's own message may still come, after this "Thinking…".
@@ -1371,7 +1378,9 @@ export class Presenter {
         const aborted = d.aborted === true;
         // The old turn ending does not end a newer request's wait. Keep its face and busy ring, with no answer's
         // hide timer; heard() above cancelled its slow timer, so start that again for the request still owed a turn.
-        if (!aborted && this.work === "reply" && this.asked !== null && !this.silent && this.state.bubble.mood === "thinking") {
+        const replaced = this.replaced;
+        this.replaced = false;
+        if ((!aborted || replaced) && this.work === "reply" && this.asked !== null && !this.silent && this.state.bubble.mood === "thinking") {
           this.cancelHide();
           this.answering = false;
           this.produced = false;

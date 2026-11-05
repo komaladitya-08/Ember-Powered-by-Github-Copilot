@@ -1,7 +1,7 @@
 /**
  * The real recognizers, on sherpa-onnx: its native addon on Windows and macOS, its WebAssembly build elsewhere (it
  * runs on RHEL 8's glibc 2.28; the Linux addon needs 2.32) and wherever the addon doesn't load (runtime.ts). Keyword
- * spotting with a 3.3M zipformer, Silero VAD, and Moonshine v2 tiny for transcription.
+ * spotting with a 3.3M zipformer, Silero VAD, and Moonshine v2 base for transcription.
  * WebAssembly memory never shrinks, so every buffer here is bounded: a VAD that hears speech for minutes (a TV,
  * colleagues) would otherwise grow until the process runs out of memory.
  */

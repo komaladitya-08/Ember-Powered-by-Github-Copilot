@@ -4,6 +4,34 @@
 
 Reliability beta, prepared for validation before publication.
 
+### A real conversation on 5 November
+
+- **Ember keeps listening.** Once you've called it, just keep talking: no name, no eight seconds, no limit on turns. It goes
+  on hearing you while it speaks and while its tasks work, until you say “That's all” or 30 seconds after everything has gone
+  quiet. **Keep listening after I call Ember** under Voice turns it off.
+- **Cut in whenever you like.** Ember's voice drops the moment it hears you, stops once it's sure the words aren't its own,
+  and answers what you just said with the rest in mind. A running task carries on, and what you said reaches it if it
+  changes the task. “Yeah” and “mm-hmm” don't interrupt.
+- **Voice Match no longer decides who Ember hears.** On a real laptop's microphone it was turning the owner away, so Ember
+  showed “Listening…” and stopped. It now only decides whose voice may answer Ember's questions, and is called **Answer
+  questions with my voice**.
+- “Hey Ember” and “Ember” are heard far more often: speech recognition's “Hey, number.” and “A number.” were being taken for
+  other words, and a name said on its own needed spelling right.
+- Better speech recognition (Moonshine v2 base): the speech models are now about 220 MB. Ember asks to download it once.
+- With a song or a video playing, Ember hears only what is said to it by name, so it doesn't take the words for requests
+  (Windows, and Linux with `parec`; on macOS a conversation can't tell yet).
+- Ember asks you to agree again, because what it hears and sends changed.
+
+### Fewer questions while browsing on 5 November
+
+- With **Work without asking** on, Enter in a browser's address bar or a page's search box, a long address, moving between
+  pages and tabs, and closing a tab you asked to close no longer ask. Chat boxes, forms and composers still do.
+- A link whose title has a risky word in it (“Post Malone”) no longer asks, or holds the whole task to asking.
+- Every button on a checkout, payment or billing page now asks, as do “Activate now”, “Start free trial” and “Upgrade now”.
+  “Activate now” on a checkout page had gone through unconfirmed.
+- Store apps such as ChatGPT and WhatsApp can be opened: Ember used to say they weren't installed.
+- A key you had just allowed no longer fails with “can't tell which window” when the page's title changed meanwhile.
+
 ### Light mode on 5 November
 
 - Home, the command window and Ember's password and consent windows now have a light look, and by default match the

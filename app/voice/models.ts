@@ -61,15 +61,15 @@ export const VOICE_MODELS: SpeechModel[] = [
     target: "silero_vad.onnx",
   },
   {
-    // Moonshine v2 tiny (2026-02-27 export, quantized). Measured on 90 requests in nine synthesized voices: 10.5 % of
-    // words wrong (Moonshine tiny before it: 11.7 %), at 0.08 of real time on one WebAssembly thread (before: 0.12), a
-    // quarter of the download, and it hears "Ember" as itself more often, so fewer real wakes are taken back. Moonshine
-    // v2 base got 8.4 %, but with twice the CPU and 225 MB more memory, and it wrote "Amber" for the name more often.
-    // It runs only after a wake: listening for the name costs nothing more.
-    id: "asr", name: "Speech recognition (Moonshine v2 tiny, English)", kind: "tar.bz2", license: "MIT",
-    url: `${RELEASES}/asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2`,
-    sha256: "9ec31b342d8fa3240c3b81b8f82e1cf7e3ac467c93ca5a999b741d5887164f8d", bytes: 29_858_559,
-    target: "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27",
+    // Moonshine v2 base (2026-02-27 export, quantized). On 90 requests in nine synthesized voices: 8.4 % of words wrong
+    // (v2 tiny: 10.5 %), for twice the CPU and 225 MB more memory. On a real laptop's microphone, the same phrases
+    // through the same room (2026-11-05), the difference is plainer: base wrote "Please write a short note to Como…"
+    // where tiny wrote "Conewell", and heard all of eight requests where tiny dropped four; 44–170 ms a request against
+    // 59–89 ms. It runs only on what is said to Ember: listening for the name costs nothing more.
+    id: "asr", name: "Speech recognition (Moonshine v2 base, English)", kind: "tar.bz2", license: "MIT",
+    url: `${RELEASES}/asr-models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2`,
+    sha256: "43232c1d13013d37317163baec3135bd771a186a4356f28c889bab453bb0e891", bytes: 111_266_225,
+    target: "sherpa-onnx-moonshine-base-en-quantized-2026-02-27",
   },
   DEFAULT_VOICE,
   {

@@ -5,6 +5,7 @@
  * systemPreferences are only called when a member runs. Plain Node, unit-tested on Linux with fakes.
  */
 
+import { spawn as nodeSpawn } from "node:child_process";
 import fs from "node:fs";
 import { KEYS, SHORTCUTS } from "../../../../shared/shortcuts";
 import { PLATFORM_WORDS } from "../../../../shared/words";
@@ -23,6 +24,7 @@ import { win32Lifecycle } from "./lifecycle";
 import { bundledModelDirs, win32Paths, win32Which } from "./paths";
 import { helperDir, powershellFacts } from "./powershell";
 import { win32Settings } from "./settings";
+import { startAppsReader } from "./start-apps";
 
 /** What tests (and the composition) may replace. */
 export interface Win32SystemOptions {
@@ -57,6 +59,8 @@ export function win32System(deps: PlatformDeps, o: Win32SystemOptions = {}): Sys
     paths: win32Paths({ env }),
     apps: win32Apps({
       env, execPath: deps.execPath, folders, packageInstalled: family => api()?.packageFamilyInstalled(family) ?? null,
+      // (A spawn given for tests has no pipe to read: they go without.)
+      ...(o.spawn ? {} : { startApps: startAppsReader(nodeSpawn, () => undefined, o.now) }),
       ansi: bytes => api()?.ansiText(bytes) ?? null, fs: o.fs, spawn: o.spawn, now: o.now, log,
     }),
     settings: win32Settings({ api, log }),
@@ -75,7 +79,7 @@ export function win32System(deps: PlatformDeps, o: Win32SystemOptions = {}): Sys
       env, api, powershell, helperDir: helper, app: deps.electron.app, systemPreferences: deps.electron.systemPreferences,
     }),
     a11y: win32A11y({ api, systemPreferences: deps.electron.systemPreferences, now: o.now }),
-    voice: { speakerMonitor: false, bundledModelDirs: res => bundledModelDirs(res, folders.programData()), nativeSpeechDir: () => null, naturalVoice: true },
+    voice: { speakerMonitor: false, outputLevel: true, bundledModelDirs: res => bundledModelDirs(res, folders.programData()), nativeSpeechDir: () => null, naturalVoice: true },
     privacy: { neverLookDefaults: NEVER_LOOK_DEFAULTS_WIN32, isSecurityWindow: w => isSecurityWindow(w, "win32") },
     clipboardFormats: CLIPBOARD_FORMATS_WIN32,
     lifecycle: win32Lifecycle({ packaged: deps.packaged, execPath: deps.execPath, programs: folders.programs, shell: deps.electron.shell, log }),

@@ -865,6 +865,7 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
     // Ember listens to what the speakers play (to tell its own voice apart) only where the OS lets it, today Linux's
     // PulseAudio: elsewhere the consent doesn't say it does.
     { selector: "#speaker-note", hidden: !p.speakerRejection },
+    { selector: "#output-note", hidden: !p.outputLevel },
     { selector: "#conversation", attrs: { "data-empty": emptyConversationText(p.shortcuts.ask.label) } },
     { selector: "#mic-indicator", content: [p.micIndicator], hidden: !p.micIndicator },
     { selector: "#audit-dir", content: [auditDirLabel(p)] },
@@ -905,6 +906,8 @@ export const PERSONAL_TEXT = {
   wordsHeading: "Words Ember learnt",
   wordsEmpty: "No words learnt yet.",
   forgetAllWords: "Forget all words",
+  conversation: "Keep listening after I call Ember",
+  conversationHint: "Talk to Ember as you would to a person: no name needed after the first time, and you can cut in while it speaks or works. Ember stops talking, takes in what you said and carries on. Say “That's all” to finish, or it stops listening 30 seconds after everything goes quiet. Off, you have a few seconds after each answer.",
   suggest: "Suggest what I might say next",
   suggestHint: "A few likely next requests under Ember's answers and in Ask Ember, worked out on this computer. Nothing runs until you choose one, and Ember never suggests sending, deleting or paying unless you just asked about it.",
   notSaid: "That's not what I said",

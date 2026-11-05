@@ -11,7 +11,7 @@ async function renderer(search = "") {
   let changed!: () => void;
   const api: MicApi = {
     status: vi.fn(), speaking: vi.fn(), speech: vi.fn(), played: vi.fn(), level: vi.fn(),
-    onSpeak: fn => { speak = fn; }, onHush: fn => { hush = fn; },
+    onSpeak: fn => { speak = fn; }, onDuck: () => undefined, onOutputWatch: () => undefined, outputBusy: () => undefined, onHush: fn => { hush = fn; },
     onAudio: fn => { audio = fn; }, onAudioDone: fn => { done = fn; }, onLevelOn: vi.fn(),
   };
   const local = { name: "Local", lang: "en-US", localService: true, default: false };

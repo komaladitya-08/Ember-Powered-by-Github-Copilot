@@ -1040,6 +1040,15 @@ export class Conductor {
     await this.session?.abort();
   }
 
+  /**
+   * The user said something new while this turn was going: it ends without a word of it ("Stopped" would be a lie: their
+   * new request is on its way), its tasks go on, and the request that replaces it goes out as usual.
+   */
+  async replaceTurn(): Promise<void> {
+    this.deps.presenter.turnReplaced();
+    await this.abort();
+  }
+
   /** Quiet this answer without stopping its desktop tasks; only a new matched request may speak again. */
   interruptAnswer(): void {
     this.answerMuted = true;

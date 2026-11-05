@@ -122,7 +122,7 @@ export const SettingsSchema = z.object({
     speakerRejection: z.boolean().default(true),
     /** The user turned the microphone off (its shortcut or the menu): it stays off across restarts. */
     muted: z.boolean().default(false),
-    /** Voice Match: answer only the owner's voice (its voiceprint is kept apart, in voiceprint.json: voiceprint-store.ts). */
+    /** Voice Match: the owner's voice may approve questions (its voiceprint is kept apart, in voiceprint.json: voiceprint-store.ts). Every voice is heard either way. */
     match: z.boolean().default(false),
     /**
      * Explicit optional Kokoro override. False uses baseline Kitten; both use the local system voice when native
@@ -140,7 +140,9 @@ export const SettingsSchema = z.object({
     words: z.boolean().default(true),
     /** Suggest what I might say next: chips under the bubble and in the Ask box (app/main/personal/predict.ts). */
     suggest: z.boolean().default(true),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true })),
+    /** Keep listening after a request: a conversation, with no wake word, that can interrupt Ember (app/voice/engine.ts). */
+    conversation: z.boolean().default(true),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true })),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),

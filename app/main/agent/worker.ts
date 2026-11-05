@@ -1171,6 +1171,8 @@ export class Worker {
   /** At that look: the focused element takes several lines, and it is in a web page (ActionRequest.multiLine, inPage). */
   private focusMultiLine = false;
   private focusInPage = false;
+  /** At that look: the focused element takes typing (ActionRequest.notEditable says when it doesn't). */
+  private focusEditable = false;
   /** At that look: the dialog the focused element is in (Enter or Space there answers it, as a click does: dialogOf). */
   private focusDialog: Dialog | undefined;
   /** Semantic context from the same quick read that supplied the key request. */
@@ -3569,6 +3571,23 @@ export class Worker {
    * Edit ▸ Select All in Writer; or nothing says it has the keyboard where an editable document is), and what a
    * spreadsheet's cell being typed into holds so far (focusFormula).
    */
+  /**
+   * The working window as the window system knows it. Reads follow a window by program and path, but borrowing finds it by
+   * its title, and a page's title changes under Ember: "Untitled and 1 more page" became "What's new…" during a 23 s
+   * question, and the Enter the user had just allowed failed with "the window couldn't be told apart" (audit of
+   * 2026-11-03). If the title Ember knows finds nothing, the title a fresh read of the same window gives is used.
+   */
+  private async windowNow<W>(find: (name: string) => W | null | undefined): Promise<W | null | undefined> {
+    const known = find(this.window.name);
+    if (known) return known;
+    const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
+    const name = seen?.window && !seen.blocked && !seen.ember ? seen.window.name : "";
+    if (!name || name === this.window.name) return known;
+    const found = find(name);
+    if (found) this.window = { ...this.window, name };
+    return found;
+  }
+
   private async focusIn(wait = false): Promise<Focus | undefined | "blocked" | "gone" | "busy"> {
     for (let i = 0; ; i++) {
       // A quick look (its ids aren't acted on): the ids of the latest perceive_window stay known however many keys go in.
@@ -3593,6 +3612,7 @@ export class Worker {
       this.focusFormula = !f || f.secret ? undefined : editing ? editing.text ?? "" : isSheetCell(f) ? "" : intoSheet(f, byId) ? f.text ?? "" : undefined;
       this.focusMultiLine = !!f && f.states.includes("multi line");
       this.focusInPage = !!f && (f.role === "document web" || inWebPage(f, byId));
+      this.focusEditable = !!f && f.states.includes("editable");
       this.focusDialog = f ? dialogAround(f, byId, nodes, !!seen && !seen.truncated && !seen.busy) : undefined;
       if (seen?.window && f) {
         const name = f.name || inferLabels(seen.nodes).get(f.id) || "";
@@ -3657,7 +3677,7 @@ export class Worker {
         // In a spreadsheet's cell: what it will hold, symbols too (a formula typed key by key).
         ...(this.focusFormula !== undefined ? { formula: this.focusFormula + (keyText(keys, this.kc) ?? "") } : {}),
         // Where Enter can send (a page's field), or only starts a line (an editor's text); and text that is all Ember's own.
-        ...(element ? { inPage: this.focusInPage, ...(this.focusMultiLine ? { multiLine: true } : {}), ...this.ownText(this.fieldOf(element), this.focusText) } : {}),
+        ...(element ? { inPage: this.focusInPage, ...(this.focusEditable ? {} : { notEditable: true }), ...(this.focusMultiLine ? { multiLine: true } : {}), ...this.ownText(this.fieldOf(element), this.focusText) } : {}),
         // The dialog the keys go to: Enter on its focused "Save Anyway" or "OK" answers it, as a click on it does.
         ...(element && this.focusDialog ? { dialog: this.focusDialog } : {}),
       };
@@ -3910,7 +3930,7 @@ export class Worker {
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 3, error: "no window known yet" });
       return fail("Ember doesn't know which window to use yet. Call perceive_window first.");
     }
-    const win = c.findWindow(this.window.name, this.target.pid);
+    const win = await this.windowNow(name => c.findWindow(name, this.target.pid));
     if (!win) {
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, tier: 3, error: "the window couldn't be told apart (none or several with that title)" });
       return fail("Ember can't tell which window that is (none or several have that title), so it didn't use the mouse. Call perceive_window.");
@@ -3979,7 +3999,7 @@ export class Worker {
       if (this.isOver) throw new BorrowStopped();
       if (place.userInControl()) throw new UserTookOver(0);
     };
-    const win = place.input.findWindow(this.window.name, this.target.pid) || this.deskDialogWindow(place);
+    const win = await this.windowNow(name => place.input.findWindow(name, this.target.pid)) || this.deskDialogWindow(place);
     if (!win) {
       release();
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, tier: 2, error: "the window couldn't be told apart (none or several with that title)" });

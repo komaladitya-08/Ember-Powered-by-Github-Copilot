@@ -550,6 +550,7 @@ function start(): void {
     micIndicator: sys.words.micIndicator,
     permissionsNote: sys.words.permissionsNote,
     speakerRejection: sys.voice.speakerMonitor,
+    outputLevel: sys.voice.outputLevel,
     fixLabels: Object.fromEntries(sys.fixes.ids.map(id => [id, sys.fixes.label(id)])),
     desk: !!platform.desk && platform.desk.available().ok,
     autostartNote: sys.autostart.note(),
@@ -1187,7 +1188,7 @@ function start(): void {
    * `how.suggested`: one of Ember's suggestions the user chose (never their own words for commands: host.ts
    * UserRequest.suggested); `how.heardId`: the request Ember heard, for "That's not what I said" (personal/service.ts).
    */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number } = {}, read = callContext, stillCurrent?: () => boolean) => {
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}, read = callContext, stillCurrent?: () => boolean) => {
     if (!consented()) { showHome(); return; }
     recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
@@ -1206,7 +1207,7 @@ function start(): void {
     if (stillCurrent && (!stillCurrent() || !consented() || screenLock?.locked)) return;
     if (how.spoken) turnLatency.mark("sent");
     if (!agent) return;
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.manual ? { manual: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}) }).catch(err => { log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.replaces ? { replaces: true } : {}), ...(how.spoken ? { spoken: true } : {}), ...(how.manual ? { manual: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}) }).catch(err => { log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1319,8 +1320,9 @@ function start(): void {
     wake: "I only caught the first part: say the rest after my answer.",
     "follow-up": "I only caught the first part: say “Ember” and the rest.",
     manual: "I only caught the first part. Use Listen once to say the rest.",
+    conversation: "I only caught the first part: say the rest.",
   } as const;
-  const isCutNote = (s: string | null) => s === CUT_NOTES.wake || s === CUT_NOTES["follow-up"] || s === CUT_NOTES.manual;
+  const isCutNote = (s: string | null) => s === CUT_NOTES.wake || s === CUT_NOTES["follow-up"] || s === CUT_NOTES.manual || s === CUT_NOTES.conversation;
   let shownForAnswer = false;
   /** "Hide Ember" while there is no overlay to hold it (no compositor): the next overlay starts hidden. */
   let keptHidden = false;
@@ -1631,6 +1633,20 @@ function start(): void {
   let voiceDetail: string | undefined;
   /** The status line while a follow-up window listens. */
   const FOLLOW_UP_STATUS = "Listening for a follow-up…";
+  /** The status line through a conversation: the microphone is open for what is said next. */
+  const CONVERSATION_STATUS = "Listening…";
+  /** A conversation is open (engine.ts CONVERSATION_IDLE_MS), and what keeps it told whether anything is at work. */
+  let conversing = false;
+  let conversingTimer: NodeJS.Timeout | null = null;
+  const conversationOpen = (on: boolean) => {
+    if (on !== conversing) voice?.watchOutput(on);
+    conversing = on;
+    if (conversingTimer) clearInterval(conversingTimer);
+    conversingTimer = null;
+    if (!on) return;
+    conversingTimer = setInterval(() => voice?.conversationBusy(!(agent?.idle ?? true) || !!confirmer?.waiting), 1000);
+    conversingTimer.unref?.();
+  };
   /** What Ember does with what it hears. */
   const onVoice = (e: VoiceEvent, heard?: { utterance: number }) => {
     switch (e.type) {
@@ -1647,6 +1663,14 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
+        if (e.window === "conversation") {
+          // The microphone stays open through replies and tasks: nothing here may take the bubble from them.
+          conversationOpen(e.on);
+          if (e.on) { setStatus("listen", CONVERSATION_STATUS); break; }
+          if (!isCutNote(statusBy.listen)) setStatus("listen", null);
+          if (lastState.bubble.mood === "listening") { agent?.claimBubble(); setState({ emotion: "neutral", bubble: IDLE_BUBBLE }); }
+          break;
+        }
         if (e.window === "manual") {
           if (e.on && manualCall) {
             heardFrom = Date.now();
@@ -1684,6 +1708,9 @@ function start(): void {
       case "speech":
         // (Counted by scripts/voice/echo-check.mjs: speech heard while Ember's own voice plays is its echo.)
         log.info("voice.speech_heard", { on: e.on });
+        // In a conversation each thing said dates from its own start, for the spoken-answer checks (a window that opened
+        // minutes ago says nothing of it), and the bubble stays with the reply or task it shows.
+        if (conversing) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
         // In a follow-up window the speech itself starts later than the window: the answer is tied to then.
         if (e.on && saidFrom < heardFrom + 1) speechStarts();
         if (e.on) agent?.claimBubble();
@@ -1699,7 +1726,7 @@ function start(): void {
         }
         // A spoken request's answer opens a follow-up window; the engine refuses one after MAX_FOLLOW_UPS in a row.
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
-        lastHeard = { utterance: heard?.utterance ?? -1, verified: e.verified === true, cut: !!e.cut, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true };
+        lastHeard = { utterance: heard?.utterance ?? -1, verified: e.verified === true, cut: !!e.cut, selfSpoke: e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true) };
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
         if (e.cut) {
           const note = CUT_NOTES[e.window];
@@ -1718,7 +1745,7 @@ function start(): void {
           // (voiceAnswer reads the raw words, e.text, never personal.heard()'s corrected ones.)
           const spokenReply = voiceAnswer({
             text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchUnready, verified: e.verified === true, short: e.short === true,
-            ...(e.restScore !== undefined ? { restScore: e.restScore } : {}), taskTrust, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true,
+            ...(e.restScore !== undefined ? { restScore: e.restScore } : {}), taskTrust, selfSpoke: e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true),
           });
           // A spoken answer to a question is never learnt from (Voice Match learns from requests only).
           if (spokenReply.kind !== "none") { lastHeard = null; answerByVoice(spokenReply); break; }
@@ -1729,10 +1756,24 @@ function start(): void {
           // Near-misses corrected against the user's own words (personal/correct.ts): never into a risky request.
           const heard = personal.heard(e.text);
           // A click opens this window, but doesn't identify the voice in the room as the user for command policy.
-          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: !!manual || !voice?.rejectsSpeakers, spoken: true, ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
+          // In a conversation Ember looks again at what the user is in, as a wake does: they may have moved on.
+          if (e.window === "conversation") captureContext();
+          // Said while a reply was on its way: that reply stops, and this is answered with it in mind (host.ts replaceTurn).
+          // A permission question stays up: its tool is waiting, and only its own answer ends it.
+          const replaces = e.window === "conversation" && !confirmer?.waiting;
+          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: !!manual || !voice?.rejectsSpeakers, spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
         }
         break;
       }
+      case "duck":
+        voice?.duck(e.on);
+        break;
+      case "cut-in":
+        // The user is talking over Ember: it stops at once. What they say comes next, as an utterance.
+        log.info("voice.cut_in");
+        if (agent) agent.interruptAnswer();
+        else resetAnswerSpeech();
+        break;
       case "stop":
         // "Ember, stop": everything stops, locally, without asking the model.
         stopEverything("voice");
@@ -3109,7 +3150,7 @@ function start(): void {
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)
     let wasOnline = net.isOnline();
-    const netWatch = setInterval(() => { const on = net.isOnline(); if (on !== wasOnline) { wasOnline = on; agent?.networkChanged(on); } }, 5000);
+    const netWatch = setInterval(() => { const on = net.isOnline(); if (on !== wasOnline) { wasOnline = on; agent?.networkChanged(on); if (on) keeper.wake(); } }, 5000);
     netWatch.unref?.();
     // Timers stood still while the computer slept: its own sign-in may be due for renewal, or have run out (cross-review X12).
     powerMonitor.on("resume", () => { keeper.wake(); agent?.networkChanged(true); });
@@ -3173,6 +3214,10 @@ function start(): void {
       ...(speechModels.bundled ? { bundled: { userRoot: speechModels.userRoot } } : {}),
       // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
+      conversation: () => settings.get().voice.conversation,
+      // (EMBER_NO_OUTPUT_WATCH: a test that speaks through the speakers as the user would count as other sound. A fake
+      // microphone's WAV is Chromium's fake loopback too, so it would.)
+      outputLevel: sys.voice.outputLevel && !testMicWav && !devEnv("EMBER_NO_OUTPUT_WATCH"),
       // Where the system that refused it lets the user allow it (the setup check has a button for it). Named without
       // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
@@ -3274,6 +3319,12 @@ function start(): void {
       voice?.setLearning(on);
     });
     settings.onChange(next => applyNaturalVoicePreference(voice, next.voice));
+    let conversations = settings.get().voice.conversation;
+    settings.onChange(next => {
+      if (next.voice.conversation === conversations) return;
+      conversations = next.voice.conversation;
+      voice?.setConversation(conversations);
+    });
     settings.onChange(next => {
       // macOS asks for the microphone once listening is agreed to, so its prompt comes with that context.
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));

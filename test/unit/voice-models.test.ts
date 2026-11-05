@@ -162,15 +162,15 @@ describe("ensureModels for some of them", () => {
 describe("the download button and Voice Match's note", () => {
   it("says what's missing and its size", () => {
     const all = VOICE_MODELS.map(m => m.id);
-    expect(modelsDownloadLabel(all, VOICE_MODELS_BYTES)).toBe("Download speech models (138 MB)");
-    expect(modelsDownloadLabel(["asr", "tts"], byId("asr").bytes + byId("tts").bytes)).toBe("Download speech models (94 MB)");
+    expect(modelsDownloadLabel(all, VOICE_MODELS_BYTES)).toBe("Download speech models (220 MB)");
+    expect(modelsDownloadLabel(["asr", "tts"], byId("asr").bytes + byId("tts").bytes)).toBe("Download speech models (175 MB)");
     expect(modelsDownloadLabel(["tts"], byId("tts").bytes)).toBe("Download Kitten Nano (63.8 MB)");
     expect(modelsDownloadLabel(["speaker"], byId("speaker").bytes)).toBe("Download Voice Match (27 MB)");
     expect(modelsDownloadLabel(["tts", "speaker"], byId("tts").bytes + byId("speaker").bytes)).toBe("Download Kitten Nano and Voice Match (90 MB)");
   });
 
   it("explains Voice Match without its model: off for now with a voiceprint kept, or not yet teachable", () => {
-    expect(matchNoModelText(true, byId("speaker").bytes)).toMatch(/^Off for now: .*Ember answers anyone.*Download it above \(27 MB\)/);
+    expect(matchNoModelText(true, byId("speaker").bytes)).toMatch(/^Off for now: .*your voice can't answer.*Download it above \(27 MB\)/);
     expect(matchNoModelText(false, null)).toBe("Voice Match needs its own model, which isn't on this computer. Download it above, then teach Ember your voice.");
   });
 });
