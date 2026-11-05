@@ -28,10 +28,19 @@ export interface ButtonView {
 /** What the page draws for a card. */
 export interface PromptView {
   title: Part[];
+  /** A risky step: the tag, caution brackets and an Allow that doesn't stand out (as the bubble). */
+  risky?: boolean;
   body: Block[];
   field: { label: string; masked: boolean } | null;
   buttons: ButtonView[];
 }
+
+/** The words of a risky step's tag, as the bubble's (packages/bubble RISKY_TAG). */
+export const RISKY_STEP_TAG = "Risky step";
+/** Under an approval whose press main didn't take: it was early, or the question moved on or expired. */
+export const APPROVAL_NOT_TAKEN = "That didn't go through. It may have been too soon, or the question may have expired: nothing was approved. Try once more.";
+/** Under an approval whose press couldn't reach Ember. */
+export const APPROVAL_NOT_SENT = "I couldn't hear that press, so nothing was approved. Press it again.";
 
 /** How long the affirmative button of a host-key or consent card ignores presses. */
 export const PROMPT_ARM_MS = 900;
@@ -108,7 +117,9 @@ export function promptView(card: PromptCard): PromptView {
     case "approval":
       return {
         title: [card.title],
-        body: [...(card.where ? [p(card.where)] : []), p(card.prompt), ...(card.detail ? [{ kind: "quote" as const, text: card.detail }] : [])],
+        ...(card.risky ? { risky: true } : {}),
+        body: [...(card.where ? [p(card.where)] : []), p(card.prompt),
+          ...(card.context && card.context.trim() !== card.prompt ? [p(`Your task: ${card.context.trim()}`)] : []), ...(card.detail ? [{ kind: "quote" as const, text: card.detail }] : [])],
         field: null,
         buttons: card.options.map(o => ({ id: o.id, label: o.label, primary: o.primary === true, isDefault: false, armed: false })),
       };

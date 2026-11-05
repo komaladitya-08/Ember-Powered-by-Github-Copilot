@@ -9,7 +9,8 @@
 </head>
 <body>
   <main>
-    <div id="card" class="card" role="dialog" aria-labelledby="title" aria-describedby="body" hidden>
+    <div id="card" class="card" role="dialog" aria-labelledby="risk title" aria-describedby="body" hidden>
+      <p id="risk" class="risk" hidden></p>
       <h1 id="title" class="title" tabindex="-1"></h1>
       <div id="body" class="body"></div>
       <div id="legend" class="legend" hidden></div>
@@ -17,6 +18,7 @@
         <label id="field-label" for="field"></label>
         <input id="field" type="password" autocomplete="off" spellcheck="false" maxlength="1024">
       </form>
+      <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
       <p id="hint" class="hint" aria-live="polite" hidden></p>
       <div id="buttons" class="buttons"></div>
     </div>

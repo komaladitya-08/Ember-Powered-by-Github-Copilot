@@ -11,7 +11,7 @@
 
 import type { PromptCard } from "../../shared/remote-ui";
 import {
-  PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
+  APPROVAL_NOT_SENT, APPROVAL_NOT_TAKEN, PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, RISKY_STEP_TAG, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
   type Block, type ButtonView, type Part, type ReadGate,
 } from "./copy";
 import type { PromptApi } from "./api";
@@ -84,13 +84,22 @@ async function hashShown(c: { title: string; body: string[] }): Promise<string |
   } catch { return null; } // no WebCrypto here: the card's own hash goes back, as the contract has it
 }
 
+/** A line under the card saying why a press didn't take (never silent). */
+function say(text: string): void {
+  const n = $("notice");
+  n.textContent = text;
+  n.hidden = !text;
+}
+
 async function press(b: ButtonView): Promise<void> {
   if (!card || sent) return;
   if (card.kind === "approval") {
     const shown = card;
     if (b.id !== "deny" && shown.detail && !seenNow()) return;
     // The Confirmer alone arms and accepts the exact current question. Rejected early presses leave it answerable.
-    const accepted = await api.approval(shown.id, b.id);
+    let accepted: boolean;
+    try { accepted = await api.approval(shown.id, b.id); } catch { if (card === shown) say(APPROVAL_NOT_SENT); return; }
+    if (card === shown && !accepted) say(APPROVAL_NOT_TAKEN);
     if (card === shown && accepted) { sent = true; for (const button of buttons) button.el.disabled = true; }
     return;
   }
@@ -154,6 +163,7 @@ function show(next: PromptCard | null): void {
   sent = false;
   gate = { seen: false, layout: layoutNow() };
   field.value = "";
+  say("");
   if (armTimer) clearTimeout(armTimer);
   armTimer = null;
   if (focusTimer) clearTimeout(focusTimer);
@@ -165,6 +175,9 @@ function show(next: PromptCard | null): void {
   const view = promptView(next);
   const legend = new Set<string>();
   $("title").replaceChildren(...partNodes(view.title, legend));
+  $("card").dataset.risky = String(!!view.risky);
+  $("risk").textContent = view.risky ? RISKY_STEP_TAG : "";
+  $("risk").hidden = !view.risky;
   // The window keeps its title "Ember" (§8.6): Ember's own windows are known by it where their process can't be told,
   // and a host name or an SSH prompt never goes into a window title other programs read. The dialog is named by its h1.
   words.replaceChildren(...view.body.map(b => blockNode(b, legend)));
@@ -177,7 +190,8 @@ function show(next: PromptCard | null): void {
     field.type = view.field.masked ? "password" : "text";
   }
   buttons = view.buttons.map(v => {
-    const b = el("button", v.primary ? "btn" : "btn quiet", v.label);
+    const b = el("button", v.primary && !view.risky ? "btn" : "btn quiet", v.label);
+    if (v.primary && view.risky) b.classList.add("caution");
     b.type = "button";
     b.addEventListener("click", e => { if (e.isTrusted) void press(v); });
     return { view: v, el: b };

@@ -35,7 +35,7 @@ export type PromptCard =
   | { id: string; kind: "consent"; n: number; consent: ConsentPanel }
   /** A first-use consent card asked directly (settings' switches), not through a question. */
   | { id: string; kind: "consent-direct"; consent: ConsentPanel }
-  | { id: string; kind: "approval"; n: number; title: string; prompt: string; detail?: string; where?: string;
+  | { id: string; kind: "approval"; n: number; title: string; prompt: string; detail?: string; where?: string; risky?: boolean; context?: string;
       options: { id: string; label: string; primary?: boolean }[] };
 
 export type ApprovalCard = Extract<PromptCard, { kind: "approval" }>;

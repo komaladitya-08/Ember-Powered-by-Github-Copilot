@@ -89,6 +89,9 @@ export interface Question {
  */
 export const ANSWER_MS = 1500;
 
+/** What the bubble says when a question timed out: nothing was approved, and it was not a refusal. */
+export const EXPIRED_THOUGHT = "Time ran out, so nothing was approved and I haven't done it. Ask me again if you'd like to review it.";
+
 /**
  * What main does once a question's answer has been up its moment (ConfirmerTiming.afterAnswer): nothing when something
  * else has replaced it on screen (`onScreen`) or what the question held off or covered shows again (`reshow`, the shared
@@ -449,7 +452,7 @@ export class Confirmer {
     this.cancelAnswer();
     const p = this.current;
     p.shownAt = this.now();
-    p.timer = setTimeout(() => this.finish(p, null), this.timeoutOf(p));
+    p.timer = setTimeout(() => this.finish(p, null, true), this.timeoutOf(p));
     this.show({ emotion: "curious", talking: false, bubble: this.bubbleOf(p) });
     this.onChange?.({ n: p.n, question: p.q });
   }
@@ -494,7 +497,7 @@ export class Confirmer {
     if (this.answerTimer) { clearTimeout(this.answerTimer); this.answerTimer = null; }
   }
 
-  private finish(p: Pending, answer: string | null): void {
+  private finish(p: Pending, answer: string | null, expired = false): void {
     if (p.timer) clearTimeout(p.timer);
     p.off?.();
     const queued = this.queue.includes(p);
@@ -505,7 +508,7 @@ export class Confirmer {
       this.current = null;
       // "Not now" (or no answer) leaves Ember idle, not still working.
       const yes = !!answer && answer !== "deny";
-      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
+      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : expired ? EXPIRED_THOUGHT : "Okay, I won't.", step: null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
       this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: shown });
       this.answerShown(shown);
     }

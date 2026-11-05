@@ -602,7 +602,7 @@ describe("the page's semantics", () => {
     const dialog = /<(\w+)\b[^>]*\brole="dialog"[^>]*>/.exec(html);
     expect(dialog?.[1]).toBe("div");
     expect(dialog?.[0]).toMatch(/\bid="card"/);
-    expect(dialog?.[0]).toMatch(/aria-labelledby="title"/);
+    expect(dialog?.[0]).toMatch(/aria-labelledby="risk title"/);
     expect(dialog?.[0]).toMatch(/aria-describedby="body"/);
     expect(html.indexOf(main)).toBeLessThan(html.indexOf(dialog![0]));
     expect(html.indexOf(dialog![0])).toBeLessThan(html.indexOf("</main>"));

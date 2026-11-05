@@ -874,3 +874,19 @@ describe("Better recall's download prompt (Settings › Memory, docs/MEMORY.md �
     expect(betterRecallProgress(1)).toBe("Language model 100% downloaded");
   });
 });
+
+describe("approval card risk and task context", () => {
+  const card: PromptCard = { id: "approval-3", kind: "approval", n: 3, title: "May I?", prompt: "Click “Send”?", context: "Email Ana the report",
+    options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] };
+  it("shows Risky step and Your task on a risky question, as the bubble does", () => {
+    const v = promptCopy.promptView({ ...card, risky: true });
+    expect(v.risky).toBe(true);
+    expect(promptCopy.RISKY_STEP_TAG).toBe("Risky step");
+    expect(JSON.stringify(v.body)).toContain("Your task: Email Ana the report");
+    expect(promptCopy.promptView(card).risky).toBeUndefined();
+  });
+  it("says nothing was approved when a press wasn't taken", () => {
+    expect(promptCopy.APPROVAL_NOT_TAKEN).toMatch(/nothing was approved/);
+    expect(promptCopy.APPROVAL_NOT_SENT).toMatch(/nothing was approved/);
+  });
+});

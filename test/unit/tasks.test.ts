@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { TaskManager } from "../../app/main/agent/tasks";
-import { Confirmer, guardWhileAsking } from "../../app/main/agent/confirm";
+import { Confirmer, EXPIRED_THOUGHT, guardWhileAsking } from "../../app/main/agent/confirm";
 import { findApp, listApps, parseDesktopFile, type DesktopApp } from "../../app/main/hands/system";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
 import type { TaskCard, EmberState } from "../../app/shared/overlay";
@@ -376,6 +376,11 @@ describe("review round 2: stopping and questions", () => {
     expect(shown.at(-1)).toMatchObject({ emotion: "neutral", bubble: { mood: "idle", thought: "Okay, I won't." } });
     await ask(c); // expires
     expect(shown.at(-1)).toMatchObject({ emotion: "neutral", bubble: { mood: "idle" } });
+    // A timeout is not a refusal: it says nothing was approved (review #30).
+    const t = shown.at(-1)!.bubble!.thought;
+    expect(t).toBe(EXPIRED_THOUGHT);
+    expect(t).toMatch(/nothing was approved/);
+    expect(t).not.toBe("Okay, I won't.");
     const yes = ask(c);
     expect(c.answerKey("primary")).toBe(true);
     await yes;

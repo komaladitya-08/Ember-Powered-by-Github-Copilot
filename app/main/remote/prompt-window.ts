@@ -136,6 +136,7 @@ export function validPromptCard(c: unknown): c is PromptCard {
     case "consent-direct": return validConsent(c.consent);
     case "approval": return Number.isSafeInteger(c.n) && (c.n as number) >= 0 && str(c.title, 2000, 1) && str(c.prompt, 100_000, 1)
       && (c.detail === undefined || str(c.detail, 1_000_000)) && (c.where === undefined || str(c.where, 500))
+      && (c.risky === undefined || typeof c.risky === "boolean") && (c.context === undefined || str(c.context, 2000))
       && Array.isArray(c.options) && c.options.length > 0 && c.options.length <= 12
       && c.options.every(v => isObj(v) && str(v.id, 100, 1) && str(v.label, 200, 1) && (v.primary === undefined || typeof v.primary === "boolean"));
     default: return false;

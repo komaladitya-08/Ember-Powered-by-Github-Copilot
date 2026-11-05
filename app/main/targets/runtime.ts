@@ -1904,9 +1904,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         promptWindow.showConsent(q.n, p.consent, true);
       } else {
         if (!promptWindow.showApproval) return false;
-        const { title, prompt, detail, where, options } = q.question;
+        const { title, prompt, detail, where, options, risky, context } = q.question;
         promptWindow.showApproval({ id: `approval-${q.n}`, kind: "approval", n: q.n, title, prompt,
-          ...(detail ? { detail } : {}), ...(where ? { where } : {}), options: options.map(o => ({ ...o })) });
+          ...(detail ? { detail } : {}), ...(where ? { where } : {}),
+          ...(risky ? { risky: true } : {}), ...(context?.trim() ? { context: context.trim().slice(0, 2000) } : {}), options: options.map(o => ({ ...o })) });
       }
       return true;
     },
