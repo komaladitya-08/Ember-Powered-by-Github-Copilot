@@ -989,7 +989,7 @@ export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: Natur
     case "too-slow": return { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
     case "wont-load": return { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
     case "needs-native": return { text: `${name} isn't available on this computer. ${fallback}`, retry: false, busy: false };
-    case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model === "kokoro", busy: false };
+    case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model !== "kitten", busy: false };
     default: return { text: `${name} is selected. ${fallback}`, retry: false, busy: false };
   }
 }

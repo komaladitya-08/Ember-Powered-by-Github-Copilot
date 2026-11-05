@@ -135,6 +135,44 @@ describe("Hear me more clearly", () => {
     expect((posted(electron.procs[2], "init")[0] as unknown as { models: { clear?: string } }).models.clear).toBeUndefined();
   });
 
+  it("starts listening again without it when turned off while the voice process was loading it (PR 181)", async () => {
+    const { v } = service(true, { native: true, downloader: vi.fn() });
+    inPlace();
+    v.setClearHearing(true);
+    await v.setWanted(true);
+    const [first] = electron.procs;
+    expect((posted(first, "init")[0] as unknown as { models: { clear?: string } }).models.clear).toBeDefined();
+    v.setClearHearing(false);
+    expect(first.kill).not.toHaveBeenCalled();
+    first.emit("message", { type: "ready", loadMs: 20, backend: { backend: "native", detail: "", provider: "cpu", threads: 2, tried: [], clear: true } });
+    expect(first.kill).toHaveBeenCalled();
+    await flush();
+    expect((posted(electron.procs[1], "init")[0] as unknown as { models: { clear?: string } }).models.clear).toBeUndefined();
+    expect(v.clearStatus.state).toBe("off");
+  });
+
+  it("downloads again when turned back on while a cancelled download cleans up, but not after a failure (PR 181)", async () => {
+    const settle: ((err?: Error) => void)[] = [];
+    const downloader = vi.fn(() => new Promise<void>((resolve, reject) => { settle.push(err => err ? reject(err) : resolve()); }));
+    const { v } = service(true, { native: true, downloader });
+    v.setClearHearing(true);
+    await flush();
+    expect(downloader).toHaveBeenCalledTimes(1);
+    v.setClearHearing(false);
+    v.setClearHearing(true);
+    expect(downloader).toHaveBeenCalledTimes(1);
+    settle[0](new Error("aborted"));
+    await flush();
+    expect(v.clearStatus.state).toBe("downloading");
+    await flush();
+    expect(downloader).toHaveBeenCalledTimes(2);
+    settle[1](new Error("The network dropped."));
+    await flush();
+    await flush();
+    expect(v.clearStatus.state).toBe("failed");
+    expect(downloader).toHaveBeenCalledTimes(2);
+  });
+
   it("says so, and keeps listening, where the clearer model wouldn't load", async () => {
     const { v } = service(true, { native: true, downloader: vi.fn() });
     inPlace();

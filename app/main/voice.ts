@@ -516,6 +516,7 @@ export class VoiceService {
     }
     const abort = new AbortController();
     this.clearAbort = abort;
+    let failed = false;
     this.setClear({ state: "downloading", percent: 0 });
     let shown = 0;
     const progress = (bytes: number) => {
@@ -531,11 +532,13 @@ export class VoiceService {
         const message = err instanceof Error ? err.message : String(err);
         this.o.log.warn("voice.clear_download_failed", { message });
         this.setClear({ state: "failed", detail: downloadHelp(message, CLEAR_SPEECH.bytes) });
-        abort.abort();
+        failed = true;
       })
       .finally(() => {
         this.clearFetch = null;
-        if (!abort.signal.aborted) this.checkClear();
+        // A failure waits for the user. A cancelled download may have been turned on again while it cleaned up: that
+        // turn found this one still running, so what is wanted now is looked at here.
+        if (!failed) this.checkClear();
       });
   }
 
@@ -1242,6 +1245,8 @@ export class VoiceService {
         connectTemporaryMic?.();
         connectTemporaryMic = undefined;
         this.armListenOnce();
+        // Turned off while this process was loading it: it has what was wanted then.
+        if (this.clearLoaded && !this.clearWanted) this.listenAgain();
         return;
       }
       if (m.type === "error") {

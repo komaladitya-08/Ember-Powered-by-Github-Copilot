@@ -1185,6 +1185,8 @@ export class Worker {
   private focusShell: string | null = null;
   /** The element refreshActionContext found to be a control of a living web page (livingPage), for this step. */
   private pageTarget: number | null = null;
+  /** What that element had selected when it was found (a field typed into must still have it: checkPageTarget). */
+  private pageSelection: string | undefined;
   /** The latest look for the cell with the keyboard found none because the read was cut short (a busy app): see cellWithKeyboard. */
   private cellLookCut = false;
   /** The user said yes to a key that only moves (onlyMoves) in this window (windowKey): more of those there go without a question. */
@@ -2461,6 +2463,7 @@ export class Worker {
       const twins = seen.nodes.filter(n => n.role === live.role && n.name === live.name).length > 1;
       if (!twins || PAGE_TWIN.test(live.role)) {
         this.pageTarget = id;
+        this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
         if (shifted || twins) {
           // The page moved on, so its ids can't be mapped again: the ids it was read with stay, and what it says now is
           // still looked through.
@@ -2543,8 +2546,13 @@ export class Worker {
     return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld && !isRiskyLabel(node.name, this.kc.os);
   }
 
-  /** The window still the one read, with nothing private or modal over it, and the object still what it was. */
-  private async checkPageTarget(id: number, node: AxNode): Promise<ToolResultObject | null> {
+  /**
+   * The window still the one read, with nothing private or modal over it, and the object still what it was. `editing`:
+   * text goes into it, so what it holds and has selected must be what was judged too (a draft restored while the step
+   * waited would be replaced with no question). Only the rest of the page may change. `clicked`: Ember's own click
+   * collapsed the selection.
+   */
+  private async checkPageTarget(id: number, node: AxNode, editing = false, clicked = false): Promise<ToolResultObject | null> {
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
     if (this.isOver) return STOPPED();
     const w = seen?.window;
@@ -2555,15 +2563,21 @@ export class Worker {
     }
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
-    if (!live || live.role !== node.role || live.name !== node.name || !!live.secret !== !!node.secret || !!live.withheld !== !!node.withheld || isDisabled(live.states)) {
+    if (!live || live.role !== node.role || live.name !== node.name || !!live.secret !== !!node.secret || !!live.withheld !== !!node.withheld || isDisabled(live.states)
+      || (editing && live.text !== node.text)) {
       return this.changedWhileDeciding(id, this.elementOf(id, node), live);
+    }
+    if (editing && !clicked) {
+      // The selection comes with the tree, not the element. A field has no twin here (refreshActionContext): two now can't be told apart.
+      const now = seen.nodes.filter(n => n.role === node.role && n.name === node.name);
+      if (now.length !== 1 || (now[0].selection ?? "") !== (this.pageSelection ?? "")) return this.changedWhileDeciding(id, this.elementOf(id, node), live);
     }
     return null;
   }
 
   /** What must still hold just before input: the whole context, but for a living page's control when no question was asked. */
-  private stillApproved(id: number, node: AxNode, context: string, clickedTextAt?: number): Promise<ToolResultObject | null> {
-    return this.pageTarget === id && !this.asked ? this.checkPageTarget(id, node) : this.checkActionContext(id, node, context, clickedTextAt);
+  private stillApproved(id: number, node: AxNode, context: string, editing: boolean, clickedTextAt?: number): Promise<ToolResultObject | null> {
+    return this.pageTarget === id && !this.asked ? this.checkPageTarget(id, node, editing, clickedTextAt !== undefined) : this.checkActionContext(id, node, context, clickedTextAt);
   }
 
   /** After a question was up, the element must still be the one the user said yes to. */
@@ -2683,7 +2697,7 @@ export class Worker {
       if (this.place?.userInControl()) return this.deskTaken(kind, element);
       const listed = await listing;
       if (this.isOver) return STOPPED();
-      const changedContext = await this.stillApproved(id, node, context);
+      const changedContext = await this.stillApproved(id, node, context, kind === "text");
       if (changedContext) return changedContext;
       this.anchorHome(kind, listed);
       this.authorized(req, { role: node.role, name: node.name });
@@ -2940,7 +2954,7 @@ export class Worker {
           const again = this.landingSpot(id, node, element, there);
           const aim = await this.mustAimAt(id, there!, again, again.shown);
           if (Math.abs(aim.x - spot.x) >= 1 || Math.abs(aim.y - spot.y) >= 1) await hand.glideTo(aim.x, aim.y);
-          const changedContext = await this.stillApproved(id, node, context);
+          const changedContext = await this.stillApproved(id, node, context, kind === "cursor_text");
           if (changedContext) throw new Error(changedContext.textResultForLlm);
           landedOn = aim.there;
           await hand.click();
@@ -2948,7 +2962,7 @@ export class Worker {
         if (kind !== "cursor_text") return;
         // Keys go wherever the keyboard is: this field must have it (a click can land on an overlay), or nothing is typed.
         await this.untilFocused(id, node, element);
-        const changedContext = await this.stillApproved(id, node, afterClickContext, clickedTextAt);
+        const changedContext = await this.stillApproved(id, node, afterClickContext, true, clickedTextAt);
         if (changedContext) throw new Error(changedContext.textResultForLlm);
         // "replace" clears what is there first; append goes to the end.
         if (mode === "replace") { await hand.keys(this.kc.edit.selectAll); await hand.keys("Delete"); }
@@ -3655,8 +3669,7 @@ export class Worker {
         ? JSON.stringify({ window: { app: seen.window.app, pid: seen.window.pid, path: seen.window.path, name: seen.window.name, role: seen.window.role },
           whole: !seen.truncated, nodes: this.actionContext(seen.nodes),
           others: (seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })) }) : null;
-      this.focusShell = this.focusContext === null ? null : JSON.stringify({ app: seen!.window!.app, pid: seen!.window!.pid, path: seen!.window!.path, name: seen!.window!.name,
-        role: seen!.window!.role, modal: (seen!.others ?? []).some(o => o.modal) });
+      this.focusShell = null;
       if (seen?.blocked) return "blocked";
       const f = seen?.window ? focusedElement(seen.nodes) : null;
       const read = !!f && !f.secret && READ_TEXT_ROLES.has(f.role);
@@ -3675,6 +3688,13 @@ export class Worker {
       this.focusInPage = !!f && (f.role === "document web" || inWebPage(f, byId));
       this.focusEditable = !!f && f.states.includes("editable");
       this.focusDialog = f ? dialogAround(f, byId, nodes, !!seen && !seen.truncated && !seen.busy) : undefined;
+      // What may not change under keys on a living page: the window, and what the keys were judged against. A field's text
+      // and selection count (a letter would replace what is newly selected), a read-only page's own words don't.
+      if (this.focusContext !== null) {
+        const w = seen!.window!;
+        this.focusShell = JSON.stringify({ app: w.app, pid: w.pid, path: w.path, name: w.name, role: w.role, modal: (seen!.others ?? []).some(o => o.modal),
+          dialog: this.focusDialog, beyond: this.focusBeyond, ...(this.focusEditable ? { text: this.focusText, selection: this.focusSelection } : {}) });
+      }
       if (seen?.window && f) {
         const name = f.name || inferLabels(seen.nodes).get(f.id) || "";
         return { role: f.role, name, ...(f.secret ? { secret: true } : {}), ...(nameWithheld(f, name, nodes, byId) ? { withheld: true } : {}), ...cellOf(f, byId) };
@@ -3771,7 +3791,8 @@ export class Worker {
           throw new Error(`Once the window was in front, ${now ? `${q(now.name, 60)} (${q(now.role, 40)})` : "nothing Ember can see"} had the keyboard, not what the user said yes to, so nothing was pressed.`);
         }
         if (!now && activating) throw new Error("Ember can't tell what that key would activate in this window (nothing there says it has the keyboard), so nothing was pressed. Click the control you mean instead.");
-        // In a living page (a video playing), with no question asked, what has the keyboard is checked just above.
+        // In a living page (a video playing), with no question asked, what has the keyboard is checked just above, and the
+        // shell holds what it contains.
         if (context === null || (this.focusContext !== context && !(this.focusInPage && !said && this.focusShell === shell))) {
           throw new Error("The window or its contents changed while preparing these keys, so nothing was pressed. Call perceive_window and ask again if it is still needed.");
         }
