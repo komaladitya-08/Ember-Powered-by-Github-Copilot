@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { TaskManager } from "../../app/main/agent/tasks";
-import { Confirmer, EXPIRED_THOUGHT, guardWhileAsking } from "../../app/main/agent/confirm";
+import { Confirmer, EXPIRED_THOUGHT, EXPIRED_STEP, guardWhileAsking } from "../../app/main/agent/confirm";
 import { findApp, listApps, parseDesktopFile, type DesktopApp } from "../../app/main/hands/system";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
 import type { TaskCard, EmberState } from "../../app/shared/overlay";
@@ -367,6 +367,16 @@ describe("Confirmer keyboard answers and borrowing", () => {
 describe("review round 2: stopping and questions", () => {
   const ask = (c: Confirmer) => c.ask({ title: "May I?", context: "Tidy the desktop", prompt: "Click “Save”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
 
+  it("says why a press isn't taken: too soon, or the question is gone (review #30)", async () => {
+    const c = new Confirmer(() => undefined, { armMs: 10_000, gapMs: 0 });
+    const q = ask(c);
+    const n = c.currentNumber!;
+    expect(c.refusal(`q${n}:once`)).toBe("not-yet");
+    expect(c.refusal(`q${n + 1}:once`)).toBe("gone");
+    expect(c.answerKey("deny")).toBe(true);
+    await q;
+    expect(c.refusal(`q${n}:once`)).toBe("gone");
+  });
   it("“Not now” (or no answer) leaves Ember idle, not working", async () => {
     const shown: Partial<EmberState>[] = [];
     const c = new Confirmer(s => shown.push(s), { armMs: 0, gapMs: 0, timeoutMs: 50 });
@@ -381,6 +391,9 @@ describe("review round 2: stopping and questions", () => {
     expect(t).toBe(EXPIRED_THOUGHT);
     expect(t).toMatch(/nothing was approved/);
     expect(t).not.toBe("Okay, I won't.");
+    // It says how to review it, which a refusal's bubble doesn't (review #30, acceptance 2).
+    expect(shown.at(-1)!.bubble!.step).toBe(EXPIRED_STEP);
+    expect(EXPIRED_STEP).toMatch(/say or type the request again/);
     const yes = ask(c);
     expect(c.answerKey("primary")).toBe(true);
     await yes;

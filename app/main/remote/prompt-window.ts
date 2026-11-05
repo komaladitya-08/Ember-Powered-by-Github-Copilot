@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { PROMPT_IPC, type ApprovalCard, type PromptAnswer, type PromptCard } from "../../shared/remote-ui";
+import { PROMPT_IPC, type ApprovalCard, type ApprovalRefusal, type ApprovalResult, type PromptAnswer, type PromptCard } from "../../shared/remote-ui";
 import type { OS } from "../../shared/shortcuts";
 import type { ConsentPanel } from "../../shared/consent";
 import type { Logger } from "../logger";
@@ -37,7 +37,7 @@ export interface PromptWindowExtras {
   /** Explicitly opens one ordinary question, without changing its Confirmer authority. */
   showApproval(card: ApprovalCard): void;
   hideApproval(n: number): void;
-  onApproval(fn: (n: number, answer?: string) => boolean): () => void;
+  onApproval(fn: (n: number, answer?: string) => boolean | ApprovalRefusal): () => void;
   /** Answers to consent questions (showConsent): wire to confirmer.answer(`q${n}:${answer}`, "panel", { sha256 }). */
   onConsent(fn: (a: ConsentAnswer) => void): () => void;
   /** Brings the window back up (the bubble's "Read it"), if it has a card. */
@@ -171,7 +171,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
   const stopIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = null; };
   /** The card on screen is queue[0]. */
   const queue: Entry[] = [];
-  const approvalFns = new Set<(n: number, answer?: string) => boolean>();
+  const approvalFns = new Set<(n: number, answer?: string) => boolean | ApprovalRefusal>();
   const consentFns = new Set<(a: ConsentAnswer) => void>();
   /**
    * Consent questions shown and not yet hidden (the targets runtime hides each when its question ends). A card the user
@@ -311,14 +311,19 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
     const refused = (channel: string) => note("warn", "prompt.ipc_refused", { channel });
 
     o.ipc.handle(PROMPT_IPC.approval, (e, raw) => {
-      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.approval); return false; }
+      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.approval); return { ok: false } satisfies ApprovalResult; }
       const head = queue[0];
-      if (!head || head.card.kind !== "approval" || !isObj(raw) || raw.id !== head.card.id) return false;
+      const gone: ApprovalResult = { ok: false, reason: "gone" };
+      if (!head || head.card.kind !== "approval" || !isObj(raw) || raw.id !== head.card.id) return gone;
       const card = head.card;
-      if (raw.answer !== undefined && (typeof raw.answer !== "string" || !card.options.some(o => o.id === raw.answer))) return false;
-      let accepted = false;
-      for (const fn of approvalFns) accepted = fn(card.n, raw.answer as string | undefined) || accepted;
-      return accepted;
+      if (raw.answer !== undefined && (typeof raw.answer !== "string" || !card.options.some(o => o.id === raw.answer))) return gone;
+      let reason: ApprovalRefusal = "gone";
+      for (const fn of approvalFns) {
+        const r = fn(card.n, raw.answer as string | undefined);
+        if (r === true) return { ok: true };
+        if (r === "not-yet") reason = "not-yet";
+      }
+      return { ok: false, reason };
     });
     o.ipc.handle(PROMPT_IPC.show, e => {
       if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.show); return null; }

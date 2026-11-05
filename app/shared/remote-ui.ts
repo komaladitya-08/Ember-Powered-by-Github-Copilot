@@ -38,6 +38,11 @@ export type PromptCard =
   | { id: string; kind: "approval"; n: number; title: string; prompt: string; detail?: string; where?: string; risky?: boolean; context?: string;
       options: { id: string; label: string; primary?: boolean }[] };
 
+/** Why main didn't take an approval press: too soon (or not yet read), or the question has gone. */
+export type ApprovalRefusal = "not-yet" | "gone";
+/** What `prompt:approval` returns: taken, or not, and why (none: the press never reached the question). */
+export interface ApprovalResult { ok: boolean; reason?: ApprovalRefusal }
+
 export type ApprovalCard = Extract<PromptCard, { kind: "approval" }>;
 
 /**

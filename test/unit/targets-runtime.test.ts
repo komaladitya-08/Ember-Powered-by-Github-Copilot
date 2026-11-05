@@ -142,7 +142,7 @@ function rig(o: RigOptions = {}) {
   const local = fakeRunner("local");
   const wslRunners = new Map<string, ReturnType<typeof fakeRunner>>();
   let onAnswer: ((a: { n: number; answer: "once" | "deny"; sha256: string }) => boolean | void) | null = null;
-  let onApproval: ((n: number, answer?: string) => boolean) | null = null;
+  let onApproval: ((n: number, answer?: string) => boolean | "not-yet" | "gone") | null = null;
   let onConsent: ((a: { n: number; answer: "once" | "deny"; sha256: string }) => void) | null = null;
   const cw = {
     showCard: vi.fn(), hideCard: vi.fn(), cardReady: vi.fn(() => true), announce: vi.fn(async () => true), cancelAnnounce: vi.fn(), attach: vi.fn(),
@@ -1326,16 +1326,16 @@ describe("question panels (§3.9)", () => {
     expect(r.pw.showApproval).not.toHaveBeenCalled();
     expect(r.t.openApproval()).toBe(true);
     expect(r.pw.showApproval).toHaveBeenCalledWith({ ...q, id: "approval-7", kind: "approval", n: 7 });
-    expect(r.onApproval()!(6, "once")).toBe(false);
-    expect(r.onApproval()!(7, "made up")).toBe(false);
+    expect(r.onApproval()!(6, "once")).toBe("gone");
+    expect(r.onApproval()!(7, "made up")).toBe("gone");
     expect(r.onApproval()!(7)).toBe(true);
     expect(r.confirmer.wholeSeen).toHaveBeenCalledWith(7);
     expect(r.onApproval()!(7, "once")).toBe(true);
     expect(r.answers).toContainEqual({ id: "q7:once", via: "bubble" });
     r.t.questionChanged({ n: 8, question: commandQ });
     expect(r.pw.hideApproval).toHaveBeenCalledWith(7);
-    expect(r.onApproval()!(7, "once")).toBe(false);
-    expect(r.onApproval()!(8, "once")).toBe(false); // command still needs its hashed panel
+    expect(r.onApproval()!(7, "once")).toBe("gone");
+    expect(r.onApproval()!(8, "once")).toBe("gone"); // command still needs its hashed panel
     expect(r.t.openApproval()).toBe(true);
     expect(r.cw.showCard).toHaveBeenLastCalledWith(8, card);
     r.t.questionChanged({ n: 9, question: consentQ });

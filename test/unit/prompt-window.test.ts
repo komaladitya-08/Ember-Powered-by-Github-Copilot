@@ -620,7 +620,7 @@ describe("focusable ordinary approvals", () => {
     } });
     ctl.onApproval((question, answer) => {
       if (answer === undefined) { c.wholeSeen(question); return true; }
-      return c.answer(`q${question}:${answer}`, "bubble");
+      return c.answer(`q${question}:${answer}`, "bubble") || (c.refusal(`q${question}:${answer}`) ?? "gone");
     });
     const q = { title: "May I?", prompt: "Type this exact text?", detail: "A long, exact message", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] };
     const result = c.ask(q);
@@ -629,18 +629,18 @@ describe("focusable ordinary approvals", () => {
     expect(win().focused).toBe(true);
     expect(win().shown()).toMatchObject({ n, title: q.title, prompt: q.prompt, detail: q.detail, options: q.options });
     const invoke = (raw: unknown, sender: WebContentsLike = page()) => ipc.handles.get(PROMPT_IPC.approval)!({ sender }, raw);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // arming
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "not-yet" }); // arming
     await vi.advanceTimersByTimeAsync(500);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // unread
-    expect(invoke({ id: `approval-${n}` }, { id: 999, send() {} })).toBe(false);
-    expect(invoke({ id: `approval-${n}` })).toBe(true);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // rearmed after full text
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "not-yet" }); // unread
+    expect(invoke({ id: `approval-${n}` }, { id: 999, send() {} })).toEqual({ ok: false });
+    expect(invoke({ id: `approval-${n}` })).toEqual({ ok: true });
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "not-yet" }); // rearmed after full text
     await vi.advanceTimersByTimeAsync(500);
-    expect(invoke({ id: `approval-${n}`, answer: "made-up" })).toBe(false);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(true);
+    expect(invoke({ id: `approval-${n}`, answer: "made-up" })).toEqual({ ok: false, reason: "gone" });
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: true });
     await expect(result).resolves.toBe("once");
     expect(win().visible).toBe(false);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false);
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "gone" });
     ctl.dispose();
   });
   it("cannot accept ordinary approvals through the SSH/consent answer channel", () => {

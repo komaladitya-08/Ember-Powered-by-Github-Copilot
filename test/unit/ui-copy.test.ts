@@ -887,6 +887,10 @@ describe("approval card risk and task context", () => {
   });
   it("says nothing was approved when a press wasn't taken", () => {
     expect(promptCopy.APPROVAL_NOT_TAKEN).toMatch(/nothing was approved/);
+    // A press main refuses says why: too soon, or the question gone (review #30, acceptance 3).
+    expect(promptCopy.approvalNotTaken("not-yet")).toMatch(/too soon.*nothing was approved/);
+    expect(promptCopy.approvalNotTaken("gone")).toMatch(/gone or timed out.*nothing was approved/);
+    expect(new Set([promptCopy.approvalNotTaken("not-yet"), promptCopy.approvalNotTaken("gone"), promptCopy.approvalNotTaken(), promptCopy.APPROVAL_NOT_SENT]).size).toBe(4);
     expect(promptCopy.APPROVAL_NOT_SENT).toMatch(/nothing was approved/);
   });
 });

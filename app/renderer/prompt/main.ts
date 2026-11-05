@@ -9,9 +9,9 @@
  * types a secret into another app (review #235).
  */
 
-import type { PromptCard } from "../../shared/remote-ui";
+import type { ApprovalResult, PromptCard } from "../../shared/remote-ui";
 import {
-  APPROVAL_NOT_SENT, APPROVAL_NOT_TAKEN, PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, RISKY_STEP_TAG, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
+  APPROVAL_NOT_SENT, approvalNotTaken, PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, RISKY_STEP_TAG, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
   type Block, type ButtonView, type Part, type ReadGate,
 } from "./copy";
 import type { PromptApi } from "./api";
@@ -97,10 +97,10 @@ async function press(b: ButtonView): Promise<void> {
     const shown = card;
     if (b.id !== "deny" && shown.detail && !seenNow()) return;
     // The Confirmer alone arms and accepts the exact current question. Rejected early presses leave it answerable.
-    let accepted: boolean;
+    let accepted: ApprovalResult;
     try { accepted = await api.approval(shown.id, b.id); } catch { if (card === shown) say(APPROVAL_NOT_SENT); return; }
-    if (card === shown && !accepted) say(APPROVAL_NOT_TAKEN);
-    if (card === shown && accepted) { sent = true; for (const button of buttons) button.el.disabled = true; }
+    if (card === shown && !accepted.ok) say(approvalNotTaken(accepted.reason));
+    if (card === shown && accepted.ok) { sent = true; for (const button of buttons) button.el.disabled = true; }
     return;
   }
   const r = pressResult(card, b, field, Date.now(), shownAt, seenNow());
