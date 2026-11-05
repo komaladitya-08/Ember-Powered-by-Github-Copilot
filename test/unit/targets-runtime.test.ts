@@ -1318,6 +1318,14 @@ describe("question panels (§3.9)", () => {
   const consent = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false } });
   const consentQ: Question = { title: "Turn on commands on this computer?", prompt: "x", options: [{ id: "once", label: "Turn on", primary: true }, { id: "deny", label: "Not now" }], panel: { kind: "consent", consent }, clickOnly: true };
 
+  it("opens a risky approval with its risky tag and task context", () => {
+    const r = rig();
+    const q: Question = { title: "May I?", context: "Email Ana the report", risky: true, prompt: "Send it?", options: [{ id: "once", label: "Allow" }, { id: "deny", label: "Not now" }] };
+    r.t.questionChanged({ n: 3, question: q });
+    expect(r.t.openApproval()).toBe(true);
+    expect(r.pw.showApproval).toHaveBeenCalledWith(expect.objectContaining({ risky: true, context: "Email Ana the report" }));
+  });
+
   it("Home opens only the exact current approval, without passively opening ordinary questions", () => {
     const r = rig();
     const q: Question = { title: "May I?", prompt: "Send exact words?", detail: "exact words", options: [{ id: "once", label: "Allow" }, { id: "deny", label: "Not now" }] };

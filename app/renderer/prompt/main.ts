@@ -98,8 +98,8 @@ async function press(b: ButtonView): Promise<void> {
     if (b.id !== "deny" && shown.detail && !seenNow()) return;
     // The Confirmer alone arms and accepts the exact current question. Rejected early presses leave it answerable.
     let accepted: ApprovalResult;
-    try { accepted = await api.approval(shown.id, b.id); } catch { if (card === shown) say(APPROVAL_NOT_SENT); return; }
-    if (card === shown && !accepted.ok) say(approvalNotTaken(accepted.reason));
+    try { accepted = await api.approval(shown.id, b.id); } catch { say(APPROVAL_NOT_SENT); return; }
+    if (!accepted.ok) say(approvalNotTaken(accepted.reason));
     if (card === shown && accepted.ok) { sent = true; for (const button of buttons) button.el.disabled = true; }
     return;
   }
@@ -178,6 +178,8 @@ function show(next: PromptCard | null): void {
   $("card").dataset.risky = String(!!view.risky);
   $("risk").textContent = view.risky ? RISKY_STEP_TAG : "";
   $("risk").hidden = !view.risky;
+  // An empty risk line is no name for the dialog: only a risky step's tag leads it.
+  $("card").setAttribute("aria-labelledby", view.risky ? "risk title" : "title");
   // The window keeps its title "Ember" (§8.6): Ember's own windows are known by it where their process can't be told,
   // and a host name or an SSH prompt never goes into a window title other programs read. The dialog is named by its h1.
   words.replaceChildren(...view.body.map(b => blockNode(b, legend)));

@@ -38,15 +38,15 @@ export interface PromptView {
 /** The words of a risky step's tag, as the bubble's (packages/bubble RISKY_TAG). */
 export const RISKY_STEP_TAG = "Risky step";
 /** Under an approval whose press main didn't take: it was early, or the question moved on or expired. */
-export const APPROVAL_NOT_TAKEN = "That didn't go through. It may have been too soon, or the question may have expired: nothing was approved. Try once more.";
-/** Under an approval pressed too soon, or before its whole text was read: nothing was approved. */
-export const APPROVAL_NOT_YET = "That was too soon, so nothing was approved. Read it through, wait a moment, then press again.";
-/** Under an approval whose question has gone (answered, expired or replaced): nothing was approved. */
-export const APPROVAL_GONE = "That question has gone or timed out, so nothing was approved. Ask me again to review it.";
+export const APPROVAL_NOT_TAKEN = "That didn't go through. It may have been too soon, or the question may have expired. Check the question, then try once more.";
+/** Under an approval pressed too soon, or before its whole text was read: that press was refused. */
+export const APPROVAL_NOT_YET = "That press was too soon, so it didn't count. Read it through, wait a moment, then press again.";
+/** Under an approval whose question has gone (answered, expired or replaced): that press was refused. */
+export const APPROVAL_GONE = "That press didn't count: the question has already been answered, replaced or timed out. Ask me again if you want to review it.";
 /** The line under the card for a press main didn't take, by why. */
 export const approvalNotTaken = (reason?: "not-yet" | "gone"): string => reason === "not-yet" ? APPROVAL_NOT_YET : reason === "gone" ? APPROVAL_GONE : APPROVAL_NOT_TAKEN;
 /** Under an approval whose press couldn't reach Ember. */
-export const APPROVAL_NOT_SENT = "I couldn't hear that press, so nothing was approved. Press it again.";
+export const APPROVAL_NOT_SENT = "I couldn't confirm that press went through. Check the question, then press again.";
 
 /** How long the affirmative button of a host-key or consent card ignores presses. */
 export const PROMPT_ARM_MS = 900;

@@ -65,7 +65,7 @@ function commandService(binding: TargetBinding, o: { cap?: CommandCapability["st
 }
 
 function makeWorker(o: {
-  target?: TargetBinding; commands?: CommandService | null; spec?: Partial<TaskSpec>; answer?: string; vision?: boolean;
+  target?: TargetBinding; commands?: CommandService | null; spec?: Partial<TaskSpec>; answer?: string | null; vision?: boolean;
   onAuthorized?: (s: ActStamp) => void; grantKey?: (app: string) => string; system?: WorkerSystem;
   doAction?: () => Promise<unknown>; grants?: Record<string, "act">; confirmEvery?: boolean; handler?: { role: string; name: string };
 } = {}) {
@@ -85,7 +85,7 @@ function makeWorker(o: {
       doAction: async () => { events.push("doAction"); if (o.doAction) return o.doAction(); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } }; },
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" }, ...(o.confirmEvery ? { confirmEveryAction: () => true, allowGrants: () => false } : {}) }),
-    confirmer: { ask: async (q: Record<string, unknown>) => { asked.push(q); events.push("ask"); return o.answer ?? "once"; } } as never,
+    confirmer: { ask: async (q: Record<string, unknown>) => { asked.push(q); events.push("ask"); return o.answer === undefined ? "once" : o.answer; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: (u: Record<string, unknown>) => { updates.push(u); } } as never,
     presenter: new Presenter(() => undefined),
@@ -430,5 +430,21 @@ describe("a no to a command is the task's no", () => {
     expect(declined()).toBe(true);
     await call("run_command", { target: "build-01", command: "ls", why: "to look" });
     expect(declined()).toBe(false);
+  });
+
+  it("keeps an unanswered question's timeout apart from a Not now (review of #183)", async () => {
+    const asks = async (answer: string | null) => {
+      const { w, call } = makeWorker({ grants: {}, confirmEvery: true, answer });
+      await call("perceive_window", {});
+      const verdict = await (w as unknown as { authorizeCells(jobs: unknown[]): Promise<{ resultType: string; textResultForLlm: string }> }).authorizeCells([{ cell: "B5", text: "42" }, { cell: "B6", text: "43" }]);
+      const f = w as unknown as { declined: boolean; expired: boolean; saidNoThisTask: boolean };
+      return { verdict, declined: f.declined, expired: f.expired, said: f.saidNoThisTask };
+    };
+    const timedOut = await asks(null);
+    expect(timedOut).toMatchObject({ declined: false, expired: true, said: true });
+    expect(timedOut.verdict).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/timed out with no answer, so nothing was approved/) });
+    const no = await asks("deny");
+    expect(no).toMatchObject({ declined: true, expired: false, said: true });
+    expect(no.verdict.textResultForLlm).toMatch(/said no/);
   });
 });

@@ -90,7 +90,7 @@ export interface CommandFlowContext {
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
   emberPids: () => number[];
   /** The user said no to a question of this flow (or let it go unanswered): the worker's `declined` (extension, AG). */
-  onDeclined?: () => void;
+  onDeclined?: (expired?: boolean) => void;
   /**
    * AI review (review.ts), while the user's "Ask only about dangerous commands" is on: a command that would ask, and
    * that no hard rule makes ask, is reviewed first, and runs with its announcement when the reviewer finds it routine.
@@ -688,7 +688,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     audit({ phase: "answered", answer: ctx.isOver() ? "stopped" : answer ?? "expired", q: "consent" });
     if (ctx.isOver()) return STOPPED();
     if (answer !== "once") {
-      ctx.onDeclined?.();
+      ctx.onDeclined?.(answer === null);
       return denied(`The user didn't turn on commands on ${place}. Finish the task saying so.`);
     }
     svc.consented();
@@ -850,7 +850,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     audit({ phase: "answered", answer: ctx.isOver() ? "stopped" : answer ?? "expired", q, ...(how?.via === "voice" ? { via: "voice", verified: how.verified === true, ...(how.trust ? { trust: how.trust } : {}) } : {}) });
     if (ctx.isOver()) return "stopped";
     if (answer === "once") return "once";
-    ctx.onDeclined?.();
+    ctx.onDeclined?.(answer === null);
     return "no";
   };
 

@@ -137,7 +137,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
  * how many times the approve key asked for more, and when that key was last pressed (`keyAt`).
  */
 interface WholeRead { seen: boolean; page: number; seenAt: number; keyAt: number }
-interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void; whole?: WholeRead; note?: string; voiceLocked?: boolean }
+interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; deadline: number; off?: () => void; whole?: WholeRead; note?: string; voiceLocked?: boolean }
 
 export interface ConfirmerTiming {
   /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
@@ -222,7 +222,7 @@ export class Confirmer {
   ask(q: Question, signal?: AbortSignal): Promise<string | null> {
     if (signal?.aborted) return Promise.resolve(null);
     return new Promise(resolve => {
-      const p: Pending = { n: ++this.n, q, resolve, timer: null, shownAt: 0, ...(q.detail ? { whole: { seen: false, page: 0, seenAt: 0, keyAt: 0 } } : {}) };
+      const p: Pending = { n: ++this.n, q, resolve, timer: null, shownAt: 0, deadline: Infinity, ...(q.detail ? { whole: { seen: false, page: 0, seenAt: 0, keyAt: 0 } } : {}) };
       if (signal) {
         const onAbort = () => this.finish(p, null);
         signal.addEventListener("abort", onAbort, { once: true });
@@ -261,6 +261,7 @@ export class Confirmer {
     const m = /^q(\d+):(.+)$/.exec(actionId);
     if (!m || !this.current || Number(m[1]) !== this.current.n) return false;
     if (!this.current.q.options.some(o => o.id === m[2])) return false;
+    if (this.lapsed(this.current)) return false;
     if (this.now() - this.current.shownAt < this.armOf(this.current.q) || this.blocked()) return false;
     if (!this.allowedFrom(this.current, m[2], via, proof)) return false;
     this.channels.set(this.current.q, { via });
@@ -276,7 +277,7 @@ export class Confirmer {
   refusal(actionId: string): ApprovalRefusal | null {
     const m = /^q(\d+):(.+)$/.exec(actionId);
     const c = this.current;
-    if (!m || !c || Number(m[1]) !== c.n || !c.q.options.some(o => o.id === m[2])) return "gone";
+    if (!m || !c || Number(m[1]) !== c.n || !c.q.options.some(o => o.id === m[2]) || this.lapsed(c)) return "gone";
     if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
     return this.allowedFrom(c, m[2], "bubble", undefined) ? null : "not-yet";
   }
@@ -299,6 +300,7 @@ export class Confirmer {
   answerVoice(which: "allow" | "deny", o: { verified: boolean; question?: number | null; startedAt?: number; trust?: { task: string } }): VoiceAnswerResult {
     const c = this.current;
     if (!c) return "no-question";
+    if (this.lapsed(c)) return "stale";
     // Tied to this question (security review of #127): said for it, after it was up and armed, never for one before it.
     if (o.question !== undefined && o.question !== c.n) return "stale";
     if (o.startedAt !== undefined && o.startedAt < c.shownAt + this.armOf(c.q)) return "stale";
@@ -409,6 +411,16 @@ export class Confirmer {
     return p.whole && p.q.detail ? Math.round(t * (1 + p.q.detail.length / 2000)) : t;
   }
 
+  /**
+   * Whether question `p` is past its fixed deadline (shown time plus its wait). The timer's callback can lag the clock, so
+   * every answer path checks this itself: a press after the deadline approves nothing, and the question ends as expired.
+   */
+  private lapsed(p: Pending): boolean {
+    if (this.now() < p.deadline) return false;
+    this.finish(p, null, true);
+    return true;
+  }
+
   /** How long clicks are ignored after `q` shows: its own arm time, or the default when it has none (or none that is a time). */
   private armOf(q: Question): number {
     return typeof q.armMs === "number" && Number.isFinite(q.armMs) && q.armMs >= 0 ? q.armMs : this.armMs;
@@ -423,7 +435,7 @@ export class Confirmer {
    */
   answerKey(which: "primary" | "deny" | "always"): boolean {
     const c = this.current;
-    if (!c) return false;
+    if (!c || this.lapsed(c)) return false;
     if (which !== "deny" && c.whole) {
       const now = this.now();
       if (!c.whole.seen) {
@@ -468,6 +480,7 @@ export class Confirmer {
     this.cancelAnswer();
     const p = this.current;
     p.shownAt = this.now();
+    p.deadline = p.shownAt + this.timeoutOf(p);
     p.timer = setTimeout(() => this.finish(p, null, true), this.timeoutOf(p));
     this.show({ emotion: "curious", talking: false, bubble: this.bubbleOf(p) });
     this.onChange?.({ n: p.n, question: p.q });

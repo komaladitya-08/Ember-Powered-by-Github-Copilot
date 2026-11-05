@@ -227,6 +227,8 @@ export interface WorkerResult {
   stopped?: boolean;
   /** Stopped because the user said no to a question (or let it go unanswered), and nothing was done after that. */
   declined?: boolean;
+  /** Stopped because a question ran out of time unanswered and nothing was done after that: not a "Not now". */
+  expired?: boolean;
   /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
   view?: ViewDoc;
 }
@@ -1133,6 +1135,8 @@ export class Worker {
   private agreed: Agreement[];
   /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
   private declined = false;
+  /** A question ran out of time unanswered, and nothing was done after that (a timeout is not a refusal). */
+  private expired = false;
   /**
    * The user said no to a question in this task (or let one expire), at any time: never cleared, unlike `declined`
    * (which a later step resets for the task's outcome). "Work without asking" stays suspended for the rest of the task
@@ -1723,7 +1727,7 @@ export class Worker {
       service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal), howAnswered: q => this.d.confirmer.howAnswered?.(q) }, presenter: this.d.presenter,
       audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
-      onDeclined: () => { this.declined = true; this.saidNoThisTask = true; },
+      onDeclined: (expired?: boolean) => { if (expired) this.expired = true; else this.declined = true; this.saidNoThisTask = true; },
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
       ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
@@ -1883,6 +1887,7 @@ export class Worker {
     if (this.halted && this.haltReason === null) return { success: false, summary: this.stoppedSummary(), stopped: true };
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
+    if (this.expired && !this.declined && !this.result?.success) return { success: false, stopped: true, expired: true, summary: this.result?.summary || "My question ran out of time with no answer, so I didn't do it." };
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
     const result = this.result ?? { success: false, summary: lastWordsSummary(lastAnswer) };
     return this.userTookOver && !result.success ? { ...result, stopped: true } : result;
@@ -3298,9 +3303,7 @@ export class Worker {
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
-    this.declined = true;
-    this.saidNoThisTask = true;
-    return denied("The user said no (or didn't answer). Don't retry or work around it; finish the task and say what wasn't done.");
+    return this.refused(answer);
   }
 
   /** A cell's address as given ("b5", "$B$5"), as "B5" and its place; or why there is no such cell. */
@@ -4127,7 +4130,7 @@ export class Worker {
   /** Every audit entry goes through here: an action done (or a command started) after a "Not now" means the task went on. */
   private audit(e: AuditEntry): void {
     // (Only a step that happened: one that failed after the "Not now" leaves the task declined.)
-    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) this.declined = false;
+    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) { this.declined = false; this.expired = false; }
     try {
       this.d.audit.write(e);
     } catch (err) {
@@ -4233,9 +4236,18 @@ export class Worker {
       }
       return null;
     }
-    this.declined = true;
+    return this.refused(answer);
+  }
+
+  /** A question without a yes: "Not now" is the user's no; no answer (null) is a timeout, which approved nothing either. */
+  private refused(answer: string | null) {
     this.saidNoThisTask = true;
-    return denied("The user said no (or didn't answer). Don't retry or work around it; finish the task and say what wasn't done.");
+    if (answer === null) {
+      this.expired = true;
+      return denied("The question timed out with no answer, so nothing was approved. Don't retry or work around it; finish the task and say what wasn't done.");
+    }
+    this.declined = true;
+    return denied("The user said no. Don't retry or work around it; finish the task and say what wasn't done.");
   }
 }
 

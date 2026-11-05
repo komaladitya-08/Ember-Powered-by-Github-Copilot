@@ -885,12 +885,12 @@ describe("approval card risk and task context", () => {
     expect(JSON.stringify(v.body)).toContain("Your task: Email Ana the report");
     expect(promptCopy.promptView(card).risky).toBeUndefined();
   });
-  it("says nothing was approved when a press wasn't taken", () => {
-    expect(promptCopy.APPROVAL_NOT_TAKEN).toMatch(/nothing was approved/);
-    // A press main refuses says why: too soon, or the question gone (review #30, acceptance 3).
-    expect(promptCopy.approvalNotTaken("not-yet")).toMatch(/too soon.*nothing was approved/);
-    expect(promptCopy.approvalNotTaken("gone")).toMatch(/gone or timed out.*nothing was approved/);
+  it("says that press was refused, never that nothing was approved, when a press wasn't taken", () => {
+    expect(promptCopy.approvalNotTaken("not-yet")).toMatch(/too soon.*didn't count/);
+    // "Gone" may mean it was already answered with a yes, so it must not claim nothing was approved (review of #183).
+    expect(promptCopy.approvalNotTaken("gone")).toMatch(/didn't count.*answered, replaced or timed out/);
+    expect(promptCopy.APPROVAL_NOT_SENT).toMatch(/couldn't confirm/);
+    for (const t of [promptCopy.APPROVAL_NOT_TAKEN, promptCopy.approvalNotTaken("not-yet"), promptCopy.approvalNotTaken("gone"), promptCopy.APPROVAL_NOT_SENT]) expect(t).not.toMatch(/nothing was approved/);
     expect(new Set([promptCopy.approvalNotTaken("not-yet"), promptCopy.approvalNotTaken("gone"), promptCopy.approvalNotTaken(), promptCopy.APPROVAL_NOT_SENT]).size).toBe(4);
-    expect(promptCopy.APPROVAL_NOT_SENT).toMatch(/nothing was approved/);
   });
 });

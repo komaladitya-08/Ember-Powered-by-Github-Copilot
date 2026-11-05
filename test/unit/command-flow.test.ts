@@ -115,6 +115,7 @@ interface Harness {
   ended: string[];
   windowAnnounce: { card: CommandCard; ms: number }[];
   declined: () => number;
+  expiredFlags: (boolean | undefined)[];
   tainted: string[];
   consented: () => number;
   abort: AbortController;
@@ -141,6 +142,7 @@ function harness(o: {
   const windowAnnounce: { card: CommandCard; ms: number }[] = [];
   const tainted: string[] = [];
   let declined = 0;
+  const expiredFlags: (boolean | undefined)[] = [];
   let consented = 0;
   const answers = [...(o.answers ?? [])];
   const binding = o.binding ?? REMOTE;
@@ -189,10 +191,10 @@ function harness(o: {
     audit: e => audit.push(e), log: quiet, signal: abort.signal, isOver: () => abort.signal.aborted,
     state: o.state ?? { cwd: null, downloaded: new Set(), running: false },
     size: () => ({ cols: 100, rows: 30 }), emberPids: () => [4242],
-    onDeclined: () => { declined++; },
+    onDeclined: (expired?: boolean) => { declined++; expiredFlags.push(expired); },
     ...(o.review ? { review: o.review } : {}),
   };
-  return { ctx, audit, asked, starts, runs, attached, announced, ended, windowAnnounce, declined: () => declined, tainted, consented: () => consented, abort };
+  return { ctx, audit, asked, starts, runs, attached, announced, ended, windowAnnounce, declined: () => declined, expiredFlags, tainted, consented: () => consented, abort };
 }
 
 const call = (h: Harness, a: Partial<Parameters<typeof runCommandTool>[0]> = {}) =>
@@ -810,6 +812,7 @@ describe("the commands card and capability (§3.9.3)", () => {
       expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "The user didn't turn on commands on build-01. Finish the task saying so." });
       expect(h.consented()).toBe(0);
       expect(h.declined()).toBe(1);
+      expect(h.expiredFlags).toEqual([answer === null]); // a timeout is reported as expired, not as a no
       expect(h.starts).toEqual([]);
     }
   });
