@@ -534,6 +534,81 @@ describe("new conversation", () => {
     await host.stop();
   });
 
+  it("a fresh ask works after a reset while a task runs, on a new session, and the task goes on (review of #184)", async () => {
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`)).toBeDefined());
+    const first = conductorSession().sessionId;
+    const manager = host.tasks;
+    const cancelAll = vi.spyOn(TaskManager.prototype, "cancelAll");
+    await host.newConversation();
+    expect(await host.ask("hello")).toBe(true);
+    expect(conductorSession().sessionId).not.toBe(first);
+    expect(conductorSession().sent.at(-1)).toContain("hello");
+    expect(host.getStatus().phase).toBe("ready");
+    expect(host.tasks).toBe(manager);
+    expect(host.tasks!.get(t.id)?.status).toBe("running");
+    expect(cancelAll).not.toHaveBeenCalled();
+    await host.stop();
+  });
+
+  it("a send that fails after the reset is the old chat's: it reconnects nothing and cuts no task off (review of #184)", async () => {
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`)).toBeDefined());
+    let reject!: (e: Error) => void;
+    sim.sendGate = new Promise<void>((_r, j) => { reject = j; });
+    const asked = host.ask("are you there?");
+    await vi.waitFor(() => expect(conductorSession().sent).toHaveLength(1));
+    sim.sendGate = null;
+    const manager = host.tasks;
+    const cancelAll = vi.spyOn(TaskManager.prototype, "cancelAll");
+    const clients = sim.clients.length;
+    await host.newConversation();
+    reject(new Error("Pending response rejected since connection got disposed"));
+    expect(await asked).toBe(false);
+    await new Promise(r => setTimeout(r, 20));
+    expect(host.getStatus().phase).toBe("ready");
+    expect(host.tasks).toBe(manager);
+    expect(host.tasks!.get(t.id)?.status).toBe("running");
+    expect(cancelAll).not.toHaveBeenCalled();
+    expect(sim.clients).toHaveLength(clients);
+    await host.stop();
+  });
+
+  it("two overlapping resets are one, leaving one fresh session", async () => {
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    const before = sim.sessions.filter(s => s.sessionId.startsWith("ember-conductor-")).length;
+    await Promise.all([host.newConversation(), host.newConversation()]);
+    expect(sim.sessions.filter(s => s.sessionId.startsWith("ember-conductor-")).length).toBe(before + 1);
+    expect(await host.ask("hello")).toBe(true);
+    await host.stop();
+  });
+
+  it("a reset that sign-out overtakes erases nothing of the conversation signed in afterwards (review of #184)", async () => {
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    await host.ask("old");
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    const realStop = host.stopAnswer.bind(host);
+    vi.spyOn(host, "stopAnswer").mockImplementation(async () => { await gate; await realStop(); });
+    const reset = host.newConversation();
+    await host.forgetConversation();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    await host.ask("newer");
+    const newer = conductorSession().sessionId;
+    release();
+    await reset;
+    expect(host.getTranscript().some(m => m.text === "newer")).toBe(true);
+    expect(conductorSession().sessionId).toBe(newer);
+    expect(sim.deleted).not.toContain(newer);
+    await host.stop();
+  });
+
   it("forgetConversation still signs out and wipes memory", async () => {
     const memory = { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => undefined) };
     const { host } = makeHost({ memory });

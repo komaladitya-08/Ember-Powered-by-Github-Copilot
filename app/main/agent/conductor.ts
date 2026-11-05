@@ -1145,6 +1145,16 @@ export class Conductor {
   }
 
   /**
+   * "New conversation": this session is deleted and a fresh one (a new id, never a resume of the old) starts on the
+   * same runtime. Nothing else about the connection changes, so running tasks go on.
+   */
+  async renew(ms = 5000): Promise<void> {
+    await this.forget(ms);
+    this.deps = { ...this.deps, resume: null };
+    await this.start();
+  }
+
+  /**
    * Forget the conversation: delete it from the runtime's store (within `ms`)
    * and drop the saved id, so the next start begins a fresh one (on quit, and
    * after sign-out, so another account never resumes this one's conversation).

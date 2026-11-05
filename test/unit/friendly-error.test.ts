@@ -30,8 +30,9 @@ describe("friendlyError: what used to show raw", () => {
       expect(friendlyError(raw)).toMatch(/New conversation/);
       expect(friendlyError(raw)).not.toMatch(/quit|reopen/i);
     }
-    // A single request too large: as before.
-    expect(friendlyError("context length exceeded")).toBe("That was too much for me to handle at once. Try a shorter request.");
+    // Context exhaustion is the conversation's too (review of #184); only a request that is itself too long keeps the short advice.
+    for (const raw of ["context length exceeded", "Error: context window limit reached"]) expect(friendlyError(raw)).toMatch(/New conversation/);
+    expect(friendlyError("request too long")).toBe("That was too much for me to handle at once. Try a shorter request.");
   });
 
   it("a bare status code is a refused request, with what to try", () => {
