@@ -272,7 +272,7 @@ export class Confirmer {
   /**
    * Why `answer(actionId, "bubble")` would not be taken now, or null when it would: "not-yet" (too soon after the question
    * showed, its whole text not yet read and armed again, or Ember using the mouse) or "gone" (another question, answered
-   * or expired). It changes nothing: the prompt card says which, so a press that did nothing is never silent.
+   * or expired). It changes nothing but a question already past its deadline, which it ends as expired: the prompt card says which, so a press that did nothing is never silent.
    */
   refusal(actionId: string): ApprovalRefusal | null {
     const m = /^q(\d+):(.+)$/.exec(actionId);

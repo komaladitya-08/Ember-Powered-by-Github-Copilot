@@ -16,22 +16,46 @@ function rig() {
 }
 
 describe("the Confirmer's deadline", () => {
-  it("rejects an Allow pressed after the deadline though the timer has not fired (bubble, key, voice)", async () => {
+  // Each entry point gets its own Confirmer, and none is preceded by another call that could end the question first
+  // (refusal() expires a late question itself, which would hide a missing guard in answer()).
+  it("answer() alone rejects a press after the deadline though the timer has not fired", async () => {
     const { c, advance } = rig();
     try {
       const q = c.ask(Q);
       advance(1000); // the logical clock is at the deadline; fake timers are not advanced, so the callback hasn't run
-      expect(c.refusal("q1:once")).toBe("gone");
       expect(c.answer("q1:once")).toBe(false);
       await expect(q).resolves.toBeNull(); // ended as expired, not approved
-      const q2 = c.ask(Q);
+      expect(c.answer("q1:once")).toBe(false); // the same id again: stale
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("refusal() says gone for a press after the deadline and ends the question as expired", async () => {
+    const { c, advance } = rig();
+    try {
+      const q = c.ask(Q);
+      advance(1000);
+      expect(c.refusal("q1:once")).toBe("gone");
+      await expect(q).resolves.toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("answerKey() rejects the allow key after the deadline", async () => {
+    const { c, advance } = rig();
+    try {
+      const q = c.ask(Q);
       advance(1000);
       expect(c.answerKey("primary")).toBe(false);
-      await expect(q2).resolves.toBeNull();
-      const q3 = c.ask(Q);
+      await expect(q).resolves.toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("answerVoice() calls a verified allow after the deadline stale", async () => {
+    const { c, advance } = rig();
+    try {
+      const q = c.ask(Q);
       advance(5000);
       expect(c.answerVoice("allow", { verified: true })).toBe("stale");
-      await expect(q3).resolves.toBeNull();
+      await expect(q).resolves.toBeNull();
     } finally { vi.useRealTimers(); }
   });
 
