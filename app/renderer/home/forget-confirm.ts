@@ -25,29 +25,36 @@ class Counts {
     api.onTasks(t => this.set("tasks", tasksSlot(t)));
     api.onMemory(v => this.set("facts", factsSlot(v)));
     api.onReminders(r => this.set("reminders", { state: "known", n: r.length }));
-    api.onRoutines(r => this.set("routines", { state: "known", n: r.length }));
+    // A pushed list is only a hint: policy turns routines off and main then broadcasts [] with the book still stored.
+    // So a push starts a fresh strict read (loading until it answers) and the older read is dropped by the version fence.
+    api.onRoutines(() => this.live && this.read("routines", () => this.api.routinesCount(), c => c.known ? { state: "known", n: c.n } : { state: "unknown" }));
   }
+  /** Whether its question is open; a push re-reads only then, so a closed question costs nothing. */
+  private live = false;
+  stop(): void { this.live = false; }
   private set(f: Field, slot: Slot, from?: number): void {
     if (from !== undefined && from !== this.version[f]) return; // a push arrived while this read was out
     if (from === undefined) this.version[f]++;
     this.slots[f] = slot;
     this.changed();
   }
+  /** One field's strict read: loading now, then its answer, unknown on failure or timeout; a newer answer or read wins. */
+  private read<T>(f: Field, call: () => Promise<T>, to: (v: T) => Slot): void {
+    const mine = ++this.version[f];
+    this.slots[f] = { state: "loading" };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), READ_TIMEOUT_MS); });
+    Promise.race([Promise.resolve().then(call), timeout]).then(v => to(v), (): Slot => ({ state: "unknown" }))
+      .then(slot => { clearTimeout(timer); this.set(f, slot, mine); });
+    this.changed();
+  }
   /** Start fresh reads for all four; their slots read as loading until each answers, fails or times out. */
   refresh(): void {
-    const read = <T>(f: Field, call: () => Promise<T>, to: (v: T) => Slot) => {
-      const mine = ++this.version[f];
-      this.slots[f] = { state: "loading" };
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), READ_TIMEOUT_MS); });
-      Promise.race([call(), timeout]).then(v => to(v), (): Slot => ({ state: "unknown" }))
-        .then(slot => { clearTimeout(timer); this.set(f, slot, mine); });
-    };
-    read("tasks", () => this.api.tasks(), tasksSlot);
-    read("facts", () => this.api.memory(), factsSlot);
-    read("reminders", () => this.api.reminders(), r => ({ state: "known", n: r.length }));
-    read("routines", () => this.api.routinesCount(), c => c.known ? { state: "known", n: c.n } : { state: "unknown" });
-    this.changed();
+    this.live = true;
+    this.read("tasks", () => this.api.tasks(), tasksSlot);
+    this.read("facts", () => this.api.memory(), factsSlot);
+    this.read("reminders", () => this.api.reminders(), r => ({ state: "known", n: r.length }));
+    this.read("routines", () => this.api.routinesCount(), c => c.known ? { state: "known", n: c.n } : { state: "unknown" });
   }
   get loading(): boolean { return FIELDS.some(f => this.slots[f].state === "loading"); }
   get view(): ForgetCounts {
@@ -102,6 +109,7 @@ export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(er
       document.removeEventListener("focusin", onFocusIn, true);
       for (const el of made) el.inert = false;
       made = [];
+      counts.stop();
     };
     // An enabled, visible control first (memory-on is disabled while an organisation manages memory), else the section heading.
     const visibleAfter = () => after.map(id => document.getElementById(id)).find(usable);

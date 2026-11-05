@@ -6,7 +6,7 @@ import { chromium } from "playwright-core";
 import { expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 
-declare global { interface Window { __calls: string[]; __counts: { tasks: number; facts: number; reminders: number; routines: number }; __mode: { memory: "ok" | "reject" | "locked" | "hang" | "manual"; signOutHangs: boolean; routinesUnreadable?: boolean }; __emit: (name: string, value: unknown) => void; __release: () => void } }
+declare global { interface Window { __calls: string[]; __counts: { tasks: number; facts: number; reminders: number; routines: number }; __mode: { memory: "ok" | "reject" | "locked" | "hang" | "manual"; signOutHangs: boolean; routinesUnreadable?: boolean; routinesDefer?: boolean }; __pend: ((v: unknown) => void)[]; __emit: (name: string, value: unknown) => void; __release: () => void } }
 
 it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out and Forget everything, shows live counts, and cancels cleanly", async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
@@ -29,7 +29,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.addInitScript(seed => {
-      window.__calls = []; window.__counts = { tasks: 3, facts: 4, reminders: 2, routines: 1 };
+      window.__calls = []; window.__pend = []; window.__counts = { tasks: 3, facts: 4, reminders: 2, routines: 1 };
       const rows = () => Array.from({ length: window.__counts.facts }, (_, i) => ({ id: `f${i}`, text: `Fact ${i}`, source: "user", at: "2026-11-04" }));
       window.__mode = { memory: "ok", signOutHangs: false };
       const subs: Record<string, ((v: unknown) => void)[]> = {};
@@ -50,7 +50,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
         };
         if (name === "reminders") return async () => Array.from({ length: window.__counts.reminders }, (_, i) => ({ id: `r${i}`, text: "x", at: 1, created: 1, kept: false }));
         if (name === "routines") return async () => Array.from({ length: window.__counts.routines }, (_, i) => ({ id: `n${i}`, name: "n", steps: [] }));
-        if (name === "routinesCount") return () => Promise.resolve(window.__mode.routinesUnreadable ? { known: false } : { known: true, n: window.__counts.routines });
+        if (name === "routinesCount") return () => window.__mode.routinesDefer ? new Promise(resolve => { window.__pend.push(resolve); }) : Promise.resolve(window.__mode.routinesUnreadable ? { known: false } : { known: true, n: window.__counts.routines });
         if (name === "signOut") return () => { window.__calls.push("signOut"); return window.__mode.signOutHangs ? new Promise(() => undefined) : Promise.resolve(); };
         if (name === "updateSettings") return (patch: unknown) => { window.__calls.push(`updateSettings:${JSON.stringify(patch)}`); return new Promise(() => undefined); };
         if (name === "forgetAllMemory") return async () => { window.__calls.push("forgetAll"); };
@@ -250,12 +250,70 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
 
     // Reminder and routine changes while it is open update the text.
     await page.evaluate(() => {
+      window.__counts.routines = 2; // a pushed list only invalidates; the strict re-read supplies the number
       window.__emit("onReminders", [{ id: "r1", text: "a", at: 1, created: 1, kept: false }, { id: "r2", text: "b", at: 2, created: 1, kept: false }, { id: "r3", text: "c", at: 3, created: 1, kept: false }]);
       window.__emit("onRoutines", [{ id: "n1", name: "n", steps: [] }, { id: "n2", name: "m", steps: [] }]);
     });
     await expect.poll(() => page.locator("#forget-all-scope").innerText()).toContain("3 reminders and 2 routines");
     await page.keyboard.press("Escape");
     await page.evaluate(() => { window.__mode.memory = "ok"; });
+
+    // #182 round 4: a push of routines is only an invalidation. Policy turns routines off and main broadcasts [], which
+    // must never read as "0 routines" while three are stored; the fresh strict read decides what shows.
+    await page.evaluate(() => { window.__mode.memory = "ok"; window.__mode.routinesDefer = true; window.__counts = { tasks: 0, facts: 1, reminders: 0, routines: 3 }; });
+    const dialogs = [
+      { pane: "#copilot-h", open: "#sign-out", box: "#sign-out-confirm", scope: "#sign-out-scope", yes: "#sign-out-yes", no: "#sign-out-no" },
+      { pane: "#memory-h", open: "#memory-forget-all", box: "#forget-all-confirm", scope: "#forget-all-scope", yes: "#forget-all-yes", no: "#forget-all-no" },
+    ];
+    const pending = () => page.evaluate(() => window.__pend.length);
+    const answer = (i: number, v: unknown) => page.evaluate(([n, val]) => window.__pend[n as number]!(val), [i, v] as const);
+    for (const d of dialogs) {
+      const text = () => page.locator(d.scope).innerText();
+      const settle = async () => { await page.waitForTimeout(150); };
+      const openFresh = async () => {
+        await page.evaluate(() => { window.__pend = []; });
+        await page.locator(`a[href="${d.pane}"]`).click();
+        await page.locator(d.open).click();
+        await expect.poll(pending).toBe(1);
+      };
+      // Count loaded as 3, then [] is pushed: loading (Confirm off), then the re-read's 3, never 0.
+      await openFresh();
+      await answer(0, { known: true, n: 3 });
+      await expect.poll(text).toContain("3 routines");
+      await page.evaluate(() => window.__emit("onRoutines", []));
+      await expect.poll(pending).toBe(2);
+      expect(await text()).toBe("Checking what this affects…");
+      expect(await page.locator(d.yes).isDisabled()).toBe(true);
+      await answer(1, { known: true, n: 3 });
+      await expect.poll(text).toContain("3 routines");
+      expect(await text()).not.toMatch(/\b0 routines/);
+      expect(await page.locator(d.yes).isDisabled()).toBe(false);
+      await page.keyboard.press("Escape");
+      // [] pushed while the first read is in flight: the older answer is dropped, the newer one shows.
+      await openFresh();
+      await page.evaluate(() => window.__emit("onRoutines", []));
+      await expect.poll(pending).toBe(2);
+      await answer(0, { known: true, n: 3 });
+      await settle();
+      expect(await text()).toBe("Checking what this affects…");
+      expect(await page.locator(d.yes).isDisabled()).toBe(true);
+      await answer(1, { known: true, n: 3 });
+      await expect.poll(text).toContain("3 routines");
+      expect(await text()).not.toMatch(/\b0 routines/);
+      await page.keyboard.press("Escape");
+      // Unknown, then [] pushed: the re-read decides, and unknown stays unknown.
+      await openFresh();
+      await answer(0, { known: false });
+      await expect.poll(text).toContain("an unknown number of routines");
+      await page.evaluate(() => window.__emit("onRoutines", []));
+      await expect.poll(pending).toBe(2);
+      expect(await page.locator(d.yes).isDisabled()).toBe(true);
+      await answer(1, { known: false });
+      await expect.poll(text).toContain("an unknown number of routines");
+      expect(await text()).not.toMatch(/\b0 routines/);
+      await page.keyboard.press("Escape");
+    }
+    await page.evaluate(() => { window.__mode.routinesDefer = false; });
 
     // Sign out twice while the first is pending makes one call.
     await page.locator('a[href="#copilot-h"]').click();

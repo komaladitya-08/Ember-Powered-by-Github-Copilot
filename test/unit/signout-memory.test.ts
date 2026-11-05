@@ -2,6 +2,10 @@
 import fs from "node:fs";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
+import { isTrustedSender } from "../../app/main/windows";
+
+// windows.ts imports electron at load; only its pure predicate is used here.
+vi.mock("electron", () => ({ app: {}, BrowserWindow: class {}, Menu: {}, nativeTheme: {}, screen: {}, shell: {}, ipcMain: {}, dialog: {}, session: {} }));
 
 it("disconnects and clears credentials even when memory erasure fails, while rejecting the sign-out promise", async () => {
   const main = fs.readFileSync("app/main/main.ts", "utf8");
@@ -40,7 +44,7 @@ it("answers routinesCount only to the live Home window, and only with a tagged c
   const install = new Function("ipcMain", "IPC", "isTrustedSender", "home", "countStoredRoutines", "userData", "log",
     ts.transpileModule(`${guardSrc}\n${handlerSrc}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText);
   install({ handle: (_c: string, fn: typeof handler) => { handler = fn; } }, { routinesCount: "routines:count" },
-    (url: string) => url.startsWith("file:///app/renderer/"), home,
+    isTrustedSender, home,
     (_dir: string, onFailed: (e: unknown) => void) => { onFailed(new Error(`EACCES: ${userData}/routines.json`)); return { known: false }; }, userData, { warn: (...a: unknown[]) => logged.push(a) });
   const event = (url: string, sender: unknown) => ({ senderFrame: { url }, sender });
   expect(handler(event("file:///app/renderer/home/index.html", home.webContents))).toEqual({ known: false });
