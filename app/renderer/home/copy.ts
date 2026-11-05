@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import type { ActivityEntry, ClearHearingStatus, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -956,6 +956,22 @@ export function teachOutcomeText(outcome: "learnt" | "off" | "unknown" | "unlike
 /** The baseline voice is included in the speech models; optional choices name their separate download. */
 export const NATURAL_HINT = naturalModelHint("kitten");
 
+/** Hear me more clearly's note: what it fetches and what it costs. */
+export const CLEAR_HINT = "Downloads a 482 MB speech model that gets about half as many words wrong, above all with an accent or across a room. Each request takes about 0.3 s longer and listening uses about 550 MB more memory. It runs on this computer, and nothing you say leaves it.";
+
+/** How Hear me more clearly stands, under its switch ("" while off). */
+export function clearHearingLine(s: ClearHearingStatus | undefined): string {
+  switch (s?.state) {
+    case "downloading": return `Downloading… ${s.percent}%`;
+    case "starting": return "Starting…";
+    case "on": return "On. Ember writes what you say with the clearer model.";
+    case "wont-load": return "It wouldn't start on this computer, so Ember is using its usual speech model.";
+    case "needs-native": return "This computer can't run it, so Ember is using its usual speech model.";
+    case "failed": return `${s.detail} Turn this off and on to try again.`;
+    default: return "";
+  }
+}
+
 /** Effective selected voice and actual playback/fallback from the service, without guessing from the old toggle. */
 export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: NaturalModel = "kitten"): { text: string; retry: boolean; busy: boolean } {
   const name = NATURAL_CHOICES[model].name;
@@ -973,7 +989,7 @@ export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: Natur
     case "too-slow": return { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
     case "wont-load": return { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
     case "needs-native": return { text: `${name} isn't available on this computer. ${fallback}`, retry: false, busy: false };
-    case "failed": return { text: model === "kokoro" ? `Couldn't download Kokoro. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model === "kokoro", busy: false };
+    case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model === "kokoro", busy: false };
     default: return { text: `${name} is selected. ${fallback}`, retry: false, busy: false };
   }
 }

@@ -46,7 +46,7 @@ import { VoiceGate } from "../../app/voice/match";
 import { VoiceService, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
-import { NATURAL_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
+import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
 import type { VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
 
@@ -90,6 +90,79 @@ const captured = (context = "running") => {
 
 beforeEach(() => { electron.app.isPackaged = false; electron.procs.length = 0; electron.windows.length = 0; electron.ipcMain.removeAllListeners(); electron.net.fetch.mockReset(); services = []; });
 afterEach(() => { vi.useRealTimers(); for (const s of services) s.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+
+describe("the Supertonic voice", () => {
+  it("is loaded by name, from its own folder, when it is the optional voice wanted", async () => {
+    const { v } = service(true, { neuralVoice: true, naturalVoice: true, naturalModel: "supertonic", native: true, downloader: vi.fn() });
+    fs.mkdirSync(path.join(root, SUPERTONIC_VOICE.target));
+    fs.writeFileSync(path.join(root, `.${SUPERTONIC_VOICE.target}.ok`), `${SUPERTONIC_VOICE.sha256}\n`);
+    v.speak("Hello.");
+    expect(posted(electron.procs[0], "init")[0]).toMatchObject({ natural: path.join(root, SUPERTONIC_VOICE.target), naturalVoice: "supertonic" });
+    expect(v.naturalStatus.model).toBe("supertonic");
+  });
+
+  it("isn't taken for Kokoro's download", () => {
+    expect(SUPERTONIC_VOICE.target).not.toBe(NATURAL_VOICE.target);
+    expect(SUPERTONIC_VOICE.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(VOICE_MODELS.map(m => m.id)).not.toContain("supertonic");
+  });
+});
+
+describe("Hear me more clearly", () => {
+  const inPlace = () => {
+    fs.mkdirSync(path.join(root, CLEAR_SPEECH.target));
+    fs.writeFileSync(path.join(root, `.${CLEAR_SPEECH.target}.ok`), `${CLEAR_SPEECH.sha256}\n`);
+  };
+
+  it("starts listening again with the clearer model, and without it once turned off", async () => {
+    const { v } = service(true, { native: true, downloader: vi.fn() });
+    inPlace();
+    await v.setWanted(true);
+    const [first] = electron.procs;
+    expect((posted(first, "init")[0] as unknown as { models: { clear?: string } }).models.clear).toBeUndefined();
+    first.emit("message", { type: "ready", loadMs: 20 });
+    v.setClearHearing(true);
+    expect(v.clearStatus.state).toBe("starting");
+    expect(first.kill).toHaveBeenCalled();
+    await flush();
+    const second = electron.procs[1];
+    expect((posted(second, "init")[0] as unknown as { models: { clear?: string } }).models.clear).toBe(path.join(root, CLEAR_SPEECH.target));
+    second.emit("message", { type: "ready", loadMs: 20, backend: { backend: "native", detail: "", provider: "cpu", threads: 2, tried: [], clear: true } });
+    expect(v.clearStatus.state).toBe("on");
+    v.setClearHearing(false);
+    expect(v.clearStatus.state).toBe("off");
+    await flush();
+    expect((posted(electron.procs[2], "init")[0] as unknown as { models: { clear?: string } }).models.clear).toBeUndefined();
+  });
+
+  it("says so, and keeps listening, where the clearer model wouldn't load", async () => {
+    const { v } = service(true, { native: true, downloader: vi.fn() });
+    inPlace();
+    v.setClearHearing(true);
+    await v.setWanted(true);
+    electron.procs[0].emit("message", { type: "ready", loadMs: 20, backend: { backend: "native", detail: "", provider: "cpu", threads: 2, tried: [] } });
+    expect(v.clearStatus.state).toBe("wont-load");
+    expect(electron.procs[0].kill).not.toHaveBeenCalled();
+  });
+
+  it("fetches nothing where speech doesn't run natively", () => {
+    const downloader = vi.fn();
+    const { v } = service(true, { native: false, downloader });
+    v.setClearHearing(true);
+    expect(v.clearStatus.state).toBe("needs-native");
+    expect(downloader).not.toHaveBeenCalled();
+  });
+
+  it("downloads only once it is turned on, and says what went wrong", async () => {
+    const downloader = vi.fn(async () => { throw new Error("no network"); });
+    const { v } = service(true, { native: true, downloader: downloader as never });
+    await flush();
+    expect(downloader).not.toHaveBeenCalled();
+    v.setClearHearing(true);
+    expect(v.clearStatus).toEqual({ state: "downloading", percent: 0 });
+    await vi.waitFor(() => expect(v.clearStatus.state).toBe("failed"), { timeout: 20_000 });
+  }, 30_000);
+});
 
 describe("VoiceService", () => {
   it("requires both a running capture and the recogniser before Listen once can arm", async () => {

@@ -82,6 +82,12 @@ export function afterWakePhrase(audio: Float32Array, withWake: boolean): Float32
   return audio.subarray(audio.length);
 }
 
+/**
+ * How like the owner something said over other sound must be for Ember to hear it unnamed. This only decides hearing, never
+ * approving. The owner's own requests on a laptop's microphone scored 0.50–0.75 (log of 2026-11-05).
+ */
+export const OVER_SOUND_MATCH = 0.45;
+
 export class VoiceGate {
   private revision = 0;
   /** Pending work belongs to this cancellation/identity revision, including asynchronous learning checks. */
@@ -155,6 +161,8 @@ export class VoiceGate {
     if (e.type === "stop") { this.cancel(); this.send(e); return; }
     const generation = this.revision;
     const owner = this.owner;
+    // Over a song with no name said: only a voice that can be told apart from it is heard.
+    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) return;
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.
     const anchor = this.anchor;
@@ -174,9 +182,10 @@ export class VoiceGate {
         if (generation !== this.revision) return;
         // The model failed: the request is heard (Voice Match failing must not leave Ember deaf), and main is told.
         this.onError(err);
-        this.send(e);
+        if (!e.overSound) this.send(e);
         return;
       }
+      if (e.overSound && score < OVER_SOUND_MATCH) return;
       // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
@@ -189,7 +198,8 @@ export class VoiceGate {
         if (generation === this.revision && heard.type === "utterance" && heard.verified) this.onSample?.(print, score, afterWakePhrase(audio, withWake));
         return;
       }
-      this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
+      // (Over a song the score says little of a stranger: nothing is said, and no trust ends.)
+      if (!e.overSound) this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
       this.send(e);
     });
   }

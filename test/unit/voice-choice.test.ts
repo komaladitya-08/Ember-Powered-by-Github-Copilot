@@ -3,7 +3,9 @@ import { expect, it } from "vitest";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "../../app/main/voice-choice";
 
 it("lists the baseline first and preserves the existing optional Kokoro platform boundary", () => {
-  expect(naturalVoiceChoices(true, false)).toEqual(["kitten", "kokoro"]);
+  expect(naturalVoiceChoices(true, false)).toEqual(["kitten", "kokoro", "supertonic"]);
+  // Supertonic needs the addon's generation config: the C API build keeps Kitten.
+  expect(naturalVoiceChoices(false, true)).toEqual(["kitten"]);
   expect(naturalVoiceChoices(false, true)).toEqual(["kitten"]);
   expect(naturalVoiceChoices(false, false)).toEqual([]);
 });

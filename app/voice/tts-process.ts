@@ -5,18 +5,18 @@
  */
 
 import { NATURAL_MAX_RTF, rememberedSlow, slowVerdict, speechChunks } from "./tts";
-import { kittenSpec, kokoroSpec, kokoroSpeaker } from "./tts-spec";
+import { SUPERTONIC_SPEAKER, kittenSpec, kokoroSpec, kokoroSpeaker, supertonicSpec } from "./tts-spec";
 import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type ProviderTry, type Sherpa, type SherpaBackend, type Tts } from "./runtime";
 
 type FromMain =
   /** `model`: Kitten's folder; optional `natural`: Kokoro's folder. WASM can listen, but cannot make neural speech. */
-  | { type: "init"; model: string; natural?: string | null; wasm?: boolean; capiDir?: string }
+  | { type: "init"; model: string; natural?: string | null; naturalVoice?: "kokoro" | "supertonic"; wasm?: boolean; capiDir?: string }
   | { type: "say"; id: number; text: string }
   | { type: "hush"; id: number };
 
 /** Which voice speaks, its runtime/provider/threads, and measured generation seconds per playback second. */
 export interface VoiceInfo {
-  voice: "kitten" | "kokoro";
+  voice: "kitten" | "kokoro" | "supertonic";
   backend: SherpaBackend;
   detail: string;
   provider: string;
@@ -67,19 +67,24 @@ function realTimeFactor(voice: Tts, speaker: number): number {
 
 /** One native model, using its own provider cache and one-week slow verdict keyed by model/provider/thread configuration. */
 function timedVoice(sherpa: Sherpa, voice: VoiceInfo["voice"], folder: string): { voice: Tts; speaker: number; info: VoiceInfo } {
-  const spec = voice === "kitten" ? kittenSpec(folder) : kokoroSpec(folder);
+  const spec = voice === "kitten" ? kittenSpec(folder) : voice === "supertonic" ? supertonicSpec(folder) : kokoroSpec(folder);
   // Kitten leaves the other cores for applications; CoreML may compete with the CPU for the larger optional Kokoro.
   const list = providers(sherpa.backend, process.platform, process.env, { gpu: voice === "kokoro" });
-  const n = threads(sherpa.backend, voice === "kitten" ? 1 : 4);
-  const speaker = voice === "kitten" ? 0 : kokoroSpeaker(folder);
+  const n = threads(sherpa.backend, voice === "kitten" ? 1 : voice === "supertonic" ? 2 : 4);
+  const speaker = voice === "kitten" ? 0 : voice === "supertonic" ? SUPERTONIC_SPEAKER : kokoroSpeaker(folder);
   const store = providerCache(), key = modelKey(spec.model, list, n);
-  const verdictKey = key && `natural|${key}`;
+  // Only an optional voice is held to one timing: a busy moment mustn't cost Ember its default voice for a week (timed at 0.81
+  // with the laptop under load, 0.36 otherwise), and Kitten is timed again at every start for about a second.
+  const verdictKey = key && voice !== "kitten" ? `natural|${key}` : null;
   const slow = verdictKey ? rememberedSlow(store.get(verdictKey), Date.now()) : null;
   if (slow !== null) throw new VoiceUnavailable("slow", `too slow here: ${slow} of real time (at most ${NATURAL_MAX_RTF}; timed before)`);
   const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: speaker, speed: 1.0 }),
     { cache: { store, key }, free: v => v.free() });
   try {
-    const rtf = realTimeFactor(chosen.made, speaker);
+    // Timed while the words just said are being recognized: Kitten came to 0.51 then and 0.28 a moment later, and one such
+    // timing cost the reply Ember's own voice. The best of three says what this computer can do.
+    let rtf = realTimeFactor(chosen.made, speaker);
+    for (let i = 0; i < 2 && rtf > NATURAL_MAX_RTF; i++) rtf = Math.min(rtf, realTimeFactor(chosen.made, speaker));
     if (!Number.isFinite(rtf)) throw new Error("The voice could not be timed.");
     if (rtf > NATURAL_MAX_RTF) {
       if (verdictKey) store.set(verdictKey, slowVerdict(rtf, Date.now()));
@@ -94,7 +99,7 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
   if (sherpa.backend !== "native") throw new VoiceUnavailable("native", `Neural speech needs the native speech runtime (${sherpa.detail}).`);
   let natural: string | undefined, naturalWhy: VoiceInfo["naturalWhy"];
   if (m.natural) {
-    try { return timedVoice(sherpa, "kokoro", m.natural); }
+    try { return timedVoice(sherpa, m.naturalVoice ?? "kokoro", m.natural); }
     catch (err) {
       naturalWhy = err instanceof VoiceUnavailable ? err.reason : "load";
       natural = naturalWhy === "slow" ? message(err) : `it couldn't be loaded: ${message(err)}`;

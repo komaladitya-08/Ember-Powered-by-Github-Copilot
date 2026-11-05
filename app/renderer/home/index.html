@@ -422,8 +422,13 @@
           <label class="switch-row"><input type="checkbox" id="suggest-on" role="switch" aria-describedby="suggest-hint"><span id="suggest-label">Suggest what I might say next</span></label>
           <p class="row-note" id="suggest-hint"></p>
         </div>
+        <div>
+          <label class="switch-row"><input type="checkbox" id="clear-on" role="switch" aria-describedby="clear-hint clear-text"><span>Hear me more clearly</span></label>
+          <p class="row-note" id="clear-hint"></p>
+          <p class="hint" id="clear-text" role="status" hidden></p>
+        </div>
         <div id="natural-row">
-          <label class="choice"><span>Voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kitten">Kitten Nano (default)</option><option value="kokoro">Kokoro · 350 MB</option></select></label>
+          <label class="choice"><span>Voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kitten">Kitten Nano (default)</option><option value="kokoro">Kokoro · 350 MB</option><option value="supertonic">Supertonic · 129 MB</option></select></label>
           <p class="hint" id="natural-model-hint">Kitten Nano is the default voice, included in Ember's speech models. Its voice files are 63.8 MB. Speech stays on this computer; the system voice is used if Kitten cannot run fast enough.</p>
           <p class="hint" id="natural-choice-status" role="status"></p>
           <div class="agent-actions"><button type="button" id="natural-use" class="btn quiet" hidden>Use Kitten Nano</button></div>

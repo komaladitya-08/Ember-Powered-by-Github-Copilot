@@ -30,7 +30,7 @@ const migrateVoiceChoice = (value: unknown): unknown => {
   const voice = value as Record<string, unknown>;
   if (voice.natural !== undefined && typeof voice.natural !== "boolean") return value;
   if (voice.natural === true && voice.naturalModel === undefined) return { ...voice, naturalModel: "kokoro" };
-  if (voice.naturalModel === "kitten" || (voice.natural !== true && voice.naturalModel === "kokoro")) return { ...voice, natural: false, naturalModel: "kitten" };
+  if (voice.naturalModel === "kitten" || (voice.natural !== true && (voice.naturalModel === "kokoro" || voice.naturalModel === "supertonic"))) return { ...voice, natural: false, naturalModel: "kitten" };
   return value;
 };
 
@@ -130,7 +130,7 @@ export const SettingsSchema = z.object({
      */
     natural: z.boolean().default(false),
     /** Kitten is the baseline; only natural:true with Kokoro opts into its separate download. */
-    naturalModel: z.enum(["kokoro", "kitten"]).default("kitten"),
+    naturalModel: z.enum(["kokoro", "supertonic", "kitten"]).default("kitten"),
     /**
      * Voice Match keeps learning: the voiceprint follows the owner's voice slowly, from their own requests it is sure of
      * (app/voice/adapt.ts; kept in voiceprint.json). In force only while Voice Match is on.
@@ -142,7 +142,9 @@ export const SettingsSchema = z.object({
     suggest: z.boolean().default(true),
     /** Keep listening after a request: a conversation, with no wake word, that can interrupt Ember (app/voice/engine.ts). */
     conversation: z.boolean().default(true),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true })),
+    /** Hear me more clearly: the clearer recognizer writes requests (a 482 MB download, once this is on). */
+    clearHearing: z.boolean().default(false),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false })),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),

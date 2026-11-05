@@ -1385,6 +1385,7 @@ function start(): void {
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
     match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips },
     ...(voice ? { natural: voice.naturalStatus } : {}),
+    ...(voice ? { clear: voice.clearStatus } : {}),
     naturalModels: availableNaturalModels,
   });
   let lastListenStatus = "";
@@ -3295,6 +3296,8 @@ function start(): void {
         syncListenOnce();
       },
     });
+    // Before anything starts listening, so the voice process loads the clearer recognizer the first time.
+    voice.setClearHearing(settings.get().voice.clearHearing);
     if (settings.get().voice.muted) voice.setMuted(true);
     const wantVoice = () => policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
@@ -3319,6 +3322,7 @@ function start(): void {
       voice?.setLearning(on);
     });
     settings.onChange(next => applyNaturalVoicePreference(voice, next.voice));
+    settings.onChange(next => voice?.setClearHearing(next.voice.clearHearing));
     let conversations = settings.get().voice.conversation;
     settings.onChange(next => {
       if (next.voice.conversation === conversations) return;

@@ -253,6 +253,7 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   // The natural voice (a 350 MB download, and the speech process to time it) is off where voice or speech is: LOCKDOWN
   // too (review of #143). Every way it starts (the switch, Try again, Ember's start) follows this setting.
   if (admin.features.voice === false || admin.features.speak === false) s.voice = { ...s.voice, natural: false };
+  if (admin.features.voice === false) s.voice = { ...s.voice, clearHearing: false };
   if (admin.neverLook.length) {
     const have = new Set(s.privacy.neverLook.map(x => x.toLowerCase()));
     s.privacy = { ...s.privacy, neverLook: [...s.privacy.neverLook, ...admin.neverLook.filter(x => !have.has(x.toLowerCase()))] };
