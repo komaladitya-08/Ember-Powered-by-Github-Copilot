@@ -17,6 +17,7 @@ import {
 } from "./copy";
 import { mountAboutYou } from "./about-you";
 import { mountReminders } from "./reminders";
+import { mountForgetConfirms } from "./forget-confirm";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -766,7 +767,10 @@ $("retry").addEventListener("click", () => {
   }, err => signInMsg(ipcErrorText(err), true));
 });
 $("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });
-$("sign-out").addEventListener("click", () => { void window.ember.signOut().catch(err => signInMsg(memoryDeleteFailedText(err), true)); });
+mountForgetConfirms(window.ember, {
+  signOutFailed: err => signInMsg(memoryDeleteFailedText(err), true),
+  deleteMemory: remove => deleteMemory($("memory-forget-all") as HTMLButtonElement, remove),
+});
 
 /** The device code row: "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]". */
 function showCode(userCode: string, uri: string): void {
@@ -1141,9 +1145,6 @@ async function deleteMemory(button: HTMLButtonElement, remove: () => Promise<unk
   catch (err) { $("memory-error").textContent = memoryDeleteFailedText(err); }
   finally { button.removeAttribute("aria-disabled"); }
 }
-$("memory-forget-all").addEventListener("click", () => {
-  void deleteMemory($("memory-forget-all") as HTMLButtonElement, () => window.ember.forgetAllMemory());
-});
 window.ember.onSettingsChanged(applyMemorySettings);
 let receivedMemory = false;
 void window.ember.memory().then(view => { if (!receivedMemory) showMemory(view); });
