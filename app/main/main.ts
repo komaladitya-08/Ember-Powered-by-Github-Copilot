@@ -1546,14 +1546,18 @@ function start(): void {
   // Routines and lasting reminders (app/main/agent/routines.ts): routines.json beside the settings, used only while the
   // user has them on and the organisation allows them.
   const routinesAllowed = () => policy.features.routines !== false;
+  /** The routines kept; throws when routines.json can't be read, so a failure is never mistaken for none. */
+  const routineRowsStrict = () => routinesAllowed() ? routineBook.list().map(r => ({ id: r.id, name: r.name, steps: r.steps })) : [];
   const routineRows = () => {
-    if (!routinesAllowed()) return [];
     // An unreadable routines.json (no permission) lists nothing rather than failing Home's section.
-    try { return routineBook.list().map(r => ({ id: r.id, name: r.name, steps: r.steps })); } catch (err) { log.warn("routines.unreadable", { err: err instanceof Error ? err.message : String(err) }); return []; }
+    try { return routineRowsStrict(); } catch (err) { log.warn("routines.unreadable", { err: err instanceof Error ? err.message : String(err) }); return []; }
   };
   const routineBook: RoutineBook = new RoutineBook({
     file: routinesFile(userData, err => log.warn("routines.file_broken", { err: err instanceof Error ? err.message : String(err) })),
-    onChange: () => broadcast(IPC.routinesChanged, routineRows()),
+    onChange: () => {
+      // An unreadable book pushes nothing: an empty push would read as "no routines" to the Forget question.
+      try { broadcast(IPC.routinesChanged, routineRowsStrict()); } catch (err) { log.warn("routines.unreadable", { err: err instanceof Error ? err.message : String(err) }); }
+    },
   });
   const reminderRows = (rows = agent?.reminders.list() ?? []) => {
     if (!hasConsent(settings.get())) return [];
@@ -2334,6 +2338,8 @@ function start(): void {
     if (page) await shell.openExternal(page);
   }));
   ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
+  // The count for the Sign out and Forget questions: rejects when the book can't be read, so Home shows it as unknown.
+  ipcMain.handle(IPC.routinesCount, guard(() => routineRowsStrict().length));
   ipcMain.handle(IPC.remindersList, guard(() => reminderRows()));
   ipcMain.handle(IPC.reminderChange, guard((value: unknown) => {
     const parsed = ReminderChangeSchema.safeParse(value);

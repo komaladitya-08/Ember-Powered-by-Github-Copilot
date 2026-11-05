@@ -63,6 +63,7 @@ const api: EmberHomeApi = {
   checkForUpdates: () => ipcRenderer.invoke(IPC.updatesCheck),
   openUpdate: () => ipcRenderer.invoke(IPC.updatesOpen),
   routines: () => ipcRenderer.invoke(IPC.routinesList),
+  routinesCount: () => ipcRenderer.invoke(IPC.routinesCount),
   reminders: () => ipcRenderer.invoke(IPC.remindersList),
   onReminders: fn => listen<ReminderRow[]>(IPC.remindersChanged, fn),
   changeReminder: change => ipcRenderer.invoke(IPC.reminderChange, change),

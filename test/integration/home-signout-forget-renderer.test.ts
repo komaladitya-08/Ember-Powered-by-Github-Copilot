@@ -6,7 +6,7 @@ import { chromium } from "playwright-core";
 import { expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 
-declare global { interface Window { __calls: string[]; __counts: { tasks: number; facts: number; reminders: number; routines: number }; __mode: { memory: "ok" | "reject" | "locked" | "hang" | "manual"; signOutHangs: boolean }; __emit: (name: string, value: unknown) => void; __release: () => void } }
+declare global { interface Window { __calls: string[]; __counts: { tasks: number; facts: number; reminders: number; routines: number }; __mode: { memory: "ok" | "reject" | "locked" | "hang" | "manual"; signOutHangs: boolean; routinesUnreadable?: boolean }; __emit: (name: string, value: unknown) => void; __release: () => void } }
 
 it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out and Forget everything, shows live counts, and cancels cleanly", async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
@@ -50,6 +50,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
         };
         if (name === "reminders") return async () => Array.from({ length: window.__counts.reminders }, (_, i) => ({ id: `r${i}`, text: "x", at: 1, created: 1, kept: false }));
         if (name === "routines") return async () => Array.from({ length: window.__counts.routines }, (_, i) => ({ id: `n${i}`, name: "n", steps: [] }));
+        if (name === "routinesCount") return () => window.__mode.routinesUnreadable ? Promise.reject(new Error("EACCES")) : Promise.resolve(window.__counts.routines);
         if (name === "signOut") return () => { window.__calls.push("signOut"); return window.__mode.signOutHangs ? new Promise(() => undefined) : Promise.resolve(); };
         if (name === "updateSettings") return (patch: unknown) => { window.__calls.push(`updateSettings:${JSON.stringify(patch)}`); return new Promise(() => undefined); };
         if (name === "forgetAllMemory") return async () => { window.__calls.push("forgetAll"); };
@@ -133,6 +134,20 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     expect(await page.locator("#forget-all-confirm").getAttribute("role")).toBe("alertdialog");
     expect(await page.locator("#forget-all-confirm").getAttribute("aria-modal")).toBe("true");
     await page.keyboard.press("Escape");
+
+    // An unreadable routines book (EACCES) is unknown, never "0 routines"; a genuinely empty one is still 0.
+    await page.evaluate(() => { window.__mode.memory = "ok"; window.__mode.routinesUnreadable = true; window.__counts.routines = 0; });
+    await page.locator("#memory-forget-all").click();
+    await expect.poll(() => page.locator("#forget-all-yes").isDisabled()).toBe(false);
+    expect(await page.locator("#forget-all-scope").innerText()).not.toMatch(/\b0 routines/);
+    expect(await page.locator("#forget-all-scope").innerText()).toContain("an unknown number of routines");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.__mode.routinesUnreadable = false; });
+    await page.locator("#memory-forget-all").click();
+    await expect.poll(() => page.locator("#forget-all-yes").isDisabled()).toBe(false);
+    expect(await page.locator("#forget-all-scope").innerText()).not.toContain("unknown number of routines");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.__counts.routines = 1; });
 
     // Locked memory (no rows, owner not ready) is unknown too.
     await page.evaluate(() => { window.__mode.memory = "locked"; });

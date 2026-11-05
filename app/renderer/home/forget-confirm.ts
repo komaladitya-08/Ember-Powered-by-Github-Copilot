@@ -46,7 +46,7 @@ class Counts {
     read("tasks", () => this.api.tasks(), tasksSlot);
     read("facts", () => this.api.memory(), factsSlot);
     read("reminders", () => this.api.reminders(), r => ({ state: "known", n: r.length }));
-    read("routines", () => this.api.routines(), r => ({ state: "known", n: r.length }));
+    read("routines", () => this.api.routinesCount(), n => ({ state: "known", n }));
     this.changed();
   }
   get loading(): boolean { return FIELDS.some(f => this.slots[f].state === "loading"); }
