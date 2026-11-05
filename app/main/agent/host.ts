@@ -2581,6 +2581,13 @@ export class AgentHost {
           this.conversation = conductor.sessionId;
           this.convoCaps = caps;
           this.extensionsGen = extensionsGen;
+          // This chat replaces the one whose failure was waiting for the tasks to end: that deferred reconnect is
+          // moot, and Ember answers again now (tasks keep running).
+          if (this.reconnectAfterTasks) {
+            this.reconnectAfterTasks = null;
+            const login = this.status.login;
+            this.setStatus({ phase: "ready", detail: login ? `Signed in as ${login}.` : "Connected." });
+          }
         }
       } catch (err) {
         this.o.log.warn("agent.new_conversation_failed", { err });
