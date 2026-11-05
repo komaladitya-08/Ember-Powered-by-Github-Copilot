@@ -989,21 +989,30 @@ export const REMINDER_WORDS = {
   deleteFailed: "Couldn't delete the routines and reminders. Try again.", loadFailed: "Couldn't load reminders. Try Refresh list again.",
 } as const;
 
-/** What is in Ember right now, counted when a Sign out or Forget everything question opens. */
-export interface ForgetCounts { tasks: number; facts: number; reminders: number; routines: number }
+/** What is in Ember right now, counted while a Sign out or Forget everything question is open; null is "couldn't tell". */
+export interface ForgetCounts { tasks: number | null; facts: number | null; reminders: number | null; routines: number | null }
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** Said while the counts are still being read. */
+export const FORGET_LOADING = "Checking what this affects…";
+
+const plural = (n: number | null, one: string, many: string) => n === null ? `an unknown number of ${many}` : `${n} ${n === 1 ? one : many}`;
+const isAre = (n: number | null) => n === 1 ? "is" : "are";
+/** Added when any count is unknown, so a missing number is never read as none. */
+const UNKNOWN_NOTE = " Ember couldn't count everything right now, so those numbers are unknown, not zero.";
+const hasUnknown = (c: ForgetCounts) => Object.values(c).some(n => n === null);
 
 /** The question for Sign out: it clears all four, and the counts are today's. */
 export function signOutScope(c: ForgetCounts): string {
-  return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${c.tasks === 1 ? "is" : "are"} running or waiting, and clears this conversation, `
-    + `${plural(c.facts, "saved fact", "saved facts")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}.`;
+  return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation, `
+    + `${plural(c.facts, "saved fact", "saved facts")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}.`
+    + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 
 /** The question for Forget everything: only saved memory goes, and the other three are said to stay. */
 export function forgetEverythingScope(c: ForgetCounts): string {
   return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")} and what Ember learned from them. `
-    + `${plural(c.tasks, "task", "tasks")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are.`;
+    + `${plural(c.tasks, "task", "tasks")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are.`
+    + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 
 /** Bulk deletion always names both visible record types and includes saved reminders in its scope. */

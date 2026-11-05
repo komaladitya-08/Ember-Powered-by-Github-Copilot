@@ -218,6 +218,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* Callouts: the consent note, organisation notices, the welcome. Neutral: colour is kept for actions. */
 .consent { padding: 14px 16px; border-radius: var(--r-xs); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .consent p { margin: 0 0 12px; }
+.consent .btn.quiet.danger { color: var(--red-text); }
 .match { display: grid; gap: 8px; }
 .match .hint { margin: 0; }
 .match-prompt { margin: 0; font-weight: 600; }

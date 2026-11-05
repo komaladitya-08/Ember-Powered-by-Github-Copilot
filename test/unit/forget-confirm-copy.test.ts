@@ -15,4 +15,11 @@ describe("Sign out and Forget everything copy", () => {
     expect(forgetEverythingScope({ tasks: 2, facts: 5, reminders: 1, routines: 0 }))
       .toBe("Forget everything? This removes 5 saved facts and what Ember learned from them. 2 tasks, 1 reminder and 0 routines stay as they are.");
   });
+  it("says a count is unknown, not zero, when it couldn't be read", () => {
+    const t = signOutScope({ tasks: 0, facts: null, reminders: 1, routines: 0 });
+    expect(t).toContain("an unknown number of saved facts");
+    expect(t).not.toContain("0 saved facts");
+    expect(t).toContain("unknown, not zero");
+    expect(forgetEverythingScope({ tasks: 0, facts: null, reminders: 0, routines: 0 })).toContain("removes an unknown number of saved facts");
+  });
 });
