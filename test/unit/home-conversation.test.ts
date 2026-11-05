@@ -4,6 +4,8 @@
  * (review of PR #125).
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONVERSATION_SHOWN, conversationChange, conversationShown, earlierLabel } from "../../app/renderer/home/conversation-view";
 import { pushLater } from "../../app/main/push-later";
@@ -101,5 +103,15 @@ describe("where a waiting question is answered", () => {
     expect(askedWhere([])).toBe("bubble");
     expect(askedWhere([{ kind: "question", state: "done", askedIn: "card" }, { kind: "question", state: "waiting", askedIn: "command" }])).toBe("command");
     expect(askedWhere([{ kind: "question", state: "waiting" }])).toBe("bubble");
+  });
+});
+
+describe("Home's New conversation button (review of #184)", () => {
+  it("clears and announces only if the conversation view wasn't reset another way meanwhile", () => {
+    const src = readFileSync(join(__dirname, "../../app/renderer/home/main.ts"), "utf8") as string;
+    const click = src.slice(src.indexOf('$("conversation-new").addEventListener'), src.indexOf('conversationSearch.addEventListener("input"'));
+    expect(click).toMatch(/const generation = conversationGeneration;/);
+    expect(click).toMatch(/\.then\(\(\) => \{\s*[^\n]*\n\s*if \(generation !== conversationGeneration\) return;\s*\n\s*resetConversationView\(\)/);
+    expect(click).toMatch(/if \(generation === conversationGeneration\) conversationComposeStatus/);
   });
 });

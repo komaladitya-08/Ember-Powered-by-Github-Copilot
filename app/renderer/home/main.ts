@@ -959,12 +959,15 @@ const resetConversationView = () => {
 window.ember.onConversationForgotten(resetConversationView);
 $("conversation-new").addEventListener("click", () => {
   const button = $("conversation-new") as HTMLButtonElement;
+  const generation = conversationGeneration;
   button.disabled = true;
   void window.ember.conversationNew().then(() => {
+    // Forgotten or reset another way meanwhile (sign-out, another account): a newer draft isn't this click's to clear.
+    if (generation !== conversationGeneration) return;
     resetConversationView();
     conversationComposeStatus.textContent = "Started a new conversation. Memory, reminders and running tasks are untouched.";
     conversationMessage.focus();
-  }, () => { conversationComposeStatus.textContent = "Couldn’t start a new conversation. Try again."; })
+  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t start a new conversation. Try again."; })
     .finally(() => { button.disabled = false; });
 });
 conversationSearch.addEventListener("input", () => renderConversation(conversationAll));
