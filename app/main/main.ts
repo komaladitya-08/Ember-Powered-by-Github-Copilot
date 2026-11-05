@@ -3091,12 +3091,13 @@ function start(): void {
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
         showState({ idle: idleNow(status), setup: setupNow(status) });
       },
-      onTranscript: entries => {
-        // Forgotten (sign-out, another account): the "Ember learned" lines go with it.
+      onTranscript: (entries, why) => {
+        // Forgotten (sign-out, another account): the "Ember learned" lines go with it. A New conversation clears them
+        // too, but isn't announced as a forgetting: Home that asked for it resets itself when the request is answered.
         if (!entries.length) {
           resetAnswerSpeech();
           learnedLines = [];
-          broadcast(IPC.conversationForgotten, null);
+          if (why !== "new-conversation") broadcast(IPC.conversationForgotten, null);
         }
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },

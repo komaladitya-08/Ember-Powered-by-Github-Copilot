@@ -20,6 +20,11 @@ const sim = vi.hoisted(() => ({
   resumed: [] as string[],
   resumeFails: false,
   deleteHangs: false,
+  /** A delete waits for this, then fails if `deleteFails`. */
+  deleteGate: null as Promise<void> | null,
+  deleteFails: false,
+  /** createSession throws (the runtime can't make a session). */
+  createFails: false,
   auth: async (): Promise<{ isAuthenticated: boolean; login?: string; statusMessage?: string }> => ({ isAuthenticated: true, login: "octo" }),
   ping: async (): Promise<unknown> => ({}),
   stopHangs: false,
@@ -87,9 +92,9 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     getAuthStatus() { return sim.auth(); }
     async listModels() { if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return sim.taskSessions.map(sessionId => ({ sessionId })); }
-    async deleteSession(id: string) { sim.deleted.push(id); if (sim.deleteHangs) await hang(); }
+    async deleteSession(id: string) { const gate = sim.deleteGate; sim.deleted.push(id); if (sim.deleteHangs) await hang(); if (gate) await gate; if (sim.deleteFails) throw new Error("delete failed"); }
     ping() { return sim.ping(); }
-    async createSession(cfg: any) { await sim.createGate; const s = new FakeSession(cfg.sessionId ?? "s", cfg); sim.sessions.push(s); return s; }
+    async createSession(cfg: any) { await sim.createGate; if (sim.createFails) throw new Error("create failed"); const s = new FakeSession(cfg.sessionId ?? "s", cfg); sim.sessions.push(s); return s; }
     async resumeSession(id: string, cfg: any) { if (sim.resumeFails) throw new Error(`Session not found: ${id}`); sim.resumed.push(id); const s = new FakeSession(id, cfg); sim.sessions.push(s); return s; }
   }
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
@@ -139,6 +144,7 @@ beforeEach(() => {
   sim.ping = async () => ({});
   sim.stopHangs = false;
   sim.createGate = null;
+  sim.deleteGate = null; sim.deleteFails = false; sim.createFails = false;
   sim.sendGate = null;
   sim.onSend = () => undefined;
   sim.holdTurns = false;
@@ -606,6 +612,106 @@ describe("new conversation", () => {
     expect(host.getTranscript().some(m => m.text === "newer")).toBe(true);
     expect(conductorSession().sessionId).toBe(newer);
     expect(sim.deleted).not.toContain(newer);
+    await host.stop();
+  });
+
+  it("tells Home which kind of reset it was: only the chat, not an account's conversation forgotten (review of #184)", async () => {
+    const seen: (string | undefined)[] = [];
+    const { host } = makeHost({ onTranscript: (e, why) => { if (!e.length) seen.push(why); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("hello");
+    await host.newConversation();
+    await host.forgetConversation();
+    expect(seen).toEqual(["new-conversation", undefined]);
+    await host.stop();
+  });
+
+  it("a delayed deletion of the old chat leaves the newer session saved, even when it fails (review of #184)", async () => {
+    const { host, agentJson } = makeHost();
+    await host.start(TOKEN, "stored");
+    const old = conductorSession().sessionId;
+    let release!: () => void;
+    sim.deleteGate = new Promise<void>(r => { release = r; });
+    sim.deleteFails = true;
+    const reset = host.newConversation().catch(() => undefined);
+    await vi.waitFor(() => expect(sim.deleted).toContain(old));
+    sim.deleteGate = null;
+    sim.deleteFails = false;
+    await host.stop();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    const newer = conductorSession().sessionId;
+    expect(agentJson().conductorSessionId).toBe(newer);
+    release();
+    await reset;
+    expect(agentJson().conductorSessionId).toBe(newer);
+    expect(agentJson().forget ?? []).not.toContain(newer);
+    expect(sim.deleted).not.toContain(newer);
+    await host.stop();
+  });
+
+  it("a session created for a reset that was overtaken never becomes the saved one (review of #184)", async () => {
+    const { host, agentJson } = makeHost();
+    await host.start(TOKEN, "stored");
+    let release!: () => void;
+    sim.createGate = new Promise<void>(r => { release = r; });
+    const reset = host.newConversation().catch(() => undefined);
+    await vi.waitFor(() => expect(sim.createGate).not.toBeNull());
+    await new Promise(r => setTimeout(r, 20));
+    sim.createGate = null;
+    await host.stop();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    const newer = conductorSession().sessionId;
+    release();
+    await reset;
+    await vi.waitFor(() => expect(sim.sessions.filter(s => s.sessionId.startsWith("ember-conductor-") && s.sessionId !== newer && s.disconnected).length).toBeGreaterThan(0));
+    expect(agentJson().conductorSessionId).toBe(newer);
+    expect((host as any).conductor.sessionId).toBe(newer);
+    expect(sim.deleted).not.toContain(newer);
+    await host.stop();
+  });
+
+  it("a renewed chat starts clean: a stuck turn of the old one doesn't swallow its answers (review of #184)", async () => {
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    (host as any).conductor.stuck = true;
+    await host.newConversation();
+    expect((host as any).conductor.stuck).toBe(false);
+    expect(await host.ask("hello")).toBe(true);
+    conductorSession().emit("assistant.message", { content: "Hi there." });
+    conductorSession().emit("session.idle");
+    expect(host.getTranscript().some(m => m.who === "ember" && /Hi there/.test(m.text))).toBe(true);
+    await host.stop();
+  });
+
+  it("a renewed chat uses the model selected now and takes the extension tools as they are now (review of #184)", async () => {
+    sim.models = [{ id: "small" }, { id: "large" }];
+    let generation = 1;
+    const forSession = vi.fn(() => undefined);
+    const { host } = makeHost({ extensions: { forSession, get generation() { return generation; } } });
+    await host.start(TOKEN, "stored");
+    expect(conductorSession().config.model).toBe("small");
+    await host.setModels({ conductor: "large" });
+    generation = 2;
+    forSession.mockClear();
+    await host.newConversation();
+    expect(conductorSession().config.model).toBe("large");
+    expect(host.getStatus().conductorModel).toBe("large");
+    expect(forSession).toHaveBeenCalled();
+    expect((host as any).extensionsGen).toBe(2);
+    await host.stop();
+  });
+
+  it("rejects when the new session can't be made, and says it is waiting while tasks go on (review of #184)", async () => {
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`)).toBeDefined());
+    sim.createFails = true;
+    await expect(host.newConversation()).rejects.toThrow(/create failed/);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering" });
+    expect(host.getStatus().detail).toMatch(/new conversation/);
+    expect(host.tasks!.get(t.id)?.status).toBe("running");
+    sim.createFails = false;
     await host.stop();
   });
 

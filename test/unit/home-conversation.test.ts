@@ -107,11 +107,12 @@ describe("where a waiting question is answered", () => {
 });
 
 describe("Home's New conversation button (review of #184)", () => {
-  it("clears and announces only if the conversation view wasn't reset another way meanwhile", () => {
-    const src = readFileSync(join(__dirname, "../../app/renderer/home/main.ts"), "utf8") as string;
-    const click = src.slice(src.indexOf('$("conversation-new").addEventListener'), src.indexOf('conversationSearch.addEventListener("input"'));
-    expect(click).toMatch(/const generation = conversationGeneration;/);
-    expect(click).toMatch(/\.then\(\(\) => \{\s*[^\n]*\n\s*if \(generation !== conversationGeneration\) return;\s*\n\s*resetConversationView\(\)/);
-    expect(click).toMatch(/if \(generation === conversationGeneration\) conversationComposeStatus/);
+  // Behaviour (status, focus, a newer draft kept) is in test/integration/home-conversation-renderer.test.ts; main.ts
+  // can't load under Node, so its one decision is pinned by its text: an own reset isn't broadcast as a forgetting.
+  it("main doesn't broadcast conversationForgotten for the chat Home itself started over", () => {
+    const src = readFileSync(join(__dirname, "../../app/main/main.ts"), "utf8") as string;
+    const hook = src.slice(src.indexOf("onTranscript: (entries, why) =>"), src.indexOf("onAccountChanged:"));
+    expect(hook).toMatch(/if \(why !== "new-conversation"\) broadcast\(IPC\.conversationForgotten, null\);/);
+    expect(hook).toMatch(/broadcast\(IPC\.conversationChanged, conversationNow\(entries\)\);/);
   });
 });

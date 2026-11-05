@@ -243,7 +243,8 @@ export interface HostOptions {
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; summary: string; text: string }) => void;
   /** The conversation changed (the settings window shows it). */
-  onTranscript?: (entries: TranscriptEntry[]) => void;
+  /** `why`: "new-conversation" when only the chat was started over (not an account's conversation forgotten). */
+  onTranscript?: (entries: TranscriptEntry[], why?: "new-conversation") => void;
   /**
    * Another account signed in: the conversation of the one before (and its transcript) was deleted, so main
    * drops what it kept of it too (the ask box's history).
@@ -2568,21 +2569,29 @@ export class AgentHost {
     await forgetting;
     if (mine !== this.conversationEpoch || gen !== this.gen || conductor !== this.conductor) return;
     this.transcript.length = 0;
-    this.o.onTranscript?.([]);
-    // A fresh session on the same runtime: tasks, their approvals and the connection are left as they are.
+    this.o.onTranscript?.([], "new-conversation");
+    // A fresh session on the same runtime: tasks, their approvals and the connection are left as they are. It is built
+    // for the model selected now and the extension tools as they are now, not the retired chat's.
     if (conductor) {
       try {
-        await conductor.renew(RUNTIME_WAIT_MS);
-        if (mine === this.conversationEpoch && gen === this.gen && conductor === this.conductor) {
+        const extensions = this.o.extensions?.forSession();
+        const extensionsGen = this.o.extensions?.generation ?? 0;
+        await conductor.renew(RUNTIME_WAIT_MS, { model: this.status.conductorModel ?? undefined, extensions });
+        if (mine === this.conversationEpoch && gen === this.gen && conductor === this.conductor && conductor.sessionId) {
           this.conversation = conductor.sessionId;
           this.convoCaps = caps;
+          this.extensionsGen = extensionsGen;
         }
       } catch (err) {
         this.o.log.warn("agent.new_conversation_failed", { err });
-        if (gen === this.gen) {
-          if (this.tasksAtWork()) this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, "new conversation failed", undefined, undefined, true); };
-          else this.lost(gen, "new conversation failed", undefined, undefined, true);
+        if (gen === this.gen && conductor === this.conductor) {
+          if (this.tasksAtWork()) {
+            this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, "new conversation failed", undefined, undefined, true); };
+            this.setStatus({ phase: "error", reason: "not-answering", detail: `I couldn't start a new conversation. ${AFTER_TASKS}` });
+          } else this.lost(gen, "new conversation failed", undefined, undefined, true);
         }
+        // The caller (Home) must not say it worked.
+        throw err;
       }
     }
     this.o.log.info("agent.new_conversation");
