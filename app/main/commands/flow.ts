@@ -291,7 +291,8 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
-const SAID_NO = "The user said no (or didn't answer). Don't run it again or work around it; finish the task saying what wasn't done.";
+const SAID_NO = "The user said no. Don't run it again or work around it; finish the task saying what wasn't done.";
+const TIMED_OUT = "The question timed out with no answer, so nothing was approved and it didn't run. Don't run it again or work around it; finish the task saying what wasn't done.";
 const STOPPED_BEFORE = "The user stopped it before it ran. Don't run it again; finish the task saying so.";
 const UNSHOWN_BEFORE = "Ember's command window couldn't show the countdown to the end, so the command didn't run (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
 const UNSEEN = "Ember couldn't show the command in its command window, so it stopped it at once (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
@@ -835,8 +836,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
     ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
   });
-  /** Asks with the command card; "once", "no" (said no or let it expire) or "stopped". */
-  const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "stopped"> => {
+  /** Asks with the command card; "once", "no" (Not now), "expired" (no answer in time: a timeout, not a refusal) or "stopped". */
+  const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "expired" | "stopped"> => {
     const question: PanelQuestion = {
       title: "May I run a command?", context: ctx.task.title, prompt,
       options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
@@ -851,7 +852,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     if (ctx.isOver()) return "stopped";
     if (answer === "once") return "once";
     ctx.onDeclined?.(answer === null);
-    return "no";
+    return answer === null ? "expired" : "no";
   };
 
   // Step 10: the card.
@@ -859,6 +860,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   if (d.verdict === "ask") {
     const answer = await askCard(d.says, "card");
     if (answer === "stopped") return STOPPED();
+    if (answer === "expired") return denied(TIMED_OUT);
     if (answer === "no") return denied(SAID_NO);
     approvedAt = performance.now();
   }
@@ -929,7 +931,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const own = [`${binding.label}'s own check also found:`, ...theirs];
         const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
-        let answer: "once" | "no" | "stopped" = "stopped";
+        let answer: "once" | "no" | "expired" | "stopped" = "stopped";
         try {
           answer = await askCard(lines, "remote",
             `On ${place}: ${d.says.length ? firstLine(d.says) : `${binding.label}'s own check wants your OK first.`}`);
@@ -938,6 +940,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
           if (answer !== "once") reaskEnded(svc, runId, answer);
         }
         if (answer === "stopped") return STOPPED();
+        if (answer === "expired") return denied(TIMED_OUT);
         if (answer === "no") return denied(SAID_NO);
         approvedAt = performance.now();
         rules = [...new Set([...rules, ...remoteRules(exit)])];
@@ -1073,8 +1076,8 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
  * Tells the command window (UI's reaskEnded) that no OK is coming for run `runId`, which the remote's own check sent back
  * for one; nothing when the window doesn't have it.
  */
-function reaskEnded(svc: CommandService, runId: string, why: "no" | "stopped" | "refused"): void {
-  const w = svc.window as CommandService["window"] & { reaskEnded?: (runId: string, why: "no" | "stopped" | "refused") => void };
+function reaskEnded(svc: CommandService, runId: string, why: "no" | "expired" | "stopped" | "refused"): void {
+  const w = svc.window as CommandService["window"] & { reaskEnded?: (runId: string, why: "no" | "expired" | "stopped" | "refused") => void };
   if (typeof w.reaskEnded !== "function") return;
   try { w.reaskEnded(runId, why); } catch { /* its tab only says it less well */ }
 }

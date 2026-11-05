@@ -1091,12 +1091,14 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(h.starts[0].stamp.approval!.ageMs).toBeGreaterThanOrEqual(0);
   });
 
-  it("no (or no answer) runs nothing, says so, and marks the task declined", async () => {
+  it("no, or no answer in time, runs nothing, says which, and marks the task declined", async () => {
     makeJudge({ decide: () => decision({ verdict: "ask", says: ["Deletes build."] }) });
     for (const answer of ["deny", null]) {
       const h = harness({ answers: [answer] });
       const r = await call(h);
-      expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "The user said no (or didn't answer). Don't run it again or work around it; finish the task saying what wasn't done." });
+      expect(r).toMatchObject({ resultType: "denied", textResultForLlm: answer === null
+        ? "The question timed out with no answer, so nothing was approved and it didn't run. Don't run it again or work around it; finish the task saying what wasn't done."
+        : "The user said no. Don't run it again or work around it; finish the task saying what wasn't done." });
       expect(h.starts).toEqual([]);
       expect(h.declined()).toBe(1);
       expect(h.audit.find(e => e.phase === "answered")).toMatchObject({ answer: answer ?? "expired", q: "card" });
@@ -1875,6 +1877,16 @@ describe("a remote's own check (§3.8.3 step 13, §3.16)", () => {
     (h.ctx.service.window as unknown as { reaskEnded: (runId: string, why: string) => void }).reaskEnded = (runId, why) => { ends.push([runId, why]); };
     return ends;
   };
+
+  it("a timeout on the remote's own question tells the tab it timed out, not that the user refused", async () => {
+    makeJudge();
+    const h = harness({ run: () => needsConfirm(), answers: [null] });
+    const ends = reaskEnds(h);
+    const r = await call(h);
+    expect(r.textResultForLlm).toMatch(/^The question timed out with no answer/);
+    expect(h.starts).toHaveLength(1);
+    expect(ends).toEqual([[h.starts[0].runId, "expired"]]);
+  });
 
   it("asks only once: a second needs_confirm is the remote's refusal", async () => {
     makeJudge();

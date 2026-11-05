@@ -81,7 +81,7 @@ export interface CommandWindowExtras {
    * let the question go ("no"), the task stopped ("stopped"), or the retry was sent back too, which is the remote's
    * refusal ("refused"). Its tab stops saying an OK is awaited, and no later run replaces it.
    */
-  reaskEnded(runId: string, why: "no" | "stopped" | "refused"): void;
+  reaskEnded(runId: string, why: "no" | "expired" | "stopped" | "refused"): void;
 }
 
 /**
@@ -834,7 +834,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
         t.outcome = "failed";
         t.status = statusLine(t.reaskExit, { label: t.card.targetLabel, os: o.os });
       } else {
-        t.status = reaskEndText(why === "no" ? "no" : "stopped");
+        t.status = reaskEndText(why === "no" || why === "expired" ? why : "stopped");
       }
       push();
     },
