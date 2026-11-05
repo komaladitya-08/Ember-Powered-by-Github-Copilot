@@ -77,6 +77,7 @@ export const IPC = {
   conversationForgotten: "agent:conversation-forgotten",
   conversationSend: "agent:conversation-send",
   conversationStop: "agent:conversation-stop",
+  conversationNew: "agent:conversation-new",
   projectPick: "project:pick",
   projectRemove: "project:remove",
   projectExport: "project:export",
@@ -431,6 +432,8 @@ export interface EmberHomeApi {
   conversationSend(text: string): Promise<void>;
   /** Ends the current response and queued requests; independently running tasks continue. */
   conversationStop(): Promise<void>;
+  /** Starts a fresh chat: memory, reminders, running tasks and sign-in stay. */
+  conversationNew(): Promise<void>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
   /** Explicit account/session erasure, distinct from a list made empty by forgetting learned facts. */
   onConversationForgotten(fn: () => void): () => void;

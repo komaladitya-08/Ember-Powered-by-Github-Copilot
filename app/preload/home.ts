@@ -81,6 +81,7 @@ const api: EmberHomeApi = {
   conversation: () => ipcRenderer.invoke(IPC.conversation),
   conversationSend: text => ipcRenderer.invoke(IPC.conversationSend, text),
   conversationStop: () => ipcRenderer.invoke(IPC.conversationStop),
+  conversationNew: () => ipcRenderer.invoke(IPC.conversationNew),
   onConversation: fn => listen<TranscriptEntry[]>(IPC.conversationChanged, fn),
   onConversationForgotten: fn => listen<unknown>(IPC.conversationForgotten, () => fn()),
   onFocusSection: fn => listen<string>(IPC.focusSection, fn),

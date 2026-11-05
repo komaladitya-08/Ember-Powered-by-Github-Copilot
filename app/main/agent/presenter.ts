@@ -66,6 +66,9 @@ export const SIGN_IN_REFUSED = "Copilot didn't accept the sign-in. Open settings
  */
 export type ServiceKind = boolean | "user";
 
+/** The whole conversation (not one request) went over the model's limit. */
+const CONVERSATION_TOO_LONG = "That's more than the model can take in at once: this conversation may have got too long. Try a shorter request, or choose New conversation in Ember's Home window to start a fresh chat.";
+
 /**
  * One plain sentence for an error from Copilot, instead of the raw SDK or HTTP text.
  * `raw` is kept for the log by the caller. `provider`: which model service is in use (ServiceKind).
@@ -98,9 +101,10 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
   if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one ${inSettings(false)}.`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
-  // The whole conversation (not this request) went over the model's limit: a new conversation starts when Ember restarts.
-  if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return "That's more than the model can take in at once: this conversation may have got too long. Try a shorter request, or quit and reopen Ember to start a new conversation.";
-  if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
+  // The whole conversation (not this request) went over the model's limit: a new conversation starts from Home's New conversation button.
+  if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return CONVERSATION_TOO_LONG;
+  if (/context.?(length|limit|window)/i.test(m)) return CONVERSATION_TOO_LONG;
+  if (/too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
   // The runtime's own connection went away ("Pending response rejected since connection got disposed").
   if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
   if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${mine ? "Your model service" : ctx.provider ? "Your organisation's model service" : "Copilot"} had a problem on its side. Try again in a moment.`;

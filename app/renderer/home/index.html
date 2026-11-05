@@ -149,9 +149,10 @@
           <label for="conversation-message">Message Ember</label>
           <p id="conversation-scope" class="hint"></p>
           <textarea id="conversation-message" rows="3" maxlength="2000" placeholder="What would you like help with?" aria-describedby="conversation-scope conversation-send-hint conversation-compose-status"></textarea>
-          <div class="conversation-compose-actions"><button type="submit" id="conversation-send" class="btn primary">Send</button><button type="button" id="conversation-cancel-edit" class="btn quiet" hidden>Cancel edit</button><button type="button" id="conversation-stop" class="btn quiet" aria-describedby="conversation-stop-hint">Stop response</button></div>
+          <div class="conversation-compose-actions"><button type="submit" id="conversation-send" class="btn primary">Send</button><button type="button" id="conversation-cancel-edit" class="btn quiet" hidden>Cancel edit</button><button type="button" id="conversation-stop" class="btn quiet" aria-describedby="conversation-stop-hint">Stop response</button><button type="button" id="conversation-new" class="btn quiet" aria-describedby="conversation-new-hint">New conversation</button></div>
           <p id="conversation-send-hint" class="hint">Up to 2,000 characters. Enter adds a new line. Ctrl+Enter or ⌘+Enter sends.</p>
           <p id="conversation-stop-hint" class="hint">Stop response ends the current reply and queued messages. Running tasks continue; use Stop everything to end those too.</p>
+          <p id="conversation-new-hint" class="hint">New conversation starts a fresh chat. Saved memory, reminders and running tasks stay, and you stay signed in.</p>
           <p id="conversation-compose-status" class="hint" role="status"></p>
         </form>
       </div>

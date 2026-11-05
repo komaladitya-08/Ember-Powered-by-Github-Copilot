@@ -940,7 +940,7 @@ void window.ember.conversation().then(entries => {
   if (!conversationReceived && conversationOpened === conversationGeneration) renderConversation(entries);
 }, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t load this conversation. New replies will still appear here."; });
 window.ember.onConversation(entries => { conversationReceived = true; renderConversation(entries); });
-window.ember.onConversationForgotten(() => {
+const resetConversationView = () => {
   // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
   conversationMessage.value = "";
   conversationSearch.value = "";
@@ -955,6 +955,20 @@ window.ember.onConversationForgotten(() => {
   send.textContent = "Send";
   ($("conversation-stop") as HTMLButtonElement).disabled = false;
   renderConversation([]);
+};
+window.ember.onConversationForgotten(resetConversationView);
+$("conversation-new").addEventListener("click", () => {
+  const button = $("conversation-new") as HTMLButtonElement;
+  const generation = conversationGeneration;
+  button.disabled = true;
+  void window.ember.conversationNew().then(() => {
+    // Forgotten or reset another way meanwhile (sign-out, another account): a newer draft isn't this click's to clear.
+    if (generation !== conversationGeneration) return;
+    resetConversationView();
+    conversationComposeStatus.textContent = "Started a new conversation. Memory, reminders and running tasks are untouched.";
+    conversationMessage.focus();
+  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t start a new conversation. Try again."; })
+    .finally(() => { button.disabled = false; });
 });
 conversationSearch.addEventListener("input", () => renderConversation(conversationAll));
 $("conversation-compose").addEventListener("submit", event => {

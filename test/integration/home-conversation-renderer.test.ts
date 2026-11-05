@@ -10,10 +10,11 @@ import type { TranscriptEntry } from "../../app/main/agent/host";
 declare global {
   interface Window {
     __conversationTest: {
-      sent: string[]; copied: string[]; stops: number; allStops: number; failNext: boolean; deferNext: boolean;
+      sent: string[]; copied: string[]; stops: number; news: number; allStops: number; failNext: boolean; deferNext: boolean; deferNew: boolean;
       push(entries: TranscriptEntry[]): void;
       reset(): void;
       resolveSend(): void;
+      resolveNew(): void;
       resolveInitial(): void;
     };
   }
@@ -45,11 +46,13 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
       const emit = (name: string, value: unknown) => { for (const listener of listeners[name] ?? []) listener(value); };
       let pendingSend: (() => void) | null = null;
       let pendingInitial: (() => void) | null = null;
+      let pendingNew: (() => void) | null = null;
       const test = window.__conversationTest = {
-        sent: [] as string[], copied: [] as string[], stops: 0, allStops: 0, failNext: false, deferNext: false,
+        sent: [] as string[], copied: [] as string[], stops: 0, news: 0, allStops: 0, failNext: false, deferNext: false, deferNew: false,
         push: (value: TranscriptEntry[]) => emit("onConversation", value),
         reset: () => { emit("onConversationForgotten", undefined); },
         resolveSend: () => { pendingSend?.(); pendingSend = null; },
+        resolveNew: () => { pendingNew?.(); pendingNew = null; },
         resolveInitial: () => { pendingInitial?.(); pendingInitial = null; },
       };
       window.ember = new Proxy({}, { get: (_target, name: string) => {
@@ -64,6 +67,12 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
           if (test.deferNext) { test.deferNext = false; await new Promise<void>(resolve => { pendingSend = resolve; }); }
         };
         if (name === "conversationStop") return async () => { test.stops++; };
+        // As main answers it: the transcript is emptied (conversationChanged), but no "forgotten" is broadcast for it.
+        if (name === "conversationNew") return async () => {
+          test.news++;
+          emit("onConversation", []);
+          if (test.deferNew) { test.deferNew = false; await new Promise<void>(resolve => { pendingNew = resolve; }); }
+        };
         if (name === "stopEverything") return async () => { test.allStops++; };
         if (name === "reminders") return async () => [];
         if (name === "copyText") return async (text: string) => { test.copied.push(text); };
@@ -119,6 +128,31 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
     await page.locator("#conversation-send").click();
     await expect.poll(() => page.evaluate(() => window.__conversationTest.sent)).toEqual(["My unsent draft", "An explicitly edited request"]);
     expect(await page.locator("#conversation-retention").innerText()).toContain("latest 60 messages");
+    // New conversation: a plain button, reached and activated from the keyboard; it empties the chat only.
+    await page.locator("#conversation-stop").focus();
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-new");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.evaluate(() => window.__conversationTest.news)).toBe(1);
+    await expect.poll(() => page.locator("#conversation li").count()).toBe(0);
+    // Its own reset still announces the result and puts focus back on the composer (review of #184).
+    await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toContain("Memory, reminders and running tasks are untouched");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-message");
+    expect(await page.locator("#conversation-new").isDisabled()).toBe(false);
+    expect(await page.evaluate(() => window.__conversationTest.allStops)).toBe(0);
+    // An account reset that lands while it is under way is not its own: the newer draft and status stay untouched.
+    await page.evaluate(() => { window.__conversationTest.deferNew = true; });
+    await page.locator("#conversation-new").click();
+    await expect.poll(() => page.evaluate(() => window.__conversationTest.news)).toBe(2);
+    await page.evaluate(() => window.__conversationTest.reset());
+    await page.locator("#conversation-message").fill("Next account’s draft");
+    await page.locator("#conversation-send").focus();
+    await page.evaluate(() => window.__conversationTest.resolveNew());
+    await expect.poll(() => page.locator("#conversation-new").isDisabled()).toBe(false);
+    expect(await page.locator("#conversation-message").inputValue()).toBe("Next account’s draft");
+    expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-send");
+    await page.locator("#conversation-message").fill("");
     // Real layouts at either side of the Home breakpoint, larger type, Calm and forced colours.
     for (const width of [600, 1000]) for (const textSize of ["default", "large", "larger"]) {
       await page.setViewportSize({ width, height: 800 });

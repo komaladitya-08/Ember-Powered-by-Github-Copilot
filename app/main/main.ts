@@ -1888,6 +1888,10 @@ function start(): void {
     resetAnswerSpeech();
     await agent?.stopAnswer();
   }));
+  ipcMain.handle(IPC.conversationNew, guard(async () => {
+    resetAnswerSpeech();
+    await agent?.newConversation();
+  }));
   // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
   ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
@@ -3087,12 +3091,13 @@ function start(): void {
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
         showState({ idle: idleNow(status), setup: setupNow(status) });
       },
-      onTranscript: entries => {
-        // Forgotten (sign-out, another account): the "Ember learned" lines go with it.
+      onTranscript: (entries, why) => {
+        // Forgotten (sign-out, another account): the "Ember learned" lines go with it. A New conversation clears them
+        // too, but isn't announced as a forgetting: Home that asked for it resets itself when the request is answered.
         if (!entries.length) {
           resetAnswerSpeech();
           learnedLines = [];
-          broadcast(IPC.conversationForgotten, null);
+          if (why !== "new-conversation") broadcast(IPC.conversationForgotten, null);
         }
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
