@@ -27,6 +27,8 @@ describe("friendlyError: what used to show raw", () => {
   it("a long conversation's token limit says so", () => {
     for (const raw of ["CAPIError: 400 prompt token count of 140000 exceeds the limit of 128000", "Error: 400 {\"error\":{\"code\":\"model_max_prompt_tokens_exceeded\"}}"]) {
       expect(friendlyError(raw)).toMatch(/conversation may have got too long/);
+      expect(friendlyError(raw)).toMatch(/New conversation/);
+      expect(friendlyError(raw)).not.toMatch(/quit|reopen/i);
     }
     // A single request too large: as before.
     expect(friendlyError("context length exceeded")).toBe("That was too much for me to handle at once. Try a shorter request.");

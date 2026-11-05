@@ -10,7 +10,7 @@ import type { TranscriptEntry } from "../../app/main/agent/host";
 declare global {
   interface Window {
     __conversationTest: {
-      sent: string[]; copied: string[]; stops: number; allStops: number; failNext: boolean; deferNext: boolean;
+      sent: string[]; copied: string[]; stops: number; news: number; allStops: number; failNext: boolean; deferNext: boolean;
       push(entries: TranscriptEntry[]): void;
       reset(): void;
       resolveSend(): void;
@@ -46,7 +46,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
       let pendingSend: (() => void) | null = null;
       let pendingInitial: (() => void) | null = null;
       const test = window.__conversationTest = {
-        sent: [] as string[], copied: [] as string[], stops: 0, allStops: 0, failNext: false, deferNext: false,
+        sent: [] as string[], copied: [] as string[], stops: 0, news: 0, allStops: 0, failNext: false, deferNext: false,
         push: (value: TranscriptEntry[]) => emit("onConversation", value),
         reset: () => { emit("onConversationForgotten", undefined); },
         resolveSend: () => { pendingSend?.(); pendingSend = null; },
@@ -64,6 +64,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
           if (test.deferNext) { test.deferNext = false; await new Promise<void>(resolve => { pendingSend = resolve; }); }
         };
         if (name === "conversationStop") return async () => { test.stops++; };
+        if (name === "conversationNew") return async () => { test.news++; };
         if (name === "stopEverything") return async () => { test.allStops++; };
         if (name === "reminders") return async () => [];
         if (name === "copyText") return async (text: string) => { test.copied.push(text); };
@@ -119,6 +120,15 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
     await page.locator("#conversation-send").click();
     await expect.poll(() => page.evaluate(() => window.__conversationTest.sent)).toEqual(["My unsent draft", "An explicitly edited request"]);
     expect(await page.locator("#conversation-retention").innerText()).toContain("latest 60 messages");
+    // New conversation: a plain button, reached and activated from the keyboard; it empties the chat only.
+    await page.locator("#conversation-stop").focus();
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-new");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.evaluate(() => window.__conversationTest.news)).toBe(1);
+    await expect.poll(() => page.locator("#conversation li").count()).toBe(0);
+    expect(await page.locator("#conversation-compose-status").innerText()).toContain("Memory, reminders and running tasks are untouched");
+    expect(await page.evaluate(() => window.__conversationTest.allStops)).toBe(0);
     // Real layouts at either side of the Home breakpoint, larger type, Calm and forced colours.
     for (const width of [600, 1000]) for (const textSize of ["default", "large", "larger"]) {
       await page.setViewportSize({ width, height: 800 });

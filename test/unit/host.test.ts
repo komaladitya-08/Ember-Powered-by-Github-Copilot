@@ -4,6 +4,7 @@
  * The real runtime is covered by the integration tests.
  */
 
+import { TaskManager } from "../../app/main/agent/tasks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -502,6 +503,45 @@ describe("live test: what Ember says when it can't take a request", () => {
     sim.auth = async () => ({ isAuthenticated: true, login: "octo" });
     expect(await host.start(TOKEN, "stored")).toBe("ready");
     expect(host.getStatus().reason).toBeUndefined();
+    await host.stop();
+  });
+});
+
+describe("new conversation", () => {
+  it("starts the chat over and leaves memory, reminders, sign-in and running tasks alone", async () => {
+    const memory = { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => undefined) };
+    const { host } = makeHost({ memory });
+    await host.start(TOKEN, "stored");
+    const first = conductorSession().sessionId;
+    await host.ask("Explain this");
+    conductorSession().emit("assistant.message", { content: "Here you go." });
+    conductorSession().emit("session.idle");
+    expect(host.getTranscript().length).toBeGreaterThan(0);
+    host.reminders.add("stretch", Date.now() + 3_600_000, "in an hour");
+    const reminders = host.reminders.list().length;
+    const cancelAll = vi.spyOn(TaskManager.prototype, "cancelAll");
+    const signedOut = vi.spyOn(host as any, "setSignedOut");
+    const forgetKept = vi.spyOn(host as any, "forgetKept");
+    await host.newConversation();
+    expect(host.getTranscript()).toEqual([]);
+    expect(sim.deleted).toContain(first);
+    expect(memory.forgetAll).not.toHaveBeenCalled();
+    expect(forgetKept).not.toHaveBeenCalled();
+    expect(cancelAll).not.toHaveBeenCalled();
+    expect(signedOut).not.toHaveBeenCalled();
+    expect(host.reminders.list()).toHaveLength(reminders);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("forgetConversation still signs out and wipes memory", async () => {
+    const memory = { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => undefined) };
+    const { host } = makeHost({ memory });
+    await host.start(TOKEN, "stored");
+    await host.ask("Hello");
+    await host.forgetConversation();
+    expect(memory.forgetAll).toHaveBeenCalled();
+    expect(host.getTranscript()).toEqual([]);
     await host.stop();
   });
 });

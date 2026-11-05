@@ -2538,6 +2538,19 @@ export class AgentHost {
   }
 
   /**
+   * "New conversation": only the chat starts over. The reply under way and queued messages stop, the conductor's
+   * session and the transcript go; sign-in, memory, reminders, routines, running tasks and approvals are untouched
+   * (unlike `forgetConversation`, which is for sign-out). How tasks ended still reaches the next turn.
+   */
+  async newConversation(): Promise<void> {
+    await this.stopAnswer();
+    await this.forgetCurrent(RUNTIME_WAIT_MS);
+    this.transcript.length = 0;
+    this.o.onTranscript?.([]);
+    this.o.log.info("agent.new_conversation");
+  }
+
+  /**
    * Another account than the conversation's signed in: the conversation is deleted, as at sign-out, and what it said,
    * how its tasks ended and what Ember kept about its person go with it.
    */
