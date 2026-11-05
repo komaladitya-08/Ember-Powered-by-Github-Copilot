@@ -46,7 +46,7 @@ class Counts {
     read("tasks", () => this.api.tasks(), tasksSlot);
     read("facts", () => this.api.memory(), factsSlot);
     read("reminders", () => this.api.reminders(), r => ({ state: "known", n: r.length }));
-    read("routines", () => this.api.routinesCount(), n => ({ state: "known", n }));
+    read("routines", () => this.api.routinesCount(), c => c.known ? { state: "known", n: c.n } : { state: "unknown" });
     this.changed();
   }
   get loading(): boolean { return FIELDS.some(f => this.slots[f].state === "loading"); }
@@ -60,10 +60,20 @@ class Counts {
 const tasksSlot = (tasks: { status: string }[]): Slot =>
   ({ state: "known", n: tasks.filter(t => t.status === "queued" || t.status === "running" || t.status === "waiting").length });
 
+/** Closes whichever question is open, at once and without moving focus (the page is about to change under it). */
+const dismissers = new Set<() => void>();
+export function dismissForgetConfirms(): void { for (const fn of dismissers) fn(); }
+
+/** Whether a control can take focus now: not disabled, and not hidden by itself or by any ancestor (a hidden pane too). */
+const usable = (el: HTMLElement | null): el is HTMLElement => {
+  if (!el || el.hidden || (el as HTMLButtonElement | HTMLInputElement).disabled) return false;
+  return typeof el.checkVisibility === "function" ? el.checkVisibility() : el.offsetParent !== null;
+};
+
 /** Wire both questions; `hooks` keep today's error and in-flight handling in main.ts. */
 export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(err: unknown): void; deleteMemory(remove: () => Promise<unknown>): Promise<void> }): void {
   /** One question: `after` lists where focus goes if the opener disappears once the action completes. */
-  const ask = (opener: string, panel: string, scope: string, yes: string, no: string, words: (c: ForgetCounts) => string, run: () => Promise<void>, after: string[]) => {
+  const ask = (opener: string, panel: string, scope: string, yes: string, no: string, words: (c: ForgetCounts) => string, run: () => Promise<void>, after: string[], heading: string) => {
     const open = document.getElementById(opener) as HTMLButtonElement, box = document.getElementById(panel)!;
     const yesBtn = document.getElementById(yes) as HTMLButtonElement, noBtn = document.getElementById(no) as HTMLButtonElement;
     const text = document.getElementById(scope)!;
@@ -93,13 +103,15 @@ export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(er
       for (const el of made) el.inert = false;
       made = [];
     };
-    const visibleAfter = () => after.map(id => document.getElementById(id)).find((el): el is HTMLElement => !!el && !el.hidden);
+    // An enabled, visible control first (memory-on is disabled while an organisation manages memory), else the section heading.
+    const visibleAfter = () => after.map(id => document.getElementById(id)).find(usable);
+    const fallback = () => visibleAfter() ?? document.getElementById(heading) ?? undefined;
     const close = (refocus: boolean) => {
       box.hidden = true;
       teardown();
       if (!refocus) return;
       // The opener may have gone while the question was up (live memory changes), so fall back to a visible control.
-      const target = !open.hidden ? open : visibleAfter();
+      const target = usable(open) ? open : fallback();
       target?.focus();
     };
     const buttons = () => [noBtn, yesBtn].filter(b => !b.disabled);
@@ -136,15 +148,16 @@ export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(er
       if (!restoring || !open.hidden) return;
       const lost = document.activeElement === document.body || document.activeElement === open || !document.activeElement;
       if (!lost) { restoring = false; return; }
-      const next = visibleAfter();
+      const next = fallback();
       if (next) { next.focus(); restoring = false; }
     };
     // Hidden from outside (not by close): drop the trap so nothing stays inert or listening.
+    dismissers.add(() => { if (!box.hidden) { box.hidden = true; teardown(); } });
     new MutationObserver(() => { if (box.hidden) teardown(); }).observe(box, { attributes: true, attributeFilter: ["hidden"] });
     new MutationObserver(restoreIfGone).observe(open, { attributes: true, attributeFilter: ["hidden"] });
   };
   ask("sign-out", "sign-out-confirm", "sign-out-scope", "sign-out-yes", "sign-out-no", signOutScope,
-    () => api.signOut().catch(hooks.signOutFailed), ["sign-in", "retry"]);
+    () => api.signOut().catch(hooks.signOutFailed), ["sign-in", "retry"], "copilot-h");
   ask("memory-forget-all", "forget-all-confirm", "forget-all-scope", "forget-all-yes", "forget-all-no", forgetEverythingScope,
-    () => hooks.deleteMemory(() => api.forgetAllMemory()), ["memory-on"]);
+    () => hooks.deleteMemory(() => api.forgetAllMemory()), ["memory-on"], "memory-h");
 }

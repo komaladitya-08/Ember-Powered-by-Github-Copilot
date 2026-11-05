@@ -386,8 +386,8 @@ export interface EmberHomeApi {
   openUpdate(): Promise<void>;
   /** The routines kept, and changes to them; deleting one, or all of them with the lasting reminders. */
   routines(): Promise<RoutineRow[]>;
-  /** How many routines are kept; rejects when they can't be read (unlike `routines()`, which lists none then). */
-  routinesCount(): Promise<number>;
+  /** How many routines are stored, whatever the policy; unknown (never zero) when they can't be read. */
+  routinesCount(): Promise<{ known: true; n: number } | { known: false }>;
   reminders(): Promise<ReminderRow[]>;
   onReminders(fn: (rows: ReminderRow[]) => void): () => void;
   changeReminder(change: ReminderChange): Promise<void>;

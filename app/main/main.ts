@@ -117,7 +117,7 @@ import { PROVIDER_IPC } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
-import { RoutineBook, routinesFile } from "./agent/routines";
+import { RoutineBook, countStoredRoutines, routinesFile } from "./agent/routines";
 import { reminderNotification, type Reminder } from "./agent/reminders";
 import { ReminderChangeSchema } from "../shared/reminders";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
@@ -2339,7 +2339,9 @@ function start(): void {
   }));
   ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
   // The count for the Sign out and Forget questions: rejects when the book can't be read, so Home shows it as unknown.
-  ipcMain.handle(IPC.routinesCount, guard(() => routineRowsStrict().length));
+  // Read from the file, not the book: no quarantine of a broken file, and policy-hidden routines still go at sign-out.
+  // Only a tagged number leaves main: a failure's message carries the file's path.
+  ipcMain.handle(IPC.routinesCount, guard(() => countStoredRoutines(userData, err => log.warn("routines.count_unreadable", { err: err instanceof Error ? err.message : String(err) }))));
   ipcMain.handle(IPC.remindersList, guard(() => reminderRows()));
   ipcMain.handle(IPC.reminderChange, guard((value: unknown) => {
     const parsed = ReminderChangeSchema.safeParse(value);

@@ -50,7 +50,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
         };
         if (name === "reminders") return async () => Array.from({ length: window.__counts.reminders }, (_, i) => ({ id: `r${i}`, text: "x", at: 1, created: 1, kept: false }));
         if (name === "routines") return async () => Array.from({ length: window.__counts.routines }, (_, i) => ({ id: `n${i}`, name: "n", steps: [] }));
-        if (name === "routinesCount") return () => window.__mode.routinesUnreadable ? Promise.reject(new Error("EACCES")) : Promise.resolve(window.__counts.routines);
+        if (name === "routinesCount") return () => Promise.resolve(window.__mode.routinesUnreadable ? { known: false } : { known: true, n: window.__counts.routines });
         if (name === "signOut") return () => { window.__calls.push("signOut"); return window.__mode.signOutHangs ? new Promise(() => undefined) : Promise.resolve(); };
         if (name === "updateSettings") return (patch: unknown) => { window.__calls.push(`updateSettings:${JSON.stringify(patch)}`); return new Promise(() => undefined); };
         if (name === "forgetAllMemory") return async () => { window.__calls.push("forgetAll"); };
@@ -214,6 +214,29 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     await page.keyboard.press("Escape");
     expect(await focusedId()).toBe("memory-on");
     await page.evaluate(() => window.__emit("onMemory", { rows: [{ id: "z", text: "x", source: "user", at: "2026-11-04" }], ownership: "ready" }));
+
+    // Managed memory: its switch is disabled, so Cancel after the last fact goes lands on an enabled, visible control or the heading.
+    await page.evaluate(() => { (document.getElementById("memory-on") as HTMLInputElement).disabled = true; });
+    await page.locator("#memory-forget-all").click();
+    await page.evaluate(() => window.__emit("onMemory", { rows: [], ownership: "ready" }));
+    await expect.poll(() => page.locator("#memory-forget-all").isHidden()).toBe(true);
+    await page.locator("#forget-all-no").click();
+    const landed = await page.evaluate(() => { const a = document.activeElement as HTMLElement; return { id: a.id, body: a === document.body, disabled: !!(a as HTMLInputElement).disabled, visible: a.checkVisibility() }; });
+    expect(landed).toEqual({ id: "memory-h", body: false, disabled: false, visible: true });
+    await page.evaluate(() => { (document.getElementById("memory-on") as HTMLInputElement).disabled = false; window.__emit("onMemory", { rows: [{ id: "z", text: "x", source: "user", at: "2026-11-04" }], ownership: "ready" }); });
+    await expect.poll(() => page.locator("#memory-forget-all").isVisible()).toBe(true);
+
+    // Main moves Home to another pane (onFocusSection) while a question is up: it closes, nothing stays inert, Tab is free.
+    await page.locator("#memory-forget-all").click();
+    await expect.poll(() => page.locator("#forget-all-yes").isEnabled()).toBe(true);
+    await page.evaluate(() => window.__emit("onFocusSection", "copilot"));
+    expect(await page.locator("#forget-all-confirm").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.querySelectorAll("[inert]").length)).toBe(0);
+    expect(await focusedId()).toBe("copilot-h");
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.activeElement?.id)).not.toBe("forget-all-no");
+    expect(await page.evaluate(() => !!document.activeElement?.closest("#forget-all-confirm"))).toBe(false);
+    await page.locator('a[href="#memory-h"]').click();
 
     // A slow read that answers after a newer push doesn't overwrite it.
     await page.evaluate(() => { window.__mode.memory = "manual"; window.__counts.facts = 2; });
