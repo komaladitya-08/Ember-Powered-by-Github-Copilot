@@ -6,7 +6,7 @@ import { chromium } from "playwright-core";
 import { expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 
-declare global { interface Window { __calls: string[]; __counts: { tasks: number; facts: number; reminders: number; routines: number }; __mode: { memory: "ok" | "reject" | "locked" | "hang"; signOutHangs: boolean }; __emit: (name: string, value: unknown) => void } }
+declare global { interface Window { __calls: string[]; __counts: { tasks: number; facts: number; reminders: number; routines: number }; __mode: { memory: "ok" | "reject" | "locked" | "hang" | "manual"; signOutHangs: boolean }; __emit: (name: string, value: unknown) => void; __release: () => void } }
 
 it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out and Forget everything, shows live counts, and cancels cleanly", async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
@@ -33,8 +33,8 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
       const rows = () => Array.from({ length: window.__counts.facts }, (_, i) => ({ id: `f${i}`, text: `Fact ${i}`, source: "user", at: "2026-11-04" }));
       window.__mode = { memory: "ok", signOutHangs: false };
       const subs: Record<string, ((v: unknown) => void)[]> = {};
-      // Home's own handlers want whole rows and may throw on these slim ones; the questions only need the counts.
-      window.__emit = (name, value) => { for (const fn of subs[name] ?? []) { try { fn(value); } catch { /* Home's own render, not under test */ } } };
+      // Complete payloads only: a throwing subscriber fails the test instead of being swallowed.
+      window.__emit = (name, value) => { for (const fn of subs[name] ?? []) fn(value); };
       window.ember = new Proxy({}, { get: (_t, name: string) => {
         if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
         if (name === "getStatus") return async () => seed.status;
@@ -42,6 +42,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
         if (name === "tasks") return async () => [...["running", "waiting", "queued"].slice(0, window.__counts.tasks).map((status, i) => ({ id: `t${i}`, status })), { id: "done", status: "done" }];
         if (name === "memory") return () => {
           if (window.__mode.memory === "reject") return Promise.reject(new Error("boom"));
+          if (window.__mode.memory === "manual") return new Promise(resolve => { const held = rows(); window.__release = () => resolve({ rows: held, ownership: "ready" }); });
           if (window.__mode.memory === "hang") return new Promise(() => undefined);
           // Locked memory deliberately returns no rows even when some are stored.
           if (window.__mode.memory === "locked") return Promise.resolve({ rows: [], ownership: "locked" });
@@ -50,6 +51,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
         if (name === "reminders") return async () => Array.from({ length: window.__counts.reminders }, (_, i) => ({ id: `r${i}`, text: "x", at: 1, created: 1, kept: false }));
         if (name === "routines") return async () => Array.from({ length: window.__counts.routines }, (_, i) => ({ id: `n${i}`, name: "n", steps: [] }));
         if (name === "signOut") return () => { window.__calls.push("signOut"); return window.__mode.signOutHangs ? new Promise(() => undefined) : Promise.resolve(); };
+        if (name === "updateSettings") return (patch: unknown) => { window.__calls.push(`updateSettings:${JSON.stringify(patch)}`); return new Promise(() => undefined); };
         if (name === "forgetAllMemory") return async () => { window.__calls.push("forgetAll"); };
         return () => new Promise(() => undefined);
       } }) as never;
@@ -158,9 +160,64 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     await expect.poll(() => page.locator("#forget-all-scope").innerText()).toContain("4 saved facts");
     await page.evaluate(() => window.__emit("onMemory", { rows: Array.from({ length: 8 }, (_, i) => ({ id: `g${i}`, text: "x", source: "user", at: "2026-11-04" })), ownership: "ready" }));
     await expect.poll(() => page.locator("#forget-all-scope").innerText()).toContain("8 saved facts");
-    await page.evaluate(() => window.__emit("onTasks", [{ id: "a", status: "running", activity: {} }]));
+    await page.evaluate(() => window.__emit("onTasks", [{ id: "a", title: "A", status: "running", activity: { startedAt: 1, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 0, approvals: 0, asking: false, retry: 0, slow: false, nearLimit: false, live: "", note: "" } }]));
     await expect.poll(() => page.locator("#forget-all-scope").innerText()).toContain("1 task, 0 reminders");
     await page.keyboard.press("Escape");
+
+    // P2-1: the page behind an open question is inert, so a pointer can't reach the sidebar or the memory switch.
+    await page.evaluate(() => { window.__mode.memory = "ok"; window.__counts = { tasks: 0, facts: 2, reminders: 0, routines: 0 }; window.__calls.length = 0; });
+    await page.locator('a[href="#memory-h"]').click();
+    await page.locator("#memory-forget-all").click();
+    await expect.poll(() => page.locator("#forget-all-yes").isEnabled()).toBe(true);
+    const clickAt = async (sel: string) => { const b = (await page.locator(sel).boundingBox())!; await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2); };
+    await clickAt('a[href="#copilot-h"]');
+    await clickAt("#memory-on");
+    expect(await page.locator("#forget-all-confirm").isVisible()).toBe(true);
+    expect(await calls()).toEqual([]);
+    expect(await page.evaluate(() => document.getElementById("memory-on")!.closest("[inert]") !== null)).toBe(true);
+    await page.keyboard.press("Escape"); // the key handler is still attached, not orphaned
+    expect(await page.locator("#forget-all-confirm").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.querySelectorAll("[inert]").length)).toBe(0);
+    // Inert is gone again after closing: a trial click (which hit-tests, without clicking) reaches the switch.
+    await page.locator("#memory-on").click({ trial: true, timeout: 3000 });
+
+    // Hidden from outside: nothing stays inert.
+    await page.locator("#memory-forget-all").click();
+    await page.evaluate(() => { (document.getElementById("forget-all-confirm") as HTMLElement).hidden = true; });
+    await expect.poll(() => page.evaluate(() => document.querySelectorAll("[inert]").length)).toBe(0);
+
+    // P2-2: the last fact goes (a real onMemory push) while the question is up; Cancel lands on the memory switch.
+    await page.locator("#memory-forget-all").click();
+    await page.evaluate(() => window.__emit("onMemory", { rows: [], ownership: "ready" }));
+    await expect.poll(() => page.locator("#memory-forget-all").isHidden()).toBe(true);
+    await page.locator("#forget-all-no").click();
+    expect(await focusedId()).toBe("memory-on");
+    await page.evaluate(() => window.__emit("onMemory", { rows: [{ id: "z", text: "x", source: "user", at: "2026-11-04" }], ownership: "ready" }));
+    await expect.poll(() => page.locator("#memory-forget-all").isVisible()).toBe(true);
+    await page.locator("#memory-forget-all").click();
+    await page.evaluate(() => window.__emit("onMemory", { rows: [], ownership: "ready" }));
+    await page.keyboard.press("Escape");
+    expect(await focusedId()).toBe("memory-on");
+    await page.evaluate(() => window.__emit("onMemory", { rows: [{ id: "z", text: "x", source: "user", at: "2026-11-04" }], ownership: "ready" }));
+
+    // A slow read that answers after a newer push doesn't overwrite it.
+    await page.evaluate(() => { window.__mode.memory = "manual"; window.__counts.facts = 2; });
+    await page.locator("#memory-forget-all").click();
+    await page.evaluate(() => window.__emit("onMemory", { rows: Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, text: "x", source: "user", at: "2026-11-04" })), ownership: "ready" }));
+    await page.evaluate(() => window.__release());
+    await page.evaluate(() => window.__emit("onTasks", [])); // let the stale answer land first
+    await expect.poll(() => page.locator("#forget-all-scope").innerText()).toContain("7 saved facts");
+    await page.waitForTimeout(200);
+    expect(await page.locator("#forget-all-scope").innerText()).toContain("7 saved facts");
+
+    // Reminder and routine changes while it is open update the text.
+    await page.evaluate(() => {
+      window.__emit("onReminders", [{ id: "r1", text: "a", at: 1, created: 1, kept: false }, { id: "r2", text: "b", at: 2, created: 1, kept: false }, { id: "r3", text: "c", at: 3, created: 1, kept: false }]);
+      window.__emit("onRoutines", [{ id: "n1", name: "n", steps: [] }, { id: "n2", name: "m", steps: [] }]);
+    });
+    await expect.poll(() => page.locator("#forget-all-scope").innerText()).toContain("3 reminders and 2 routines");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.__mode.memory = "ok"; });
 
     // Sign out twice while the first is pending makes one call.
     await page.locator('a[href="#copilot-h"]').click();

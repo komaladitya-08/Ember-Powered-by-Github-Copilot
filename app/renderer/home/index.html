@@ -212,7 +212,8 @@
           <button type="button" id="cancel-sign-in" class="btn quiet" hidden>Cancel</button>
           <button type="button" id="sign-out" class="btn quiet" hidden>Sign out</button>
         </div>
-        <div id="sign-out-confirm" class="consent" role="alertdialog" aria-modal="true" aria-label="Sign out" aria-describedby="sign-out-scope" hidden>
+        <div id="sign-out-confirm" class="consent" role="alertdialog" aria-modal="true" aria-labelledby="sign-out-title" aria-describedby="sign-out-scope" hidden>
+          <p id="sign-out-title"><b>Sign out</b></p>
           <p id="sign-out-scope" role="status" aria-live="polite"></p>
           <div class="agent-actions"><button type="button" id="sign-out-yes" class="btn quiet danger">Sign out</button><button type="button" id="sign-out-no" class="btn quiet">Stay signed in</button></div>
         </div>
@@ -357,7 +358,8 @@
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
       <p class="hint" id="memory-owner" role="status" hidden></p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
-      <div id="forget-all-confirm" class="consent" role="alertdialog" aria-modal="true" aria-label="Forget everything" aria-describedby="forget-all-scope" hidden>
+      <div id="forget-all-confirm" class="consent" role="alertdialog" aria-modal="true" aria-labelledby="forget-all-title" aria-describedby="forget-all-scope" hidden>
+        <p id="forget-all-title"><b>Forget everything</b></p>
         <p id="forget-all-scope" role="status" aria-live="polite"></p>
         <div class="agent-actions"><button type="button" id="forget-all-yes" class="btn quiet danger">Forget everything</button><button type="button" id="forget-all-no" class="btn quiet">Keep saved memory</button></div>
       </div>

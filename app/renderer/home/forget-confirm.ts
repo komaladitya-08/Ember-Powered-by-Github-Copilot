@@ -77,11 +77,30 @@ export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(er
       yesBtn.disabled = loading || pending;
     };
     const counts = new Counts(api, render);
-    const close = (refocus: boolean) => {
-      box.hidden = true;
+    /** Everything outside the question is inert while it is up, so a pointer can't reach the page behind it. */
+    let made: HTMLElement[] = [];
+    const makeInert = () => {
+      for (let node: HTMLElement = box; node.parentElement; node = node.parentElement) {
+        for (const sib of Array.from(node.parentElement.children)) {
+          if (sib !== node && sib instanceof HTMLElement && !sib.inert) { sib.inert = true; made.push(sib); }
+        }
+      }
+    };
+    /** Undo every listener and the inert marks; safe to call twice (a hidden panel, an external hide, then close). */
+    const teardown = () => {
       document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("focusin", onFocusIn, true);
-      if (refocus && !open.hidden) open.focus();
+      for (const el of made) el.inert = false;
+      made = [];
+    };
+    const visibleAfter = () => after.map(id => document.getElementById(id)).find((el): el is HTMLElement => !!el && !el.hidden);
+    const close = (refocus: boolean) => {
+      box.hidden = true;
+      teardown();
+      if (!refocus) return;
+      // The opener may have gone while the question was up (live memory changes), so fall back to a visible control.
+      const target = !open.hidden ? open : visibleAfter();
+      target?.focus();
     };
     const buttons = () => [noBtn, yesBtn].filter(b => !b.disabled);
     const onKey = (e: KeyboardEvent) => {
@@ -99,6 +118,7 @@ export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(er
       box.hidden = false;
       document.addEventListener("keydown", onKey, true);
       document.addEventListener("focusin", onFocusIn, true);
+      makeInert();
       counts.refresh(); // renders the loading state first
       render();
       noBtn.focus(); // the safe choice first, even while loading
@@ -116,9 +136,11 @@ export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(er
       if (!restoring || !open.hidden) return;
       const lost = document.activeElement === document.body || document.activeElement === open || !document.activeElement;
       if (!lost) { restoring = false; return; }
-      const next = after.map(id => document.getElementById(id)).find((el): el is HTMLElement => !!el && !el.hidden);
+      const next = visibleAfter();
       if (next) { next.focus(); restoring = false; }
     };
+    // Hidden from outside (not by close): drop the trap so nothing stays inert or listening.
+    new MutationObserver(() => { if (box.hidden) teardown(); }).observe(box, { attributes: true, attributeFilter: ["hidden"] });
     new MutationObserver(restoreIfGone).observe(open, { attributes: true, attributeFilter: ["hidden"] });
   };
   ask("sign-out", "sign-out-confirm", "sign-out-scope", "sign-out-yes", "sign-out-no", signOutScope,
