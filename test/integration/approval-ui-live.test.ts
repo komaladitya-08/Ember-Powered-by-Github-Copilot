@@ -80,3 +80,66 @@ it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("reads and focuses an exact a
     await buttons.screenshot({ path: path.join(dir, "gesture.png") });
   } finally { await app?.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 }, 90_000);
+
+it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("keeps a refusal visible when its card is pulled before the reply, and clears it for a replacement", async () => {
+  const root = process.cwd(), dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-approval-notice-"));
+  const requireCjs = createRequire(import.meta.url);
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  try {
+    const main = path.join(dir, "main.cjs");
+    // The reply to a press waits until the test releases it, so the card can be pulled or replaced first.
+    const source = `
+      import { app, BrowserWindow, ipcMain } from "electron";
+      import { createPromptWindowController } from "./app/main/remote/prompt-window";
+      const quiet = { info(){}, debug(){}, warn(){}, error(){}, child(){return this;} };
+      let ctl, release;
+      const card = n => ({ title: 'Question ' + n, prompt: 'Send it?', kind: 'approval', id: 'approval-' + n, n, options: [{id:'once',label:'Allow',primary:true},{id:'deny',label:'Not now'}] });
+      app.whenReady().then(() => {
+        ctl = createPromptWindowController({ os: "linux", log: quiet, ipc: ipcMain, create() {
+          const w = new BrowserWindow({ width: 520, height: 600, show: false, webPreferences: { contextIsolation: true, sandbox: true, preload: ${JSON.stringify(path.join(root, "dist/app/preload/prompt.cjs"))} } });
+          w.loadFile(${JSON.stringify(path.join(root, "dist/app/renderer/prompt/index.html"))}); return w;
+        }});
+        ctl.onApproval(() => new Promise(r => { release = () => r("gone"); }));
+        globalThis.__p = { show: n => ctl.showApproval(card(n)), hide: n => ctl.hideApproval(n), release: () => release() };
+        globalThis.__p.show(1);
+      });`;
+    await build({ stdin: { contents: source, resolveDir: root, loader: "ts" }, outfile: main, bundle: true, platform: "node", format: "cjs", external: ["electron"] });
+    app = await _electron.launch({ executablePath: requireCjs("electron") as string, args: [main, ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])] });
+    const page = await app.firstWindow();
+    const p = (fn: "show" | "hide" | "release", n?: number) => app!.evaluate((_e, a) => (globalThis as unknown as { __p: Record<string, (n?: number) => void> }).__p[a.fn](a.n), { fn, n });
+    const notice = page.locator("#notice");
+    const press = async () => { await page.getByRole("button", { name: "Not now", exact: true }).click({ timeout: 3000 }); };
+
+    // Pulled before the reply: the refusal is still there to read, though the card is gone.
+    await page.locator("#title").waitFor({ state: "visible" });
+    await press();
+    await p("hide", 1);
+    await expect.poll(() => page.locator("#card").isVisible()).toBe(false);
+    await p("release");
+    await expect.poll(() => notice.evaluate(el => (el as HTMLElement).checkVisibility())).toBe(true);
+    expect(await notice.innerText()).not.toBe("");
+
+    // Replaced before the reply: the old question's refusal doesn't land under the new one.
+    await p("show", 2);
+    await expect.poll(() => page.locator("#title").innerText()).toBe("Question 2");
+    expect(await notice.evaluate(el => (el as HTMLElement).hidden)).toBe(true);
+    await press();
+    await p("show", 3);
+    await expect.poll(() => page.locator("#title").innerText()).toBe("Question 3");
+    await p("release");
+    await page.waitForTimeout(150);
+    expect(await notice.evaluate(el => (el as HTMLElement).hidden)).toBe(true);
+
+    // Reply first, then replaced: it clears, as before.
+    await press();
+    await p("release");
+    await expect.poll(() => notice.evaluate(el => (el as HTMLElement).hidden)).toBe(false);
+    await p("show", 4);
+    await expect.poll(() => page.locator("#title").innerText()).toBe("Question 4");
+    expect(await notice.evaluate(el => (el as HTMLElement).hidden)).toBe(true);
+  } finally {
+    // The prompt window keeps the app alive (it hides rather than closes), so end the process outright.
+    await app?.evaluate(({ app: a }) => a.exit(0)).catch(() => undefined);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, 90_000);

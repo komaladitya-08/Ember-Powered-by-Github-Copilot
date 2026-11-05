@@ -30,6 +30,8 @@ let shownAt = 0;
 let buttons: { view: ButtonView; el: HTMLButtonElement }[] = [];
 let armTimer: ReturnType<typeof setTimeout> | null = null;
 let sent = false;
+/** The id of the last card shown: a refusal belongs under that question, and under no later one. */
+let shownId: string | null = null;
 /** The card's layout: the text size main gave the page (page-prefs.ts), which it may set after the card is drawn. */
 const layoutNow = (): string => document.documentElement.dataset.textSize ?? "default";
 /** Every word of the card on screen has been in view since it came up, and at which text size (copy.ts judgeRead). */
@@ -98,8 +100,9 @@ async function press(b: ButtonView): Promise<void> {
     if (b.id !== "deny" && shown.detail && !seenNow()) return;
     // The Confirmer alone arms and accepts the exact current question. Rejected early presses leave it answerable.
     let accepted: ApprovalResult;
-    try { accepted = await api.approval(shown.id, b.id); } catch { say(APPROVAL_NOT_SENT); return; }
-    if (!accepted.ok) say(approvalNotTaken(accepted.reason));
+    try { accepted = await api.approval(shown.id, b.id); } catch { if (shownId === shown.id) say(APPROVAL_NOT_SENT); return; }
+    // The question may have been pulled (its refusal stays readable) but not replaced (a new question starts clean).
+    if (!accepted.ok && shownId === shown.id) say(approvalNotTaken(accepted.reason));
     if (card === shown && accepted.ok) { sent = true; for (const button of buttons) button.el.disabled = true; }
     return;
   }
@@ -160,10 +163,12 @@ function show(next: PromptCard | null): void {
   // The same card again (pulled after it was pushed): leave what the user is doing alone.
   if (next && card && next.id === card.id) return;
   card = next;
+  if (next) shownId = next.id;
   sent = false;
   gate = { seen: false, layout: layoutNow() };
   field.value = "";
-  say("");
+  // A pulled card keeps its last refusal on screen ("gone", "too soon"); a new question starts with none.
+  if (next) say("");
   if (armTimer) clearTimeout(armTimer);
   armTimer = null;
   if (focusTimer) clearTimeout(focusTimer);
