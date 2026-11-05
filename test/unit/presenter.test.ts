@@ -224,7 +224,10 @@ describe("Presenter: review round 2", () => {
       ["Forbidden", undefined, { statusCode: 403 }, /Check that your GitHub plan includes Copilot, or ask whoever manages it/],
       ["Could not connect to local model provider at http://127.0.0.1:1/v1.", "query", { provider: true }, /can't reach your organisation's model service/],
       ["Failed to get response from the AI model; retried 5 times. Last error: 429 Rate limit reached", "rate_limit", { statusCode: 429 }, /usage limit/],
-      ["400 This model's maximum context length is 8192 tokens.", "query", { statusCode: 400 }, /too much/],
+      // A whole conversation over the model's limit points to New conversation (#184); one request too big stays "too much".
+      ["400 This model's maximum context length is 8192 tokens.", "query", { statusCode: 400 }, /New conversation/],
+      ["400 Your request is too large for this model.", "query", { statusCode: 400 }, /too much/],
+      ["max_tokens must be smaller", "query", { statusCode: 400 }, /too much/],
       ["Resource not found on provider at http://x/v1 (HTTP 404).", "query", { statusCode: 404, provider: true }, /model I'm set to use/],
     ];
     for (const [raw, type, ctx, want] of cases) expect(friendlyError(raw, type, ctx), raw).toMatch(want);
