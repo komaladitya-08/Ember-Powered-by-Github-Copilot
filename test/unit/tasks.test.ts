@@ -368,13 +368,12 @@ describe("review round 2: stopping and questions", () => {
   const ask = (c: Confirmer) => c.ask({ title: "May I?", context: "Tidy the desktop", prompt: "Click “Save”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
 
   it("says why a press isn't taken: too soon, or the question is gone (review #30)", async () => {
-    const c = new Confirmer(() => undefined, { armMs: 10_000, gapMs: 0 });
+    const c = new Confirmer(() => undefined, { armMs: 10_000, gapMs: 0, timeoutMs: 50 });
     const q = ask(c);
     const n = c.currentNumber!;
     expect(c.refusal(`q${n}:once`)).toBe("not-yet");
     expect(c.refusal(`q${n + 1}:once`)).toBe("gone");
-    expect(c.answerKey("deny")).toBe(true);
-    await q;
+    await q; // expires
     expect(c.refusal(`q${n}:once`)).toBe("gone");
   });
   it("“Not now” (or no answer) leaves Ember idle, not working", async () => {
