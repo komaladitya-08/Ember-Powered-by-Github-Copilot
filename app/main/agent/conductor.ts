@@ -847,9 +847,13 @@ export class Conductor {
       d.log.info("conductor.created", { sessionId: created });
     }
     if (leftovers.length) {
-      await within(Promise.all(leftovers.map(id => d.client.deleteSession(id).catch(err => d.log.warn("conductor.delete_failed", { err })))), 5000);
-      writeAgentState(d.stateFile, { forget: undefined });
-      d.log.info("conductor.leftovers_deleted", { count: leftovers.length });
+      // Only what was really deleted leaves the forget list, and it leaves the list as it is now: a newer entry (a
+      // sign-out that couldn't delete the chat it just forgot) and a failed or timed-out deletion stay for the next start.
+      const deleted = new Set<string>();
+      await within(Promise.all(leftovers.map(id => d.client.deleteSession(id).then(() => { deleted.add(id); }, err => d.log.warn("conductor.delete_failed", { err })))), 5000);
+      const left = (readAgentState(d.stateFile).forget ?? []).filter(id => !deleted.has(id));
+      writeAgentState(d.stateFile, { forget: left.length ? left : undefined });
+      d.log.info("conductor.leftovers_deleted", { count: deleted.size });
     }
     if (life !== this.lifetime || !this.session) return;
     const tools = await verifySessionTools(this.session, this.toolNames, undefined, d.extensions);

@@ -92,7 +92,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     getAuthStatus() { return sim.auth(); }
     async listModels() { if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return sim.taskSessions.map(sessionId => ({ sessionId })); }
-    async deleteSession(id: string) { const gate = sim.deleteGate; sim.deleted.push(id); if (sim.deleteHangs) await hang(); if (gate) await gate; if (sim.deleteFails) throw new Error("delete failed"); }
+    async deleteSession(id: string) { const gate = sim.deleteGate; const fails = sim.deleteFails; sim.deleted.push(id); if (sim.deleteHangs) await hang(); if (gate) await gate; if (fails) throw new Error("delete failed"); }
     ping() { return sim.ping(); }
     async createSession(cfg: any) { await sim.createGate; if (sim.createFails) throw new Error("create failed"); const s = new FakeSession(cfg.sessionId ?? "s", cfg); sim.sessions.push(s); return s; }
     async resumeSession(id: string, cfg: any) { if (sim.resumeFails) throw new Error(`Session not found: ${id}`); sim.resumed.push(id); const s = new FakeSession(id, cfg); sim.sessions.push(s); return s; }
@@ -646,7 +646,85 @@ describe("new conversation", () => {
     expect(agentJson().conductorSessionId).toBe(newer);
     expect(agentJson().forget ?? []).not.toContain(newer);
     expect(sim.deleted).not.toContain(newer);
+    // The delete of the old chat really failed (its failure was fixed when it was sent): it stays queued, and the next start retries it.
+    expect(agentJson().forget ?? []).toContain(old);
+    const tried = sim.deleted.filter(id => id === old).length;
     await host.stop();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(sim.deleted.filter(id => id === old).length).toBe(tried + 1);
+    expect(agentJson().forget ?? []).not.toContain(old);
+    await host.stop();
+  });
+
+  it("a delayed cleanup after a reset keeps a newer id that sign-out couldn't delete (review of #184)", async () => {
+    const { host, agentJson } = makeHost();
+    await host.start(TOKEN, "stored");
+    const old = conductorSession().sessionId;
+    const client = sim.clients[0];
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    let deletesOfOld = 0;
+    const deleting = vi.spyOn(client, "deleteSession").mockImplementation(async (id: unknown) => {
+      sim.deleted.push(String(id));
+      if (id === old) {
+        if (++deletesOfOld === 1) throw new Error("old chat delete failed once");
+        await gate;
+        return;
+      }
+      throw new Error("new chat delete failed during sign-out");
+    });
+    const reset = host.newConversation();
+    try {
+      await vi.waitFor(() => expect(deletesOfOld).toBe(2));
+      const newer = conductorSession().sessionId;
+      expect(newer).not.toBe(old);
+      await host.forgetConversation();
+      expect(agentJson().forget).toContain(newer);
+      release();
+      await reset;
+      expect(agentJson().forget ?? []).toContain(newer);
+      const tried = sim.deleted.filter(id => id === newer).length;
+      deleting.mockRestore();
+      await host.start(TOKEN, "stored");
+      expect(sim.deleted.filter(id => id === newer).length).toBe(tried + 1);
+    } finally { release(); await reset.catch(() => undefined); deleting.mockRestore(); await host.stop(); }
+  });
+
+  it("a reset after the silent-abort grace answers again while the task keeps running (review of #184)", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost({ hands: hands(), turnSilentMs: 5000 });
+    await host.start(TOKEN, "stored");
+    const task = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(sim.sessions.find(s => s.sessionId === `ember-task-${task.id}`)?.sent).toHaveLength(1));
+    const worker = sim.sessions.find(s => s.sessionId === `ember-task-${task.id}`);
+    const keepAlive = setInterval(() => worker.emit("assistant.message_delta", { deltaContent: "working" }), 1000);
+    try {
+      await host.ask("explain a binary tree");
+      await vi.advanceTimersByTimeAsync(15500);
+      expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", waitingForTasks: true });
+      await host.newConversation();
+      expect(host.tasks!.get(task.id)?.status).toBe("running");
+      expect(host.getStatus()).toMatchObject({ phase: "ready", waitingForTasks: false });
+      expect(await host.ask("explain a linked list")).toBe(true);
+      expect(conductorSession().sent).toHaveLength(1);
+    } finally { clearInterval(keepAlive); const stopped = host.stop(); await vi.advanceTimersByTimeAsync(15000); await stopped; }
+  });
+
+  it("a successful retry after a failed new conversation restores ready while the task keeps running (review of #184)", async () => {
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const task = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(sim.sessions.find(s => s.sessionId === `ember-task-${task.id}`)?.sent).toHaveLength(1));
+    try {
+      vi.spyOn(sim.clients[0], "createSession").mockRejectedValueOnce(new Error("transient create failure"));
+      await expect(host.newConversation()).rejects.toThrow("transient create failure");
+      expect(host.getStatus()).toMatchObject({ phase: "error", waitingForTasks: true });
+      await host.newConversation();
+      expect(host.tasks!.get(task.id)?.status).toBe("running");
+      expect(host.getStatus()).toMatchObject({ phase: "ready", waitingForTasks: false });
+      expect(await host.ask("explain a linked list")).toBe(true);
+      expect(conductorSession().sent).toHaveLength(1);
+    } finally { await host.stop(); }
   });
 
   it("a session created for a reset that was overtaken never becomes the saved one (review of #184)", async () => {
