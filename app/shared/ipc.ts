@@ -109,6 +109,7 @@ export const IPC = {
   /** Routines and lasting reminders (app/main/agent/routines.ts): the routines kept, and deleting one or all of them. */
   routinesList: "routines:list",
   routinesChanged: "routines:changed",
+  routinesCount: "routines:count",
   routinesForget: "routines:forget",
   routinesForgetAll: "routines:forget-all",
   remindersList: "reminders:list",
@@ -386,6 +387,8 @@ export interface EmberHomeApi {
   openUpdate(): Promise<void>;
   /** The routines kept, and changes to them; deleting one, or all of them with the lasting reminders. */
   routines(): Promise<RoutineRow[]>;
+  /** How many routines are stored, whatever the policy; unknown (never zero) when they can't be read. */
+  routinesCount(): Promise<{ known: true; n: number } | { known: false }>;
   reminders(): Promise<ReminderRow[]>;
   onReminders(fn: (rows: ReminderRow[]) => void): () => void;
   changeReminder(change: ReminderChange): Promise<void>;

@@ -51,6 +51,30 @@ export interface RoutinesFile {
   readonly path: string;
 }
 
+/** How many routines are stored: a number, or unknown when the file can't be read or isn't valid. */
+export type StoredRoutinesCount = { known: true; n: number } | { known: false };
+
+/**
+ * Counts the routines in routines.json without touching it: no rename of a broken file, no file or folder made, and
+ * whatever the admin's policy says (sign-out deletes them all the same). Missing is none; anything else wrong is unknown.
+ */
+export function countStoredRoutines(dir: string, onFailed?: (err: unknown) => void): StoredRoutinesCount {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(dir, "routines.json"), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { known: true, n: 0 };
+    onFailed?.(err);
+    return { known: false };
+  }
+  try {
+    return { known: true, n: FileSchema.parse(JSON.parse(raw)).routines.length };
+  } catch (err) {
+    onFailed?.(err);
+    return { known: false };
+  }
+}
+
 /** routines.json in Ember's data folder (as memory.json: 0600, written whole, a broken one moved aside). */
 export function routinesFile(dir: string, onBroken?: (err: unknown) => void): RoutinesFile {
   const file = path.join(dir, "routines.json");
