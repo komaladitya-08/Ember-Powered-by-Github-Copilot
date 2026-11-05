@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { PROMPT_IPC, type ApprovalCard, type ApprovalRefusal, type ApprovalResult, type PromptAnswer, type PromptCard } from "../../shared/remote-ui";
+import { PROMPT_IPC, PROMPT_NOTICE_MS, type ApprovalCard, type ApprovalRefusal, type ApprovalResult, type PromptAnswer, type PromptCard } from "../../shared/remote-ui";
 import type { OS } from "../../shared/shortcuts";
 import type { ConsentPanel } from "../../shared/consent";
 import type { Logger } from "../logger";
@@ -240,6 +240,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       return;
     }
     stopIdle();
+    stopNotice();
     const w = ensure();
     if (!w) {
       // No window to ask in: an SSH prompt is answered no at once, as refused (nobody can answer it, and ssh mustn't
@@ -270,6 +271,9 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
    * secret into another app. The page says so on the card too.
    */
   let focusTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Hides the window again once a refused press's notice has been up for PROMPT_NOTICE_MS (review #183). */
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  const stopNotice = () => { if (noticeTimer) clearTimeout(noticeTimer); noticeTimer = null; };
   const warned = new Set<string>();
   function checkKeyboard(w: PromptWindowLike, e: Entry): void {
     if (focusTimer) clearTimeout(focusTimer);
@@ -324,6 +328,20 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
         if (r === "not-yet") reason = "not-yet";
       }
       return { ok: false, reason };
+    });
+    // A refusal is on screen with no card up (the question was pulled or replaced before its reply): the window stays
+    // up, small and without the keyboard, for a while so it can be read, then hides as it does with nothing to show.
+    o.ipc.on(PROMPT_IPC.notice, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.notice); return; }
+      if (!isObj(raw) || queue.length) return;
+      const w = live();
+      if (!w) return;
+      stopIdle();
+      stopNotice();
+      if (typeof w.fit === "function") safe("fit", () => w.fit?.({ width: PROMPT_SIZE.card.width, height: 160 }));
+      safe("show", () => w.showInactive()); // no keyboard taken
+      noticeTimer = setTimeout(() => { noticeTimer = null; if (!disposed && !queue.length) reveal(); }, PROMPT_NOTICE_MS);
+      noticeTimer.unref?.();
     });
     o.ipc.handle(PROMPT_IPC.show, e => {
       if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.show); return null; }
@@ -454,6 +472,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       stopIdle();
       if (focusTimer) clearTimeout(focusTimer);
       focusTimer = null;
+      stopNotice();
       for (const e of queue.splice(0)) e.resolve?.({ id: e.card.id, ok: false });
       approvalFns.clear();
       consentFns.clear();

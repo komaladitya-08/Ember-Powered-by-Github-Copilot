@@ -9,9 +9,9 @@
  * types a secret into another app (review #235).
  */
 
-import type { ApprovalResult, PromptCard } from "../../shared/remote-ui";
+import { PROMPT_NOTICE_MS, type ApprovalResult, type PromptCard } from "../../shared/remote-ui";
 import {
-  APPROVAL_NOT_SENT, approvalNotTaken, PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, RISKY_STEP_TAG, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
+  APPROVAL_EARLIER_NOT_TAKEN, APPROVAL_NOT_SENT, approvalNotTaken, PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, RISKY_STEP_TAG, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
   type Block, type ButtonView, type Part, type ReadGate,
 } from "./copy";
 import type { PromptApi } from "./api";
@@ -30,8 +30,6 @@ let shownAt = 0;
 let buttons: { view: ButtonView; el: HTMLButtonElement }[] = [];
 let armTimer: ReturnType<typeof setTimeout> | null = null;
 let sent = false;
-/** The id of the last card shown: a refusal belongs under that question, and under no later one. */
-let shownId: string | null = null;
 /** The card's layout: the text size main gave the page (page-prefs.ts), which it may set after the card is drawn. */
 const layoutNow = (): string => document.documentElement.dataset.textSize ?? "default";
 /** Every word of the card on screen has been in view since it came up, and at which text size (copy.ts judgeRead). */
@@ -86,11 +84,34 @@ async function hashShown(c: { title: string; body: string[] }): Promise<string |
   } catch { return null; } // no WebCrypto here: the card's own hash goes back, as the contract has it
 }
 
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
 /** A line under the card saying why a press didn't take (never silent). */
 function say(text: string): void {
   const n = $("notice");
   n.textContent = text;
   n.hidden = !text;
+  delete n.dataset.earlier;
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = null;
+}
+
+/**
+ * The refusal of a press on a question that is no longer the one shown (pulled or replaced before main's reply). It is
+ * worded as about the earlier question, outlives a replacement card's arrival, and, with no card up, asks main to keep
+ * the window shown so it can be read (review #183). It goes after PROMPT_NOTICE_MS, or at the next press.
+ */
+function sayEarlier(): void {
+  say(APPROVAL_EARLIER_NOT_TAKEN);
+  $("notice").dataset.earlier = "true";
+  noticeTimer = setTimeout(() => { noticeTimer = null; say(""); }, PROMPT_NOTICE_MS);
+  if (!card) api.notice();
+}
+
+/** A refusal already on screen when its card is pulled or replaced: it now belongs to the earlier question. */
+function keepAsEarlier(): void {
+  if ($("notice").hidden) return;
+  sayEarlier();
 }
 
 async function press(b: ButtonView): Promise<void> {
@@ -98,11 +119,12 @@ async function press(b: ButtonView): Promise<void> {
   if (card.kind === "approval") {
     const shown = card;
     if (b.id !== "deny" && shown.detail && !seenNow()) return;
+    say(""); // each press starts without the last one's refusal
     // The Confirmer alone arms and accepts the exact current question. Rejected early presses leave it answerable.
     let accepted: ApprovalResult;
-    try { accepted = await api.approval(shown.id, b.id); } catch { if (shownId === shown.id) say(APPROVAL_NOT_SENT); return; }
-    // The question may have been pulled (its refusal stays readable) but not replaced (a new question starts clean).
-    if (!accepted.ok && shownId === shown.id) say(approvalNotTaken(accepted.reason));
+    try { accepted = await api.approval(shown.id, b.id); } catch { if (card === shown) say(APPROVAL_NOT_SENT); else sayEarlier(); return; }
+    // Still the question on screen: its own refusal. Pulled or replaced meanwhile: said of the earlier question.
+    if (!accepted.ok) { if (card === shown) say(approvalNotTaken(accepted.reason)); else sayEarlier(); }
     if (card === shown && accepted.ok) { sent = true; for (const button of buttons) button.el.disabled = true; }
     return;
   }
@@ -162,20 +184,25 @@ new MutationObserver(() => judge()).observe(document.documentElement, { attribut
 function show(next: PromptCard | null): void {
   // The same card again (pulled after it was pushed): leave what the user is doing alone.
   if (next && card && next.id === card.id) return;
+  const hadCard = !!card;
   card = next;
-  if (next) shownId = next.id;
   sent = false;
   gate = { seen: false, layout: layoutNow() };
   field.value = "";
-  // A pulled card keeps its last refusal on screen ("gone", "too soon"); a new question starts with none.
-  if (next) say("");
+  // A pulled card keeps its last refusal on screen ("gone", "too soon"); a new question starts with none of its own,
+  // but a refusal of an earlier question's press stays, worded as that, until it times out.
+  if (next && $("notice").hidden) say("");
+  else if (hadCard || next) keepAsEarlier();
   if (armTimer) clearTimeout(armTimer);
   armTimer = null;
   if (focusTimer) clearTimeout(focusTimer);
   focusTimer = null;
   rewrap?.disconnect();
   $("card").hidden = !next;
-  if (!next) { buttons = []; return; }
+  if (!next) {
+    buttons = [];
+    return;
+  }
   shownAt = Date.now();
   const view = promptView(next);
   const legend = new Set<string>();

@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PROMPT_IPC, type PromptAnswer, type PromptCard } from "../../app/shared/remote-ui";
+import { PROMPT_IPC, PROMPT_NOTICE_MS, type PromptAnswer, type PromptCard } from "../../app/shared/remote-ui";
 import {
   PROMPT_FOCUS_CHECK_MS, PROMPT_IDLE_MS, PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
 } from "../../app/main/remote/prompt-window";
@@ -642,6 +642,34 @@ describe("focusable ordinary approvals", () => {
     expect(win().visible).toBe(false);
     expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "gone" });
     ctl.dispose();
+  });
+  it("keeps the window up without taking the keyboard while a refused press's notice is read, then hides it (review #183)", async () => {
+    vi.useFakeTimers();
+    const { ctl, ipc, win, page } = setup();
+    ctl.showApproval({ id: "approval-7", n: 7, kind: "approval", title: "May I?", prompt: "Save?", options: [{ id: "once", label: "Allow" }] });
+    ctl.hideApproval(7);
+    expect(win().visible).toBe(false); // nothing to show: hidden, as before
+    win().focused = false;
+    ipc.send(PROMPT_IPC.notice, { id: 999, send() {} }, { id: "approval-7" }); // not this window's page
+    ipc.send(PROMPT_IPC.notice, page(), "x"); // not an object
+    expect(win().visible).toBe(false);
+    ipc.send(PROMPT_IPC.notice, page(), { id: "approval-7" });
+    expect(win().visible).toBe(true);
+    expect(win().focused).toBe(false); // showInactive: no stolen keyboard
+    await vi.advanceTimersByTimeAsync(PROMPT_NOTICE_MS + 50);
+    expect(win().visible).toBe(false);
+    ctl.dispose();
+  });
+  it("shows no notice over a card that is up, and a new card outlives the notice's hide timer", async () => {
+    vi.useFakeTimers();
+    const { ctl, ipc, win, page } = setup();
+    ctl.showApproval({ id: "approval-8", n: 8, kind: "approval", title: "A", prompt: "A?", options: [{ id: "once", label: "Allow" }] });
+    ctl.hideApproval(8);
+    ipc.send(PROMPT_IPC.notice, page(), { id: "approval-8" });
+    ctl.showApproval({ id: "approval-9", n: 9, kind: "approval", title: "B", prompt: "B?", options: [{ id: "once", label: "Allow" }] });
+    await vi.advanceTimersByTimeAsync(PROMPT_NOTICE_MS + 50);
+    expect(win().visible).toBe(true); // the new question stays up
+    ctl.hideApproval(9); ctl.dispose();
   });
   it("cannot accept ordinary approvals through the SSH/consent answer channel", () => {
     const { ctl, ipc, page } = setup();

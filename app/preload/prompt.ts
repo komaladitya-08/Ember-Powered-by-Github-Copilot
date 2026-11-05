@@ -13,6 +13,7 @@ const api: PromptApi = {
   onShow: fn => { ipcRenderer.on(PROMPT_IPC.show, (_e: IpcRendererEvent, card: PromptCard | null) => fn(card)); },
   answer: a => ipcRenderer.send(PROMPT_IPC.answer, { id: a.id, ok: a.ok, ...(a.value !== undefined ? { value: a.value } : {}), ...(a.sha256 !== undefined ? { sha256: a.sha256 } : {}) }),
   cancel: id => ipcRenderer.send(PROMPT_IPC.cancel, { id }),
+  notice: () => ipcRenderer.send(PROMPT_IPC.notice, {}),
   approval: (id, answer) => ipcRenderer.invoke(PROMPT_IPC.approval, { id, ...(answer === undefined ? {} : { answer }) }),
 };
 

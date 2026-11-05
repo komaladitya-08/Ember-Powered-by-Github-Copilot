@@ -16,7 +16,12 @@ export const PROMPT_IPC = {
   cancel: "prompt:cancel",
   /** Exact ordinary question read/answer, accepted only from this window. */
   approval: "prompt:approval",
+  /** Page → main: a refused press's notice is on screen with no card up, so keep the window up to be read. */
+  notice: "prompt:notice",
 } as const;
+
+/** How long (ms) the prompt window stays up, without the keyboard, for a refused press's notice once its card is gone. */
+export const PROMPT_NOTICE_MS = 12_000;
 
 /** One card in the prompt window. */
 export type PromptCard =

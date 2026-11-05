@@ -45,6 +45,8 @@ export const APPROVAL_NOT_YET = "That press was too soon, so it didn't count. Re
 export const APPROVAL_GONE = "That press didn't count: the question has already been answered, replaced or timed out. Ask me again if you want to review it.";
 /** The line under the card for a press main didn't take, by why. */
 export const approvalNotTaken = (reason?: "not-yet" | "gone"): string => reason === "not-yet" ? APPROVAL_NOT_YET : reason === "gone" ? APPROVAL_GONE : APPROVAL_NOT_TAKEN;
+/** Under a card or none, for a press on an earlier question that didn't count: it is tied to that question, not the one shown. */
+export const APPROVAL_EARLIER_NOT_TAKEN = "Your press on the earlier question didn't go through: it was too soon, or that question had already been answered, replaced or timed out. If you still want it, ask me again.";
 /** Under an approval whose press couldn't reach Ember. */
 export const APPROVAL_NOT_SENT = "I couldn't confirm that press went through. Check the question, then press again.";
 

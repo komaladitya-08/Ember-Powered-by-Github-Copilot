@@ -81,62 +81,88 @@ it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("reads and focuses an exact a
   } finally { await app?.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 }, 90_000);
 
-it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("keeps a refusal visible when its card is pulled before the reply, and clears it for a replacement", async () => {
+it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("keeps a refused press visible, with its window shown, whether the card is pulled or replaced before or after the reply", async () => {
   const root = process.cwd(), dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-approval-notice-"));
   const requireCjs = createRequire(import.meta.url);
   let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
   try {
     const main = path.join(dir, "main.cjs");
-    // The reply to a press waits until the test releases it, so the card can be pulled or replaced first.
+    // The real ipc handler for a press is wrapped so its reply (decided "gone" at press time) is held until the test
+    // releases it: the card can then be pulled or replaced before the page hears back, as it can when main is slow.
     const source = `
       import { app, BrowserWindow, ipcMain } from "electron";
       import { createPromptWindowController } from "./app/main/remote/prompt-window";
       const quiet = { info(){}, debug(){}, warn(){}, error(){}, child(){return this;} };
-      let ctl, release;
+      let ctl, release, win;
       const card = n => ({ title: 'Question ' + n, prompt: 'Send it?', kind: 'approval', id: 'approval-' + n, n, options: [{id:'once',label:'Allow',primary:true},{id:'deny',label:'Not now'}] });
+      const ipc = { on: (c, f) => ipcMain.on(c, f), handle: (c, f) => ipcMain.handle(c, async (e, raw) => {
+        const r = f(e, raw);
+        if (c === 'prompt:approval' && globalThis.__hold) await new Promise(res => { release = res; });
+        return r;
+      }) };
       app.whenReady().then(() => {
-        ctl = createPromptWindowController({ os: "linux", log: quiet, ipc: ipcMain, create() {
-          const w = new BrowserWindow({ width: 520, height: 600, show: false, webPreferences: { contextIsolation: true, sandbox: true, preload: ${JSON.stringify(path.join(root, "dist/app/preload/prompt.cjs"))} } });
-          w.loadFile(${JSON.stringify(path.join(root, "dist/app/renderer/prompt/index.html"))}); return w;
+        ctl = createPromptWindowController({ os: "linux", log: quiet, ipc, create() {
+          win = new BrowserWindow({ width: 520, height: 600, show: false, webPreferences: { contextIsolation: true, sandbox: true, preload: ${JSON.stringify(path.join(root, "dist/app/preload/prompt.cjs"))} } });
+          win.loadFile(${JSON.stringify(path.join(root, "dist/app/renderer/prompt/index.html"))}); return win;
         }});
-        ctl.onApproval(() => new Promise(r => { release = () => r("gone"); }));
-        globalThis.__p = { show: n => ctl.showApproval(card(n)), hide: n => ctl.hideApproval(n), release: () => release() };
+        ctl.onApproval(() => false);
+        globalThis.__p = { show: n => ctl.showApproval(card(n)), hide: n => ctl.hideApproval(n), hold: on => { globalThis.__hold = on; }, release: () => release(), visible: () => win.isVisible() };
         globalThis.__p.show(1);
       });`;
     await build({ stdin: { contents: source, resolveDir: root, loader: "ts" }, outfile: main, bundle: true, platform: "node", format: "cjs", external: ["electron"] });
     app = await _electron.launch({ executablePath: requireCjs("electron") as string, args: [main, ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])] });
     const page = await app.firstWindow();
-    const p = (fn: "show" | "hide" | "release", n?: number) => app!.evaluate((_e, a) => (globalThis as unknown as { __p: Record<string, (n?: number) => void> }).__p[a.fn](a.n), { fn, n });
+    const p = (fn: "show" | "hide" | "hold" | "release", n?: number | boolean) => app!.evaluate((_e, a) => (globalThis as unknown as { __p: Record<string, (n?: unknown) => unknown> }).__p[a.fn](a.n), { fn, n });
+    const winVisible = () => app!.evaluate(() => (globalThis as unknown as { __p: { visible(): boolean } }).__p.visible());
     const notice = page.locator("#notice");
+    const noticeShown = () => notice.evaluate(el => (el as HTMLElement).checkVisibility());
     const press = async () => { await page.getByRole("button", { name: "Not now", exact: true }).click({ timeout: 3000 }); };
-
-    // Pulled before the reply: the refusal is still there to read, though the card is gone.
+    const title = () => page.locator("#title").innerText();
+    const showHeld = async (n: number) => { await p("show", n); await expect.poll(() => page.locator("#card").isVisible()).toBe(true); await expect.poll(title).toBe("Question " + n); };
     await page.locator("#title").waitFor({ state: "visible" });
+
+    // 1. Pulled before the reply: the card goes, the window hides, then the reply's refusal brings it back to be read.
+    await p("hold", true);
     await press();
     await p("hide", 1);
     await expect.poll(() => page.locator("#card").isVisible()).toBe(false);
+    await expect.poll(winVisible).toBe(false);
     await p("release");
-    await expect.poll(() => notice.evaluate(el => (el as HTMLElement).checkVisibility())).toBe(true);
-    expect(await notice.innerText()).not.toBe("");
+    await expect.poll(noticeShown).toBe(true);
+    await expect.poll(winVisible).toBe(true);
+    expect(await notice.innerText()).toContain("earlier question");
 
-    // Replaced before the reply: the old question's refusal doesn't land under the new one.
-    await p("show", 2);
-    await expect.poll(() => page.locator("#title").innerText()).toBe("Question 2");
-    expect(await notice.evaluate(el => (el as HTMLElement).hidden)).toBe(true);
+    // 2. Replaced before the reply: the old press's refusal is worded as the earlier question's, under the new one.
+    await showHeld(2);
     await press();
     await p("show", 3);
-    await expect.poll(() => page.locator("#title").innerText()).toBe("Question 3");
+    await expect.poll(title).toBe("Question 3");
     await p("release");
-    await page.waitForTimeout(150);
-    expect(await notice.evaluate(el => (el as HTMLElement).hidden)).toBe(true);
+    await expect.poll(noticeShown).toBe(true);
+    expect(await notice.innerText()).toContain("earlier question");
+    expect(await winVisible()).toBe(true);
+    expect(await page.getByRole("button", { name: "Allow", exact: true }).isVisible()).toBe(true); // the new question is still answerable
 
-    // Reply first, then replaced: it clears, as before.
+    // 3. Reply first, then the card is pulled: the notice stays and the window stays up.
+    await p("hold", false);
+    await p("hide", 3); await p("hide", 2); // 2 was replaced, not answered: it is still queued behind 3
+    await showHeld(4);
+    await press(); // answered "gone" at once
+    await expect.poll(noticeShown).toBe(true);
+    expect(await notice.innerText()).not.toContain("earlier question"); // its own question is still the one shown
+    await p("hide", 4);
+    await expect.poll(() => page.locator("#card").isVisible()).toBe(false);
+    await expect.poll(noticeShown).toBe(true);
+    await expect.poll(winVisible).toBe(true);
+
+    // 4. Reply first, then replaced: it is said of the question that has gone, not clean.
+    await showHeld(5);
     await press();
-    await p("release");
-    await expect.poll(() => notice.evaluate(el => (el as HTMLElement).hidden)).toBe(false);
-    await p("show", 4);
-    await expect.poll(() => page.locator("#title").innerText()).toBe("Question 4");
-    expect(await notice.evaluate(el => (el as HTMLElement).hidden)).toBe(true);
+    await expect.poll(noticeShown).toBe(true);
+    await p("show", 6);
+    await expect.poll(title).toBe("Question 6");
+    expect(await notice.innerText()).toContain("earlier question");
+    expect(await winVisible()).toBe(true);
   } finally {
     // The prompt window keeps the app alive (it hides rather than closes), so end the process outright.
     await app?.evaluate(({ app: a }) => a.exit(0)).catch(() => undefined);
