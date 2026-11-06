@@ -61,6 +61,12 @@ Exactly one of:
 {"ready":true,"version":1,"dpi":"per-monitor-v2","processDpi":"per-monitor-v2"}
 ```
 
+`version` is required and must be the number `1` exactly. The host refuses a bridge whose ready line has a missing,
+non-number, non-integer or different `version` (a stale cached DLL, a half-upgraded install): it writes no request,
+fails every waiting request at once, kills the process, logs `uia.version_mismatch` (expected and got, nothing else),
+says "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember." in status,
+and never starts the bridge again in its life (it can't become compatible), as for a Constrained Language fatal.
+
 `dpi` is the DPI awareness the bridge's UIA threads run with: `"per-monitor-v2"` (expected), `"per-monitor"`,
 `"system"` or `"unaware"`. Anything but `per-monitor-v2` means bounds may be scaled for some monitors; the host
 should log it once. `processDpi` is the process's own awareness, in the same words (from

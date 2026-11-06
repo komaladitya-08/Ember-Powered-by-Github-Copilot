@@ -153,7 +153,11 @@ if (process.env.FAKE_BRIDGE_FATAL) {
 }
 process.stdout.write("Windows PowerShell noise before the ready line\\n");
 const processDpi = process.env.FAKE_BRIDGE_PROCESS_DPI ? { processDpi: process.env.FAKE_BRIDGE_PROCESS_DPI } : {};
-setTimeout(() => send({ ready: true, version: 1, dpi: "per-monitor-v2", ...processDpi }), Number(process.env.FAKE_BRIDGE_READY_MS || 0));
+// FAKE_BRIDGE_READY_LINE: the ready line verbatim (a wrong or missing version).
+setTimeout(() => {
+  if (process.env.FAKE_BRIDGE_READY_LINE !== undefined) process.stdout.write(process.env.FAKE_BRIDGE_READY_LINE + "\\n");
+  else send({ ready: true, version: 1, dpi: "per-monitor-v2", ...processDpi });
+}, Number(process.env.FAKE_BRIDGE_READY_MS || 0));
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const req = JSON.parse(line);
   if (log) fs.appendFileSync(log, line + "\\n");
@@ -281,6 +285,35 @@ describe("the bridge client", () => {
     await p.start();
     expect(spawned).toHaveLength(1);
     expect(p.generation).toBe(1);
+  });
+
+  it("refuses a bridge whose ready line doesn't say version 1: fails what waits at once, never starts it again (audit BE-3)", async () => {
+    const lines = [
+      '{"ready":true,"version":2,"dpi":"per-monitor-v2"}', '{"ready":true,"version":0}', '{"ready":true,"dpi":"per-monitor-v2"}',
+      '{"ready":true,"version":"1"}', '{"ready":true,"version":1.5}', '{"ready":true,"version":null}', '{"ready":true,"version":[1]}',
+    ];
+    for (const line of lines) {
+      const notes: string[] = [];
+      const { p, spawned, lines: sent } = provider({ FAKE_BRIDGE_READY_LINE: line, FAKE_BRIDGE_READY_MS: "50" }, { backoffMs: [1], note: (e, f) => { notes.push(JSON.stringify([e, f])); } });
+      // Two requests wait for the ready line together: both fail with the refusal, not a timeout.
+      const t0 = Date.now();
+      const both = await Promise.all([failure(p.start()), failure(p.start())]);
+      expect(Date.now() - t0, line).toBeLessThan(2000);
+      for (const f of both) expect(f, line).toContain("out of date");
+      // Nothing was written to it (requests are sent only after a valid ready line).
+      expect(sent().filter(l => l.id !== undefined), line).toEqual([]);
+      expect(p.health(), line).toMatchObject({ ok: false, detail: "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember." });
+      await new Promise(r => setTimeout(r, 30));
+      expect(await failure(p.start()), line).toContain("out of date");
+      expect(spawned, line).toHaveLength(1);
+      expect(notes.join("\n"), line).toContain("uia.version_mismatch");
+    }
+  });
+
+  it("accepts a ready line with version 1 (audit BE-3)", async () => {
+    const { p } = provider({ FAKE_BRIDGE_READY_LINE: '{"ready":true,"version":1,"dpi":"per-monitor-v2"}' });
+    await p.start();
+    expect(p.health().ok).toBe(true);
   });
 
   it("says why it couldn't start, and doesn't try again at once", async () => {

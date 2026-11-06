@@ -287,6 +287,10 @@ export const BACKOFF_MS: readonly number[] = [5_000, 30_000, 120_000, 600_000];
 /** What a refused script says on stderr (PowerShell's PSSecurityException for an execution policy). */
 const POLICY_REFUSAL = /execution[ _]polic|PSSecurityException|UnauthorizedAccess/i;
 /** The words for it, in the host's status and the setup check. */
+/** The protocol version this host speaks with the bridge (sidecar/uia/PROTOCOL.md, `Bridge.Version` in ember_uia.cs). */
+export const BRIDGE_PROTOCOL_VERSION = 1;
+/** What status says when the bridge's ready line doesn't carry exactly that version (a stale cached DLL, a half-upgraded install). */
+export const VERSION_DETAIL = "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember.";
 export const POLICY_DETAIL = "PowerShell refused to run the bridge (execution policy)";
 /** How much of a starting bridge's stderr is kept to tell a refusal (never logged, never past its start). */
 const STDERR_KEPT = 16_384;
@@ -299,8 +303,8 @@ interface StartFailure {
   why: string;
   /** What status says (ProviderHealth.detail). */
   detail: string;
-  /** "constrained": never started again; "policy": an execution policy refused the script; "other". */
-  kind: "constrained" | "policy" | "other";
+  /** "constrained" and "version": never started again (neither can change in this host's life); "policy": an execution policy refused the script; "other". */
+  kind: "constrained" | "version" | "policy" | "other";
   languageMode?: string;
   /** When it failed, and whether the script carried a Mark-of-the-Web then (a refusal for an execution policy). */
   at: number;
@@ -406,7 +410,7 @@ export class UiaProvider implements AxProvider {
    * for at most once a request, and only after a refusal for an execution policy.
    */
   private mayRetry(f: StartFailure): boolean {
-    if (f.kind === "constrained") return false;
+    if (f.kind === "constrained" || f.kind === "version") return false;
     if (f.kind === "policy" && f.marked && !this.marked()) return true;
     const wait = this.backoffMs[Math.min(Math.max(this.failures, 1), this.backoffMs.length) - 1];
     return Date.now() - f.at >= wait;
@@ -480,6 +484,13 @@ export class UiaProvider implements AxProvider {
       }
       if (!b.isReady) {
         if (msg.ready === true) {
+          // Fail closed: only exactly the expected version is spoken to (PROTOCOL.md "The first line").
+          if (msg.version !== BRIDGE_PROTOCOL_VERSION) {
+            const got = typeof msg.version === "number" || typeof msg.version === "string" ? String(msg.version).slice(0, 20) : msg.version === undefined ? "none" : "not a number";
+            this.note("uia.version_mismatch", { expected: BRIDGE_PROTOCOL_VERSION, got });
+            fail(`the accessibility bridge is out of date or mismatched (expected protocol ${BRIDGE_PROTOCOL_VERSION}, got ${got})`, { kind: "version", detail: VERSION_DETAIL });
+            return;
+          }
           b.isReady = true;
           b.stderr = "";
           this.failure = null;
