@@ -191,6 +191,12 @@ export const SettingsSchema = z.object({
   }).default({ on: false, type: "openai", baseUrl: "", wireApi: null, azureApiVersion: null, conductor: null, worker: null, consent: { version: 0, at: null, host: "" } }),
   /** Calm mode: no hops, bounces or idle fidgets (also on when the desktop asks for reduced motion). */
   reduceMotion: z.boolean().default(false),
+  /**
+   * Keep the recent Home conversation across restarts (app/main/agent/conversation-store.ts): off by default, so closing
+   * Ember or signing out forgets it. On: the latest lines are saved on this computer (mode 0600) for the person to read
+   * after a restart; the model still starts afresh. Turning it off, signing out and Forget everything delete the file.
+   */
+  keepConversation: z.boolean().default(false),
   /** More time to read and answer: bubbles stay ten times as long, and a question waits 20 minutes (WCAG 2.2.1: readTimeOf). */
   moreTime: z.boolean().default(false),
   /** Text size in Ember's windows, bubble and cards (main's page-prefs.ts applies it): larger is 30% bigger. */

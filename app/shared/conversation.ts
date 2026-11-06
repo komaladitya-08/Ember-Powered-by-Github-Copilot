@@ -1,7 +1,10 @@
-/** Session-only conversation bounds, shared by the host and Home. Nothing here writes to disk. */
+/** Conversation bounds, shared by the host, Home and the opt-in saved copy (app/main/agent/conversation-store.ts). Nothing here writes to disk. */
 export const CONVERSATION_LIMIT = 60;
 export const CONVERSATION_TEXT_LIMIT = 128 * 1024;
 export const CONVERSATION_REQUEST_LIMIT = 2000;
+
+/** What can be wrong with the saved conversation (conversation-store.ts HistoryProblem), told beside its switch. */
+export type HistoryProblemKind = "exposed" | "delete" | "unchecked" | "save" | "owner" | "account";
 
 /** Keep long answers readable, with an explicit signal if the memory bound is reached. */
 export function retainedConversationText(text: string): { text: string; truncated?: true } {

@@ -10,7 +10,7 @@ import type { TranscriptEntry } from "../../app/main/agent/host";
 declare global {
   interface Window {
     __conversationTest: {
-      sent: string[]; copied: string[]; stops: number; news: number; allStops: number; failNext: boolean; deferNext: boolean; deferNew: boolean;
+      sent: string[]; copied: string[]; patches: unknown[]; stops: number; news: number; allStops: number; failNext: boolean; deferNext: boolean; deferNew: boolean;
       push(entries: TranscriptEntry[]): void;
       reset(): void;
       resolveSend(): void;
@@ -48,7 +48,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
       let pendingInitial: (() => void) | null = null;
       let pendingNew: (() => void) | null = null;
       const test = window.__conversationTest = {
-        sent: [] as string[], copied: [] as string[], stops: 0, news: 0, allStops: 0, failNext: false, deferNext: false, deferNew: false,
+        sent: [] as string[], copied: [] as string[], patches: [] as unknown[], stops: 0, news: 0, allStops: 0, failNext: false, deferNext: false, deferNew: false,
         push: (value: TranscriptEntry[]) => emit("onConversation", value),
         reset: () => { emit("onConversationForgotten", undefined); },
         resolveSend: () => { pendingSend?.(); pendingSend = null; },
@@ -66,6 +66,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
           test.sent.push(text);
           if (test.deferNext) { test.deferNext = false; await new Promise<void>(resolve => { pendingSend = resolve; }); }
         };
+        if (name === "updateSettings") return async (patch: unknown) => { test.patches.push(patch); return {}; };
         if (name === "conversationStop") return async () => { test.stops++; };
         // As main answers it: the transcript is emptied (conversationChanged), but no "forgotten" is broadcast for it.
         if (name === "conversationNew") return async () => {
@@ -128,6 +129,15 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
     await page.locator("#conversation-send").click();
     await expect.poll(() => page.evaluate(() => window.__conversationTest.sent)).toEqual(["My unsent draft", "An explicitly edited request"]);
     expect(await page.locator("#conversation-retention").innerText()).toContain("latest 60 messages");
+    // Keeping the conversation across restarts is a switch, off until chosen, and says what it saves and what it doesn't.
+    const keep = page.locator("#keep-conversation");
+    expect(await keep.isChecked()).toBe(false);
+    expect(await keep.getAttribute("role")).toBe("switch");
+    expect(await page.locator("#keep-conversation-label").innerText()).toBe("Keep my recent conversation after Ember closes");
+    expect(await page.locator("#keep-conversation-hint").innerText()).toContain("starts a fresh conversation");
+    await keep.focus();
+    await page.keyboard.press("Space");
+    await expect.poll(() => page.evaluate(() => window.__conversationTest.patches)).toEqual([{ keepConversation: true }]);
     // New conversation: a plain button, reached and activated from the keyboard; it empties the chat only.
     await page.locator("#conversation-stop").focus();
     await page.keyboard.press("Tab");

@@ -14,10 +14,27 @@ import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefau
 import { onboardingRest } from "./computers-copy";
 import { needsUser, type SetupRow } from "../../shared/setup-attention";
 import { sideOf, type HandlePosition } from "../../shared/handle-place";
-import { CONVERSATION_LIMIT } from "../../shared/conversation";
+import { CONVERSATION_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
 import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
+export const CONVERSATION_KEEP_LABEL = "Keep my recent conversation after Ember closes";
+export const CONVERSATION_KEEP_HINT = "Off by default. When on, Ember saves these messages on this computer, in a file only you can read, and shows them again after it restarts. They are for you to read: Ember itself starts a fresh conversation and doesn’t remember them, and nothing in them is run again.";
+export const CONVERSATION_RETENTION_KEPT = `Keeps the latest ${CONVERSATION_LIMIT} messages on this computer, also after Ember closes. Older messages are forgotten as new ones arrive. Turning this off, New conversation, signing out and Forget everything delete the saved copy.`;
+/** The retention note for the setting as it is now. */
+export function conversationRetention(keep: boolean): string {
+  return keep ? CONVERSATION_RETENTION_KEPT : CONVERSATION_RETENTION;
+}
+/** Under the switch when the saved copy can't be written or deleted (it is never silent). */
+export function conversationKeepProblem(problem: HistoryProblemKind | null): string {
+  if (problem === "exposed") return "Ember couldn’t delete the saved conversation on this computer, and couldn’t make sure it stays hidden, so it may show again after a restart. Try turning this off again later.";
+  if (problem === "unchecked") return "Ember can’t check that the earlier conversation was cleared, so it isn’t showing it. It will look again the next time Ember starts.";
+  if (problem === "account") return "Ember couldn’t confirm which GitHub account is signed in, so it isn’t keeping this conversation. Sign out and in again, or check your connection.";
+  if (problem === "owner") return "Ember can’t tell which model service key this conversation belongs to, so it isn’t saving it. Save the key again in Model provider to fix this.";
+  if (problem === "delete") return "Ember couldn’t delete the saved conversation on this computer. It won’t show it again, and will try to delete it the next time you turn this off, forget or sign out.";
+  if (problem === "save") return "Ember couldn’t save the conversation on this computer, so it may not be here after a restart.";
+  return "";
+}
 export const CONVERSATION_SCOPE = "Sends your message without reading a window. Use Ask Ember to include the app you’re working in. Existing conversation context still applies.";
 export const CONVERSATION_EDIT = "Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.";
 export const CONVERSATION_TRUNCATED = "This message exceeded the session limit of 131,072 characters. Only the text shown here is retained and copied.";
@@ -1059,15 +1076,15 @@ const hasUnknown = (c: ForgetCounts) => Object.values(c).some(n => n === null);
 
 /** The question for Sign out: it clears all four, and the counts are today's. */
 export function signOutScope(c: ForgetCounts): string {
-  return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation, `
+  return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), `
     + `${plural(c.facts, "saved fact", "saved facts")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 
 /** The question for Forget everything: only saved memory goes, and the other three are said to stay. */
 export function forgetEverythingScope(c: ForgetCounts): string {
-  return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")} and what Ember learned from them. `
-    + `${plural(c.tasks, "task", "tasks")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are.`
+  return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")}, what Ember learned from them and the conversation saved on this computer, if you keep one. `
+    + `${plural(c.tasks, "task", "tasks")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
+import type { HistoryProblemKind } from "../shared/conversation";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { TaskEntry } from "../shared/activity";
@@ -79,6 +80,8 @@ const api: EmberHomeApi = {
   openApproval: () => ipcRenderer.invoke(IPC.openApproval),
   taskControl: (id, action) => ipcRenderer.invoke(IPC.taskControl, { id, action }),
   onTasks: fn => listen<TaskEntry[]>(IPC.tasksChanged, fn),
+  historyProblem: () => ipcRenderer.invoke(IPC.historyProblem),
+  onHistoryProblem: fn => listen<HistoryProblemKind | null>(IPC.historyProblemChanged, fn),
   conversation: () => ipcRenderer.invoke(IPC.conversation),
   conversationSend: text => ipcRenderer.invoke(IPC.conversationSend, text),
   conversationStop: () => ipcRenderer.invoke(IPC.conversationStop),

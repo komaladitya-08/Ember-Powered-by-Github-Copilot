@@ -101,7 +101,10 @@ describe("the user's own model provider on the real Copilot runtime", () => {
       },
     });
     const keys = new ProviderKeyStore(path.join(userData, "provider-key.bin"), box);
-    expect(await keys.save(KEY, endpointHost(mock.baseUrl)!)).toEqual({ ok: true });
+    expect(await keys.save(KEY, endpointHost(mock.baseUrl)!)).toEqual({
+      ok: true,
+      keyId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+    });
     const key = await keys.load();
     const states: Partial<EmberState>[] = [];
     // What happened, said when an expectation fails (a flake must say why).

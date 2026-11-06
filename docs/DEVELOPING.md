@@ -162,7 +162,39 @@ runtime. It does not change the app's consent or speaking settings.
     opens. Starting it again while it runs, the
     settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
 - Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
-  keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
+  keeps this session's questions, answers and task results (in memory only by default; quitting or signing out forgets them).
+  - **Keep my recent conversation after Ember closes** (`keepConversation`, off by default; Home › Conversation): saves the
+    latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
+    atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
+    signed-in account is known and is the one that saved them (a file of another account, or while the account can't be
+    told, is never shown; another account's file is deleted). The saved lines are for the person to read: the model starts a
+    fresh session at every launch and never sees them, a restored question is not one a later "yes" agrees to, and nothing
+    is spoken, sent or run again. A file that can't be read (not JSON, another version, too large) is moved to
+    `conversation.json.broken` and Ember starts empty. Turning the switch off, **New conversation**, **Sign out** and
+    **Forget everything** (Memory) delete `conversation.json` (and `.broken`), and a write queued before any of them can't
+    bring it back; Forget everything leaves the messages on screen but doesn't save them again (its question says so). The
+    copy belongs to an owner written into the file and compared at every start: `github:<id>|<service>` (or `none|<service>`
+    with no GitHub account), the service being `copilot` or `provider:<kind>|<hash of the address>|<keyId>`. `keyId` is a
+    random id made whenever the person saves a key, sealed in `provider-key.bin` with the key (never derived from it); a
+    key saved before ids existed, and the administrator's key, have none, so for them nothing is saved and an earlier copy is
+    deleted (a known limitation). Any difference (another account, service, address or key) deletes the copy, never shows it.
+    What a connection that began before such a change says (a late answer, a stopped stream, a task's result) is shown but
+    never saved (`connGen`). A copy that can't be deleted is emptied if possible, never loaded again, retried first thing,
+    and Sign out and Forget everything say so; a copy that can't be written is said under the switch (`historyProblem`).
+    A clear sticks across a restart: before deleting, it writes `conversation.erased` (`{ version, gen }`; temp, fsync, atomic
+    rename, mode 0600) and every saved file carries the generation `gen` it was saved under. A load honours the marker first:
+    a file of a lower generation is never shown and is deleted again, and the marker goes only once nothing is left or a
+    newer save (written under the marker's generation) replaced the file. If neither the deletion nor the marker can be done,
+    the problem is "exposed" and says the copy may show again; history on with a provider key that has no id says "owner".
+    The key id travels with the key: saving a key makes a new id (also for the same key), and that is a new owner. Known
+    limitation: the owner is the account and service the copy was saved under, so GitHub → own provider → restart with the
+    same key doesn't bring the earlier provider conversation back (the account is unverified on launch).
+    Nothing is saved until the saved copy of that owner has been
+    looked at, and lines said before then are added after the saved ones, so an earlier copy is never silently replaced. A
+    saved line never carries a per-run id (`answerId`, `heardId`). The file's folder is flushed after the rename (best
+    effort). The organisation's policy has no key for it. Code: app/main/agent/conversation-store.ts, host.ts (`restoreHistory`, `forgetHistory`). With a build ready,
+    `EMBER_CONVERSATION_LIVE=1 npm run test:integration -- test/integration/conversation-history-live.test.ts` launches the
+    real app three times on one data folder against a mock model (the switch found by its label, quit, relaunch, off).
 - When a task closes its window with keys (Ctrl+W or Ctrl+Q, Command+W or Command+Q on macOS), the next read tells it
   the window closed, as a click on Close does. Closing a tab leaves a live window alone; denied or failed keys never
   claim a close. A task never carries on in an unrelated window in the closed window's place.

@@ -183,7 +183,7 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 - **Audio** stays on the machine and is never written to disk.
 - **Permissions.** Every web permission request is denied except audio `media` for Ember's mic window (`voicePermissions`), and the mic page's system audio for its level meter where `outputLevel` says so (output-watch.ts: only the level, its video stopped at once, only while a conversation is open). The spellchecker stays off, because it would download dictionaries.
 - **Conversation data.**
-  - Ember's own conversation log is in memory only.
+  - Ember's own conversation log is in memory only, unless the user turns on `keepConversation` (off by default): then `conversation.json` (0600, app/main/agent/conversation-store.ts) keeps the latest lines for them to read after a restart. Restored lines are inert (`restored` in host.ts: never model context, never agreed to, never words a task is checked against). Sign-out, an account change, New conversation, turning it off and Forget everything delete it; any new place that empties the transcript must call `dropHistory()`.
   - Copilot's session state lives in `<userData>/copilot` only while Ember runs. It is deleted at quit, at the next start after a crash, and on sign-out.
 - **The audit log.** Write every decision, question, answer, action, refusal, task outcome and stop to `AuditLog`:
   - workers use their `audit()` helper;

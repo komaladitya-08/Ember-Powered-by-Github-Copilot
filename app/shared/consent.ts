@@ -7,8 +7,10 @@ import type { TargetId } from "./targets";
  * 4: Project work sends the text files the user selects to the connected model.
  * 6 (2026-11-05): once called, Ember keeps listening through a conversation, and what it hears goes to Copilot as text
  * without its name; Voice Match no longer decides who is heard.
+ * 7 (2026-11-06): Home's “Keep my recent conversation” (off by default) can keep the latest messages on this computer
+ * across restarts; "Before Ember starts" says so.
  */
-export const CONSENT_VERSION = 6;
+export const CONSENT_VERSION = 7;
 
 /**
  * The versions of the first-use consent cards for WSL, SSH (per host) and commands (per target), recorded apart from

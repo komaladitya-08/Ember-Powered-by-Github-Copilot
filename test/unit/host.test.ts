@@ -109,6 +109,7 @@ import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { HISTORY_FILE, HistoryStore } from "../../app/main/agent/conversation-store";
 import { MemoryOwner } from "../../app/main/memory/owner";
 import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
@@ -3809,3 +3810,662 @@ describe("memory erasure at account boundaries", () => {
     await host.stop();
   });
 });
+
+describe("keeping the recent conversation across restarts (opt-in)", () => {
+  const SHALL_I = "I can delete the 12 installers there older than a month. Shall I?";
+  /** A host as main builds it: the saved copy in the data folder, the account lookup, the setting a switch. */
+  function kept(dir: string, o: { on?: () => boolean; account?: number | null; delayMs?: number; provider?: () => import("../../app/main/provider").ActiveProvider | null; stream?: (e: { id: number; text: string; state: string }) => void; resolve?: () => Promise<number | null>; ops?: import("../../app/main/agent/conversation-store").HistoryOps; onProblem?: (p: string | null) => void } = {}) {
+    const flag = { on: true };
+    const store = new HistoryStore({ dir, log: quiet, delayMs: o.delayMs ?? 1, ...(o.ops ? { ops: o.ops } : {}), ...(o.onProblem ? { onProblem: o.onProblem } : {}) });
+    const memory = { remember: () => "", context: () => "", forget: () => false, forgetAll() {}, resolveAccountId: o.resolve ?? (async () => o.account === undefined ? 7 : o.account) };
+    const made = makeHost({ userData: dir, memory, ...(o.provider ? { provider: o.provider } : {}), ...(o.stream ? { onAnswerStream: o.stream } : {}), history: { store, enabled: o.on ?? (() => flag.on) } });
+    return { ...made, store, flag, file: path.join(dir, HISTORY_FILE) };
+  }
+  const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-keep-"));
+  const say = (text: string) => { conductorSession().emit("assistant.message", { content: text }); conductorSession().emit("session.idle", {}); };
+
+  it("brings the conversation back after a restart, for reading only: nothing is sent and the model starts afresh", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("What's the weather like?");
+    say("Sunny, about 20 degrees.");
+    await first.host.stop();
+    if (process.platform !== "win32") expect(fs.statSync(first.file).mode & 0o777).toBe(0o600); // (Windows reports 0666 for any file)
+    const before = first.host.getTranscript().map(e => [e.who, e.text]);
+    expect(before).toEqual([["you", "What's the weather like?"], ["ember", "Sunny, about 20 degrees."]]);
+
+    const sends: string[] = [];
+    sim.onSend = (_s, prompt) => { sends.push(prompt as string); };
+    const heard: unknown[][] = [];
+    const second = kept(dir);
+    const again = makeHostOptionsSpy(second, heard);
+    expect(second.host.getTranscript()).toEqual([]);
+    await again.start();
+    expect(second.host.getTranscript().map(e => [e.who, e.text])).toEqual(before);
+    expect(sends).toEqual([]);
+    expect(heard.at(-1)).toHaveLength(2);
+    await second.host.stop();
+  });
+
+  it("is inert: a restored question is not agreed to by a later yes, and restored words are not the task's", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("Clean up my Downloads folder");
+    say(SHALL_I);
+    await first.host.stop();
+    const second = kept(dir);
+    await second.host.start(TOKEN, "stored");
+    expect(second.host.getTranscript()).toHaveLength(2);
+    (second.host as any).remember("you", "sure, go ahead");
+    const said = (second.host as any).userWordsOf({ words: "sure, go ahead" });
+    expect(said.agreed).toBeUndefined();
+    expect(said.words).toBe("sure, go ahead");
+    // Live, the same lines do agree (the control for the above).
+    await second.host.ask("Clean up my Downloads folder");
+    say(SHALL_I);
+    (second.host as any).remember("you", "sure, go ahead");
+    expect((second.host as any).userWordsOf({ words: "sure, go ahead" }).agreed).toHaveLength(1);
+    await second.host.stop();
+  });
+
+  it("writes nothing while off, and deletes a file an earlier run left", async () => {
+    const dir = tmpDir();
+    const file = path.join(dir, HISTORY_FILE);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, account: "github:7|copilot", savedAt: "x", entries: [] }));
+    const off = kept(dir, { on: () => false });
+    expect(fs.existsSync(file)).toBe(false);
+    await off.host.start(TOKEN, "stored");
+    await off.host.ask("hello");
+    say("hi");
+    await off.store.flush();
+    await off.host.stop();
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it("turning it off deletes the file; turning it on saves what is on screen", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    k.flag.on = false;
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("hello");
+    say("hi");
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(false);
+    k.flag.on = true;
+    k.host.applyHistorySetting();
+    await k.store.flush();
+    expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries).toHaveLength(2);
+    k.flag.on = false;
+    k.host.applyHistorySetting();
+    expect(fs.existsSync(k.file)).toBe(false);
+    await k.host.stop();
+  });
+
+  it("never shows another account's conversation, and an unknown account shows and saves nothing", async () => {
+    const dir = tmpDir();
+    const a = kept(dir, { account: 7 });
+    await a.host.start(TOKEN, "stored");
+    await a.host.ask("private to seven");
+    await a.store.flush();
+    await a.host.stop();
+    const unknown = kept(dir, { account: null });
+    await unknown.host.start(TOKEN, "stored");
+    expect(unknown.host.getTranscript()).toEqual([]);
+    await unknown.host.ask("typed before the account is known");
+    await unknown.store.flush();
+    expect(fs.readFileSync(a.file, "utf8")).toContain("private to seven");
+    await unknown.host.stop();
+    const b = kept(dir, { account: 8 });
+    await b.host.start(TOKEN, "stored");
+    expect(b.host.getTranscript()).toEqual([]);
+    expect(fs.existsSync(b.file)).toBe(false);
+    await b.host.stop();
+  });
+
+  it("sign-out and New conversation delete the saved copy; a write queued before them can't bring it back", async () => {
+    const dir = tmpDir();
+    const k = kept(dir, { delayMs: 30 });
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("one");
+    say("two");
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(true);
+    await k.host.ask("queued, not yet written");
+    await k.host.newConversation();
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(false);
+    await k.host.ask("fresh");
+    await k.store.flush();
+    expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["fresh"]);
+    await k.host.ask("queued before sign-out");
+    await k.host.forgetConversation();
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(false);
+    await k.host.stop();
+  });
+
+  it("never restores or saves a per-run id (answerId, heardId): a restored line has none, and the file has none", async () => {
+    const dir = tmpDir();
+    const file = path.join(dir, HISTORY_FILE);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, account: "github:7|copilot", savedAt: "2026-11-05T10:00:00Z", entries: [
+      { t: "2026-11-05T10:00:00Z", who: "you", text: "hello", answerId: 1, heardId: 3 },
+      { t: "2026-11-05T10:00:01Z", who: "ember", text: "hi", answerId: 1 },
+    ] }));
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    const shown = k.host.getTranscript();
+    expect(shown).toHaveLength(2);
+    for (const e of shown) { expect(e).not.toHaveProperty("answerId"); expect(e).not.toHaveProperty("heardId"); }
+    // A live line that has an id saves without it.
+    const live = (k.host as any).remember("ember", "live");
+    live.answerId = 1; live.heardId = 9;
+    (k.host as any).remember("you", "again");
+    await k.store.flush();
+    expect(fs.readFileSync(file, "utf8")).not.toMatch(/answerId|heardId/);
+    await k.host.stop();
+  });
+
+  it("a streamed answer's id lives only in this run: saved without it, restored without it, so a new stream id 1 settles only on its own entry (Home streaming, B2)", async () => {
+    const dir = tmpDir();
+    const seen1: { id: number; text: string; state: string }[] = [];
+    const first = kept(dir, { stream: e => seen1.push(e) });
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("One");
+    conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: "Whole answer." });
+    conductorSession().emit("assistant.message", { messageId: "a", content: "Whole answer." });
+    conductorSession().emit("session.idle", {});
+    await first.host.ask("Two");
+    conductorSession().emit("assistant.message_delta", { messageId: "b", deltaContent: "Half of it" });
+    await first.host.stopAnswer();
+    // Live: both streamed answers carry their stream id, the stopped one marked stopped.
+    const live = first.host.getTranscript().filter(e => e.who === "ember");
+    expect(live).toEqual([
+      expect.objectContaining({ text: "Whole answer.", answerId: seen1[0].id }),
+      expect.objectContaining({ text: "Half of it", stopped: true, answerId: seen1.at(-1)!.id }),
+    ]);
+    await first.store.flush();
+    // Saved: the interruption is kept, no per-run id is.
+    const file = fs.readFileSync(first.file, "utf8");
+    expect(file).not.toMatch(/answerId/);
+    expect(JSON.parse(file).entries.filter((e: { stopped?: boolean }) => e.stopped)).toHaveLength(1);
+    await first.host.stop();
+
+    // A restart: the restored lines have no id (the stopped one stays stopped), and ids start again at 1.
+    const seen2: { id: number; text: string; state: string }[] = [];
+    const second = kept(dir, { stream: e => seen2.push(e) });
+    await second.host.start(TOKEN, "stored");
+    const restored = second.host.getTranscript();
+    expect(restored).toHaveLength(4);
+    for (const e of restored) expect(e).not.toHaveProperty("answerId");
+    expect(restored.filter(e => e.stopped)).toEqual([expect.objectContaining({ who: "ember", text: "Half of it" })]);
+    await second.host.ask("Three");
+    conductorSession().emit("assistant.message_delta", { messageId: "c", deltaContent: "New words" });
+    conductorSession().emit("assistant.message", { messageId: "c", content: "New words" });
+    conductorSession().emit("session.idle", {});
+    expect(seen2[0].id).toBe(1);
+    const all = second.host.getTranscript();
+    expect(all.filter(e => e.answerId !== undefined)).toEqual([expect.objectContaining({ text: "New words", answerId: 1 })]);
+    expect(all.slice(0, 4)).toEqual(restored);
+    await second.store.flush();
+    expect(fs.readFileSync(second.file, "utf8")).not.toMatch(/answerId/);
+    await second.host.stop();
+  });
+
+  it("something said before the account is known doesn't replace the earlier saved copy: the saved lines come first, both are kept", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("old question");
+    say("old answer");
+    await first.host.stop();
+    let resolve!: (n: number | null) => void;
+    const second = kept(dir, { resolve: () => new Promise<number | null>(r => { resolve = r; }) });
+    (second.host as any).remember("you", "early words");
+    await second.store.flush();
+    // Nothing was written before the owner was known and the old copy was looked at.
+    expect(JSON.parse(fs.readFileSync(second.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["old question", "old answer"]);
+    const starting = second.host.start(TOKEN, "stored");
+    await vi.waitFor(() => { expect(resolve).toBeTypeOf("function"); });
+    resolve(7);
+    await starting;
+    expect(second.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer", "early words"]);
+    await second.store.flush();
+    expect(JSON.parse(fs.readFileSync(second.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["old question", "old answer", "early words"]);
+    await second.host.stop();
+  });
+
+  it("an account that never resolves never overwrites the saved copy", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("old question");
+    await first.host.stop();
+    const second = kept(dir, { account: null });
+    (second.host as any).remember("you", "typed meanwhile");
+    await second.host.start(TOKEN, "stored");
+    (second.host as any).remember("you", "and more");
+    await second.store.flush();
+    expect(fs.readFileSync(second.file, "utf8")).toContain("old question");
+    await second.host.stop();
+  });
+
+  describe("with the person's own model provider", () => {
+    const ID1 = "11111111-1111-4111-8111-111111111111", ID2 = "22222222-2222-4222-8222-222222222222";
+    const KEY1 = "sk-" + "a".repeat(40), KEY2 = "sk-" + "b".repeat(40); // not real keys
+    /** The user's provider as main builds it: the key and its random id (none for a key saved before ids existed: `id` null). */
+    const own = (key: string | undefined, baseUrl = "https://models.example.com/v1", id: string | null = key === KEY1 ? ID1 : key ? ID2 : null) => ({ kind: "user" as const, config: { type: "openai" as const, baseUrl, ...(key ? { apiKey: key } : {}) }, models: { conductor: "m", worker: null }, ...(key && id ? { keyId: id } : {}) });
+
+    it("is owned by the GitHub account when it is known, whatever provider is in force; by the provider's address only with none", async () => {
+      const dir = tmpDir();
+      let cur: ReturnType<typeof own> | null = null;
+      const k = kept(dir, { provider: () => cur });
+      await k.host.start(TOKEN, "stored");          // GitHub account 7 known
+      cur = own(KEY1);
+      await k.host.providerChanged();                // the provider is turned on: the saved copy goes (another service), the account is still 7
+      await k.host.ask("under the provider");
+      await k.store.flush();
+      expect(JSON.parse(fs.readFileSync(k.file, "utf8")).account).toMatch(/^github:7\|provider:user\|[0-9a-f]{32}\|11111111-1111-4111-8111-111111111111$/);
+      await k.host.stop();
+
+      const dir2 = tmpDir();
+      const solo = kept(dir2, { provider: () => own(KEY1) });
+      await solo.host.start(null);
+      await solo.host.ask("no GitHub account");
+      await solo.store.flush();
+      const saved = fs.readFileSync(solo.file, "utf8");
+      expect(JSON.parse(saved).account).toMatch(/^none\|provider:user\|[0-9a-f]{32}\|11111111-1111-4111-8111-111111111111$/);
+      expect(saved).not.toContain(KEY1);
+      await solo.host.stop();
+    });
+
+    it("a key saved just now is a known owner at once: history is saved, and a re-save (new id) moves new turns to the new owner (PR #188 re-review 3)", async () => {
+      const dir = tmpDir();
+      let cur = own(KEY1, undefined, ID1);
+      const k = kept(dir, { provider: () => cur });
+      await k.host.start(null);
+      await k.host.ask("under the first save");
+      say("answered");
+      await k.store.flush();
+      expect(JSON.parse(fs.readFileSync(k.file, "utf8")).account).toContain(ID1);
+      // The same key saved again: another id, the same credential. Old history goes; new turns save under the new id.
+      cur = own(KEY1, undefined, ID2);
+      await k.host.providerChanged();
+      await k.host.ask("after the re-save");
+      say("answered again");
+      await k.store.flush();
+      const saved = JSON.parse(fs.readFileSync(k.file, "utf8"));
+      expect(saved.account).toContain(ID2);
+      expect(saved.entries.map((e: { text: string }) => e.text)).toEqual(["after the re-save", "answered again"]);
+      await k.host.stop();
+    });
+
+    it("a re-save with the same credentials reconnects: the connection’s identity includes the key id (PR #188 re-review 3)", async () => {
+      const dir = tmpDir();
+      let cur = own(KEY1, undefined, ID1);
+      const k = kept(dir, { provider: () => cur });
+      await k.host.start(null);
+      const before = sim.sessions.length;
+      cur = own(KEY1, undefined, ID2);
+      expect(await k.host.providerChanged()).not.toBeNull();
+      expect(sim.sessions.length).toBeGreaterThan(before);
+      await k.host.stop();
+    });
+
+    it("history on but the owner can’t be established (a key with no id): a visible problem, not silence (PR #188 re-review 3)", async () => {
+      const dir = tmpDir();
+      const k = kept(dir, { provider: () => own(KEY1, undefined, null) });
+      await k.host.start(null);
+      await k.host.ask("nobody owns this");
+      say("answered");
+      await k.store.flush();
+      expect(fs.existsSync(k.file)).toBe(false);
+      expect(k.store.problem).toBe("owner");
+      await k.host.stop();
+    });
+
+    it("a replaced or removed key, or another address, drops the saved copy and the lines on screen are not saved under it", async () => {
+      for (const change of [
+        () => own(KEY2),                                   // key replaced
+        () => own(undefined),                              // key removed
+        () => own(KEY1, "https://other.example.com/v1"),   // another address
+      ]) {
+        const dir = tmpDir();
+        let cur = own(KEY1);
+        const k = kept(dir, { provider: () => cur });
+        await k.host.start(null);
+        await k.host.ask("before the change");
+        say("answered");
+        await k.store.flush();
+        expect(fs.existsSync(k.file)).toBe(true);
+        cur = change();
+        await k.host.providerChanged();
+        await k.store.flush();
+        expect(fs.existsSync(k.file)).toBe(false);
+        await k.host.ask("after the change");
+        say("answered again");
+        await k.store.flush();
+        const saved = JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text);
+        expect(saved).not.toContain("before the change");
+        await k.host.stop();
+      }
+    });
+
+    it("a conversation is shown after a restart only to the same account, service and key (ownership continuity)", async () => {
+      const shownAfter = async (before: () => ReturnType<typeof own> | null, after: () => ReturnType<typeof own> | null, o: { copilotFirst?: boolean; copilotThen?: boolean } = {}) => {
+        const dir = tmpDir();
+        let cur = before();
+        const first = kept(dir, { provider: () => cur });
+        if (o.copilotFirst) { const was = cur; cur = null; await first.host.start(TOKEN, "stored"); cur = was; await first.host.providerChanged(); } else await first.host.start(o.copilotFirst === undefined && !cur ? TOKEN : null, "stored");
+        await first.host.ask("the old question");
+        say("the old answer");
+        await first.store.flush();
+        await first.host.stop();
+        const second = kept(dir, { provider: () => after() });
+        await second.host.start(after() ? null : TOKEN, "stored");
+        const file = fs.existsSync(second.file);
+        const shown = second.host.getTranscript().map(e => e.text);
+        await second.host.stop();
+        return { shown, file };
+      };
+      // keyA -> keyB at the same address: nothing, and the file is deleted.
+      expect(await shownAfter(() => own(KEY1), () => own(KEY2))).toEqual({ shown: [], file: false });
+      // the same key (same id): restored.
+      expect((await shownAfter(() => own(KEY1), () => own(KEY1))).shown).toEqual(["the old question", "the old answer"]);
+      // a BYOK conversation of GitHub account 7 is not shown under Copilot for the same account 7.
+      expect(await shownAfter(() => own(KEY1), () => null, { copilotFirst: true })).toEqual({ shown: [], file: false });
+      // and a Copilot one is not shown under the provider.
+      expect((await shownAfter(() => null, () => null)).shown).toEqual(["the old question", "the old answer"]);
+      // a key with no id (saved before ids existed) can't be continued: nothing saved, nothing shown.
+      expect(await shownAfter(() => own(KEY1, undefined, null), () => own(KEY1, undefined, null))).toEqual({ shown: [], file: false });
+      // a saved copy of the key that did have an id is deleted when the key now has none.
+      const dir = tmpDir();
+      const a = kept(dir, { provider: () => own(KEY1) });
+      await a.host.start(null); await a.host.ask("q"); await a.store.flush(); await a.host.stop();
+      expect(fs.existsSync(a.file)).toBe(true);
+      const b = kept(dir, { provider: () => own(KEY1, undefined, null) });
+      await b.host.start(null);
+      expect(b.host.getTranscript()).toEqual([]);
+      expect(fs.existsSync(b.file)).toBe(false);
+      await b.host.stop();
+    });
+
+    it("an answer that finishes after the credentials were replaced is never saved, also once the replacement connection runs", async () => {
+      const dir = tmpDir();
+      let cur = own(KEY1);
+      const k = kept(dir, { provider: () => cur });
+      await k.host.start(null);
+      await k.host.ask("question to the old provider");
+      conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: "Half of the late answer" });
+      await k.store.flush();
+      cur = own(KEY2);
+      expect(await k.host.providerChanged()).toBeNull(); // not idle: the old connection carries on
+      expect(fs.existsSync(k.file)).toBe(false);
+      // The old connection finishes its answer after the switch.
+      conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: " and its end" });
+      conductorSession().emit("assistant.message", { messageId: "a", content: "Half of the late answer and its end" });
+      conductorSession().emit("session.idle", {});
+      await k.store.flush();
+      expect(k.host.getTranscript().some(e => e.text.includes("late answer"))).toBe(true); // still on screen
+      expect(fs.existsSync(k.file) ? fs.readFileSync(k.file, "utf8") : "").not.toContain("late answer");
+      // The replacement connection starts: still not there, and its own lines are saved.
+      await k.host.providerChanged();
+      await k.store.flush();
+      expect(fs.existsSync(k.file) ? fs.readFileSync(k.file, "utf8") : "").not.toMatch(/late answer|old provider/);
+      await k.host.ask("question to the new one");
+      await k.store.flush();
+      expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["question to the new one"]);
+      await k.host.stop();
+    });
+
+    it("the same credentials told again keep the saved copy", async () => {
+      const dir = tmpDir();
+      const k = kept(dir, { provider: () => own(KEY1) });
+      await k.host.start(null);
+      await k.host.ask("stays");
+      await k.store.flush();
+      await k.host.providerChanged();
+      expect(fs.existsSync(k.file)).toBe(true);
+      await k.host.stop();
+    });
+  });
+
+  describe("through main's own IPC handlers (their source, run with the real host)", () => {
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    const slice = (from: string, to: string) => { const a = main.indexOf(from); expect(a).toBeGreaterThan(-1); return main.slice(a, main.indexOf(to, a)); };
+    const handlerOf = (src: string, deps: Record<string, unknown>) => {
+      let run!: () => Promise<void>;
+      const names = Object.keys(deps);
+      new Function("ipcMain", "IPC", "guard", ...names, `let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "t", askHistory = [], memoryEpoch = 0;\n${src}`)(
+        { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));
+      return run;
+    };
+    const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
+      agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
+    });
+
+    it("Sign out deletes conversation.json although the switch is off by then", async () => {
+      const dir = tmpDir();
+      const k = kept(dir);
+      await k.host.start(TOKEN, "stored");
+      await k.host.ask("hello");
+      say("hi");
+      await k.store.flush();
+      expect(fs.existsSync(k.file)).toBe(true);
+      k.flag.on = false; // the setting turned off, the listener not yet run
+      await signOutHandler(k.host)();
+      expect(fs.existsSync(k.file)).toBe(false);
+      await k.store.flush();
+      expect(fs.existsSync(k.file)).toBe(false);
+      await k.host.stop();
+    });
+
+    it("Sign out deletes conversation.json when the GitHub account was never known", async () => {
+      const dir = tmpDir();
+      fs.writeFileSync(path.join(dir, HISTORY_FILE), JSON.stringify({ version: 1, account: "github:7|copilot", savedAt: "2026-11-05T10:00:00Z", entries: [{ t: "2026-11-05T10:00:00Z", who: "you", text: "x" }] }));
+      const k = kept(dir, { account: null });
+      await k.host.start(TOKEN, "stored");
+      expect(fs.existsSync(k.file)).toBe(true); // an unknown account shows and touches nothing
+      await signOutHandler(k.host)();
+      expect(fs.existsSync(k.file)).toBe(false);
+      await k.host.stop();
+    });
+
+    it("Forget everything deletes it, leaves the lines on screen, and those lines are never saved again", async () => {
+      const dir = tmpDir();
+      const k = kept(dir);
+      await k.host.start(TOKEN, "stored");
+      await k.host.ask("old question");
+      say("old answer");
+      await k.store.flush();
+      const calls: string[] = [];
+      const run = handlerOf(slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"'), {
+        learning: { forgetAll: () => calls.push("learning") }, agent: k.host,
+        memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
+      });
+      await run();
+      expect(calls).toEqual(["learning", "owner.clear"]);
+      expect(fs.existsSync(k.file)).toBe(false);
+      expect(k.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer"]);
+      await k.host.ask("after forgetting");
+      say("answered");
+      await k.store.flush();
+      expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["after forgetting", "answered"]);
+      await k.host.stop();
+    });
+  });
+
+  it("Forget everything while an answer streams: the words on screen are never saved, even when the answer is stopped after", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("old question");
+    conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: "Half of an answer" });
+    k.host.forgetHistory();
+    await k.host.stopAnswer();
+    await k.store.flush();
+    expect(k.host.getTranscript().find(e => e.stopped)?.text).toBe("Half of an answer"); // still shown
+    expect(fs.existsSync(k.file) ? fs.readFileSync(k.file, "utf8") : "").not.toContain("Half of an answer");
+    // A later answer is the person's new conversation and is kept.
+    await k.host.ask("after");
+    say("fresh");
+    await k.store.flush();
+    expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["after", "fresh"]);
+    await k.host.stop();
+  });
+
+  it("Forget everything while an answer streams, then the answer finishes normally: its words are not saved or restored after a restart (PR #188 re-review 1)", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("old question");
+    conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: "Words seen before forgetting" });
+    k.host.forgetHistory();
+    say("Words seen before forgetting, and the rest");
+    await k.store.flush();
+    expect(k.host.getTranscript().map(e => e.text)).toContain("Words seen before forgetting, and the rest"); // still shown
+    expect(fs.existsSync(k.file) ? fs.readFileSync(k.file, "utf8") : "").not.toContain("Words seen");
+    await k.host.stop();
+    const again = kept(dir);
+    await again.host.start(TOKEN, "stored");
+    expect(again.host.getTranscript()).toEqual([]);
+    await again.host.stop();
+  });
+
+  it("Forget everything and Sign out whose deletion and emptying both fail: a restarted Ember (new store and host) still restores nothing (PR #188 re-review 2)", async () => {
+    for (const how of ["forget", "signout"] as const) {
+      const dir = tmpDir();
+      const k = kept(dir);
+      await k.host.start(TOKEN, "stored");
+      await k.host.ask("keep me out");
+      say("answer");
+      await k.store.flush();
+      const rm = vi.spyOn(fs, "rmSync").mockImplementation((f: fs.PathLike) => { if (String(f).endsWith(HISTORY_FILE)) throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+      const trunc = vi.spyOn(fs, "truncateSync").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+      try {
+        if (how === "forget") expect(k.host.forgetHistory()).toBe(false);
+        else await expect(k.host.forgetConversation()).rejects.toThrow();
+        await k.host.stop();
+        expect(fs.existsSync(k.file)).toBe(true);
+        // Another process: signed back in as the same account, nothing comes back.
+        const again = kept(dir);
+        await again.host.start(TOKEN, "stored");
+        expect(again.host.getTranscript()).toEqual([]);
+        await again.host.stop();
+      } finally { rm.mockRestore(); trunc.mockRestore(); }
+      // Deletion works again: still nothing, the file and the marker go, and later turns are kept as usual.
+      const later = kept(dir);
+      await later.host.start(TOKEN, "stored");
+      expect(later.host.getTranscript()).toEqual([]);
+      await later.host.ask("new start");
+      say("fresh");
+      await later.store.flush();
+      await later.host.stop();
+      const last = kept(dir);
+      await last.host.start(TOKEN, "stored");
+      expect(last.host.getTranscript().map(e => e.text)).toEqual(["new start", "fresh"]);
+      await last.host.stop();
+    }
+  });
+
+  it("a saved copy that can't be deleted: sign-out says so, and nothing is restored from it afterwards", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("keep me out");
+    say("answer");
+    await k.store.flush();
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation((f: fs.PathLike) => { if (String(f).endsWith(HISTORY_FILE)) throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    const trunc = vi.spyOn(fs, "truncateSync").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    try {
+      await expect(k.host.forgetConversation()).rejects.toThrow(/^Ember couldn't finish deleting the saved conversation/);
+      expect(k.host.forgetHistory()).toBe(false);
+      expect(k.store.problem).toBe("delete");
+      // The same store (still undeletable) restores nothing on the next connection.
+      await k.host.start(TOKEN, "stored");
+      expect(k.host.getTranscript()).toEqual([]);
+    } finally { rm.mockRestore(); trunc.mockRestore(); }
+    await k.host.stop();
+  });
+
+  it("Forget everything while an older save is flushing the folder: the clear stays (marker kept, problem 'delete'), and a restarted host restores nothing (PR #188 round 3)", async () => {
+    const dir = tmpDir();
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    let hold = false, syncing = false;
+    const ops = { write: async (t: string, d: string) => { fs.writeFileSync(t, d, { mode: 0o600 }); }, syncDir: async () => { if (hold) { syncing = true; await gate; } } };
+    const problems: (string | null)[] = [];
+    const k = kept(dir, { ops, onProblem: p => problems.push(p) });
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("forget this");
+    say("and this");
+    await k.store.flush();
+    hold = true;
+    await k.host.ask("one more");
+    await vi.waitFor(() => { expect(syncing).toBe(true); });
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation((f: fs.PathLike) => { if (String(f).endsWith(HISTORY_FILE)) throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    const trunc = vi.spyOn(fs, "truncateSync").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    try { expect(k.host.forgetHistory()).toBe(false); } finally { rm.mockRestore(); trunc.mockRestore(); }
+    release();
+    await k.store.flush();
+    expect(fs.existsSync(path.join(dir, "conversation.erased"))).toBe(true);
+    expect(k.store.problem).toBe("delete");
+    expect(problems.at(-1)).toBe("delete");
+    await k.host.stop();
+    const again = kept(dir);
+    await again.host.start(TOKEN, "stored");
+    expect(again.host.getTranscript()).toEqual([]);
+    await again.host.stop();
+  });
+
+  it("history on and the GitHub account can't be confirmed: nothing is saved and Home is told why, until an id arrives (PR #188 round 3)", async () => {
+    const dir = tmpDir();
+    let id: number | null = null;
+    const problems: (string | null)[] = [];
+    const k = kept(dir, { resolve: async () => id, onProblem: p => problems.push(p) });
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("first");
+    say("one");
+    await k.host.start(TOKEN, "stored"); // reconnect: the lookup still fails
+    await k.host.ask("second");
+    say("two");
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(false);
+    expect(k.store.problem).toBe("account");
+    expect(problems).toEqual(["account"]);
+    id = 7;
+    await k.host.start(TOKEN, "stored");
+    expect(k.store.problem).toBeNull();
+    await k.host.ask("third");
+    say("three");
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(true);
+    expect(problems.at(-1)).toBeNull();
+    await k.host.stop();
+  });
+
+  it("Forget everything deletes the saved copy, and what was on screen is not saved again", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("old question");
+    say("old answer");
+    await k.store.flush();
+    k.host.forgetHistory();
+    expect(fs.existsSync(k.file)).toBe(false);
+    expect(k.host.getTranscript()).toHaveLength(2);
+    await k.host.ask("new question");
+    await k.store.flush();
+    expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["new question"]);
+    await k.host.stop();
+  });
+});
+
+/** Restarts `made.host` and counts what it tells the page. */
+function makeHostOptionsSpy(made: { host: AgentHost }, heard: unknown[][]) {
+  const o = (made.host as any).o;
+  const was = o.onTranscript;
+  o.onTranscript = (e: unknown[], why?: string) => { heard.push(e); was?.(e, why); };
+  return { start: () => made.host.start(TOKEN, "stored") };
+}

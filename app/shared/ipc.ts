@@ -26,6 +26,7 @@ export interface ProjectWorkspaceReply {
   opened?: { files: string[]; sizes?: (number | null)[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
 }
 export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number }
+import type { HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
@@ -151,6 +152,9 @@ export const IPC = {
   openApproval: "ember:open-approval",
   taskControl: "tasks:control",
   tasksChanged: "tasks:activity-changed",
+  /** What is wrong with the saved conversation ("save" or "delete", else null): asked, and pushed when it changes. */
+  historyProblem: "conversation:history-problem",
+  historyProblemChanged: "conversation:history-problem-changed",
   /** Everything was stopped (first run's stop rehearsal hears the shortcut): the source, "hotkey" for the keys. */
   homeStopped: "ember:home-stopped",
   /** First run's "Hey Ember" meter: the window asks for the microphone's level while it shows, and gets it (0–8, null at the end). */
@@ -437,6 +441,9 @@ export interface EmberHomeApi {
   openApproval(): Promise<boolean>;
   taskControl(id: string, action: TaskControlAction): Promise<boolean>;
   onTasks(fn: (tasks: TaskEntry[]) => void): () => void;
+  /** Whether the saved conversation couldn't be written ("save") or deleted ("delete"), and changes to it. */
+  historyProblem(): Promise<HistoryProblemKind | null>;
+  onHistoryProblem(fn: (problem: HistoryProblemKind | null) => void): () => void;
   /** This session's conversation (kept in memory only). */
   conversation(): Promise<TranscriptEntry[]>;
   /** Explicit typed request from Home, without capturing its foreground window. */
