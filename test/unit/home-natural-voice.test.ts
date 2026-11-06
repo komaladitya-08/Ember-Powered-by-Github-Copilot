@@ -59,7 +59,8 @@ describe("effective voice status", () => {
     expect(naturalVoiceView({ state: "on", model: "kokoro", voice: "kitten" }, "kokoro").text).toContain("Ember uses Kitten Nano.");
   });
 
-  it("offers optional download retry only for Kokoro and never displays more than 99% while downloading", () => {
+  it("offers download retry for the optional voices, not Kitten, and never displays more than 99% while downloading", () => {
+    expect(naturalVoiceView({ state: "failed", model: "supertonic", detail: "Check the network." }, "supertonic").retry).toBe(true);
     const failed = naturalVoiceView({ state: "failed", model: "kokoro", voice: "kitten", detail: "Check the network." }, "kokoro");
     expect(failed).toEqual({ text: "Couldn't download Kokoro. Check the network. Ember uses Kitten Nano.", retry: true, busy: false });
     expect(naturalVoiceView({ state: "failed", model: "kitten", voice: "system", detail: "Missing files." }).retry).toBe(false);

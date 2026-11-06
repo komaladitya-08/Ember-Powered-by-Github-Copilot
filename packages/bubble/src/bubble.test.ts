@@ -329,8 +329,25 @@ describe("onPress: release inside one unchanged control", () => {
     });
     let count = 0;
     onPress(b as unknown as HTMLElement, () => count++);
-    return { b, doc, count: () => count, captured: () => captured, move: () => { rect = { ...rect, x: 20, left: 20, right: 120 }; } };
+    return { b, doc, count: () => count, captured: () => captured, move: () => { rect = { ...rect, x: 20, left: 20, right: 120 }; },
+      // Its press: scale 0.97 about its centre (the task cards ease into it over 220 ms).
+      shrink: () => { rect = { x: 11.5, y: 10.45, left: 11.5, top: 10.45, right: 108.5, bottom: 39.55, width: 97, height: 29.1 }; },
+      grow: () => { rect = { x: 10, y: 10, left: 10, top: 10, right: 110, bottom: 60, width: 100, height: 50 }; } };
   }
+  it("takes a click that lets go once the button has shrunk under the press (Close on a failed task's card did nothing)", () => {
+    const c = control();
+    c.b.dispatchEvent(new Press("pointerdown"));
+    c.shrink();
+    c.b.dispatchEvent(new Press("pointerup"));
+    expect(c.count()).toBe(1);
+  });
+  it("still cancels a control that changed size under the press", () => {
+    const c = control();
+    c.b.dispatchEvent(new Press("pointerdown"));
+    c.grow();
+    c.b.dispatchEvent(new Press("pointerup"));
+    expect(c.count()).toBe(0);
+  });
   it("captures down, activates on release inside, and suppresses the following mouse click", () => {
     const c = control();
     c.b.dispatchEvent(new Press("pointerdown"));

@@ -4,6 +4,24 @@ import { OutputBusy } from "../../app/renderer/mic/output-watch";
 describe("whether other sound is playing (Windows' output level, in a conversation)", () => {
   const watch = () => { const told: boolean[] = []; return { told, busy: new OutputBusy(on => told.push(on)) }; };
 
+  it("doesn't take the end of Ember's own voice for other sound, in the gap between its sentences", () => {
+    const { told, busy } = watch();
+    busy.look(0.1, true, 1000);
+    busy.look(0.1, false, 1200);
+    busy.look(0.1, true, 1600);
+    busy.look(0.1, true, 5000);
+    expect(told).toEqual([]);
+  });
+
+  it("still finds a song that goes on after Ember stops", () => {
+    const { told, busy } = watch();
+    busy.look(0.1, true, 1000);
+    busy.look(0.1, false, 1200);
+    busy.look(0.1, false, 2200);
+    expect(told).toEqual([true]);
+  });
+
+
   it("says so at the first sound, and only once", () => {
     const { told, busy } = watch();
     busy.look(0, false, 0);

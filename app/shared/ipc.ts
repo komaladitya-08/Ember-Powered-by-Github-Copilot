@@ -77,6 +77,7 @@ export const IPC = {
   conversationForgotten: "agent:conversation-forgotten",
   conversationSend: "agent:conversation-send",
   conversationStop: "agent:conversation-stop",
+  conversationNew: "agent:conversation-new",
   projectPick: "project:pick",
   projectRemove: "project:remove",
   projectExport: "project:export",
@@ -108,6 +109,7 @@ export const IPC = {
   /** Routines and lasting reminders (app/main/agent/routines.ts): the routines kept, and deleting one or all of them. */
   routinesList: "routines:list",
   routinesChanged: "routines:changed",
+  routinesCount: "routines:count",
   routinesForget: "routines:forget",
   routinesForgetAll: "routines:forget-all",
   remindersList: "reminders:list",
@@ -188,6 +190,7 @@ export interface VoiceStatus {
   match?: VoiceMatchStatus;
   /** The selected natural voice: what became of turning it on, shown under its switch. */
   natural?: NaturalVoiceStatus;
+  clear?: ClearHearingStatus;
   /** Optional voices supported by this computer's selected native backend. No model is downloaded by listing them. */
   naturalModels?: Settings["voice"]["naturalModel"][];
   listenOnce?: ListenOnceStatus;
@@ -200,14 +203,20 @@ export interface VoiceStatus {
  * `too-slow`; `failed` (the download failed: Try again); `wont-load` (downloaded, but it wouldn't load); `needs-native`
  * (Ember's faster speech didn't load on this computer, and Kokoro needs it).
  */
+/** Hear me more clearly (Settings › Voice): how the clearer recognizer stands. */
+export type ClearHearingStatus =
+  | { state: "off" | "starting" | "on" | "wont-load" | "needs-native" }
+  | { state: "downloading"; percent: number }
+  | { state: "failed"; detail: string };
+
 export type NaturalVoiceStatus = (
   | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
   | { state: "downloading"; percent: number }
   | { state: "failed"; detail: string }) & {
     /** Effective requested voice; legacy natural:false selects the Kitten baseline. */
-    model?: "kitten" | "kokoro";
+    model?: "kitten" | "kokoro" | "supertonic";
     /** Current/last usable local engine, including an explicit system-voice fallback. */
-    voice?: "kitten" | "kokoro" | "system";
+    voice?: "kitten" | "kokoro" | "supertonic" | "system";
   };
 
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */
@@ -385,6 +394,8 @@ export interface EmberHomeApi {
   openUpdate(): Promise<void>;
   /** The routines kept, and changes to them; deleting one, or all of them with the lasting reminders. */
   routines(): Promise<RoutineRow[]>;
+  /** How many routines are stored, whatever the policy; unknown (never zero) when they can't be read. */
+  routinesCount(): Promise<{ known: true; n: number } | { known: false }>;
   reminders(): Promise<ReminderRow[]>;
   onReminders(fn: (rows: ReminderRow[]) => void): () => void;
   changeReminder(change: ReminderChange): Promise<void>;
@@ -431,6 +442,8 @@ export interface EmberHomeApi {
   conversationSend(text: string): Promise<void>;
   /** Ends the current response and queued requests; independently running tasks continue. */
   conversationStop(): Promise<void>;
+  /** Starts a fresh chat: memory, reminders, running tasks and sign-in stay. */
+  conversationNew(): Promise<void>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
   /** Explicit account/session erasure, distinct from a list made empty by forgetting learned facts. */
   onConversationForgotten(fn: () => void): () => void;

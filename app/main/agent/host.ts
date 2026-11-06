@@ -243,7 +243,8 @@ export interface HostOptions {
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; summary: string; text: string }) => void;
   /** The conversation changed (the settings window shows it). */
-  onTranscript?: (entries: TranscriptEntry[]) => void;
+  /** `why`: "new-conversation" when only the chat was started over (not an account's conversation forgotten). */
+  onTranscript?: (entries: TranscriptEntry[], why?: "new-conversation") => void;
   /**
    * Another account signed in: the conversation of the one before (and its transcript) was deleted, so main
    * drops what it kept of it too (the ask box's history).
@@ -836,6 +837,10 @@ export class AgentHost {
    * kept with it), and compared with now on every request.
    */
   private convoCaps: PromptCaps | null = null;
+  /** Which chat a request belongs to: bumped whenever a conversation is forgotten, so a late failure of an old request can't reconnect (and cut off the tasks of) a newer chat. */
+  private conversationEpoch = 0;
+  /** A "New conversation" under way: a second one joins it. */
+  private resetting: Promise<void> | null = null;
   private readonly stateFile: string;
 
   /** The OS's keys, words, apps, settings and security vocabulary (Linux's unless main passes its own). */
@@ -2323,6 +2328,7 @@ export class AgentHost {
     }
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
     const gen = this.gen;
+    const chat = this.conversationEpoch;
     const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
@@ -2348,7 +2354,8 @@ export class AgentHost {
       // Never sent: no turn of its own will come (nor its hint).
       this.hintOwed = false;
       this.queued = this.queued.filter(r => r !== request);
-      if (err instanceof ConnectionLost) { this.lost(gen, "send failed"); return false; }
+      // A request of a chat that was started over meanwhile: its failure is the old chat's, not the connection's.
+      if (err instanceof ConnectionLost) { if (chat === this.conversationEpoch) this.lost(gen, "send failed"); return false; }
       throw err;
     }
     return true;
@@ -2538,6 +2545,66 @@ export class AgentHost {
   }
 
   /**
+   * "New conversation": only the chat starts over. The reply under way and queued messages stop, the conductor's
+   * session and the transcript go; sign-in, memory, reminders, routines, running tasks and approvals are untouched
+   * (unlike `forgetConversation`, which is for sign-out). How tasks ended still reaches the next turn.
+   */
+  async newConversation(): Promise<void> {
+    // A second click while one is under way is the same reset, not another that could erase what the first started.
+    this.resetting ??= this.resetConversation().finally(() => { this.resetting = null; });
+    return this.resetting;
+  }
+
+  private async resetConversation(): Promise<void> {
+    const conductor = this.conductor;
+    const gen = this.gen;
+    // Retires the requests of this chat at once: a late send failure of one is no reason to reconnect.
+    const before = ++this.conversationEpoch;
+    await this.stopAnswer();
+    // Signed out, another account or a reconnect meanwhile: that conversation isn't this one's to erase.
+    if (before !== this.conversationEpoch || gen !== this.gen || conductor !== this.conductor) return;
+    const caps = this.convoCaps;
+    const forgetting = this.forgetCurrent(RUNTIME_WAIT_MS);
+    const mine = this.conversationEpoch;
+    await forgetting;
+    if (mine !== this.conversationEpoch || gen !== this.gen || conductor !== this.conductor) return;
+    this.transcript.length = 0;
+    this.o.onTranscript?.([], "new-conversation");
+    // A fresh session on the same runtime: tasks, their approvals and the connection are left as they are. It is built
+    // for the model selected now and the extension tools as they are now, not the retired chat's.
+    if (conductor) {
+      try {
+        const extensions = this.o.extensions?.forSession();
+        const extensionsGen = this.o.extensions?.generation ?? 0;
+        await conductor.renew(RUNTIME_WAIT_MS, { model: this.status.conductorModel ?? undefined, extensions });
+        if (mine === this.conversationEpoch && gen === this.gen && conductor === this.conductor && conductor.sessionId) {
+          this.conversation = conductor.sessionId;
+          this.convoCaps = caps;
+          this.extensionsGen = extensionsGen;
+          // This chat replaces the one whose failure was waiting for the tasks to end: that deferred reconnect is
+          // moot, and Ember answers again now (tasks keep running).
+          if (this.reconnectAfterTasks) {
+            this.reconnectAfterTasks = null;
+            const login = this.status.login;
+            this.setStatus({ phase: "ready", detail: login ? `Signed in as ${login}.` : "Connected." });
+          }
+        }
+      } catch (err) {
+        this.o.log.warn("agent.new_conversation_failed", { err });
+        if (gen === this.gen && conductor === this.conductor) {
+          if (this.tasksAtWork()) {
+            this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, "new conversation failed", undefined, undefined, true); };
+            this.setStatus({ phase: "error", reason: "not-answering", detail: `I couldn't start a new conversation. ${AFTER_TASKS}` });
+          } else this.lost(gen, "new conversation failed", undefined, undefined, true);
+        }
+        // The caller (Home) must not say it worked.
+        throw err;
+      }
+    }
+    this.o.log.info("agent.new_conversation");
+  }
+
+  /**
    * Another account than the conversation's signed in: the conversation is deleted, as at sign-out, and what it said,
    * how its tasks ended and what Ember kept about its person go with it.
    */
@@ -2575,6 +2642,7 @@ export class AgentHost {
 
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
+    this.conversationEpoch++;
     this.conversation = null;
     this.setConversationContext(undefined);
     // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.

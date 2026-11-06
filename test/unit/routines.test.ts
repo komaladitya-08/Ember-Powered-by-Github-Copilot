@@ -15,7 +15,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { MAX_STEPS, RoutineBook, routineKey, routinesFile, routineSteps } from "../../app/main/agent/routines";
+import { MAX_STEPS, RoutineBook, countStoredRoutines, routineKey, routinesFile, routineSteps } from "../../app/main/agent/routines";
 import { Reminders, type Reminder } from "../../app/main/agent/reminders";
 import { conductorTools } from "../../app/main/agent/conductor";
 import { applyAdminPolicy, managedKeys, parseAdminPolicy } from "../../app/main/admin";
@@ -502,5 +502,41 @@ describe("AgentHost's routines across a sign-out, a restart and another account 
     await inner.accountChanged();
     await host.ask("what did I miss?");
     expect(answers.at(-1)).toBe("Nothing new: no tasks finished in the last two hours.");
+  });
+});
+
+describe("countStoredRoutines (the Sign out and Forget everything questions)", () => {
+  it("counts what is stored and touches nothing: a missing file is none, and no file is made", () => {
+    const dir = tmp();
+    expect(countStoredRoutines(dir)).toEqual({ known: true, n: 0 });
+    expect(fs.readdirSync(dir)).toEqual([]);
+    new RoutineBook({ file: routinesFile(dir), now: () => 5 }).save("Start my day", ["open Mail", "show today's calendar"], SAID);
+    expect(countStoredRoutines(dir)).toEqual({ known: true, n: 1 });
+  });
+
+  it("calls a corrupt or invalid file unknown, never zero, and leaves it where it is (not moved to .broken)", () => {
+    for (const body of ["{not json", JSON.stringify({ version: 2, routines: [], reminders: [] })]) {
+      const dir = tmp();
+      fs.writeFileSync(path.join(dir, "routines.json"), body);
+      const failed = vi.fn();
+      expect(countStoredRoutines(dir, failed)).toEqual({ known: false });
+      expect(failed).toHaveBeenCalledOnce();
+      expect(fs.readdirSync(dir)).toEqual(["routines.json"]);
+    }
+  });
+
+  it("counts stored routines whatever the policy says, since sign-out deletes them all the same", () => {
+    const dir = tmp();
+    new RoutineBook({ file: routinesFile(dir) }).save("Start my day", ["open Mail", "show today's calendar"], SAID);
+    // No policy parameter exists: a policy-off book's rows are hidden from Home, but the count reads the file.
+    expect(countStoredRoutines(dir)).toEqual({ known: true, n: 1 });
+  });
+
+  it("calls an unreadable file unknown, with nothing in the result that names its path", () => {
+    const dir = tmp();
+    fs.mkdirSync(path.join(dir, "routines.json")); // a folder in its place: EISDIR
+    const result = countStoredRoutines(dir);
+    expect(result).toEqual({ known: false });
+    expect(JSON.stringify(result)).not.toContain(dir);
   });
 });

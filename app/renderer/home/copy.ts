@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import type { ActivityEntry, ClearHearingStatus, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -956,6 +956,22 @@ export function teachOutcomeText(outcome: "learnt" | "off" | "unknown" | "unlike
 /** The baseline voice is included in the speech models; optional choices name their separate download. */
 export const NATURAL_HINT = naturalModelHint("kitten");
 
+/** Hear me more clearly's note: what it fetches and what it costs. */
+export const CLEAR_HINT = "Downloads a 482 MB speech model that gets about half as many words wrong, above all with an accent or across a room. Each request takes about 0.3 s longer and listening uses about 550 MB more memory. It runs on this computer, and nothing you say leaves it.";
+
+/** How Hear me more clearly stands, under its switch ("" while off). */
+export function clearHearingLine(s: ClearHearingStatus | undefined): string {
+  switch (s?.state) {
+    case "downloading": return `Downloading… ${s.percent}%`;
+    case "starting": return "Starting…";
+    case "on": return "On. Ember writes what you say with the clearer model.";
+    case "wont-load": return "It wouldn't start on this computer, so Ember is using its usual speech model.";
+    case "needs-native": return "This computer can't run it, so Ember is using its usual speech model.";
+    case "failed": return `${s.detail} Turn this off and on to try again.`;
+    default: return "";
+  }
+}
+
 /** Effective selected voice and actual playback/fallback from the service, without guessing from the old toggle. */
 export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: NaturalModel = "kitten"): { text: string; retry: boolean; busy: boolean } {
   const name = NATURAL_CHOICES[model].name;
@@ -973,7 +989,7 @@ export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: Natur
     case "too-slow": return { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
     case "wont-load": return { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
     case "needs-native": return { text: `${name} isn't available on this computer. ${fallback}`, retry: false, busy: false };
-    case "failed": return { text: model === "kokoro" ? `Couldn't download Kokoro. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model === "kokoro", busy: false };
+    case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model !== "kitten", busy: false };
     default: return { text: `${name} is selected. ${fallback}`, retry: false, busy: false };
   }
 }
@@ -988,6 +1004,32 @@ export const REMINDER_WORDS = {
   empty: "No reminders waiting.", deleted: "All routines and waiting reminders deleted.",
   deleteFailed: "Couldn't delete the routines and reminders. Try again.", loadFailed: "Couldn't load reminders. Try Refresh list again.",
 } as const;
+
+/** What is in Ember right now, counted while a Sign out or Forget everything question is open; null is "couldn't tell". */
+export interface ForgetCounts { tasks: number | null; facts: number | null; reminders: number | null; routines: number | null }
+
+/** Said while the counts are still being read. */
+export const FORGET_LOADING = "Checking what this affects…";
+
+const plural = (n: number | null, one: string, many: string) => n === null ? `an unknown number of ${many}` : `${n} ${n === 1 ? one : many}`;
+const isAre = (n: number | null) => n === 1 ? "is" : "are";
+/** Added when any count is unknown, so a missing number is never read as none. */
+const UNKNOWN_NOTE = " Ember couldn't count everything right now, so those numbers are unknown, not zero.";
+const hasUnknown = (c: ForgetCounts) => Object.values(c).some(n => n === null);
+
+/** The question for Sign out: it clears all four, and the counts are today's. */
+export function signOutScope(c: ForgetCounts): string {
+  return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation, `
+    + `${plural(c.facts, "saved fact", "saved facts")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}.`
+    + (hasUnknown(c) ? UNKNOWN_NOTE : "");
+}
+
+/** The question for Forget everything: only saved memory goes, and the other three are said to stay. */
+export function forgetEverythingScope(c: ForgetCounts): string {
+  return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")} and what Ember learned from them. `
+    + `${plural(c.tasks, "task", "tasks")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are.`
+    + (hasUnknown(c) ? UNKNOWN_NOTE : "");
+}
 
 /** Bulk deletion always names both visible record types and includes saved reminders in its scope. */
 export function reminderDeleteScope(routines: number, reminders: number): string {

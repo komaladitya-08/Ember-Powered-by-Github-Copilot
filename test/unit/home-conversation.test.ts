@@ -4,6 +4,8 @@
  * (review of PR #125).
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONVERSATION_SHOWN, conversationChange, conversationShown, earlierLabel } from "../../app/renderer/home/conversation-view";
 import { pushLater } from "../../app/main/push-later";
@@ -101,5 +103,16 @@ describe("where a waiting question is answered", () => {
     expect(askedWhere([])).toBe("bubble");
     expect(askedWhere([{ kind: "question", state: "done", askedIn: "card" }, { kind: "question", state: "waiting", askedIn: "command" }])).toBe("command");
     expect(askedWhere([{ kind: "question", state: "waiting" }])).toBe("bubble");
+  });
+});
+
+describe("Home's New conversation button (review of #184)", () => {
+  // Behaviour (status, focus, a newer draft kept) is in test/integration/home-conversation-renderer.test.ts; main.ts
+  // can't load under Node, so its one decision is pinned by its text: an own reset isn't broadcast as a forgetting.
+  it("main doesn't broadcast conversationForgotten for the chat Home itself started over", () => {
+    const src = readFileSync(join(__dirname, "../../app/main/main.ts"), "utf8") as string;
+    const hook = src.slice(src.indexOf("onTranscript: (entries, why) =>"), src.indexOf("onAccountChanged:"));
+    expect(hook).toMatch(/if \(why !== "new-conversation"\) broadcast\(IPC\.conversationForgotten, null\);/);
+    expect(hook).toMatch(/broadcast\(IPC\.conversationChanged, conversationNow\(entries\)\);/);
   });
 });

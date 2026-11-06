@@ -699,3 +699,15 @@ Same report: with every switch on, Enter in Edge's address bar still asked as a 
 ### Light mode (2026-11-05)
 
 Owner decision, replacing "dark only". `settings.appearance` (system, light, dark; system by default) sets `nativeTheme.themeSource`. Content windows (`html.content`) take ember.css's light tokens through `prefers-color-scheme`, measured by light-mode.test.ts. The floating layer stays dark, because it sits over any app and its labels are measured against that.
+
+### Hear me more clearly (2026-11-05)
+
+Departure from §2's offline Moonshine, as an option. Owner's report: what Ember showed wasn't what was said. On 240 synthesized requests as a laptop hears them, Moonshine base got 6.0 % of words wrong (8.4 % in Hindi-accented voices), Parakeet TDT 0.6B v2 2.8 % (3.8 %) for about 0.2 s more a request and 550 MB more memory (docs/ASSISTANT.md §10). `voice.clearHearing`, off by default, a 482 MB pinned download after the user turns it on, native builds only; Moonshine stays the default and does every quick check.
+
+### Web pages that live on their own (2026-11-05)
+
+Same report: every click on a YouTube result was refused, since the 2026-11-03 check on repeated names and the binding of a step to the whole tree can't hold on a page with a preview playing. A step that asks nothing in a web page, outside a dialog and with no risky word, now needs only its window and the object itself (`livingPage()`, worker.ts). A question still binds to the whole tree. Checked on real YouTube in Edge: the first result opened in one click.
+
+### Supertonic (2026-11-05)
+
+Owner's choice by ear of six voices and then all ten of Supertonic 3's: its fifth, as a third value of `voice.naturalModel`, downloaded after an explicit choice, on the native addon only. On a laptop that refuses Kokoro at 0.78 of real time it comes to 0.25–0.33. Its weights are under the BigScience Open RAIL-M licence. **Before a public release:** ship a copy of that licence and its notices, put its use restrictions (Attachment A) in terms users agree to and tell them so, have a lawyer read restriction (l), medical advice, against a general assistant, and credit Parakeet (CC-BY-4.0).

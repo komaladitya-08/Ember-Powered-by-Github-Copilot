@@ -13,6 +13,8 @@
 //   stop       "Hey Ember, stop" said while Ember speaks a long reply pulls the app-wide kill switch, hushes it at
 //              once, and no follow-up opens.
 //   conversation  "Hey Ember, …" and then two requests with no name, in one open conversation (the setting's default).
+//   clear      Hear me more clearly: the clearer recognizer loads and writes the request. Skipped without its model in
+//              the models folder (482 MB: CI doesn't fetch it).
 //   match      Voice Match: enrolled from 4 clips through the settings page's own IPC (window.ember.enrolVoice, on
 //              Chromium's debugging port), then a request in another synthetic voice is said not to match, and heard (voice.rejected,
 //              reason "voice") and one in the owner's is heard.
@@ -41,7 +43,7 @@ const otherVoice = path.resolve(process.env.EMBER_VOICE_E2E_OTHER ?? path.join(r
 const verbose = process.env.EMBER_VOICE_E2E_VERBOSE === "1";
 const wantBackend = process.env.EMBER_VOICE_E2E_BACKEND || null;
 if (wantBackend && wantBackend !== "native" && wantBackend !== "wasm") { console.error("EMBER_VOICE_E2E_BACKEND is native or wasm"); process.exit(2); }
-const DEFAULT_SCENARIOS = ["reply", "name", "multi", "conversation", "stop", "match", "listen-once-off"];
+const DEFAULT_SCENARIOS = ["reply", "name", "multi", "conversation", "clear", "stop", "match", "listen-once-off"];
 const SCENARIOS = [...DEFAULT_SCENARIOS, "listen-once"];
 const wanted = process.argv.slice(2);
 if (wanted.some(s => !SCENARIOS.includes(s))) { console.error(`usage: node test/smoke/voice.mjs [${SCENARIOS.join(" | ")}]...`); process.exit(2); }
@@ -123,7 +125,7 @@ function inRoom(samples) {
   return out;
 }
 
-function startEmber(name, wav, { debugPort = false, wakeWord = true, conversation = false } = {}) {
+function startEmber(name, wav, { debugPort = false, wakeWord = true, conversation = false, clearHearing = false } = {}) {
   const userData = mkdtempSync(path.join(tmpdir(), `ember-voice-${name}-`));
   const micWav = path.join(userData, "mic.wav");
   writeWav(micWav, inRoom(wav));
@@ -132,7 +134,7 @@ function startEmber(name, wav, { debugPort = false, wakeWord = true, conversatio
   // Conversations off but in their own scenario: the rest check the follow-up window, which is what that switch leaves.
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
     version: 1, onboarded: true, consent: { version: 6, at: new Date().toISOString() },
-    wakeWord, speak: true, voice: { consent: wakeWord, speakerRejection: false, muted: false, match: false, conversation },
+    wakeWord, speak: true, voice: { consent: wakeWord, speakerRejection: false, muted: false, match: false, conversation, clearHearing },
   }));
   const env = {
     ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1", EMBER_LOG_LEVEL: "debug",
@@ -462,6 +464,23 @@ const scenarios = {
         from++;
       }
       console.log("ok   conversation: three requests in one conversation, two of them with no name");
+    } finally { await finish(inst); }
+  },
+
+  async clear() {
+    if (!existsSync(path.join(models, ".sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.ok"))) { console.log("skip clear: its model isn't in the models folder"); return; }
+    reply = "Night Light is on.";
+    const sent = mock.requests.length;
+    // (The clearer recognizer takes about 8 s more to load: the request must come after it has.)
+    const inst = startEmber("clear", cat(silence(LEAD_S + 15), clip("wake"), silence(12)), { clearHearing: true });
+    try {
+      const ready = await waitFor(inst, e => e.msg === "voice.ready", 60_000, "the voice process (voice.ready)");
+      expect(inst.log[ready].clear === true, "the clearer recognizer didn't load");
+      const heard = await waitFor(inst, e => e.msg === "voice.utterance", 40_000, "the request (voice.utterance)", ready);
+      await waitFor(inst, e => e.msg === "conductor.ask", 10_000, "the request to reach the conversation (conductor.ask)", heard);
+      await new Promise(r => setTimeout(r, 2000));
+      expect(asked(sent, /night ?light/i), `the model wasn't asked about night light (it was asked ${askedText(sent)})`);
+      console.log(`ok   clear: heard ${askedText(sent)} with the clearer recognizer, in ${inst.log[heard].ms} ms after the speech ended`);
     } finally { await finish(inst); }
   },
 

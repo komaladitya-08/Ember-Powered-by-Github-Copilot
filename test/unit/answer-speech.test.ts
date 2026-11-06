@@ -14,7 +14,7 @@ function wiring() {
   const speech = source.slice(source.indexOf("  let accountErasures ="), source.indexOf("  // ───── Copilot brain"));
   const callbacks = source.slice(source.indexOf("      onTurnStart: turn =>"), source.indexOf("      onStatus: status =>", source.indexOf("      onTurnStart: turn =>")));
   const taskCallback = source.slice(source.indexOf("      onTaskFinished: t =>"), source.indexOf("      isOnline:", source.indexOf("      onTaskFinished: t =>")));
-  const transcriptCallback = source.slice(source.indexOf("      onTranscript: entries =>"), source.indexOf("      // Another account signed in:", source.indexOf("      onTranscript: entries =>")));
+  const transcriptCallback = source.slice(source.indexOf("      onTranscript: (entries, why) =>"), source.indexOf("      // Another account signed in:", source.indexOf("      onTranscript: (entries, why) =>")));
   const learnedForgot = source.slice(source.indexOf("    onForgotAll: () => {"), source.indexOf("    // One fact forgotten", source.indexOf("    onForgotAll: () => {")));
   const signOut = source.slice(source.indexOf("  ipcMain.handle(IPC.signOut,"), source.indexOf("  ipcMain.handle(IPC.cancelSignIn,"));
   expect(speech.length).toBeGreaterThan(500);
@@ -55,7 +55,7 @@ function wiring() {
     onAnswerEnd(text: string): void;
     onTurnEnd(aborted: boolean): void;
     onTaskFinished(task: { title: string; status: string; text: string; summary: string }): void;
-    onTranscript(entries: unknown[]): void;
+    onTranscript(entries: unknown[], why?: "new-conversation"): void;
     onForgotAll(): void;
     signOut(): Promise<void>;
     interrupt(): void;
@@ -113,6 +113,12 @@ describe("main's answer speech ownership", () => {
     w.onTranscript([]);
     expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
     expect(w.broadcast).toHaveBeenCalledWith(IPC.conversationForgotten, null);
+    // Home's own New conversation hushes too, but isn't announced as a forgetting (review of #184).
+    w.broadcast.mockClear();
+    w.onTranscript([], "new-conversation");
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 2);
+    expect(w.broadcast).not.toHaveBeenCalledWith(IPC.conversationForgotten, null);
+    expect(w.broadcast).toHaveBeenCalledWith(IPC.conversationChanged, []);
     w.onAnswer("The erased account’s answer.");
     vi.advanceTimersByTime(ACK_MS + 1);
     expect(w.voice.speak).not.toHaveBeenCalled();

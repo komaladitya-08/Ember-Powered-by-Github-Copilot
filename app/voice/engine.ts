@@ -72,7 +72,7 @@ export interface VoiceBackend {
   speechEnd?(segment: Float32Array): number | null;
   resetVad(): void;
   /** What was said in `samples`, or "". Keyword checks keep their original handling of decoder repeats. */
-  transcribe(samples: Float32Array, purpose?: "keyword"): string;
+  transcribe(samples: Float32Array, purpose?: "keyword" | "request"): string;
   /** What the VAD heard just before a segment it returned (0.1 s), if it still has it; optional. */
   before?(segment: Float32Array): Float32Array | null;
 }
@@ -100,7 +100,7 @@ export type VoiceEvent =
    * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score against the
    * enrolled voiceprint, unrounded, when it had one (absent: too little voice to score, which is never trusted).
    */
-  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; verified?: true; short?: true; restScore?: number }
+  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; verified?: true; short?: true; restScore?: number }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came); it is heard all the same (match.ts). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number };
 
@@ -694,6 +694,8 @@ export class VoiceEngine {
   private said: string[] = [];
   /** The speech under way was heard while Ember spoke; it has been taken for the user cutting in; where it was last checked. */
   private overEmber = false;
+  /** Said with other sound playing and not by name: it counts only if it sounds like the owner (match.ts). */
+  private overSound = false;
   private cutIn = false;
   private cutInCheckedAt = 0;
   /** Ember's voice is ducked for the speech under way. */
@@ -1482,6 +1484,7 @@ export class VoiceEngine {
     this.silentAt = -1;
     this.afterHush = 0;
     this.overEmber = false;
+    this.overSound = false;
     this.cutIn = false;
     this.cutInCheckedAt = 0;
     if (this.ducked) { this.ducked = false; this.emit({ type: "duck", on: false }); }
@@ -1619,8 +1622,12 @@ export class VoiceEngine {
       this.mode.overFollowUp = false;
     }
     const conversation = this.mode.reason === "conversation";
-    // With a song or a video on, only what is said to Ember by name is for it.
-    if (conversation && this.soundPlaying(t0) && t0 - this.spottedAt >= NAME_HEARD_MS && !calledByName(heard)) { this.peak = 0; return; }
+    // With a song or a video on, what is said to Ember by name is for it, and so is what sounds like its owner (the voice
+    // gate decides that; without a voiceprint it is dropped there). Over Ember's voice too, nothing can tell whose it is.
+    if (conversation && this.soundPlaying(t0) && t0 - this.spottedAt >= NAME_HEARD_MS && !calledByName(heard)) {
+      if (this.overEmber) { this.peak = 0; return; }
+      this.overSound = true;
+    }
     if (conversation && this.overEmber && !this.cutIn) {
       // All of what was said over Ember, its end heard: Ember's own voice, a "yeah", or the user cutting in.
       if (this.peak < this.echo * ECHO_MARGIN || BACKCHANNEL.test(heard)) { this.peak = 0; return; }
@@ -1707,7 +1714,7 @@ export class VoiceEngine {
     this.followUps = window === "follow-up" ? this.followUps + 1 : 0;
     this.requestAudio = clip.audio;
     this.requestWithWake = withWake;
-    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}) });
+    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}) });
     this.echo *= ECHO_DECAY;
     if (conversation && this.mode.kind === "listening") {
       // The microphone stays with the user: the next thing they say is heard as this one was, whatever Ember does meanwhile.
@@ -1739,10 +1746,10 @@ export class VoiceEngine {
         const e = rmsOf(seg.subarray(i, i + 1600));
         if (e < low) { low = e; split = i + 800; }
       }
-      parts.push(this.backend.transcribe(seg.subarray(at, split)));
+      parts.push(this.backend.transcribe(seg.subarray(at, split), "request"));
       at = split;
     }
-    parts.push(this.backend.transcribe(seg.subarray(at)));
+    parts.push(this.backend.transcribe(seg.subarray(at), "request"));
     return parts.map(p => p.trim()).filter(Boolean).join(" ");
   }
 

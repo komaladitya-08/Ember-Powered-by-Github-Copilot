@@ -20,7 +20,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
-import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -117,7 +117,7 @@ import { PROVIDER_IPC } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
-import { RoutineBook, routinesFile } from "./agent/routines";
+import { RoutineBook, countStoredRoutines, routinesFile } from "./agent/routines";
 import { reminderNotification, type Reminder } from "./agent/reminders";
 import { ReminderChangeSchema } from "../shared/reminders";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
@@ -1385,6 +1385,7 @@ function start(): void {
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
     match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips },
     ...(voice ? { natural: voice.naturalStatus } : {}),
+    ...(voice ? { clear: voice.clearStatus } : {}),
     naturalModels: availableNaturalModels,
   });
   let lastListenStatus = "";
@@ -1546,14 +1547,18 @@ function start(): void {
   // Routines and lasting reminders (app/main/agent/routines.ts): routines.json beside the settings, used only while the
   // user has them on and the organisation allows them.
   const routinesAllowed = () => policy.features.routines !== false;
+  /** The routines kept; throws when routines.json can't be read, so a failure is never mistaken for none. */
+  const routineRowsStrict = () => routinesAllowed() ? routineBook.list().map(r => ({ id: r.id, name: r.name, steps: r.steps })) : [];
   const routineRows = () => {
-    if (!routinesAllowed()) return [];
     // An unreadable routines.json (no permission) lists nothing rather than failing Home's section.
-    try { return routineBook.list().map(r => ({ id: r.id, name: r.name, steps: r.steps })); } catch (err) { log.warn("routines.unreadable", { err: err instanceof Error ? err.message : String(err) }); return []; }
+    try { return routineRowsStrict(); } catch (err) { log.warn("routines.unreadable", { err: err instanceof Error ? err.message : String(err) }); return []; }
   };
   const routineBook: RoutineBook = new RoutineBook({
     file: routinesFile(userData, err => log.warn("routines.file_broken", { err: err instanceof Error ? err.message : String(err) })),
-    onChange: () => broadcast(IPC.routinesChanged, routineRows()),
+    onChange: () => {
+      // An unreadable book pushes nothing: an empty push would read as "no routines" to the Forget question.
+      try { broadcast(IPC.routinesChanged, routineRowsStrict()); } catch (err) { log.warn("routines.unreadable", { err: err instanceof Error ? err.message : String(err) }); }
+    },
   });
   const reminderRows = (rows = agent?.reminders.list() ?? []) => {
     if (!hasConsent(settings.get())) return [];
@@ -1761,7 +1766,7 @@ function start(): void {
           // Said while a reply was on its way: that reply stops, and this is answered with it in mind (host.ts replaceTurn).
           // A permission question stays up: its tool is waiting, and only its own answer ends it.
           const replaces = e.window === "conversation" && !confirmer?.waiting;
-          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: !!manual || !voice?.rejectsSpeakers, spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
+          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: heardUnchecked(e, !!manual, !!voice?.rejectsSpeakers), spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
         }
         break;
       }
@@ -1887,6 +1892,10 @@ function start(): void {
   ipcMain.handle(IPC.conversationStop, guard(async () => {
     resetAnswerSpeech();
     await agent?.stopAnswer();
+  }));
+  ipcMain.handle(IPC.conversationNew, guard(async () => {
+    resetAnswerSpeech();
+    await agent?.newConversation();
   }));
   // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
@@ -2334,6 +2343,10 @@ function start(): void {
     if (page) await shell.openExternal(page);
   }));
   ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
+  // The count for the Sign out and Forget questions: rejects when the book can't be read, so Home shows it as unknown.
+  // Read from the file, not the book: no quarantine of a broken file, and policy-hidden routines still go at sign-out.
+  // Only a tagged number leaves main: a failure's message carries the file's path.
+  ipcMain.handle(IPC.routinesCount, guard(() => countStoredRoutines(userData, err => log.warn("routines.count_unreadable", { err: err instanceof Error ? err.message : String(err) }))));
   ipcMain.handle(IPC.remindersList, guard(() => reminderRows()));
   ipcMain.handle(IPC.reminderChange, guard((value: unknown) => {
     const parsed = ReminderChangeSchema.safeParse(value);
@@ -3087,12 +3100,13 @@ function start(): void {
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
         showState({ idle: idleNow(status), setup: setupNow(status) });
       },
-      onTranscript: entries => {
-        // Forgotten (sign-out, another account): the "Ember learned" lines go with it.
+      onTranscript: (entries, why) => {
+        // Forgotten (sign-out, another account): the "Ember learned" lines go with it. A New conversation clears them
+        // too, but isn't announced as a forgetting: Home that asked for it resets itself when the request is answered.
         if (!entries.length) {
           resetAnswerSpeech();
           learnedLines = [];
-          broadcast(IPC.conversationForgotten, null);
+          if (why !== "new-conversation") broadcast(IPC.conversationForgotten, null);
         }
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
@@ -3295,6 +3309,8 @@ function start(): void {
         syncListenOnce();
       },
     });
+    // Before anything starts listening, so the voice process loads the clearer recognizer the first time.
+    voice.setClearHearing(settings.get().voice.clearHearing);
     if (settings.get().voice.muted) voice.setMuted(true);
     const wantVoice = () => policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
@@ -3319,6 +3335,7 @@ function start(): void {
       voice?.setLearning(on);
     });
     settings.onChange(next => applyNaturalVoicePreference(voice, next.voice));
+    settings.onChange(next => voice?.setClearHearing(next.voice.clearHearing));
     let conversations = settings.get().voice.conversation;
     settings.onChange(next => {
       if (next.voice.conversation === conversations) return;

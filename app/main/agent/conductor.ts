@@ -645,10 +645,13 @@ export function writeAgentState(file: string, patch: Partial<Record<keyof AgentS
  * Drops the saved conversation. Unless it was `deleted` already, it is deleted from the runtime's
  * store at the next start (e.g. signed out while Copilot wasn't connected).
  */
-export function forgetSavedConversation(file: string, deleted = false): void {
+export function forgetSavedConversation(file: string, deleted = false, target?: string | null): void {
   const s = readAgentState(file);
-  const id = s.conductorSessionId;
-  writeAgentState(file, { conductorSessionId: undefined, ...(id && !deleted ? { forget: [...new Set([...(s.forget ?? []), id])] } : {}) });
+  // `target`: the conversation this call was made for, captured before anything was awaited. A newer one saved since
+  // (a sign-in, a new conversation) is not this call's to clear or to queue for deletion.
+  const id = target === undefined ? s.conductorSessionId : target;
+  const mine = target === undefined || !s.conductorSessionId || s.conductorSessionId === target;
+  writeAgentState(file, { ...(mine ? { conductorSessionId: undefined } : {}), ...(id && !deleted ? { forget: [...new Set([...(s.forget ?? []), id])] } : {}) });
 }
 
 export class Conductor {
@@ -675,6 +678,8 @@ export class Conductor {
    * ended (endSilentTurn). Nothing of it shows meanwhile.
    */
   private stuck = false;
+  /** Bumped whenever this conductor lets go of its session: a start that began before that is stale and publishes nothing. */
+  private lifetime = 0;
   /** A silent turn being ended (see endSilentTurn): true once it has, false if it hasn't in time. */
   private endingTurn: Promise<boolean> | null = null;
   /** Settles endingTurn. */
@@ -796,6 +801,7 @@ export class Conductor {
 
   async start(): Promise<void> {
     const d = this.deps;
+    const life = this.lifetime;
     fs.mkdirSync(d.workDir, { recursive: true });
     const state = readAgentState(d.stateFile);
     // Anything saved but this run's own conversation was left by a run that crashed (or forgotten while disconnected).
@@ -809,9 +815,10 @@ export class Conductor {
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
       ...(d.extensions ? { extensions: d.extensions } : {}),
     });
+    let opened: CopilotSession | null = null;
     if (d.resume) {
       try {
-        this.session = await d.client.resumeSession(d.resume, config);
+        opened = await d.client.resumeSession(d.resume, config);
         d.log.info("conductor.resumed", { sessionId: d.resume });
       } catch (err) {
         // It can't be resumed (e.g. nothing was asked in it yet): it's deleted with the leftovers, and stays on the forget list until then.
@@ -820,17 +827,35 @@ export class Conductor {
         writeAgentState(d.stateFile, { forget: [...new Set([...(state.forget ?? []), d.resume])] });
       }
     }
-    if (!this.session) {
+    let created: string | null = null;
+    if (!opened) {
       const sessionId = `ember-conductor-${crypto.randomUUID()}`;
-      this.session = await d.client.createSession({ ...config, sessionId });
-      writeAgentState(d.stateFile, { conductorSessionId: sessionId });
-      d.log.info("conductor.created", { sessionId });
+      opened = await d.client.createSession({ ...config, sessionId });
+      created = sessionId;
+    }
+    // Stopped, forgotten or replaced while the runtime was answering: this session is nobody's. It never becomes the
+    // saved or current one (it would overwrite a newer conversation's id); a created one is deleted again.
+    if (life !== this.lifetime) {
+      d.log.warn("conductor.start_superseded", { sessionId: opened.sessionId });
+      await within(opened.disconnect().catch(() => undefined), 3000);
+      if (created) await within(d.client.deleteSession(created).catch(err => d.log.warn("conductor.delete_failed", { err })), 3000);
+      return;
+    }
+    this.session = opened;
+    if (created) {
+      writeAgentState(d.stateFile, { conductorSessionId: created });
+      d.log.info("conductor.created", { sessionId: created });
     }
     if (leftovers.length) {
-      await within(Promise.all(leftovers.map(id => d.client.deleteSession(id).catch(err => d.log.warn("conductor.delete_failed", { err })))), 5000);
-      writeAgentState(d.stateFile, { forget: undefined });
-      d.log.info("conductor.leftovers_deleted", { count: leftovers.length });
+      // Only what was really deleted leaves the forget list, and it leaves the list as it is now: a newer entry (a
+      // sign-out that couldn't delete the chat it just forgot) and a failed or timed-out deletion stay for the next start.
+      const deleted = new Set<string>();
+      await within(Promise.all(leftovers.map(id => d.client.deleteSession(id).then(() => { deleted.add(id); }, err => d.log.warn("conductor.delete_failed", { err })))), 5000);
+      const left = (readAgentState(d.stateFile).forget ?? []).filter(id => !deleted.has(id));
+      writeAgentState(d.stateFile, { forget: left.length ? left : undefined });
+      d.log.info("conductor.leftovers_deleted", { count: deleted.size });
     }
+    if (life !== this.lifetime || !this.session) return;
     const tools = await verifySessionTools(this.session, this.toolNames, undefined, d.extensions);
     d.log.info("conductor.tools", { tools });
     const ms = d.turnStartMs ?? TURN_START_MS;
@@ -1136,6 +1161,7 @@ export class Conductor {
 
   /** Lets go of the session; a runtime that doesn't answer within a few seconds is left behind. */
   async stop(): Promise<void> {
+    this.lifetime++;
     const session = this.session;
     this.session = null;
     this.watch?.dispose();
@@ -1145,18 +1171,55 @@ export class Conductor {
   }
 
   /**
+   * "New conversation": this session is deleted and a fresh one (a new id, never a resume of the old) starts on the
+   * same runtime, so running tasks go on. What belongs to the old conversation (a stuck turn, what was said, the
+   * model and extension tools it was built with) does not carry over: `fresh` gives the model now selected and the
+   * extension tools as they are now. Rejects if the new session can't be made; a renewal that was overtaken (stop,
+   * sign-out, another reset) resolves without publishing anything.
+   */
+  async renew(ms = 5000, fresh: { model?: string | null; extensions?: SessionExtensions | undefined } = {}): Promise<void> {
+    const life = this.lifetime;
+    await this.forget(ms);
+    if (life + 1 !== this.lifetime) return;
+    this.settleEnding?.(false);
+    this.stuck = false;
+    this.stopping = false;
+    this.busy = false;
+    this.modelSwitches = 0;
+    this.waitForContextTurn = false;
+    this.answerMuted = false;
+    this.answerMessages.clear();
+    this.retiredMessages.clear();
+    this.runtimeTurn = undefined;
+    this.unstarted = [];
+    this.said = "";
+    this.saidOwn = false;
+    this.routineWords = [];
+    this.routinesRan.clear();
+    this.answered = "";
+    const { extensions: _old, ...kept } = this.deps;
+    this.deps = {
+      ...kept, resume: null,
+      ...(fresh.model !== undefined ? { model: fresh.model } : {}),
+      ...(fresh.extensions ? { extensions: fresh.extensions } : {}),
+    };
+    await this.start();
+  }
+
+  /**
    * Forget the conversation: delete it from the runtime's store (within `ms`)
    * and drop the saved id, so the next start begins a fresh one (on quit, and
    * after sign-out, so another account never resumes this one's conversation).
    */
   async forget(ms = 5000): Promise<void> {
-    const id = this.session?.sessionId ?? readAgentState(this.deps.stateFile).conductorSessionId;
+    // Which conversation this is for is fixed now: what is saved after the awaits below may be a newer one's.
+    const id = this.session?.sessionId ?? readAgentState(this.deps.stateFile).conductorSessionId ?? null;
     const work = (async () => {
       await this.stop();
       return id ? this.deps.client.deleteSession(id).then(() => true, err => { this.deps.log.warn("conductor.delete_failed", { err }); return false; }) : true;
     })();
     const deleted = await within(work, ms);
     // Not deleted in time (the runtime didn't answer): it goes at the next start.
-    forgetSavedConversation(this.deps.stateFile, deleted === true);
+    forgetSavedConversation(this.deps.stateFile, deleted === true, id);
   }
 }

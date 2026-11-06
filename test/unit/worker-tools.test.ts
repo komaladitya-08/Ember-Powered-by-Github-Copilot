@@ -1210,6 +1210,136 @@ describe("approval stays with the action the user saw (safety review)", () => {
     expect(events).toEqual([]);
   });
 
+  describe("a web page that lives on its own (YouTube: every click on a video refused, 2026-11-05)", () => {
+    const video = "Thummak Thummak, 3 minutes";
+    const twin: AxNode = { id: 2, parent: 0, depth: 1, role: "link", name: video, states: ["enabled", "sensitive"], bounds: null };
+    const clock = (t: number): AxNode => ({ id: 3, parent: 0, depth: 1, role: "label", name: `0:0${t}`, states: [], bounds: null });
+    const page = { role: "link", name: video, parentRole: "document web" };
+
+    it("opens a link whose thumbnail repeats its name, by the object the model named", async () => {
+      const { call, events } = makeWorker({ ...page, more: [twin] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(events).toContain("start");
+    });
+
+    it("clicks through a page whose words change between every read (a preview playing)", async () => {
+      let t = 0;
+      const { call, events } = makeWorker({ ...page, more: [clock(0)], treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${++t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(events).toContain("start");
+    });
+
+    it("clicks through a page that gained controls since it was read", async () => {
+      let reads = 0;
+      const { call, events } = makeWorker({ ...page, treeNodes: nodes => ++reads > 1 ? [...nodes, clock(1)] : nodes });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(events).toContain("start");
+    });
+
+    const box = { role: "entry", name: "Search", parentRole: "document web" };
+
+    it("types into a page's field while the page around it changes", async () => {
+      let t = 0;
+      const { call } = makeWorker({ ...box, setTextOk: true, more: [clock(0)], treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${++t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("success");
+    });
+
+    it("types nothing over a draft a page's field gained while the step waited (PR 181)", async () => {
+      let restored = false;
+      const typed: string[] = [];
+      const { call } = makeWorker({ ...box, setTextOk: true, onSetText: t => typed.push(t), more: [clock(0)], onLease: () => { restored = true; },
+        live: id => id === 1 && restored ? { text: "A long draft the page brought back" } : undefined });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("failure");
+      expect(typed).toEqual([]);
+    });
+
+    it("types nothing into a page's field whose selection changed while the step waited (PR 181)", async () => {
+      let picked = false;
+      const typed: string[] = [];
+      const { call } = makeWorker({ ...box, setTextOk: true, onSetText: t => typed.push(t), more: [clock(0)], onLease: () => { picked = true; },
+        treeNode: n => n.id === 1 && picked ? { ...n, selection: "a whole paragraph" } : n });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("failure");
+      expect(typed).toEqual([]);
+    });
+
+    const focusedBox = { ...box, states: () => ["enabled", "sensitive", "editable", "focused"] };
+
+    // The first key asks and binds its answer to the whole page. The next is covered by it, so it asks nothing.
+    it("presses keys in a page's field while the page around it changes", async () => {
+      let t = 0;
+      let playing = false;
+      const { call, asked } = makeWorker({ ...focusedBox, more: [clock(0)], treeNodes: nodes => nodes.map(n => n.id === 3 && playing ? { ...n, name: `0:0${++t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("press_keys", { keys: "Down" })).resultType).toBe("success");
+      playing = true;
+      expect((await call("press_keys", { keys: "Down" })).resultType).toBe("success");
+      expect(asked.length).toBe(1);
+    });
+
+    it("presses no key in a page's field whose selection changed since it was judged (PR 181)", async () => {
+      let armed = false;
+      let picked = false;
+      let inputs = 0;
+      const { call, asked } = makeWorker({ ...focusedBox, onInput: () => { inputs++; }, more: [clock(0)], onLease: () => { picked = armed; },
+        treeNode: n => n.id === 1 && picked ? { ...n, selection: "a whole paragraph" } : n });
+      await call("perceive_window", {});
+      expect((await call("press_keys", { keys: "Down" })).resultType).toBe("success");
+      armed = true;
+      expect((await call("press_keys", { keys: "Down" })).resultType).toBe("failure");
+      expect(asked.length).toBe(1);
+      expect(inputs).toBe(1);
+    });
+
+    it("still refuses repeated names that say something risky, before asking", async () => {
+      const { call, asked, events } = makeWorker({ role: "link", name: "Delete", parentRole: "document web",
+        more: [{ ...twin, name: "Delete" }] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toEqual([]);
+      expect(events).toEqual([]);
+    });
+
+    it("still refuses repeated names in a dialog on the page", async () => {
+      const { call, events } = makeWorker({ role: "link", name: "Open", parentRole: "dialog",
+        more: [{ id: 9, parent: null, depth: 0, role: "document web", name: "", states: [], bounds: null }, { ...twin, name: "Open" }] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(events).toEqual([]);
+    });
+
+    it("refuses when its object became something else", async () => {
+      let swapped = false;
+      const { call, events } = makeWorker({ ...page, more: [clock(0)], onLease: () => { swapped = true; }, live: id => id === 1 && swapped ? { name: "Sponsored" } : undefined });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(events).toEqual([]);
+    });
+
+    it("binds an answer to the whole page: words that change while the user decides undo a yes", async () => {
+      let t = 0;
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, more: [clock(0)], onAsk: () => { t = 5; },
+        treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked.length).toBe(1);
+      expect(events).toEqual([]);
+    });
+
+    it("still reads nothing into an app's own window that changes (only a web page lives on its own)", async () => {
+      let t = 0;
+      const { call, events } = makeWorker({ more: [clock(0)], treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${++t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(events).toEqual([]);
+    });
+  });
+
   it("refuses when the full context can no longer be read after Allow", async () => {
     let unavailable = false;
     const { call, events } = makeWorker({ name: "Delete", readFails: () => unavailable, onAsk: () => { unavailable = true; } });

@@ -7,7 +7,7 @@
 import { speechMarkupOpen, spokenText } from "./spoken";
 
 /** Persisted preference names; Kitten is the default, with Kokoro as the optional alternative. */
-export type NaturalVoiceModel = "kokoro" | "kitten";
+export type NaturalVoiceModel = "kokoro" | "supertonic" | "kitten";
 
 /** Neural speech must be made in at most half its playback duration, keeping streamed sentences ahead of playback. */
 export const NATURAL_MAX_RTF = 0.5;

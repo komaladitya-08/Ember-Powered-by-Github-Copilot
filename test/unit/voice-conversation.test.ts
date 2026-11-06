@@ -240,7 +240,8 @@ describe("a conversation with other sound playing (a song Ember was asked to pla
     c.say(20); c.quiet(2);
     c.e.otherSound(true);
     c.say(20); c.quiet(2);
-    expect(c.utterances()).toHaveLength(1);
+    // The voice gate decides it (match.ts): a song is not the owner, and with no voiceprint nothing marked so is heard.
+    expect(c.utterances().at(-1)).toMatchObject({ overSound: true });
     expect(c.e.listening).toBe(true);
   });
 
@@ -297,6 +298,22 @@ describe("endsConversation", () => {
   });
   it.each(["That's all I need from the report, now print it.", "Say goodbye to the team in my email.", "Open the calculator.", "Thanks."])("goes on after “%s”", t => {
     expect(endsConversation(t)).toBe(false);
+  });
+});
+
+describe("which recognizer writes what (Hear me more clearly)", () => {
+  it("has the request itself written by the one for requests, and the quick checks by the other", () => {
+    const asked: (string | undefined)[] = [];
+    const b = fake(["Open the calculator."]);
+    const inner = b.transcribe.bind(b);
+    b.transcribe = (s, purpose) => { asked.push(purpose); return inner(s, purpose); };
+    const clock = { t: 1000 };
+    const e = new VoiceEngine(b, () => undefined, { now: () => clock.t, verifyWake: false, rejectWindowMs: 0 });
+    const feed = (f: Float32Array) => { clock.t += 32; e.feed(f); };
+    feed(frame(0, 1));
+    for (let i = 0; i < 20; i++) feed(frame(0.2));
+    for (let i = 0; i < 2; i++) feed(frame(0));
+    expect(asked).toContain("request");
   });
 });
 

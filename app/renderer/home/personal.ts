@@ -6,7 +6,7 @@
 
 import type { VoiceStatus, VoiceWord } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
-import { PERSONAL_TEXT, WORD_DELETE_FAILED, WORDS_DELETE_FAILED, forgetWordLabel, personalView, teachOutcomeText, wordRowText } from "./copy";
+import { CLEAR_HINT, PERSONAL_TEXT, WORD_DELETE_FAILED, WORDS_DELETE_FAILED, forgetWordLabel, personalView, teachOutcomeText, wordRowText } from "./copy";
 import { KeyedRows } from "./keyed-rows";
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -19,7 +19,7 @@ let wordRows: KeyedRows<VoiceWord> | null = null;
 
 /** The voice settings as Home last had them, with this change. */
 const voiceWith = (change: Partial<Settings["voice"]>): Settings["voice"] => ({
-  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true,
+  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false,
   ...(current?.voice ?? {}), ...change,
 });
 
@@ -60,6 +60,7 @@ export function personalSettings(s: Settings): void {
   ($("match-learn") as HTMLInputElement).checked = s.voice.learn;
   ($("words-on") as HTMLInputElement).checked = s.voice.words;
   ($("suggest-on") as HTMLInputElement).checked = s.voice.suggest;
+  ($("clear-on") as HTMLInputElement).checked = s.voice.clearHearing;
   ($("conversation-on") as HTMLInputElement).checked = s.voice.conversation;
 }
 
@@ -152,9 +153,11 @@ export function startPersonal(saveSettings: Save): void {
   $("conversation-hint").textContent = PERSONAL_TEXT.conversationHint;
   $("suggest-label").textContent = PERSONAL_TEXT.suggest;
   $("suggest-hint").textContent = PERSONAL_TEXT.suggestHint;
+  $("clear-hint").textContent = CLEAR_HINT;
   $("match-learn").addEventListener("change", e => { void save({ voice: voiceWith({ learn: (e.target as HTMLInputElement).checked }) }); });
   $("words-on").addEventListener("change", e => { void save({ voice: voiceWith({ words: (e.target as HTMLInputElement).checked }) }); });
   $("conversation-on").addEventListener("change", e => { void save({ voice: voiceWith({ conversation: (e.target as HTMLInputElement).checked }) }); });
+  $("clear-on").addEventListener("change", e => { void save({ voice: voiceWith({ clearHearing: (e.target as HTMLInputElement).checked }) }); });
   $("suggest-on").addEventListener("change", e => { void save({ voice: voiceWith({ suggest: (e.target as HTMLInputElement).checked }) }); });
   $("match-reset").addEventListener("click", () => {
     void window.ember.resetVoice().then(() => { $("voice-live").textContent = PERSONAL_TEXT.resetDone; ($("match-learn") as HTMLElement).focus(); });

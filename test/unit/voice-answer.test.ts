@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, heardAnswer, refusalEndsTrust, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
+import { SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
 import fs from "node:fs";
@@ -530,5 +530,24 @@ describe("a short yes on the task's voice trust (owner decision of 2026-11-03, â
       later(600);
       expect(c.answerVoice("allow", { verified: false, trust: { task: "1-a" } })).toBe("not-yet");
     });
+  });
+});
+
+describe("whose words a heard request counts as, for commands", () => {
+  it("never a song's: speech over other sound without a full match stays unchecked (PR 181 security review)", () => {
+    expect(heardUnchecked({ overSound: true }, false, true)).toBe(true);
+  });
+
+  it("the owner's, over other sound, once Voice Match fully matched", () => {
+    expect(heardUnchecked({ overSound: true, verified: true }, false, true)).toBe(false);
+  });
+
+  it("the user's in a quiet room where Ember can tell them from its speakers", () => {
+    expect(heardUnchecked({}, false, true)).toBe(false);
+  });
+
+  it("nobody's after a click, or where Ember can't tell the user from its speakers, even when verified", () => {
+    expect(heardUnchecked({ verified: true }, true, true)).toBe(true);
+    expect(heardUnchecked({ verified: true }, false, false)).toBe(true);
   });
 });

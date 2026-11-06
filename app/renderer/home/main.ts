@@ -8,7 +8,7 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
@@ -17,6 +17,7 @@ import {
 } from "./copy";
 import { mountAboutYou } from "./about-you";
 import { mountReminders } from "./reminders";
+import { dismissForgetConfirms, mountForgetConfirms } from "./forget-confirm";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -766,7 +767,10 @@ $("retry").addEventListener("click", () => {
   }, err => signInMsg(ipcErrorText(err), true));
 });
 $("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });
-$("sign-out").addEventListener("click", () => { void window.ember.signOut().catch(err => signInMsg(memoryDeleteFailedText(err), true)); });
+mountForgetConfirms(window.ember, {
+  signOutFailed: err => signInMsg(memoryDeleteFailedText(err), true),
+  deleteMemory: remove => deleteMemory($("memory-forget-all") as HTMLButtonElement, remove),
+});
 
 /** The device code row: "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]". */
 function showCode(userCode: string, uri: string): void {
@@ -940,7 +944,7 @@ void window.ember.conversation().then(entries => {
   if (!conversationReceived && conversationOpened === conversationGeneration) renderConversation(entries);
 }, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t load this conversation. New replies will still appear here."; });
 window.ember.onConversation(entries => { conversationReceived = true; renderConversation(entries); });
-window.ember.onConversationForgotten(() => {
+const resetConversationView = () => {
   // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
   conversationMessage.value = "";
   conversationSearch.value = "";
@@ -955,6 +959,20 @@ window.ember.onConversationForgotten(() => {
   send.textContent = "Send";
   ($("conversation-stop") as HTMLButtonElement).disabled = false;
   renderConversation([]);
+};
+window.ember.onConversationForgotten(resetConversationView);
+$("conversation-new").addEventListener("click", () => {
+  const button = $("conversation-new") as HTMLButtonElement;
+  const generation = conversationGeneration;
+  button.disabled = true;
+  void window.ember.conversationNew().then(() => {
+    // Forgotten or reset another way meanwhile (sign-out, another account): a newer draft isn't this click's to clear.
+    if (generation !== conversationGeneration) return;
+    resetConversationView();
+    conversationComposeStatus.textContent = "Started a new conversation. Memory, reminders and running tasks are untouched.";
+    conversationMessage.focus();
+  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t start a new conversation. Try again."; })
+    .finally(() => { button.disabled = false; });
 });
 conversationSearch.addEventListener("input", () => renderConversation(conversationAll));
 $("conversation-compose").addEventListener("submit", event => {
@@ -1141,9 +1159,6 @@ async function deleteMemory(button: HTMLButtonElement, remove: () => Promise<unk
   catch (err) { $("memory-error").textContent = memoryDeleteFailedText(err); }
   finally { button.removeAttribute("aria-disabled"); }
 }
-$("memory-forget-all").addEventListener("click", () => {
-  void deleteMemory($("memory-forget-all") as HTMLButtonElement, () => window.ember.forgetAllMemory());
-});
 window.ember.onSettingsChanged(applyMemorySettings);
 let receivedMemory = false;
 void window.ember.memory().then(view => { if (!receivedMemory) showMemory(view); });
@@ -1315,6 +1330,7 @@ let pane = "home";
 const paneOf = (el: Element) => el.closest<HTMLElement>(".home > [data-pane]")?.dataset.pane ?? null;
 /** Shows pane `p` (every other pane's sections are taken off the page) and marks its link. */
 function showPane(p: string, glide = false, remember = true): void {
+  if (p !== pane) dismissForgetConfirms(); // an open question would stay modal over a pane it isn't in, and its inert marks would block the focus that follows
   pane = p;
   if (remember) try { localStorage.setItem("ember.home.pane", p); } catch { /* storage blocked: the window opens on Home */ }
   for (const s of document.querySelectorAll<HTMLElement>(".home > [data-pane]")) s.classList.toggle("off-pane", s.dataset.pane !== p);
@@ -1742,7 +1758,7 @@ $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
   if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
-  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true }), match: on } });
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false }), match: on } });
 });
 $("match-teach").addEventListener("click", startEnrol);
 // Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
@@ -1766,7 +1782,7 @@ $("wake").addEventListener("change", e => {
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();
@@ -1778,6 +1794,9 @@ function renderNatural(): void {
   // Kitten remains the baseline choice even when speech must use the system voice.
   $("natural-row").hidden = false;
   naturalUI.status(voice?.natural, voice?.naturalModels ?? []);
+  const clearLine = clearHearingLine(voice?.clear);
+  $("clear-text").textContent = clearLine;
+  $("clear-text").hidden = !clearLine;
 }
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });

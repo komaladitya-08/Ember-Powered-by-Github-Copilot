@@ -37,13 +37,18 @@ export interface VadSpec {
   windowSize: number; bufferSizeInSeconds: number;
 }
 
+/** A NeMo transducer (Parakeet): the clearer recognizer, on the native builds only. */
+export interface NemoSpec { encoder: string; decoder: string; joiner: string; tokens: string }
+
 /** Moonshine (v2: one merged decoder). */
 export interface MoonshineSpec { encoder: string; mergedDecoder: string; tokens: string }
 
 /** The native neural voices. WebAssembly remains available for listening, while unsupported speech uses the local OS voice. */
 export type TtsSpec =
   | { kind: "kitten"; model: string; voices: string; tokens: string; dataDir: string; lengthScale: number }
-  | { kind: "kokoro"; model: string; voices: string; tokens: string; dataDir: string; lexicon: string; lang: string; lengthScale: number };
+  | { kind: "kokoro"; model: string; voices: string; tokens: string; dataDir: string; lexicon: string; lang: string; lengthScale: number }
+  /** `model`: its vector estimator (what the voice is keyed by). */
+  | { kind: "supertonic"; model: string; durationPredictor: string; textEncoder: string; vocoder: string; ttsJson: string; unicodeIndexer: string; voiceStyle: string };
 
 /** How a model runs: onnxruntime's execution provider and its CPU threads. */
 export interface RunSpec { provider: string; numThreads: number }
@@ -94,6 +99,8 @@ export interface Sherpa {
   createKws(spec: KwsSpec, run: RunSpec): Spotter;
   createVad(spec: VadSpec, run: RunSpec): Vad;
   createMoonshine(spec: MoonshineSpec, run: RunSpec): Recognizer;
+  /** Not on WebAssembly, whose memory couldn't hold it. */
+  createNemo?(spec: NemoSpec, run: RunSpec): Recognizer;
   createTts(spec: TtsSpec, run: RunSpec, maxNumSentences: number): Tts;
 }
 
@@ -224,7 +231,31 @@ function nativeSherpa(a: any): Sherpa {
         free() {},
       };
     },
+    createNemo(s, run) {
+      const h = a.createOfflineRecognizer({
+        featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
+        modelConfig: { transducer: { encoder: s.encoder, decoder: s.decoder, joiner: s.joiner }, tokens: s.tokens, modelType: "nemo_transducer", numThreads: run.numThreads, provider: run.provider, debug: 0 },
+        decodingMethod: "greedy_search",
+      });
+      if (!h) throw new Error("the clearer speech recognizer couldn't be made");
+      return {
+        createStream: () => stream(a.createOfflineStream(h), a.acceptWaveformOffline),
+        decode: st => a.decodeOfflineStream(h, (st as any).h),
+        getResult: st => JSON.parse(a.getOfflineStreamResultAsJson((st as any).h)),
+        free() {},
+      };
+    },
     createTts(s, run, maxNumSentences) {
+      if (s.kind === "supertonic") {
+        const h = a.createOfflineTts({ model: { supertonic: { durationPredictor: s.durationPredictor, textEncoder: s.textEncoder, vectorEstimator: s.model, vocoder: s.vocoder, ttsJson: s.ttsJson, unicodeIndexer: s.unicodeIndexer, voiceStyle: s.voiceStyle }, numThreads: run.numThreads, provider: run.provider, debug: 0 }, maxNumSentences });
+        if (!h) throw new Error("the voice couldn't be made");
+        return {
+          sampleRate: Number(a.getOfflineTtsSampleRate(h)), numSpeakers: Number(a.getOfflineTtsNumSpeakers(h)),
+          // Five steps and the language go in a generation config; the plain call would leave Supertonic to guess them.
+          generate: o => a.offlineTtsGenerateWithConfig(h, { text: o.text, enableExternalBuffer: false, generationConfig: { sid: o.sid, speed: o.speed, silenceScale: 0.2, numSteps: 5, extra: { lang: "en" } } }),
+          free() {},
+        };
+      }
       const model = s.kind === "kitten" ? { kitten: { model: s.model, voices: s.voices, tokens: s.tokens, dataDir: s.dataDir, lengthScale: s.lengthScale } }
         : { kokoro: { model: s.model, voices: s.voices, tokens: s.tokens, dataDir: s.dataDir, lexicon: s.lexicon, lang: s.lang, lengthScale: s.lengthScale } };
       const h = a.createOfflineTts({ model: { ...model, numThreads: run.numThreads, provider: run.provider, debug: 0 }, maxNumSentences });

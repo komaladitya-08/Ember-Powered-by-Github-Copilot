@@ -100,7 +100,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("uses the baseline voice and 
     expect(await page.evaluate(() => window.__naturalTest.patches.at(-1)?.voice)).toMatchObject({ natural: false, naturalModel: "kitten" });
     await page.evaluate(() => window.__naturalTest.models([]));
     expect(await model.isEnabled()).toBe(true);
-    expect(await model.evaluate(select => [...(select as HTMLSelectElement).options].map(option => [option.value, option.disabled]))).toEqual([["kitten", false], ["kokoro", true]]);
+    expect(await model.evaluate(select => [...(select as HTMLSelectElement).options].map(option => [option.value, option.disabled]))).toEqual([["kitten", false], ["kokoro", true], ["supertonic", true]]);
     expect(await page.locator("#natural-text").innerText()).toContain("system voice");
     await page.evaluate(() => window.__naturalTest.policy(true));
     expect(await model.isDisabled()).toBe(true);

@@ -459,3 +459,21 @@ The two-minute idle release, local audio boundary, Stop semantics, consent and p
 pinned Piper Amy/Ryan models may still synthesise ASR/evaluation fixtures; they are test-only and never production
 speech models. Their use does not justify deleting bundled sherpa/eSpeak NG/phonemiser licence notices. Real-device
 recognition, audible Stop timing and blinded voice listening remain separate acceptance work.
+
+## 10. A clearer recognizer on 5 November
+
+The owner's report: the words shown weren't the words said. Their accent is Indian English on a laptop's array microphone.
+Measured on 240 requests (30 everyday ones in eight of Kokoro's voices: US, UK and four Hindi-accented), on this laptop,
+two threads, words wrong:
+
+| | Clean | As a laptop hears it (room, fan noise at 12 dB, quiet) | Hindi-accented, as a laptop hears it | A request | Memory |
+|---|---|---|---|---|---|
+| Moonshine v2 base | 3.7 % | 6.0 % | 8.4 % | 87 ms | 245 MB |
+| Parakeet TDT 0.6B v2 (int8) | 2.5 % | 2.8 % | 3.8 % | 296 ms | 800 MB |
+
+Moonshine also wrote the name as "Remember", "Amber" and "Investop" where Parakeet wrote "Ember". Four threads gained nothing
+(342 ms). These voices are synthesized: no real accent has been measured, and no audio of the owner was kept.
+
+Parakeet is a 482 MB download and 550 MB of memory, too much to force on the weakest target, so it is **Hear me more
+clearly** in Settings › Voice, off by default, native builds only. It writes the requests; Moonshine goes on doing the quick
+checks, so the name and a cut-in cost what they did. It is a transducer, so hotword biasing (§ above) is now open to it.

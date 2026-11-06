@@ -149,9 +149,10 @@
           <label for="conversation-message">Message Ember</label>
           <p id="conversation-scope" class="hint"></p>
           <textarea id="conversation-message" rows="3" maxlength="2000" placeholder="What would you like help with?" aria-describedby="conversation-scope conversation-send-hint conversation-compose-status"></textarea>
-          <div class="conversation-compose-actions"><button type="submit" id="conversation-send" class="btn primary">Send</button><button type="button" id="conversation-cancel-edit" class="btn quiet" hidden>Cancel edit</button><button type="button" id="conversation-stop" class="btn quiet" aria-describedby="conversation-stop-hint">Stop response</button></div>
+          <div class="conversation-compose-actions"><button type="submit" id="conversation-send" class="btn primary">Send</button><button type="button" id="conversation-cancel-edit" class="btn quiet" hidden>Cancel edit</button><button type="button" id="conversation-stop" class="btn quiet" aria-describedby="conversation-stop-hint">Stop response</button><button type="button" id="conversation-new" class="btn quiet" aria-describedby="conversation-new-hint">New conversation</button></div>
           <p id="conversation-send-hint" class="hint">Up to 2,000 characters. Enter adds a new line. Ctrl+Enter or ⌘+Enter sends.</p>
           <p id="conversation-stop-hint" class="hint">Stop response ends the current reply and queued messages. Running tasks continue; use Stop everything to end those too.</p>
+          <p id="conversation-new-hint" class="hint">New conversation starts a fresh chat. Saved memory, reminders and running tasks stay, and you stay signed in.</p>
           <p id="conversation-compose-status" class="hint" role="status"></p>
         </form>
       </div>
@@ -211,6 +212,11 @@
           <button type="button" id="retry" class="btn quiet" hidden>Check again</button>
           <button type="button" id="cancel-sign-in" class="btn quiet" hidden>Cancel</button>
           <button type="button" id="sign-out" class="btn quiet" hidden>Sign out</button>
+        </div>
+        <div id="sign-out-confirm" class="consent" role="alertdialog" aria-modal="true" aria-labelledby="sign-out-title" aria-describedby="sign-out-scope" hidden>
+          <p id="sign-out-title"><b>Sign out</b></p>
+          <p id="sign-out-scope" role="status" aria-live="polite"></p>
+          <div class="agent-actions"><button type="button" id="sign-out-yes" class="btn quiet danger">Sign out</button><button type="button" id="sign-out-no" class="btn quiet">Stay signed in</button></div>
         </div>
         <div id="sign-in-msg" class="sign-in-msg" role="status" aria-live="polite" hidden></div>
         <div class="models" id="models" hidden>
@@ -353,6 +359,11 @@
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
       <p class="hint" id="memory-owner" role="status" hidden></p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
+      <div id="forget-all-confirm" class="consent" role="alertdialog" aria-modal="true" aria-labelledby="forget-all-title" aria-describedby="forget-all-scope" hidden>
+        <p id="forget-all-title"><b>Forget everything</b></p>
+        <p id="forget-all-scope" role="status" aria-live="polite"></p>
+        <div class="agent-actions"><button type="button" id="forget-all-yes" class="btn quiet danger">Forget everything</button><button type="button" id="forget-all-no" class="btn quiet">Keep saved memory</button></div>
+      </div>
       <h3 class="sub" id="recall-h" hidden>Better recall</h3>
       <div class="group" id="recall-group" role="group" aria-labelledby="recall-h" hidden>
         <p class="agent-line"><i id="recall-dot" class="dot" aria-hidden="true"></i><span id="recall-text"></span></p>
@@ -422,8 +433,13 @@
           <label class="switch-row"><input type="checkbox" id="suggest-on" role="switch" aria-describedby="suggest-hint"><span id="suggest-label">Suggest what I might say next</span></label>
           <p class="row-note" id="suggest-hint"></p>
         </div>
+        <div>
+          <label class="switch-row"><input type="checkbox" id="clear-on" role="switch" aria-describedby="clear-hint clear-text"><span>Hear me more clearly</span></label>
+          <p class="row-note" id="clear-hint"></p>
+          <p class="hint" id="clear-text" role="status" hidden></p>
+        </div>
         <div id="natural-row">
-          <label class="choice"><span>Voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kitten">Kitten Nano (default)</option><option value="kokoro">Kokoro · 350 MB</option></select></label>
+          <label class="choice"><span>Voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kitten">Kitten Nano (default)</option><option value="kokoro">Kokoro · 350 MB</option><option value="supertonic">Supertonic · 129 MB</option></select></label>
           <p class="hint" id="natural-model-hint">Kitten Nano is the default voice, included in Ember's speech models. Its voice files are 63.8 MB. Speech stays on this computer; the system voice is used if Kitten cannot run fast enough.</p>
           <p class="hint" id="natural-choice-status" role="status"></p>
           <div class="agent-actions"><button type="button" id="natural-use" class="btn quiet" hidden>Use Kitten Nano</button></div>

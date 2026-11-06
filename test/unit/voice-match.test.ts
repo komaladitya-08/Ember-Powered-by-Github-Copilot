@@ -67,6 +67,24 @@ const joined = (...parts: Float32Array[]) => { const a = new Float32Array(parts.
 describe("VoiceGate", () => {
   const utterance = (text: string): VoiceEvent => ({ type: "utterance", text, ms: 100, window: "wake" });
 
+  it("hears nothing said over a song with no name while Voice Match is off (it can't tell the singer from the owner)", () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.event({ ...utterance("Dancing in the moonlight."), overSound: true } as VoiceEvent, Float32Array.from([0, 1]));
+    expect(sent).toEqual([]);
+  });
+
+  it("over a song with no name, hears the owner and drops any other voice without a word", async () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.setOwner(owner);
+    g.event({ ...utterance("Dancing in the moonlight."), overSound: true } as VoiceEvent, Float32Array.from([0, 1]));
+    g.event({ ...utterance("Turn it down."), overSound: true } as VoiceEvent, ownerAudio(APPROVAL_MIN_SECONDS + 0.1));
+    await flush();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: "utterance", text: "Turn it down." });
+  });
+
   it("lets every voice through while Voice Match is off", () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
