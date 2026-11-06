@@ -69,6 +69,13 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   hash of the text and the model's SHA-256 (a new model rebuilds them). A forgotten fact's vector goes with it;
   "Forget everything", sign-out and Remove delete the file. A question's 8 nearest facts by brute-force cosine
   (3 ms over 5,000 facts on a busy 4-vCPU machine) at 0.2 or above go to recall as `semantic`.
+  **Crash recovery:** the two files are separate renames, not one transaction. `memory.json` is the authority and the
+  vectors are derived: on load and whenever a graph is bound, a vector whose fact is missing, or was made from other
+  text, is dropped before any search and the drop is saved (idempotent; no fact is ever deleted by this). Search
+  offers nothing until a graph is bound. A delete writes the vectors first, then the graph, so a crash leaves the
+  fact (never acknowledged) rather than a vector for a forgotten one; "Forget everything" erases vectors first, then
+  the graph. A fact with no vector is recalled lexically until embedded. Limits: a crash can lose up to a second of
+  unsaved graph edits (as before), and an orphan vector's numbers (not its text) can sit on disk until the next load.
 - `recall.ts`: semantic matches seed the walk beside the lexical ones and add a score of their own (`SEMANTIC_WEIGHTS`:
   0.6 for meaning, the rest in the lexical mix's proportions). Facts the question's words or names also reach count
   from the floor; of the rest, only the best one (`SEMANTIC_ALONE`), so a request about nothing remembered brings

@@ -13,6 +13,11 @@
  *   SHA-256: a changed fact is embedded again, and a new model rebuilds the index.
  * - Search is brute force over unit vectors (a dot product each): 5,000 facts take about 3 ms (measured on a busy
  *   4-vCPU machine).
+ * - The two files are never written together, so a crash can leave them disagreeing. memory.json is the authority and
+ *   the vectors only follow it: a vector whose fact is not in the graph, or was made from other text, is dropped before
+ *   anything is searched (`pruneStale`, on load and on every bind) and the drop is saved; a fact without a vector is
+ *   found lexically until it is embedded. A delete writes the vectors first, so a crash leaves the fact (undeleted, never
+ *   acknowledged) rather than a vector for a forgotten one. Search offers nothing until a graph is bound.
  * - With no model (not downloaded, memory off, or it failed), `seeds()` gives nothing, and recall is exactly lexical.
  *
  * Plain Node: no Electron (main injects the process).
@@ -302,6 +307,8 @@ export class SemanticMemory {
    * index is empty, or the question's vector didn't come in time (recall is then lexical).
    */
   async seeds(query: string): Promise<Map<string, number> | undefined> {
+    // The graph is the authority (BE #19): until one is bound, vectors can't be checked against it, so none is offered.
+    if (!this.graph) return undefined;
     const index = this.current();
     if (!index?.size || !query.trim()) return undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
