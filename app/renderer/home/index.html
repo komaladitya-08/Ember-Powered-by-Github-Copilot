@@ -237,10 +237,13 @@
         <p class="agent-line" role="status"><i id="agent-dot" class="dot" aria-hidden="true"></i><span id="agent-text">Checking…</span></p>
         <div class="agent-actions">
           <button type="button" id="sign-in" class="btn" hidden>Sign in with GitHub</button>
+          <button type="button" id="own-provider" class="btn quiet" hidden>Use my own provider</button>
+          <button type="button" id="switch-account" class="btn quiet" hidden>Try a different GitHub account</button>
           <button type="button" id="retry" class="btn quiet" hidden>Check again</button>
           <button type="button" id="cancel-sign-in" class="btn quiet" hidden>Cancel</button>
           <button type="button" id="sign-out" class="btn quiet" hidden>Sign out</button>
         </div>
+        <p id="connection-help" class="hint" hidden></p>
         <div id="sign-out-confirm" class="consent" role="alertdialog" aria-modal="true" aria-labelledby="sign-out-title" aria-describedby="sign-out-scope" hidden>
           <p id="sign-out-title"><b>Sign out</b></p>
           <p id="sign-out-scope" role="status" aria-live="polite"></p>

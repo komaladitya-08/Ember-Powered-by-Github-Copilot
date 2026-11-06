@@ -75,6 +75,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let ownState: ProviderState | null = null;
   /** The own-provider step's check: bumped by every edit and by leaving the step, so an older answer is dropped. */
   let checkEpoch = 0;
+  /** The newest provider check that was started: only it may put the provider away after its step was abandoned. */
+  let checkRun = 0;
+  /** Setup fixes under way: their buttons stay disabled however often the rows are drawn again. */
+  const fixPending = new Set<string>();
   let providerCheck: { phase: "idle" | "checking" | "ok" | "failed" | "invalid"; line: string } = { phase: "idle", line: "" };
   /** The edit area of "Models I'll use" is open. */
   let modelsOpen = false;
@@ -292,16 +296,21 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     box.hidden = !show;
     if (!show || !a) { modelsOpen = false; return; }
     const own = !!a.service;
+    // Only the user's own provider has saved model names that stand in for the runtime's; Copilot's unknown model is
+    // shown as Copilot's default, never as the models of a provider that isn't in use (FE #4).
+    const named = a.service?.kind === "user" ? settings?.provider : undefined;
     const fixed = !!status?.admin.managed.includes("models") || a.service?.kind === "admin";
-    const rows = modelRows({ models: a.models, conductor: a.conductorModel ?? settings?.provider.conductor ?? null, worker: a.workerModel ?? settings?.provider.worker ?? null, own });
+    const rows = modelRows({ models: a.models, conductor: a.conductorModel ?? named?.conductor ?? null, worker: a.workerModel ?? named?.worker ?? null, own });
     $("w-models-list").replaceChildren(...rows.flatMap(r => [el("dt", { textContent: r.label }), el("dd", { textContent: r.note ? `${r.value} (${r.note})` : r.value })]));
     const note = fixed ? "Your organisation chooses these." : own ? "These are the models you named. I use them for your first request." : "I picked these. You can change them now or later in Settings › Models & connections.";
     if ($("w-models-note").textContent !== note) $("w-models-note").textContent = note;
     const change = $("w-models-change") as HTMLButtonElement;
-    change.hidden = fixed;
+    // Nothing to choose from: no models listed, or the models are the provider's own fields (not drawn here).
+    const editable = !fixed && !own && a.models.length > 0;
+    change.hidden = !editable;
     change.setAttribute("aria-expanded", String(modelsOpen && !own));
-    $("w-models-edit").hidden = !modelsOpen || own || fixed;
-    if (modelsOpen && !own && !fixed) fillModelEditor(a);
+    $("w-models-edit").hidden = !modelsOpen || !editable;
+    if (modelsOpen && editable) fillModelEditor(a);
   }
   /** The editor's lists are rebuilt only when they change (an open drop-down isn't pulled from under the pointer). */
   let editorKey = "";
@@ -350,19 +359,33 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   const checkProvider = latestOnly<{ epoch: number; result: { ok: true; host: string; models: number | null } | { ok: false; why: string } }>(
     async () => {
       const epoch = checkEpoch;
+      const mine = ++checkRun;
       const f = readProviderFields();
       const host = endpointHost(f.baseUrl);
       const api = window.emberProvider;
       if (!api || !host) return { epoch, result: { ok: false, why: PROVIDER_STEP.needAddress } };
+      // Back, an edit or another check can come between any two steps. Each step that does something (the card's yes
+      // turns the provider on) first looks whether this check was abandoned; one abandoned after the yes was recorded
+      // puts the provider away again, unless a newer check has taken over (it owns the provider now).
+      const abandoned = () => epoch !== checkEpoch;
+      const dropped = async () => {
+        if (mine === checkRun) await turnOwnOff(true);
+        return { epoch, result: { ok: false as const, why: "" } };
+      };
       const saved = await deps.save({ provider: { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null } } as SettingsPatch);
       if (!saved) return { epoch, result: { ok: false, why: "I couldn't save these details. The notice at the top says why." } };
+      if (abandoned()) return { epoch, result: { ok: false, why: "" } };
       if (f.key.trim()) {
         const k = await api.saveKey(f.key);
         if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
+        if (abandoned()) return { epoch, result: { ok: false, why: "" } };
       }
       const agreed = await api.agree(host);
+      if (abandoned()) return dropped();
       if (!agreed.ok) return { epoch, result: { ok: false, why: agreed.why } };
-      return { epoch, result: await api.test() };
+      const tested = await api.test();
+      if (abandoned()) return dropped();
+      return { epoch, result: tested };
     },
     r => {
       // An answer to an older check, or to a step the user has left, says nothing about what they see now.
@@ -379,8 +402,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     render();
     if (!ok) provField("w-p-key").focus(); else next.focus();
   }
-  async function turnOwnOff(): Promise<void> {
-    if (!settings?.provider.on) return;
+  /** `force`: also when the page's copy of the settings doesn't show it on yet (the card's yes may still be on its way). */
+  async function turnOwnOff(force = false): Promise<void> {
+    if (!force && !settings?.provider.on) return;
     try { await deps.save({ provider: { on: false } } as SettingsPatch); } catch { /* the settings window's notice says why */ }
   }
   function startCheck(): void {
@@ -467,16 +491,21 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         const btn = el("button", { type: "button", className: "btn quiet small", textContent: label });
         btn.dataset.fix = fix;
         btn.setAttribute("aria-label", fixButtonName(label, c.title));
+        // A button drawn again while its fix runs (clearing the earlier failure does) stays disabled.
+        if (fixPending.has(fix)) btn.setAttribute("aria-disabled", "true");
         btn.addEventListener("click", () => {
-          if (btn.getAttribute("aria-disabled") === "true") return;
+          if (btn.getAttribute("aria-disabled") === "true" || fixPending.has(fix)) return;
+          fixPending.add(fix);
           btn.setAttribute("aria-disabled", "true");
           if (fixFailures.delete(fix)) { $("w-checks-msg").textContent = ""; shownChecks = ""; render(); }
           window.ember.applyFix(fix as Parameters<typeof window.ember.applyFix>[0]).then(env => {
+            fixPending.delete(fix);
             if (status) status = { ...status, environment: env };
             shownChecks = "";
             deps.checksChanged(env);
             render();
           }, err => {
+            fixPending.delete(fix);
             const text = fixFailedText(c.title, ipcErrorText(err));
             fixFailures.set(fix, text);
             $("w-checks-msg").textContent = text;

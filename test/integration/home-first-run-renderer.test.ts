@@ -26,7 +26,7 @@ const READY_MODELS = [
 ];
 const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, signInWith: "github-app" };
 
-interface Seed { admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean }
+interface Seed { admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; home?: boolean; provider?: Record<string, unknown> }
 
 let browser: Browser;
 let server: http.Server;
@@ -50,7 +50,8 @@ afterAll(async () => { if (gate) return; await browser.close(); server.close(); 
 
 async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
-  settings.onboarded = false;
+  settings.onboarded = !!seed.home;
+  if (seed.provider) settings.provider = { ...settings.provider, ...seed.provider } as typeof settings.provider;
   settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
   const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
   const environment = { checks: seed.checks ?? [], versions: { node: "24", electron: "44", chrome: "152" } };
@@ -58,7 +59,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree }) => {
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
     const subs: Record<string, ((v: unknown) => void)[]> = {};
@@ -88,13 +89,13 @@ async function open(seed: Seed = {}): Promise<Page> {
         onChanged: () => () => undefined,
         saveKey: () => { window.__frCalls.push("saveKey"); return Promise.resolve({ ok: true }); },
         removeKey: async () => ({ ok: true }),
-        agree: (host: string) => { window.__frCalls.push(`agree:${host}`); window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return Promise.resolve({ ok: true }); },
+        agree: (host: string) => { window.__frCalls.push(`agree:${host}`); if (slowAgree) return (defer("agree") as Promise<unknown>).then(r => { window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return r; }) as never; window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return Promise.resolve({ ok: true }); },
         test: () => { window.__frCalls.push("test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
-  await page.waitForSelector("#welcome:not([hidden])");
+  if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
 }
 
@@ -297,5 +298,68 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-checks .w-check-fail").count()).toBe(0);
     await settle(p, "fix", { checks: [{ ...check, status: "ok" }], versions: {} }, 1);
     await expect.poll(() => p.locator("#w-checks .w-check-fail").count()).toBe(0);
+  });
+
+  it("(h) Back while the card's yes is on its way: the provider is turned off again and nothing is tested", async () => {
+    const p = await open({ slowAgree: true });
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    await p.fill("#w-p-url", "https://api.example.com/v1");
+    await p.fill("#w-p-key", "sk-x");
+    await p.fill("#w-p-conductor", "gpt-4.1");
+    await next(p).click();
+    await expect.poll(async () => (await calls(p)).some(c => c.startsWith("agree:"))).toBe(true);
+    await p.locator("#w-back").click();
+    await settle(p, "agree", { ok: true });
+    await expect.poll(async () => (await calls(p)).some(c => c === `save:${JSON.stringify({ provider: { on: false } })}`)).toBe(true);
+    expect(await calls(p)).not.toContain("test");
+    expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+    expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+  });
+
+  it("(i) Home's connection area leads an entitlement failure with the provider, never with signing in (FE #3)", async () => {
+    const p = await open({ home: true, agent: { ...SIGNED_OUT, phase: "error", reason: "no-access", detail: "Copilot isn't available to this account." } });
+    const shown = (id: string) => p.evaluate(i => !(document.getElementById(i) as HTMLElement).hidden, id);
+    await expect.poll(() => shown("own-provider")).toBe(true);
+    expect(await shown("sign-in")).toBe(false);
+    expect(await shown("switch-account")).toBe(true);
+    expect(await shown("retry")).toBe(true);
+    expect(await p.locator("#own-provider").getAttribute("class")).not.toContain("quiet");
+    expect(await p.locator("#connection-help").innerText()).toContain("github.com/features/copilot");
+    // Where the organisation forbids a provider of one's own: a different account leads.
+    const q = await open({ home: true, agent: { ...SIGNED_OUT, phase: "error", reason: "no-access", detail: "Copilot is disabled by your organisation's policy." }, admin: { features: { userProvider: false } } });
+    await expect.poll(() => q.evaluate(() => !(document.getElementById("switch-account") as HTMLElement).hidden)).toBe(true);
+    expect(await q.evaluate(() => (document.getElementById("own-provider") as HTMLElement).hidden)).toBe(true);
+    expect(await q.evaluate(() => (document.getElementById("sign-in") as HTMLElement).hidden)).toBe(true);
+    expect(await q.locator("#connection-help").innerText()).toContain("administrator");
+    // A plain signed-out Copilot still signs in first.
+    const r = await open({ home: true });
+    await expect.poll(() => r.evaluate(() => !(document.getElementById("sign-in") as HTMLElement).hidden)).toBe(true);
+    expect(await r.locator("#connection-help").isVisible()).toBe(false);
+  });
+
+  it("(j) Copilot's own default is reviewed as Copilot's, not as an inactive provider's models (FE #4)", async () => {
+    const p = await open({ agent: readyAgent({ models: [], conductorModel: null, workerModel: null }), provider: { on: false, conductor: "gpt-own-a", worker: "gpt-own-b" } });
+    await expect.poll(() => p.locator("#w-models").isVisible()).toBe(true);
+    const list = await p.locator("#w-models-list").innerText();
+    expect(list).toContain("The default model");
+    expect(list).not.toContain("gpt-own");
+    // Nothing to choose from: no Change button and no empty selectors.
+    expect(await p.locator("#w-models-change").isVisible()).toBe(false);
+  });
+
+  it("(k) a setup fix pending keeps its button disabled when an earlier failure is cleared (FE #6)", async () => {
+    const check = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Accessibility is off.", fix: "enable-accessibility" };
+    const p = await open({ agent: readyAgent(), checks: [check] });
+    await next(p).click();
+    const fix = p.locator("#w-checks [data-fix='enable-accessibility']");
+    await fix.click();
+    await fail(p, "fix", "Permission denied.");
+    await expect.poll(() => p.locator("#w-checks .w-check-fail").count()).toBe(1);
+    await fix.click();
+    await expect.poll(async () => (await calls(p)).filter(c => c.startsWith("fix:")).length).toBe(2);
+    expect(await fix.getAttribute("aria-disabled")).toBe("true");
+    await fix.click({ force: true });
+    await p.waitForTimeout(100);
+    expect((await calls(p)).filter(c => c.startsWith("fix:")).length).toBe(2);
   });
 });

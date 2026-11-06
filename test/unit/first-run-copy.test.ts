@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, modelRows, ownProviderOffer, providerCheckLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 
 describe("first run: own provider offer (FE #2)", () => {
   const base = { bridge: true, managedProvider: false, locked: false, userProviderOff: false };
@@ -84,5 +84,32 @@ describe("first run: the models Ember chose (FE #4, #5)", () => {
     expect(c.options.map(m => m.id)).toEqual(["v"]);
     expect(c).toMatchObject({ textOnly: false, note: "" });
     expect(taskModelChoices([], null).options).toEqual([]);
+  });
+});
+
+describe("Home's connection buttons by why Copilot isn't connected (FE #3)", () => {
+  const base = { phase: "error", ownOffered: true, signingIn: false, waiting: false };
+  it("never leads an account without Copilot with signing in again", () => {
+    const v = homeConnectionView({ ...base, reason: "no-access", detail: "Copilot isn't available to this account." });
+    expect(v.primary).toBe("own-provider");
+    expect(v.show).toEqual({ "own-provider": true, "switch-account": true, retry: true, "sign-in": false });
+    expect(v.help).toContain("github.com/features/copilot");
+  });
+  it("names the administrator, and leads with another account when the provider is forbidden by policy", () => {
+    const v = homeConnectionView({ ...base, reason: "no-access", detail: "Disabled by your organisation's policy.", ownOffered: false });
+    expect(v.primary).toBe("switch-account");
+    expect(v.show["own-provider"]).toBe(false);
+    expect(v.show["sign-in"]).toBe(false);
+    expect(v.help).toContain("administrator");
+  });
+  it("keeps signing in first for a signed-out Copilot, with the provider beside it and Check again as before", () => {
+    const v = homeConnectionView({ ...base, phase: "signed-out" });
+    expect(v.primary).toBe("sign-in");
+    expect(v.show).toEqual({ "sign-in": true, "own-provider": true, "switch-account": false, retry: true });
+  });
+  it("shows nothing while signing in, and only Reconnect while waiting for tasks", () => {
+    expect(homeConnectionView({ ...base, signingIn: true }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: false });
+    expect(homeConnectionView({ ...base, waiting: true, reason: "network" }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: true });
+    expect(homeConnectionView({ ...base, phase: "ready" }).show.retry).toBe(false);
   });
 });
