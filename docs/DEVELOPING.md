@@ -723,9 +723,13 @@ GitHub or Copilot credential from the environment it gives the runtime (`without
 app/main/agent/runtime-env.ts), and hands none over when another model service is in use. Extension servers start
 through Ember's launcher with `appEnv()`'s allowlist, so they get no token. Any GitHub-token-shaped text is replaced
 in Ember's logs and in the sentence a failed start shows (`redactGitHubTokens`). What remains: the runtime process
-itself holds the token and the SDK has no option to keep its environment from the runtime's own children. Ember grants
-the runtime no shell tool (`availableTools: []`), but that is the runtime's behaviour, not something Ember enforces
-for its descendants. A token from `gh auth token` or the environment is still accepted when no Ember sign-in exists.
+itself holds the token and the SDK has no option to keep its environment from the runtime's own children. Observed on
+the real runtime with `scripts/runtime-env-live.sh` (a network namespace with only loopback, dummy tokens, not in CI):
+an MCP server the runtime starts directly gets `COPILOT_SDK_AUTH_TOKEN`; one started through Ember's launcher does not,
+even when the launcher's own environment holds a token (extensions-launch.test.ts). Every extension server goes through
+the launcher; add none without it. The runtime's own shell, file and web tools are not offered to the model:
+`availableTools` is an allowlist of the agreed `mcp:` tools only (session-config.ts, `hardenedSessionConfig`; pinned in
+extensions-runtime.test.ts), so the model has no runtime tool that could print its environment (`verifySessionTools` checks the list the runtime reports). A token from `gh auth token` or the environment is still accepted when no Ember sign-in exists.
 
 Then press **Ctrl+Alt+Space** and type a question.
 

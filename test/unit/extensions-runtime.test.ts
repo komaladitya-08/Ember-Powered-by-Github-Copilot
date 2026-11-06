@@ -169,6 +169,17 @@ describe("hardened sessions with extensions", () => {
     expect(Object.keys(c.hooks as object)).toEqual(["onPreToolUse"]);
   });
 
+  it("never enable the runtime's own shell, file, web or process tools, with or without extensions (BE audit #1)", () => {
+    const builtin = /^(bash|shell|powershell|sh|exec|run|process|read|write|edit|view|create|glob|grep|fetch|web|url|task|agent|\*)|^builtin:|\*$/i;
+    for (const extensions of [undefined, fakeExt()]) {
+      const c = hardenedSessionConfig({ ...base, tools: [own("set_appearance")], ...(extensions ? { extensions } : {}) }) as unknown as { availableTools: string[]; excludedTools?: string[]; enableConfigDiscovery: boolean };
+      // availableTools is an allowlist: the runtime offers the model nothing outside it, and every entry is an agreed MCP tool.
+      expect(Array.isArray(c.availableTools)).toBe(true);
+      for (const t of c.availableTools) { expect(t.startsWith("mcp:")).toBe(true); expect(t.slice(4)).not.toMatch(builtin); }
+      expect(c.enableConfigDiscovery).toBe(false);
+    }
+  });
+
   it("admit only the agreed extension tools by their source-qualified names, never a builtin", () => {
     const c = hardenedSessionConfig({ ...base, tools: [own("set_appearance")], extensions: fakeExt() }) as unknown as { availableTools: string[]; mcpServers: Record<string, { tools: string[] }> };
     expect(c.availableTools.sort()).toEqual(["mcp:fake-lookup", "mcp:fake-post_message", "mcp:other-set_appearance"]);
