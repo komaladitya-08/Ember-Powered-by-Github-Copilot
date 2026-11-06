@@ -7,10 +7,35 @@ import { build } from "esbuild";
 import { _electron } from "playwright-core";
 import { expect, it } from "vitest";
 
+type Launched = Awaited<ReturnType<typeof _electron.launch>>;
+
+/**
+ * Ends a launched Electron app and waits for its process to be gone, so a later file in the same X session (action-link's
+ * keystrokes into a GTK dialog, #183) never meets a window left mapped. Plain `app.close()` and `app.exit(0)` both return
+ * while the process, and the prompt window it showed, lives on (measured: still running 20 s later), so the windows are
+ * destroyed first, then the app exits; the real "exit" event is awaited, and a process that ignores that is killed.
+ * Returns how it ended, so a test can insist on the graceful way.
+ */
+async function endApp(app: Launched | undefined): Promise<"gone" | "exited" | "killed"> {
+  if (!app) return "gone";
+  const proc = app.process();
+  if (proc.exitCode !== null || proc.signalCode !== null) return "gone";
+  const exited = new Promise<void>(resolve => proc.once("exit", () => resolve()));
+  await app.evaluate(({ app: a, BrowserWindow }) => { BrowserWindow.getAllWindows().forEach(w => w.destroy()); a.exit(0); }).catch(() => undefined); // the connection may drop as it exits
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stuck = new Promise<"stuck">(resolve => { timer = setTimeout(() => resolve("stuck"), 10_000); });
+  const how = await Promise.race([exited.then(() => "exited" as const), stuck]);
+  clearTimeout(timer);
+  if (how === "exited") return "exited";
+  proc.kill("SIGKILL");
+  await exited;
+  return "killed";
+}
+
 it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("reads and focuses an exact approval, and cancels captured drags before release", async () => {
   const root = process.cwd(), dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-approval-live-"));
   const requireCjs = createRequire(import.meta.url);
-  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  let app: Launched | undefined, ended: Awaited<ReturnType<typeof endApp>> | undefined;
   try {
     const main = path.join(dir, "main.cjs"), gesture = path.join(dir, "gesture.js");
     await build({ entryPoints: [path.join(root, "packages/bubble/src/bubble.ts")], outfile: gesture, bundle: true, platform: "browser", format: "iife", globalName: "EmberGesture" });
@@ -78,13 +103,19 @@ it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("reads and focuses an exact a
     await buttons.locator("#choice").focus(); await buttons.keyboard.press("Space");
     expect(await count()).toBe(3);
     await buttons.screenshot({ path: path.join(dir, "gesture.png") });
-  } finally { await app?.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+    ended = await endApp(app);
+    app = undefined;
+  } finally {
+    if (app) await endApp(app); // a failed run: still end it, but the assertion below is for a passing one
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  expect(ended).toBe("exited"); // no Electron left mapped for the next file in this X session (#183)
 }, 90_000);
 
 it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("keeps a refused press visible, with its window shown, whether the card is pulled or replaced before or after the reply", async () => {
   const root = process.cwd(), dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-approval-notice-"));
   const requireCjs = createRequire(import.meta.url);
-  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  let app: Launched | undefined, ended: Awaited<ReturnType<typeof endApp>> | undefined;
   try {
     const main = path.join(dir, "main.cjs");
     // The real ipc handler for a press is wrapped so its reply (decided "gone" at press time) is held until the test
@@ -163,9 +194,11 @@ it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("keeps a refused press visibl
     await expect.poll(title).toBe("Question 6");
     expect(await notice.innerText()).toContain("earlier question");
     expect(await winVisible()).toBe(true);
+    ended = await endApp(app);
+    app = undefined;
   } finally {
-    // The prompt window keeps the app alive (it hides rather than closes), so end the process outright.
-    await app?.evaluate(({ app: a }) => a.exit(0)).catch(() => undefined);
+    if (app) await endApp(app);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  expect(ended).toBe("exited");
 }, 90_000);
