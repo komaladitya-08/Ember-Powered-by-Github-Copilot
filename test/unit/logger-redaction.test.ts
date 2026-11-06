@@ -98,4 +98,27 @@ describe("the logger's emitted lines hold no token (BE audit #1)", () => {
     h.log.info(`k ${KEY}`, { [KEY]: KEY, err: Object.assign(new Error(KEY), { code: KEY }) });
     expect(h.emitted()).not.toContain(KEY);
   });
+
+  it("keeps every line valid JSON, in the file and on stdout, whatever a credential-named field holds", () => {
+    const h = harness([PLAIN]);
+    const fields: Record<string, unknown> = {
+      secret: true, token: 12345678, password: null, api_key: "plain-value-0123", access_token: [GH, 1, false],
+      authorization: { scheme: "Bearer", nested: { v: PLAIN } }, passwd: false, client_secret: 0,
+      count: 3, ok: true, none: null, tokens: 12, label: "ghost_writer", note: "github_pattern",
+      resembles: "the token count is high", words: ["secret agent", "password manager"], obj: { a: 1, b: [true, null] },
+    };
+    h.log.info("probe", fields);
+    h.real.warn("probe two", { secret: true, token: null, deep: { password: [1, { x: GH }] } });
+    const outLines = h.emitted().split("\n").filter(Boolean);
+    expect(outLines.length).toBe(4); // two in the file, two on stdout
+    for (const l of outLines) {
+      const parsed = JSON.parse(l) as Record<string, unknown>; // (a) parses
+      for (const m of [GH, PLAIN]) expect(l).not.toContain(m); // (b) no secret
+      expect(parsed.secret).toBe("[token]");
+    }
+    expect(h.lines()[0]).toMatchObject({ // (c) the rest exactly as given
+      count: 3, ok: true, none: null, tokens: 12, label: "ghost_writer", note: "github_pattern",
+      resembles: "the token count is high", words: ["secret agent", "password manager"], obj: { a: 1, b: [true, null] },
+    });
+  });
 });

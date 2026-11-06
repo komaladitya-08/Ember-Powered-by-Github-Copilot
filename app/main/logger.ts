@@ -52,7 +52,23 @@ const MAX_DEPTH = 8;
  * object key, a scope or a deep value never reaches the file or stdout, whatever put it there.
  */
 function safeLine(entry: Fields): string {
-  return redactSecretText(rawLine(entry));
+  // Redacted as a parsed value, never as finished text: a text pass can turn `"secret":true` into `"secret":[token]`.
+  return JSON.stringify(redactValue(JSON.parse(rawLine(entry)) as unknown));
+}
+
+/** Names whose value is a credential whatever its type (the same words secret-text.ts finds in `name=value` text). */
+const CREDENTIAL_KEY = /^(?:[a-z]+[_-])?token$|password|passwd|secret|api[_-]?key|authorization/i;
+
+/** Every string and key redacted; a credential-named key's value, of any type, becomes "[token]". Output stays valid JSON. */
+function redactValue(v: unknown): unknown {
+  if (typeof v === "string") return redactSecretText(v);
+  if (Array.isArray(v)) return v.map(redactValue);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>; // so a `__proto__` key stays a key
+    for (const [k, x] of Object.entries(v)) out[redactSecretText(k)] = CREDENTIAL_KEY.test(k) ? "[token]" : redactValue(x);
+    return out;
+  }
+  return v;
 }
 
 function rawLine(entry: Fields): string {
