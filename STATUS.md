@@ -26,7 +26,7 @@ The review is complete, not the backlog. Remaining follow-ups include text corre
 ## Architecture and owner decisions
 
 - Keep the GitHub token out of the runtime environment: inherited-environment filtering does not solve the pinned SDK's explicit token injection. Requires a supported authentication/account-validation design.
-- Durable account-owned memory needs a persistent ownership format and migration/failure policy. Current-run deletion protection is not restart isolation; graph/vector updates are not atomic.
+- Durable account-owned memory needs a persistent ownership format and migration/failure policy. Current-run deletion protection is not restart isolation; graph and vector files are still two writes, but memory.json is the authority and the vectors are reconciled against it on load (docs/MEMORY.md), so a crash between them cannot surface a forgotten fact.
 - Super agent: recover the missing original D1–D15 design notes and obtain the owner's answers before implementing project sessions. Support non-Git folders explicitly; do not repurpose hardened desktop workers by enabling coding tools.
 - Owner decision: spoken trust on Windows/macOS where the user's voice cannot be distinguished from Ember's speakers; the associated CLAUDE.md “Policy decides” wording still needs approval.
 - Owner decision: whether releases should attach eSpeak NG source archives.
