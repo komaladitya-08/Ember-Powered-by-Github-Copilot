@@ -43,6 +43,7 @@ import { startTasks } from "./tasks";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
+import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { CONVERSATION_EDIT, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
@@ -914,6 +915,7 @@ function conversationRow(e: Entry): HTMLLIElement {
     actions.append(edit);
   }
   if (actions.childElementCount) li.append(actions);
+  if (e.stopped) li.append(Object.assign(document.createElement("small"), { className: "conversation-limit", textContent: STOPPED_NOTE }));
   if (e.truncated) li.append(Object.assign(document.createElement("small"), { className: "conversation-limit", textContent: CONVERSATION_TRUNCATED }));
   return li;
 }
@@ -925,13 +927,49 @@ function conversationRow(e: Entry): HTMLLIElement {
 /** Every message, once "Show earlier messages" was pressed (until the conversation is forgotten). */
 let conversationAllShown = false;
 let conversationAll: Entry[] = [];
-function renderConversation(entries: Entry[]): void {
+/** The answer being written: one row that grows in place (conversation-stream.ts), kept apart from the messages' rows. */
+let answerStream = NO_STREAM;
+let streamRowEl: HTMLLIElement | null = null;
+let streamRowId = 0;
+/** Draws the answer being written (or stopped short) as the last row; the same element for every word of one answer. */
+function syncStreamRow(list: HTMLElement): void {
+  const row = answerStream.row;
+  if (!row) { streamRowEl?.remove(); streamRowEl = null; return; }
+  if (!streamRowEl || streamRowId !== row.id) {
+    streamRowEl?.remove();
+    const li = document.createElement("li");
+    li.className = "ember";
+    li.dataset.streamId = String(row.id);
+    li.append(
+      Object.assign(document.createElement("span"), { className: "who", textContent: WHO.ember }),
+      Object.assign(document.createElement("time"), { textContent: time(row.t), dateTime: row.t }),
+      document.createElement("p"),
+    );
+    streamRowEl = li;
+    streamRowId = row.id;
+  }
+  const li = streamRowEl;
+  (li.querySelector("p") as HTMLElement).textContent = row.text;
+  // A screen reader waits for the finished answer (the status line says when it came) rather than reading every word.
+  if (row.phase === "streaming") li.setAttribute("aria-busy", "true"); else li.removeAttribute("aria-busy");
+  li.dataset.phase = row.phase;
+  const note = li.querySelector("small");
+  if (row.phase === "interrupted" && !note) li.append(Object.assign(document.createElement("small"), { className: "conversation-limit", textContent: STOPPED_NOTE }));
+  const q = conversationSearch.value.trim();
+  li.hidden = !!q && !conversationMatchesText(row.text, q);
+  if (li.parentElement !== list || li !== list.lastElementChild) list.append(li);
+}
+function renderConversation(raw: Entry[]): void {
+  answerStream = streamEntries(answerStream, raw);
+  const entries = raw;
   // Forgotten (signed out, another account): back to the latest messages.
   if (!entries.length) {
     conversationAllShown = false;
   }
-  conversationAll = entries;
+  conversationAll = raw;
   const list = $("conversation");
+  // Out of the way while the messages' rows change (their changes count rows from the top), back at the end after.
+  streamRowEl?.remove();
   const searching = !!conversationSearch.value.trim();
   const shown = conversationShown(entries, conversationAllShown || searching);
   const { drop, add } = conversationChange(shownConversation, shown);
@@ -945,11 +983,13 @@ function renderConversation(entries: Entry[]): void {
     if (match) matches++;
   }
   $("conversation-search-status").textContent = searching ? conversationSearchCount(matches) : "";
-  const latest = entries.at(-1);
+  syncStreamRow(list);
+  const latest = raw.at(-1);
   const newReply = latest && (latest.t !== conversationLastAtSend?.t || latest.who !== conversationLastAtSend?.who || latest.text !== conversationLastAtSend?.text);
-  if (conversationAwaitingReply && newReply && ["ember", "problem"].includes(latest.who)) {
+  // (An answer stopped short is not a reply received: the problem that follows it, or the Stop, says what happened.)
+  if (conversationAwaitingReply && newReply && (latest.who === "problem" || (latest.who === "ember" && !latest.stopped))) {
     conversationAwaitingReply = false;
-    conversationComposeStatus.textContent = entries.at(-1)?.who === "problem" ? "Ember couldn’t finish this reply. Review the message above; you can edit your request and send again." : "Reply received.";
+    conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? "Ember couldn’t finish this reply. Review the message above; you can edit your request and send again." : "Reply received.";
   }
   // Requests Ember heard (not typed) offer “That's not what I said”.
   markHeard(list);
@@ -989,6 +1029,12 @@ const resetConversationView = () => {
   renderConversation([]);
 };
 window.ember.onConversationForgotten(resetConversationView);
+window.ember.onConversationStream(e => {
+  const ev = e as Partial<StreamEvent> | null;
+  if (!ev || !Number.isSafeInteger(ev.id) || typeof ev.text !== "string" || !["streaming", "done", "interrupted"].includes(ev.state ?? "")) return;
+  answerStream = streamEvent(answerStream, ev as StreamEvent, conversationAll, new Date().toISOString());
+  syncStreamRow($("conversation"));
+});
 $("conversation-new").addEventListener("click", () => {
   const button = $("conversation-new") as HTMLButtonElement;
   const generation = conversationGeneration;

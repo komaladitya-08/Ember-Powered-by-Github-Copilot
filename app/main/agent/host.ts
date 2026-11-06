@@ -15,7 +15,7 @@ import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import { BubbleOwner, Presenter, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import type { ActiveProvider } from "../provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
 import { modelsManaged, type AdminPolicy } from "../admin";
@@ -151,7 +151,20 @@ export interface AgentStatus {
  * which userWordsOf reads), with the fact's id for its Undo. `heardId`: a request Ember heard, as voice personalisation
  * knows it (app/main/personal/service.ts heard()).
  */
-export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number }
+/**
+ * (`stopped`: an answer that stopped short, kept with the words it had. Home shows it with a note; it is never "the last
+ * answer" to read aloud, never a question Ember asked, and nothing sends the transcript to a model. `answerId`: the
+ * AnswerStream id of an answer that streamed, on the entry that holds it (finished or stopped), so Home settles that
+ * answer's row by identity, never by position or words. Display plumbing only: never sent to a model or spoken.)
+ */
+/**
+ * Ember's answer as it develops, for Home's conversation (the bubble shows the same words). `id` names one answer (it
+ * only grows, so a late word of an older one is told apart); `text` is all of it so far, as plain text. `done`: the
+ * answer is complete (the transcript has it); `interrupted`: it stopped short (Stop, a problem, a lost connection), and
+ * the transcript then holds its words as an `ember` entry marked `stopped`.
+ */
+export interface AnswerStream { id: number; text: string; state: "streaming" | "done" | "interrupted" }
+export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number; stopped?: true; answerId?: number }
 
 /** How long to wait before each further try at a reconnect's account lookup (ms). */
 const ACCOUNT_RETRY_MS: readonly number[] = [1000, 3000];
@@ -246,6 +259,8 @@ export interface HostOptions {
   onTurnStart?: (turn: { text: string; spoken: boolean; manual?: true }) => void;
   /** The current answer was interrupted: buffered audio and delayed acknowledgements must go too. */
   onAnswerInterrupted?: () => void;
+  /** The answer being written, for Home's conversation (see AnswerStream). */
+  onAnswerStream?: (e: AnswerStream) => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; summary: string; text: string }) => void;
   /** The conversation changed (the settings window shows it). */
@@ -858,6 +873,14 @@ export class AgentHost {
   private convoCaps: PromptCaps | null = null;
   /** Which chat a request belongs to: bumped whenever a conversation is forgotten, so a late failure of an old request can't reconnect (and cut off the tasks of) a newer chat. */
   private conversationEpoch = 0;
+  /**
+   * The chat the conductor's answer callbacks speak for. New conversation renews the same conductor (one set of callbacks)
+   * onto a fresh session, so the binding moves with it; the conductor itself drops a retired session's events.
+   */
+  private conductorChat: { chat: number } = { chat: 0 };
+  /** The answer streaming now (Home shows it as it comes); null between answers. */
+  private stream: { id: number; text: string } | null = null;
+  private streamSeq = 0;
   /** A "New conversation" under way: a second one joins it. */
   private resetting: Promise<void> | null = null;
   private readonly stateFile: string;
@@ -894,7 +917,7 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
-    this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), () => this.serviceKind(),
+    this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id), () => this.serviceKind(),
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
@@ -1181,7 +1204,7 @@ export class AgentHost {
 
   /** The last retained answer. Home discloses if the explicit per-message memory bound was reached. */
   lastAnswer(): string | null {
-    return [...this.transcript].reverse().find(e => e.who === "ember")?.text ?? null;
+    return [...this.transcript].reverse().find(e => e.who === "ember" && !e.stopped)?.text ?? null;
   }
 
   /**
@@ -1217,10 +1240,10 @@ export class AgentHost {
       const last = log[at - 1];
       // Lines from before a restart are only to read: no question there is agreed to, none of those words stand for this task.
       if (this.restored.has(last)) break;
-      const question = last.who === "ember" ? questionOf(last.text) : n === 0 && last.who === "task" ? questionOf(this.results.get(last) ?? "") : "";
+      const question = last.who === "ember" && !last.stopped ? questionOf(last.text) : n === 0 && last.who === "task" ? questionOf(this.results.get(last) ?? "") : "";
       if (question && apart(log[at], last) <= 10 * 60_000 && agrees(reply, question)) agreed.unshift({ asked: question, answer: reply });
       let k = at - 1;
-      const asked = last.who === "ember" && asks(last.text);
+      const asked = last.who === "ember" && !last.stopped && asks(last.text);
       while (k >= 0 && log[k].who === "ember") k--;
       const before = log[k];
       if (!before || this.restored.has(before) || before.who !== "you" || apart(log[at], before) > 10 * 60_000) break;
@@ -1246,8 +1269,31 @@ export class AgentHost {
     };
   }
 
-  private remember(who: TranscriptEntry["who"], text: string, heardId?: number): TranscriptEntry {
-    const entry: TranscriptEntry = { t: new Date().toISOString(), who, ...retainedConversationText(text), ...(heardId ? { heardId } : {}) };
+  /** A word of the answer (of the chat `chat`: a retired chat's late words are dropped). */
+  private streamDelta(delta: string, chat: number): void {
+    if (chat !== this.conversationEpoch || !delta) return;
+    if (!this.stream) {
+      if (!delta.trim()) return;
+      this.stream = { id: ++this.streamSeq, text: "" };
+    }
+    this.stream.text += delta;
+    this.o.onAnswerStream?.({ id: this.stream.id, text: plainText(this.stream.text), state: "streaming" });
+  }
+
+  /** The answer open now is complete or stopped short; `chat` undefined: ended by this chat's own doing. */
+  private endStream(state: "done" | "interrupted", chat?: number): void {
+    const s = this.stream;
+    if (!s || (chat !== undefined && chat !== this.conversationEpoch)) return;
+    this.stream = null;
+    const text = plainText(s.text);
+    // The words said so far are kept in the transcript (the host's record, so a reopened Home shows them), before the
+    // stream's own event so Home never sees the row go and come back.
+    if (state === "interrupted" && text.trim()) this.remember("ember", text, undefined, true, s.id);
+    this.o.onAnswerStream?.({ id: s.id, text, state });
+  }
+
+  private remember(who: TranscriptEntry["who"], text: string, heardId?: number, stopped?: true, answerId?: number): TranscriptEntry {
+    const entry: TranscriptEntry = { t: new Date().toISOString(), who, ...retainedConversationText(text), ...(heardId ? { heardId } : {}), ...(stopped ? { stopped } : {}), ...(answerId ? { answerId } : {}) };
     this.transcript.push(entry);
     if (this.transcript.length > CONVERSATION_LIMIT) this.transcript.splice(0, this.transcript.length - CONVERSATION_LIMIT);
     this.o.onTranscript?.(this.getTranscript());
@@ -1261,6 +1307,8 @@ export class AgentHost {
    * so each request still gets its own.
    */
   private rememberProblem(text: string): void {
+    // What was said so far stays where it was, before the problem's line.
+    this.endStream("interrupted");
     const last = this.transcript.at(-1);
     const retained = retainedConversationText(text);
     const said = retained.text;
@@ -1598,6 +1646,8 @@ export class AgentHost {
       // The extension tools as they are now (none while extensions are off): a later change reconnects between turns.
       this.extensionsGen = this.o.extensions?.generation ?? 0;
       const extensions = this.o.extensions?.forSession();
+      const chatOf = { chat: this.conversationEpoch };
+      this.conductorChat = chatOf;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
         reminders: this.reminders,
@@ -1622,11 +1672,12 @@ export class AgentHost {
           if (gen === this.gen && this.status.phase === "ready") this.setConversationContext(context);
         },
         // An answer that tells the user where to turn commands on gets the button for it (once per run).
-        onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
-        onAnswerDelta: delta => this.o.onAnswerDelta?.(delta),
-        onAnswerEnd: text => this.o.onAnswerEnd?.(text),
-        onAnswerInterrupted: () => this.o.onAnswerInterrupted?.(),
+        onAnswer: text => { this.endStream("done", chatOf.chat); this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
+        onAnswerDelta: delta => { this.streamDelta(delta, chatOf.chat); this.o.onAnswerDelta?.(delta); },
+        onAnswerEnd: text => { this.endStream("done", chatOf.chat); this.o.onAnswerEnd?.(text); },
+        onAnswerInterrupted: () => { this.endStream("interrupted", chatOf.chat); this.o.onAnswerInterrupted?.(); },
         onTurnEnd: aborted => {
+          this.endStream(aborted ? "interrupted" : "done", chatOf.chat);
           // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
           this.o.onTurnEnd?.(aborted);
@@ -2695,6 +2746,8 @@ export class AgentHost {
         await conductor.renew(RUNTIME_WAIT_MS, { model: this.status.conductorModel ?? undefined, extensions });
         if (mine === this.conversationEpoch && gen === this.gen && conductor === this.conductor && conductor.sessionId) {
           this.conversation = conductor.sessionId;
+          // The renewed session's answers are this chat's (its retired session's are dropped by the conductor).
+          this.conductorChat.chat = mine;
           this.convoCaps = caps;
           this.extensionsGen = extensionsGen;
           // This chat replaces the one whose failure was waiting for the tasks to end: that deferred reconnect is
@@ -2760,6 +2813,7 @@ export class AgentHost {
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
     this.conversationEpoch++;
+    this.stream = null;
     this.conversation = null;
     this.setConversationContext(undefined);
     // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.
