@@ -1846,18 +1846,37 @@ function applyVoiceSettings(s: Status["settings"]): void {
 $("wake").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // First time: the microphone note comes first, and focus moves to it so it is read and answered.
-  if (on && !voiceSettings.consent) { $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
+  if (on && !voiceSettings.consent) { consentClosed(); $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
   void save({ wakeWord: on });
 });
+/**
+ * The microphone note's Agree: consent is saved first, and only a save that succeeded hides the note and fetches the
+ * speech models (audit FE #20). A refused write leaves the note open with a plain line and Agree ready to try again,
+ * and nothing here claims consent. `consentRun` changes when the note is closed, so a save that finishes after
+ * "Not now" starts no download.
+ */
+let consentRun = 0;
+let consentSaving = false;
+const consentError = (text: string) => { $("consent-error").textContent = text; $("consent-error").hidden = !text; if (text) voiceLive(text); };
+const consentClosed = () => { consentRun++; consentSaving = false; consentError(""); $("consent-yes").removeAttribute("aria-busy"); };
 $("consent-yes").addEventListener("click", () => {
-  if ($("consent-yes").getAttribute("aria-disabled") === "true") return;
-  $("consent").hidden = true;
-  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
-  // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
-  if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
-  $("wake").focus();
+  if ($("consent-yes").getAttribute("aria-disabled") === "true" || consentSaving) return;
+  consentSaving = true;
+  const run = ++consentRun;
+  consentError("");
+  $("consent-yes").setAttribute("aria-busy", "true");
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } }).then(ok => {
+    if (run !== consentRun) return; // closed meanwhile: nothing more to do here
+    consentSaving = false;
+    $("consent-yes").removeAttribute("aria-busy");
+    if (!ok) { consentError("Ember couldn't save your choice, so it isn't listening. Press “I agree, start listening” to try again."); $("consent-yes").focus(); return; }
+    $("consent").hidden = true;
+    // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
+    if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
+    $("wake").focus();
+  });
 });
-$("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
+$("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });
 /** The voice choice discloses the optional Kokoro download before switching. */
 const naturalUI = mountNaturalVoice({ save, live: voiceLive, managed: () => managed.has("naturalVoice") });
 function renderNatural(): void {
