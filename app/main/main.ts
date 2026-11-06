@@ -9,6 +9,7 @@
  * never tests the OS itself; it asks the platform's members.
  */
 
+import { HistoryStore } from "./agent/conversation-store";
 import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeTheme, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -2322,6 +2323,8 @@ function start(): void {
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(() => {
     learning.forgetAll();
+    // The saved copy of the conversation is part of what Ember keeps about the person: it goes too.
+    agent?.forgetHistory();
     memoryOwner.clear();
     memoryOwner.refresh(memoryConfigured());
     memoryEpoch++;
@@ -3029,7 +3032,16 @@ function start(): void {
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
+    // The saved copy of the conversation, only while the person keeps it (Home › Conversation); off by default.
+    const history = { store: new HistoryStore({ dir: userData, log: log.child("history") }), enabled: () => settings.get().keepConversation };
+    let keptConversation = history.enabled();
+    settings.onChange(() => {
+      if (history.enabled() === keptConversation) return;
+      keptConversation = history.enabled();
+      agent?.applyHistorySetting();
+    });
     agent = new AgentHost({
+      history,
       // Always given, so sign-out and an account change forget them even while the organisation has them off (the host
       // uses them only while settings, with the policy applied, have them on). Memory learns on its own (hostMemory).
       memory: hostMemory,

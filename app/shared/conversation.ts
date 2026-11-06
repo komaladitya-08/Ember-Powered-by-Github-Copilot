@@ -1,4 +1,4 @@
-/** Session-only conversation bounds, shared by the host and Home. Nothing here writes to disk. */
+/** Conversation bounds, shared by the host, Home and the opt-in saved copy (app/main/agent/conversation-store.ts). Nothing here writes to disk. */
 export const CONVERSATION_LIMIT = 60;
 export const CONVERSATION_TEXT_LIMIT = 128 * 1024;
 export const CONVERSATION_REQUEST_LIMIT = 2000;

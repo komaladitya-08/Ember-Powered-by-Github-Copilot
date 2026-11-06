@@ -58,6 +58,7 @@ import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, statusQuestion, statusReply } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText } from "../../shared/conversation";
+import type { HistoryStore } from "./conversation-store";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -156,6 +157,11 @@ export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "p
 const ACCOUNT_RETRY_MS: readonly number[] = [1000, 3000];
 
 export interface HostOptions {
+  /**
+   * The saved copy of the conversation (conversation-store.ts), used only while `enabled()` (settings `keepConversation`).
+   * Restored lines are for the person to read: inert, never model context.
+   */
+  history?: { store: HistoryStore; enabled(): boolean };
   /** Instead of ACCOUNT_RETRY_MS (tests). */
   accountRetryMs?: readonly number[];
   userData: string;
@@ -788,6 +794,12 @@ export class AgentHost {
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
+  /** Lines restored from the saved copy: shown, but never a question a "yes" agrees to or words a task is checked against. */
+  private readonly restored = new WeakSet<TranscriptEntry>();
+  /** Lines Forget everything deleted from the saved copy: they stay on screen but are never saved again. */
+  private readonly unsaved = new WeakSet<TranscriptEntry>();
+  /** The owner the saved copy was last looked at for: a reconnect of the same one doesn't restore again. */
+  private historyOwner: string | null = null;
   /** The user's lines in the transcript that were heard where Ember can't tell the user from its speakers (V1). */
   private readonly voiceUnchecked = new WeakSet<TranscriptEntry>();
   /** The user's requests that were Ember's suggestions they chose (UserRequest.suggested). */
@@ -870,6 +882,8 @@ export class AgentHost {
       usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, ...(o.signInWith ? { signInWith: o.signInWith } : {}),
     };
     this.stateFile = path.join(o.userData, "agent.json");
+    // Off (the default): no saved conversation is left on this computer, whatever an earlier run did.
+    if (o.history && !o.history.enabled()) o.history.store.clear();
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
@@ -1076,6 +1090,67 @@ export class AgentHost {
     return [...this.transcript];
   }
 
+  /**
+   * Who the saved conversation belongs to: the GitHub account's id, or a hash of the user's own provider's address (never
+   * its key). Null while that isn't known: nothing is then saved or shown (a mismatch is never risked).
+   */
+  private historyAccount(): string | null {
+    const p = this.active;
+    if (p) return "provider:" + createHash("sha256").update(`${p.kind}|${p.config.baseUrl}`).digest("hex").slice(0, 32);
+    return this.githubAccountId === null ? null : `github:${this.githubAccountId}`;
+  }
+
+  private saveHistory(): void {
+    const h = this.o.history;
+    if (!h?.enabled()) return;
+    const owner = this.historyAccount();
+    if (owner === null) return;
+    h.store.save(owner, this.transcript.filter(e => !this.unsaved.has(e)));
+  }
+
+  /** The conversation went (sign-out, another account, New conversation): so does the saved copy, whatever the setting. */
+  private dropHistory(): void {
+    this.historyOwner = null;
+    this.o.history?.store.clear();
+  }
+
+  /**
+   * Shows the lines saved before Ember restarted, once the account is known and only if it is the one that saved them.
+   * They are for reading: marked `restored`, they are never a question a later "yes" agrees to, never words a task is
+   * checked against, and nothing is sent to a model or spoken (the conductor's session is new).
+   */
+  private restoreHistory(): void {
+    const h = this.o.history;
+    if (!h?.enabled()) return;
+    const owner = this.historyAccount();
+    if (owner === null || owner === this.historyOwner) return;
+    this.historyOwner = owner;
+    if (this.transcript.length) return;
+    const saved = h.store.load(owner);
+    if (!saved.length) return;
+    for (const e of saved) {
+      const entry: TranscriptEntry = { ...e };
+      this.restored.add(entry);
+      this.transcript.push(entry);
+    }
+    this.o.log.info("agent.history_restored", { n: saved.length });
+    this.o.onTranscript?.(this.getTranscript());
+  }
+
+  /** The setting changed: on saves what is shown now, off deletes the saved copy. */
+  applyHistorySetting(): void {
+    const h = this.o.history;
+    if (!h) return;
+    if (h.enabled()) this.saveHistory();
+    else this.dropHistory();
+  }
+
+  /** Forget everything: the saved copy goes now, and what is on screen is never saved. */
+  forgetHistory(): void {
+    for (const e of this.transcript) this.unsaved.add(e);
+    this.o.history?.store.clear();
+  }
+
   /** The last retained answer. Home discloses if the explicit per-message memory bound was reached. */
   lastAnswer(): string | null {
     return [...this.transcript].reverse().find(e => e.who === "ember")?.text ?? null;
@@ -1108,17 +1183,19 @@ export class AgentHost {
     const log = this.transcript;
     const apart = (a: TranscriptEntry, b: TranscriptEntry) => Date.parse(a.t) - Date.parse(b.t);
     const requestText = retainedConversationText(r.words).text;
-    let at = log.map(e => e.who === "you" && e.text === requestText).lastIndexOf(true);
+    let at = log.map(e => e.who === "you" && !this.restored.has(e) && e.text === requestText).lastIndexOf(true);
     for (let n = 0; at > 0 && n < 3; n++) {
       const reply = log[at].text;
       const last = log[at - 1];
+      // Lines from before a restart are only to read: no question there is agreed to, none of those words stand for this task.
+      if (this.restored.has(last)) break;
       const question = last.who === "ember" ? questionOf(last.text) : n === 0 && last.who === "task" ? questionOf(this.results.get(last) ?? "") : "";
       if (question && apart(log[at], last) <= 10 * 60_000 && agrees(reply, question)) agreed.unshift({ asked: question, answer: reply });
       let k = at - 1;
       const asked = last.who === "ember" && asks(last.text);
       while (k >= 0 && log[k].who === "ember") k--;
       const before = log[k];
-      if (!before || before.who !== "you" || apart(log[at], before) > 10 * 60_000) break;
+      if (!before || this.restored.has(before) || before.who !== "you" || apart(log[at], before) > 10 * 60_000) break;
       if (isRiskyLabel(reply, this.sys.os) || !(asked || onlyAnswers(reply))) break;
       said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
       if (!this.voiceUnchecked.has(before) && !this.suggested.has(before)) typed.unshift(said[0]);
@@ -1146,6 +1223,7 @@ export class AgentHost {
     this.transcript.push(entry);
     if (this.transcript.length > CONVERSATION_LIMIT) this.transcript.splice(0, this.transcript.length - CONVERSATION_LIMIT);
     this.o.onTranscript?.(this.getTranscript());
+    this.saveHistory();
     return entry;
   }
 
@@ -1160,8 +1238,11 @@ export class AgentHost {
     const said = retained.text;
     // (Only the same request's: two requests sent together that both fail get a line each.)
     if (last?.who === "problem" && this.problemTurn === this.turn && (last.text === said || Date.now() - Date.parse(last.t) < 3000)) {
-      this.transcript[this.transcript.length - 1] = { ...last, ...retained, truncated: retained.truncated };
+      const again = { ...last, ...retained, truncated: retained.truncated };
+      this.transcript[this.transcript.length - 1] = again;
+      if (this.unsaved.has(last)) this.unsaved.add(again);
       this.o.onTranscript?.(this.getTranscript());
+      this.saveHistory();
       return;
     }
     this.problemTurn = this.turn;
@@ -1226,7 +1307,9 @@ export class AgentHost {
     this.quitting = true;
     // Requests held for a new model service go with Ember (not doStop, which every reconnect runs: the switch itself).
     this.dropHeld();
-    return this.halt(true);
+    const halted = this.halt(true);
+    // What was said last is on disk before Ember quits (if the person keeps their conversation).
+    return halted.finally(() => this.o.history?.store.flush());
   }
 
   private halt(forget: boolean): Promise<void> {
@@ -1326,6 +1409,7 @@ export class AgentHost {
       if (gen !== this.gen) return;
       if (this.memoryDeletionPending) this.forgetKept();
       if (!provider) { this.githubLogin = login; this.githubAccountId = accountId; }
+      this.restoreHistory();
       this.o.memory?.verifyAccount?.(accountId);
 
       let models: ModelLike[] = [];
@@ -2538,6 +2622,7 @@ export class AgentHost {
       this.finishedLately = [];
       this.carried = [];
       this.transcript.length = 0;
+      this.dropHistory();
       this.terminalRefused.clear();
       this.o.onTranscript?.([]);
       this.o.log.info("agent.conversation_forgotten");
@@ -2569,6 +2654,7 @@ export class AgentHost {
     await forgetting;
     if (mine !== this.conversationEpoch || gen !== this.gen || conductor !== this.conductor) return;
     this.transcript.length = 0;
+    this.dropHistory();
     this.o.onTranscript?.([], "new-conversation");
     // A fresh session on the same runtime: tasks, their approvals and the connection are left as they are. It is built
     // for the model selected now and the extension tools as they are now, not the retired chat's.
@@ -2613,6 +2699,7 @@ export class AgentHost {
     await this.forgetCurrent(RUNTIME_WAIT_MS);
     this.carried = [];
     this.transcript.length = 0;
+    this.dropHistory();
     this.terminalRefused.clear();
     this.o.onTranscript?.([]);
     // What Ember remembered was about the account before, its person: none of it carries over.

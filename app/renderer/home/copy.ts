@@ -18,6 +18,13 @@ import { CONVERSATION_LIMIT } from "../../shared/conversation";
 import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
+export const CONVERSATION_KEEP_LABEL = "Keep my recent conversation after Ember closes";
+export const CONVERSATION_KEEP_HINT = "Off by default. When on, Ember saves these messages on this computer, in a file only you can read, and shows them again after it restarts. They are for you to read: Ember itself starts a fresh conversation and doesn’t remember them, and nothing in them is run again.";
+export const CONVERSATION_RETENTION_KEPT = `Keeps the latest ${CONVERSATION_LIMIT} messages on this computer, also after Ember closes. Older messages are forgotten as new ones arrive. Turning this off, New conversation, signing out and Forget everything delete the saved copy.`;
+/** The retention note for the setting as it is now. */
+export function conversationRetention(keep: boolean): string {
+  return keep ? CONVERSATION_RETENTION_KEPT : CONVERSATION_RETENTION;
+}
 export const CONVERSATION_SCOPE = "Sends your message without reading a window. Use Ask Ember to include the app you’re working in. Existing conversation context still applies.";
 export const CONVERSATION_EDIT = "Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.";
 export const CONVERSATION_TRUNCATED = "This message exceeded the session limit of 131,072 characters. Only the text shown here is retained and copied.";

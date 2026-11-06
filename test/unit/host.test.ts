@@ -109,6 +109,7 @@ import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { HISTORY_FILE, HistoryStore } from "../../app/main/agent/conversation-store";
 import { MemoryOwner } from "../../app/main/memory/owner";
 import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
@@ -3636,3 +3637,163 @@ describe("memory erasure at account boundaries", () => {
     await host.stop();
   });
 });
+
+describe("keeping the recent conversation across restarts (opt-in)", () => {
+  const SHALL_I = "I can delete the 12 installers there older than a month. Shall I?";
+  /** A host as main builds it: the saved copy in the data folder, the account lookup, the setting a switch. */
+  function kept(dir: string, o: { on?: () => boolean; account?: number | null; delayMs?: number } = {}) {
+    const flag = { on: true };
+    const store = new HistoryStore({ dir, log: quiet, delayMs: o.delayMs ?? 1 });
+    const memory = { remember: () => "", context: () => "", forget: () => false, forgetAll() {}, resolveAccountId: async () => o.account === undefined ? 7 : o.account };
+    const made = makeHost({ userData: dir, memory, history: { store, enabled: o.on ?? (() => flag.on) } });
+    return { ...made, store, flag, file: path.join(dir, HISTORY_FILE) };
+  }
+  const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-keep-"));
+  const say = (text: string) => { conductorSession().emit("assistant.message", { content: text }); conductorSession().emit("session.idle", {}); };
+
+  it("brings the conversation back after a restart, for reading only: nothing is sent and the model starts afresh", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("What's the weather like?");
+    say("Sunny, about 20 degrees.");
+    await first.host.stop();
+    expect(fs.statSync(first.file).mode & 0o777).toBe(0o600);
+    const before = first.host.getTranscript().map(e => [e.who, e.text]);
+    expect(before).toEqual([["you", "What's the weather like?"], ["ember", "Sunny, about 20 degrees."]]);
+
+    const sends: string[] = [];
+    sim.onSend = (_s, prompt) => { sends.push(prompt as string); };
+    const heard: unknown[][] = [];
+    const second = kept(dir);
+    const again = makeHostOptionsSpy(second, heard);
+    expect(second.host.getTranscript()).toEqual([]);
+    await again.start();
+    expect(second.host.getTranscript().map(e => [e.who, e.text])).toEqual(before);
+    expect(sends).toEqual([]);
+    expect(heard.at(-1)).toHaveLength(2);
+    await second.host.stop();
+  });
+
+  it("is inert: a restored question is not agreed to by a later yes, and restored words are not the task's", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("Clean up my Downloads folder");
+    say(SHALL_I);
+    await first.host.stop();
+    const second = kept(dir);
+    await second.host.start(TOKEN, "stored");
+    expect(second.host.getTranscript()).toHaveLength(2);
+    (second.host as any).remember("you", "sure, go ahead");
+    const said = (second.host as any).userWordsOf({ words: "sure, go ahead" });
+    expect(said.agreed).toBeUndefined();
+    expect(said.words).toBe("sure, go ahead");
+    // Live, the same lines do agree (the control for the above).
+    await second.host.ask("Clean up my Downloads folder");
+    say(SHALL_I);
+    (second.host as any).remember("you", "sure, go ahead");
+    expect((second.host as any).userWordsOf({ words: "sure, go ahead" }).agreed).toHaveLength(1);
+    await second.host.stop();
+  });
+
+  it("writes nothing while off, and deletes a file an earlier run left", async () => {
+    const dir = tmpDir();
+    const file = path.join(dir, HISTORY_FILE);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, account: "github:7", savedAt: "x", entries: [] }));
+    const off = kept(dir, { on: () => false });
+    expect(fs.existsSync(file)).toBe(false);
+    await off.host.start(TOKEN, "stored");
+    await off.host.ask("hello");
+    say("hi");
+    await off.store.flush();
+    await off.host.stop();
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it("turning it off deletes the file; turning it on saves what is on screen", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    k.flag.on = false;
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("hello");
+    say("hi");
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(false);
+    k.flag.on = true;
+    k.host.applyHistorySetting();
+    await k.store.flush();
+    expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries).toHaveLength(2);
+    k.flag.on = false;
+    k.host.applyHistorySetting();
+    expect(fs.existsSync(k.file)).toBe(false);
+    await k.host.stop();
+  });
+
+  it("never shows another account's conversation, and an unknown account shows and saves nothing", async () => {
+    const dir = tmpDir();
+    const a = kept(dir, { account: 7 });
+    await a.host.start(TOKEN, "stored");
+    await a.host.ask("private to seven");
+    await a.store.flush();
+    await a.host.stop();
+    const unknown = kept(dir, { account: null });
+    await unknown.host.start(TOKEN, "stored");
+    expect(unknown.host.getTranscript()).toEqual([]);
+    await unknown.host.ask("typed before the account is known");
+    await unknown.store.flush();
+    expect(fs.readFileSync(a.file, "utf8")).toContain("private to seven");
+    await unknown.host.stop();
+    const b = kept(dir, { account: 8 });
+    await b.host.start(TOKEN, "stored");
+    expect(b.host.getTranscript()).toEqual([]);
+    expect(fs.existsSync(b.file)).toBe(false);
+    await b.host.stop();
+  });
+
+  it("sign-out and New conversation delete the saved copy; a write queued before them can't bring it back", async () => {
+    const dir = tmpDir();
+    const k = kept(dir, { delayMs: 30 });
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("one");
+    say("two");
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(true);
+    await k.host.ask("queued, not yet written");
+    await k.host.newConversation();
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(false);
+    await k.host.ask("fresh");
+    await k.store.flush();
+    expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["fresh"]);
+    await k.host.ask("queued before sign-out");
+    await k.host.forgetConversation();
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(false);
+    await k.host.stop();
+  });
+
+  it("Forget everything deletes the saved copy, and what was on screen is not saved again", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("old question");
+    say("old answer");
+    await k.store.flush();
+    k.host.forgetHistory();
+    expect(fs.existsSync(k.file)).toBe(false);
+    expect(k.host.getTranscript()).toHaveLength(2);
+    await k.host.ask("new question");
+    await k.store.flush();
+    expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["new question"]);
+    await k.host.stop();
+  });
+});
+
+/** Restarts `made.host` and counts what it tells the page. */
+function makeHostOptionsSpy(made: { host: AgentHost }, heard: unknown[][]) {
+  const o = (made.host as any).o;
+  const was = o.onTranscript;
+  o.onTranscript = (e: unknown[], why?: string) => { heard.push(e); was?.(e, why); };
+  return { start: () => made.host.start(TOKEN, "stored") };
+}
