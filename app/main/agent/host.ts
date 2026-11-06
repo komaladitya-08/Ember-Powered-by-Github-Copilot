@@ -500,6 +500,11 @@ function providerKey(p: ActiveProvider | null): string {
   return p ? JSON.stringify([p.kind, p.config, p.models ?? null]) : "";
 }
 
+/** Which credentials a connection uses, for telling a change (kind, address, key): held in memory, never stored or logged. */
+function providerCredentials(p: ActiveProvider | null): string {
+  return p ? JSON.stringify([p.kind, p.config.baseUrl, p.config.apiKey ?? null]) : "";
+}
+
 /** The model service a conversation is held with: "copilot", or a provider's kind and address. */
 function serviceOf(p: ActiveProvider | null): string {
   return p ? `${p.kind} ${p.config.baseUrl}` : "copilot";
@@ -800,6 +805,8 @@ export class AgentHost {
   private readonly unsaved = new WeakSet<TranscriptEntry>();
   /** The owner the saved copy was last looked at for: a reconnect of the same one doesn't restore again. */
   private historyOwner: string | null = null;
+  /** The model service's credentials as last seen (providerCredentials), to tell a change that may be another account. */
+  private historyService: string | null = null;
   /** The user's lines in the transcript that were heard where Ember can't tell the user from its speakers (V1). */
   private readonly voiceUnchecked = new WeakSet<TranscriptEntry>();
   /** The user's requests that were Ember's suggestions they chose (UserRequest.suggested). */
@@ -1091,26 +1098,46 @@ export class AgentHost {
   }
 
   /**
-   * Who the saved conversation belongs to: the GitHub account's id, or a hash of the user's own provider's address (never
-   * its key). Null while that isn't known: nothing is then saved or shown (a mismatch is never risked).
+   * Who the saved conversation belongs to: the GitHub account's id whenever it is known (whatever model service is in
+   * force), else, with no GitHub account, a hash of the user's own provider's kind and address (never its key). Null
+   * while neither is known: nothing is then saved or shown (a mismatch is never risked).
    */
   private historyAccount(): string | null {
+    if (this.githubAccountId !== null) return `github:${this.githubAccountId}`;
     const p = this.active;
     if (p) return "provider:" + createHash("sha256").update(`${p.kind}|${p.config.baseUrl}`).digest("hex").slice(0, 32);
-    return this.githubAccountId === null ? null : `github:${this.githubAccountId}`;
+    return null;
   }
 
+  /** Saves only once the saved copy of this owner has been looked at (restoreHistory): an earlier copy is never silently replaced. */
   private saveHistory(): void {
     const h = this.o.history;
     if (!h?.enabled()) return;
     const owner = this.historyAccount();
-    if (owner === null) return;
+    if (owner === null || owner !== this.historyOwner) return;
     h.store.save(owner, this.transcript.filter(e => !this.unsaved.has(e)));
   }
 
+  /**
+   * The credentials of the model service changed (its key replaced or removed, its address or kind changed, or it was
+   * turned on or off): that may be another person's account, so the saved copy goes and the lines on screen now are never
+   * saved under the new one. Compared in memory only; nothing is derived from the key.
+   */
+  private checkHistoryService(): void {
+    const now = providerCredentials(this.providerNow());
+    if (this.historyService === now) return;
+    const first = this.historyService === null;
+    this.historyService = now;
+    if (first) return;
+    for (const e of this.transcript) this.unsaved.add(e);
+    this.o.history?.store.clear();
+    this.o.log.info("agent.history_service_changed");
+  }
+
   /** The conversation went (sign-out, another account, New conversation): so does the saved copy, whatever the setting. */
-  private dropHistory(): void {
-    this.historyOwner = null;
+  private dropHistory(sameOwner = false): void {
+    // (New conversation and the switch keep the owner: it was looked at already. Sign-out and another account look afresh.)
+    if (!sameOwner) this.historyOwner = null;
     this.o.history?.store.clear();
   }
 
@@ -1125,24 +1152,25 @@ export class AgentHost {
     const owner = this.historyAccount();
     if (owner === null || owner === this.historyOwner) return;
     this.historyOwner = owner;
-    if (this.transcript.length) return;
     const saved = h.store.load(owner);
     if (!saved.length) return;
-    for (const e of saved) {
-      const entry: TranscriptEntry = { ...e };
-      this.restored.add(entry);
-      this.transcript.push(entry);
-    }
+    // Said before the account was known (or a connection ago): the saved lines come first and the live ones after, so the
+    // next save keeps both instead of replacing the earlier copy.
+    const live = this.transcript.splice(0);
+    const entries = saved.map(e => { const entry: TranscriptEntry = { ...e }; this.restored.add(entry); return entry; });
+    this.transcript.push(...entries, ...live);
+    if (this.transcript.length > CONVERSATION_LIMIT) this.transcript.splice(0, this.transcript.length - CONVERSATION_LIMIT);
     this.o.log.info("agent.history_restored", { n: saved.length });
     this.o.onTranscript?.(this.getTranscript());
+    if (live.length) this.saveHistory();
   }
 
   /** The setting changed: on saves what is shown now, off deletes the saved copy. */
   applyHistorySetting(): void {
     const h = this.o.history;
     if (!h) return;
-    if (h.enabled()) this.saveHistory();
-    else this.dropHistory();
+    if (h.enabled()) { this.restoreHistory(); this.saveHistory(); }
+    else this.dropHistory(true);
   }
 
   /** Forget everything: the saved copy goes now, and what is on screen is never saved. */
@@ -1327,6 +1355,7 @@ export class AgentHost {
     // The endpoint in force as this connection starts: it holds until the next connect (tasks keep theirs).
     const provider = this.active = this.providerNow();
     this.startedProvider = providerKey(provider);
+    this.checkHistoryService();
     const refused = this.o.refuseConnect?.() ?? null;
     if (refused) {
       this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined, service: undefined });
@@ -2129,6 +2158,7 @@ export class AgentHost {
    * reconnect is done, or null when nothing reconnects now.
    */
   providerChanged(): Promise<AgentPhase> | null {
+    this.checkHistoryService();
     if (this.quitting || !this.providerMoved()) return null;
     if (this.status.phase === "ready" && (!this.quietForSwitch() || this.held.length > 0)) return null;
     this.o.log.info("agent.provider_changed", { kind: this.providerNow()?.kind ?? "copilot" });
@@ -2654,7 +2684,7 @@ export class AgentHost {
     await forgetting;
     if (mine !== this.conversationEpoch || gen !== this.gen || conductor !== this.conductor) return;
     this.transcript.length = 0;
-    this.dropHistory();
+    this.dropHistory(true);
     this.o.onTranscript?.([], "new-conversation");
     // A fresh session on the same runtime: tasks, their approvals and the connection are left as they are. It is built
     // for the model selected now and the extension tools as they are now, not the retired chat's.

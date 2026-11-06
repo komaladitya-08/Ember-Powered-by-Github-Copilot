@@ -5,7 +5,7 @@ import { forgetEverythingScope, signOutScope } from "../../app/renderer/home/cop
 describe("Sign out and Forget everything copy", () => {
   it("tells the user Sign out stops tasks and clears conversation, facts, reminders and routines, with counts", () => {
     const t = signOutScope({ tasks: 2, facts: 5, reminders: 1, routines: 3 });
-    expect(t).toBe("Sign out? This stops 2 tasks that are running or waiting, and clears this conversation, 5 saved facts, 1 reminder and 3 routines.");
+    expect(t).toBe("Sign out? This stops 2 tasks that are running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), 5 saved facts, 1 reminder and 3 routines.");
   });
   it("uses the singular and says 0 plainly", () => {
     expect(signOutScope({ tasks: 1, facts: 1, reminders: 0, routines: 1 })).toContain("1 task that is running or waiting");
@@ -13,7 +13,7 @@ describe("Sign out and Forget everything copy", () => {
   });
   it("tells the user Forget everything removes only saved memory and leaves the rest", () => {
     expect(forgetEverythingScope({ tasks: 2, facts: 5, reminders: 1, routines: 0 }))
-      .toBe("Forget everything? This removes 5 saved facts and what Ember learned from them. 2 tasks, 1 reminder and 0 routines stay as they are.");
+      .toBe("Forget everything? This removes 5 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. 2 tasks, 1 reminder and 0 routines stay as they are, and so do the lines on screen now, but they aren't saved again.");
   });
   it("says a count is unknown, not zero, when it couldn't be read", () => {
     const t = signOutScope({ tasks: 0, facts: null, reminders: 1, routines: 0 });

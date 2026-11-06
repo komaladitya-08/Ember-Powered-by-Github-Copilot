@@ -172,8 +172,16 @@ runtime. It does not change the app's consent or speaking settings.
     is spoken, sent or run again. A file that can't be read (not JSON, another version, too large) is moved to
     `conversation.json.broken` and Ember starts empty. Turning the switch off, **New conversation**, **Sign out** and
     **Forget everything** (Memory) delete `conversation.json` (and `.broken`), and a write queued before any of them can't
-    bring it back; Forget everything leaves the messages on screen but doesn't save them again. The organisation's policy has
-    no key for it. Code: app/main/agent/conversation-store.ts, host.ts (`restoreHistory`, `forgetHistory`).
+    bring it back; Forget everything leaves the messages on screen but doesn't save them again (its question says so). The
+    copy belongs to the GitHub account (`github:<id>`) whenever that is known, whatever model service is in force, and to a
+    hash of the person's own provider's kind and address only when there is no GitHub account (never anything from its
+    key); a replaced or removed key, another address or kind, or the provider turned on or off deletes the copy and the
+    lines on screen then are not saved under the new service. Nothing is saved until the saved copy of that owner has been
+    looked at, and lines said before then are added after the saved ones, so an earlier copy is never silently replaced. A
+    saved line never carries a per-run id (`answerId`, `heardId`). The file's folder is flushed after the rename (best
+    effort). The organisation's policy has no key for it. Code: app/main/agent/conversation-store.ts, host.ts (`restoreHistory`, `forgetHistory`). With a build ready,
+    `EMBER_CONVERSATION_LIVE=1 npm run test:integration -- test/integration/conversation-history-live.test.ts` launches the
+    real app three times on one data folder against a mock model (the switch found by its label, quit, relaunch, off).
 - When a task closes its window with keys (Ctrl+W or Ctrl+Q, Command+W or Command+Q on macOS), the next read tells it
   the window closed, as a click on Close does. Closing a tab leaves a live window alone; denied or failed keys never
   claim a close. A task never carries on in an unrelated window in the closed window's place.

@@ -35,6 +35,8 @@ export type SavedEntry = Pick<TranscriptEntry, "t" | "who" | "text" | "truncated
 export interface HistoryOps {
   /** Writes `data` to a new file `tmp` (mode 0600) and flushes it to disk. */
   write(tmp: string, data: string): Promise<void>;
+  /** Flushes the folder `dir` so a rename into it survives a crash. Best effort: may throw where unsupported. */
+  syncDir(dir: string): Promise<void>;
 }
 
 const realOps: HistoryOps = {
@@ -47,6 +49,10 @@ const realOps: HistoryOps = {
       await fd.close();
     }
   },
+  async syncDir(dir) {
+    const fd = await fs.promises.open(dir, "r");
+    try { await fd.sync(); } finally { await fd.close(); }
+  },
 };
 
 export interface HistoryStoreOptions {
@@ -56,7 +62,10 @@ export interface HistoryStoreOptions {
   delayMs?: number;
 }
 
-/** One saved line if it is valid, else null. Unknown fields are dropped, not trusted. */
+/**
+ * One saved line if it is valid, else null. Unknown fields are dropped, not trusted. Contract: a saved line NEVER carries a
+ * per-run id (`answerId`, `heardId`, …): those restart at 1 on every launch, so a restored one would collide with a live row.
+ */
 export function savedEntry(raw: unknown): SavedEntry | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const e = raw as Record<string, unknown>;
@@ -156,7 +165,11 @@ export class HistoryStore {
         fs.mkdirSync(this.o.dir, { recursive: true, mode: 0o700 });
         await this.ops.write(tmp, body);
         // Checked and renamed in the same turn: a clear can't fall between them.
-        if (epoch === this.epoch) fs.renameSync(tmp, this.file);
+        if (epoch === this.epoch) {
+          fs.renameSync(tmp, this.file);
+          // Best effort (Windows can't open a folder: EISDIR/EPERM): the data is already safe, only the name's durability is at stake.
+          try { await this.ops.syncDir(this.o.dir); } catch { /* unsupported here, or the folder can't be flushed */ }
+        }
       } catch (err) {
         this.o.log.warn("history.not_saved", { code: (err as NodeJS.ErrnoException).code });
       } finally {

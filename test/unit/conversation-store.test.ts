@@ -21,6 +21,8 @@ const log = { info: (e: string) => { logs.push(e); }, warn: (e: string, f?: obje
 const msg = (i: number, extra: object = {}) => ({ t: new Date(Date.UTC(2026, 10, 5, 10, i % 60)).toISOString(), who: i % 2 ? "ember" : "you", text: `message ${i}`, ...extra });
 const store = (dir: string, ops?: HistoryOps) => new HistoryStore({ dir, log, ops, delayMs: 1 });
 const file = (dir: string) => path.join(dir, HISTORY_FILE);
+/** The real operations, for a test that replaces one of them. */
+const real = (): HistoryOps => ({ write: async (t, d) => { fs.writeFileSync(t, d, { mode: 0o600 }); }, syncDir: async () => undefined });
 
 describe("the saved conversation", () => {
   it("is off by default and described truthfully in both modes", () => {
@@ -48,7 +50,7 @@ describe("the saved conversation", () => {
     const s = store(dir);
     s.save("github:1", [msg(0)]);
     await s.flush();
-    const crashing: HistoryOps = { write: async tmp => { fs.writeFileSync(tmp, '{"version":1,"acc'); throw new Error("power cut"); } };
+    const crashing: HistoryOps = { ...real(), write: async tmp => { fs.writeFileSync(tmp, '{"version":1,"acc'); throw new Error("power cut"); } };
     const t = store(dir, crashing);
     t.save("github:1", [msg(0), msg(1)]);
     await t.flush();
@@ -127,7 +129,7 @@ describe("the saved conversation", () => {
     const dir = tmp();
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
-    const slow: HistoryOps = { write: async (tmp, data) => { await gate; fs.writeFileSync(tmp, data, { mode: 0o600 }); } };
+    const slow: HistoryOps = { ...real(), write: async (tmp, data) => { await gate; fs.writeFileSync(tmp, data, { mode: 0o600 }); } };
     const s = store(dir, slow);
     s.save("a", [msg(0)]);
     await vi.waitFor(() => { expect((s as unknown as { running: unknown }).running).not.toBeNull(); });
@@ -152,12 +154,64 @@ describe("the saved conversation", () => {
   it("coalesces: the last state wins, one write in flight at a time", async () => {
     const dir = tmp();
     let inFlight = 0, most = 0, writes = 0;
-    const ops: HistoryOps = { write: async (tmp, data) => { inFlight++; writes++; most = Math.max(most, inFlight); await new Promise(r => setTimeout(r, 10)); fs.writeFileSync(tmp, data); inFlight--; } };
+    const ops: HistoryOps = { ...real(), write: async (tmp, data) => { inFlight++; writes++; most = Math.max(most, inFlight); await new Promise(r => setTimeout(r, 10)); fs.writeFileSync(tmp, data); inFlight--; } };
     const s = store(dir, ops);
     for (let i = 1; i <= 5; i++) s.save("a", Array.from({ length: i }, (_, k) => msg(k)));
     await s.flush();
     expect(most).toBe(1);
     expect(writes).toBeLessThan(5);
     expect(store(dir).load("a")).toHaveLength(5);
+  });
+});
+
+describe("the saved conversation: ephemeral ids, durability", () => {
+  it("never writes a per-run id (answerId, heardId) and never reads one back", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("github:1", [msg(0, { answerId: 1, heardId: 7, someId: 3 }), msg(1, { answerId: 2 })]);
+    await s.flush();
+    const text = fs.readFileSync(file(dir), "utf8");
+    expect(text).not.toMatch(/answerId|heardId|someId/);
+    // A file that carries them (written by another build, or edited) loads without them.
+    fs.writeFileSync(file(dir), JSON.stringify({ version: 1, account: "github:1", savedAt: "2026-11-05T10:00:00Z", entries: [msg(0, { answerId: 1, heardId: 4 })] }));
+    const loaded = store(dir).load("github:1");
+    expect(loaded).toEqual([msg(0)]);
+    expect(Object.keys(loaded[0]).sort()).toEqual(["t", "text", "who"]);
+  });
+
+  it("flushes the folder after the rename so a crash right after keeps the new name; a folder that can't be synced doesn't fail the save", async () => {
+    const dir = tmp();
+    const order: string[] = [];
+    const ops: HistoryOps = {
+      ...real(),
+      syncDir: async d => { order.push(fs.existsSync(file(dir)) ? "dir-after-rename" : "dir-before-rename"); expect(d).toBe(dir); throw Object.assign(new Error("no"), { code: "EPERM" }); },
+    };
+    const s = store(dir, ops);
+    s.save("github:1", [msg(0)]);
+    await s.flush();
+    expect(order).toEqual(["dir-after-rename"]);
+    expect(store(dir).load("github:1")).toEqual([msg(0)]);
+    expect(logs.join("\n")).not.toContain("history.not_saved");
+  });
+
+  it("a write that fails midway (ENOSPC) leaves the old file whole, removes the temp file, logs, and the next save works", async () => {
+    const dir = tmp();
+    const ok = store(dir);
+    ok.save("github:1", [msg(0)]);
+    await ok.flush();
+    logs.length = 0;
+    let fail = true;
+    const s = store(dir, { ...real(), write: async (t, d) => { if (!fail) { fs.writeFileSync(t, d); return; } fs.writeFileSync(t, d.slice(0, 20)); throw Object.assign(new Error("full"), { code: "ENOSPC" }); } });
+    s.save("github:1", [msg(0), msg(1)]);
+    await s.flush();
+    expect(JSON.parse(fs.readFileSync(file(dir), "utf8")).entries).toHaveLength(1);
+    expect(fs.readdirSync(dir)).toEqual([HISTORY_FILE]);
+    expect(logs.join("\n")).toContain("history.not_saved");
+    expect(logs.join("\n")).toContain("ENOSPC");
+    fail = false;
+    s.save("github:1", [msg(0), msg(1)]);
+    await s.flush();
+    expect(JSON.parse(fs.readFileSync(file(dir), "utf8")).entries).toHaveLength(2);
+    expect(fs.readdirSync(dir)).toEqual([HISTORY_FILE]);
   });
 });

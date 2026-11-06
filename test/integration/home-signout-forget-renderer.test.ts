@@ -72,7 +72,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     // Sign out: opens with live counts, Esc changes nothing, focus returns.
     await page.locator("#sign-out").click();
     await expect.poll(() => page.locator("#sign-out-confirm").isVisible()).toBe(true);
-    expect(await page.locator("#sign-out-scope").innerText()).toBe("Sign out? This stops 3 tasks that are running or waiting, and clears this conversation, 4 saved facts, 2 reminders and 1 routine.");
+    expect(await page.locator("#sign-out-scope").innerText()).toBe("Sign out? This stops 3 tasks that are running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), 4 saved facts, 2 reminders and 1 routine.");
     expect(await focusedId()).toBe("sign-out-no");
     await page.keyboard.press("Escape");
     expect(await page.locator("#sign-out-confirm").isHidden()).toBe(true);
@@ -103,7 +103,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     await page.evaluate(() => { window.__counts = { tasks: 2, facts: 4, reminders: 2, routines: 1 }; });
     await page.locator("#memory-forget-all").click();
     await expect.poll(() => page.locator("#forget-all-confirm").isVisible()).toBe(true);
-    expect(await page.locator("#forget-all-scope").innerText()).toBe("Forget everything? This removes 4 saved facts and what Ember learned from them. 2 tasks, 2 reminders and 1 routine stay as they are.");
+    expect(await page.locator("#forget-all-scope").innerText()).toBe("Forget everything? This removes 4 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. 2 tasks, 2 reminders and 1 routine stay as they are, and so do the lines on screen now, but they aren't saved again.");
     await page.keyboard.press("Escape");
     expect(await focusedId()).toBe("memory-forget-all");
     expect(await calls()).toEqual(["signOut"]);
