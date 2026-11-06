@@ -36,6 +36,7 @@ import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
 import { modelDestination, recipientWords } from "./copy";
 import { mountProject } from "./project";
+import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
@@ -531,6 +532,7 @@ function renderAdmin(a: Status["admin"]): void {
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
   lastAdmin = a;
+  if (agent) renderAgent(agent);
   renderRecipient();
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
@@ -664,7 +666,7 @@ drawSoon();
 
 // ───── Copilot ─────
 type AgentStatus = Awaited<ReturnType<EmberHomeApi["agentStatus"]>>;
-const COPILOT_BUTTONS = ["sign-in", "cancel-sign-in", "retry", "sign-out"];
+const COPILOT_BUTTONS = ["sign-in", "own-provider", "switch-account", "cancel-sign-in", "retry", "sign-out"];
 let agent: AgentStatus | null = null;
 let signingIn = false;
 let modelsKey = "";
@@ -700,14 +702,31 @@ function renderAgent(a: AgentStatus | null): void {
   const had = document.activeElement;
   ($("agent-dot") as HTMLElement).dataset.phase = a.phase;
   $("agent-text").textContent = a.detail;
-  const notConnected = a.phase === "signed-out" || a.phase === "error";
   // Copilot stopped answering with tasks at work: Ember reconnects once they're done. Signing in again isn't the
   // fix, and reconnecting now stops the tasks: the button says so.
   const waiting = a.waitingForTasks === true;
-  $("sign-in").hidden = !notConnected || signingIn || waiting;
+  // What leads depends on why Copilot isn't connected (FE #3): an account without Copilot is not asked to sign in again.
+  const a2 = lastAdmin;
+  const view = homeConnectionView({
+    phase: a.phase, reason: a.reason, detail: a.detail, signingIn, waiting,
+    ownOffered: ownProviderOffer({
+      bridge: !!window.emberProvider, managedProvider: !!a2?.provider, locked: !!a2 && a2.error !== null,
+      userProviderOff: a2?.features.userProvider === false,
+    }).offered,
+  });
+  $("sign-in").hidden = !view.show["sign-in"] || waiting;
   // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
   $("sign-in").textContent = signInLabel(a.signInWith);
-  $("retry").hidden = !notConnected || signingIn;
+  $("own-provider").hidden = !view.show["own-provider"];
+  $("switch-account").hidden = !view.show["switch-account"];
+  // Only the leading action is filled: one prominent button in the group.
+  $("sign-in").classList.toggle("quiet", view.primary !== "sign-in");
+  $("own-provider").classList.toggle("quiet", view.primary !== "own-provider");
+  $("switch-account").classList.toggle("quiet", view.primary !== "switch-account");
+  $("connection-help").hidden = !view.help;
+  if ($("connection-help").textContent !== view.help) $("connection-help").textContent = view.help;
+  $("retry").hidden = !view.show.retry;
+  $("retry").classList.toggle("quiet", view.primary !== "retry");
   $("retry").textContent = waiting ? "Reconnect now (stops the tasks that are running)" : "Check again";
   $("cancel-sign-in").hidden = !signingIn;
   $("sign-out").hidden = a.phase !== "ready" || !a.login;
@@ -726,7 +745,12 @@ function renderAgent(a: AgentStatus | null): void {
       }));
     };
     fill("m-conductor", a.models, a.conductorModel);
-    fill("m-worker", a.models.filter(m => m.vision), a.workerModel);
+    // No model reads images: every model is listed, the one in use selected, and the limit is said (FE #5).
+    const tasks = taskModelChoices(a.models, a.workerModel);
+    fill("m-worker", tasks.options, a.workerModel);
+    $("m-worker-label").textContent = tasks.label;
+    $("m-worker-note").textContent = tasks.note;
+    $("m-worker-note").hidden = !tasks.note;
   }
   $("usage").textContent = usageLine(a.usage);
   $("conversation-context").textContent = conversationContextLine(a.phase === "ready" ? a.conversationContext : undefined);
@@ -786,6 +810,14 @@ $("sign-in").addEventListener("click", () => {
 });
 /** What "Check again" found, while its message shows (it changes to "connected" when Copilot is ready). */
 let retryFound: { found: boolean; source: string | null; hint?: string } | null = null;
+// "Try a different GitHub account" is the same sign-in: GitHub's page lets them choose another account.
+$("switch-account").addEventListener("click", () => $("sign-in").click());
+// The user's own provider is the group under this one: its switch is the way in.
+$("own-provider").addEventListener("click", () => {
+  const sw = $("byok-on");
+  sw.scrollIntoView({ block: "center" });
+  sw.focus();
+});
 $("retry").addEventListener("click", () => {
   signInMsg("Checking…");
   window.ember.retrySignIn().then(r => {

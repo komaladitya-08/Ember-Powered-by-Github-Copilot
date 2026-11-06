@@ -10,6 +10,7 @@ import type { EmberProviderApi, ProviderState } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
+import { noteProviderChoice } from "./provider-choice";
 import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerConsentText, providerHint, providerTestText } from "./copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -49,6 +50,7 @@ const agreedFor = (p: Own, host: string | null) => !!host && p.consent.version >
  * the organisation's policy applies here are never written back, and the card's record never travels this way.
  */
 function change(patch: Partial<Omit<Own, "consent">>): Promise<boolean> {
+  noteProviderChoice();
   return save({ provider: patch } as SettingsPatch);
 }
 
@@ -163,6 +165,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
       void change({ baseUrl: next.save }).then(() => { say(PROVIDER_WORDS.readAgain); $("byok-yes").focus(); });
       return;
     }
+    noteProviderChoice();
     void a.agree(next.agree).then(r => {
       if (!r.ok) { say(r.why, true); return; }
       $("byok-consent").hidden = true;
@@ -201,6 +204,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     const field = input("byok-key");
     const key = field.value;
     if (!key.trim()) { say(PROVIDER_WORDS.pasteKey, true); field.focus(); return; }
+    noteProviderChoice();
     void a.saveKey(key).then(r => {
       if (r.ok) { field.value = ""; replacing = false; say(PROVIDER_WORDS.keySaved); } else say(r.why, true);
       return reread();
@@ -208,6 +212,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
   });
   $("byok-key-replace").addEventListener("click", () => { replacing = true; draw(); input("byok-key").focus(); });
   $("byok-key-remove").addEventListener("click", () => {
+    noteProviderChoice();
     void a.removeKey().then(r => { say(r.ok ? PROVIDER_WORDS.keyRemoved : r.why, !r.ok); replacing = false; return reread(); }).then(() => input("byok-key").focus());
   });
   $("byok-test").addEventListener("click", () => {

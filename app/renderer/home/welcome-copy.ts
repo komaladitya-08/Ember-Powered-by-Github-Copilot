@@ -10,7 +10,7 @@ import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attentio
 
 /** The essential first-run route; character and memory personalisation remain optional detours. */
 export const WELCOME_STEPS = ["hello", "consent", "sign-in", "checks", "try", "done"] as const;
-export type WelcomeStep = (typeof WELCOME_STEPS)[number] | "character" | "about";
+export type WelcomeStep = (typeof WELCOME_STEPS)[number] | "character" | "about" | "provider";
 
 /** Where first run opens: at the start, or at sign-in once consent was already agreed. */
 export function firstStep(consented: boolean): WelcomeStep {
@@ -19,7 +19,7 @@ export function firstStep(consented: boolean): WelcomeStep {
 
 /** Position in the essential route; optional detours keep their originating step's indicator. */
 export function stepPosition(step: WelcomeStep): number {
-  return WELCOME_STEPS.indexOf(step === "character" ? "hello" : step === "about" ? "try" : step);
+  return WELCOME_STEPS.indexOf(step === "character" ? "hello" : step === "about" ? "try" : step === "provider" ? "sign-in" : step);
 }
 
 /** Optional personalisation never pretends to be another mandatory setup step. */
@@ -33,12 +33,14 @@ export function stepCount(step: WelcomeStep): string {
 export function stepBefore(step: WelcomeStep): WelcomeStep | null {
   if (step === "character") return "hello";
   if (step === "about") return "try";
+  if (step === "provider") return "sign-in";
   const i = stepPosition(step);
   return i > 0 ? WELCOME_STEPS[i - 1] : null;
 }
 export function stepAfter(step: WelcomeStep): WelcomeStep | null {
   if (step === "character") return "consent";
   if (step === "about") return "done";
+  if (step === "provider") return "checks";
   const i = stepPosition(step);
   return i < WELCOME_STEPS.length - 1 ? WELCOME_STEPS[i + 1] : null;
 }
@@ -64,7 +66,11 @@ export const STEP_TEXT: Readonly<Record<WelcomeStep, { title: string; lead: stri
   },
   "sign-in": {
     title: "Sign in to GitHub",
-    lead: "I think with GitHub Copilot, so I need a GitHub account that has Copilot. Your browser opens so you can approve it there.",
+    lead: "I think with GitHub Copilot, so I need a GitHub account that has Copilot. Your browser opens so you can approve it there. No Copilot? You can use your own model provider instead.",
+  },
+  provider: {
+    title: "Use your own model provider",
+    lead: "Use any service that speaks the OpenAI, Azure OpenAI or Anthropic API instead of GitHub Copilot. Nothing is sent to it until you agree below.",
   },
   checks: {
     title: "Checking this computer",

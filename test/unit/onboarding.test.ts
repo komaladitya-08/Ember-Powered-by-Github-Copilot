@@ -97,7 +97,7 @@ describe("the first-run window", () => {
 
   it("shows only its steps until Start, with each step's buttons after its words (UI audit #7)", () => {
     // Everything else on the page waits until Ember has started; the organisation's notices still show.
-    expect(STYLES).toContain("body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: none; }");
+    expect(STYLES).toContain("body.first-run .home > :not(#welcome, #managed, #settings-notice, #provider-off) { display: none; }");
     // The buttons follow the step (Apple: no controls at a macOS window's foot), and nothing sticks over the words.
     const nav = flat.slice(flat.indexOf("<div class=\"w-nav\">"));
     expect(nav).toMatch(/^<div class="w-nav"><button type="button" class="btn quiet" id="w-back">Back<\/button><p class="w-why" id="w-why" role="status"><\/p>/);
