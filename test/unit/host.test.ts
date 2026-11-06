@@ -3831,7 +3831,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     await first.host.ask("What's the weather like?");
     say("Sunny, about 20 degrees.");
     await first.host.stop();
-    expect(fs.statSync(first.file).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(fs.statSync(first.file).mode & 0o777).toBe(0o600); // (Windows reports 0666 for any file)
     const before = first.host.getTranscript().map(e => [e.who, e.text]);
     expect(before).toEqual([["you", "What's the weather like?"], ["ember", "Sunny, about 20 degrees."]]);
 
@@ -3873,7 +3873,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
   it("writes nothing while off, and deletes a file an earlier run left", async () => {
     const dir = tmpDir();
     const file = path.join(dir, HISTORY_FILE);
-    fs.writeFileSync(file, JSON.stringify({ version: 1, account: "github:7", savedAt: "x", entries: [] }));
+    fs.writeFileSync(file, JSON.stringify({ version: 1, account: "github:7|copilot", savedAt: "x", entries: [] }));
     const off = kept(dir, { on: () => false });
     expect(fs.existsSync(file)).toBe(false);
     await off.host.start(TOKEN, "stored");
@@ -3949,7 +3949,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
   it("never restores or saves a per-run id (answerId, heardId): a restored line has none, and the file has none", async () => {
     const dir = tmpDir();
     const file = path.join(dir, HISTORY_FILE);
-    fs.writeFileSync(file, JSON.stringify({ version: 1, account: "github:7", savedAt: "2026-11-05T10:00:00Z", entries: [
+    fs.writeFileSync(file, JSON.stringify({ version: 1, account: "github:7|copilot", savedAt: "2026-11-05T10:00:00Z", entries: [
       { t: "2026-11-05T10:00:00Z", who: "you", text: "hello", answerId: 1, heardId: 3 },
       { t: "2026-11-05T10:00:01Z", who: "ember", text: "hi", answerId: 1 },
     ] }));
@@ -4052,8 +4052,10 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
   });
 
   describe("with the person's own model provider", () => {
-    const own = (key: string | undefined, baseUrl = "https://models.example.com/v1") => ({ kind: "user" as const, config: { type: "openai" as const, baseUrl, ...(key ? { apiKey: key } : {}) }, models: { conductor: "m", worker: null } });
+    const ID1 = "11111111-1111-4111-8111-111111111111", ID2 = "22222222-2222-4222-8222-222222222222";
     const KEY1 = "sk-" + "a".repeat(40), KEY2 = "sk-" + "b".repeat(40); // not real keys
+    /** The user's provider as main builds it: the key and its random id (none for a key saved before ids existed: `id` null). */
+    const own = (key: string | undefined, baseUrl = "https://models.example.com/v1", id: string | null = key === KEY1 ? ID1 : key ? ID2 : null) => ({ kind: "user" as const, config: { type: "openai" as const, baseUrl, ...(key ? { apiKey: key } : {}) }, models: { conductor: "m", worker: null }, ...(key && id ? { keyId: id } : {}) });
 
     it("is owned by the GitHub account when it is known, whatever provider is in force; by the provider's address only with none", async () => {
       const dir = tmpDir();
@@ -4064,7 +4066,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.host.providerChanged();                // the provider is turned on: the saved copy goes (another service), the account is still 7
       await k.host.ask("under the provider");
       await k.store.flush();
-      expect(JSON.parse(fs.readFileSync(k.file, "utf8")).account).toBe("github:7");
+      expect(JSON.parse(fs.readFileSync(k.file, "utf8")).account).toMatch(/^github:7\|provider:user\|[0-9a-f]{32}\|11111111-1111-4111-8111-111111111111$/);
       await k.host.stop();
 
       const dir2 = tmpDir();
@@ -4073,7 +4075,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await solo.host.ask("no GitHub account");
       await solo.store.flush();
       const saved = fs.readFileSync(solo.file, "utf8");
-      expect(JSON.parse(saved).account).toMatch(/^provider:[0-9a-f]{32}$/);
+      expect(JSON.parse(saved).account).toMatch(/^none\|provider:user\|[0-9a-f]{32}\|11111111-1111-4111-8111-111111111111$/);
       expect(saved).not.toContain(KEY1);
       await solo.host.stop();
     });
@@ -4103,6 +4105,73 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
         expect(saved).not.toContain("before the change");
         await k.host.stop();
       }
+    });
+
+    it("a conversation is shown after a restart only to the same account, service and key (ownership continuity)", async () => {
+      const shownAfter = async (before: () => ReturnType<typeof own> | null, after: () => ReturnType<typeof own> | null, o: { copilotFirst?: boolean; copilotThen?: boolean } = {}) => {
+        const dir = tmpDir();
+        let cur = before();
+        const first = kept(dir, { provider: () => cur });
+        if (o.copilotFirst) { const was = cur; cur = null; await first.host.start(TOKEN, "stored"); cur = was; await first.host.providerChanged(); } else await first.host.start(o.copilotFirst === undefined && !cur ? TOKEN : null, "stored");
+        await first.host.ask("the old question");
+        say("the old answer");
+        await first.store.flush();
+        await first.host.stop();
+        const second = kept(dir, { provider: () => after() });
+        await second.host.start(after() ? null : TOKEN, "stored");
+        const file = fs.existsSync(second.file);
+        const shown = second.host.getTranscript().map(e => e.text);
+        await second.host.stop();
+        return { shown, file };
+      };
+      // keyA -> keyB at the same address: nothing, and the file is deleted.
+      expect(await shownAfter(() => own(KEY1), () => own(KEY2))).toEqual({ shown: [], file: false });
+      // the same key (same id): restored.
+      expect((await shownAfter(() => own(KEY1), () => own(KEY1))).shown).toEqual(["the old question", "the old answer"]);
+      // a BYOK conversation of GitHub account 7 is not shown under Copilot for the same account 7.
+      expect(await shownAfter(() => own(KEY1), () => null, { copilotFirst: true })).toEqual({ shown: [], file: false });
+      // and a Copilot one is not shown under the provider.
+      expect((await shownAfter(() => null, () => null)).shown).toEqual(["the old question", "the old answer"]);
+      // a key with no id (saved before ids existed) can't be continued: nothing saved, nothing shown.
+      expect(await shownAfter(() => own(KEY1, undefined, null), () => own(KEY1, undefined, null))).toEqual({ shown: [], file: false });
+      // a saved copy of the key that did have an id is deleted when the key now has none.
+      const dir = tmpDir();
+      const a = kept(dir, { provider: () => own(KEY1) });
+      await a.host.start(null); await a.host.ask("q"); await a.store.flush(); await a.host.stop();
+      expect(fs.existsSync(a.file)).toBe(true);
+      const b = kept(dir, { provider: () => own(KEY1, undefined, null) });
+      await b.host.start(null);
+      expect(b.host.getTranscript()).toEqual([]);
+      expect(fs.existsSync(b.file)).toBe(false);
+      await b.host.stop();
+    });
+
+    it("an answer that finishes after the credentials were replaced is never saved, also once the replacement connection runs", async () => {
+      const dir = tmpDir();
+      let cur = own(KEY1);
+      const k = kept(dir, { provider: () => cur });
+      await k.host.start(null);
+      await k.host.ask("question to the old provider");
+      conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: "Half of the late answer" });
+      await k.store.flush();
+      cur = own(KEY2);
+      expect(await k.host.providerChanged()).toBeNull(); // not idle: the old connection carries on
+      expect(fs.existsSync(k.file)).toBe(false);
+      // The old connection finishes its answer after the switch.
+      conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: " and its end" });
+      conductorSession().emit("assistant.message", { messageId: "a", content: "Half of the late answer and its end" });
+      conductorSession().emit("session.idle", {});
+      await k.store.flush();
+      expect(k.host.getTranscript().some(e => e.text.includes("late answer"))).toBe(true); // still on screen
+      expect(fs.existsSync(k.file) ? fs.readFileSync(k.file, "utf8") : "").not.toContain("late answer");
+      // The replacement connection starts: still not there, and its own lines are saved.
+      await k.host.providerChanged();
+      await k.store.flush();
+      expect(fs.existsSync(k.file) ? fs.readFileSync(k.file, "utf8") : "").not.toMatch(/late answer|old provider/);
+      await k.host.ask("question to the new one");
+      await k.store.flush();
+      expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["question to the new one"]);
+      await k.host.stop();
     });
 
     it("the same credentials told again keep the saved copy", async () => {
@@ -4149,7 +4218,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
 
     it("Sign out deletes conversation.json when the GitHub account was never known", async () => {
       const dir = tmpDir();
-      fs.writeFileSync(path.join(dir, HISTORY_FILE), JSON.stringify({ version: 1, account: "github:7", savedAt: "2026-11-05T10:00:00Z", entries: [{ t: "2026-11-05T10:00:00Z", who: "you", text: "x" }] }));
+      fs.writeFileSync(path.join(dir, HISTORY_FILE), JSON.stringify({ version: 1, account: "github:7|copilot", savedAt: "2026-11-05T10:00:00Z", entries: [{ t: "2026-11-05T10:00:00Z", who: "you", text: "x" }] }));
       const k = kept(dir, { account: null });
       await k.host.start(TOKEN, "stored");
       expect(fs.existsSync(k.file)).toBe(true); // an unknown account shows and touches nothing
@@ -4180,6 +4249,45 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["after forgetting", "answered"]);
       await k.host.stop();
     });
+  });
+
+  it("Forget everything while an answer streams: the words on screen are never saved, even when the answer is stopped after", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("old question");
+    conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: "Half of an answer" });
+    k.host.forgetHistory();
+    await k.host.stopAnswer();
+    await k.store.flush();
+    expect(k.host.getTranscript().find(e => e.stopped)?.text).toBe("Half of an answer"); // still shown
+    expect(fs.existsSync(k.file) ? fs.readFileSync(k.file, "utf8") : "").not.toContain("Half of an answer");
+    // A later answer is the person's new conversation and is kept.
+    await k.host.ask("after");
+    say("fresh");
+    await k.store.flush();
+    expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["after", "fresh"]);
+    await k.host.stop();
+  });
+
+  it("a saved copy that can't be deleted: sign-out says so, and nothing is restored from it afterwards", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("keep me out");
+    say("answer");
+    await k.store.flush();
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation((f: fs.PathLike) => { if (String(f).endsWith(HISTORY_FILE)) throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    const trunc = vi.spyOn(fs, "truncateSync").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    try {
+      await expect(k.host.forgetConversation()).rejects.toThrow(/^Ember couldn't finish deleting the saved conversation/);
+      expect(k.host.forgetHistory()).toBe(false);
+      expect(k.store.problem).toBe("delete");
+      // The same store (still undeletable) restores nothing on the next connection.
+      await k.host.start(TOKEN, "stored");
+      expect(k.host.getTranscript()).toEqual([]);
+    } finally { rm.mockRestore(); trunc.mockRestore(); }
+    await k.host.stop();
   });
 
   it("Forget everything deletes the saved copy, and what was on screen is not saved again", async () => {

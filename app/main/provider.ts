@@ -14,6 +14,7 @@
  * thread would hold Ember, and a second Ember waiting to hand over). Plain Node: Electron's objects are injected.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import type { ProviderConfig } from "@github/copilot-sdk";
 import { applyAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "./admin";
@@ -36,10 +37,19 @@ export interface ActiveProvider {
   kind: "admin" | "user" | "test";
   config: ProviderConfig;
   models?: { conductor: string | null; worker: string | null };
+  /**
+   * Which saved key `config.apiKey` is: the random, non-secret id made when the user saved it (StoredKey.keyId), never
+   * derived from the key. Absent for a fixed config, or a key saved before ids existed: that key's continuity can't be
+   * told (the saved conversation keeps nothing for it).
+   */
+  keyId?: string;
 }
 
-/** The user's saved key and the endpoint host it was entered for. */
-export interface StoredKey { key: string; host: string }
+/**
+ * The user's saved key and the endpoint host it was entered for. `keyId`: a random non-secret id made whenever a key
+ * is saved (so a replaced key has another one); null for a key saved before ids existed.
+ */
+export interface StoredKey { key: string; host: string; keyId?: string | null }
 
 /** Where a connection's model requests go, for the setup check and Home: whose, and the host only (never the key). */
 export interface ProviderSummary { kind: ActiveProvider["kind"]; host: string }
@@ -116,7 +126,8 @@ export function activeProvider(o: { fixed: ActiveProvider | null; settings: Sett
   if (o.fixed) return o.fixed;
   const p = userProviderInForce(o.settings, o.admin);
   if (!p) return null;
-  return { kind: "user", config: userProviderConfig(p, o.key), models: { conductor: p.conductor, worker: p.worker } };
+  const config = userProviderConfig(p, o.key);
+  return { kind: "user", config, models: { conductor: p.conductor, worker: p.worker }, ...(config.apiKey && o.key?.keyId ? { keyId: o.key.keyId } : {}) };
 }
 
 /** Whose endpoint `p` is and its host, for the setup check and Home (null: GitHub Copilot). */
@@ -199,7 +210,8 @@ export class ProviderKeyStore {
     if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
     if (!(await this.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
     if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
-    const text = JSON.stringify({ v: 1, host, key: key.trim() });
+    // The id is sealed with the key, so the two can never be of different saves.
+    const text = JSON.stringify({ v: 1, host, key: key.trim(), id: randomUUID() });
     let sealed: Buffer;
     try {
       sealed = this.opts.asyncKeyring && this.box.encryptStringAsync ? await this.box.encryptStringAsync(text) : this.box.encryptString(text);
@@ -220,9 +232,9 @@ export class ProviderKeyStore {
     try {
       const text = this.opts.asyncKeyring && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
       if (revision !== this.revision) return null;
-      const v = JSON.parse(text) as { host?: unknown; key?: unknown };
+      const v = JSON.parse(text) as { host?: unknown; key?: unknown; id?: unknown };
       if (typeof v.host !== "string" || !v.host || typeof v.key !== "string" || apiKeyProblem(v.key) !== null) return null;
-      return { key: v.key, host: v.host };
+      return { key: v.key, host: v.host, keyId: typeof v.id === "string" && /^[0-9a-f-]{36}$/.test(v.id) ? v.id : null };
     } catch {
       return null; // the keyring refused, or the file isn't one of these: as if none were saved
     }

@@ -9,7 +9,9 @@
  *   limit and MAX_BYTES in all; the oldest entries go first. Only the fields Home displays are kept.
  * - Writes are coalesced (one in flight, the last state wins) and atomic: a unique temp file, fsync, then rename.
  * - `clear()` bumps an epoch and deletes the file at once; a write begun or queued before it checks the epoch
- *   immediately before its rename and gives up, so a clear is never undone by a late write.
+ *   immediately before its rename and gives up, so a clear is never undone by a late write. It says whether everything
+ *   went (false: a file could not be deleted; it is then emptied if that can be done, and never loaded again by this
+ *   store, which retries the deletion first). A save that fails is reported too (`problem`), never only logged.
  * - A file that can't be read as this version, or is too large, is moved aside (`.broken`, replacing an older one) and
  *   logged without its content. A file of another account is deleted, never shown.
  */
@@ -60,7 +62,12 @@ export interface HistoryStoreOptions {
   log: { info(e: string, f?: object): void; warn(e: string, f?: object): void };
   ops?: HistoryOps;
   delayMs?: number;
+  /** Told whenever `problem` changes (Home shows it beside the switch). */
+  onProblem?: (problem: HistoryProblem | null) => void;
 }
+
+/** What is wrong with the saved copy: it could not be written, or it could not be deleted (the worse one). */
+export type HistoryProblem = "save" | "delete";
 
 /**
  * One saved line if it is valid, else null. Unknown fields are dropped, not trusted. Contract: a saved line NEVER carries a
@@ -97,6 +104,9 @@ export class HistoryStore {
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
   private seq = 0;
+  /** A deletion failed and has not succeeded since: the saved copy must not be loaded, and every clear retries it. */
+  private erasePending = false;
+  private saveFailed = false;
 
   constructor(private readonly o: HistoryStoreOptions) {
     this.file = path.join(o.dir, HISTORY_FILE);
@@ -109,6 +119,8 @@ export class HistoryStore {
    * can't be read (it is moved aside). Never throws. Also clears temp files an earlier crash left.
    */
   load(account: string): SavedEntry[] {
+    // A deletion that failed is retried before anything is read: what should be gone is never shown.
+    if (this.erasePending && !this.remove()) return [];
     this.tidyTemp();
     let raw: string;
     try {
@@ -139,18 +151,36 @@ export class HistoryStore {
     this.timer.unref?.();
   }
 
-  /** Deletes the saved copy now, and makes any write begun or queued earlier give up. */
-  clear(): void {
+  /**
+   * Deletes the saved copy now, and makes any write begun or queued earlier give up. True when every file is gone; false
+   * when one could not be deleted (the caller tells the person; this store won't load it meanwhile).
+   */
+  clear(): boolean {
     this.epoch++;
     this.pending = null;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
-    this.remove();
+    return this.remove();
   }
 
-  /** Resolves once everything queued is on disk (or given up). Quit waits for it. */
+  /** What is wrong now, or null. */
+  get problem(): HistoryProblem | null {
+    return this.erasePending ? "delete" : this.saveFailed ? "save" : null;
+  }
+
+  /** Resolves once everything queued is on disk (or given up): no timer, nothing pending, no write running. Quit waits for it. */
   async flush(): Promise<void> {
-    if (this.timer) { clearTimeout(this.timer); this.timer = null; this.pump(); }
-    while (this.running) await this.running;
+    for (;;) {
+      if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+      if (this.running) { await this.running; continue; }
+      if (this.pending) { this.pump(); continue; }
+      return;
+    }
+  }
+
+  private setProblem(change: () => void): void {
+    const before = this.problem;
+    change();
+    if (this.problem !== before) this.o.onProblem?.(this.problem);
   }
 
   private pump(): void {
@@ -169,9 +199,11 @@ export class HistoryStore {
           fs.renameSync(tmp, this.file);
           // Best effort (Windows can't open a folder: EISDIR/EPERM): the data is already safe, only the name's durability is at stake.
           try { await this.ops.syncDir(this.o.dir); } catch { /* unsupported here, or the folder can't be flushed */ }
+          this.setProblem(() => { this.saveFailed = false; });
         }
       } catch (err) {
         this.o.log.warn("history.not_saved", { code: (err as NodeJS.ErrnoException).code });
+        if (epoch === this.epoch) this.setProblem(() => { this.saveFailed = true; });
       } finally {
         try { fs.rmSync(tmp, { force: true }); } catch { /* already renamed or gone */ }
       }
@@ -182,11 +214,21 @@ export class HistoryStore {
     this.running.catch(() => undefined);
   }
 
-  /** Every file of the saved conversation: the file, its temp files and a moved-aside one. */
-  private remove(): void {
+  /**
+   * Every file of the saved conversation: the file, its temp files and a moved-aside one. A file that can't be deleted is
+   * emptied if that can be done (a restart then finds nothing to show), and the failure is remembered and reported.
+   */
+  private remove(): boolean {
+    let ok = true;
     for (const f of [this.file, `${this.file}.broken`, ...this.tempFiles()]) {
-      try { fs.rmSync(f, { force: true }); } catch (err) { this.o.log.warn("history.not_deleted", { code: (err as NodeJS.ErrnoException).code }); }
+      try { fs.rmSync(f, { force: true }); } catch (err) {
+        ok = false;
+        this.o.log.warn("history.not_deleted", { code: (err as NodeJS.ErrnoException).code });
+        try { fs.truncateSync(f, 0); } catch { /* neither deleted nor emptied: only this run's marker stands in the way */ }
+      }
     }
+    this.setProblem(() => { this.erasePending = !ok; if (ok) this.saveFailed = false; });
+    return ok;
   }
 
   private tempFiles(): string[] {

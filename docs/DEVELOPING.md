@@ -173,10 +173,15 @@ runtime. It does not change the app's consent or speaking settings.
     `conversation.json.broken` and Ember starts empty. Turning the switch off, **New conversation**, **Sign out** and
     **Forget everything** (Memory) delete `conversation.json` (and `.broken`), and a write queued before any of them can't
     bring it back; Forget everything leaves the messages on screen but doesn't save them again (its question says so). The
-    copy belongs to the GitHub account (`github:<id>`) whenever that is known, whatever model service is in force, and to a
-    hash of the person's own provider's kind and address only when there is no GitHub account (never anything from its
-    key); a replaced or removed key, another address or kind, or the provider turned on or off deletes the copy and the
-    lines on screen then are not saved under the new service. Nothing is saved until the saved copy of that owner has been
+    copy belongs to an owner written into the file and compared at every start: `github:<id>|<service>` (or `none|<service>`
+    with no GitHub account), the service being `copilot` or `provider:<kind>|<hash of the address>|<keyId>`. `keyId` is a
+    random id made whenever the person saves a key, sealed in `provider-key.bin` with the key (never derived from it); a
+    key saved before ids existed, and the administrator's key, have none, so for them nothing is saved and an earlier copy is
+    deleted (a known limitation). Any difference (another account, service, address or key) deletes the copy, never shows it.
+    What a connection that began before such a change says (a late answer, a stopped stream, a task's result) is shown but
+    never saved (`connGen`). A copy that can't be deleted is emptied if possible, never loaded again, retried first thing,
+    and Sign out and Forget everything say so; a copy that can't be written is said under the switch (`historyProblem`).
+    Nothing is saved until the saved copy of that owner has been
     looked at, and lines said before then are added after the saved ones, so an earlier copy is never silently replaced. A
     saved line never carries a per-run id (`answerId`, `heardId`). The file's folder is flushed after the rename (best
     effort). The organisation's policy has no key for it. Code: app/main/agent/conversation-store.ts, host.ts (`restoreHistory`, `forgetHistory`). With a build ready,

@@ -517,7 +517,7 @@ function providerKey(p: ActiveProvider | null): string {
 
 /** Which credentials a connection uses, for telling a change (kind, address, key): held in memory, never stored or logged. */
 function providerCredentials(p: ActiveProvider | null): string {
-  return p ? JSON.stringify([p.kind, p.config.baseUrl, p.config.apiKey ?? null]) : "";
+  return p ? JSON.stringify([p.kind, p.config.baseUrl, p.config.apiKey ?? null, p.keyId ?? null]) : "";
 }
 
 /** The model service a conversation is held with: "copilot", or a provider's kind and address. */
@@ -818,6 +818,18 @@ export class AgentHost {
   private readonly restored = new WeakSet<TranscriptEntry>();
   /** Lines Forget everything deleted from the saved copy: they stay on screen but are never saved again. */
   private readonly unsaved = new WeakSet<TranscriptEntry>();
+  /**
+   * The history generation: bumped whenever the saved conversation is invalidated because the identity behind it may
+   * have changed (the model service's credentials, sign-out, another account). A connection captures it as it starts
+   * (doStart); what it says after a bump (a late answer, a stream, a task's result) is shown but never saved.
+   */
+  private connGen = 0;
+  /** The generation of the connection whose callback is running now (underGen), else null: this is the current one. */
+  private callGen: number | null = null;
+  /** The generation the live conversation (conductor) began under: what the presenter says for it (its answers) is of that one. */
+  private conductorGen: number | null = null;
+  /** A deletion of the saved conversation failed and hasn't succeeded since (told to the person by sign-out and Forget). */
+  private historyEraseFailed = false;
   /** The owner the saved copy was last looked at for: a reconnect of the same one doesn't restore again. */
   private historyOwner: string | null = null;
   /** The model service's credentials as last seen (providerCredentials), to tell a change that may be another account. */
@@ -879,7 +891,7 @@ export class AgentHost {
    */
   private conductorChat: { chat: number } = { chat: 0 };
   /** The answer streaming now (Home shows it as it comes); null between answers. */
-  private stream: { id: number; text: string } | null = null;
+  private stream: { id: number; text: string; unsaved: boolean } | null = null;
   private streamSeq = 0;
   /** A "New conversation" under way: a second one joins it. */
   private resetting: Promise<void> | null = null;
@@ -1121,15 +1133,34 @@ export class AgentHost {
   }
 
   /**
-   * Who the saved conversation belongs to: the GitHub account's id whenever it is known (whatever model service is in
-   * force), else, with no GitHub account, a hash of the user's own provider's kind and address (never its key). Null
-   * while neither is known: nothing is then saved or shown (a mismatch is never risked).
+   * Who and what the saved conversation belongs to: the GitHub account's id (when known) together with the model
+   * service of this connection: "copilot", or the provider's kind, a hash of its address and the random id of the key
+   * saved for it (never the key, nor anything derived from it). Written into the file and compared on every restart, so
+   * a conversation is shown only to the same account on the same service with the same key. Null (nothing is saved or
+   * shown, the saved copy goes) while that can't be established: neither an account nor a provider is known, or the
+   * provider's key has no id (saved before ids existed, or a fixed config's own key).
    */
   private historyAccount(): string | null {
-    if (this.githubAccountId !== null) return `github:${this.githubAccountId}`;
     const p = this.active;
-    if (p) return "provider:" + createHash("sha256").update(`${p.kind}|${p.config.baseUrl}`).digest("hex").slice(0, 32);
-    return null;
+    let service: string;
+    if (!p) service = "copilot";
+    else if (p.config.apiKey && !p.keyId) return null;
+    else service = `provider:${p.kind}|${createHash("sha256").update(p.config.baseUrl).digest("hex").slice(0, 32)}|${p.config.apiKey ? p.keyId : "nokey"}`;
+    if (this.githubAccountId !== null) return `github:${this.githubAccountId}|${service}`;
+    return p ? `none|${service}` : null;
+  }
+
+  /** What is being said now comes from a connection that began before the saved copy was last invalidated. */
+  private staleSource(): boolean {
+    const g = this.callGen ?? this.conductorGen;
+    return g !== null && g !== this.connGen;
+  }
+
+  /** A history fence: what a connection that began before the current generation says is never saved (see connGen). */
+  private underGen<T>(gen: number, f: () => T): T {
+    const before = this.callGen;
+    this.callGen = gen;
+    try { return f(); } finally { this.callGen = before; }
   }
 
   /** Saves only once the saved copy of this owner has been looked at (restoreHistory): an earlier copy is never silently replaced. */
@@ -1153,15 +1184,28 @@ export class AgentHost {
     this.historyService = now;
     if (first) return;
     for (const e of this.transcript) this.unsaved.add(e);
-    this.o.history?.store.clear();
+    this.connGen++;
+    this.eraseHistory();
     this.o.log.info("agent.history_service_changed");
   }
 
   /** The conversation went (sign-out, another account, New conversation): so does the saved copy, whatever the setting. */
   private dropHistory(sameOwner = false): void {
     // (New conversation and the switch keep the owner: it was looked at already. Sign-out and another account look afresh.)
-    if (!sameOwner) this.historyOwner = null;
-    this.o.history?.store.clear();
+    if (!sameOwner) { this.historyOwner = null; this.connGen++; }
+    this.eraseHistory();
+  }
+
+  /** Deletes the saved copy and remembers whether that worked. */
+  private eraseHistory(): boolean {
+    const ok = this.o.history?.store.clear() ?? true;
+    this.historyEraseFailed = !ok;
+    return ok;
+  }
+
+  /** Why the saved conversation couldn't be deleted (a sentence Home shows as it is), or null. */
+  historyDeleteProblem(): string | null {
+    return this.historyEraseFailed ? "Ember couldn't finish deleting the saved conversation on this computer. Try again." : null;
   }
 
   /**
@@ -1173,6 +1217,8 @@ export class AgentHost {
     const h = this.o.history;
     if (!h?.enabled()) return;
     const owner = this.historyAccount();
+    // A key with no id (saved before ids existed): whose it is can't be told, so no earlier copy is kept for it.
+    if (owner === null && this.active?.config.apiKey && !this.active.keyId) { this.eraseHistory(); return; }
     if (owner === null || owner === this.historyOwner) return;
     this.historyOwner = owner;
     const saved = h.store.load(owner);
@@ -1197,9 +1243,11 @@ export class AgentHost {
   }
 
   /** Forget everything: the saved copy goes now, and what is on screen is never saved. */
-  forgetHistory(): void {
+  forgetHistory(): boolean {
     for (const e of this.transcript) this.unsaved.add(e);
-    this.o.history?.store.clear();
+    // The answer streaming now is on screen too: its words are never saved, even if it is stopped later.
+    if (this.stream) this.stream.unsaved = true;
+    return this.eraseHistory();
   }
 
   /** The last retained answer. Home discloses if the explicit per-message memory bound was reached. */
@@ -1274,7 +1322,7 @@ export class AgentHost {
     if (chat !== this.conversationEpoch || !delta) return;
     if (!this.stream) {
       if (!delta.trim()) return;
-      this.stream = { id: ++this.streamSeq, text: "" };
+      this.stream = { id: ++this.streamSeq, text: "", unsaved: this.staleSource() };
     }
     this.stream.text += delta;
     this.o.onAnswerStream?.({ id: this.stream.id, text: plainText(this.stream.text), state: "streaming" });
@@ -1288,12 +1336,14 @@ export class AgentHost {
     const text = plainText(s.text);
     // The words said so far are kept in the transcript (the host's record, so a reopened Home shows them), before the
     // stream's own event so Home never sees the row go and come back.
-    if (state === "interrupted" && text.trim()) this.remember("ember", text, undefined, true, s.id);
+    if (state === "interrupted" && text.trim()) this.remember("ember", text, undefined, true, s.id, s.unsaved);
     this.o.onAnswerStream?.({ id: s.id, text, state });
   }
 
-  private remember(who: TranscriptEntry["who"], text: string, heardId?: number, stopped?: true, answerId?: number): TranscriptEntry {
+  private remember(who: TranscriptEntry["who"], text: string, heardId?: number, stopped?: true, answerId?: number, fenced = false): TranscriptEntry {
     const entry: TranscriptEntry = { t: new Date().toISOString(), who, ...retainedConversationText(text), ...(heardId ? { heardId } : {}), ...(stopped ? { stopped } : {}), ...(answerId ? { answerId } : {}) };
+    // Said by a connection that began before the saved copy was last invalidated (or by a stream Forget everything covered).
+    if (fenced || this.staleSource()) this.unsaved.add(entry);
     this.transcript.push(entry);
     if (this.transcript.length > CONVERSATION_LIMIT) this.transcript.splice(0, this.transcript.length - CONVERSATION_LIMIT);
     this.o.onTranscript?.(this.getTranscript());
@@ -1487,6 +1537,8 @@ export class AgentHost {
       if (this.memoryDeletionPending) this.forgetKept();
       if (!provider) { this.githubLogin = login; this.githubAccountId = accountId; }
       this.restoreHistory();
+      // This connection's generation: what it says after the saved copy is invalidated again is never saved (underGen).
+      const hg = this.conductorGen = this.connGen;
       this.o.memory?.verifyAccount?.(accountId);
 
       let models: ModelLike[] = [];
@@ -1571,7 +1623,7 @@ export class AgentHost {
           this.taskPresenters.delete(task.id);
           // What it showed on its card goes to the conversation too, as words (and to the next turn's task results).
           const view = task.view ? viewText(task.view) : "";
-          const said = this.remember("task", view ? `${text}\n${view}` : text);
+          const said = this.underGen(hg, () => this.remember("task", view ? `${text}\n${view}` : text));
           if (summary) this.results.set(said, summary);
           // Memory learns from what a finished task found (source `task`: context, never the user's word).
           if (this.memoryOn && task.status === "done" && summary && !why) this.o.memory?.taskDone?.(task.title, view ? `${summary}\n${view}` : summary);
@@ -1672,12 +1724,12 @@ export class AgentHost {
           if (gen === this.gen && this.status.phase === "ready") this.setConversationContext(context);
         },
         // An answer that tells the user where to turn commands on gets the button for it (once per run).
-        onAnswer: text => { this.endStream("done", chatOf.chat); this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
-        onAnswerDelta: delta => { this.streamDelta(delta, chatOf.chat); this.o.onAnswerDelta?.(delta); },
-        onAnswerEnd: text => { this.endStream("done", chatOf.chat); this.o.onAnswerEnd?.(text); },
-        onAnswerInterrupted: () => { this.endStream("interrupted", chatOf.chat); this.o.onAnswerInterrupted?.(); },
+        onAnswer: text => this.underGen(hg, () => { this.endStream("done", chatOf.chat); this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); }),
+        onAnswerDelta: delta => this.underGen(hg, () => { this.streamDelta(delta, chatOf.chat); this.o.onAnswerDelta?.(delta); }),
+        onAnswerEnd: text => this.underGen(hg, () => { this.endStream("done", chatOf.chat); this.o.onAnswerEnd?.(text); }),
+        onAnswerInterrupted: () => this.underGen(hg, () => { this.endStream("interrupted", chatOf.chat); this.o.onAnswerInterrupted?.(); }),
         onTurnEnd: aborted => {
-          this.endStream(aborted ? "interrupted" : "done", chatOf.chat);
+          this.underGen(hg, () => this.endStream(aborted ? "interrupted" : "done", chatOf.chat));
           // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
           this.o.onTurnEnd?.(aborted);
@@ -2708,6 +2760,9 @@ export class AgentHost {
       this.o.onTranscript?.([]);
       this.o.log.info("agent.conversation_forgotten");
     }
+    // Everything else is done; the person is told if the saved copy is still there (sign-out shows the sentence as it is).
+    const stuck = this.historyDeleteProblem();
+    if (stuck) throw new Error(stuck);
   }
 
   /**

@@ -144,7 +144,7 @@ describe("the key and its host (S2)", () => {
     const file = path.join(dir, "provider-key.bin");
     const keys = new ProviderKeyStore(file, box().box);
     await keys.save(KEY, "a.example");
-    expect(await keys.load()).toEqual<StoredKey>({ key: KEY, host: "a.example" });
+    expect(await keys.load()).toEqual<StoredKey>({ key: KEY, host: "a.example", keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     // Someone swaps the host beside it: the service still won't use the key for that host.
     fs.writeFileSync(path.join(dir, "provider-key.host"), "b.example");
     const settings = new SettingsStore(path.join(dir, "settings.json"));
@@ -200,7 +200,7 @@ describe("the keyring at a start (macOS second-instance hang in CI)", () => {
     const keys = new ProviderKeyStore(path.join(dir, "provider-key.bin"), kr, { asyncKeyring: true });
     expect(await keys.canPersist()).toBe(true);
     expect(await keys.save(KEY, "a.example")).toEqual({ ok: true });
-    expect(await keys.load()).toEqual({ key: KEY, host: "a.example" });
+    expect(await keys.load()).toEqual({ key: KEY, host: "a.example", keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     expect(asked).toEqual(["isAsyncEncryptionAvailable", "isAsyncEncryptionAvailable", "encryptStringAsync", "decryptStringAsync"]);
   });
 
@@ -212,7 +212,7 @@ describe("the keyring at a start (macOS second-instance hang in CI)", () => {
     expect(settings.own().provider.on).toBe(true);
     await s.ensureKey();
     expect(asked).toEqual(["decryptString"]);
-    expect(s.key()).toEqual({ key: KEY, host: "a.example" });
+    expect(s.key()).toEqual({ key: KEY, host: "a.example", keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
   });
 
   it("isn't touched by main.ts before the single-instance check", () => {

@@ -25,6 +25,12 @@ export const CONVERSATION_RETENTION_KEPT = `Keeps the latest ${CONVERSATION_LIMI
 export function conversationRetention(keep: boolean): string {
   return keep ? CONVERSATION_RETENTION_KEPT : CONVERSATION_RETENTION;
 }
+/** Under the switch when the saved copy can't be written or deleted (it is never silent). */
+export function conversationKeepProblem(problem: "save" | "delete" | null): string {
+  if (problem === "delete") return "Ember couldn’t delete the saved conversation on this computer. It won’t show it again, and will try to delete it the next time you turn this off, forget or sign out.";
+  if (problem === "save") return "Ember couldn’t save the conversation on this computer, so it may not be here after a restart.";
+  return "";
+}
 export const CONVERSATION_SCOPE = "Sends your message without reading a window. Use Ask Ember to include the app you’re working in. Existing conversation context still applies.";
 export const CONVERSATION_EDIT = "Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.";
 export const CONVERSATION_TRUNCATED = "This message exceeded the session limit of 131,072 characters. Only the text shown here is retained and copied.";

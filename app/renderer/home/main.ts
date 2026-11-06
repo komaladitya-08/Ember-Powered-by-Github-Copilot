@@ -44,7 +44,7 @@ import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whats
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { CONVERSATION_EDIT, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { CONVERSATION_EDIT, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountLearnedUndo } from "./learned-undo";
@@ -871,6 +871,12 @@ $("conversation-scope").textContent = CONVERSATION_SCOPE;
 $("conversation-retention").textContent = conversationRetention(false);
 $("keep-conversation-label").textContent = CONVERSATION_KEEP_LABEL;
 $("keep-conversation-hint").textContent = CONVERSATION_KEEP_HINT;
+// Never silent: the saved copy that couldn't be written or deleted is said under the switch.
+{
+  const showProblem = (p: "save" | "delete" | null) => { $("keep-conversation-problem").textContent = conversationKeepProblem(p); };
+  void window.ember.historyProblem().then(showProblem, () => undefined);
+  window.ember.onHistoryProblem(showProblem);
+}
 $("keep-conversation").addEventListener("change", e => { void save({ keepConversation: (e.target as HTMLInputElement).checked }); });
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");

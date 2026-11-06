@@ -62,7 +62,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps the conversation a
     await expect.poll(() => conversation(home).innerText(), { timeout: 60_000 }).toContain(ANSWERED);
     // Quit straight away: what was said last is flushed by the quit itself.
     await quit();
-    expect(fs.statSync(saved).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(fs.statSync(saved).mode & 0o777).toBe(0o600);
     const file = fs.readFileSync(saved, "utf8");
     expect(file).toContain("pineapple-history-marker");
     expect(file).toContain("answer-history-marker");

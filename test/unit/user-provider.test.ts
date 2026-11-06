@@ -193,7 +193,11 @@ describe("the API key's store", () => {
     expect(store.savedHost()).toBe("models.example.com");
     expect(fs.readFileSync(file, "utf8")).not.toContain(KEY);
     if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    expect(await store.load()).toEqual(STORED);
+    const loaded = await store.load();
+    expect(loaded).toEqual({ ...STORED, keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+    // Saving again makes another id (a replaced key never shares one with the old), and the id isn't derived from the key.
+    await store.save(KEY, "models.example.com");
+    expect((await store.load())!.keyId).not.toBe(loaded!.keyId);
     store.clear();
     expect(store.savedHost()).toBeNull();
     expect(fs.readdirSync(dir)).toEqual([]);

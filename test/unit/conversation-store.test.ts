@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HISTORY_FILE, HistoryStore, MAX_BYTES, boundedEntries, type HistoryOps } from "../../app/main/agent/conversation-store";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
-import { CONVERSATION_RETENTION, CONVERSATION_RETENTION_KEPT, conversationRetention } from "../../app/renderer/home/copy";
+import { CONVERSATION_RETENTION, CONVERSATION_RETENTION_KEPT, conversationKeepProblem, conversationRetention } from "../../app/renderer/home/copy";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 
 const dirs: string[] = [];
@@ -21,6 +21,8 @@ const log = { info: (e: string) => { logs.push(e); }, warn: (e: string, f?: obje
 const msg = (i: number, extra: object = {}) => ({ t: new Date(Date.UTC(2026, 10, 5, 10, i % 60)).toISOString(), who: i % 2 ? "ember" : "you", text: `message ${i}`, ...extra });
 const store = (dir: string, ops?: HistoryOps) => new HistoryStore({ dir, log, ops, delayMs: 1 });
 const file = (dir: string) => path.join(dir, HISTORY_FILE);
+/** POSIX file modes mean something only off Windows (it reports 0666 for a file and 0777 for a folder): the privacy requirement is asserted where the OS can keep it. */
+const posixModes = process.platform !== "win32";
 /** The real operations, for a test that replaces one of them. */
 const real = (): HistoryOps => ({ write: async (t, d) => { fs.writeFileSync(t, d, { mode: 0o600 }); }, syncDir: async () => undefined });
 
@@ -29,6 +31,10 @@ describe("the saved conversation", () => {
     expect(DEFAULT_SETTINGS.keepConversation).toBe(false);
     expect(conversationRetention(false)).toBe(CONVERSATION_RETENTION);
     expect(conversationRetention(true)).toBe(CONVERSATION_RETENTION_KEPT);
+    // Never silent: what is said under the switch when the saved copy can't be written or deleted.
+    expect(conversationKeepProblem(null)).toBe("");
+    expect(conversationKeepProblem("save")).toBe("Ember couldn’t save the conversation on this computer, so it may not be here after a restart.");
+    expect(conversationKeepProblem("delete")).toBe("Ember couldn’t delete the saved conversation on this computer. It won’t show it again, and will try to delete it the next time you turn this off, forget or sign out.");
     expect(CONVERSATION_RETENTION).toContain("Closing Ember or signing out forgets");
     expect(CONVERSATION_RETENTION_KEPT).toContain("Forget everything delete the saved copy");
   });
@@ -38,8 +44,10 @@ describe("the saved conversation", () => {
     const s = store(dir);
     s.save("github:1", [msg(0), msg(1, { truncated: true })]);
     await s.flush();
-    expect(fs.statSync(file(dir)).mode & 0o777).toBe(0o600);
-    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    if (posixModes) {
+      expect(fs.statSync(file(dir)).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    }
     expect(fs.readdirSync(dir)).toEqual([HISTORY_FILE]);
     expect(JSON.parse(fs.readFileSync(file(dir), "utf8"))).toMatchObject({ version: 1, account: "github:1" });
     expect(store(dir).load("github:1")).toEqual([msg(0), msg(1, { truncated: true })]);
@@ -213,5 +221,77 @@ describe("the saved conversation: ephemeral ids, durability", () => {
     await s.flush();
     expect(JSON.parse(fs.readFileSync(file(dir), "utf8")).entries).toHaveLength(2);
     expect(fs.readdirSync(dir)).toEqual([HISTORY_FILE]);
+  });
+});
+
+describe("the saved conversation: quit, erasure and failures (PR #188 review)", () => {
+  const eacces = () => Object.assign(new Error("denied"), { code: "EACCES" });
+
+  it("flush() waits for a newer snapshot queued behind a write in flight: it is on disk when flush resolves", async () => {
+    const dir = tmp();
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    let first = true;
+    const ops: HistoryOps = { ...real(), write: async (t, d) => { if (first) { first = false; await gate; } fs.writeFileSync(t, d, { mode: 0o600 }); } };
+    const s = store(dir, ops);
+    s.save("a", [msg(0)]);
+    await vi.waitFor(() => { expect((s as unknown as { running: unknown }).running).not.toBeNull(); });
+    s.save("a", [msg(0), msg(1)]); // B, behind A
+    let done = false;
+    const flushed = s.flush().then(() => { done = true; });
+    release();
+    await flushed;
+    expect(done).toBe(true);
+    expect(JSON.parse(fs.readFileSync(file(dir), "utf8")).entries).toHaveLength(2);
+  });
+
+  it("a deletion that fails is reported by clear(), and this store never loads the file meanwhile", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation(() => { throw eacces(); });
+    const trunc = vi.spyOn(fs, "truncateSync").mockImplementation(() => { throw eacces(); });
+    const problems: unknown[] = [];
+    const t = new HistoryStore({ dir, log, delayMs: 1, onProblem: p => problems.push(p) });
+    expect(t.clear()).toBe(false);
+    expect(t.problem).toBe("delete");
+    expect(problems).toEqual(["delete"]);
+    expect(fs.existsSync(file(dir))).toBe(true);
+    // Still undeletable: the entry is not restored by this store.
+    expect(t.load("a")).toEqual([]);
+    rm.mockRestore(); trunc.mockRestore();
+    // The retry before the next load succeeds and says so.
+    expect(t.load("a")).toEqual([]);
+    expect(fs.existsSync(file(dir))).toBe(false);
+    expect(t.problem).toBeNull();
+    expect(problems).toEqual(["delete", null]);
+  });
+
+  it("a file that can't be deleted is emptied, so even a later start finds nothing to show", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation(() => { throw eacces(); });
+    expect(s.clear()).toBe(false);
+    rm.mockRestore();
+    expect(fs.statSync(file(dir)).size).toBe(0);
+    expect(store(dir).load("a")).toEqual([]);
+  });
+
+  it("a save that fails is visible (problem 'save') until a save works", async () => {
+    const dir = tmp();
+    let fail = true;
+    const seen: unknown[] = [];
+    const s = new HistoryStore({ dir, log, delayMs: 1, onProblem: p => seen.push(p), ops: { ...real(), write: async (t, d) => { if (fail) throw eacces(); fs.writeFileSync(t, d); } } });
+    s.save("a", [msg(0)]);
+    await s.flush();
+    expect(s.problem).toBe("save");
+    fail = false;
+    s.save("a", [msg(0)]);
+    await s.flush();
+    expect(s.problem).toBeNull();
+    expect(seen).toEqual(["save", null]);
   });
 });
