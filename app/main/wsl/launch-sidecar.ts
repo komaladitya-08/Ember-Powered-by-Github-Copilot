@@ -57,7 +57,7 @@ export function helperLaunch(o: { wslExe: string; distro: string; scriptLinuxPat
   // Started in /: the inbox wsl.exe can't take --cd ~ (CI's WSL 1 runner), and the helper needs no folder.
   const args = ["-d", o.distro, "--cd", "/", "--exec", "/usr/bin/env", "EMBER_ATSPI_FIND_BUS=1", "python3", "-I", o.scriptLinuxPath];
   const run = underJobHost(o.wslExe, args, helperEnv(o.env), o.jobHost);
-  return { command: run.command, args: run.args, env: run.env, firstRequestMs: HELPER_FIRST_REQUEST_MS, windowsHide: true, mayStart: o.mayStart, noRevive: true };
+  return { command: run.command, args: run.args, env: run.env, firstRequestMs: HELPER_FIRST_REQUEST_MS, windowsHide: true, mayStart: o.mayStart, noRevive: true, where: o.distro };
 }
 
 /** A spawn as this module uses it (node's; faked in tests). */

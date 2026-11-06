@@ -6,6 +6,7 @@
  */
 
 import type { FloatingKind, FloatingWindow, HelperStatus, OS, OverlayShaper, Rect, ScreenLike, WindowSystem } from "./types";
+import { SidecarVersionError } from "../perception/sidecar";
 import { TEST_SWITCHES } from "../../sidecar-host/launch";
 
 /**
@@ -149,6 +150,11 @@ export function applyAllWorkspaces(win: AllWorkspacesTarget, rule: FloatingWindo
   if (rule === null) return;
   if (rule === "plain") win.setVisibleOnAllWorkspaces(true);
   else win.setVisibleOnAllWorkspaces(true, rule);
+}
+
+/** What the setup check says when the helper was refused for its protocol version (null: any other failure). */
+export function helperStatusOfError(err: unknown): HelperStatus | null {
+  return err instanceof SidecarVersionError ? { toolkitAccessibility: false, detail: err.detail } : null;
 }
 
 /**

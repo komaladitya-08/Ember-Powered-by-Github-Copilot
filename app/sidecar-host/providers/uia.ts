@@ -286,11 +286,11 @@ export const BACKOFF_MS: readonly number[] = [5_000, 30_000, 120_000, 600_000];
 
 /** What a refused script says on stderr (PowerShell's PSSecurityException for an execution policy). */
 const POLICY_REFUSAL = /execution[ _]polic|PSSecurityException|UnauthorizedAccess/i;
-/** The words for it, in the host's status and the setup check. */
 /** The protocol version this host speaks with the bridge (sidecar/uia/PROTOCOL.md, `Bridge.Version` in ember_uia.cs). */
 export const BRIDGE_PROTOCOL_VERSION = 1;
 /** What status says when the bridge's ready line doesn't carry exactly that version (a stale cached DLL, a half-upgraded install). */
 export const VERSION_DETAIL = "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember.";
+/** The words for a refused execution policy, in the host's status and the setup check. */
 export const POLICY_DETAIL = "PowerShell refused to run the bridge (execution policy)";
 /** How much of a starting bridge's stderr is kept to tell a refusal (never logged, never past its start). */
 const STDERR_KEPT = 16_384;

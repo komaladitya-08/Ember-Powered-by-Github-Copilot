@@ -85,7 +85,7 @@ import { speaksAloud } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform, switchArgs } from "./platform";
-import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
+import { helperStatusOfError, primaryScaledUnion, toHelperStatus } from "./platform/compose";
 import type { HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
 import { extraBinDirs } from "./platform/darwin/system";
 import { deskProcesses } from "./desk/desk";
@@ -323,7 +323,7 @@ async function doctorHelper(): Promise<HelperStatus | null | undefined> {
     return toHelperStatus(await Promise.race([sidecar.status(), late]));
   } catch (err) {
     log.warn("doctor.helper_unavailable", { err });
-    return null;
+    return helperStatusOfError(err);
   } finally {
     clearTimeout(timer);
     sidecar.stop();
@@ -2768,7 +2768,7 @@ function start(): void {
     // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked once, after
     // the cold start (and later still at login, so the probe stays out of the way of everything else starting).
     if (launch) {
-      setTimeout(() => sidecar.status().then(st => { helper = toHelperStatus(st); }, () => { helper = null; }), atLogin ? 60_000 : 10_000).unref();
+      setTimeout(() => sidecar.status().then(st => { helper = toHelperStatus(st); }, err => { helper = helperStatusOfError(err); }), atLogin ? 60_000 : 10_000).unref();
     }
     // The first screenshot with Ember's marks on a fresh Windows or macOS machine doesn't pay fontconfig's cache build:
     // sharp's text is drawn once in the background, later at login (text-warm.ts).
