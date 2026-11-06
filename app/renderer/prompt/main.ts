@@ -9,9 +9,9 @@
  * types a secret into another app (review #235).
  */
 
-import type { PromptCard } from "../../shared/remote-ui";
+import { PROMPT_NOTICE_MS, type ApprovalResult, type PromptCard } from "../../shared/remote-ui";
 import {
-  PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
+  APPROVAL_EARLIER_NOT_TAKEN, APPROVAL_NOT_SENT, approvalNotTaken, PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, RISKY_STEP_TAG, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
   type Block, type ButtonView, type Part, type ReadGate,
 } from "./copy";
 import type { PromptApi } from "./api";
@@ -84,14 +84,48 @@ async function hashShown(c: { title: string; body: string[] }): Promise<string |
   } catch { return null; } // no WebCrypto here: the card's own hash goes back, as the contract has it
 }
 
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** A line under the card saying why a press didn't take (never silent). */
+function say(text: string): void {
+  const n = $("notice");
+  n.textContent = text;
+  n.hidden = !text;
+  delete n.dataset.earlier;
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = null;
+}
+
+/**
+ * The refusal of a press on a question that is no longer the one shown (pulled or replaced before main's reply). It is
+ * worded as about the earlier question, outlives a replacement card's arrival, and, with no card up, asks main to keep
+ * the window shown so it can be read (review #183). It goes after PROMPT_NOTICE_MS, or at the next press.
+ */
+function sayEarlier(): void {
+  say(APPROVAL_EARLIER_NOT_TAKEN);
+  $("notice").dataset.earlier = "true";
+  noticeTimer = setTimeout(() => { noticeTimer = null; say(""); }, PROMPT_NOTICE_MS);
+  if (!card) api.notice();
+}
+
+/** A refusal already on screen when its card is pulled or replaced: it now belongs to the earlier question. */
+function keepAsEarlier(): void {
+  if ($("notice").hidden) return;
+  sayEarlier();
+}
+
 async function press(b: ButtonView): Promise<void> {
   if (!card || sent) return;
   if (card.kind === "approval") {
     const shown = card;
     if (b.id !== "deny" && shown.detail && !seenNow()) return;
+    say(""); // each press starts without the last one's refusal
     // The Confirmer alone arms and accepts the exact current question. Rejected early presses leave it answerable.
-    const accepted = await api.approval(shown.id, b.id);
-    if (card === shown && accepted) { sent = true; for (const button of buttons) button.el.disabled = true; }
+    let accepted: ApprovalResult;
+    try { accepted = await api.approval(shown.id, b.id); } catch { if (card === shown) say(APPROVAL_NOT_SENT); else sayEarlier(); return; }
+    // Still the question on screen: its own refusal. Pulled or replaced meanwhile: said of the earlier question.
+    if (!accepted.ok) { if (card === shown) say(approvalNotTaken(accepted.reason)); else sayEarlier(); }
+    if (card === shown && accepted.ok) { sent = true; for (const button of buttons) button.el.disabled = true; }
     return;
   }
   const r = pressResult(card, b, field, Date.now(), shownAt, seenNow());
@@ -150,21 +184,34 @@ new MutationObserver(() => judge()).observe(document.documentElement, { attribut
 function show(next: PromptCard | null): void {
   // The same card again (pulled after it was pushed): leave what the user is doing alone.
   if (next && card && next.id === card.id) return;
+  const hadCard = !!card;
   card = next;
   sent = false;
   gate = { seen: false, layout: layoutNow() };
   field.value = "";
+  // A pulled card keeps its last refusal on screen ("gone", "too soon"); a new question starts with none of its own,
+  // but a refusal of an earlier question's press stays, worded as that, until it times out.
+  if (next && $("notice").hidden) say("");
+  else if (hadCard || next) keepAsEarlier();
   if (armTimer) clearTimeout(armTimer);
   armTimer = null;
   if (focusTimer) clearTimeout(focusTimer);
   focusTimer = null;
   rewrap?.disconnect();
   $("card").hidden = !next;
-  if (!next) { buttons = []; return; }
+  if (!next) {
+    buttons = [];
+    return;
+  }
   shownAt = Date.now();
   const view = promptView(next);
   const legend = new Set<string>();
   $("title").replaceChildren(...partNodes(view.title, legend));
+  $("card").dataset.risky = String(!!view.risky);
+  $("risk").textContent = view.risky ? RISKY_STEP_TAG : "";
+  $("risk").hidden = !view.risky;
+  // An empty risk line is no name for the dialog: only a risky step's tag leads it.
+  $("card").setAttribute("aria-labelledby", view.risky ? "risk title" : "title");
   // The window keeps its title "Ember" (§8.6): Ember's own windows are known by it where their process can't be told,
   // and a host name or an SSH prompt never goes into a window title other programs read. The dialog is named by its h1.
   words.replaceChildren(...view.body.map(b => blockNode(b, legend)));
@@ -177,7 +224,8 @@ function show(next: PromptCard | null): void {
     field.type = view.field.masked ? "password" : "text";
   }
   buttons = view.buttons.map(v => {
-    const b = el("button", v.primary ? "btn" : "btn quiet", v.label);
+    const b = el("button", v.primary && !view.risky ? "btn" : "btn quiet", v.label);
+    if (v.primary && view.risky) b.classList.add("caution");
     b.type = "button";
     b.addEventListener("click", e => { if (e.isTrusted) void press(v); });
     return { view: v, el: b };

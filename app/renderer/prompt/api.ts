@@ -3,7 +3,7 @@
  * channels and nothing else. Types only.
  */
 
-import type { PromptAnswer, PromptCard } from "../../shared/remote-ui";
+import type { ApprovalResult, PromptAnswer, PromptCard } from "../../shared/remote-ui";
 
 export interface PromptApi {
   /** The card on screen now (main may have sent it before the page listened), or null. */
@@ -15,5 +15,7 @@ export interface PromptApi {
   /** The card was closed without an answer (Cancel, Not now, Close, Esc). */
   cancel(id: string): void;
   /** Without answer: the full text was in view. Main keeps all decision authority. */
-  approval(id: string, answer?: string): Promise<boolean>;
+  /** A refusal is on screen with no card up: main keeps the window shown for a while (never takes the keyboard). */
+  notice(): void;
+  approval(id: string, answer?: string): Promise<ApprovalResult>;
 }

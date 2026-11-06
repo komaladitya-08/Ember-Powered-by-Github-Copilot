@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PROMPT_IPC, type PromptAnswer, type PromptCard } from "../../app/shared/remote-ui";
+import { PROMPT_IPC, PROMPT_NOTICE_MS, type PromptAnswer, type PromptCard } from "../../app/shared/remote-ui";
 import {
   PROMPT_FOCUS_CHECK_MS, PROMPT_IDLE_MS, PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
 } from "../../app/main/remote/prompt-window";
@@ -602,7 +602,7 @@ describe("the page's semantics", () => {
     const dialog = /<(\w+)\b[^>]*\brole="dialog"[^>]*>/.exec(html);
     expect(dialog?.[1]).toBe("div");
     expect(dialog?.[0]).toMatch(/\bid="card"/);
-    expect(dialog?.[0]).toMatch(/aria-labelledby="title"/);
+    expect(dialog?.[0]).toMatch(/aria-labelledby="risk title"/);
     expect(dialog?.[0]).toMatch(/aria-describedby="body"/);
     expect(html.indexOf(main)).toBeLessThan(html.indexOf(dialog![0]));
     expect(html.indexOf(dialog![0])).toBeLessThan(html.indexOf("</main>"));
@@ -620,7 +620,7 @@ describe("focusable ordinary approvals", () => {
     } });
     ctl.onApproval((question, answer) => {
       if (answer === undefined) { c.wholeSeen(question); return true; }
-      return c.answer(`q${question}:${answer}`, "bubble");
+      return c.answer(`q${question}:${answer}`, "bubble") || (c.refusal(`q${question}:${answer}`) ?? "gone");
     });
     const q = { title: "May I?", prompt: "Type this exact text?", detail: "A long, exact message", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] };
     const result = c.ask(q);
@@ -629,19 +629,47 @@ describe("focusable ordinary approvals", () => {
     expect(win().focused).toBe(true);
     expect(win().shown()).toMatchObject({ n, title: q.title, prompt: q.prompt, detail: q.detail, options: q.options });
     const invoke = (raw: unknown, sender: WebContentsLike = page()) => ipc.handles.get(PROMPT_IPC.approval)!({ sender }, raw);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // arming
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "not-yet" }); // arming
     await vi.advanceTimersByTimeAsync(500);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // unread
-    expect(invoke({ id: `approval-${n}` }, { id: 999, send() {} })).toBe(false);
-    expect(invoke({ id: `approval-${n}` })).toBe(true);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false); // rearmed after full text
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "not-yet" }); // unread
+    expect(invoke({ id: `approval-${n}` }, { id: 999, send() {} })).toEqual({ ok: false });
+    expect(invoke({ id: `approval-${n}` })).toEqual({ ok: true });
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "not-yet" }); // rearmed after full text
     await vi.advanceTimersByTimeAsync(500);
-    expect(invoke({ id: `approval-${n}`, answer: "made-up" })).toBe(false);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(true);
+    expect(invoke({ id: `approval-${n}`, answer: "made-up" })).toEqual({ ok: false, reason: "gone" });
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: true });
     await expect(result).resolves.toBe("once");
     expect(win().visible).toBe(false);
-    expect(invoke({ id: `approval-${n}`, answer: "once" })).toBe(false);
+    expect(invoke({ id: `approval-${n}`, answer: "once" })).toEqual({ ok: false, reason: "gone" });
     ctl.dispose();
+  });
+  it("keeps the window up without taking the keyboard while a refused press's notice is read, then hides it (review #183)", async () => {
+    vi.useFakeTimers();
+    const { ctl, ipc, win, page } = setup();
+    ctl.showApproval({ id: "approval-7", n: 7, kind: "approval", title: "May I?", prompt: "Save?", options: [{ id: "once", label: "Allow" }] });
+    ctl.hideApproval(7);
+    expect(win().visible).toBe(false); // nothing to show: hidden, as before
+    win().focused = false;
+    ipc.send(PROMPT_IPC.notice, { id: 999, send() {} }, { id: "approval-7" }); // not this window's page
+    ipc.send(PROMPT_IPC.notice, page(), "x"); // not an object
+    expect(win().visible).toBe(false);
+    ipc.send(PROMPT_IPC.notice, page(), { id: "approval-7" });
+    expect(win().visible).toBe(true);
+    expect(win().focused).toBe(false); // showInactive: no stolen keyboard
+    await vi.advanceTimersByTimeAsync(PROMPT_NOTICE_MS + 50);
+    expect(win().visible).toBe(false);
+    ctl.dispose();
+  });
+  it("shows no notice over a card that is up, and a new card outlives the notice's hide timer", async () => {
+    vi.useFakeTimers();
+    const { ctl, ipc, win, page } = setup();
+    ctl.showApproval({ id: "approval-8", n: 8, kind: "approval", title: "A", prompt: "A?", options: [{ id: "once", label: "Allow" }] });
+    ctl.hideApproval(8);
+    ipc.send(PROMPT_IPC.notice, page(), { id: "approval-8" });
+    ctl.showApproval({ id: "approval-9", n: 9, kind: "approval", title: "B", prompt: "B?", options: [{ id: "once", label: "Allow" }] });
+    await vi.advanceTimersByTimeAsync(PROMPT_NOTICE_MS + 50);
+    expect(win().visible).toBe(true); // the new question stays up
+    ctl.hideApproval(9); ctl.dispose();
   });
   it("cannot accept ordinary approvals through the SSH/consent answer channel", () => {
     const { ctl, ipc, page } = setup();

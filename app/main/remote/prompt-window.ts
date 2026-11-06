@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { PROMPT_IPC, type ApprovalCard, type PromptAnswer, type PromptCard } from "../../shared/remote-ui";
+import { PROMPT_IPC, PROMPT_NOTICE_MS, type ApprovalCard, type ApprovalRefusal, type ApprovalResult, type PromptAnswer, type PromptCard } from "../../shared/remote-ui";
 import type { OS } from "../../shared/shortcuts";
 import type { ConsentPanel } from "../../shared/consent";
 import type { Logger } from "../logger";
@@ -37,7 +37,7 @@ export interface PromptWindowExtras {
   /** Explicitly opens one ordinary question, without changing its Confirmer authority. */
   showApproval(card: ApprovalCard): void;
   hideApproval(n: number): void;
-  onApproval(fn: (n: number, answer?: string) => boolean): () => void;
+  onApproval(fn: (n: number, answer?: string) => boolean | ApprovalRefusal): () => void;
   /** Answers to consent questions (showConsent): wire to confirmer.answer(`q${n}:${answer}`, "panel", { sha256 }). */
   onConsent(fn: (a: ConsentAnswer) => void): () => void;
   /** Brings the window back up (the bubble's "Read it"), if it has a card. */
@@ -136,6 +136,7 @@ export function validPromptCard(c: unknown): c is PromptCard {
     case "consent-direct": return validConsent(c.consent);
     case "approval": return Number.isSafeInteger(c.n) && (c.n as number) >= 0 && str(c.title, 2000, 1) && str(c.prompt, 100_000, 1)
       && (c.detail === undefined || str(c.detail, 1_000_000)) && (c.where === undefined || str(c.where, 500))
+      && (c.risky === undefined || typeof c.risky === "boolean") && (c.context === undefined || str(c.context, 2000))
       && Array.isArray(c.options) && c.options.length > 0 && c.options.length <= 12
       && c.options.every(v => isObj(v) && str(v.id, 100, 1) && str(v.label, 200, 1) && (v.primary === undefined || typeof v.primary === "boolean"));
     default: return false;
@@ -170,7 +171,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
   const stopIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = null; };
   /** The card on screen is queue[0]. */
   const queue: Entry[] = [];
-  const approvalFns = new Set<(n: number, answer?: string) => boolean>();
+  const approvalFns = new Set<(n: number, answer?: string) => boolean | ApprovalRefusal>();
   const consentFns = new Set<(a: ConsentAnswer) => void>();
   /**
    * Consent questions shown and not yet hidden (the targets runtime hides each when its question ends). A card the user
@@ -239,6 +240,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       return;
     }
     stopIdle();
+    stopNotice();
     const w = ensure();
     if (!w) {
       // No window to ask in: an SSH prompt is answered no at once, as refused (nobody can answer it, and ssh mustn't
@@ -269,6 +271,9 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
    * secret into another app. The page says so on the card too.
    */
   let focusTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Hides the window again once a refused press's notice has been up for PROMPT_NOTICE_MS (review #183). */
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  const stopNotice = () => { if (noticeTimer) clearTimeout(noticeTimer); noticeTimer = null; };
   const warned = new Set<string>();
   function checkKeyboard(w: PromptWindowLike, e: Entry): void {
     if (focusTimer) clearTimeout(focusTimer);
@@ -310,14 +315,33 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
     const refused = (channel: string) => note("warn", "prompt.ipc_refused", { channel });
 
     o.ipc.handle(PROMPT_IPC.approval, (e, raw) => {
-      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.approval); return false; }
+      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.approval); return { ok: false } satisfies ApprovalResult; }
       const head = queue[0];
-      if (!head || head.card.kind !== "approval" || !isObj(raw) || raw.id !== head.card.id) return false;
+      const gone: ApprovalResult = { ok: false, reason: "gone" };
+      if (!head || head.card.kind !== "approval" || !isObj(raw) || raw.id !== head.card.id) return gone;
       const card = head.card;
-      if (raw.answer !== undefined && (typeof raw.answer !== "string" || !card.options.some(o => o.id === raw.answer))) return false;
-      let accepted = false;
-      for (const fn of approvalFns) accepted = fn(card.n, raw.answer as string | undefined) || accepted;
-      return accepted;
+      if (raw.answer !== undefined && (typeof raw.answer !== "string" || !card.options.some(o => o.id === raw.answer))) return gone;
+      let reason: ApprovalRefusal = "gone";
+      for (const fn of approvalFns) {
+        const r = fn(card.n, raw.answer as string | undefined);
+        if (r === true) return { ok: true };
+        if (r === "not-yet") reason = "not-yet";
+      }
+      return { ok: false, reason };
+    });
+    // A refusal is on screen with no card up (the question was pulled or replaced before its reply): the window stays
+    // up, small and without the keyboard, for a while so it can be read, then hides as it does with nothing to show.
+    o.ipc.on(PROMPT_IPC.notice, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.notice); return; }
+      if (!isObj(raw) || queue.length) return;
+      const w = live();
+      if (!w) return;
+      stopIdle();
+      stopNotice();
+      if (typeof w.fit === "function") safe("fit", () => w.fit?.({ width: PROMPT_SIZE.card.width, height: 160 }));
+      safe("show", () => w.showInactive()); // no keyboard taken
+      noticeTimer = setTimeout(() => { noticeTimer = null; if (!disposed && !queue.length) reveal(); }, PROMPT_NOTICE_MS);
+      noticeTimer.unref?.();
     });
     o.ipc.handle(PROMPT_IPC.show, e => {
       if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.show); return null; }
@@ -448,6 +472,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       stopIdle();
       if (focusTimer) clearTimeout(focusTimer);
       focusTimer = null;
+      stopNotice();
       for (const e of queue.splice(0)) e.resolve?.({ id: e.card.id, ok: false });
       approvalFns.clear();
       consentFns.clear();

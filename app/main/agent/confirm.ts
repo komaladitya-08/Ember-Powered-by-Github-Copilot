@@ -31,6 +31,7 @@
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import type { ConsentPanel } from "../../shared/consent";
+import type { ApprovalRefusal } from "../../shared/remote-ui";
 import type { CommandCard } from "../commands/types";
 
 /** How an answer arrived: a bubble button, Ember's approve/deny keys, the panel window's own buttons, or spoken. */
@@ -89,6 +90,11 @@ export interface Question {
  */
 export const ANSWER_MS = 1500;
 
+/** What the bubble says when a question timed out: nothing was approved, and it was not a refusal. */
+/** Under a timed-out question's thought: how to review it (the bubble has no button once the question has gone). */
+export const EXPIRED_STEP = "To review it, say or type the request again.";
+export const EXPIRED_THOUGHT = "Time ran out, so nothing was approved and I haven't done it. Ask me again if you'd like to review it.";
+
 /**
  * What main does once a question's answer has been up its moment (ConfirmerTiming.afterAnswer): nothing when something
  * else has replaced it on screen (`onScreen`) or what the question held off or covered shows again (`reshow`, the shared
@@ -131,7 +137,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
  * how many times the approve key asked for more, and when that key was last pressed (`keyAt`).
  */
 interface WholeRead { seen: boolean; page: number; seenAt: number; keyAt: number }
-interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void; whole?: WholeRead; note?: string; voiceLocked?: boolean }
+interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; deadline: number; off?: () => void; whole?: WholeRead; note?: string; voiceLocked?: boolean }
 
 export interface ConfirmerTiming {
   /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
@@ -216,7 +222,7 @@ export class Confirmer {
   ask(q: Question, signal?: AbortSignal): Promise<string | null> {
     if (signal?.aborted) return Promise.resolve(null);
     return new Promise(resolve => {
-      const p: Pending = { n: ++this.n, q, resolve, timer: null, shownAt: 0, ...(q.detail ? { whole: { seen: false, page: 0, seenAt: 0, keyAt: 0 } } : {}) };
+      const p: Pending = { n: ++this.n, q, resolve, timer: null, shownAt: 0, deadline: Infinity, ...(q.detail ? { whole: { seen: false, page: 0, seenAt: 0, keyAt: 0 } } : {}) };
       if (signal) {
         const onAbort = () => this.finish(p, null);
         signal.addEventListener("abort", onAbort, { once: true });
@@ -255,11 +261,25 @@ export class Confirmer {
     const m = /^q(\d+):(.+)$/.exec(actionId);
     if (!m || !this.current || Number(m[1]) !== this.current.n) return false;
     if (!this.current.q.options.some(o => o.id === m[2])) return false;
+    if (this.lapsed(this.current)) return false;
     if (this.now() - this.current.shownAt < this.armOf(this.current.q) || this.blocked()) return false;
     if (!this.allowedFrom(this.current, m[2], via, proof)) return false;
     this.channels.set(this.current.q, { via });
     this.finish(this.current, m[2]);
     return true;
+  }
+
+  /**
+   * Why `answer(actionId, "bubble")` would not be taken now, or null when it would: "not-yet" (too soon after the question
+   * showed, its whole text not yet read and armed again, or Ember using the mouse) or "gone" (another question, answered
+   * or expired). It changes nothing but a question already past its deadline, which it ends as expired: the prompt card says which, so a press that did nothing is never silent.
+   */
+  refusal(actionId: string): ApprovalRefusal | null {
+    const m = /^q(\d+):(.+)$/.exec(actionId);
+    const c = this.current;
+    if (!m || !c || Number(m[1]) !== c.n || !c.q.options.some(o => o.id === m[2]) || this.lapsed(c)) return "gone";
+    if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
+    return this.allowedFrom(c, m[2], "bubble", undefined) ? null : "not-yet";
   }
 
   /** How question `q` was answered, once it has been by the user (undefined: not yet, expired, cancelled or stopped). */
@@ -280,6 +300,7 @@ export class Confirmer {
   answerVoice(which: "allow" | "deny", o: { verified: boolean; question?: number | null; startedAt?: number; trust?: { task: string } }): VoiceAnswerResult {
     const c = this.current;
     if (!c) return "no-question";
+    if (this.lapsed(c)) return "stale";
     // Tied to this question (security review of #127): said for it, after it was up and armed, never for one before it.
     if (o.question !== undefined && o.question !== c.n) return "stale";
     if (o.startedAt !== undefined && o.startedAt < c.shownAt + this.armOf(c.q)) return "stale";
@@ -390,6 +411,16 @@ export class Confirmer {
     return p.whole && p.q.detail ? Math.round(t * (1 + p.q.detail.length / 2000)) : t;
   }
 
+  /**
+   * Whether question `p` is past its fixed deadline (shown time plus its wait). The timer's callback can lag the clock, so
+   * every answer path checks this itself: a press after the deadline approves nothing, and the question ends as expired.
+   */
+  private lapsed(p: Pending): boolean {
+    if (this.now() < p.deadline) return false;
+    this.finish(p, null, true);
+    return true;
+  }
+
   /** How long clicks are ignored after `q` shows: its own arm time, or the default when it has none (or none that is a time). */
   private armOf(q: Question): number {
     return typeof q.armMs === "number" && Number.isFinite(q.armMs) && q.armMs >= 0 ? q.armMs : this.armMs;
@@ -404,7 +435,7 @@ export class Confirmer {
    */
   answerKey(which: "primary" | "deny" | "always"): boolean {
     const c = this.current;
-    if (!c) return false;
+    if (!c || this.lapsed(c)) return false;
     if (which !== "deny" && c.whole) {
       const now = this.now();
       if (!c.whole.seen) {
@@ -449,7 +480,8 @@ export class Confirmer {
     this.cancelAnswer();
     const p = this.current;
     p.shownAt = this.now();
-    p.timer = setTimeout(() => this.finish(p, null), this.timeoutOf(p));
+    p.deadline = p.shownAt + this.timeoutOf(p);
+    p.timer = setTimeout(() => this.finish(p, null, true), this.timeoutOf(p));
     this.show({ emotion: "curious", talking: false, bubble: this.bubbleOf(p) });
     this.onChange?.({ n: p.n, question: p.q });
   }
@@ -494,7 +526,7 @@ export class Confirmer {
     if (this.answerTimer) { clearTimeout(this.answerTimer); this.answerTimer = null; }
   }
 
-  private finish(p: Pending, answer: string | null): void {
+  private finish(p: Pending, answer: string | null, expired = false): void {
     if (p.timer) clearTimeout(p.timer);
     p.off?.();
     const queued = this.queue.includes(p);
@@ -505,7 +537,7 @@ export class Confirmer {
       this.current = null;
       // "Not now" (or no answer) leaves Ember idle, not still working.
       const yes = !!answer && answer !== "deny";
-      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
+      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : expired ? EXPIRED_THOUGHT : "Okay, I won't.", step: expired && !yes ? EXPIRED_STEP : null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
       this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: shown });
       this.answerShown(shown);
     }

@@ -28,6 +28,7 @@ import type { OS } from "../../shared/shortcuts";
 import { DISTRO_NAME, HOST_ID, LOCAL_TARGET, parseTargetId, targetIdOf, type TargetId, type TargetSummary, type TargetsAct } from "../../shared/targets";
 import { commandMode, type LoadedAdminPolicy } from "../admin";
 import type { Question } from "../agent/confirm";
+import type { ApprovalRefusal } from "../../shared/remote-ui";
 import type { NoticeBoard, NoticeBubble, NoticeOptions } from "../agent/presenter";
 import type { Emotion } from "@ember/characters";
 import { plainMarkdown } from "@ember/bubble";
@@ -93,7 +94,7 @@ export type PromptWindow = PromptUi & {
   /** A consent question's answer from its card (UI's extra; without it a consent question can only be declined). */
   showApproval?(card: import("../../shared/remote-ui").ApprovalCard): void;
   hideApproval?(n: number): void;
-  onApproval?(fn: (n: number, answer?: string) => boolean): () => void;
+  onApproval?(fn: (n: number, answer?: string) => boolean | ApprovalRefusal): () => void;
   onConsent?(fn: (a: PanelAnswer) => void): () => void;
   /** Brings the window back with its card (UI's extra). */
   show?(): void;
@@ -1205,10 +1206,12 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   if (promptWindow.onConsent) promptWindow.onConsent(confirmAnswer("consent"));
   else log.info("targets.consent_answers_unwired", {});
   promptWindow.onApproval?.((n, answer) => {
-    if (current?.n !== n || current.question.panel) return false;
+    if (current?.n !== n || current.question.panel) return "gone";
     if (answer === undefined) { deps.confirmer()?.wholeSeen(n); return true; }
-    if (!current.question.options.some(o => o.id === answer)) return false;
-    return deps.confirmer()?.answer(`q${n}:${answer}`, "bubble") ?? false;
+    if (!current.question.options.some(o => o.id === answer)) return "gone";
+    const c = deps.confirmer();
+    if (c?.answer(`q${n}:${answer}`, "bubble")) return true;
+    return c?.refusal?.(`q${n}:${answer}`) ?? "gone";
   });
   const hidePanel = (q: { n: number; question: Question }) => {
     const p = q.question.panel;
@@ -1904,9 +1907,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         promptWindow.showConsent(q.n, p.consent, true);
       } else {
         if (!promptWindow.showApproval) return false;
-        const { title, prompt, detail, where, options } = q.question;
+        const { title, prompt, detail, where, options, risky, context } = q.question;
         promptWindow.showApproval({ id: `approval-${q.n}`, kind: "approval", n: q.n, title, prompt,
-          ...(detail ? { detail } : {}), ...(where ? { where } : {}), options: options.map(o => ({ ...o })) });
+          ...(detail ? { detail } : {}), ...(where ? { where } : {}),
+          ...(risky ? { risky: true } : {}), ...(context?.trim() ? { context: context.trim().slice(0, 2000) } : {}), options: options.map(o => ({ ...o })) });
       }
       return true;
     },

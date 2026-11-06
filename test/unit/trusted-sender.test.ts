@@ -128,7 +128,7 @@ describe("the prompt window's channels", () => {
     void ctl.ask({ id: "p", kind: "touch", host: "build-01" });
     refusals.length = 0;
     const channels = [...ons.keys(), ...handles.keys()];
-    expect(channels.sort()).toEqual([PROMPT_IPC.answer, PROMPT_IPC.cancel, PROMPT_IPC.show, PROMPT_IPC.approval].sort());
+    expect(channels.sort()).toEqual([PROMPT_IPC.answer, PROMPT_IPC.cancel, PROMPT_IPC.show, PROMPT_IPC.approval, PROMPT_IPC.notice].sort());
     for (const c of channels) deliver(c, home, { id: "p", ok: true });
     expect(refusals.sort()).toEqual(channels.sort());
     expect(ctl.owns(home)).toBe(false);

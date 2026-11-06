@@ -16,7 +16,12 @@ export const PROMPT_IPC = {
   cancel: "prompt:cancel",
   /** Exact ordinary question read/answer, accepted only from this window. */
   approval: "prompt:approval",
+  /** Page → main: a refused press's notice is on screen with no card up, so keep the window up to be read. */
+  notice: "prompt:notice",
 } as const;
+
+/** How long (ms) the prompt window stays up, without the keyboard, for a refused press's notice once its card is gone. */
+export const PROMPT_NOTICE_MS = 12_000;
 
 /** One card in the prompt window. */
 export type PromptCard =
@@ -35,8 +40,13 @@ export type PromptCard =
   | { id: string; kind: "consent"; n: number; consent: ConsentPanel }
   /** A first-use consent card asked directly (settings' switches), not through a question. */
   | { id: string; kind: "consent-direct"; consent: ConsentPanel }
-  | { id: string; kind: "approval"; n: number; title: string; prompt: string; detail?: string; where?: string;
+  | { id: string; kind: "approval"; n: number; title: string; prompt: string; detail?: string; where?: string; risky?: boolean; context?: string;
       options: { id: string; label: string; primary?: boolean }[] };
+
+/** Why main didn't take an approval press: too soon (or not yet read), or the question has gone. */
+export type ApprovalRefusal = "not-yet" | "gone";
+/** What `prompt:approval` returns: taken, or not, and why (none: the press never reached the question). */
+export interface ApprovalResult { ok: boolean; reason?: ApprovalRefusal }
 
 export type ApprovalCard = Extract<PromptCard, { kind: "approval" }>;
 

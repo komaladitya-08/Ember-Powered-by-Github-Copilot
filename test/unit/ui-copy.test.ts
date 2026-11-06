@@ -874,3 +874,23 @@ describe("Better recall's download prompt (Settings › Memory, docs/MEMORY.md �
     expect(betterRecallProgress(1)).toBe("Language model 100% downloaded");
   });
 });
+
+describe("approval card risk and task context", () => {
+  const card: PromptCard = { id: "approval-3", kind: "approval", n: 3, title: "May I?", prompt: "Click “Send”?", context: "Email Ana the report",
+    options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] };
+  it("shows Risky step and Your task on a risky question, as the bubble does", () => {
+    const v = promptCopy.promptView({ ...card, risky: true });
+    expect(v.risky).toBe(true);
+    expect(promptCopy.RISKY_STEP_TAG).toBe("Risky step");
+    expect(JSON.stringify(v.body)).toContain("Your task: Email Ana the report");
+    expect(promptCopy.promptView(card).risky).toBeUndefined();
+  });
+  it("says that press was refused, never that nothing was approved, when a press wasn't taken", () => {
+    expect(promptCopy.approvalNotTaken("not-yet")).toMatch(/too soon.*didn't count/);
+    // "Gone" may mean it was already answered with a yes, so it must not claim nothing was approved (review of #183).
+    expect(promptCopy.approvalNotTaken("gone")).toMatch(/didn't count.*answered, replaced or timed out/);
+    expect(promptCopy.APPROVAL_NOT_SENT).toMatch(/couldn't confirm/);
+    for (const t of [promptCopy.APPROVAL_NOT_TAKEN, promptCopy.approvalNotTaken("not-yet"), promptCopy.approvalNotTaken("gone"), promptCopy.APPROVAL_NOT_SENT]) expect(t).not.toMatch(/nothing was approved/);
+    expect(new Set([promptCopy.approvalNotTaken("not-yet"), promptCopy.approvalNotTaken("gone"), promptCopy.approvalNotTaken(), promptCopy.APPROVAL_NOT_SENT]).size).toBe(4);
+  });
+});

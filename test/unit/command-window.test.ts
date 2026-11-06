@@ -1002,6 +1002,10 @@ describe("a run the remote's own check sent back for the user's OK (review #274)
     // The same command again later is a run of its own: the answered tab stays.
     ctl.attach(card({ runId: "4444444444444444", command: "rm -r a" }), new FakeRun("4444444444444444"));
     expect(no()).toBeDefined();
+    // A timeout approved nothing, and is not the user's refusal.
+    const late = await ask("5555555555555555", "rm -r d");
+    ctl.reaskEnded("5555555555555555", "expired");
+    expect(late()).toMatchObject({ outcome: "stopped", status: "Not run: the question timed out, so nothing was approved." });
     const stopped = await ask("2222222222222222", "rm -r b");
     ctl.reaskEnded("2222222222222222", "stopped");
     expect(stopped()).toMatchObject({ outcome: "stopped", status: "Not run: the task was stopped." });

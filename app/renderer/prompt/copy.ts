@@ -28,10 +28,27 @@ export interface ButtonView {
 /** What the page draws for a card. */
 export interface PromptView {
   title: Part[];
+  /** A risky step: the tag, caution brackets and an Allow that doesn't stand out (as the bubble). */
+  risky?: boolean;
   body: Block[];
   field: { label: string; masked: boolean } | null;
   buttons: ButtonView[];
 }
+
+/** The words of a risky step's tag, as the bubble's (packages/bubble RISKY_TAG). */
+export const RISKY_STEP_TAG = "Risky step";
+/** Under an approval whose press main didn't take: it was early, or the question moved on or expired. */
+export const APPROVAL_NOT_TAKEN = "That didn't go through. It may have been too soon, or the question may have expired. Check the question, then try once more.";
+/** Under an approval pressed too soon, or before its whole text was read: that press was refused. */
+export const APPROVAL_NOT_YET = "That press was too soon, so it didn't count. Read it through, wait a moment, then press again.";
+/** Under an approval whose question has gone (answered, expired or replaced): that press was refused. */
+export const APPROVAL_GONE = "That press didn't count: the question has already been answered, replaced or timed out. Ask me again if you want to review it.";
+/** The line under the card for a press main didn't take, by why. */
+export const approvalNotTaken = (reason?: "not-yet" | "gone"): string => reason === "not-yet" ? APPROVAL_NOT_YET : reason === "gone" ? APPROVAL_GONE : APPROVAL_NOT_TAKEN;
+/** Under a card or none, for a press on an earlier question that didn't count: it is tied to that question, not the one shown. */
+export const APPROVAL_EARLIER_NOT_TAKEN = "Your press on the earlier question didn't go through: it was too soon, or that question had already been answered, replaced or timed out. If you still want it, ask me again.";
+/** Under an approval whose press couldn't reach Ember. */
+export const APPROVAL_NOT_SENT = "I couldn't confirm that press went through. Check the question, then press again.";
 
 /** How long the affirmative button of a host-key or consent card ignores presses. */
 export const PROMPT_ARM_MS = 900;
@@ -108,7 +125,9 @@ export function promptView(card: PromptCard): PromptView {
     case "approval":
       return {
         title: [card.title],
-        body: [...(card.where ? [p(card.where)] : []), p(card.prompt), ...(card.detail ? [{ kind: "quote" as const, text: card.detail }] : [])],
+        ...(card.risky ? { risky: true } : {}),
+        body: [...(card.where ? [p(card.where)] : []), p(card.prompt),
+          ...(card.context && card.context.trim() !== card.prompt ? [p(`Your task: ${card.context.trim()}`)] : []), ...(card.detail ? [{ kind: "quote" as const, text: card.detail }] : [])],
         field: null,
         buttons: card.options.map(o => ({ id: o.id, label: o.label, primary: o.primary === true, isDefault: false, armed: false })),
       };

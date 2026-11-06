@@ -175,9 +175,10 @@ export function reaskText(label: string): string {
 
 /**
  * The status line of a run sent back for the user's OK once no OK is coming for it (review #274): the user said Not
- * now or let the question go, or the task was stopped while it was up.
+ * now, the question timed out, or the task was stopped while it was up.
  */
-export function reaskEndText(why: "no" | "stopped"): string {
+export function reaskEndText(why: "no" | "expired" | "stopped"): string {
+  if (why === "expired") return "Not run: the question timed out, so nothing was approved.";
   return why === "no" ? "Not run: you didn't allow it." : "Not run: the task was stopped.";
 }
 
