@@ -84,7 +84,7 @@ it.skipIf(process.env.EMBER_MIC_RECIPIENT_TEST !== "1")("names the active model 
     expect(await page.evaluate(() => window.__calls)).toEqual([]);
     await open();
     await page.locator("#consent-yes").click();
-    expect(await page.locator("#consent").isHidden()).toBe(true);
+    await expect.poll(() => page.locator("#consent").isHidden()).toBe(true);
     await expect.poll(() => page.evaluate(() => window.__calls.length)).toBe(1);
     expect(await page.evaluate(() => window.__calls[0])).toContain('"consent":true');
 

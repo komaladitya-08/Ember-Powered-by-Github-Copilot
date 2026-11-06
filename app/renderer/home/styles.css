@@ -294,6 +294,7 @@ progress[hidden] { display: none; }
 .byok-msg { margin: 6px 0 0; }
 .byok-msg:empty { display: none; }
 .byok-msg.error { color: var(--red-text); }
+#consent-error { color: var(--red-text); margin: 8px 0 0; }
 .never-look-msg:empty { display: none; }
 .presence-line { margin: 0; color: var(--fg); }
 #presence-text:empty { display: none; }
