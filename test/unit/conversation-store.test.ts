@@ -295,3 +295,113 @@ describe("the saved conversation: quit, erasure and failures (PR #188 review)", 
     expect(seen).toEqual(["save", null]);
   });
 });
+
+describe("the saved conversation: a clear that survives a restart (PR #188 re-review 2)", () => {
+  const eacces = () => Object.assign(new Error("denied"), { code: "EACCES" });
+  const marker = (dir: string) => path.join(dir, "conversation.erased");
+  /** Deleting and emptying the conversation file fail (a held or read-only file), as in the review's repro. */
+  const stuck = () => [
+    vi.spyOn(fs, "rmSync").mockImplementation((f: fs.PathLike) => { if (String(f).endsWith(HISTORY_FILE)) throw eacces(); }),
+    vi.spyOn(fs, "truncateSync").mockImplementation(() => { throw eacces(); }),
+  ];
+  const free = (spies: { mockRestore(): void }[]) => spies.forEach(s => s.mockRestore());
+
+  it("a clear whose deletion and emptying both fail still hides the conversation from a fresh store, and says so", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const spies = stuck();
+    expect(s.clear()).toBe(false);
+    expect(s.problem).toBe("delete"); // (physical deletion failed; the marker holds it back)
+    expect(fs.existsSync(file(dir))).toBe(true);
+    if (posixModes) expect(fs.statSync(marker(dir)).mode & 0o777).toBe(0o600);
+    // A separate process: no memory of the failure, only the folder.
+    const fresh = store(dir);
+    expect(fresh.load("a")).toEqual([]);
+    expect(fresh.problem).toBe("delete");
+    free(spies);
+    // Deletion works again: the retry removes the file and then the marker.
+    const later = store(dir);
+    expect(later.load("a")).toEqual([]);
+    expect(later.problem).toBeNull();
+    expect(fs.existsSync(file(dir))).toBe(false);
+    expect(fs.existsSync(marker(dir))).toBe(false);
+    later.save("a", [msg(3)]);
+    await later.flush();
+    expect(store(dir).load("a")).toEqual([msg(3)]);
+  });
+
+  it("a save made while the old file still can't be deleted replaces it, and a restart restores only the new one", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const spies = stuck();
+    s.clear();
+    const t = store(dir);
+    expect(t.load("a")).toEqual([]);
+    t.save("a", [msg(5)]);
+    await t.flush();
+    expect(store(dir).load("a")).toEqual([msg(5)]);
+    free(spies);
+    expect(store(dir).load("a")).toEqual([msg(5)]);
+    expect(fs.existsSync(marker(dir))).toBe(false); // superseded by the newer save, so it is tidied
+  });
+
+  it("an older copy written after the marker (a stale file put back) is never shown", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const old = fs.readFileSync(file(dir), "utf8");
+    const spies = stuck();
+    s.clear();
+    fs.writeFileSync(file(dir), old);
+    expect(store(dir).load("a")).toEqual([]);
+    free(spies);
+  });
+
+  it("when even the marker can't be written, the problem says the copy may come back", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const spies = stuck();
+    const open = vi.spyOn(fs, "openSync").mockImplementation(() => { throw eacces(); });
+    const seen: unknown[] = [];
+    const t = new HistoryStore({ dir, log, delayMs: 1, onProblem: p => seen.push(p) });
+    expect(t.clear()).toBe(false);
+    expect(t.problem).toBe("exposed");
+    expect(seen).toEqual(["exposed"]);
+    open.mockRestore();
+    free(spies);
+    expect(conversationKeepProblem("exposed")).not.toContain("won’t show it again");
+    expect(conversationKeepProblem("delete")).toContain("won’t show it again");
+  });
+
+  it("a failed delete that the marker covers is not 'exposed' once a later start deletes it", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const spies = stuck();
+    s.clear();
+    free(spies);
+    const t = store(dir);
+    t.load("zzz"); // another owner: still tidies everything
+    expect(fs.existsSync(file(dir))).toBe(false);
+    expect(fs.existsSync(marker(dir))).toBe(false);
+  });
+
+  it("an owner the host can't establish is a visible problem until it can", () => {
+    const seen: unknown[] = [];
+    const t = new HistoryStore({ dir: tmp(), log, delayMs: 1, onProblem: p => seen.push(p) });
+    t.setOwnerKnown(false);
+    expect(t.problem).toBe("owner");
+    t.setOwnerKnown(true);
+    expect(t.problem).toBeNull();
+    expect(seen).toEqual(["owner", null]);
+    expect(conversationKeepProblem("owner")).toMatch(/isn’t saving/);
+  });
+});

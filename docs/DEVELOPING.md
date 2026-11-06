@@ -181,6 +181,14 @@ runtime. It does not change the app's consent or speaking settings.
     What a connection that began before such a change says (a late answer, a stopped stream, a task's result) is shown but
     never saved (`connGen`). A copy that can't be deleted is emptied if possible, never loaded again, retried first thing,
     and Sign out and Forget everything say so; a copy that can't be written is said under the switch (`historyProblem`).
+    A clear sticks across a restart: before deleting, it writes `conversation.erased` (`{ version, gen }`; temp, fsync, atomic
+    rename, mode 0600) and every saved file carries the generation `gen` it was saved under. A load honours the marker first:
+    a file of a lower generation is never shown and is deleted again, and the marker goes only once nothing is left or a
+    newer save (written under the marker's generation) replaced the file. If neither the deletion nor the marker can be done,
+    the problem is "exposed" and says the copy may show again; history on with a provider key that has no id says "owner".
+    The key id travels with the key: saving a key makes a new id (also for the same key), and that is a new owner. Known
+    limitation: the owner is the account and service the copy was saved under, so GitHub → own provider → restart with the
+    same key doesn't bring the earlier provider conversation back (the account is unverified on launch).
     Nothing is saved until the saved copy of that owner has been
     looked at, and lines said before then are added after the saved ones, so an earlier copy is never silently replaced. A
     saved line never carries a per-run id (`answerId`, `heardId`). The file's folder is flushed after the rename (best

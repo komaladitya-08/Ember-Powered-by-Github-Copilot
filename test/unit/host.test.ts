@@ -4080,6 +4080,51 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await solo.host.stop();
     });
 
+    it("a key saved just now is a known owner at once: history is saved, and a re-save (new id) moves new turns to the new owner (PR #188 re-review 3)", async () => {
+      const dir = tmpDir();
+      let cur = own(KEY1, undefined, ID1);
+      const k = kept(dir, { provider: () => cur });
+      await k.host.start(null);
+      await k.host.ask("under the first save");
+      say("answered");
+      await k.store.flush();
+      expect(JSON.parse(fs.readFileSync(k.file, "utf8")).account).toContain(ID1);
+      // The same key saved again: another id, the same credential. Old history goes; new turns save under the new id.
+      cur = own(KEY1, undefined, ID2);
+      await k.host.providerChanged();
+      await k.host.ask("after the re-save");
+      say("answered again");
+      await k.store.flush();
+      const saved = JSON.parse(fs.readFileSync(k.file, "utf8"));
+      expect(saved.account).toContain(ID2);
+      expect(saved.entries.map((e: { text: string }) => e.text)).toEqual(["after the re-save", "answered again"]);
+      await k.host.stop();
+    });
+
+    it("a re-save with the same credentials reconnects: the connection’s identity includes the key id (PR #188 re-review 3)", async () => {
+      const dir = tmpDir();
+      let cur = own(KEY1, undefined, ID1);
+      const k = kept(dir, { provider: () => cur });
+      await k.host.start(null);
+      const before = sim.sessions.length;
+      cur = own(KEY1, undefined, ID2);
+      expect(await k.host.providerChanged()).not.toBeNull();
+      expect(sim.sessions.length).toBeGreaterThan(before);
+      await k.host.stop();
+    });
+
+    it("history on but the owner can’t be established (a key with no id): a visible problem, not silence (PR #188 re-review 3)", async () => {
+      const dir = tmpDir();
+      const k = kept(dir, { provider: () => own(KEY1, undefined, null) });
+      await k.host.start(null);
+      await k.host.ask("nobody owns this");
+      say("answered");
+      await k.store.flush();
+      expect(fs.existsSync(k.file)).toBe(false);
+      expect(k.store.problem).toBe("owner");
+      await k.host.stop();
+    });
+
     it("a replaced or removed key, or another address, drops the saved copy and the lines on screen are not saved under it", async () => {
       for (const change of [
         () => own(KEY2),                                   // key replaced
@@ -4268,6 +4313,60 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     await k.store.flush();
     expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["after", "fresh"]);
     await k.host.stop();
+  });
+
+  it("Forget everything while an answer streams, then the answer finishes normally: its words are not saved or restored after a restart (PR #188 re-review 1)", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("old question");
+    conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: "Words seen before forgetting" });
+    k.host.forgetHistory();
+    say("Words seen before forgetting, and the rest");
+    await k.store.flush();
+    expect(k.host.getTranscript().map(e => e.text)).toContain("Words seen before forgetting, and the rest"); // still shown
+    expect(fs.existsSync(k.file) ? fs.readFileSync(k.file, "utf8") : "").not.toContain("Words seen");
+    await k.host.stop();
+    const again = kept(dir);
+    await again.host.start(TOKEN, "stored");
+    expect(again.host.getTranscript()).toEqual([]);
+    await again.host.stop();
+  });
+
+  it("Forget everything and Sign out whose deletion and emptying both fail: a restarted Ember (new store and host) still restores nothing (PR #188 re-review 2)", async () => {
+    for (const how of ["forget", "signout"] as const) {
+      const dir = tmpDir();
+      const k = kept(dir);
+      await k.host.start(TOKEN, "stored");
+      await k.host.ask("keep me out");
+      say("answer");
+      await k.store.flush();
+      const rm = vi.spyOn(fs, "rmSync").mockImplementation((f: fs.PathLike) => { if (String(f).endsWith(HISTORY_FILE)) throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+      const trunc = vi.spyOn(fs, "truncateSync").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+      try {
+        if (how === "forget") expect(k.host.forgetHistory()).toBe(false);
+        else await expect(k.host.forgetConversation()).rejects.toThrow();
+        await k.host.stop();
+        expect(fs.existsSync(k.file)).toBe(true);
+        // Another process: signed back in as the same account, nothing comes back.
+        const again = kept(dir);
+        await again.host.start(TOKEN, "stored");
+        expect(again.host.getTranscript()).toEqual([]);
+        await again.host.stop();
+      } finally { rm.mockRestore(); trunc.mockRestore(); }
+      // Deletion works again: still nothing, the file and the marker go, and later turns are kept as usual.
+      const later = kept(dir);
+      await later.host.start(TOKEN, "stored");
+      expect(later.host.getTranscript()).toEqual([]);
+      await later.host.ask("new start");
+      say("fresh");
+      await later.store.flush();
+      await later.host.stop();
+      const last = kept(dir);
+      await last.host.start(TOKEN, "stored");
+      expect(last.host.getTranscript().map(e => e.text)).toEqual(["new start", "fresh"]);
+      await last.host.stop();
+    }
   });
 
   it("a saved copy that can't be deleted: sign-out says so, and nothing is restored from it afterwards", async () => {

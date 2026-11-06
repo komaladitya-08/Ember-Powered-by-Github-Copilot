@@ -26,6 +26,7 @@ export interface ProjectWorkspaceReply {
   opened?: { files: string[]; sizes?: (number | null)[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
 }
 export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number }
+import type { HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
@@ -441,8 +442,8 @@ export interface EmberHomeApi {
   taskControl(id: string, action: TaskControlAction): Promise<boolean>;
   onTasks(fn: (tasks: TaskEntry[]) => void): () => void;
   /** Whether the saved conversation couldn't be written ("save") or deleted ("delete"), and changes to it. */
-  historyProblem(): Promise<"save" | "delete" | null>;
-  onHistoryProblem(fn: (problem: "save" | "delete" | null) => void): () => void;
+  historyProblem(): Promise<HistoryProblemKind | null>;
+  onHistoryProblem(fn: (problem: HistoryProblemKind | null) => void): () => void;
   /** This session's conversation (kept in memory only). */
   conversation(): Promise<TranscriptEntry[]>;
   /** Explicit typed request from Home, without capturing its foreground window. */

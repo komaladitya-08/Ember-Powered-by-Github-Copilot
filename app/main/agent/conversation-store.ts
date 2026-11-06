@@ -12,6 +12,12 @@
  *   immediately before its rename and gives up, so a clear is never undone by a late write. It says whether everything
  *   went (false: a file could not be deleted; it is then emptied if that can be done, and never loaded again by this
  *   store, which retries the deletion first). A save that fails is reported too (`problem`), never only logged.
+ * - A clear must stick across a restart. Every file carries the generation `gen` it was saved under. Before a clear
+ *   deletes anything it writes `conversation.erased` (`{ version, gen }`, temp + fsync + atomic rename, 0600): a later
+ *   generation than any file it voids. Every load honours it first: a file with a lower `gen` (or none) is never shown, is
+ *   deleted again, and the marker goes only once nothing is left (or a newer save, written under the marker's `gen`,
+ *   superseded the file). When the marker itself can't be written and the file can't be deleted, the problem says so
+ *   ("exposed"), never "it won't show again".
  * - A file that can't be read as this version, or is too large, is moved aside (`.broken`, replacing an older one) and
  *   logged without its content. A file of another account is deleted, never shown.
  */
@@ -23,6 +29,8 @@ import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT } from "../../shared/conver
 
 export const HISTORY_FILE = "conversation.json";
 export const HISTORY_VERSION = 1;
+/** The tombstone of a clear (see the module doc): every saved file of a lower generation is void. */
+export const ERASED_FILE = "conversation.erased";
 /** The whole file's most, in UTF-8 bytes; older entries are dropped to fit. */
 export const MAX_BYTES = 2 * 1024 * 1024;
 /** How long a change waits for further ones before it is written (ms). */
@@ -66,8 +74,12 @@ export interface HistoryStoreOptions {
   onProblem?: (problem: HistoryProblem | null) => void;
 }
 
-/** What is wrong with the saved copy: it could not be written, or it could not be deleted (the worse one). */
-export type HistoryProblem = "save" | "delete";
+/**
+ * What is wrong with the saved copy, the worst first: "exposed" (it could not be deleted and could not be hidden either, so
+ * it may come back), "delete" (it could not be deleted, but a marker keeps it hidden), "save" (it could not be written),
+ * "owner" (history is on but whose it is can't be told, so nothing is saved).
+ */
+export type HistoryProblem = "exposed" | "delete" | "save" | "owner";
 
 /**
  * One saved line if it is valid, else null. Unknown fields are dropped, not trusted. Contract: a saved line NEVER carries a
@@ -106,7 +118,12 @@ export class HistoryStore {
   private seq = 0;
   /** A deletion failed and has not succeeded since: the saved copy must not be loaded, and every clear retries it. */
   private erasePending = false;
+  /** A deletion failed and the marker could not be written either. */
+  private exposed = false;
   private saveFailed = false;
+  private ownerUnknown = false;
+  /** The generation files are saved under: at least the marker's (and the last file's) as far as this store has seen. */
+  private gen = 0;
 
   constructor(private readonly o: HistoryStoreOptions) {
     this.file = path.join(o.dir, HISTORY_FILE);
@@ -120,7 +137,9 @@ export class HistoryStore {
    */
   load(account: string): SavedEntry[] {
     // A deletion that failed is retried before anything is read: what should be gone is never shown.
-    if (this.erasePending && !this.remove()) return [];
+    if ((this.erasePending || this.exposed) && !this.eraseAll(false)) return [];
+    const marker = this.markerGen();
+    if (marker !== null) this.gen = Math.max(this.gen, marker);
     this.tidyTemp();
     let raw: string;
     try {
@@ -129,15 +148,28 @@ export class HistoryStore {
       raw = fs.readFileSync(this.file, "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.o.log.warn("history.unreadable", { code: (err as NodeJS.ErrnoException).code });
+      else if (marker !== null) this.eraseAll(false); // nothing left to hide: the marker (and any temp or aside copy) goes
       return [];
     }
-    let v: { version?: unknown; account?: unknown; entries?: unknown };
+    let v: { version?: unknown; account?: unknown; entries?: unknown; gen?: unknown };
     try { v = JSON.parse(raw); } catch { return this.aside("not_json"); }
     if (!v || typeof v !== "object" || v.version !== HISTORY_VERSION || typeof v.account !== "string" || !Array.isArray(v.entries)) return this.aside("wrong_shape");
+    const fileGen = typeof v.gen === "number" && Number.isSafeInteger(v.gen) && v.gen >= 0 ? v.gen : 0;
+    if (marker !== null) {
+      if (fileGen < marker || typeof v.gen !== "number") {
+        // Saved before a clear whose deletion failed: void. Deleted again; the marker stays until that works.
+        this.o.log.info("history.erased_copy_hidden");
+        this.eraseAll(false);
+        return [];
+      }
+      // Saved after the clear: the marker has done its work.
+      this.dropMarker();
+    }
+    this.gen = Math.max(this.gen, fileGen);
     if (v.account !== account) {
       // Another account's: never shown to this one, and not kept for it either.
       this.o.log.info("history.other_account_deleted");
-      this.remove();
+      this.eraseAll(true);
       return [];
     }
     return boundedEntries(v.entries);
@@ -159,12 +191,17 @@ export class HistoryStore {
     this.epoch++;
     this.pending = null;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
-    return this.remove();
+    return this.eraseAll(true);
+  }
+
+  /** Whether the owner of the live conversation is known (history is on and nothing can be saved without one: "owner"). */
+  setOwnerKnown(known: boolean): void {
+    this.setProblem(() => { this.ownerUnknown = !known; });
   }
 
   /** What is wrong now, or null. */
   get problem(): HistoryProblem | null {
-    return this.erasePending ? "delete" : this.saveFailed ? "save" : null;
+    return this.exposed ? "exposed" : this.erasePending ? "delete" : this.saveFailed ? "save" : this.ownerUnknown ? "owner" : null;
   }
 
   /** Resolves once everything queued is on disk (or given up): no timer, nothing pending, no write running. Quit waits for it. */
@@ -189,7 +226,9 @@ export class HistoryStore {
     this.pending = null;
     const epoch = this.epoch;
     const tmp = `${this.file}.tmp-${process.pid}-${++this.seq}`;
-    const body = JSON.stringify({ version: HISTORY_VERSION, account: job.account, savedAt: new Date().toISOString(), entries: job.entries }) + "\n";
+    // Under at least the marker's generation (a save after a clear supersedes the marker), never under a lower one.
+    this.gen = Math.max(this.gen, this.markerGen() ?? 0);
+    const body = JSON.stringify({ version: HISTORY_VERSION, account: job.account, gen: this.gen, savedAt: new Date().toISOString(), entries: job.entries }) + "\n";
     this.running = (async () => {
       try {
         fs.mkdirSync(this.o.dir, { recursive: true, mode: 0o700 });
@@ -199,7 +238,10 @@ export class HistoryStore {
           fs.renameSync(tmp, this.file);
           // Best effort (Windows can't open a folder: EISDIR/EPERM): the data is already safe, only the name's durability is at stake.
           try { await this.ops.syncDir(this.o.dir); } catch { /* unsupported here, or the folder can't be flushed */ }
-          this.setProblem(() => { this.saveFailed = false; });
+          // The new file replaced the old one that couldn't be deleted: it is of a generation the marker doesn't void.
+          const replaced = this.erasePending || this.exposed;
+          if (replaced) this.dropMarker();
+          this.setProblem(() => { this.saveFailed = false; if (replaced) { this.erasePending = false; this.exposed = false; } });
         }
       } catch (err) {
         this.o.log.warn("history.not_saved", { code: (err as NodeJS.ErrnoException).code });
@@ -215,6 +257,67 @@ export class HistoryStore {
   }
 
   /**
+   * Erases with a durable record: `bump`, a new clear, first writes the marker of a generation above every file this store
+   * knows (before anything is deleted, so a crash or a failure afterwards still hides the old copy); then deletes. The marker
+   * is removed only when everything is gone. Returns whether everything went.
+   */
+  private eraseAll(bump: boolean): boolean {
+    let marked = this.markerGen() !== null;
+    if (bump) {
+      this.gen = Math.max(this.gen, this.markerGen() ?? 0, this.fileGen()) + 1;
+      marked = this.writeMarker(this.gen);
+    }
+    const ok = this.remove();
+    if (ok) this.dropMarker();
+    this.setProblem(() => { this.erasePending = !ok; this.exposed = !ok && !marked; if (ok) this.saveFailed = false; });
+    return ok;
+  }
+
+  /** The generation the marker records, or null when there is none (an unreadable marker counts as generation 0 and hides everything). */
+  private markerGen(): number | null {
+    const f = path.join(this.o.dir, ERASED_FILE);
+    let raw: string;
+    try { raw = fs.readFileSync(f, "utf8"); } catch { return null; /* none */ }
+    try {
+      const v = JSON.parse(raw) as { gen?: unknown };
+      return typeof v.gen === "number" && Number.isSafeInteger(v.gen) && v.gen >= 0 ? v.gen : 2 ** 40;
+    } catch { return 2 ** 40; /* damaged: it still means "a clear happened", so nothing older is shown */ }
+  }
+
+  /** The generation the file on disk was saved under (0 if none or unreadable). */
+  private fileGen(): number {
+    try {
+      const v = JSON.parse(fs.readFileSync(this.file, "utf8")) as { gen?: unknown };
+      return typeof v.gen === "number" && Number.isSafeInteger(v.gen) && v.gen >= 0 ? v.gen : 0;
+    } catch { return 0; }
+  }
+
+  /** Writes the marker durably (temp, fsync, atomic rename, 0600, folder fsync best effort). True if it is in place. */
+  private writeMarker(gen: number): boolean {
+    const f = path.join(this.o.dir, ERASED_FILE);
+    const tmp = `${f}.tmp`;
+    try {
+      fs.mkdirSync(this.o.dir, { recursive: true, mode: 0o700 });
+      const fd = fs.openSync(tmp, "w", 0o600);
+      try { fs.writeSync(fd, JSON.stringify({ version: HISTORY_VERSION, gen }) + "\n"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      fs.renameSync(tmp, f);
+      try {
+        const d = fs.openSync(this.o.dir, "r");
+        try { fs.fsyncSync(d); } finally { fs.closeSync(d); }
+      } catch { /* a folder can't be flushed here (Windows): the rename itself is done */ }
+      return true;
+    } catch (err) {
+      this.o.log.warn("history.marker_not_written", { code: (err as NodeJS.ErrnoException).code });
+      try { fs.rmSync(tmp, { force: true }); } catch { /* nothing was written */ }
+      return false;
+    }
+  }
+
+  private dropMarker(): void {
+    try { fs.rmSync(path.join(this.o.dir, ERASED_FILE), { force: true }); } catch { /* it stays; the next load tidies it */ }
+  }
+
+  /**
    * Every file of the saved conversation: the file, its temp files and a moved-aside one. A file that can't be deleted is
    * emptied if that can be done (a restart then finds nothing to show), and the failure is remembered and reported.
    */
@@ -224,10 +327,9 @@ export class HistoryStore {
       try { fs.rmSync(f, { force: true }); } catch (err) {
         ok = false;
         this.o.log.warn("history.not_deleted", { code: (err as NodeJS.ErrnoException).code });
-        try { fs.truncateSync(f, 0); } catch { /* neither deleted nor emptied: only this run's marker stands in the way */ }
+        try { fs.truncateSync(f, 0); } catch { /* neither deleted nor emptied: only the marker (and this run's memory of it) stands in the way */ }
       }
     }
-    this.setProblem(() => { this.erasePending = !ok; if (ok) this.saveFailed = false; });
     return ok;
   }
 

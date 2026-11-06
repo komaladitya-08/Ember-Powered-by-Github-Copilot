@@ -8,6 +8,7 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
+import type { HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
@@ -873,7 +874,7 @@ $("keep-conversation-label").textContent = CONVERSATION_KEEP_LABEL;
 $("keep-conversation-hint").textContent = CONVERSATION_KEEP_HINT;
 // Never silent: the saved copy that couldn't be written or deleted is said under the switch.
 {
-  const showProblem = (p: "save" | "delete" | null) => { $("keep-conversation-problem").textContent = conversationKeepProblem(p); };
+  const showProblem = (p: HistoryProblemKind | null) => { $("keep-conversation-problem").textContent = conversationKeepProblem(p); };
   void window.ember.historyProblem().then(showProblem, () => undefined);
   window.ember.onHistoryProblem(showProblem);
 }

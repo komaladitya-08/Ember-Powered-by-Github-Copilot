@@ -189,7 +189,7 @@ describe("the API key's store", () => {
     const dir = tmp();
     const file = path.join(dir, "provider-key.bin");
     const store = new ProviderKeyStore(file, box());
-    expect(await store.save(`  ${KEY}\n`, "models.example.com")).toEqual({ ok: true });
+    expect(await store.save(`  ${KEY}\n`, "models.example.com")).toMatchObject({ ok: true, keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     expect(store.savedHost()).toBe("models.example.com");
     expect(fs.readFileSync(file, "utf8")).not.toContain(KEY);
     if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);

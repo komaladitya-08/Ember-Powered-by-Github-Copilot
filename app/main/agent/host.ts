@@ -510,9 +510,9 @@ const HELD_RECHECK_MS = 250;
 const CONNECT_WAIT_MS = 15_000;
 export const PROVIDER_MOVED_TASK = "The model service changed before this task could start. Ask me again and I'll use the new one.";
 
-/** What a connection's endpoint is, to tell a change: its kind, config (key included: kept in memory only) and models. */
+/** What a connection's endpoint is, to tell a change: its kind, config (key included: kept in memory only), models and the key's id (a re-saved key is another owner of the saved conversation). */
 function providerKey(p: ActiveProvider | null): string {
-  return p ? JSON.stringify([p.kind, p.config, p.models ?? null]) : "";
+  return p ? JSON.stringify([p.kind, p.config, p.models ?? null, p.keyId ?? null]) : "";
 }
 
 /** Which credentials a connection uses, for telling a change (kind, address, key): held in memory, never stored or logged. */
@@ -929,7 +929,7 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
-    this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id), () => this.serviceKind(),
+    this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved), () => this.serviceKind(),
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
@@ -1150,6 +1150,11 @@ export class AgentHost {
     return p ? `none|${service}` : null;
   }
 
+  /** Tells Home when history is on but a provider's key can't be tied to an id, so nothing would be saved (never silent). */
+  private noteOwner(owner: string | null): void {
+    this.o.history?.store.setOwnerKnown(!(owner === null && !!this.active?.config.apiKey));
+  }
+
   /** What is being said now comes from a connection that began before the saved copy was last invalidated. */
   private staleSource(): boolean {
     const g = this.callGen ?? this.conductorGen;
@@ -1168,6 +1173,7 @@ export class AgentHost {
     const h = this.o.history;
     if (!h?.enabled()) return;
     const owner = this.historyAccount();
+    this.noteOwner(owner);
     if (owner === null || owner !== this.historyOwner) return;
     h.store.save(owner, this.transcript.filter(e => !this.unsaved.has(e)));
   }
@@ -1217,6 +1223,7 @@ export class AgentHost {
     const h = this.o.history;
     if (!h?.enabled()) return;
     const owner = this.historyAccount();
+    this.noteOwner(owner);
     // A key with no id (saved before ids existed): whose it is can't be told, so no earlier copy is kept for it.
     if (owner === null && this.active?.config.apiKey && !this.active.keyId) { this.eraseHistory(); return; }
     if (owner === null || owner === this.historyOwner) return;

@@ -165,6 +165,8 @@ export const KEY_WRITE_FAILED = "Ember couldn't save the key: its data folder ca
 
 /** What saving a key came to (`why` set when it wasn't kept). */
 export type KeySave = { ok: true } | { ok: false; why: string };
+/** What the key store says of a save: on success, the id sealed with the key (it never goes to a page). */
+export type KeyKept = { ok: true; keyId: string } | { ok: false; why: string };
 
 /** Where the host a key belongs to is kept (not secret: the settings name it too), so no keyring is asked to know it. */
 const hostFile = (file: string) => file.replace(/\.bin$/, "") + ".host";
@@ -203,7 +205,7 @@ export class ProviderKeyStore {
   }
 
   /** Seals and writes `key` for `host`, or says why it wasn't. Never throws. */
-  async save(key: string, host: string, current: () => boolean = () => true): Promise<KeySave> {
+  async save(key: string, host: string, current: () => boolean = () => true): Promise<KeyKept> {
     const revision = ++this.revision;
     const problem = apiKeyProblem(key);
     if (problem) return { ok: false, why: problem };
@@ -211,7 +213,8 @@ export class ProviderKeyStore {
     if (!(await this.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
     if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
     // The id is sealed with the key, so the two can never be of different saves.
-    const text = JSON.stringify({ v: 1, host, key: key.trim(), id: randomUUID() });
+    const keyId = randomUUID();
+    const text = JSON.stringify({ v: 1, host, key: key.trim(), id: keyId });
     let sealed: Buffer;
     try {
       sealed = this.opts.asyncKeyring && this.box.encryptStringAsync ? await this.box.encryptStringAsync(text) : this.box.encryptString(text);
@@ -221,7 +224,7 @@ export class ProviderKeyStore {
     if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
     const r: SaveResult = this.write(this.file, sealed);
     if (r !== "kept" || this.write(hostFile(this.file), Buffer.from(host)) !== "kept") { this.clear(); return { ok: false, why: KEY_WRITE_FAILED }; }
-    return { ok: true };
+    return { ok: true, keyId };
   }
 
   /** The saved key and its host, or null (none saved, unreadable, or the keyring wouldn't open it). Never throws. */
@@ -427,7 +430,8 @@ export function createProviderService(d: ProviderServiceDeps) {
           if (!r.ok) return r;
           invalidate();
           retire();
-          stored = { key: key.trim(), host };
+          // The id sealed with this very key: without it the saved conversation has no owner to be saved for.
+          stored = { key: key.trim(), host, keyId: r.keyId };
           d.log.info("provider.key_saved", {});
           d.changed();
           return { ok: true };

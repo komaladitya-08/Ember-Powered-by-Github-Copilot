@@ -14,7 +14,7 @@ import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefau
 import { onboardingRest } from "./computers-copy";
 import { needsUser, type SetupRow } from "../../shared/setup-attention";
 import { sideOf, type HandlePosition } from "../../shared/handle-place";
-import { CONVERSATION_LIMIT } from "../../shared/conversation";
+import { CONVERSATION_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
 import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
@@ -26,7 +26,9 @@ export function conversationRetention(keep: boolean): string {
   return keep ? CONVERSATION_RETENTION_KEPT : CONVERSATION_RETENTION;
 }
 /** Under the switch when the saved copy can't be written or deleted (it is never silent). */
-export function conversationKeepProblem(problem: "save" | "delete" | null): string {
+export function conversationKeepProblem(problem: HistoryProblemKind | null): string {
+  if (problem === "exposed") return "Ember couldn’t delete the saved conversation on this computer, and couldn’t make sure it stays hidden, so it may show again after a restart. Try turning this off again later.";
+  if (problem === "owner") return "Ember can’t tell which model service key this conversation belongs to, so it isn’t saving it. Save the key again in Model provider to fix this.";
   if (problem === "delete") return "Ember couldn’t delete the saved conversation on this computer. It won’t show it again, and will try to delete it the next time you turn this off, forget or sign out.";
   if (problem === "save") return "Ember couldn’t save the conversation on this computer, so it may not be here after a restart.";
   return "";
