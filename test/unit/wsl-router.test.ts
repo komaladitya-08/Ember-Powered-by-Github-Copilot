@@ -13,6 +13,7 @@ import {
   WSLPATH_SCRIPT,
   type SpawnLike,
 } from "../../app/main/wsl/launch-sidecar";
+import { SidecarVersionError } from "../../app/main/perception/sidecar";
 import { geditScene, harness, RDP_MSRDC, stacked, WSLG_MSRDC, type FrameSpec } from "./wsl-fakes";
 import {
   doctorHelperRows, IDENTITY_MS, IDLE_MS, linuxApp, linuxFrame, linuxNames, parseWslPath, routerFor, stopWslHelpers, wslHelperPids, wslNamesOf, dropRouter, WslRouter,
@@ -375,6 +376,41 @@ describe("the lifecycle", () => {
     stopWslHelpers();
     expect(h.helperOf("Ubuntu")!.stopped).toBe(1);
     expect(wslHelperPids()).toEqual([]);
+  });
+});
+
+describe("a helper that speaks another protocol version (PR #187 review)", () => {
+  const SENTENCE = "Ember's accessibility helper in Ubuntu is out of date or not matching this Ember (it speaks protocol 2; Ember needs 3). Ember will need to reinstall or update the helper there: update Ember, then reopen your Linux apps.";
+  function refused() {
+    const { h, r } = ubuntu();
+    h.setups.set("Ubuntu", helper => { helper.request = async () => { throw new SidecarVersionError(3, "2", "Ubuntu"); }; });
+    return { h, r };
+  }
+
+  it("is a refusal that stays: later looks create no second client, and the row keeps the sentence that says what to do", async () => {
+    const { h, r } = refused();
+    for (let i = 0; i < 3; i++) {
+      await r.refresh();
+      h.state.now += 30_001;
+    }
+    expect(h.created).toEqual(["Ubuntu"]);
+    expect(await r.doctorRows()).toEqual([{ id: "wsl-helper:Ubuntu", status: "warn", label: "Linux apps in Ubuntu", detail: SENTENCE }]);
+  });
+
+  it("is forgotten when the distro stops, the lifecycle's recovery: the next start makes a fresh client that may agree", async () => {
+    const { h, r } = refused();
+    await r.refresh();
+    h.state.now += 30_001;
+    await r.refresh();
+    expect(h.created).toEqual(["Ubuntu"]);
+    h.wsl.stop("Ubuntu");
+    await r.refresh();
+    h.wsl.distros[0].running = true;
+    h.setups.set("Ubuntu", helper => { helper.frames = [geditScene(h).frame]; });
+    await r.refresh();
+    expect(h.created).toEqual(["Ubuntu", "Ubuntu"]);
+    const rows = await r.doctorRows();
+    expect(rows.find(x => x.id === "wsl-helper:Ubuntu")).toMatchObject({ status: "ok" });
   });
 });
 

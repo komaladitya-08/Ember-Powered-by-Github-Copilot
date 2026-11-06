@@ -474,6 +474,9 @@ export class UiaProvider implements AxProvider {
     };
     const out = readline.createInterface({ input: child.stdout });
     out.on("line", line => {
+      // A bridge that is finished with (refused, failed, stopped) is final: a buffered line after it, a second ready line
+      // included, must not clear its failure nor make it ready again.
+      if (b.done) return;
       b.lines++;
       let msg: Record<string, unknown>;
       try {

@@ -547,9 +547,16 @@ export class AtspiSidecar {
       this.log.warn("sidecar.bad_line", { bytes: line.length, ...(json ? {} : { start: line.slice(0, 120) }) });
       return;
     }
+    // A retired helper (refused, timed out, replaced) is finished with: whatever it still says, a buffered line after a
+    // refusal included, must not start the secrets going again nor mark a newer client's state.
+    if (h.done || this.helper !== h) return;
     const id = typeof msg.id === "number" ? msg.id : null;
-    if (id !== null && id === h.pingId && !h.ready) {
-      this.handshake(h, msg);
+    if (!h.ready) {
+      // Until the handshake passes only its one answer counts. Anything else (an answer to an id that was never sent, a
+      // held request's included) is ignored, so it can't resolve an operation that was never written; the ping's own
+      // timeout bounds a helper that says nothing else.
+      if (id !== null && id === h.pingId && h.pending.has(h.pingId)) this.handshake(h, msg);
+      else this.log.warn("sidecar.early_line", {});
       return;
     }
     if (id !== null) h.answered = true;

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { SIDECAR_PROTOCOL_VERSION } from "../../app/shared/sidecar-protocol";
-import { AtspiSidecar, SidecarVersionError, type SidecarLaunch } from "../../app/main/perception/sidecar";
+import { AtspiSidecar, SidecarVersionError, type SidecarLaunch, type UtilityChild } from "../../app/main/perception/sidecar";
 import { VERSION as HOST_VERSION } from "../../app/sidecar-host/protocol";
 import { helperStatusOfError } from "../../app/main/platform/compose";
 import type { Logger } from "../../app/main/logger";
@@ -179,5 +181,109 @@ describe("AtspiSidecar's handshake (BE-3: nothing is processed before the versio
     await settle();
     expect(written()).toEqual(["ping"]);
     expect(lines.some(l => l.msg === "sidecar.revive")).toBe(false);
+  });
+});
+
+/** A helper Ember hands requests to as messages (a utility process), driven by hand: the test says what it writes and when. */
+function manual() {
+  const children: FakeChild[] = [];
+  class FakeChild extends EventEmitter {
+    readonly stdout = new PassThrough();
+    readonly stderr = new PassThrough();
+    readonly pid = 1000 + children.length;
+    readonly posted: string[] = [];
+    killed = false;
+    postMessage(m: string) { this.posted.push(m); }
+    kill() { this.killed = true; setImmediate(() => this.emit("exit", 0)); return true; }
+    /** What it was sent so far: [method, id]. */
+    sent(): [string, number][] { return this.posted.map(l => { const m = JSON.parse(l) as { method: string; id: number }; return [m.method, m.id]; }); }
+    methods(): string[] { return this.sent().map(([m]) => m); }
+    idOf(method: string): number { return this.sent().find(([m]) => m === method)![1]; }
+    /** Writes these lines in one chunk, then lets the client read them. */
+    async write(...msgs: unknown[]): Promise<void> {
+      this.stdout.write(msgs.map(m => JSON.stringify(m) + "\n").join(""));
+      await new Promise(r => setImmediate(r));
+    }
+    async pong(version: unknown = SIDECAR_PROTOCOL_VERSION) { await this.write({ jsonrpc: "2.0", id: this.idOf("ping"), result: { version } }); }
+  }
+  const launch: SidecarLaunch = {
+    command: "unused", args: ["unused.js"], env: {}, noRevive: true,
+    utility: { serviceName: "test", fork: () => { const c = new FakeChild(); children.push(c); return c as unknown as UtilityChild; } },
+  };
+  const s = new AtspiSidecar("unused", log, "unused", {}, launch);
+  running.push(s);
+  return { s, children };
+}
+
+describe("AtspiSidecar's handshake against a helper that keeps talking (PR #187 review)", () => {
+  it("writes nothing more once a helper was refused, even when a valid ping answer is buffered behind the refusal", async () => {
+    const { s, children } = manual();
+    // A first helper that works teaches the client a secret field and a withheld cell.
+    const first = s.readWindow({});
+    await children[0].pong();
+    await children[0].write({ jsonrpc: "2.0", id: children[0].idOf("read_window"), result: { window: null, nodes: [], ms: 1, secretKeys: [[":1.42", "/a"]], withheldKeys: [[":1.42", "/b"]] } });
+    await first;
+    children[0].emit("exit", 1);
+    // The next one answers version 2 and, in the same chunk, version 3 for the same id.
+    const asked = failure(s.request("whoami"));
+    const second = children[1];
+    const pingId = second.idOf("ping");
+    await second.write({ jsonrpc: "2.0", id: pingId, result: { version: 2 } }, { jsonrpc: "2.0", id: pingId, result: { version: SIDECAR_PROTOCOL_VERSION } });
+    await second.write({ jsonrpc: "2.0", id: pingId, result: { version: SIDECAR_PROTOCOL_VERSION } });
+    expect(await asked).toBeInstanceOf(SidecarVersionError);
+    expect(second.methods()).toEqual(["ping"]);
+    expect(second.killed).toBe(true);
+    expect(await failure(s.request("whoami"))).toBeInstanceOf(SidecarVersionError);
+    expect(children).toHaveLength(2);
+  });
+
+  it("ignores a replaced helper's late ping answer: it doesn't mark a healthy replacement incompatible", async () => {
+    const { s, children } = manual();
+    const lost = failure(s.request("whoami"));
+    const old = children[0];
+    const oldPing = old.idOf("ping");
+    old.emit("exit", 1); // it died before answering ping
+    expect(((await lost) as Error).message).toBe("accessibility helper stopped");
+    const ok = s.request<{ n: number }>("whoami");
+    const fresh = children[1];
+    await fresh.pong();
+    // The old one's buffered output arrives now: an old version, for its own ping.
+    await old.write({ jsonrpc: "2.0", id: oldPing, result: { version: 2 } });
+    await fresh.write({ jsonrpc: "2.0", id: fresh.idOf("whoami"), result: { n: 7 } });
+    expect(await ok).toEqual({ n: 7 });
+    expect(fresh.killed).toBe(false);
+    expect(lines.some(l => l.msg === "sidecar.version_mismatch")).toBe(false);
+    const again = s.request<{ n: number }>("whoami");
+    await fresh.write({ jsonrpc: "2.0", id: fresh.sent().filter(([m]) => m === "whoami")[1][1], result: { n: 8 } });
+    expect(await again).toEqual({ n: 8 });
+    expect(children).toHaveLength(2);
+  });
+
+  it("does not let an answer to an id that was never sent resolve a held request before the handshake passes", async () => {
+    const { s, children } = manual();
+    const c = children[0] ?? undefined;
+    let outcome = "pending";
+    const asked = s.request<unknown>("whoami").then(v => { outcome = `resolved ${JSON.stringify(v)}`; return v; }, (e: Error) => { outcome = e.constructor.name; });
+    const child = children[0] ?? c;
+    const heldId = child.idOf("ping") + 1;
+    expect(child.methods()).toEqual(["ping"]);
+    await child.write({ jsonrpc: "2.0", id: heldId, result: { ok: true } });
+    expect(outcome).toBe("pending");
+    expect(child.methods()).toEqual(["ping"]);
+    await child.pong();
+    expect(child.methods()).toEqual(["ping", "whoami"]);
+    expect(outcome).toBe("pending"); // the early line was dropped: only the real answer resolves it
+    await child.write({ jsonrpc: "2.0", id: heldId, result: { real: 1 } });
+    await asked;
+    expect(outcome).toBe('resolved {"real":1}');
+  });
+
+  it("fails a held request with the refusal, not a success, when the early answer is followed by a version 2 ping answer", async () => {
+    const { s, children } = manual();
+    const asked = failure(s.request("whoami"));
+    const child = children[0];
+    await child.write({ jsonrpc: "2.0", id: child.idOf("ping") + 1, result: { ok: true } });
+    await child.pong(2);
+    expect(await asked).toBeInstanceOf(SidecarVersionError);
   });
 });

@@ -1970,6 +1970,10 @@ sidecar/atspi       Python accessibility helper (Linux, and inside WSL distros: 
                     nothing else is written to it (the remembered secret fields included); a wrong, missing or
                     errored answer fails every waiting request with a plain "out of date" sentence, ends the helper,
                     logs `sidecar.version_mismatch` and is not retried by that client. A new client tries afresh.
+                    A refused or replaced helper's later output is ignored, and before the ping passes only its answer
+                    counts (a response to any other id is dropped, so it can't resolve a held request). In a WSL distro the
+                    refusal is the row's sentence and stays until the distro stops (then a fresh client may try); the Windows
+                    bridge, once refused, stays refused for the run (a late ready line changes nothing).
 sidecar/notice      the notice with Stop on a remote's screen while Ember uses it
 sidecar/uia         UI Automation bridge (Windows): ember_uia.ps1 (the bootstrap), ember_uia.cs (C# 5), PROTOCOL.md
 app/voice           wake word, VAD and speech recognition (runs in a utility process)

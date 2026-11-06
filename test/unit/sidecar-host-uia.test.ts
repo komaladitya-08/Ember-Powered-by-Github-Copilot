@@ -310,6 +310,22 @@ describe("the bridge client", () => {
     }
   });
 
+  it("keeps a refused bridge refused when a version 1 ready line follows in the same chunk: operational calls fail too, nothing respawns (PR #187 review)", async () => {
+    const notes: string[] = [];
+    const v2 = '{"ready":true,"version":2,"dpi":"per-monitor-v2"}';
+    const v1 = '{"ready":true,"version":1,"dpi":"per-monitor-v2"}';
+    const { p, spawned, lines: sent } = provider({ FAKE_BRIDGE_READY_LINE: `${v2}\n${v1}`, FAKE_BRIDGE_READY_MS: "50" }, { backoffMs: [1], note: (e, f) => { notes.push(JSON.stringify([e, f])); } });
+    const calls = await Promise.all([failure(p.start()), failure(p.topWindows()), failure(p.focused()), failure(p.element({} as never))]);
+    for (const f of calls) expect(f).toContain("out of date");
+    await new Promise(r => setTimeout(r, 50));
+    expect(await failure(p.topWindows())).toContain("out of date");
+    expect(await failure(p.start())).toContain("out of date");
+    expect(spawned).toHaveLength(1);
+    expect(sent().filter(l => l.id !== undefined)).toEqual([]);
+    expect(p.health()).toMatchObject({ ok: false, detail: "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember." });
+    expect(notes.join("\n")).not.toContain("uia.ready");
+  });
+
   it("accepts a ready line with version 1 (audit BE-3)", async () => {
     const { p } = provider({ FAKE_BRIDGE_READY_LINE: '{"ready":true,"version":1,"dpi":"per-monitor-v2"}' });
     await p.start();
