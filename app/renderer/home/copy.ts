@@ -229,6 +229,38 @@ export function providerConsentText(host: string): string {
   return `Ember will send what it would send to GitHub Copilot to ${host} instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to ${host}. Turn this off to go back to Copilot.`;
 }
 
+/** Where Ember's model requests go right now (see `modelDestination`). `host` only: never a path, key or credentials. */
+export type ModelDestination =
+  | { kind: "copilot" }
+  | { kind: "own"; host: string }
+  | { kind: "organisation"; host: string }
+  | { kind: "none" };
+
+/**
+ * The single answer for the microphone and data-list words, matching main's routing (app/main/provider.ts
+ * userProviderInForce): the administrator's lockdown sends nothing; the organisation's own service wins and shuts
+ * the user's out; the user's own provider counts only while it is in force (on, agreed to for its host, allowed);
+ * otherwise GitHub Copilot. `ownHost` is null unless that provider is in force; `adminProvider` is a URL.
+ */
+export function modelDestination(o: { locked: boolean; adminProvider: string | null; ownHost: string | null }): ModelDestination {
+  if (o.locked) return { kind: "none" };
+  if (o.adminProvider) {
+    try { return { kind: "organisation", host: new URL(o.adminProvider).host }; } catch { return { kind: "none" }; /* unreadable address: fail closed */ }
+  }
+  if (o.ownHost) return { kind: "own", host: o.ownHost };
+  return { kind: "copilot" };
+}
+
+/** The recipient as a phrase: "Copilot" (or "GitHub Copilot" when `long`), "your own model provider (host)", and so on. */
+export function recipientWords(d: ModelDestination, long = false): string {
+  switch (d.kind) {
+    case "copilot": return long ? "GitHub Copilot" : "Copilot";
+    case "own": return `your own model provider (${d.host})`;
+    case "organisation": return `your organisation's model service (${d.host})`;
+    case "none": return "no model service (your organisation's policy has locked Ember down)";
+  }
+}
+
 /** Under the Model provider group: what the switch does now, or why the organisation decides it. */
 export function providerHint(o: { managed: "organisation" | "off" | null; inForce: boolean; on: boolean; host: string | null }): string {
   if (o.managed === "organisation") return "Managed by your organisation: Ember uses its model service.";

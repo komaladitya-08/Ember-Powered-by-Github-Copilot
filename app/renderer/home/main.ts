@@ -32,7 +32,8 @@ import {
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
-import { providerSettings, startProvider } from "./provider";
+import { onProviderDestination, ownProviderHost, providerSettings, startProvider } from "./provider";
+import { modelDestination, recipientWords } from "./copy";
 import { mountProject } from "./project";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
@@ -471,6 +472,25 @@ let confirmEvery = false;
 let adminNeverLook = new Set<string>();
 /** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
 let sendAsWritten: Node[] | null = null;
+let lastAdmin: Status["admin"] | null = null;
+/**
+ * Names where requests actually go (copy.ts modelDestination) in the data list's "When you ask something" line and in
+ * the microphone note and its list item, so none says Copilot while another service answers. Runs whenever the policy
+ * or the user's provider changes, so the note is never stale when it is read.
+ */
+function renderRecipient(): void {
+  const a = lastAdmin;
+  if (!a) return;
+  const d = modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, ownHost: ownProviderHost() });
+  const service = document.querySelector<HTMLElement>("#w-full #model-service");
+  // The locked-down line replaces the sentence (and this span) altogether.
+  if (service && d.kind !== "none") service.textContent = recipientWords(d, true);
+  for (const el of document.querySelectorAll<HTMLElement>(".model-recipient")) {
+    const words = recipientWords(d);
+    if (el.textContent !== words) el.textContent = words;
+  }
+}
+onProviderDestination(renderRecipient);
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
@@ -503,8 +523,8 @@ function renderAdmin(a: Status["admin"]): void {
     sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
-  const service = document.querySelector<HTMLElement>("#w-full #model-service");
-  if (a.provider && !sendLine && service) service.textContent = `your organisation's model service (${new URL(a.provider).host})`;
+  lastAdmin = a;
+  renderRecipient();
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);

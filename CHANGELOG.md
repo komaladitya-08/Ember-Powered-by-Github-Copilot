@@ -6,6 +6,8 @@ Reliability beta, prepared for validation before publication.
 
 ### A real conversation on 5 November
 
+- **The microphone note names who gets your words.** It always said Copilot; it now names your own model provider or your
+  organisation's model service (host only) when that is what answers, and follows a change while it is open.
 - **Ember hears you over its own voice again.** The tail of its own voice counted as other sound playing, and from then on
   it threw away everything said without its name, right through its next sentence.
 - **Talk over a song.** With a song or video on, Ember now also hears you without its name once it knows your voice.

@@ -91,6 +91,22 @@ function draw(): void {
   $("byok-no-keyring").hidden = keyring || saved;
   $("byok-no-keyring").textContent = PROVIDER_NO_KEYRING;
   $("byok-hint").textContent = providerHint({ managed, inForce: !!state?.inForce, on, host });
+  onDestination();
+}
+
+/** Told when what the page knows of the provider changes (the words naming where requests go follow it). */
+let onDestination: () => void = () => undefined;
+export function onProviderDestination(fn: () => void): void { onDestination = fn; }
+
+/**
+ * The host of the user's own provider while it is in force (on, agreed to for that host, allowed by the organisation),
+ * or null. Taken from the settings as they are now plus what main said is allowed; unknown counts as not in force.
+ */
+export function ownProviderHost(): string | null {
+  const p = own;
+  if (!p || !p.on || !state || !state.allowed || state.managed) return null;
+  const host = endpointHost(p.baseUrl);
+  return host && agreedFor(p, host) ? host : null;
 }
 
 async function refresh(): Promise<void> {
