@@ -3814,9 +3814,9 @@ describe("memory erasure at account boundaries", () => {
 describe("keeping the recent conversation across restarts (opt-in)", () => {
   const SHALL_I = "I can delete the 12 installers there older than a month. Shall I?";
   /** A host as main builds it: the saved copy in the data folder, the account lookup, the setting a switch. */
-  function kept(dir: string, o: { on?: () => boolean; account?: number | null; delayMs?: number; provider?: () => import("../../app/main/provider").ActiveProvider | null; stream?: (e: { id: number; text: string; state: string }) => void; resolve?: () => Promise<number | null> } = {}) {
+  function kept(dir: string, o: { on?: () => boolean; account?: number | null; delayMs?: number; provider?: () => import("../../app/main/provider").ActiveProvider | null; stream?: (e: { id: number; text: string; state: string }) => void; resolve?: () => Promise<number | null>; ops?: import("../../app/main/agent/conversation-store").HistoryOps; onProblem?: (p: string | null) => void } = {}) {
     const flag = { on: true };
-    const store = new HistoryStore({ dir, log: quiet, delayMs: o.delayMs ?? 1 });
+    const store = new HistoryStore({ dir, log: quiet, delayMs: o.delayMs ?? 1, ...(o.ops ? { ops: o.ops } : {}), ...(o.onProblem ? { onProblem: o.onProblem } : {}) });
     const memory = { remember: () => "", context: () => "", forget: () => false, forgetAll() {}, resolveAccountId: o.resolve ?? (async () => o.account === undefined ? 7 : o.account) };
     const made = makeHost({ userData: dir, memory, ...(o.provider ? { provider: o.provider } : {}), ...(o.stream ? { onAnswerStream: o.stream } : {}), history: { store, enabled: o.on ?? (() => flag.on) } });
     return { ...made, store, flag, file: path.join(dir, HISTORY_FILE) };
@@ -4386,6 +4386,62 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.host.start(TOKEN, "stored");
       expect(k.host.getTranscript()).toEqual([]);
     } finally { rm.mockRestore(); trunc.mockRestore(); }
+    await k.host.stop();
+  });
+
+  it("Forget everything while an older save is flushing the folder: the clear stays (marker kept, problem 'delete'), and a restarted host restores nothing (PR #188 round 3)", async () => {
+    const dir = tmpDir();
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    let hold = false, syncing = false;
+    const ops = { write: async (t: string, d: string) => { fs.writeFileSync(t, d, { mode: 0o600 }); }, syncDir: async () => { if (hold) { syncing = true; await gate; } } };
+    const problems: (string | null)[] = [];
+    const k = kept(dir, { ops, onProblem: p => problems.push(p) });
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("forget this");
+    say("and this");
+    await k.store.flush();
+    hold = true;
+    await k.host.ask("one more");
+    await vi.waitFor(() => { expect(syncing).toBe(true); });
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation((f: fs.PathLike) => { if (String(f).endsWith(HISTORY_FILE)) throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    const trunc = vi.spyOn(fs, "truncateSync").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    try { expect(k.host.forgetHistory()).toBe(false); } finally { rm.mockRestore(); trunc.mockRestore(); }
+    release();
+    await k.store.flush();
+    expect(fs.existsSync(path.join(dir, "conversation.erased"))).toBe(true);
+    expect(k.store.problem).toBe("delete");
+    expect(problems.at(-1)).toBe("delete");
+    await k.host.stop();
+    const again = kept(dir);
+    await again.host.start(TOKEN, "stored");
+    expect(again.host.getTranscript()).toEqual([]);
+    await again.host.stop();
+  });
+
+  it("history on and the GitHub account can't be confirmed: nothing is saved and Home is told why, until an id arrives (PR #188 round 3)", async () => {
+    const dir = tmpDir();
+    let id: number | null = null;
+    const problems: (string | null)[] = [];
+    const k = kept(dir, { resolve: async () => id, onProblem: p => problems.push(p) });
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("first");
+    say("one");
+    await k.host.start(TOKEN, "stored"); // reconnect: the lookup still fails
+    await k.host.ask("second");
+    say("two");
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(false);
+    expect(k.store.problem).toBe("account");
+    expect(problems).toEqual(["account"]);
+    id = 7;
+    await k.host.start(TOKEN, "stored");
+    expect(k.store.problem).toBeNull();
+    await k.host.ask("third");
+    say("three");
+    await k.store.flush();
+    expect(fs.existsSync(k.file)).toBe(true);
+    expect(problems.at(-1)).toBeNull();
     await k.host.stop();
   });
 

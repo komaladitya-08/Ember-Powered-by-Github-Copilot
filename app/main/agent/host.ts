@@ -759,6 +759,8 @@ export class AgentHost {
   /** The GitHub account Ember last connected to Copilot with (kept across connections to another model service). */
   private githubLogin: string | undefined;
   private githubAccountId: number | null = null;
+  /** The last Copilot connection looked the GitHub account up and could not establish its id (cleared when one does, or at sign-out). */
+  private accountUnresolved = false;
   /** A failed account-boundary deletion must be retried before any new session in this run. */
   private memoryDeletionPending = false;
   /**
@@ -1152,7 +1154,10 @@ export class AgentHost {
 
   /** Tells Home when history is on but a provider's key can't be tied to an id, so nothing would be saved (never silent). */
   private noteOwner(owner: string | null): void {
-    this.o.history?.store.setOwnerKnown(!(owner === null && !!this.active?.config.apiKey));
+    const keyLess = owner === null && !!this.active?.config.apiKey;
+    // Copilot: only after an attempted lookup came back without an id (not while one is outstanding).
+    const noAccount = owner === null && !this.active && this.accountUnresolved;
+    this.o.history?.store.setOwnerKnown(!keyLess && !noAccount, noAccount ? "account" : "owner");
   }
 
   /** What is being said now comes from a connection that began before the saved copy was last invalidated. */
@@ -1543,6 +1548,7 @@ export class AgentHost {
       if (gen !== this.gen) return;
       if (this.memoryDeletionPending) this.forgetKept();
       if (!provider) { this.githubLogin = login; this.githubAccountId = accountId; }
+      this.accountUnresolved = !provider && accountId === null;
       this.restoreHistory();
       // This connection's generation: what it says after the saved copy is invalidated again is never saved (underGen).
       const hg = this.conductorGen = this.connGen;
@@ -2757,6 +2763,7 @@ export class AgentHost {
       // The next account to sign in is nobody's successor: no account change is told for it.
       this.githubLogin = undefined;
       this.githubAccountId = null;
+      this.accountUnresolved = false;
       // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
       this.tasks?.takeReports();
       this.finishedLately = [];

@@ -35,6 +35,8 @@ describe("the saved conversation", () => {
     expect(conversationKeepProblem(null)).toBe("");
     expect(conversationKeepProblem("save")).toBe("Ember couldn’t save the conversation on this computer, so it may not be here after a restart.");
     expect(conversationKeepProblem("delete")).toBe("Ember couldn’t delete the saved conversation on this computer. It won’t show it again, and will try to delete it the next time you turn this off, forget or sign out.");
+    expect(conversationKeepProblem("unchecked")).toBe("Ember can’t check that the earlier conversation was cleared, so it isn’t showing it. It will look again the next time Ember starts.");
+    expect(conversationKeepProblem("account")).toBe("Ember couldn’t confirm which GitHub account is signed in, so it isn’t keeping this conversation. Sign out and in again, or check your connection.");
     expect(CONVERSATION_RETENTION).toContain("Closing Ember or signing out forgets");
     expect(CONVERSATION_RETENTION_KEPT).toContain("Forget everything delete the saved copy");
   });
@@ -330,6 +332,67 @@ describe("the saved conversation: a clear that survives a restart (PR #188 re-re
     later.save("a", [msg(3)]);
     await later.flush();
     expect(store(dir).load("a")).toEqual([msg(3)]);
+  });
+
+  it("an older save still flushing the folder when a clear succeeds in marking doesn't undo that clear (PR #188 round 3)", async () => {
+    const dir = tmp();
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    let syncing = false;
+    const ops: HistoryOps = { ...real(), syncDir: async () => { syncing = true; await gate; } };
+    const s = store(dir, ops);
+    s.save("a", [msg(0)]);
+    await vi.waitFor(() => { expect(syncing).toBe(true); }); // renamed, now held in syncDir
+    const spies = stuck();
+    expect(s.clear()).toBe(false);
+    expect(s.problem).toBe("delete");
+    free(spies);
+    release();
+    await s.flush();
+    expect(fs.existsSync(marker(dir))).toBe(true);
+    expect(s.problem).toBe("delete");
+    expect(store(dir).load("a")).toEqual([]);
+  });
+
+  it("a marker that can't be read is not 'no marker': nothing is restored, the problem says so, and it recovers when readable (PR #188 round 3)", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const spies = stuck();
+    expect(s.clear()).toBe(false);
+    free(spies); // (the old file is still there, voided by the marker)
+    const realRead = fs.readFileSync;
+    const read = vi.spyOn(fs, "readFileSync").mockImplementation(((f: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (String(f).endsWith("conversation.erased")) throw eacces();
+      return (realRead as (...a: unknown[]) => unknown)(f, ...rest);
+    }) as typeof fs.readFileSync);
+    const problems: unknown[] = [];
+    const fresh = new HistoryStore({ dir, log, delayMs: 1, onProblem: p => problems.push(p) });
+    expect(fresh.load("a")).toEqual([]);
+    expect(fresh.problem).toBe("unchecked");
+    expect(problems).toEqual(["unchecked"]);
+    expect(fs.existsSync(marker(dir))).toBe(true);
+    read.mockRestore();
+    // Readable again: the normal rules apply (the old-generation file is voided and the problem goes).
+    expect(fresh.load("a")).toEqual([]);
+    expect(fresh.problem).toBeNull();
+  });
+
+  it.skipIf(!posixModes || process.getuid?.() === 0)("a marker with mode 000 is refused the same way, with a real permission error (PR #188 round 3)", async () => {
+    const dir = tmp();
+    const s = store(dir);
+    s.save("a", [msg(0)]);
+    await s.flush();
+    const spies = stuck();
+    s.clear();
+    free(spies);
+    fs.chmodSync(marker(dir), 0);
+    try {
+      const fresh = store(dir);
+      expect(fresh.load("a")).toEqual([]);
+      expect(fresh.problem).toBe("unchecked");
+    } finally { fs.chmodSync(marker(dir), 0o600); }
   });
 
   it("a save made while the old file still can't be deleted replaces it, and a restart restores only the new one", async () => {

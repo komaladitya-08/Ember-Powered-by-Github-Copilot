@@ -77,9 +77,11 @@ export interface HistoryStoreOptions {
 /**
  * What is wrong with the saved copy, the worst first: "exposed" (it could not be deleted and could not be hidden either, so
  * it may come back), "delete" (it could not be deleted, but a marker keeps it hidden), "save" (it could not be written),
- * "owner" (history is on but whose it is can't be told, so nothing is saved).
+ * "owner" (history is on but which model service key it belongs to can't be told, so nothing is saved), "account" (the same, for
+ * a GitHub account that couldn't be confirmed), "unchecked" (the record of an earlier clear can't be read, so the saved copy
+ * isn't shown until it can be).
  */
-export type HistoryProblem = "exposed" | "delete" | "save" | "owner";
+export type HistoryProblem = "exposed" | "delete" | "unchecked" | "save" | "owner" | "account";
 
 /**
  * One saved line if it is valid, else null. Unknown fields are dropped, not trusted. Contract: a saved line NEVER carries a
@@ -121,7 +123,9 @@ export class HistoryStore {
   /** A deletion failed and the marker could not be written either. */
   private exposed = false;
   private saveFailed = false;
-  private ownerUnknown = false;
+  private ownerUnknown: "owner" | "account" | null = null;
+  /** The marker exists but couldn't be read (anything but ENOENT): whether an earlier clear voided the file can't be told. */
+  private markerUnreadable = false;
   /** The generation files are saved under: at least the marker's (and the last file's) as far as this store has seen. */
   private gen = 0;
 
@@ -138,7 +142,11 @@ export class HistoryStore {
   load(account: string): SavedEntry[] {
     // A deletion that failed is retried before anything is read: what should be gone is never shown.
     if ((this.erasePending || this.exposed) && !this.eraseAll(false)) return [];
-    const marker = this.markerGen();
+    const read = this.readMarker();
+    // Only a missing marker means no clear is on record. One that can't be read is refused until it can (retried at the next load).
+    this.setProblem(() => { this.markerUnreadable = read.state === "unreadable"; });
+    if (read.state === "unreadable") return [];
+    const marker = read.state === "gen" ? read.gen : null;
     if (marker !== null) this.gen = Math.max(this.gen, marker);
     this.tidyTemp();
     let raw: string;
@@ -195,13 +203,13 @@ export class HistoryStore {
   }
 
   /** Whether the owner of the live conversation is known (history is on and nothing can be saved without one: "owner"). */
-  setOwnerKnown(known: boolean): void {
-    this.setProblem(() => { this.ownerUnknown = !known; });
+  setOwnerKnown(known: boolean, kind: "owner" | "account" = "owner"): void {
+    this.setProblem(() => { this.ownerUnknown = known ? null : kind; });
   }
 
   /** What is wrong now, or null. */
   get problem(): HistoryProblem | null {
-    return this.exposed ? "exposed" : this.erasePending ? "delete" : this.saveFailed ? "save" : this.ownerUnknown ? "owner" : null;
+    return this.exposed ? "exposed" : this.erasePending ? "delete" : this.markerUnreadable ? "unchecked" : this.saveFailed ? "save" : this.ownerUnknown;
   }
 
   /** Resolves once everything queued is on disk (or given up): no timer, nothing pending, no write running. Quit waits for it. */
@@ -238,6 +246,9 @@ export class HistoryStore {
           fs.renameSync(tmp, this.file);
           // Best effort (Windows can't open a folder: EISDIR/EPERM): the data is already safe, only the name's durability is at stake.
           try { await this.ops.syncDir(this.o.dir); } catch { /* unsupported here, or the folder can't be flushed */ }
+          // A clear during that wait voids this file (its generation is below the new marker's): it neither removes that
+          // marker nor changes the clear's problem.
+          if (epoch !== this.epoch) return;
           // The new file replaced the old one that couldn't be deleted: it is of a generation the marker doesn't void.
           const replaced = this.erasePending || this.exposed;
           if (replaced) this.dropMarker();
@@ -269,19 +280,29 @@ export class HistoryStore {
     }
     const ok = this.remove();
     if (ok) this.dropMarker();
-    this.setProblem(() => { this.erasePending = !ok; this.exposed = !ok && !marked; if (ok) this.saveFailed = false; });
+    this.setProblem(() => { this.erasePending = !ok; this.exposed = !ok && !marked; if (ok) this.saveFailed = false; if (ok || (bump && marked)) this.markerUnreadable = false; });
     return ok;
   }
 
   /** The generation the marker records, or null when there is none (an unreadable marker counts as generation 0 and hides everything). */
   private markerGen(): number | null {
+    const r = this.readMarker();
+    return r.state === "gen" ? r.gen : null;
+  }
+
+  /** The marker: absent (ENOENT only), its generation, or present but unreadable (any other error: it fails closed in load). */
+  private readMarker(): { state: "none" } | { state: "unreadable" } | { state: "gen"; gen: number } {
     const f = path.join(this.o.dir, ERASED_FILE);
     let raw: string;
-    try { raw = fs.readFileSync(f, "utf8"); } catch { return null; /* none */ }
+    try { raw = fs.readFileSync(f, "utf8"); } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { state: "none" };
+      this.o.log.warn("history.marker_unreadable", { code: (err as NodeJS.ErrnoException).code });
+      return { state: "unreadable" };
+    }
     try {
       const v = JSON.parse(raw) as { gen?: unknown };
-      return typeof v.gen === "number" && Number.isSafeInteger(v.gen) && v.gen >= 0 ? v.gen : 2 ** 40;
-    } catch { return 2 ** 40; /* damaged: it still means "a clear happened", so nothing older is shown */ }
+      return { state: "gen", gen: typeof v.gen === "number" && Number.isSafeInteger(v.gen) && v.gen >= 0 ? v.gen : 2 ** 40 };
+    } catch { return { state: "gen", gen: 2 ** 40 }; /* damaged: it still means "a clear happened", so nothing older is shown */ }
   }
 
   /** The generation the file on disk was saved under (0 if none or unreadable). */

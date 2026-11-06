@@ -28,6 +28,8 @@ export function conversationRetention(keep: boolean): string {
 /** Under the switch when the saved copy can't be written or deleted (it is never silent). */
 export function conversationKeepProblem(problem: HistoryProblemKind | null): string {
   if (problem === "exposed") return "Ember couldn’t delete the saved conversation on this computer, and couldn’t make sure it stays hidden, so it may show again after a restart. Try turning this off again later.";
+  if (problem === "unchecked") return "Ember can’t check that the earlier conversation was cleared, so it isn’t showing it. It will look again the next time Ember starts.";
+  if (problem === "account") return "Ember couldn’t confirm which GitHub account is signed in, so it isn’t keeping this conversation. Sign out and in again, or check your connection.";
   if (problem === "owner") return "Ember can’t tell which model service key this conversation belongs to, so it isn’t saving it. Save the key again in Model provider to fix this.";
   if (problem === "delete") return "Ember couldn’t delete the saved conversation on this computer. It won’t show it again, and will try to delete it the next time you turn this off, forget or sign out.";
   if (problem === "save") return "Ember couldn’t save the conversation on this computer, so it may not be here after a restart.";
