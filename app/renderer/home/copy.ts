@@ -234,20 +234,27 @@ export type ModelDestination =
   | { kind: "copilot" }
   | { kind: "own"; host: string }
   | { kind: "organisation"; host: string }
-  | { kind: "none" };
+  | { kind: "none" }
+  /** The user's own provider can't be told yet (state not read, or the read failed): never worded as Copilot. */
+  | { kind: "unknown" };
+
+/** Whether the user's own provider is in force, as main's provider state said: `host` is null when it is not. */
+export type OwnProvider = { known: true; host: string | null } | { known: false };
 
 /**
  * The single answer for the microphone and data-list words, matching main's routing (app/main/provider.ts
  * userProviderInForce): the administrator's lockdown sends nothing; the organisation's own service wins and shuts
  * the user's out; the user's own provider counts only while it is in force (on, agreed to for its host, allowed);
- * otherwise GitHub Copilot. `ownHost` is null unless that provider is in force; `adminProvider` is a URL.
+ * otherwise GitHub Copilot. `own` is main's answer: its host while in force, `host: null` when not, `known: false` when
+ * it hasn't been (or couldn't be) read, which is a destination of its own and never Copilot; `adminProvider` is a URL.
  */
-export function modelDestination(o: { locked: boolean; adminProvider: string | null; ownHost: string | null }): ModelDestination {
+export function modelDestination(o: { locked: boolean; adminProvider: string | null; own: OwnProvider }): ModelDestination {
   if (o.locked) return { kind: "none" };
   if (o.adminProvider) {
     try { return { kind: "organisation", host: new URL(o.adminProvider).host }; } catch { return { kind: "none" }; /* unreadable address: fail closed */ }
   }
-  if (o.ownHost) return { kind: "own", host: o.ownHost };
+  if (!o.own.known) return { kind: "unknown" };
+  if (o.own.host) return { kind: "own", host: o.own.host };
   return { kind: "copilot" };
 }
 
@@ -257,6 +264,7 @@ export function recipientWords(d: ModelDestination, long = false): string {
     case "copilot": return long ? "GitHub Copilot" : "Copilot";
     case "own": return `your own model provider (${d.host})`;
     case "organisation": return `your organisation's model service (${d.host})`;
+    case "unknown": return "a model service I can't tell yet";
     case "none": return "no model service (your organisation's policy has locked Ember down)";
   }
 }

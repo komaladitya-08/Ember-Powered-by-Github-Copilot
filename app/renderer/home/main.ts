@@ -32,7 +32,7 @@ import {
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
-import { onProviderDestination, ownProviderHost, providerSettings, startProvider } from "./provider";
+import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
 import { modelDestination, recipientWords } from "./copy";
 import { mountProject } from "./project";
 import { mountNaturalVoice } from "./natural-voice";
@@ -481,7 +481,7 @@ let lastAdmin: Status["admin"] | null = null;
 function renderRecipient(): void {
   const a = lastAdmin;
   if (!a) return;
-  const d = modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, ownHost: ownProviderHost() });
+  const d = modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
   const service = document.querySelector<HTMLElement>("#w-full #model-service");
   // The locked-down line replaces the sentence (and this span) altogether.
   if (service && d.kind !== "none") service.textContent = recipientWords(d, true);
@@ -489,6 +489,9 @@ function renderRecipient(): void {
     const words = recipientWords(d);
     if (el.textContent !== words) el.textContent = words;
   }
+  // Agreeing to "sent to …" needs the recipient named: unknown, "I agree" waits (aria-disabled keeps it focusable).
+  const yes = $("consent-yes");
+  if (d.kind === "unknown") yes.setAttribute("aria-disabled", "true"); else yes.removeAttribute("aria-disabled");
 }
 onProviderDestination(renderRecipient);
 function renderAdmin(a: Status["admin"]): void {
@@ -1801,6 +1804,7 @@ $("wake").addEventListener("change", e => {
   void save({ wakeWord: on });
 });
 $("consent-yes").addEventListener("click", () => {
+  if ($("consent-yes").getAttribute("aria-disabled") === "true") return;
   $("consent").hidden = true;
   void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
