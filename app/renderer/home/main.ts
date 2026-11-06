@@ -34,7 +34,7 @@ import {
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
-import { modelDestination, recipientWords } from "./copy";
+import { modelDestination, recipientWords, type ModelDestination } from "./copy";
 import { mountProject } from "./project";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
@@ -487,8 +487,8 @@ let lastAdmin: Status["admin"] | null = null;
  */
 function renderRecipient(): void {
   const a = lastAdmin;
-  if (!a) return;
-  const d = modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
+  // No status yet: the policy (which can fix the provider or lock Ember down) is unknown, so the recipient is too.
+  const d: ModelDestination = a ? modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() }) : { kind: "unknown" };
   const service = document.querySelector<HTMLElement>("#w-full #model-service");
   // The locked-down line replaces the sentence (and this span) altogether.
   if (service && d.kind !== "none") service.textContent = recipientWords(d, true);
@@ -501,6 +501,7 @@ function renderRecipient(): void {
   if (d.kind === "unknown") yes.setAttribute("aria-disabled", "true"); else yes.removeAttribute("aria-disabled");
 }
 onProviderDestination(renderRecipient);
+renderRecipient();
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;

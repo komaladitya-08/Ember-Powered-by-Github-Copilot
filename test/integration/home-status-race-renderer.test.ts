@@ -145,4 +145,25 @@ describe.skipIf(process.env.EMBER_STATUS_RACE_TEST !== "1")("Home startup snapsh
     await page.close();
     expect(errors.filter(e => !/Main is busy/.test(e))).toEqual([]);
   }, 30_000);
+
+  it("(e) treats the recipient as unknown, and Agree waits, until a status has arrived", async () => {
+    const { page, errors } = await openHome(A);
+    await expect.poll(() => held(page)).toBeGreaterThan(0);
+    const note = await recipient(page);
+    expect(note).toBe("a model service I can't tell yet");
+    expect(note).not.toContain("Copilot");
+    expect(await page.locator("#consent-yes").getAttribute("aria-disabled")).toBe("true");
+    // A failed status changes nothing; the retry's success names the recipient and enables Agree.
+    const first = await held(page);
+    for (let i = 0; i < first; i++) await settle(page, i, "reject");
+    await page.waitForTimeout(300);
+    expect(await page.locator("#consent-text .model-recipient").first().innerText()).not.toContain("Copilot");
+    expect(await page.locator("#consent-yes").getAttribute("aria-disabled")).toBe("true");
+    await expect.poll(() => held(page), { timeout: 5000 }).toBeGreaterThan(first);
+    await settle(page, first, "resolve", statusOf(A));
+    await expect.poll(() => page.locator("#consent-text .model-recipient").first().innerText()).toContain(A.host);
+    expect(await page.locator("#consent-yes").getAttribute("aria-disabled")).toBeNull();
+    await page.close();
+    expect(errors.filter(e => !/Main is busy/.test(e))).toEqual([]);
+  }, 30_000);
 });
