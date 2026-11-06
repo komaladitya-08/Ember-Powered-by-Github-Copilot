@@ -9,6 +9,7 @@
 import type { CopilotSession, MCPServerConfig, PermissionHandler, ProviderConfig, SessionConfig, SessionHooks, SystemMessageConfig, Tool } from "@github/copilot-sdk";
 import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "../extensions/tool-name";
 import type { ReasoningEffort } from "./models";
+import { blankedCredentialEnv } from "./credential-env";
 
 // The hook types, as SessionHooks names them (the SDK doesn't export them by name).
 export type PreToolUseHookInput = Parameters<NonNullable<SessionHooks["onPreToolUse"]>>[0];
@@ -119,7 +120,8 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
         const origin = admitted.get(modelToolName(key, t));
         return origin?.server === key && origin.tool === t;
       });
-      if (tools.length) servers[key] = { ...cfg, tools };
+      // The runtime merges `env` over its own environment, which holds the sign-in: blank every credential variable (BE audit #1).
+      if (tools.length) servers[key] = { ...cfg, ...(cfg.type === "stdio" || cfg.type === undefined || cfg.type === "local" ? { env: blankedCredentialEnv((cfg as { env?: Record<string, string> }).env) } : {}), tools } as MCPServerConfig;
     }
   }
   const withExt = admitted.size > 0;

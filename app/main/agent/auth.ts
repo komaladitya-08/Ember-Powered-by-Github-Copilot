@@ -9,6 +9,7 @@
  * Classic `ghp_` tokens are refused: the Copilot runtime does not accept them.
  */
 
+import { redactSecretText } from "../secret-text";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -36,6 +37,11 @@ export interface SecretBox {
 
 /** Whether a sign-in was kept on disk, and why not: no keyring (or the keyring refused), or the file couldn't be written. */
 export type SaveResult = "kept" | "no-keyring" | "write-failed";
+
+/** `text` with anything shaped like a GitHub token (or an Authorization value, a `token=` pair, a URL's password) replaced, whichever token it is (a stale one, one from the environment). */
+export function redactGitHubTokens(text: string): string {
+  return redactSecretText(text);
+}
 
 export function isUsableToken(t: string | undefined | null): t is string {
   return !!t && /^(gho_|ghu_|github_pat_)[A-Za-z0-9_]+$/.test(t.trim());

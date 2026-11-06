@@ -9,6 +9,7 @@
  * never tests the OS itself; it asks the platform's members.
  */
 
+import { HistoryStore } from "./agent/conversation-store";
 import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeTheme, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -1126,6 +1127,8 @@ function start(): void {
     textScale: () => textScale(settings.get().textSize),
   });
   let agent: AgentHost | null = null;
+  /** The saved conversation's store (set where the agent is made): what is wrong with it is asked by Home. */
+  let historyStore: HistoryStore | null = null;
   /** Where tasks act besides this screen (WSL, SSH) and the commands on each (§2); made once the hands are. */
   let targets: (TargetsRuntime & TargetsRuntimeExtra) | null = null;
   let perception: Perception | null = null;
@@ -1901,6 +1904,7 @@ function start(): void {
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
   ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
   ipcMain.handle(IPC.openApproval, guard(() => targets?.openApproval() ?? false));
+  ipcMain.handle(IPC.historyProblem, guard(() => historyStore?.problem ?? null));
   ipcMain.handle(IPC.taskControl, guard((raw: unknown) => taskControl(agent, raw)));
   const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });
   tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };
@@ -2322,10 +2326,14 @@ function start(): void {
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(() => {
     learning.forgetAll();
+    // The saved copy of the conversation is part of what Ember keeps about the person: it goes too.
+    const savedGone = agent?.forgetHistory() ?? true;
     memoryOwner.clear();
     memoryOwner.refresh(memoryConfigured());
     memoryEpoch++;
     publishMemoryOwner();
+    // Told after the rest is done (Home shows a sentence that starts like this as it is).
+    if (!savedGone) throw new Error("Ember couldn't finish deleting the saved conversation on this computer. Try Forget again.");
   }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
   ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduce(answers)));
@@ -2744,7 +2752,7 @@ function start(): void {
     try { adminKey = policy.provider ? sys.adminPolicy.providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
     const testProvider = devEnv("EMBER_TEST_PROVIDER_URL");
     fixedProvider = testProvider
-      ? { kind: "test", config: { type: "openai" as const, baseUrl: testProvider, apiKey: "test" } }
+      ? { kind: "test", config: { type: "openai" as const, baseUrl: testProvider, apiKey: "test" }, keyId: "test-provider" }
       : policy.provider
         ? { kind: "admin", config: { type: policy.provider.type, baseUrl: policy.provider.baseUrl, apiKey: adminKey, wireApi: policy.provider.wireApi, azure: policy.provider.azure } }
         : null;
@@ -3029,7 +3037,17 @@ function start(): void {
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
+    // The saved copy of the conversation, only while the person keeps it (Home › Conversation); off by default.
+    const history = { store: new HistoryStore({ dir: userData, log: log.child("history"), onProblem: p => { if (home && !home.isDestroyed()) home.webContents.send(IPC.historyProblemChanged, p); } }), enabled: () => settings.get().keepConversation };
+    historyStore = history.store;
+    let keptConversation = history.enabled();
+    settings.onChange(() => {
+      if (history.enabled() === keptConversation) return;
+      keptConversation = history.enabled();
+      agent?.applyHistorySetting();
+    });
     agent = new AgentHost({
+      history,
       // Always given, so sign-out and an account change forget them even while the organisation has them off (the host
       // uses them only while settings, with the policy applied, have them on). Memory learns on its own (hostMemory).
       memory: hostMemory,

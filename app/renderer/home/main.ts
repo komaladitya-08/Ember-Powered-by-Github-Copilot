@@ -8,6 +8,7 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
+import type { HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
@@ -45,7 +46,7 @@ import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whats
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { CONVERSATION_EDIT, CONVERSATION_RETENTION, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { CONVERSATION_EDIT, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountLearnedUndo } from "./learned-undo";
@@ -170,6 +171,8 @@ function applySettings(s: Settings): void {
   applyAutonomySettings(s);
   providerSettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
+  ($("keep-conversation") as HTMLInputElement).checked = s.keepConversation;
+  $("conversation-retention").textContent = conversationRetention(s.keepConversation);
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
   ($("appearance") as HTMLSelectElement).value = s.appearance;
@@ -872,7 +875,16 @@ let conversationLastAtSend: Entry | undefined;
 let conversationDraftBeforeEdit: string | null = null;
 let conversationGeneration = 0;
 $("conversation-scope").textContent = CONVERSATION_SCOPE;
-$("conversation-retention").textContent = CONVERSATION_RETENTION;
+$("conversation-retention").textContent = conversationRetention(false);
+$("keep-conversation-label").textContent = CONVERSATION_KEEP_LABEL;
+$("keep-conversation-hint").textContent = CONVERSATION_KEEP_HINT;
+// Never silent: the saved copy that couldn't be written or deleted is said under the switch.
+{
+  const showProblem = (p: HistoryProblemKind | null) => { $("keep-conversation-problem").textContent = conversationKeepProblem(p); };
+  void window.ember.historyProblem().then(showProblem, () => undefined);
+  window.ember.onHistoryProblem(showProblem);
+}
+$("keep-conversation").addEventListener("change", e => { void save({ keepConversation: (e.target as HTMLInputElement).checked }); });
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");
   li.className = e.who;

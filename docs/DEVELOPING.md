@@ -162,7 +162,39 @@ runtime. It does not change the app's consent or speaking settings.
     opens. Starting it again while it runs, the
     settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
 - Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
-  keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
+  keeps this session's questions, answers and task results (in memory only by default; quitting or signing out forgets them).
+  - **Keep my recent conversation after Ember closes** (`keepConversation`, off by default; Home › Conversation): saves the
+    latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
+    atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
+    signed-in account is known and is the one that saved them (a file of another account, or while the account can't be
+    told, is never shown; another account's file is deleted). The saved lines are for the person to read: the model starts a
+    fresh session at every launch and never sees them, a restored question is not one a later "yes" agrees to, and nothing
+    is spoken, sent or run again. A file that can't be read (not JSON, another version, too large) is moved to
+    `conversation.json.broken` and Ember starts empty. Turning the switch off, **New conversation**, **Sign out** and
+    **Forget everything** (Memory) delete `conversation.json` (and `.broken`), and a write queued before any of them can't
+    bring it back; Forget everything leaves the messages on screen but doesn't save them again (its question says so). The
+    copy belongs to an owner written into the file and compared at every start: `github:<id>|<service>` (or `none|<service>`
+    with no GitHub account), the service being `copilot` or `provider:<kind>|<hash of the address>|<keyId>`. `keyId` is a
+    random id made whenever the person saves a key, sealed in `provider-key.bin` with the key (never derived from it); a
+    key saved before ids existed, and the administrator's key, have none, so for them nothing is saved and an earlier copy is
+    deleted (a known limitation). Any difference (another account, service, address or key) deletes the copy, never shows it.
+    What a connection that began before such a change says (a late answer, a stopped stream, a task's result) is shown but
+    never saved (`connGen`). A copy that can't be deleted is emptied if possible, never loaded again, retried first thing,
+    and Sign out and Forget everything say so; a copy that can't be written is said under the switch (`historyProblem`).
+    A clear sticks across a restart: before deleting, it writes `conversation.erased` (`{ version, gen }`; temp, fsync, atomic
+    rename, mode 0600) and every saved file carries the generation `gen` it was saved under. A load honours the marker first:
+    a file of a lower generation is never shown and is deleted again, and the marker goes only once nothing is left or a
+    newer save (written under the marker's generation) replaced the file. If neither the deletion nor the marker can be done,
+    the problem is "exposed" and says the copy may show again; history on with a provider key that has no id says "owner".
+    The key id travels with the key: saving a key makes a new id (also for the same key), and that is a new owner. Known
+    limitation: the owner is the account and service the copy was saved under, so GitHub → own provider → restart with the
+    same key doesn't bring the earlier provider conversation back (the account is unverified on launch).
+    Nothing is saved until the saved copy of that owner has been
+    looked at, and lines said before then are added after the saved ones, so an earlier copy is never silently replaced. A
+    saved line never carries a per-run id (`answerId`, `heardId`). The file's folder is flushed after the rename (best
+    effort). The organisation's policy has no key for it. Code: app/main/agent/conversation-store.ts, host.ts (`restoreHistory`, `forgetHistory`). With a build ready,
+    `EMBER_CONVERSATION_LIVE=1 npm run test:integration -- test/integration/conversation-history-live.test.ts` launches the
+    real app three times on one data folder against a mock model (the switch found by its label, quit, relaunch, off).
 - When a task closes its window with keys (Ctrl+W or Ctrl+Q, Command+W or Command+Q on macOS), the next read tells it
   the window closed, as a click on Close does. Closing a tab leaves a live window alone; denied or failed keys never
   claim a close. A task never carries on in an unrelated window in the closed window's place.
@@ -391,8 +423,8 @@ it builds on:
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
   in `extensions/run/` (Linux and macOS: as the leader of its own process group, so the kill switch ends everything
   it started; Windows: `taskkill /T`). A server that needs a `${VAR}` from the user's environment is refused, and
-  proxy addresses reach it without their user name and password. This keeps Ember's sign-in out of the server's own
-  environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
+  proxy addresses reach it without their user name and password. This (and the blanked credential variables: see "Where the sign-in goes") keeps Ember's sign-in out of the server's
+  own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
   (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
   Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
@@ -715,6 +747,28 @@ then `gh auth token --hostname github.com`; a sign-in Copilot refuses gives way 
 Enterprise, your organisation must enable the **Copilot CLI** policy. No restart is needed: run `gh auth login` in a
 terminal (Ember notices within a few seconds), or press **Check again**. If sign-in fails, the Copilot section says
 which sign-in Ember tried and why; while offline, Ember retries by itself.
+
+**Where the sign-in goes (BE audit #1).** Only the one sign-in Ember picked goes to the Copilot runtime, and only as
+the environment variable `COPILOT_SDK_AUTH_TOKEN` of the runtime process (the pinned @github/copilot-sdk 1.0.21 does
+it so: `--auth-token-env COPILOT_SDK_AUTH_TOKEN` is all that is on its command line). Ember removes every other
+GitHub or Copilot credential from the environment it gives the runtime (`withoutGitHubCredentials`,
+app/main/agent/runtime-env.ts), and hands none over when another model service is in use. Extension servers start
+through Ember's launcher with `appEnv()`'s allowlist, and Ember sets every credential variable (`CREDENTIAL_VARS`,
+app/main/agent/credential-env.ts: `COPILOT_SDK_AUTH_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `COPILOT_GITHUB_TOKEN`, the two
+`*_ENTERPRISE_TOKEN`s, `COPILOT_CONNECTION_TOKEN` and the two `COPILOT_PROVIDER_*` credentials) to an empty string in the
+`env` of every stdio MCP server it gives a session (`hardenedSessionConfig`): the runtime merges that `env` over its own
+environment, so the launcher and any other stdio server start with those variables empty, not holding the sign-in. Any
+GitHub-token-shaped text, `Bearer` or `token=` value and URL password is replaced in the finished line of every Ember
+log (logger.ts, `redactSecretText`) and in the sentence a failed start shows; the user's provider key is replaced by
+exact match in messages, scopes, keys and fields (`redactingLogger`). Observed on the real runtime with
+`scripts/runtime-env-live.sh` (a network namespace with only loopback, dummy tokens, not in CI): before this blanking
+both the directly started server and the launcher held the dummy token in their environment; now neither does, nor does
+the extension's process, and the credential variables in their environment are all empty. Still true: the runtime
+process itself holds the token (its `/proc/<pid>/environ` shows it), and a stdio server, being the runtime's child,
+can read that file as the same user; the SDK has no option to keep the runtime's environment from it. Remote (HTTP)
+servers' headers are not scrubbed. The runtime's own shell, file and web tools are not offered to the model:
+`availableTools` is an allowlist of the agreed `mcp:` tools only (session-config.ts, `hardenedSessionConfig`; pinned in
+extensions-runtime.test.ts), so the model has no runtime tool that could print its environment (`verifySessionTools` checks the list the runtime reports). A token from `gh auth token` or the environment is still accepted when no Ember sign-in exists.
 
 Then press **Ctrl+Alt+Space** and type a question.
 

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { build } from "esbuild";
+import { appEnv } from "../../app/main/hands/system";
 
 let dir: string;
 let launcher: string;
@@ -49,5 +50,26 @@ describe("extension launch leases", () => {
       fs.rmSync(leaseFile, { force: true });
       if (child.exitCode === null && child.signalCode === null) child.kill();
     }
+  });
+});
+
+describe("extension launch environment (BE audit #1)", () => {
+  it("starts the server with only the spec's environment, even when the runtime gives the launcher its whole one, token included", async () => {
+    const marks = { COPILOT_SDK_AUTH_TOKEN: "ghu_TESTMARKER_LAUNCH_SDK_0123456789", GITHUB_TOKEN: "ghp_TESTMARKER_LAUNCH_GH_0123456789", GH_ENTERPRISE_TOKEN: "ghe_TESTMARKER_LAUNCH_ENT_0123456789", MY_SERVICE_KEY: "ghu_TESTMARKER_LAUNCH_ODD_0123456789" };
+    const leaseFile = path.join(dir, `${crypto.randomUUID()}.lease`);
+    fs.writeFileSync(leaseFile, "", { mode: 0o600 });
+    const out = path.join(dir, "server-env.json");
+    // The spec's environment is built as the extensions service builds it: appEnv() over Ember's (here marker-filled) environment.
+    const spec = {
+      command: process.execPath, args: ["-e", `require("fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv, env: process.env }))`],
+      env: { ...appEnv({ ...process.env, ...marks }, { session: false }) as Record<string, string>, ELECTRON_RUN_AS_NODE: "1" },
+      cwd: dir, runDir: dir, leaseFile, group: os.platform() !== "win32",
+    };
+    const child = spawn(process.execPath, [launcher], { env: { ...process.env, ...marks, NODE_PATH: path.resolve("node_modules"), EMBER_MCP_SPEC: JSON.stringify(spec) }, stdio: "ignore" });
+    const [code] = await once(child, "exit");
+    expect(code).toBe(0);
+    const server = fs.readFileSync(out, "utf8");
+    for (const v of Object.values(marks)) expect(server).not.toContain(v);
+    for (const k of Object.keys(marks)) expect(Object.keys((JSON.parse(server) as { env: object }).env)).not.toContain(k);
   });
 });

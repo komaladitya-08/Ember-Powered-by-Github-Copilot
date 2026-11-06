@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
 import { SettingsSchema, SettingsStore, withOwnProvider, type Settings } from "../../app/main/settings";
 import {
-  PROVIDER_HOST_CHANGED, ProviderKeyStore, createProviderService, keyFor, ownProviderAuth, providerNotAgreed, providerStateOf, redact, redactingLogger, testConnection,
+  PROVIDER_HOST_CHANGED, ProviderKeyStore, activeProvider, createProviderService, keyFor, ownProviderAuth, providerNotAgreed, providerStateOf, redact, redactingLogger, testConnection,
   userProviderConfig, type FetchLike, type StoredKey,
 } from "../../app/main/provider";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -144,7 +144,7 @@ describe("the key and its host (S2)", () => {
     const file = path.join(dir, "provider-key.bin");
     const keys = new ProviderKeyStore(file, box().box);
     await keys.save(KEY, "a.example");
-    expect(await keys.load()).toEqual<StoredKey>({ key: KEY, host: "a.example" });
+    expect(await keys.load()).toEqual<StoredKey>({ key: KEY, host: "a.example", keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     // Someone swaps the host beside it: the service still won't use the key for that host.
     fs.writeFileSync(path.join(dir, "provider-key.host"), "b.example");
     const settings = new SettingsStore(path.join(dir, "settings.json"));
@@ -199,8 +199,8 @@ describe("the keyring at a start (macOS second-instance hang in CI)", () => {
     };
     const keys = new ProviderKeyStore(path.join(dir, "provider-key.bin"), kr, { asyncKeyring: true });
     expect(await keys.canPersist()).toBe(true);
-    expect(await keys.save(KEY, "a.example")).toEqual({ ok: true });
-    expect(await keys.load()).toEqual({ key: KEY, host: "a.example" });
+    expect(await keys.save(KEY, "a.example")).toMatchObject({ ok: true, keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+    expect(await keys.load()).toEqual({ key: KEY, host: "a.example", keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     expect(asked).toEqual(["isAsyncEncryptionAvailable", "isAsyncEncryptionAvailable", "encryptStringAsync", "decryptStringAsync"]);
   });
 
@@ -212,7 +212,7 @@ describe("the keyring at a start (macOS second-instance hang in CI)", () => {
     expect(settings.own().provider.on).toBe(true);
     await s.ensureKey();
     expect(asked).toEqual(["decryptString"]);
-    expect(s.key()).toEqual({ key: KEY, host: "a.example" });
+    expect(s.key()).toEqual({ key: KEY, host: "a.example", keyId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
   });
 
   it("isn't touched by main.ts before the single-instance check", () => {
@@ -467,5 +467,29 @@ describe("the provider keyring write boundary", () => {
     release(Buffer.from("sealed"));
     expect((await pending).ok).toBe(false);
     expect(fs.existsSync(file)).toBe(false);
+  });
+});
+
+describe("the key id of a key just saved (PR #188 re-review 3)", () => {
+  it("the live key carries the same id that was sealed with it, so history can be owned at once", async () => {
+    const { s, keys, settings } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    s.api.agree("a.example");
+    expect(await s.api.saveKey(KEY)).toEqual({ ok: true }); // (the id never goes to the page)
+    const sealed = await keys.load();
+    expect(sealed?.keyId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(s.key()).toEqual({ key: KEY, host: "a.example", keyId: sealed?.keyId });
+    expect(activeProvider({ fixed: null, settings: settings.get(), admin: NONE, key: s.key() })?.keyId).toBe(sealed?.keyId);
+  });
+
+  it("saving the same key again makes a new id, and the live key follows it", async () => {
+    const { s, keys } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    s.api.agree("a.example");
+    await s.api.saveKey(KEY);
+    const first = s.key()?.keyId;
+    await s.api.saveKey(KEY);
+    const second = s.key()?.keyId;
+    expect(second).toBeTruthy();
+    expect(second).not.toBe(first);
+    expect((await keys.load())?.keyId).toBe(second);
   });
 });
