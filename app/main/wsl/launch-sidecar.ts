@@ -230,7 +230,9 @@ export function helperDoctorRows(distro: string, o: { missing: boolean; diag: He
   const helper = (status: PlatformDoctorRow["status"], detail: string): PlatformDoctorRow => ({ id: `wsl-helper:${distro}`, status, label, detail });
   const d = o.diag, pm = d?.pm ?? null;
   const rows: PlatformDoctorRow[] = [];
+  // A helper that refused on its protocol version is terminal and says what to do: no dependency look hides it.
   const problem: HelperProblem | null = o.missing ? "missing"
+    : o.known?.problem === "version" ? "version"
     : d?.uid === 0 || o.known?.status?.uid === 0 || o.known?.problem === "root" ? "root"
       : d?.wslg === false ? "nowslg"
         : d?.python3 === false ? "python3"

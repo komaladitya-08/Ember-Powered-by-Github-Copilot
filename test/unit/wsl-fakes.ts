@@ -73,6 +73,7 @@ export class FakeHelper implements DistroSidecar {
   uid = 1000;
   wslg = true;
   pyatspi = true;
+  toolkitAccessibility = true;
   bus: string = "proc";
   /** find_bus answers this once (then `bus`). */
   restartOnce = false;
@@ -119,7 +120,7 @@ export class FakeHelper implements DistroSidecar {
       return Promise.reject(err);
     }
     this.calls.push({ method, params });
-    if (method === "status") return Promise.resolve({ version: 3, python: "3.10", toolkitAccessibility: true, apps: 3, uid: this.uid, wslg: this.wslg, bus: "none", pyatspi: this.pyatspi } as T);
+    if (method === "status") return Promise.resolve({ version: 3, python: "3.10", toolkitAccessibility: this.toolkitAccessibility, apps: 3, uid: this.uid, wslg: this.wslg, bus: "none", pyatspi: this.pyatspi } as T);
     if (method === "find_bus") {
       if (this.findBusTooLong) {
         // AtspiSidecar ends a process whose answer took too long.

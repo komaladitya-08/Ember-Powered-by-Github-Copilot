@@ -492,6 +492,7 @@ export class WslRouter {
         // Terminal until the distro stops (forgetDistro): the sentence says what to do, and no retry makes a client agree.
         st.problem = "version";
         st.refusal = err.message;
+        st.status = null; // an older look's pyatspi or bus must not speak over the refusal
       } else {
         st.problem = "start";
         st.retryAt = this.d.now() + RETRY_MS;
