@@ -18,7 +18,7 @@ import fs from "node:fs";
 import type { ProviderConfig } from "@github/copilot-sdk";
 import { applyAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "./admin";
 import { lenientJson, repairSettings, type Settings, type SettingsPatch } from "./settings";
-import type { SaveResult, SecretBox } from "./agent/auth";
+import { redactGitHubTokens, type SaveResult, type SecretBox } from "./agent/auth";
 import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
@@ -272,7 +272,8 @@ export async function providerStateOf(o: { settings: Settings; admin: LoadedAdmi
 /** `text` with every exact occurrence of each secret replaced (none, or one too short to be a key, changes nothing). */
 export function redact(text: string, secret: string | null | readonly string[]): string {
   const all = secret === null ? [] : typeof secret === "string" ? [secret] : secret;
-  return all.filter(s => s.length >= 8).reduce((t, s) => t.split(s).join("[key]"), text);
+  // Anything shaped like a GitHub token goes too, whichever it is (BE audit #1): the runtime's errors may quote its environment.
+  return redactGitHubTokens(all.filter(s => s.length >= 8).reduce((t, s) => t.split(s).join("[key]"), text));
 }
 
 /** A copy of `v` with `secret` redacted from every string in it, errors included (a depth limit keeps it finite). */
@@ -299,8 +300,7 @@ function scrub(v: unknown, secret: readonly string[], depth = 0): unknown {
 export function redactingLogger(base: Logger, secret: () => string | null | readonly string[]): Logger {
   const list = (): string[] => { const s = secret(); return (s === null ? [] : typeof s === "string" ? [s] : [...s]).filter(x => x.length >= 8); };
   const clean = (fields?: Fields): Fields | undefined => {
-    const s = list();
-    return fields && s.length ? scrub(fields, s) as Fields : fields;
+    return fields ? scrub(fields, list()) as Fields : fields;
   };
   const msg = (m: string) => redact(m, list());
   return {

@@ -716,6 +716,17 @@ Enterprise, your organisation must enable the **Copilot CLI** policy. No restart
 terminal (Ember notices within a few seconds), or press **Check again**. If sign-in fails, the Copilot section says
 which sign-in Ember tried and why; while offline, Ember retries by itself.
 
+**Where the sign-in goes (BE audit #1).** Only the one sign-in Ember picked goes to the Copilot runtime, and only as
+the environment variable `COPILOT_SDK_AUTH_TOKEN` of the runtime process (the pinned @github/copilot-sdk 1.0.21 does
+it so: `--auth-token-env COPILOT_SDK_AUTH_TOKEN` is all that is on its command line). Ember removes every other
+GitHub or Copilot credential from the environment it gives the runtime (`withoutGitHubCredentials`,
+app/main/agent/runtime-env.ts), and hands none over when another model service is in use. Extension servers start
+through Ember's launcher with `appEnv()`'s allowlist, so they get no token. Any GitHub-token-shaped text is replaced
+in Ember's logs and in the sentence a failed start shows (`redactGitHubTokens`). What remains: the runtime process
+itself holds the token and the SDK has no option to keep its environment from the runtime's own children. Ember grants
+the runtime no shell tool (`availableTools: []`), but that is the runtime's behaviour, not something Ember enforces
+for its descendants. A token from `gh auth token` or the environment is still accepted when no Ember sign-in exists.
+
 Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an

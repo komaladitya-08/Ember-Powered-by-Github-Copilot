@@ -37,6 +37,14 @@ export interface SecretBox {
 /** Whether a sign-in was kept on disk, and why not: no keyring (or the keyring refused), or the file couldn't be written. */
 export type SaveResult = "kept" | "no-keyring" | "write-failed";
 
+/** The shapes of GitHub's tokens: OAuth (gho_), user-to-server (ghu_), server-to-server (ghs_), refresh (ghr_), classic (ghp_) and fine-grained. */
+const TOKEN_SHAPE = /\b(?:gh[opusr]_|github_pat_)[A-Za-z0-9_]{8,}/g;
+
+/** `text` with anything shaped like a GitHub token replaced, whichever token it is (a stale one, one from the environment). */
+export function redactGitHubTokens(text: string): string {
+  return text.replace(TOKEN_SHAPE, "[token]");
+}
+
 export function isUsableToken(t: string | undefined | null): t is string {
   return !!t && /^(gho_|ghu_|github_pat_)[A-Za-z0-9_]+$/.test(t.trim());
 }
