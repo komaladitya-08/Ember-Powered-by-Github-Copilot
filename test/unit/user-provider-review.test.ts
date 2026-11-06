@@ -179,6 +179,13 @@ describe("the keyring at a start (macOS second-instance hang in CI)", () => {
     expect(asked).toEqual([]);
   });
 
+  it("a keyring that fails to answer doesn't hide whether the provider is in force and its host (the destination stays readable)", async () => {
+    const own = provider({ baseUrl: "https://a.example/v1", on: true, consent: agreedFor("a.example") });
+    const keys = { savedHost: () => null, canPersist: async () => { throw new Error("keyring broke"); } };
+    const st = await providerStateOf({ settings: { provider: own } as Settings, admin: NONE, keys });
+    expect(st).toMatchObject({ inForce: true, host: "a.example", keyring: false });
+  });
+
   it("is never asked synchronously on macOS (asyncKeyring): isEncryptionAvailable fetches the Keychain on the main thread", async () => {
     const dir = tmp();
     const asked: string[] = [];

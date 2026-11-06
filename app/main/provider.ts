@@ -262,7 +262,7 @@ export async function providerStateOf(o: { settings: Settings; admin: LoadedAdmi
     allowed,
     managed: allowed ? null : o.admin.policy.provider ? "organisation" : "off",
     keySaved,
-    keyring: allowed && p.on && !keySaved ? await o.keys.canPersist() : true,
+    keyring: allowed && p.on && !keySaved ? await o.keys.canPersist().catch(() => false) : true, // a keyring that fails must not hide inForce and host
     inForce: userProviderInForce(o.settings, o.admin) !== null,
     host,
     agreed: providerAgreed(p),

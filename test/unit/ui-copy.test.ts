@@ -22,7 +22,7 @@ import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, providerConsentText, providerHint, providerTestText } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerConsentText, recipientWords, providerHint, providerTestText } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -892,5 +892,37 @@ describe("approval card risk and task context", () => {
     expect(promptCopy.APPROVAL_NOT_SENT).toMatch(/couldn't confirm/);
     for (const t of [promptCopy.APPROVAL_NOT_TAKEN, promptCopy.approvalNotTaken("not-yet"), promptCopy.approvalNotTaken("gone"), promptCopy.APPROVAL_NOT_SENT]) expect(t).not.toMatch(/nothing was approved/);
     expect(new Set([promptCopy.approvalNotTaken("not-yet"), promptCopy.approvalNotTaken("gone"), promptCopy.approvalNotTaken(), promptCopy.APPROVAL_NOT_SENT]).size).toBe(4);
+  });
+});
+
+describe("modelDestination and recipientWords (microphone consent names the real recipient, audit FE #19)", () => {
+  const base = { locked: false, adminProvider: null, own: { known: true as const, host: null } };
+  it("says Copilot when no provider is in force", () => {
+    expect(modelDestination(base)).toEqual({ kind: "copilot" });
+    expect(recipientWords(modelDestination(base))).toBe("Copilot");
+    expect(recipientWords(modelDestination(base), true)).toBe("GitHub Copilot");
+  });
+  it("names the user's own provider by host only once it is in force", () => {
+    const d = modelDestination({ ...base, own: { known: true, host: "models.example.com:8443" } });
+    expect(recipientWords(d)).toBe("your own model provider (models.example.com:8443)");
+  });
+  it("names the organisation's service by host only, never the path or credentials, and it wins over a personal one", () => {
+    const d = modelDestination({ ...base, adminProvider: "https://user:secret@llm.corp.example/v1/path?k=1", own: { known: true, host: "x.example" } });
+    expect(recipientWords(d)).toBe("your organisation's model service (llm.corp.example)");
+    expect(recipientWords(d)).not.toMatch(/secret|path|v1/);
+  });
+  it("never says Copilot while the user's provider is unknown: it is its own destination, in short and long form", () => {
+    const d = modelDestination({ ...base, own: { known: false } });
+    expect(d).toEqual({ kind: "unknown" });
+    for (const long of [false, true]) expect(recipientWords(d, long)).not.toMatch(/Copilot/);
+    expect(recipientWords(d)).toMatch(/can't tell|can't yet/);
+  });
+  it("lets the organisation's service and lockdown answer even while the user's provider is unknown", () => {
+    expect(modelDestination({ locked: false, adminProvider: "https://a.example", own: { known: false } })).toEqual({ kind: "organisation", host: "a.example" });
+    expect(modelDestination({ locked: true, adminProvider: null, own: { known: false } }).kind).toBe("none");
+  });
+  it("sends nothing anywhere while locked down, or when the organisation's address can't be read", () => {
+    expect(modelDestination({ ...base, locked: true, adminProvider: "https://a.example" }).kind).toBe("none");
+    expect(modelDestination({ ...base, adminProvider: "not a url" }).kind).toBe("none");
   });
 });

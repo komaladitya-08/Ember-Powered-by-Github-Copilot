@@ -51,6 +51,21 @@ export function endpointProblem(url: string): string | null {
 export const AGREE_ARM_MS = 500;
 
 /**
+ * Runs asynchronous reads of one thing so only the newest one's outcome (value or failure) is applied: an older read that
+ * settles after a newer one began is dropped, so a late failure can't overwrite a newer success, nor a late success a
+ * newer failure.
+ */
+export function latestOnly<T>(read: () => Promise<T>, apply: (r: { ok: true; value: T } | { ok: false }) => void): () => Promise<void> {
+  let generation = 0;
+  return async () => {
+    const mine = ++generation;
+    let r: { ok: true; value: T } | { ok: false };
+    try { r = { ok: true, value: await read() }; } catch { r = { ok: false }; /* the caller treats it as unknown */ }
+    if (mine === generation) apply(r);
+  };
+}
+
+/**
  * The card's "I agree" as Ember's questions are (confirm.ts): drawn or redrawn for another host, it ignores activation
  * for AGREE_ARM_MS; and the host is taken when it is pressed (pointer down, or the key), so a card redrawn between the
  * press and the click (pressing blurs the address field, which saves it and redraws the card) agrees to nothing.

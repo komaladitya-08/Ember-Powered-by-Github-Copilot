@@ -113,7 +113,7 @@ Each test run works in a temporary folder of its own (`ember-run-…`), which it
 cache (test/temp-folder.ts).
 
 After building, CI also runs the Ask, conversation, memory, reminders/desk and natural-voice renderer journeys with
-`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_MEMORY_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
+`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
 and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium. The exact file list is in `.github/workflows/ci.yml`.
 The same workflow enables `EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1` for native approval and task-card
 journeys on X11. `EMBER_KITTEN_TEST=1` requires actual synthesis with the verified default Kitten model in native
