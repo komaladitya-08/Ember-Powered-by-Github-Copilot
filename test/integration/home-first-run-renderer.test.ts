@@ -15,6 +15,7 @@ declare global {
     __frCalls: string[];
     __frEmit: (name: string, value: unknown) => void;
     __frPend: Record<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }[]>;
+    __frFailOff: boolean;
     __frState: { settings: Record<string, unknown> & { provider: Record<string, unknown> }; agent: Record<string, unknown> };
   }
 }
@@ -26,7 +27,7 @@ const READY_MODELS = [
 ];
 const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, signInWith: "github-app" };
 
-interface Seed { admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; home?: boolean; provider?: Record<string, unknown> }
+interface Seed { admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown> }
 
 let browser: Browser;
 let server: http.Server;
@@ -59,7 +60,8 @@ async function open(seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff }) => {
+    window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
     const subs: Record<string, ((v: unknown) => void)[]> = {};
@@ -72,6 +74,7 @@ async function open(seed: Seed = {}): Promise<Page> {
       if (name === "agentStatus") return async () => window.__frState.agent;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => {
         window.__frCalls.push(`save:${JSON.stringify(patch)}`);
+        if (window.__frFailOff && (patch.provider as { on?: boolean } | undefined)?.on === false) throw new Error("disk full");
         const s = window.__frState.settings;
         for (const [k, v] of Object.entries(patch)) s[k] = v && typeof v === "object" && !Array.isArray(v) && typeof s[k] === "object" ? { ...(s[k] as object), ...v } : v;
         window.__frEmit("onSettingsChanged", s);
@@ -93,7 +96,7 @@ async function open(seed: Seed = {}): Promise<Page> {
         test: () => { window.__frCalls.push("test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -361,5 +364,42 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await fix.click({ force: true });
     await p.waitForTimeout(100);
     expect((await calls(p)).filter(c => c.startsWith("fix:")).length).toBe(2);
+  });
+
+  it("(l) Back while the card's yes is on its way and the switch-off cannot be saved: the provider is still on, says so, and a retry switches it off (PR #191 re-review)", async () => {
+    const p = await open({ slowAgree: true, failOff: true });
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    await p.fill("#w-p-url", "https://api.example.com/v1");
+    await p.fill("#w-p-key", "sk-x");
+    await p.fill("#w-p-conductor", "gpt-4.1");
+    await next(p).click();
+    await expect.poll(async () => (await calls(p)).some(c => c.startsWith("agree:"))).toBe(true);
+    await p.locator("#w-back").click();
+    await settle(p, "agree", { ok: true });
+    await expect.poll(() => p.locator("#provider-off").isVisible()).toBe(true);
+    expect(await p.locator("#provider-off").innerText()).toContain("still on");
+    expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
+    await p.evaluate(() => { window.__frFailOff = false; });
+    await p.locator("#provider-off-retry").click();
+    await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+    await expect.poll(() => p.locator("#provider-off").isVisible()).toBe(false);
+  });
+
+  it("(m) Back, then Home turns the provider on itself: the late switch-off of the abandoned check leaves it on (PR #191 re-review)", async () => {
+    const p = await open({ slowAgree: true });
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    await p.fill("#w-p-url", "https://api.example.com/v1");
+    await p.fill("#w-p-key", "sk-x");
+    await p.fill("#w-p-conductor", "gpt-4.1");
+    await next(p).click();
+    await expect.poll(async () => (await calls(p)).some(c => c.startsWith("agree:"))).toBe(true);
+    await p.locator("#w-back").click();
+    // Home's switch, through its own handler.
+    await p.evaluate(() => { const sw = document.getElementById("byok-on") as HTMLInputElement; sw.checked = true; sw.dispatchEvent(new Event("change")); });
+    await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
+    await settle(p, "agree", { ok: true });
+    await p.waitForTimeout(300);
+    expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
+    expect(await calls(p)).not.toContain(`save:${JSON.stringify({ provider: { on: false } })}`);
   });
 });

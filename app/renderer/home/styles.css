@@ -809,7 +809,7 @@ body:not(.first-run) .home > [data-pane]:not(.off-pane) {
 body.first-run .home { max-width: 640px; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; gap: 20px; padding: 28px 24px 32px; }
 body.first-run #welcome { min-height: min(560px, calc(100vh - 60px)); }
 @media (min-width: 1000px) { body.first-run .home { max-width: 720px; } }
-body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: none; }
+body.first-run .home > :not(#welcome, #managed, #settings-notice, #provider-off) { display: none; }
 .welcome {
   display: flex; flex-direction: column; gap: 22px;
   /* The motion system's tokens (docs/DESIGN.md "Motion"), with the values ember.css takes on: defined here until then. */

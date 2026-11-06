@@ -18,6 +18,7 @@ import { keptWords } from "./admin-copy";
 import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel } from "./copy";
 import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
+import { onProviderChoice, providerChoice } from "./provider-choice";
 import {
   ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
@@ -368,8 +369,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       // turns the provider on) first looks whether this check was abandoned; one abandoned after the yes was recorded
       // puts the provider away again, unless a newer check has taken over (it owns the provider now).
       const abandoned = () => epoch !== checkEpoch;
+      // Nor may it undo a provider the user chose in Home since this check began: that choice owns the provider now.
+      const chosen = providerChoice();
       const dropped = async () => {
-        if (mine === checkRun) await turnOwnOff(true);
+        if (mine === checkRun) await turnOwnOff(true, chosen);
         return { epoch, result: { ok: false as const, why: "" } };
       };
       const saved = await deps.save({ provider: { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null } } as SettingsPatch);
@@ -402,10 +405,26 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     render();
     if (!ok) provField("w-p-key").focus(); else next.focus();
   }
-  /** `force`: also when the page's copy of the settings doesn't show it on yet (the card's yes may still be on its way). */
-  async function turnOwnOff(force = false): Promise<void> {
+  /**
+   * Puts the user's own provider away. `force`: also when the page's copy of the settings doesn't show it on yet (the
+   * card's yes may still be on its way). `since`: the provider choice count when the check began; a deliberate choice
+   * made after it means this is no longer ours to undo. A write that fails (it says false, or throws) is never passed
+   * over: the provider is still on, and a notice with a retry says so.
+   */
+  async function turnOwnOff(force = false, since?: number): Promise<void> {
     if (!force && !settings?.provider.on) return;
-    try { await deps.save({ provider: { on: false } } as SettingsPatch); } catch { /* the settings window's notice says why */ }
+    if (since !== undefined && since !== providerChoice()) return;
+    let ok = false;
+    try { ok = await deps.save({ provider: { on: false } } as SettingsPatch); } catch { /* counted as failed below */ }
+    showOffFailure(!ok);
+  }
+  /** The notice above first run and Home alike (so it is seen on whichever is up): the provider is still on, with a retry. */
+  function showOffFailure(failed: boolean): void {
+    const note = $("provider-off");
+    note.hidden = !failed;
+    if (!failed) return;
+    $("provider-off-text").textContent = PROVIDER_STEP.offFailed;
+    $("provider-off-retry").textContent = PROVIDER_STEP.offRetry;
   }
   function startCheck(): void {
     const f = readProviderFields();
@@ -420,6 +439,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     render();
     void checkProvider();
   }
+  $("provider-off-retry").addEventListener("click", () => {
+    // The user's own click: not held back by an earlier choice. The notice stays until the write lands.
+    void turnOwnOff(true);
+  });
+  // A deliberate choice made in Home replaces whatever was true of the old state.
+  onProviderChoice(() => showOffFailure(false));
   function renderProvider(): { label: string; why: string } {
     const needs = $("w-p-needs");
     if (!needs.childElementCount) needs.replaceChildren(...PROVIDER_STEP.needs.map(t => el("li", { textContent: t })));

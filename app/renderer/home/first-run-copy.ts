@@ -100,6 +100,9 @@ export const PROVIDER_STEP = {
   check: "Agree and check the models",
   checking: "Checking the service…",
   fixPrompt: "Check the details above, then try again.",
+  /** The provider could not be switched off again after a check that was left: it is still on, and the way to retry. */
+  offFailed: "I couldn't switch your own provider off, so it is still on. Try again, or turn it off in Settings › Models & connections.",
+  offRetry: "Switch it off",
   needAddress: "Enter the service's full address first.",
   needKey: "Paste the API key first.",
   needModel: "Enter the name of a model first.",
