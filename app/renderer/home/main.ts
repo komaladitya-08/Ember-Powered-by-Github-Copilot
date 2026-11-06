@@ -35,6 +35,7 @@ import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
 import { modelDestination, recipientWords } from "./copy";
 import { mountProject } from "./project";
+import { taskModelChoices } from "./first-run-copy";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
@@ -723,7 +724,12 @@ function renderAgent(a: AgentStatus | null): void {
       }));
     };
     fill("m-conductor", a.models, a.conductorModel);
-    fill("m-worker", a.models.filter(m => m.vision), a.workerModel);
+    // No model reads images: every model is listed, the one in use selected, and the limit is said (FE #5).
+    const tasks = taskModelChoices(a.models, a.workerModel);
+    fill("m-worker", tasks.options, a.workerModel);
+    $("m-worker-label").textContent = tasks.label;
+    $("m-worker-note").textContent = tasks.note;
+    $("m-worker-note").hidden = !tasks.note;
   }
   $("usage").textContent = usageLine(a.usage);
   $("conversation-context").textContent = conversationContextLine(a.phase === "ready" ? a.conversationContext : undefined);

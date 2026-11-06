@@ -711,3 +711,7 @@ Same report: every click on a YouTube result was refused, since the 2026-11-03 c
 ### Supertonic (2026-11-05)
 
 Owner's choice by ear of six voices and then all ten of Supertonic 3's: its fifth, as a third value of `voice.naturalModel`, downloaded after an explicit choice, on the native addon only. On a laptop that refuses Kokoro at 0.78 of real time it comes to 0.25–0.33. Its weights are under the BigScience Open RAIL-M licence. **Before a public release:** ship a copy of that licence and its notices, put its use restrictions (Attachment A) in terms users agree to and tell them so, have a lawyer read restriction (l), medical advice, against a general assistant, and credit Parakeet (CC-BY-4.0).
+
+### First-run connection (2026-11-06, FE #2–#6)
+
+Audit FE #2 and #3 (own provider offered in setup; failure actions by reason) are implemented in full, #4 (models reviewed before the first request, premium multiplier shown), #5 (a text-only task model is explained, never an empty selector) and #6 (a failed setup fix is shown in its row). No §2 decision changes: the provider's consent card, key store and test are the existing ones (FEATURE_CONSENT_VERSION.provider), driven from first run. The own-provider step is an optional detour at step 3 (like the character and about-you steps), so the six-step route is unchanged.

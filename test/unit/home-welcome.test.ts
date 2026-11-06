@@ -150,7 +150,8 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "error", reason: "policy", signingIn: false, managedProvider: false })).toMatchObject({ primary: "continue", why: "", retry: false, skip: false });
     expect(signInView({ phase: "signed-out", signingIn: false, managedProvider: false, locked: true }))
       .toMatchObject({ primary: "continue", line: "Your organisation's policy locks me down, so I can't connect for now.", retry: false });
-    expect(SCRIPT).toContain("if (step === \"sign-in\" && signInFirst) { signIn(); return; }");
+    // Sign in (or another way on) is the step's button only while it can help; Continue otherwise.
+    expect(SCRIPT).toContain("if (step === \"sign-in\" && signInPrimary !== \"continue\") { perform(signInPrimary); return; }");
   });
 
   it("says who is signed in once connected", () => {

@@ -83,7 +83,32 @@
         <p class="w-status" id="w-signin-line" role="status"></p>
         <div class="w-code" id="w-code" aria-live="polite" hidden></div>
         <p class="w-code-row" id="w-signin-more" hidden><button type="button" class="btn quiet small" id="w-open-page" hidden></button><button type="button" class="btn quiet small" id="w-check-again">Check again</button></p>
+        <p class="hint" id="w-signin-help" hidden></p>
+        <p class="w-code-row" id="w-signin-actions" hidden></p>
         <p class="hint" id="w-signin-later" hidden></p>
+        <section class="w-models" id="w-models" aria-labelledby="w-models-h" hidden>
+          <h3 id="w-models-h">Models I'll use</h3>
+          <dl class="w-card" id="w-models-list"></dl>
+          <p class="hint" id="w-models-note"></p>
+          <p class="w-code-row"><button type="button" class="btn quiet small" id="w-models-change" aria-expanded="false" aria-controls="w-models-edit">Change</button></p>
+          <div id="w-models-edit" hidden>
+            <div class="field-row"><label for="w-m-conductor">Conversation model</label><select id="w-m-conductor"></select></div>
+            <div class="field-row"><label for="w-m-worker" id="w-m-worker-label">Model for tasks</label><select id="w-m-worker" aria-describedby="w-m-worker-note"></select></div>
+            <p class="hint" id="w-m-worker-note" hidden></p>
+            <p class="hint">A new choice applies from your next message.</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="w-pane" data-pane="provider" hidden>
+        <ul class="w-needs" id="w-p-needs" aria-label="What you need"></ul>
+        <div class="field-row"><label for="w-p-type">Provider</label><select id="w-p-type"><option value="openai">OpenAI-compatible</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option></select></div>
+        <div class="field-row"><label for="w-p-url">Address</label><input id="w-p-url" type="url" maxlength="2048" spellcheck="false" autocomplete="off" placeholder="https://api.openai.com/v1" aria-describedby="w-p-result"></div>
+        <div class="field-row"><label for="w-p-key">API key</label><input id="w-p-key" type="password" maxlength="8192" spellcheck="false" autocomplete="off" placeholder="Paste your key" aria-describedby="w-p-result"></div>
+        <div class="field-row"><label for="w-p-conductor">Conversation model</label><input id="w-p-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1" aria-describedby="w-p-result"></div>
+        <div class="field-row"><label for="w-p-worker">Model for tasks (optional, must understand images)</label><input id="w-p-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation" aria-describedby="w-p-result"></div>
+        <p class="hint" id="w-p-consent"></p>
+        <p class="w-status" id="w-p-result" role="status"></p>
       </div>
 
       <div class="w-pane" data-pane="checks" hidden>
@@ -222,8 +247,9 @@
         <div class="models" id="models" hidden>
           <label for="m-conductor">Conversation model</label>
           <select id="m-conductor"></select>
-          <label for="m-worker">Model for tasks (must understand images)</label>
-          <select id="m-worker"></select>
+          <label for="m-worker" id="m-worker-label">Model for tasks (must understand images)</label>
+          <select id="m-worker" aria-describedby="m-worker-note"></select>
+          <p class="hint models-hint" id="m-worker-note" hidden></p>
           <label for="m-worker-effort" id="m-worker-effort-label" hidden>Thinking effort for tasks</label>
           <select id="m-worker-effort" aria-describedby="m-worker-effort-hint" hidden></select>
           <p class="hint models-hint" id="m-worker-effort-hint" hidden>Higher effort can take longer. Changes apply to new tasks.</p>

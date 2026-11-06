@@ -4,6 +4,16 @@
 
 Reliability beta, prepared for validation before publication.
 
+### First run
+
+- **You can start with your own model provider.** The GitHub step now offers “Use my own provider”: enter its address,
+  API key and a model, agree to where your requests go, and Ember checks the service's models before it says it works.
+- **No Copilot on the account? Ember says what to do.** It offers your own provider, a different GitHub account, or your
+  administrator, instead of asking you to sign in to the same account again.
+- **You see which models Ember picked** (and their premium-request cost) before your first request, and can change them.
+  With no model that reads images, the tasks selector shows the one in use and says tasks work from text.
+- **A permission fix that fails says so in its row,** not only to screen readers.
+
 ### A real conversation on 5 November
 
 - **The microphone note names who gets your words.** It always said Copilot; it now names your own model provider or your

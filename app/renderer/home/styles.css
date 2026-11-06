@@ -193,15 +193,15 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* A choice in a list (Speak … out loud), laid out and styled as the model choices. */
 .choice { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; }
 /* A pop-up button, sized to its choice and set at the row's end; its height grows with the text size, as its words do. */
-.models select, .choice select, #text-size, #handle-position, #glass, #appearance {
+.models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance {
   justify-self: end; max-width: 100%; height: calc(28px * var(--text-scale)); padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
   -webkit-appearance: none; appearance: none; cursor: pointer;
   color: var(--fg); font: 500 13px var(--ember-font); letter-spacing: -0.003em;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f2ef' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E") right 10px center / 12px no-repeat, rgba(255, 255, 255, 0.07);
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-.models select:focus-visible, .choice select:focus-visible, #text-size:focus-visible, #handle-position:focus-visible, #glass:focus-visible, #appearance:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-.models select option, .choice select option, #text-size option, #handle-position option, #glass option, #appearance option { background: var(--surface-2); color: var(--fg); }
+.models select:focus-visible, #w-models select:focus-visible, #w-p-type:focus-visible, .choice select:focus-visible, #text-size:focus-visible, #handle-position:focus-visible, #glass:focus-visible, #appearance:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.models select option, #w-models select option, #w-p-type option, .choice select option, #text-size option, #handle-position option, #glass option, #appearance option { background: var(--surface-2); color: var(--fg); }
 /* Narrow: the choice goes under its label. */
 @media (max-width: 480px) { .choice { grid-template-columns: minmax(0, 1fr); } .choice select { justify-self: start; } }
 .models-hint { grid-column: 1 / -1; margin: 0; }
@@ -552,12 +552,12 @@ html { scroll-padding-top: 16px; }
    an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
 @media (forced-colors: active) {
   body:not(.first-run) .status-panel, .task-group, .task-groups > .empty, .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .consent, .managed, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
-  .card, .start, .models select, .choice select, #text-size, #handle-position, #glass, #appearance, .add-row input, .field-row > input { border: 1px solid ButtonText; }
+  .card, .start, .models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance, .add-row input, .field-row > input { border: 1px solid ButtonText; }
   .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
-  .models select, .choice select, #text-size, #handle-position, #glass, #appearance { appearance: auto; -webkit-appearance: menulist; background-image: none; }
+  .models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance { appearance: auto; -webkit-appearance: menulist; background-image: none; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
   .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }
@@ -695,7 +695,7 @@ html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: 
 html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-height: round(calc(20px * var(--text-scale)), 1px); }
 html[data-text-size] .terms code, html[data-text-size] .hint code { font-size: calc(12px * var(--text-scale)); }
 html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: round(calc(28px * var(--text-scale)), 1px); }
-html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size, html[data-text-size] #handle-position, html[data-text-size] #glass, html[data-text-size] #appearance { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .models select, html[data-text-size] #w-models select, html[data-text-size] #w-p-type, html[data-text-size] .choice select, html[data-text-size] #text-size, html[data-text-size] #handle-position, html[data-text-size] #glass, html[data-text-size] #appearance { font-size: calc(13px * var(--text-scale)); }
 html[data-text-size] .ext-tool-name { font-size: calc(12px * var(--text-scale)); line-height: round(calc(16px * var(--text-scale)), 1px); }
 html[data-text-size] .ext-list .tag, html[data-text-size] .ext-card .tag { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
 html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
@@ -898,6 +898,12 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: non
 .w-check-text, .w-try-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .w-check-text p, .w-try-text p { margin: 2px 0 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
 .w-try-text b, .w-check-text b { font-weight: 600; }
+.w-check-text p.w-check-fail { color: var(--red-text); }
+.w-models { margin-top: 16px; }
+.w-models h3 { margin: 0 0 6px; font: var(--type-headline); }
+.w-models .field-row { margin-top: 8px; }
+.w-models .field-row > select, #welcome .field-row > select { min-width: 0; }
+.w-needs { margin: 0 0 8px; padding-left: 18px; color: var(--muted); font: var(--type-callout); }
 .w-try-text .chord { margin-left: 6px; }
 .w-sym { flex: none; width: 20px; height: 20px; background: var(--yellow); -webkit-mask: var(--sym-failed) center / contain no-repeat; }
 .w-check[data-tone="fail"] .w-sym { background: var(--red); }
@@ -1038,7 +1044,7 @@ html.calm .w-card > * { transition-delay: 0s; }
   html.content { --bg: var(--surface-0); --sidebar-fill: #ebe7e4; }
   html.content ::placeholder { color: #6b6664; }
   html.content .conversation li.you p { color: var(--label); }
-  html.content :is(.models select, .choice select, #text-size, #handle-position, #glass, #appearance) {
+  html.content :is(.models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance) {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d1a1b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E");
   }
 }
