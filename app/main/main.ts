@@ -20,7 +20,7 @@ import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
-import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
+import { autonomyConsented, autonomyHeld, autonomyInForce, holdAutonomyOff, releaseAutonomyHold, ALL_SCOPES } from "./policy/autonomy";
 import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
@@ -1580,6 +1580,8 @@ function start(): void {
   /** Turned off before the audit log was opened (before the app was ready): written once it is. */
   const autonomyBeforeAudit: { on: boolean; via: string; verified: boolean }[] = [];
   settings.onChange(s => {
+    // Seen off: the hold (autonomy.ts holdAutonomyOff) has done its work; a new turn on is audited afresh.
+    if (s.autonomy.on !== true) releaseAutonomyHold();
     const on = autonomyInForce(s.autonomy, policy) !== null;
     // Whoever marked a change takes it with them, whether or not it changed anything (review of #127).
     const how = autonomyChangedBy ?? { via: "file" as const, verified: false };
@@ -1593,7 +1595,7 @@ function start(): void {
     } catch (err) {
       // Not recorded: it isn't turned on (fail closed); a turn off stands.
       log.warn("autonomy.audit_failed", { err });
-      if (on) { try { settings.update({ autonomy: { ...s.autonomy, on: false } }); } catch (e) { log.warn("autonomy.off_not_saved", { err: e }); } }
+      if (on) { try { settings.update({ autonomy: { ...s.autonomy, on: false } }); } catch (e) { holdAutonomyOff(); log.warn("autonomy.off_not_saved", { err: e }); } }
       return;
     }
     log.info("autonomy.changed", { on, via: how.via });
@@ -2828,7 +2830,7 @@ function start(): void {
     if (autonomyWasOn) {
       try { audit.write({ event: "autonomy", on: true, via: "file", verified: false, atStart: true }); } catch (err) {
         log.warn("autonomy.audit_failed", { err });
-        try { settings.update({ autonomy: { ...settings.get().autonomy, on: false } }); } catch (e) { log.warn("autonomy.off_not_saved", { err: e }); }
+        try { settings.update({ autonomy: { ...settings.get().autonomy, on: false } }); } catch (e) { holdAutonomyOff(); log.warn("autonomy.off_not_saved", { err: e }); }
       }
     }
     // Nothing is pruned while the policy can't be used: its retention can't be read then.
@@ -3145,7 +3147,7 @@ function start(): void {
       // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
       voiceTrust,
       autonomy: {
-        state: () => ({ on: settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
+        state: () => ({ on: !autonomyHeld() && settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
         // True once it is as asked and recorded (a turn on whose audit entry can't be written is undone: say so, not "Okay").
         set: (on, how) => {
           autonomyChangedBy = how;
