@@ -52,12 +52,15 @@ import { mountLearnedUndo } from "./learned-undo";
 import { mountMemoryCorrection } from "./memory-correction";
 import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
 import type { TaskEntry } from "../../shared/activity";
+import { STATUS_RETRIES, STATUS_RETRY_MS, StatusFence } from "./status-fence";
 
 declare global {
   interface Window { ember: EmberHomeApi }
 }
 
 const $ = (id: string) => document.getElementById(id)!;
+/** Where the startup snapshot meets the pushes that are newer than it. */
+const statusFence = new StatusFence();
 const PITCH: Record<string, string> = {
   cinder: "Coal critter with ember eyes and helping hands",
   wisp: "A living flame; its fire is its mood",
@@ -466,7 +469,7 @@ function renderSettingsNotice(notice: string | null): void {
   el.hidden = !notice;
   el.textContent = notice ?? "";
 }
-window.ember.onSettingsNotice(renderSettingsNotice);
+window.ember.onSettingsNotice(n => { statusFence.pushedNotice(n); renderSettingsNotice(n); });
 
 // ───── Organisation policy ─────
 let managed = new Set<string>();
@@ -843,7 +846,18 @@ window.ember.onSignInProgress(p => {
 void window.ember.agentStatus().then(renderAgent);
 window.ember.onAgentStatus(renderAgent);
 
-void window.ember.getStatus().then(render);
+// The snapshot never puts back what a newer push already set (status-fence.ts); a failed one is asked for again.
+function loadStatus(): Promise<Status> {
+  const ticket = statusFence.begin();
+  return window.ember.getStatus().then(st => statusFence.apply(ticket, st));
+}
+function startStatus(attempt = 0): void {
+  loadStatus().then(render, () => {
+    if (attempt < STATUS_RETRIES) setTimeout(() => startStatus(attempt + 1), STATUS_RETRY_MS * (attempt + 1));
+  });
+}
+startStatus();
+window.ember.onSettingsChanged(s => statusFence.pushedSettings(s));
 window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
 window.ember.onSettingsChanged(targetsSettings);
@@ -1919,4 +1933,4 @@ window.ember.onVoiceProgress(p => {
 void window.ember.voiceStatus().then(renderVoice);
 window.ember.onVoiceStatus(renderVoice);
 window.ember.onSettingsChanged(applyVoiceSettings);
-void window.ember.getStatus().then(st => applyVoiceSettings(st.settings));
+loadStatus().then(st => applyVoiceSettings(st.settings), () => { /* startStatus asks again; pushes follow changes */ });
