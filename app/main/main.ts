@@ -20,7 +20,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
-import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1385,6 +1385,7 @@ function start(): void {
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
     match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips },
     ...(voice ? { natural: voice.naturalStatus } : {}),
+    ...(voice ? { clear: voice.clearStatus } : {}),
     naturalModels: availableNaturalModels,
   });
   let lastListenStatus = "";
@@ -1765,7 +1766,7 @@ function start(): void {
           // Said while a reply was on its way: that reply stops, and this is answered with it in mind (host.ts replaceTurn).
           // A permission question stays up: its tool is waiting, and only its own answer ends it.
           const replaces = e.window === "conversation" && !confirmer?.waiting;
-          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: !!manual || !voice?.rejectsSpeakers, spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
+          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: heardUnchecked(e, !!manual, !!voice?.rejectsSpeakers), spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
         }
         break;
       }
@@ -3308,6 +3309,8 @@ function start(): void {
         syncListenOnce();
       },
     });
+    // Before anything starts listening, so the voice process loads the clearer recognizer the first time.
+    voice.setClearHearing(settings.get().voice.clearHearing);
     if (settings.get().voice.muted) voice.setMuted(true);
     const wantVoice = () => policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
@@ -3332,6 +3335,7 @@ function start(): void {
       voice?.setLearning(on);
     });
     settings.onChange(next => applyNaturalVoicePreference(voice, next.voice));
+    settings.onChange(next => voice?.setClearHearing(next.voice.clearHearing));
     let conversations = settings.get().voice.conversation;
     settings.onChange(next => {
       if (next.voice.conversation === conversations) return;

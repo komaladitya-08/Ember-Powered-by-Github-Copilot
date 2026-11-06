@@ -152,19 +152,13 @@ describe("Ember's voice process", () => {
     expect(fake.freed).toEqual(["kitten"]);
   });
 
-  it("reuses a slow Kitten verdict without loading it, and retries after a week", async () => {
+  it("times a slow Kitten again at the next start: a busy moment doesn't cost the default voice for a week", async () => {
     const model = folder("kitten-nano-en-v0_8-fp32", ["model.fp32.onnx", "voices.bin", "tokens.txt", "espeak-ng-data"]);
     fake.cost.kitten = 0.9;
     let p = await speechProcess();
     p.init({ model });
     expect(p.sent()).toEqual([expect.objectContaining({ type: "error", reason: "slow" })]);
     fake.made = [];
-    p = await speechProcess();
-    p.init({ model });
-    expect(fake.made).toEqual([]);
-    expect(p.sent()).toEqual([expect.objectContaining({ type: "error", reason: "slow", message: expect.stringMatching(/timed before/) })]);
-    const now = Date.now();
-    vi.spyOn(Date, "now").mockReturnValue(now + 7 * 24 * 3_600_000);
     fake.cost.kitten = 0.25;
     p = await speechProcess();
     p.init({ model });

@@ -11,10 +11,17 @@ const SOUND_RMS = 0.0005;
 /** Sound counts as over after this long (ms): the gaps between a song's lines and a video's sentences aren't silence. */
 const HOLD_MS = 2500;
 const LOOK_MS = 200;
+/**
+ * Ember's voice stays in the output a moment after the page says it stopped. Counted as other sound, it turned the answer
+ * on in the gap between two of Ember's sentences, where it then stood through the whole of the next (log of 2026-11-05
+ * 03:33:01–03:33:24), and everything said over it was thrown away.
+ */
+const EMBER_TAIL_MS = 1000;
 
 /** Follows the output's level; says when the answer to "is other sound playing?" changes. */
 export class OutputBusy {
   private soundAt = Number.NEGATIVE_INFINITY;
+  private emberAt = Number.NEGATIVE_INFINITY;
   private busy = false;
 
   constructor(private tell: (on: boolean) => void) {}
@@ -24,7 +31,8 @@ export class OutputBusy {
    * nothing can be told, so the answer stands until it ends.
    */
   look(rms: number, emberSpeaking: boolean, now: number): void {
-    if (emberSpeaking) { this.soundAt = Number.NEGATIVE_INFINITY; return; }
+    if (emberSpeaking) { this.soundAt = Number.NEGATIVE_INFINITY; this.emberAt = now; return; }
+    if (now - this.emberAt < EMBER_TAIL_MS) return;
     if (rms >= SOUND_RMS) this.soundAt = now;
     this.set(now - this.soundAt < HOLD_MS);
   }

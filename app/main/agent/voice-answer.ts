@@ -26,6 +26,14 @@
  * own 0.15 s yes 17.5 % (95 %). PLAN.md §2 "Approvals" records the owner's choice.
  */
 export const SHORT_YES_FLOOR = 0.5;
+
+/**
+ * Is a heard request not to count as the user's own words for commands (UserRequest.voiceUnchecked)? So when a click opened
+ * the window, where Ember can't tell the user from its speakers, and over other sound without a full match: there
+ * OVER_SOUND_MATCH only lets it be heard, and other voices score above it, so a song's "delete…" must not pass for the user's.
+ */
+export const heardUnchecked = (u: { overSound?: boolean; verified?: boolean }, manual: boolean, rejectsSpeakers: boolean): boolean =>
+  manual || !rejectsSpeakers || (u.overSound === true && u.verified !== true);
 /**
  * How long after the owner's verified request a task's short yeses are trusted: 10 minutes. Most tasks ask their
  * questions within a few minutes of being asked (a worker stops at 20); it is the window in which host.ts already folds

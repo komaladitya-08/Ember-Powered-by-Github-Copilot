@@ -37,7 +37,7 @@ export interface ModelFile {
 }
 
 /** One of the speech models (not the natural voice, which is optional and fetched on its own: NATURAL_VOICE). */
-export type SpeechModel = ModelFile & { id: Exclude<keyof ModelPaths, "natural"> };
+export type SpeechModel = ModelFile & { id: Exclude<keyof ModelPaths, "natural" | "clear" | "supertonic"> };
 
 /** Ember's default native voice; the archive carries its compatible style table, phonemiser data and Apache licence. */
 export const DEFAULT_VOICE: SpeechModel = {
@@ -108,7 +108,35 @@ export const NATURAL_VOICE: ModelFile = {
   target: "kokoro-multi-lang-v1_0",
 };
 
-const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE];
+/**
+ * Supertonic 3 (int8), the optional voice the owner chose by ear on 2026-11-05 (its voice 5). On a laptop that gives Kokoro
+ * 0.78 of real time on 4 threads and refuses it, this comes to 0.25–0.33 on 2. Native addon only (it needs a generation
+ * config the C API binding doesn't pass). Its weights are under the BigScience Open RAIL-M licence: redistribution is
+ * allowed, but its use restrictions must be passed on to users. PLAN.md §10 "Supertonic" lists what a release must do first.
+ */
+export const SUPERTONIC_VOICE: ModelFile = {
+  id: "supertonic", name: "Ember's Supertonic voice (Supertonic 3)", kind: "tar.bz2", license: "OpenRAIL-M",
+  url: `${RELEASES}/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2`,
+  sha256: "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427", bytes: 128_774_318,
+  target: "sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+};
+
+/**
+ * The clearer recognizer: NVIDIA's Parakeet TDT 0.6B v2 (int8), optional, native builds only, fetched once the user turns
+ * on **Hear me more clearly** (Settings › Voice). It writes the requests themselves; Moonshine still does the quick checks
+ * (the name, a cut-in, "stop"). On 240 requests in Kokoro's US, UK and Hindi-accented voices, made to sound like a laptop's
+ * microphone (room, fan noise at 12 dB, quiet; 2026-11-05): 2.8 % of words wrong against Moonshine base's 6.0 %, and 3.8 %
+ * against 8.4 % for the Hindi-accented voices. It writes the name as "Ember" where Moonshine wrote "Remember", "Amber" or
+ * "Investop". About 300 ms a request against 87, and 550 MB more memory.
+ */
+export const CLEAR_SPEECH: ModelFile = {
+  id: "clear", name: "Clearer speech recognition (Parakeet TDT 0.6B v2, English)", kind: "tar.bz2", license: "CC-BY-4.0",
+  url: `${RELEASES}/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2`,
+  sha256: "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad", bytes: 482_468_385,
+  target: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+};
+
+const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE, SUPERTONIC_VOICE, CLEAR_SPEECH];
 
 /** A pinned download that isn't a speech model (the memory model's files): in place and verified like one. */
 export type PinnedFile = ModelDownload & Pick<ModelFile, "bytes" | "license">;

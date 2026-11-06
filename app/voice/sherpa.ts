@@ -9,9 +9,13 @@
 import path from "node:path";
 import { isNumberWord } from "../shared/number-words";
 import { MIN_TRANSCRIBE_SAMPLES, Ring, SAMPLE_RATE, type VoiceBackend } from "./engine";
-import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type KwsStream, type OfflineStream, type ProviderCache, type ProviderTry, type RuntimeOptions, type Sherpa } from "./runtime";
+import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type KwsStream, type OfflineStream, type Recognizer, type ProviderCache, type ProviderTry, type RuntimeOptions, type Sherpa } from "./runtime";
 
 export interface ModelPaths {
+  /** The clearer recognizer (models.ts CLEAR_SPEECH), only while it is wanted and verified. */
+  clear?: string;
+  /** Only so that the Supertonic voice is a model like the others: the speech process is told its folder apart. */
+  supertonic?: string;
   kws: string;
   vad: string;
   asr: string;
@@ -105,7 +109,7 @@ export function recognizerPieces(samples: Float32Array): Float32Array[] {
  * to type "ha ha ha" is meaningful, even when the same pattern could also be a model loop. Keyword checks still
  * remove loops so they can hear a repeated stop phrase.
  */
-export function withoutRepeats(text: string, purpose?: "keyword"): string {
+export function withoutRepeats(text: string, purpose?: "keyword" | "request"): string {
   if (purpose !== "keyword" && /\b(?:say|write|right|type|spell|repeat|dictate|transcribe|quote|named|called)\b/i.test(text)) return text;
   const words = text.split(/\s+/).filter(Boolean);
   const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
@@ -167,6 +171,8 @@ export interface BackendInfo {
   tried: ProviderTry[];
   /** The models the native build couldn't make, made on WebAssembly instead (loadModel); main logs a warning for them. */
   wasmModels?: string[];
+  /** The clearer recognizer writes the requests (ModelPaths.clear loaded). */
+  clear?: boolean;
 }
 
 /**
@@ -227,8 +233,22 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
       { cache: { store: opts.providerCache ?? providerCache(), key: modelKey(a("encoder_model.ort"), list, asrThreads) }, free: r => r.free() }) };
   });
   const asr = chosen.made;
+  // The clearer recognizer, on the same threads: what it can't do, Moonshine goes on doing. Its first decode is the slow one,
+  // so it is made now rather than on the first request.
+  let clear: Recognizer | null = null;
+  if (models.clear && sherpa.createNemo) {
+    const c = (f: string) => path.join(models.clear!, f);
+    try {
+      clear = sherpa.createNemo({ encoder: c("encoder.int8.onnx"), decoder: c("decoder.int8.onnx"), joiner: c("joiner.int8.onnx"), tokens: c("tokens.txt") }, { provider: "cpu", numThreads: chosen.asrThreads });
+      const s = clear.createStream();
+      try { s.acceptWaveform(SAMPLE_RATE, probe); clear.decode(s); clear.getResult(s); } finally { s.free(); }
+    } catch (err) {
+      clear = null;
+      opts.onError?.(err);
+    }
+  }
   const detail = onWasm.length ? `${sherpa.detail}; on WebAssembly: ${onWasm.join(", ")}` : sherpa.detail;
-  const info: BackendInfo = { backend: sherpa.backend, detail, provider: chosen.provider, threads: chosen.asrThreads, tried: chosen.tried, ...(onWasm.length ? { wasmModels: [...onWasm] } : {}) };
+  const info: BackendInfo = { backend: sherpa.backend, detail, provider: chosen.provider, threads: chosen.asrThreads, tried: chosen.tried, ...(onWasm.length ? { wasmModels: [...onWasm] } : {}), ...(clear ? { clear: true } : {}) };
 
   const spotIn = (stream: KwsStream, frame: Float32Array): string[] => {
     stream.acceptWaveform(SAMPLE_RATE, frame);
@@ -370,18 +390,21 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     resetVad: () => reset(),
     transcribe(samples, purpose) {
       if (samples.length < MIN_TRANSCRIBE_SAMPLES) return "";
+      const rec = purpose === "request" && clear ? clear : asr;
       const words: string[] = [];
       for (const piece of recognizerPieces(samples)) {
         if (piece.length < MIN_TRANSCRIBE_SAMPLES) continue;
         let s: OfflineStream | null = null;
         try {
-          s = asr.createStream();
+          s = rec.createStream();
           s.acceptWaveform(SAMPLE_RATE, piece);
-          asr.decode(s);
-          const text = withoutRepeats(String(asr.getResult(s).text ?? "").trim(), purpose);
+          rec.decode(s);
+          const text = withoutRepeats(String(rec.getResult(s).text ?? "").trim(), purpose);
           if (text) words.push(text);
         } catch (err) {
           opts.onError?.(err);
+          // The clearer recognizer failed on this: the request is heard all the same, and it isn't tried again.
+          if (rec === clear) { clear = null; s?.free(); s = null; return this.transcribe(samples, purpose); }
           return "";
         } finally {
           s?.free();
@@ -392,7 +415,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     before: seg => before.get(seg) ?? null,
     info,
     free() {
-      micStream.free(); monStream?.free(); kws.free(); vad.free(); check.free(); asr.free();
+      micStream.free(); monStream?.free(); kws.free(); vad.free(); check.free(); asr.free(); clear?.free();
     },
   };
 }

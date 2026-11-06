@@ -24,6 +24,20 @@ export function kittenSpec(dir: string): TtsSpec {
   return { kind: "kitten", model: path.join(dir, "model.fp32.onnx"), voices: path.join(dir, "voices.bin"), tokens: path.join(dir, "tokens.txt"), dataDir: path.join(dir, "espeak-ng-data"), lengthScale: 1.0 };
 }
 
+/** The Supertonic voice the owner chose by ear (the fifth of its ten). */
+export const SUPERTONIC_SPEAKER = 4;
+
+/** Supertonic's files in its folder. */
+export function supertonicSpec(dir: string): TtsSpec {
+  const at = (f: string) => {
+    const p = path.join(dir, f);
+    if (!fs.existsSync(p)) throw new Error(`the Supertonic voice is missing ${f}`);
+    return p;
+  };
+  return { kind: "supertonic", model: at("vector_estimator.int8.onnx"), durationPredictor: at("duration_predictor.int8.onnx"), textEncoder: at("text_encoder.int8.onnx"),
+    vocoder: at("vocoder.int8.onnx"), ttsJson: at("tts.json"), unicodeIndexer: at("unicode_indexer.bin"), voiceStyle: at("voice.bin") };
+}
+
 /** Kokoro's speaker (af_heart in kokoro-multi-lang v1.0's voices.bin; af_bella in kokoro-en v0.19's). */
 const KOKORO_SID: Record<string, number> = { "kokoro-int8-multi-lang-v1_0": 3, "kokoro-multi-lang-v1_0": 3, "kokoro-en-v0_19": 1, "kokoro-int8-en-v0_19": 1 };
 

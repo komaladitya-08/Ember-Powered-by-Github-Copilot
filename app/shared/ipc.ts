@@ -190,6 +190,7 @@ export interface VoiceStatus {
   match?: VoiceMatchStatus;
   /** The selected natural voice: what became of turning it on, shown under its switch. */
   natural?: NaturalVoiceStatus;
+  clear?: ClearHearingStatus;
   /** Optional voices supported by this computer's selected native backend. No model is downloaded by listing them. */
   naturalModels?: Settings["voice"]["naturalModel"][];
   listenOnce?: ListenOnceStatus;
@@ -202,14 +203,20 @@ export interface VoiceStatus {
  * `too-slow`; `failed` (the download failed: Try again); `wont-load` (downloaded, but it wouldn't load); `needs-native`
  * (Ember's faster speech didn't load on this computer, and Kokoro needs it).
  */
+/** Hear me more clearly (Settings › Voice): how the clearer recognizer stands. */
+export type ClearHearingStatus =
+  | { state: "off" | "starting" | "on" | "wont-load" | "needs-native" }
+  | { state: "downloading"; percent: number }
+  | { state: "failed"; detail: string };
+
 export type NaturalVoiceStatus = (
   | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
   | { state: "downloading"; percent: number }
   | { state: "failed"; detail: string }) & {
     /** Effective requested voice; legacy natural:false selects the Kitten baseline. */
-    model?: "kitten" | "kokoro";
+    model?: "kitten" | "kokoro" | "supertonic";
     /** Current/last usable local engine, including an explicit system-voice fallback. */
-    voice?: "kitten" | "kokoro" | "system";
+    voice?: "kitten" | "kokoro" | "supertonic" | "system";
   };
 
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */

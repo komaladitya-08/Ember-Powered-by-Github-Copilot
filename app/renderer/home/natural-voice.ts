@@ -20,7 +20,7 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
   let available: readonly NaturalModel[] = [];
   let failure = "";
   let said = "";
-  const allowed = (model: NaturalModel) => model === "kitten" || available.includes("kokoro");
+  const allowed = (model: NaturalModel) => model === "kitten" || available.includes(model);
   function draw(): void {
     const current = effectiveVoiceModel(settings?.voice);
     const changed = draft !== current;
@@ -28,7 +28,7 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
     select.disabled = busy || deps.managed() || !settings;
     for (const option of select.options) option.disabled = !allowed(option.value as NaturalModel);
     select.value = draft;
-    hint.textContent = allowed(draft) ? naturalModelHint(draft) : "Kokoro isn't available on this computer. Choose Kitten Nano to use the default voice, with the system voice as its fallback.";
+    hint.textContent = allowed(draft) ? naturalModelHint(draft) : `${NATURAL_CHOICES[draft].name} isn't available on this computer. Choose Kitten Nano to use the default voice, with the system voice as its fallback.`;
     choiceStatus.textContent = busy ? "Saving voice choice…" : failure || (changed ? `Not saved. Current choice: ${NATURAL_CHOICES[current].name}.` : "");
     use.hidden = !changed;
     use.disabled = busy || deps.managed() || !settings || !allowed(draft);
@@ -37,7 +37,7 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
     downloadRow.hidden = !settings || status?.model !== undefined && status.model !== current || !(status?.state === "needs-voice" || current === "kitten" && status?.state === "failed");
     download.disabled = busy || deps.managed();
     const hadRetry = document.activeElement === retry;
-    retry.hidden = !view.retry || current !== "kokoro" || !allowed(current);
+    retry.hidden = !view.retry || current === "kitten" || !allowed(current);
     retry.disabled = busy || deps.managed() || !allowed(current);
     if (hadRetry && retry.hidden) select.focus();
     const state = `${current}:${status?.model ?? ""}:${status?.state ?? ""}:${status?.voice ?? ""}`;
@@ -51,7 +51,7 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
     failure = "";
     draw();
     try {
-      const ok = await deps.save({ voice: { ...settings.voice, natural: draft === "kokoro", naturalModel: draft } });
+      const ok = await deps.save({ voice: { ...settings.voice, natural: draft !== "kitten", naturalModel: draft } });
       if (!ok) failure = "Couldn't save the voice choice. Your current voice is kept.";
     } catch { failure = "Couldn't save the voice choice. Your current voice is kept."; }
     finally {
@@ -65,7 +65,7 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
     }
   }
   select.addEventListener("change", () => {
-    if (select.value !== "kokoro" && select.value !== "kitten") return;
+    if (select.value !== "kokoro" && select.value !== "supertonic" && select.value !== "kitten") return;
     draft = select.value;
     failure = "";
     draw();

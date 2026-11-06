@@ -6,6 +6,19 @@ Reliability beta, prepared for validation before publication.
 
 ### A real conversation on 5 November
 
+- **Ember hears you over its own voice again.** The tail of its own voice counted as other sound playing, and from then on
+  it threw away everything said without its name, right through its next sentence.
+- **Talk over a song.** With a song or video on, Ember now also hears you without its name once it knows your voice.
+- **A more natural voice.** Choose **Supertonic** under Settings › Voice (129 MB). It sounds more natural than Kitten Nano
+  and is fast enough where Kokoro isn't. Windows and macOS only.
+- **Hear me more clearly.** A new switch under Settings › Voice downloads a bigger speech model (482 MB) that makes about
+  half as many mistakes, above all with an accent or across a room. It takes about 0.2 s longer a request and 550 MB more
+  memory, and it runs on your computer like everything else Ember hears.
+- **Close, Try again and Stop work on a task's card.** A click that lasted longer than a moment was thrown away, because
+  the button shrinks a little as it's pressed and Ember took that for the button having moved.
+- **Ember clicks videos on YouTube again.** It refused any page that changed while it worked (a hover preview playing) and
+  any link with the same name as another (a video's thumbnail and title). A step that needs no question now only checks
+  the control itself. Risky steps and anything in a dialog are bound as tightly as before.
 - **Ember keeps listening.** Once you've called it, just keep talking: no name, no eight seconds, no limit on turns. It goes
   on hearing you while it speaks and while its tasks work, until you say “That's all” or 30 seconds after everything has gone
   quiet. **Keep listening after I call Ember** under Voice turns it off.

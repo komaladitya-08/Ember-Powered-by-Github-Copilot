@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
+import { CLEAR_SPEECH, SUPERTONIC_VOICE, ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
 import type { ModelPaths } from "../voice/sherpa";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
@@ -26,7 +26,7 @@ import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
 import { readLevel, type SoundLevel } from "../shared/level";
 import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio, type SpeechPlayed } from "../shared/voice";
-import type { ListenOnceStatus, NaturalVoiceStatus } from "../shared/ipc";
+import type { ClearHearingStatus, ListenOnceStatus, NaturalVoiceStatus } from "../shared/ipc";
 import type { Logger } from "./logger";
 import { pageUrl } from "./page-url";
 
@@ -248,6 +248,12 @@ export class VoiceService {
   private enrolling = false;
   /** ASR may retry through WebAssembly. Neural synthesis is native-only and falls back to the local system voice. */
   private wasmOnly = { voice: false };
+  /** Hear me more clearly: wanted, what became of it, its download, and whether the running voice process has it. */
+  private clearWanted = false;
+  private clear: ClearHearingStatus = { state: "off" };
+  private clearFetch: Promise<void> | null = null;
+  private clearAbort: AbortController | null = null;
+  private clearLoaded = false;
   /**
    * The natural voice: being fetched, or not to be used this session (it was too slow here, or couldn't be fetched);
    * `switchVoice`: fetched, so the speech process starts again with it once it has nothing left to say.
@@ -258,7 +264,9 @@ export class VoiceService {
   private naturalRetiring = false;
   /** The explicit optional Kokoro override; Kitten needs no toggle or separate download. */
   private naturalWanted: boolean;
-  private currentVoice: "kitten" | "kokoro" | "system" = "system";
+  private currentVoice: "kitten" | "kokoro" | "supertonic" | "system" = "system";
+  /** Which optional voice is wanted while naturalWanted. */
+  private optional: "kokoro" | "supertonic" = "kokoro";
   private naturalOff = false;
   private switchVoice = false;
   /** What became of the natural voice, as Home shows it while it is wanted (naturalStatus). */
@@ -274,7 +282,8 @@ export class VoiceService {
   private speakingPage: "mic" | "speaker" | null = null;
 
   constructor(private o: VoiceOptions) {
-    this.naturalWanted = !!o.naturalVoice && (o.naturalModel ?? "kokoro") === "kokoro";
+    this.naturalWanted = !!o.naturalVoice && o.naturalModel !== "kitten";
+    if (o.naturalModel === "supertonic") this.optional = "supertonic";
     this.naturalOff = this.naturalWanted && o.naturalSupported === false;
     this.bundledRoot = o.bundled ? o.modelsRoot : null;
     this.userRoot = o.bundled?.userRoot ?? o.modelsRoot;
@@ -474,6 +483,72 @@ export class VoiceService {
     return !!this.downloading;
   }
 
+  /** Hear me more clearly, as it stands (Home shows it under its switch). */
+  get clearStatus(): ClearHearingStatus {
+    return this.clear;
+  }
+
+  private setClear(s: ClearHearingStatus): void {
+    this.clear = s;
+    this.o.onNatural?.(this.naturalStatus);
+  }
+
+  /** Hear me more clearly turned on or off: fetched first if it must be, and listening starts again with it or without. */
+  setClearHearing(on: boolean): void {
+    if (on === this.clearWanted) return;
+    this.clearWanted = on;
+    this.o.log.info("voice.clear_wanted", { on });
+    if (on) { this.checkClear(); return; }
+    this.clearAbort?.abort();
+    this.clearAbort = null;
+    this.setClear({ state: "off" });
+    if (this.clearLoaded) this.listenAgain();
+  }
+
+  private checkClear(): void {
+    if (!this.clearWanted || this.clearFetch) return;
+    if (!this.native) { this.setClear({ state: "needs-native" }); return; }
+    if (this.rootOf("clear") !== null) {
+      if (this.clearLoaded) { this.setClear({ state: "on" }); return; }
+      this.setClear({ state: "starting" });
+      this.listenAgain();
+      return;
+    }
+    const abort = new AbortController();
+    this.clearAbort = abort;
+    let failed = false;
+    this.setClear({ state: "downloading", percent: 0 });
+    let shown = 0;
+    const progress = (bytes: number) => {
+      const percent = Math.min(99, Math.floor((bytes / CLEAR_SPEECH.bytes) * 100));
+      if (percent === shown || abort.signal.aborted) return;
+      shown = percent;
+      this.setClear({ state: "downloading", percent });
+    };
+    this.clearFetch = ensureModel(this.userRoot, CLEAR_SPEECH, this.o.downloader ?? electronDownloader, progress, abort.signal)
+      .then(() => { this.o.log.info("voice.clear_ready", { bytes: CLEAR_SPEECH.bytes }); })
+      .catch((err: unknown) => {
+        if (abort.signal.aborted) return;
+        const message = err instanceof Error ? err.message : String(err);
+        this.o.log.warn("voice.clear_download_failed", { message });
+        this.setClear({ state: "failed", detail: downloadHelp(message, CLEAR_SPEECH.bytes) });
+        failed = true;
+      })
+      .finally(() => {
+        this.clearFetch = null;
+        // A failure waits for the user. A cancelled download may have been turned on again while it cleaned up: that
+        // turn found this one still running, so what is wanted now is looked at here.
+        if (!failed) this.checkClear();
+      });
+  }
+
+  /** The voice process starts again, so that it loads the recognizers wanted now. */
+  private listenAgain(): void {
+    if (!this.proc) return;
+    this.teardown();
+    void this.start();
+  }
+
   /** Which folder model `id` is used from: the one that came with Ember, else the user's own; null when in neither. */
   private rootOf(id: ModelId): string | null {
     if (this.bundledRoot && !this.notBundled.has(id) && modelReady(this.bundledRoot, id)) return this.bundledRoot;
@@ -482,8 +557,10 @@ export class VoiceService {
 
   /** Each model's path, from the folder it is used from (the user's own for one that isn't in anywhere). */
   private paths(): ModelPaths {
-    const at = (id: keyof ModelPaths) => modelPaths(this.rootOf(id) ?? this.userRoot)[id];
-    return { kws: at("kws"), vad: at("vad"), asr: at("asr"), tts: at("tts"), speaker: at("speaker"), natural: at("natural") };
+    const at = (id: Exclude<keyof ModelPaths, "clear" | "supertonic">) => modelPaths(this.rootOf(id) ?? this.userRoot)[id];
+    const clearRoot = this.clearWanted && this.native ? this.rootOf("clear") : null;
+    return { kws: at("kws"), vad: at("vad"), asr: at("asr"), tts: at("tts"), speaker: at("speaker"), natural: at("natural"),
+      ...(clearRoot !== null ? { clear: path.join(clearRoot, CLEAR_SPEECH.target) } : {}) };
   }
 
   /** The owner's voiceprint for the voice process: none while its model isn't in (Voice Match is off then, not deaf). */
@@ -723,16 +800,29 @@ export class VoiceService {
 
   /** Selects the optional model; choosing it while off downloads nothing. An in-flight old model never changes this choice. */
   setNaturalModel(model: NaturalVoiceModel): void {
-    if (model === "kitten") this.setNaturalVoice(false);
+    if (model === "kitten") { this.setNaturalVoice(false); return; }
+    if (model === this.optional) return;
+    this.optional = model;
+    if (!this.naturalWanted) return;
+    this.cancelNaturalDownload();
+    this.naturalOff = this.o.naturalSupported === false;
+    this.ttsFailures = 0;
+    this.checkNatural();
+  }
+
+  /** The optional voice wanted, as a download. */
+  private get naturalFile(): typeof NATURAL_VOICE {
+    return this.optional === "supertonic" ? SUPERTONIC_VOICE : NATURAL_VOICE;
   }
 
   private get selectedVoice(): NaturalVoiceModel {
-    return this.naturalWanted ? "kokoro" : "kitten";
+    return this.naturalWanted ? this.optional : "kitten";
   }
 
   private get naturalPath(): string | null {
-    const root = this.rootOf("natural");
-    return root === null ? null : path.join(root, NATURAL_VOICE.target);
+    const file = this.naturalFile;
+    const root = this.rootOf(file.id);
+    return root === null ? null : path.join(root, file.target);
   }
 
   /** Effective requested model and actual local engine, including baseline Kitten when the legacy toggle is false. */
@@ -776,7 +866,7 @@ export class VoiceService {
     // Turned off and on again while it downloads: the download carries on.
     if (this.naturalFetch) { this.setNatural(this.naturalRetiring ? { state: "checking" } : { state: "downloading", percent: this.naturalPercent }); return; }
     if (this.naturalPath !== null) {
-      if (this.ttsInfo?.voice === "kokoro") { this.setNatural({ state: "on" }); return; }
+      if (this.ttsInfo?.voice === this.optional) { this.setNatural({ state: "on" }); return; }
       this.switchVoice = true;
       this.switchWhenIdle();
       if (this.tts) { this.setNatural({ state: "checking" }); return; }
@@ -916,7 +1006,7 @@ export class VoiceService {
       if (this.tts !== tts) return;
       const used = this.ttsInfo?.voice;
       this.ttsInfo = null;
-      if ((used === "kokoro" || (!tts.ready && this.naturalWanted && this.naturalPath && !this.naturalOff)) && this.native) {
+      if ((used === "kokoro" || used === "supertonic" || (!tts.ready && this.naturalWanted && this.naturalPath && !this.naturalOff)) && this.native) {
         this.kokoroFailed();
         return;
       }
@@ -931,7 +1021,7 @@ export class VoiceService {
       const pending = this.ttsPending.get(m.id);
       if (m.id <= this.ttsHushed || !pending) return;
       if (m.type === "audio") { pending.remaining = m.remaining; pending.send(VOICE.audio, { id: m.id, samples: m.samples, rate: m.rate } satisfies SpeechAudio); return; }
-      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro") this.kokoroFailed(); else this.voiceFailed(); return; }
+      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro" || this.ttsInfo?.voice === "supertonic") this.kokoroFailed(); else this.voiceFailed(); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
       if (!this.saidSpeaking) { this.awaitingSpeechStart = true; this.speakingUntil = Date.now() + SPEECH_START_MS; }
@@ -940,7 +1030,7 @@ export class VoiceService {
       this.idleVoice();
     });
     const natural = this.optionalVoiceReady ? this.naturalPath : null;
-    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.o.capiDir ? { capiDir: this.o.capiDir } : {}) });
+    proc.postMessage({ type: "init", model: this.paths().tts, natural, naturalVoice: this.optional, ...(this.o.capiDir ? { capiDir: this.o.capiDir } : {}) });
     return proc;
   }
 
@@ -976,9 +1066,9 @@ export class VoiceService {
     }
     // Downloaded already (and not loaded by this process: it started before): it starts again with it once idle.
     if (this.naturalPath !== null) { this.setNatural({ state: "ready" }); this.switchVoice = true; this.switchWhenIdle(); return; }
-    const file = NATURAL_VOICE, epoch = ++this.naturalEpoch, abort = new AbortController();
+    const file = this.naturalFile, epoch = ++this.naturalEpoch, abort = new AbortController();
     this.naturalAbort = abort;
-    this.o.log.info("voice.natural_fetching", { bytes: file.bytes, model: "kokoro" });
+    this.o.log.info("voice.natural_fetching", { bytes: file.bytes, model: this.optional });
     this.setNatural({ state: "downloading", percent: 0 });
     // Into the user's own models folder (one that came with Ember is never changed).
     this.naturalPercent = 0;
@@ -1143,13 +1233,20 @@ export class VoiceService {
       if (m.type === "alive") return;
       if (m.type === "ready") {
         const b = m.backend;
-        this.o.log.info("voice.ready", { loadMs: m.loadMs, ...(b ? { backend: b.backend, detail: b.detail, provider: b.provider, threads: b.threads, tried: b.tried } : {}) });
+        this.o.log.info("voice.ready", { loadMs: m.loadMs, ...(b?.clear ? { clear: true } : {}), ...(b ? { backend: b.backend, detail: b.detail, provider: b.provider, threads: b.threads, tried: b.tried } : {}) });
         // A model the native build couldn't make runs on WebAssembly (slower): worth a warning, it may be the build's fault.
         if (b?.wasmModels?.length) this.o.log.warn("voice.model_wasm_fallback", { models: b.wasmModels, detail: b.detail });
+        this.clearLoaded = !!b?.clear;
+        if (this.clearWanted && !this.clearFetch && this.clear.state !== "failed") {
+          this.setClear({ state: b?.clear ? "on" : this.rootOf("clear") === null ? "starting" : "wont-load" });
+          if (!b?.clear && this.rootOf("clear") === null) this.checkClear();
+        }
         this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting");
         connectTemporaryMic?.();
         connectTemporaryMic = undefined;
         this.armListenOnce();
+        // Turned off while this process was loading it: it has what was wanted then.
+        if (this.clearLoaded && !this.clearWanted) this.listenAgain();
         return;
       }
       if (m.type === "error") {

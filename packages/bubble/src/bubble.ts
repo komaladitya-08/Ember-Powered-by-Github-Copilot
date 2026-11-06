@@ -628,6 +628,8 @@ html[data-text-size] .eb-suggest-cap, html[data-text-size] .eb-suggest button { 
  * keyboard Enter/Space produce the one detail-zero click. Replacing a question or hiding a surface cancels a press.
  */
 export function onPress(button: HTMLElement, fn: () => void): void {
+  /** How much of its size a pressed button may lose (its press is scale 0.97) and still be the same control. */
+  const PRESS_GIVE = 0.04;
   let held: { pointer: number; bounds: DOMRect; label: string } | null = null;
   let watch: MutationObserver | null = null;
   const doc = button.ownerDocument;
@@ -667,8 +669,12 @@ export function onPress(button: HTMLElement, fn: () => void): void {
     const press = held;
     if (!press || press.pointer !== e.pointerId || e.button !== 0) return;
     const r = button.getBoundingClientRect();
-    const same = (["x", "y", "width", "height"] as const).every(k => Math.abs(r[k] - press.bounds[k]) < .5);
-    const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    const was = press.bounds;
+    // Still where it was, by its centre: a pressed button shrinks towards it (scale 0.97, over 220 ms on a task card), so
+    // its edges have moved by the time a click of 60 ms or more lets go, and comparing them cancelled every ordinary click.
+    const same = Math.abs(r.x + r.width / 2 - (was.x + was.width / 2)) < .5 && Math.abs(r.y + r.height / 2 - (was.y + was.height / 2)) < .5
+      && Math.abs(r.width / was.width - 1) < PRESS_GIVE && Math.abs(r.height / was.height - 1) < PRESS_GIVE;
+    const inside = e.clientX >= was.left && e.clientX <= was.right && e.clientY >= was.top && e.clientY <= was.bottom;
     const act = available() && same && inside && press.label === (button.textContent ?? "");
     cancel();
     if (act) fn();

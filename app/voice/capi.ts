@@ -187,7 +187,21 @@ function bindCapi(dir: string): Sherpa {
         free: () => c.destroyRecognizer(h),
       };
     },
+    createNemo(s, run) {
+      const h = made("clearer speech recognizer", c.createRecognizer({
+        feat_config: { sample_rate: SAMPLE_RATE, feature_dim: 80 },
+        model_config: { transducer: { encoder: s.encoder, decoder: s.decoder, joiner: s.joiner }, tokens: s.tokens, model_type: "nemo_transducer", num_threads: run.numThreads, provider: run.provider, debug: 0 },
+        decoding_method: "greedy_search",
+      }));
+      return {
+        createStream: () => offlineStream(made("recognizer stream", c.createOfflineStream(h))),
+        decode: st => c.decodeOffline(h, handle(st)),
+        getResult: st => jsonOf(c.offlineResultJson(handle(st)), freeOfflineJson),
+        free: () => c.destroyRecognizer(h),
+      };
+    },
     createTts(s, run, maxNumSentences) {
+      if (s.kind === "supertonic") throw new Error("the Supertonic voice needs the native addon");
       const model = s.kind === "kitten" ? { kitten: { model: s.model, voices: s.voices, tokens: s.tokens, data_dir: s.dataDir, length_scale: s.lengthScale } }
         : { kokoro: { model: s.model, voices: s.voices, tokens: s.tokens, data_dir: s.dataDir, lexicon: s.lexicon, lang: s.lang, length_scale: s.lengthScale } };
       const h = made("voice", c.createTts({ model: { ...model, num_threads: run.numThreads, provider: run.provider, debug: 0 }, max_num_sentences: maxNumSentences }));
