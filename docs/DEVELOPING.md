@@ -391,8 +391,8 @@ it builds on:
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
   in `extensions/run/` (Linux and macOS: as the leader of its own process group, so the kill switch ends everything
   it started; Windows: `taskkill /T`). A server that needs a `${VAR}` from the user's environment is refused, and
-  proxy addresses reach it without their user name and password. This keeps Ember's sign-in out of the server's own
-  environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
+  proxy addresses reach it without their user name and password. This (and the blanked credential variables: see "Where the sign-in goes") keeps Ember's sign-in out of the server's
+  own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
   (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
   Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
@@ -721,13 +721,20 @@ the environment variable `COPILOT_SDK_AUTH_TOKEN` of the runtime process (the pi
 it so: `--auth-token-env COPILOT_SDK_AUTH_TOKEN` is all that is on its command line). Ember removes every other
 GitHub or Copilot credential from the environment it gives the runtime (`withoutGitHubCredentials`,
 app/main/agent/runtime-env.ts), and hands none over when another model service is in use. Extension servers start
-through Ember's launcher with `appEnv()`'s allowlist, so they get no token. Any GitHub-token-shaped text is replaced
-in Ember's logs and in the sentence a failed start shows (`redactGitHubTokens`). What remains: the runtime process
-itself holds the token and the SDK has no option to keep its environment from the runtime's own children. Observed on
-the real runtime with `scripts/runtime-env-live.sh` (a network namespace with only loopback, dummy tokens, not in CI):
-an MCP server the runtime starts directly gets `COPILOT_SDK_AUTH_TOKEN`; one started through Ember's launcher does not,
-even when the launcher's own environment holds a token (extensions-launch.test.ts). Every extension server goes through
-the launcher; add none without it. The runtime's own shell, file and web tools are not offered to the model:
+through Ember's launcher with `appEnv()`'s allowlist, and Ember sets every credential variable (`CREDENTIAL_VARS`,
+app/main/agent/credential-env.ts: `COPILOT_SDK_AUTH_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `COPILOT_GITHUB_TOKEN`, the two
+`*_ENTERPRISE_TOKEN`s, `COPILOT_CONNECTION_TOKEN` and the two `COPILOT_PROVIDER_*` credentials) to an empty string in the
+`env` of every stdio MCP server it gives a session (`hardenedSessionConfig`): the runtime merges that `env` over its own
+environment, so the launcher and any other stdio server start with those variables empty, not holding the sign-in. Any
+GitHub-token-shaped text, `Bearer` or `token=` value and URL password is replaced in the finished line of every Ember
+log (logger.ts, `redactSecretText`) and in the sentence a failed start shows; the user's provider key is replaced by
+exact match in messages, scopes, keys and fields (`redactingLogger`). Observed on the real runtime with
+`scripts/runtime-env-live.sh` (a network namespace with only loopback, dummy tokens, not in CI): before this blanking
+both the directly started server and the launcher held the dummy token in their environment; now neither does, nor does
+the extension's process, and the credential variables in their environment are all empty. Still true: the runtime
+process itself holds the token (its `/proc/<pid>/environ` shows it), and a stdio server, being the runtime's child,
+can read that file as the same user; the SDK has no option to keep the runtime's environment from it. Remote (HTTP)
+servers' headers are not scrubbed. The runtime's own shell, file and web tools are not offered to the model:
 `availableTools` is an allowlist of the agreed `mcp:` tools only (session-config.ts, `hardenedSessionConfig`; pinned in
 extensions-runtime.test.ts), so the model has no runtime tool that could print its environment (`verifySessionTools` checks the list the runtime reports). A token from `gh auth token` or the environment is still accepted when no Ember sign-in exists.
 

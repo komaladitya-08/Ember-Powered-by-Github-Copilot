@@ -12,19 +12,10 @@
 
 import path from "node:path";
 import { redactGitHubTokens } from "./auth";
+import { withoutGitHubCredentials } from "./credential-env";
 import { RuntimeConnection, type CopilotClientOptions } from "@github/copilot-sdk";
 
-/**
- * Environment variables that hold a GitHub or Copilot credential. Ember's own sign-in (agent/auth.ts) reads
- * COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN itself and hands the one it uses over explicitly, so the runtime
- * needs none of them from the inherited environment.
- */
-const CREDENTIAL_NAME = /^((GH|GITHUB|COPILOT)_([A-Z0-9]+_)*TOKEN|GITHUB_PAT|GH_PAT)$/i;
-
-/** `env` without any GitHub or Copilot credential (names compared without regard to case, as Windows does). */
-export function withoutGitHubCredentials(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !CREDENTIAL_NAME.test(k)));
-}
+export { withoutGitHubCredentials };
 
 export { redactGitHubTokens };
 

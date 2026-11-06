@@ -5,6 +5,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { redactSecretText } from "./secret-text";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 const ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
@@ -42,8 +43,19 @@ export interface Logger {
   readonly file: string;
 }
 
-/** Errors anywhere in a value become plain objects (with code and cause); cycles and BigInts can't break a log line. */
+/** Nesting past this is written as "[deep]", never raw (JSON.stringify has no limit of its own). */
+const MAX_DEPTH = 8;
+
+/**
+ * Errors anywhere in a value become plain objects (with code and cause); cycles and BigInts can't break a log line.
+ * The finished line then has anything shaped like a credential replaced (BE audit #1), so a token in a name, a code, an
+ * object key, a scope or a deep value never reaches the file or stdout, whatever put it there.
+ */
 function safeLine(entry: Fields): string {
+  return redactSecretText(rawLine(entry));
+}
+
+function rawLine(entry: Fields): string {
   // Only a value inside itself is a cycle: the same value twice side by side prints twice.
   const ancestors: object[] = [];
   const origin = new WeakMap<object, object>();
@@ -52,6 +64,7 @@ function safeLine(entry: Fields): string {
     if (!v || typeof v !== "object") return v;
     while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
     if (ancestors.some(a => a === v || origin.get(a) === v)) return "[circular]";
+    if (ancestors.length >= MAX_DEPTH) return "[deep]";
     let out: object = v;
     if (v instanceof Error) {
       const e = v as Error & { code?: unknown; cause?: unknown };

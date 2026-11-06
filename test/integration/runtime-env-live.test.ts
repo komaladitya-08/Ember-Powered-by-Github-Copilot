@@ -15,6 +15,7 @@ import { CopilotClient } from "@github/copilot-sdk";
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { runtimeClientOptions } from "../../app/main/agent/runtime-env";
+import { hardenedSessionConfig } from "../../app/main/agent/session-config";
 import { appEnv } from "../../app/main/hands/system";
 import type { OS } from "../../app/shared/shortcuts";
 
@@ -56,7 +57,11 @@ describe.skipIf(!live)("the real Copilot runtime's environment, offline (BE audi
     expect(runtime.exists).toBe(true);
     const dump = path.join(dir, "dump.cjs");
     // Records its own argv and environment, then exits (the runtime's handshake with it fails; the spawn is what counts).
-    fs.writeFileSync(dump, `require("fs").writeFileSync(process.argv[2], JSON.stringify({ argv: process.argv, env: process.env }));`);
+    // It also reads its parent's environment (/proc/<ppid>/environ): the runtime for a direct server, Ember's launcher for a launched one.
+    fs.writeFileSync(dump, `const fs = require("fs");
+let parentEnv = null;
+try { parentEnv = Object.fromEntries(fs.readFileSync("/proc/" + process.ppid + "/environ", "utf8").split("\\0").filter(Boolean).map(l => { const i = l.indexOf("="); return [l.slice(0, i), l.slice(i + 1)]; })); } catch {}
+fs.writeFileSync(process.argv[2], JSON.stringify({ argv: process.argv, env: process.env, parentEnv }));`);
     const directOut = path.join(dir, "direct.json");
     const launchedOut = path.join(dir, "launched.json");
     const leaseFile = path.join(dir, `${crypto.randomUUID()}.lease`);
@@ -73,15 +78,25 @@ describe.skipIf(!live)("the real Copilot runtime's environment, offline (BE audi
     const seen: string[] = [];
     try {
       await client.start();
-      const session = await client.createSession({
-        model: "mock-model", provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
-        enableConfigDiscovery: false, availableTools: [], workingDirectory: dir,
-        onPermissionRequest: () => ({ kind: "reject" }) as never,
+      // The session config is Ember's own (hardenedSessionConfig), so what the runtime is told about each MCP server is what Ember sends.
+      const tool = (server: string) => ({ server, name: `${server}-x` });
+      const ext = {
         mcpServers: {
           direct: { type: "stdio", command: process.execPath, args: [dump, directOut], env: { ELECTRON_RUN_AS_NODE: "1" }, tools: ["x"] },
           launched: { type: "stdio", command: process.execPath, args: [launcher], env: { ELECTRON_RUN_AS_NODE: "1", EMBER_MCP_SPEC: JSON.stringify(spec) }, tools: ["x"] },
         },
-      } as never);
+        tools: [tool("direct").name, tool("launched").name],
+        preToolUse: async () => ({ permissionDecision: "deny" }),
+        postToolUse: async () => undefined,
+        verify: () => undefined,
+      };
+      const config = hardenedSessionConfig({
+        tools: [], systemMessage: { mode: "replace", content: "test" }, workingDirectory: dir,
+        onPermissionRequest: () => ({ kind: "reject" }) as never, extensions: ext as never,
+        provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" }, model: "mock-model",
+      });
+      expect(Object.keys(config.mcpServers ?? {}).sort()).toEqual(["direct", "launched"]);
+      const session = await client.createSession(config);
       seen.push("session created");
       await session.send({ prompt: "hello" }).catch((e: unknown) => { seen.push(`send: ${String(e).split(MARKER).join("[marker]")}`); });
       for (let i = 0; i < 100 && !(fs.existsSync(directOut) && fs.existsSync(launchedOut)); i++) await new Promise(r => setTimeout(r, 100));
@@ -90,26 +105,37 @@ describe.skipIf(!live)("the real Copilot runtime's environment, offline (BE audi
     } finally {
       await client.forceStop().catch(() => undefined);
     }
-    const read = (f: string) => (fs.existsSync(f) ? (JSON.parse(fs.readFileSync(f, "utf8")) as { argv: string[]; env: Record<string, string> }) : null);
+    const read = (f: string) => (fs.existsSync(f) ? (JSON.parse(fs.readFileSync(f, "utf8")) as { argv: string[]; env: Record<string, string>; parentEnv: Record<string, string> | null }) : null);
     const direct = read(directOut), launched = read(launchedOut);
     // The observation, for whoever reads the log; the assertions below are what must hold either way.
     process.stderr.write(`RUNTIME-ENV-LIVE ${JSON.stringify({
       steps: seen,
       directStarted: !!direct,
       directHasSdkTokenVar: direct ? "COPILOT_SDK_AUTH_TOKEN" in direct.env : null,
-      directHasMarker: direct ? JSON.stringify(direct).includes(MARKER) : null,
+      directHasMarker: direct ? JSON.stringify(direct.env).includes(MARKER) : null,
+      runtimeEnvHoldsMarker: direct?.parentEnv ? JSON.stringify(direct.parentEnv).includes(MARKER) : null,
+      runtimeCredentialNames: direct?.parentEnv ? Object.keys(direct.parentEnv).filter(k => /TOKEN|COPILOT|GITHUB|^GH_/.test(k)) : null,
+      launcherEnvHoldsMarker: launched?.parentEnv ? JSON.stringify(launched.parentEnv).includes(MARKER) : null,
       directEnvNames: direct ? Object.keys(direct.env).filter(k => /TOKEN|COPILOT|GITHUB|GH_/.test(k)) : null,
       launchedStarted: !!launched,
-      launchedHasMarker: launched ? JSON.stringify(launched).includes(MARKER) : null,
+      launchedHasMarker: launched ? JSON.stringify(launched.env).includes(MARKER) : null,
       launchedEnvNames: launched ? Object.keys(launched.env).filter(k => /TOKEN|COPILOT|GITHUB|GH_/.test(k)) : null,
     })}\n`);
-    // Whatever the runtime does for its own children, the extension's process (through the launcher) never sees a token.
-    expect(launched).not.toBeNull(); // the runtime did start Ember's launcher, which started the extension's process
-    if (launched) {
-      expect(JSON.stringify(launched)).not.toContain(MARKER);
-      expect(JSON.stringify(launched)).not.toContain(AMBIENT);
-      expect(Object.keys(launched.env).filter(k => /TOKEN|COPILOT|GITHUB|^GH_/.test(k))).toEqual([]);
+    // No MCP server Ember configures, started directly or through the launcher, may hold a credential: the dummy sign-in,
+    // the ambient one, or any value in a credential variable (Ember blanks each by name; the runtime merges that over its own).
+    const credential = /^((GH|GITHUB|COPILOT)_([A-Z0-9]+_)*TOKEN|COPILOT_SDK_AUTH_TOKEN|COPILOT_CONNECTION_TOKEN)$/i;
+    for (const [name, got] of [["direct", direct], ["launched", launched]] as const) {
+      expect(got, `${name} started`).not.toBeNull();
+      if (!got) continue;
+      expect(JSON.stringify(got.env), `${name}: marker in env`).not.toContain(MARKER);
+      expect(JSON.stringify(got.env), `${name}: ambient in env`).not.toContain(AMBIENT);
+      expect(Object.entries(got.env).filter(([k, v]) => credential.test(k) && v !== ""), `${name}: credential variables with a value`).toEqual([]);
+      // Its parent is the runtime (direct) or the launcher (launched); what the runtime itself holds is reported above, not asserted.
+      if (name === "launched") {
+        expect(JSON.stringify(got.parentEnv), "launcher's own environment").not.toContain(MARKER);
+        expect(JSON.stringify(got.parentEnv)).not.toContain(AMBIENT);
+      }
     }
-    if (direct) expect(JSON.stringify(direct)).not.toContain(AMBIENT);
+    if (direct?.parentEnv) expect(JSON.stringify(direct.parentEnv)).not.toContain(AMBIENT);
   }, 90_000);
 });
