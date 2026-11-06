@@ -1593,7 +1593,7 @@ function start(): void {
     } catch (err) {
       // Not recorded: it isn't turned on (fail closed); a turn off stands.
       log.warn("autonomy.audit_failed", { err });
-      if (on) settings.update({ autonomy: { ...s.autonomy, on: false } });
+      if (on) { try { settings.update({ autonomy: { ...s.autonomy, on: false } }); } catch (e) { log.warn("autonomy.off_not_saved", { err: e }); } }
       return;
     }
     log.info("autonomy.changed", { on, via: how.via });
@@ -1872,7 +1872,7 @@ function start(): void {
     },
     told: () => settings.get().updates.told,
     announce: version => {
-      settings.update({ updates: { ...settings.get().updates, told: version } });
+      try { settings.update({ updates: { ...settings.get().updates, told: version } }); } catch (err) { log.warn("updates.told_not_saved", { err }); }
       notify("Ember: a new version is out", `Ember ${version} is out. Open Ember's settings to see what's new.`);
     },
     changed: status => broadcast(IPC.updatesChanged, status),
@@ -2291,7 +2291,7 @@ function start(): void {
     personal.forgetVoice();
     // A task's voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).
     voiceTrust.endAll("voice-changed");
-    settings.update({ voice: { ...settings.get().voice, match: false } });
+    try { settings.update({ voice: { ...settings.get().voice, match: false } }); } catch (err) { log.warn("voice.match_off_not_saved", { err }); }
     voice?.setVoiceprint(null);
     log.info("voice.match_forgotten");
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
@@ -2828,7 +2828,7 @@ function start(): void {
     if (autonomyWasOn) {
       try { audit.write({ event: "autonomy", on: true, via: "file", verified: false, atStart: true }); } catch (err) {
         log.warn("autonomy.audit_failed", { err });
-        settings.update({ autonomy: { ...settings.get().autonomy, on: false } });
+        try { settings.update({ autonomy: { ...settings.get().autonomy, on: false } }); } catch (e) { log.warn("autonomy.off_not_saved", { err: e }); }
       }
     }
     // Nothing is pruned while the policy can't be used: its retention can't be read then.

@@ -740,14 +740,15 @@ export class SettingsStore {
     // A hand edit since Ember last looked comes first (or the file that couldn't be read): the patch goes on top of it.
     // (A repairable edit is repaired now, not waited on: Ember saves anyway.)
     if (this.unread || this.mtime() !== this.seen) { try { this.read(true, false); } catch { /* keep what is in memory */ } }
-    // A change not saved yet (held while the file couldn't be read, or a slider's) goes on top of what was just read,
+    // A change not saved yet (a slider's) goes on top of what was just read,
     // as reloadIfChanged() does it, and is saved with this one (review #83).
     const next = SettingsSchema.parse({ ...this.current, ...this.pending, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
     if (this.unread) {
-      // Saving would replace the user's unreadable file with defaults: the change is used now and saved on top of
-      // their settings once the file reads again (review #83).
-      this.pending = { ...this.pending, ...patch };
+      // Saving would replace the user's unreadable file with defaults, and a change used from memory only would be in
+      // force (a consent, a feature) with nothing on disk to say so, so the change is refused: fail closed. Nothing is
+      // held; the file is read again with the next change and the watcher (review #83).
+      throw new Error(`Ember couldn't save your settings: it can't read ${path.basename(this.file)}, and won't write over it. Your change wasn't kept.`);
     } else if (opts.soon) {
       this.pending = { ...this.pending, ...patch };
       if (!this.pendingTimer) {
