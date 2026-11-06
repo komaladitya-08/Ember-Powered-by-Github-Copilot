@@ -2,7 +2,7 @@
 
 import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
-import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
+import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
 import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
@@ -75,6 +75,7 @@ export const IPC = {
   conversation: "agent:conversation",
   conversationChanged: "agent:conversation-changed",
   conversationForgotten: "agent:conversation-forgotten",
+  conversationStream: "agent:conversation-stream",
   conversationSend: "agent:conversation-send",
   conversationStop: "agent:conversation-stop",
   conversationNew: "agent:conversation-new",
@@ -447,6 +448,8 @@ export interface EmberHomeApi {
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
   /** Explicit account/session erasure, distinct from a list made empty by forgetting learned facts. */
   onConversationForgotten(fn: () => void): () => void;
+  /** Ember's answer as it develops (the same words the bubble shows), so Home's conversation can show it too. */
+  onConversationStream(fn: (e: AnswerStream) => void): () => void;
   onFocusSection(fn: (section: string) => void): () => void;
   /** The window was minimised or hidden (false), or shown again (true): nothing is drawn while it can't be seen. */
   onVisibility(fn: (visible: boolean) => void): () => void;

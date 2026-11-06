@@ -3100,6 +3100,8 @@ function start(): void {
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
         showState({ idle: idleNow(status), setup: setupNow(status) });
       },
+      // Home's conversation shows the answer as it develops (the same words as the bubble's).
+      onAnswerStream: e => broadcast(IPC.conversationStream, e),
       onTranscript: (entries, why) => {
         // Forgotten (sign-out, another account): the "Ember learned" lines go with it. A New conversation clears them
         // too, but isn't announced as a forgetting: Home that asked for it resets itself when the request is answered.

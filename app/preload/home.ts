@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
-import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
+import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { TaskEntry } from "../shared/activity";
 import { TARGETS_IPC, type TargetSummary } from "../shared/targets";
@@ -85,6 +85,7 @@ const api: EmberHomeApi = {
   conversationNew: () => ipcRenderer.invoke(IPC.conversationNew),
   onConversation: fn => listen<TranscriptEntry[]>(IPC.conversationChanged, fn),
   onConversationForgotten: fn => listen<unknown>(IPC.conversationForgotten, () => fn()),
+  onConversationStream: fn => listen<AnswerStream>(IPC.conversationStream, fn),
   onFocusSection: fn => listen<string>(IPC.focusSection, fn),
   presence: () => ipcRenderer.invoke(IPC.presence),
   setPresence: p => ipcRenderer.invoke(IPC.setPresence, p),

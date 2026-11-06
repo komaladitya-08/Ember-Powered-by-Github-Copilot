@@ -11,9 +11,9 @@
 export const CONVERSATION_SHOWN = 30;
 
 /** A message as the list compares it. */
-export interface Said { t: string; who: string; text: string; truncated?: boolean }
+export interface Said { t: string; who: string; text: string; truncated?: boolean; stopped?: true; answerId?: number }
 
-const same = (a: Said, b: Said) => a.t === b.t && a.who === b.who && a.text === b.text && !!a.truncated === !!b.truncated;
+const same = (a: Said, b: Said) => a.t === b.t && a.who === b.who && a.text === b.text && !!a.truncated === !!b.truncated && !!a.stopped === !!b.stopped;
 
 /** The messages shown: the latest CONVERSATION_SHOWN, or every one once the earlier ones were asked for. */
 export function conversationShown<T extends Said>(entries: readonly T[], all: boolean): T[] {
