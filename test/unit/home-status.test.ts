@@ -127,7 +127,7 @@ describe("Home's style sheet", () => {
     }
     expect(depth).toBe(0);
     // First run shows only its steps and the organisation's notices, at the top level of the sheet.
-    expect(css).toMatch(/(?:^|\n)body\.first-run \.home > :not\(#welcome, #managed, #settings-notice\) \{ display: none; \}/);
+    expect(css).toMatch(/(?:^|\n)body\.first-run \.home > :not\(#welcome, #managed, #settings-notice, #provider-off\) \{ display: none; \}/);
   });
 });
 

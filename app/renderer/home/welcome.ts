@@ -11,11 +11,17 @@
 import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { CONSENT_VERSION } from "../../shared/consent";
-import type { Status, VoiceStatus } from "../../shared/ipc";
+import type { ProviderState, Status, VoiceStatus } from "../../shared/ipc";
+import { endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { LEVEL_STEPS } from "../../shared/level";
 import { keptWords } from "./admin-copy";
 import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel } from "./copy";
 import { mountAboutYou } from "./about-you";
+import { providerConsentText } from "./copy";
+import { onProviderChoice, providerChoice } from "./provider-choice";
+import {
+  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, taskModelChoices, type FailureAction,
+} from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
   DEFAULT_SIZE, aboutNext, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
@@ -64,8 +70,23 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   /** The page main offers while it waits for a sign-in made elsewhere ("Open cli.github.com"), or null. */
   let waitLink: string | null = null;
   let declined = false;
-  /** The sign-in step's main button signs in (rather than going on). */
-  let signInFirst = false;
+  /** What the sign-in step's main button does: an action on the connection, or just go on. */
+  let signInPrimary: FailureAction | "continue" = "continue";
+  /** The user's own provider as main reports it (null until read, or when it can't be). */
+  let ownState: ProviderState | null = null;
+  /** The own-provider step's check: bumped by every edit and by leaving the step, so an older answer is dropped. */
+  let checkEpoch = 0;
+  /** The newest provider check that was started: only it may put the provider away after its step was abandoned. */
+  let checkRun = 0;
+  /** Setup fixes under way: their buttons stay disabled however often the rows are drawn again. */
+  const fixPending = new Set<string>();
+  let providerCheck: { phase: "idle" | "checking" | "ok" | "failed" | "invalid"; line: string } = { phase: "idle", line: "" };
+  /** The edit area of "Models I'll use" is open. */
+  let modelsOpen = false;
+  /** The buttons drawn under the sign-in line (drawn again only when they change). */
+  let shownActions = "";
+  /** A fix that failed, by fix id: shown in its row until it is tried again or works. */
+  const fixFailures = new Map<string, string>();
   /** Whether main was last asked for the microphone's level (asked again only when that changes). */
   let levelWanted: boolean | null = null;
   /** The setup rows (and their buttons' words) as last drawn: drawn again only when they change. */
@@ -93,6 +114,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-cards").append(deps.cards);
     deps.cards.setAttribute("aria-labelledby", "w-title");
     step = firstStep(consented());
+    void readOwn();
     root.hidden = false;
     render();
     // Ember lands, then greets: one happy hop (none in Calm, where the rig holds still).
@@ -112,6 +134,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   function go(to: WelcomeStep): void {
     // The step comes in from the side it lies on (motion only; focus moves at once, as the motion starts).
     root.dataset.dir = stepPosition(to) < stepPosition(step) ? "back" : "next";
+    // Leaving the provider step: an older check is dropped, and going back to Copilot puts the provider away again.
+    if (step === "provider" && to !== "provider") {
+      checkEpoch++;
+      if (to === "sign-in") { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
+    }
     step = gated(to, consented());
     navigation++;
     if (step === "try") heardBefore = -1;
@@ -147,6 +174,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "hello") { label = NAV.begin; alt.hidden = false; alt.textContent = NAV.character; }
     if (step === "consent") ({ label, why } = renderConsent());
     if (step === "sign-in") ({ label, why } = renderSignIn());
+    if (step === "provider") ({ label, why } = renderProvider());
     if (step === "checks") label = renderChecks();
     if (step === "try") { renderTry(); alt.hidden = false; alt.textContent = NAV.about; }
     if (step === "about") label = aboutNext(about);
@@ -207,14 +235,252 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-check-again").textContent = CHECK_AGAIN;
     $("w-signin-more").hidden = open.hidden && $("w-check-again").hidden;
     $("w-signin-later").hidden = $("w-signin-later").hidden || managed();
-    signInFirst = v.primary === "sign-in";
-    return { label: signInFirst ? signInLabel(agent?.signInWith) : NAV.next, why: v.why };
+    // What can be done about it (FE #2, #3): the way on by the failure's reason, and the user's own provider beside
+    // Copilot's sign-in wherever it is offered. An entitlement failure never leads with signing in again.
+    const offer = ownOffer();
+    const failing = agent?.phase === "error" && !signingIn && !managed();
+    const fv = failing ? failureView({ reason: agent?.reason, detail: agent?.detail, ownOffered: offer.offered }) : null;
+    let extras: FailureAction[] = [];
+    signInPrimary = v.primary === "sign-in" ? "sign-in" : "continue";
+    if (fv) { signInPrimary = fv.primary; extras = fv.others; }
+    else if (!signingIn && v.primary !== "continue" && offer.offered) extras = ["own-provider"];
+    else if (!signingIn && v.skip && offer.offered) extras = ["own-provider"];
+    // A policy that forbids the user's own provider says so; Copilot's step is then the only way and the choice isn't drawn.
+    const help = fv?.help || (!offer.offered && !signingIn && agent?.phase !== "ready" ? offer.why : "");
+    const helpEl = $("w-signin-help");
+    helpEl.hidden = !help;
+    if (helpEl.textContent !== help) helpEl.textContent = help;
+    renderActions(extras);
+    renderModels();
+    const label = signInPrimary === "continue" ? NAV.next : signInPrimary === "sign-in" ? signInLabel(agent?.signInWith) : ACTION_LABEL[signInPrimary];
+    return { label, why: v.why };
+  }
+
+  /** The user's own provider is offered on first run (and if not, why). */
+  function ownOffer(): ReturnType<typeof ownProviderOffer> {
+    return ownProviderOffer({
+      bridge: !!window.emberProvider, managedProvider: !!status?.admin.provider, locked: !!status && status.admin.error !== null,
+      userProviderOff: status?.admin.features.userProvider === false || (!!ownState && !ownState.allowed),
+    });
+  }
+
+  /** The buttons under the sign-in line: drawn again only when they change, so a focused one keeps the focus. */
+  function renderActions(actions: readonly FailureAction[]): void {
+    const box = $("w-signin-actions");
+    const key = actions.join(",");
+    box.hidden = !actions.length;
+    if (key === shownActions) return;
+    shownActions = key;
+    const hadFocus = box.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.action : undefined;
+    box.replaceChildren(...actions.map(a => {
+      const b = el("button", { type: "button", className: "btn quiet small", textContent: ACTION_LABEL[a] });
+      b.dataset.action = a;
+      b.addEventListener("click", () => perform(a));
+      return b;
+    }));
+    if (hadFocus) box.querySelector<HTMLElement>(`[data-action="${hadFocus}"]`)?.focus();
+  }
+
+  /** One way on from a connection that needs something. */
+  function perform(a: FailureAction): void {
+    if (a === "own-provider") { openProvider(); return; }
+    if (a === "retry") { checkAgain(); return; }
+    // "Switch account" is the same GitHub sign-in: the browser page lets them choose another account.
+    signIn();
+  }
+
+  // ───── Models I'll use (FE #4, #5) ─────
+  function renderModels(): void {
+    const box = $("w-models");
+    const a = agent;
+    const show = a?.phase === "ready" && !!status;
+    box.hidden = !show;
+    if (!show || !a) { modelsOpen = false; return; }
+    const own = !!a.service;
+    // Only the user's own provider has saved model names that stand in for the runtime's; Copilot's unknown model is
+    // shown as Copilot's default, never as the models of a provider that isn't in use (FE #4).
+    const named = a.service?.kind === "user" ? settings?.provider : undefined;
+    const fixed = !!status?.admin.managed.includes("models") || a.service?.kind === "admin";
+    const rows = modelRows({ models: a.models, conductor: a.conductorModel ?? named?.conductor ?? null, worker: a.workerModel ?? named?.worker ?? null, own });
+    $("w-models-list").replaceChildren(...rows.flatMap(r => [el("dt", { textContent: r.label }), el("dd", { textContent: r.note ? `${r.value} (${r.note})` : r.value })]));
+    const note = fixed ? "Your organisation chooses these." : own ? "These are the models you named. I use them for your first request." : "I picked these. You can change them now or later in Settings › Models & connections.";
+    if ($("w-models-note").textContent !== note) $("w-models-note").textContent = note;
+    const change = $("w-models-change") as HTMLButtonElement;
+    // Nothing to choose from: no models listed, or the models are the provider's own fields (not drawn here).
+    const editable = !fixed && !own && a.models.length > 0;
+    change.hidden = !editable;
+    change.setAttribute("aria-expanded", String(modelsOpen && !own));
+    $("w-models-edit").hidden = !modelsOpen || !editable;
+    if (modelsOpen && editable) fillModelEditor(a);
+  }
+  /** The editor's lists are rebuilt only when they change (an open drop-down isn't pulled from under the pointer). */
+  let editorKey = "";
+  function fillModelEditor(a: AgentStatus): void {
+    const key = JSON.stringify([a.models, a.conductorModel, a.workerModel]);
+    if (key === editorKey) return;
+    editorKey = key;
+    const choices = taskModelChoices(a.models, a.workerModel);
+    const fill = (id: string, list: readonly { id: string; name: string }[], current: string | null) => {
+      ($(id) as HTMLSelectElement).replaceChildren(...list.map(m => Object.assign(document.createElement("option"), { value: m.id, textContent: m.name, selected: m.id === current })));
+    };
+    fill("w-m-conductor", a.models, a.conductorModel);
+    fill("w-m-worker", choices.options, a.workerModel);
+    $("w-m-worker-label").textContent = choices.label;
+    $("w-m-worker-note").textContent = choices.note;
+    $("w-m-worker-note").hidden = !choices.note;
+  }
+
+  // ───── Your own model provider (FE #2) ─────
+  const provField = (id: string) => $(id) as HTMLInputElement;
+  const prefilled = { done: false };
+  function openProvider(): void {
+    checkEpoch++;
+    providerCheck = { phase: "idle", line: "" };
+    prefilled.done = false;
+    go("provider");
+    provField("w-p-url").focus();
+  }
+  function readProviderFields(): { type: ProviderType; baseUrl: string; conductor: string; worker: string; key: string } {
+    return {
+      type: ($("w-p-type") as unknown as HTMLSelectElement).value as ProviderType, baseUrl: provField("w-p-url").value.trim(),
+      conductor: provField("w-p-conductor").value.trim(), worker: provField("w-p-worker").value.trim(), key: provField("w-p-key").value,
+    };
+  }
+  /** Why the fields can't be checked yet, with the field to fix, or null. */
+  function providerProblem(f: ReturnType<typeof readProviderFields>): { text: string; field: string } | null {
+    if (!f.baseUrl) return { text: PROVIDER_STEP.needAddress, field: "w-p-url" };
+    const bad = endpointProblem(f.baseUrl);
+    if (bad) return { text: bad, field: "w-p-url" };
+    if (!f.key.trim() && !ownState?.keySaved) return { text: PROVIDER_STEP.needKey, field: "w-p-key" };
+    if (!f.conductor) return { text: PROVIDER_STEP.needModel, field: "w-p-conductor" };
+    if (!MODEL_ID.test(f.conductor) || (f.worker && !MODEL_ID.test(f.worker))) return { text: "A model name has no spaces in it, such as gpt-4.1 or llama3.2:3b.", field: MODEL_ID.test(f.conductor) ? "w-p-worker" : "w-p-conductor" };
+    return null;
+  }
+  /** Saves the fields, the key, the card's yes for exactly this address, then asks the service for its models. */
+  const checkProvider = latestOnly<{ epoch: number; result: { ok: true; host: string; models: number | null } | { ok: false; why: string } }>(
+    async () => {
+      const epoch = checkEpoch;
+      const mine = ++checkRun;
+      const f = readProviderFields();
+      const host = endpointHost(f.baseUrl);
+      const api = window.emberProvider;
+      if (!api || !host) return { epoch, result: { ok: false, why: PROVIDER_STEP.needAddress } };
+      // Back, an edit or another check can come between any two steps. Each step that does something (the card's yes
+      // turns the provider on) first looks whether this check was abandoned; one abandoned after the yes was recorded
+      // puts the provider away again, unless a newer check has taken over (it owns the provider now).
+      const abandoned = () => epoch !== checkEpoch;
+      // Nor may it undo a provider the user chose in Home since this check began: that choice owns the provider now.
+      const chosen = providerChoice();
+      const dropped = async () => {
+        if (mine === checkRun) await turnOwnOff(true, chosen);
+        return { epoch, result: { ok: false as const, why: "" } };
+      };
+      const saved = await deps.save({ provider: { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null } } as SettingsPatch);
+      if (!saved) return { epoch, result: { ok: false, why: "I couldn't save these details. The notice at the top says why." } };
+      if (abandoned()) return { epoch, result: { ok: false, why: "" } };
+      if (f.key.trim()) {
+        const k = await api.saveKey(f.key);
+        if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
+        if (abandoned()) return { epoch, result: { ok: false, why: "" } };
+      }
+      const agreed = await api.agree(host);
+      if (abandoned()) return dropped();
+      if (!agreed.ok) return { epoch, result: { ok: false, why: agreed.why } };
+      const tested = await api.test();
+      if (abandoned()) return dropped();
+      return { epoch, result: tested };
+    },
+    r => {
+      // An answer to an older check, or to a step the user has left, says nothing about what they see now.
+      if (!active || step !== "provider") return;
+      if (!r.ok) { if (providerCheck.phase === "checking") finishCheck(false, "I couldn't check the provider. Try again."); return; }
+      if (r.value.epoch !== checkEpoch) return;
+      finishCheck(r.value.result.ok, providerCheckLine(r.value.result));
+    },
+  );
+  function finishCheck(ok: boolean, line: string): void {
+    providerCheck = { phase: ok ? "ok" : "failed", line };
+    // Not verified: nothing stays pointed at a service that didn't answer.
+    if (!ok) void turnOwnOff();
+    render();
+    if (!ok) provField("w-p-key").focus(); else next.focus();
+  }
+  /**
+   * Puts the user's own provider away. `force`: also when the page's copy of the settings doesn't show it on yet (the
+   * card's yes may still be on its way). `since`: the provider choice count when the check began; a deliberate choice
+   * made after it means this is no longer ours to undo. A write that fails (it says false, or throws) is never passed
+   * over: the provider is still on, and a notice with a retry says so.
+   */
+  async function turnOwnOff(force = false, since?: number): Promise<void> {
+    if (!force && !settings?.provider.on) return;
+    if (since !== undefined && since !== providerChoice()) return;
+    let ok = false;
+    try { ok = await deps.save({ provider: { on: false } } as SettingsPatch); } catch { /* counted as failed below */ }
+    showOffFailure(!ok);
+  }
+  /** The notice above first run and Home alike (so it is seen on whichever is up): the provider is still on, with a retry. */
+  function showOffFailure(failed: boolean): void {
+    const note = $("provider-off");
+    note.hidden = !failed;
+    if (!failed) return;
+    $("provider-off-text").textContent = PROVIDER_STEP.offFailed;
+    $("provider-off-retry").textContent = PROVIDER_STEP.offRetry;
+  }
+  function startCheck(): void {
+    const f = readProviderFields();
+    const problem = providerProblem(f);
+    if (problem) {
+      providerCheck = { phase: "invalid", line: problem.text };
+      render();
+      provField(problem.field).focus();
+      return;
+    }
+    providerCheck = { phase: "checking", line: PROVIDER_STEP.checking };
+    render();
+    void checkProvider();
+  }
+  $("provider-off-retry").addEventListener("click", () => {
+    // The user's own click: not held back by an earlier choice. The notice stays until the write lands.
+    void turnOwnOff(true);
+  });
+  // A deliberate choice made in Home replaces whatever was true of the old state.
+  onProviderChoice(() => showOffFailure(false));
+  function renderProvider(): { label: string; why: string } {
+    const needs = $("w-p-needs");
+    if (!needs.childElementCount) needs.replaceChildren(...PROVIDER_STEP.needs.map(t => el("li", { textContent: t })));
+    // The saved details come into the fields once, the first time the step opens: what is typed is never overwritten.
+    if (!prefilled.done && settings) {
+      prefilled.done = true;
+      ($("w-p-type") as unknown as HTMLSelectElement).value = settings.provider.type;
+      provField("w-p-url").value = settings.provider.baseUrl;
+      provField("w-p-conductor").value = settings.provider.conductor ?? "";
+      provField("w-p-worker").value = settings.provider.worker ?? "";
+      provField("w-p-key").placeholder = ownState?.keySaved ? "A key is saved. Paste a new one to replace it" : "Paste your key";
+    }
+    const host = endpointHost(provField("w-p-url").value.trim());
+    const consent = host ? providerConsentText(host) : "Once you enter the address, I'll say here exactly what is sent to it.";
+    if ($("w-p-consent").textContent !== consent) $("w-p-consent").textContent = consent;
+    const result = $("w-p-result");
+    if (result.textContent !== providerCheck.line) result.textContent = providerCheck.line;
+    result.className = `w-status ${providerCheck.phase === "failed" || providerCheck.phase === "invalid" ? "error" : providerCheck.phase === "ok" ? "ok" : ""}`;
+    if (ownState && ownState.keyring === false && !ownState.keySaved) {
+      result.textContent = PROVIDER_STEP.noKeyring;
+      result.className = "w-status error";
+      return { label: PROVIDER_STEP.check, why: PROVIDER_STEP.noKeyring };
+    }
+    if (providerCheck.phase === "checking") return { label: PROVIDER_STEP.check, why: PROVIDER_STEP.checking };
+    if (providerCheck.phase === "ok") {
+      // The service answered; Continue waits for Ember to be connected to it, and says what went wrong if it can't.
+      if (agent?.phase === "error" && agent.service?.kind === "user") return { label: NAV.next, why: agent.detail };
+      return { label: NAV.next, why: agent?.phase === "ready" ? "" : `Connecting to ${host ?? "the provider"}…` };
+    }
+    return { label: providerCheck.phase === "failed" ? "Check again" : PROVIDER_STEP.check, why: "" };
   }
 
   function renderChecks(): string {
     const rows = status?.environment.checks ?? [];
     // Unchanged: left as it is, so a "Copied" and the focus stay where they are.
-    const key = JSON.stringify([rows, status?.platform?.fixLabels ?? null]);
+    const key = JSON.stringify([rows, status?.platform?.fixLabels ?? null, [...fixFailures]]);
     if (key === shownChecks) return checksNext(rows);
     shownChecks = key;
     const head = checksHeadline(rows);
@@ -236,6 +502,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         cmd.append(el("code", { textContent: c.command }), copy);
         text.append(cmd);
       }
+      // A fix that failed says so here, in the row it belongs to (FE #6): the live line below announces it too.
+      const failed = [c.fix, c.alt].map(f => (f ? fixFailures.get(f) : undefined)).find(Boolean);
+      if (failed) {
+        const why = el("p", { className: "w-check-fail", textContent: failed });
+        why.dataset.fail = c.id;
+        text.append(why);
+      }
       li.append(el("i", { className: "w-sym" }), text);
       for (const fix of [c.fix, c.alt]) {
         if (!fix) continue;
@@ -243,17 +516,27 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         const btn = el("button", { type: "button", className: "btn quiet small", textContent: label });
         btn.dataset.fix = fix;
         btn.setAttribute("aria-label", fixButtonName(label, c.title));
+        // A button drawn again while its fix runs (clearing the earlier failure does) stays disabled.
+        if (fixPending.has(fix)) btn.setAttribute("aria-disabled", "true");
         btn.addEventListener("click", () => {
-          if (btn.getAttribute("aria-disabled") === "true") return;
+          if (btn.getAttribute("aria-disabled") === "true" || fixPending.has(fix)) return;
+          fixPending.add(fix);
           btn.setAttribute("aria-disabled", "true");
+          if (fixFailures.delete(fix)) { $("w-checks-msg").textContent = ""; shownChecks = ""; render(); }
           window.ember.applyFix(fix as Parameters<typeof window.ember.applyFix>[0]).then(env => {
+            fixPending.delete(fix);
             if (status) status = { ...status, environment: env };
             shownChecks = "";
             deps.checksChanged(env);
             render();
           }, err => {
-            btn.removeAttribute("aria-disabled");
-            $("w-checks-msg").textContent = fixFailedText(c.title, ipcErrorText(err));
+            fixPending.delete(fix);
+            const text = fixFailedText(c.title, ipcErrorText(err));
+            fixFailures.set(fix, text);
+            $("w-checks-msg").textContent = text;
+            // Drawn again with the failure in the row; the retry button keeps (or gets back) the focus.
+            shownChecks = "";
+            render();
           });
         });
         li.append(btn);
@@ -327,7 +610,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const keys = status?.platform?.shortcuts;
     const rows = summaryRows({
       character: name, size: s?.size ?? DEFAULT_SIZE, voice: voiceState(),
-      signedIn: signedIn() ? (status?.admin.provider ? "Your organisation's model service" : agent?.login ? `Signed in as ${agent.login}` : "Connected") : null,
+      signedIn: signedIn() ? (agent?.service?.kind === "user" ? `Your own provider (${agent.service.host})` : status?.admin.provider ? "Your organisation's model service" : agent?.login ? `Signed in as ${agent.login}` : "Connected") : null,
       keys: keys ? { ask: keys.ask.label, stop: keys.stop.label, settings: keys.settings.label } : null,
     });
     $("w-summary").replaceChildren(...rows.flatMap(r => [el("dt", { textContent: r.label }), el("dd", { textContent: r.value })]));
@@ -358,7 +641,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       return;
     }
     // Sign in is the step's button only while signing in can help (not with the organisation's own service, nor locked).
-    if (step === "sign-in" && signInFirst) { signIn(); return; }
+    if (step === "sign-in" && signInPrimary !== "continue") { perform(signInPrimary); return; }
+    if (step === "provider" && providerCheck.phase !== "ok") { startCheck(); return; }
     // Start that couldn't be saved says why in the notice at the top (review #84).
     // What was answered is saved, then on (nothing answered, or memory left off: nothing is kept).
     if (step === "about") {
@@ -391,7 +675,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     }
   });
   $("w-open-page").addEventListener("click", () => { void window.ember.openSignInPage(); });
-  $("w-check-again").addEventListener("click", () => {
+  $("w-check-again").addEventListener("click", () => checkAgain());
+  function checkAgain(): void {
     if (signInMessage?.text === "Checking…") return;
     const checking = { text: "Checking…", tone: "" };
     signInMessage = checking;
@@ -403,7 +688,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     };
     window.ember.retrySignIn().then(r => show(retryMessage(r, r.found && agent?.phase === "ready"), r.found ? "" : "error"),
       err => show(ipcErrorText(err), "error"));
-  });
+  }
   $("w-stop").addEventListener("click", () => { void window.ember.stopEverything(); });
   $("w-ask").addEventListener("click", () => {
     if ($("w-ask").getAttribute("aria-disabled") === "true") return;
@@ -453,6 +738,34 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     render();
   }
 
+  // Any edit makes an earlier check (or a check in flight) say nothing about what is now typed.
+  for (const id of ["w-p-type", "w-p-url", "w-p-key", "w-p-conductor", "w-p-worker"]) {
+    $(id).addEventListener("input", () => {
+      checkEpoch++;
+      if (providerCheck.phase !== "idle") { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
+      if (active && step === "provider") render();
+    });
+  }
+  const readOwn = latestOnly<ProviderState>(async () => { const api = window.emberProvider; if (!api) throw new Error("no bridge"); return api.state(); }, r => {
+    ownState = r.ok ? r.value : null;
+    if (active && (step === "sign-in" || step === "provider")) render();
+  });
+  // Read only while first run is on screen: a returning user's Home reads it in provider.ts alone.
+  window.emberProvider?.onChanged(() => { if (active) void readOwn(); });
+  $("w-models-change").addEventListener("click", () => {
+    modelsOpen = !modelsOpen;
+    editorKey = "";
+    render();
+    if (modelsOpen) $("w-m-conductor").focus();
+  });
+  for (const [id, key] of [["w-m-conductor", "conductor"], ["w-m-worker", "worker"]] as const) {
+    $(id).addEventListener("change", e => {
+      const value = (e.target as HTMLSelectElement).value;
+      const current = settings?.models ?? { conductor: null, worker: null };
+      void deps.save({ models: { ...current, [key]: value } });
+    });
+  }
+
   // ───── What the tries hear ─────
   window.ember.onStopped(() => {
     if (!active || step !== "try" || tried.stop) return;
@@ -471,7 +784,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (!active || step !== "try" || heardBefore < 0 || tried.ask) return;
     if (c.slice(heardBefore).some(e => e.who === "you")) { tried.ask = true; live(TRY_TEXT.ask.done); render(); }
   });
-  const onAgent = (a: AgentStatus) => { agent = a; if (active && (step === "sign-in" || step === "try" || step === "done")) render(); };
+  const onAgent = (a: AgentStatus) => { agent = a; if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };
   void window.ember.agentStatus().then(onAgent, () => { /* the next status brings it */ });
   window.ember.onAgentStatus(onAgent);
   const onVoice = (v: VoiceStatus) => {

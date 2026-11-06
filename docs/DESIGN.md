@@ -367,6 +367,16 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   changes, hairlines are one device pixel, line heights are whole pixels at every text size, and the
   status line is centred by layout rather than `translateX(-50%)`. Nested corners are
   `max(outer − padding, 6 px)`: the bubble's whole-text panel is 6.
+- **First run's connection** (FE #2–#6; first-run-copy.ts, welcome.ts). The sign-in step offers “Use my own provider”
+  beside GitHub's sign-in (hidden, with its reason, when the organisation fixes or forbids a provider of the user's own),
+  which opens an optional detour (same position, “Step 3 of 6”): the provider's type, address, API key and model names,
+  the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
+  key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
+  failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
+  provider or a different GitHub account, never the same sign-in. Once connected, “Models I'll use” names both models
+  with the premium-request multiplier where Copilot gives one, and says so when tasks work from text only; Change is
+  optional. A setup fix that fails says so in its own row.
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay
   put from step to step and a short step no longer leaves the window's lower half empty. A still step indicator
