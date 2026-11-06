@@ -6,8 +6,10 @@
  * Python wording, including the quotes Python puts round a KeyError's message ("'element 7 is no longer known; …'").
  */
 
+import { SIDECAR_PROTOCOL_VERSION } from "../shared/sidecar-protocol";
+
 /** The protocol's version, as the Python sidecar reports it (ping, status). */
-export const VERSION = 3;
+export const VERSION = SIDECAR_PROTOCOL_VERSION;
 
 /** The words for an app that didn't answer in time; Ember matches "busy" in them. */
 export const BUSY = "the app is busy (it didn't answer in time); try again in a moment";

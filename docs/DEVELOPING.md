@@ -1986,6 +1986,16 @@ app/sidecar-host/   the Windows and macOS accessibility host (dist/app/ax-sideca
                     Windows, a utility process on macOS): protocol, ids, secrets, labels, roles, launch.ts;
                     providers/uia.ts (the bridge's client), providers/ax-darwin*.ts (macOS AX), providers/fake.ts (tests)
 sidecar/atspi       Python accessibility helper (Linux, and inside WSL distros: reads app controls over AT-SPI)
+                    Every new helper process (Python, the host, a WSL distro's, a remote's) is asked `ping` first and
+                    must report exactly `SIDECAR_PROTOCOL_VERSION` (app/shared/sidecar-protocol.ts, which the Python
+                    VERSION and app/sidecar-host/protocol.ts must equal: a test reads all three). Until it does,
+                    nothing else is written to it (the remembered secret fields included); a wrong, missing or
+                    errored answer fails every waiting request with a plain "out of date" sentence, ends the helper,
+                    logs `sidecar.version_mismatch` and is not retried by that client. A new client tries afresh.
+                    A refused or replaced helper's later output is ignored, and before the ping passes only its answer
+                    counts (a response to any other id is dropped, so it can't resolve a held request). In a WSL distro the
+                    refusal is the row's sentence and stays until the distro stops (then a fresh client may try); the Windows
+                    bridge, once refused, stays refused for the run (a late ready line changes nothing).
 sidecar/notice      the notice with Stop on a remote's screen while Ember uses it
 sidecar/uia         UI Automation bridge (Windows): ember_uia.ps1 (the bootstrap), ember_uia.cs (C# 5), PROTOCOL.md
 app/voice           wake word, VAD and speech recognition (runs in a utility process)

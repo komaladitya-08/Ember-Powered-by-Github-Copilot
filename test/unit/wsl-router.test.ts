@@ -9,10 +9,11 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CommandRunner, RunnerFacts, RunningCommand, RunSpec } from "../../app/main/commands/types";
 import {
-  A11Y_FIX_COMMAND, DIAG_SCRIPT, fixedScriptStdin, helperLaunch, helperScriptPath, parseDiag, parseHelperStatus, parseLinuxPath, runFixedScript, turnOnLinuxAccessibility,
+  A11Y_FIX_COMMAND, DIAG_SCRIPT, fixedScriptStdin, helperDoctorRows, helperLaunch, helperScriptPath, parseDiag, parseHelperStatus, parseLinuxPath, runFixedScript, turnOnLinuxAccessibility,
   WSLPATH_SCRIPT,
   type SpawnLike,
 } from "../../app/main/wsl/launch-sidecar";
+import { SidecarVersionError } from "../../app/main/perception/sidecar";
 import { geditScene, harness, RDP_MSRDC, stacked, WSLG_MSRDC, type FrameSpec } from "./wsl-fakes";
 import {
   doctorHelperRows, IDENTITY_MS, IDLE_MS, linuxApp, linuxFrame, linuxNames, parseWslPath, routerFor, stopWslHelpers, wslHelperPids, wslNamesOf, dropRouter, WslRouter,
@@ -375,6 +376,79 @@ describe("the lifecycle", () => {
     stopWslHelpers();
     expect(h.helperOf("Ubuntu")!.stopped).toBe(1);
     expect(wslHelperPids()).toEqual([]);
+  });
+});
+
+describe("a helper that speaks another protocol version (PR #187 review)", () => {
+  const SENTENCE = "Ember's accessibility helper in Ubuntu is out of date or not matching this Ember (it speaks protocol 2; Ember needs 3). Ember will need to reinstall or update the helper there: update Ember, then reopen your Linux apps.";
+  function refused() {
+    const { h, r } = ubuntu();
+    h.setups.set("Ubuntu", helper => { helper.request = async () => { throw new SidecarVersionError(3, "2", "Ubuntu"); }; });
+    return { h, r };
+  }
+
+  it("is a refusal that stays: later looks create no second client, and the row keeps the sentence that says what to do", async () => {
+    const { h, r } = refused();
+    for (let i = 0; i < 3; i++) {
+      await r.refresh();
+      h.state.now += 30_001;
+    }
+    expect(h.created).toEqual(["Ubuntu"]);
+    expect(await r.doctorRows()).toEqual([{ id: "wsl-helper:Ubuntu", status: "warn", label: "Linux apps in Ubuntu", detail: SENTENCE }]);
+  });
+
+  const refuse = (helper: { request: unknown }) => { helper.request = async () => { throw new SidecarVersionError(3, "2", "Ubuntu"); }; };
+
+  it("keeps the sentence when a missing-package look is followed by the refusal, though fresh diagnostics now find pyatspi", async () => {
+    const diag = { uid: 1000, wslg: true, python3: true, pyatspi: false, a11y: true, pm: "apt-get" as const };
+    const { h, r } = ubuntu({ diag });
+    h.setups.set("Ubuntu", helper => { (helper as unknown as { pyatspi: boolean }).pyatspi = false; });
+    await r.refresh();
+    expect((await r.doctorRows())[0].detail).toContain("install the accessibility packages");
+    h.setups.set("Ubuntu", refuse);
+    h.state.now += 30_001;
+    await r.refresh();
+    diag.pyatspi = true;
+    expect((await r.doctorRows())[0].detail).toBe(SENTENCE);
+  });
+
+  it("keeps the sentence beside a fresh missing-dependency diagnostic", async () => {
+    const { h, r } = ubuntu({ diag: { uid: 1000, wslg: true, python3: false, pyatspi: false, a11y: true, pm: "apt-get" } });
+    h.setups.set("Ubuntu", refuse);
+    await r.refresh();
+    expect((await r.doctorRows())[0].detail).toBe(SENTENCE);
+  });
+
+  it("forgets an earlier look's findings when it refuses, so no accessibility row from that look speaks beside the sentence", async () => {
+    const { h, r } = ubuntu();
+    h.setups.set("Ubuntu", helper => { Object.assign(helper, { pyatspi: false, toolkitAccessibility: false }); });
+    await r.refresh();
+    expect((await r.doctorRows()).map(x => x.id)).toContain("wsl-a11y:Ubuntu");
+    h.setups.set("Ubuntu", refuse);
+    h.state.now += 30_001;
+    await r.refresh();
+    expect(await r.doctorRows()).toEqual([{ id: "wsl-helper:Ubuntu", status: "warn", label: "Linux apps in Ubuntu", detail: SENTENCE }]);
+  });
+
+  it("ranks a known refusal above a remembered missing-package status in the row itself", () => {
+    const rows = helperDoctorRows("Ubuntu", { missing: false, diag: null, known: { problem: "version", status: { uid: 1000, wslg: true, bus: "proc", pyatspi: false, toolkitAccessibility: null }, detail: SENTENCE } });
+    expect(rows[0].detail).toBe(SENTENCE);
+  });
+
+  it("is forgotten when the distro stops, the lifecycle's recovery: the next start makes a fresh client that may agree", async () => {
+    const { h, r } = refused();
+    await r.refresh();
+    h.state.now += 30_001;
+    await r.refresh();
+    expect(h.created).toEqual(["Ubuntu"]);
+    h.wsl.stop("Ubuntu");
+    await r.refresh();
+    h.wsl.distros[0].running = true;
+    h.setups.set("Ubuntu", helper => { helper.frames = [geditScene(h).frame]; });
+    await r.refresh();
+    expect(h.created).toEqual(["Ubuntu", "Ubuntu"]);
+    const rows = await r.doctorRows();
+    expect(rows.find(x => x.id === "wsl-helper:Ubuntu")).toMatchObject({ status: "ok" });
   });
 });
 

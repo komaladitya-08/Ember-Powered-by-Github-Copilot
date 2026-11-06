@@ -57,7 +57,7 @@ export function helperLaunch(o: { wslExe: string; distro: string; scriptLinuxPat
   // Started in /: the inbox wsl.exe can't take --cd ~ (CI's WSL 1 runner), and the helper needs no folder.
   const args = ["-d", o.distro, "--cd", "/", "--exec", "/usr/bin/env", "EMBER_ATSPI_FIND_BUS=1", "python3", "-I", o.scriptLinuxPath];
   const run = underJobHost(o.wslExe, args, helperEnv(o.env), o.jobHost);
-  return { command: run.command, args: run.args, env: run.env, firstRequestMs: HELPER_FIRST_REQUEST_MS, windowsHide: true, mayStart: o.mayStart, noRevive: true };
+  return { command: run.command, args: run.args, env: run.env, firstRequestMs: HELPER_FIRST_REQUEST_MS, windowsHide: true, mayStart: o.mayStart, noRevive: true, where: o.distro };
 }
 
 /** A spawn as this module uses it (node's; faked in tests). */
@@ -141,7 +141,7 @@ export function helperScriptPath(o: { resourcesPath?: string | null; appDir?: st
 }
 
 /** What each distro's helper can't do, as the doctor says it (§8.7, §8.8). */
-export type HelperProblem = "missing" | "path" | "start" | "python3" | "pyatspi" | "bus" | "root" | "nowslg";
+export type HelperProblem = "missing" | "path" | "start" | "python3" | "pyatspi" | "bus" | "root" | "nowslg" | "version";
 
 /** What `status` says inside a distro (the FIND_BUS additions of §4.3). */
 export interface HelperStatusInfo {
@@ -206,7 +206,7 @@ function pythonPackage(pm: HelperDiag["pm"]): string {
 }
 
 /** The plain words for a problem in `distro` (§8.7). */
-export function problemWords(p: HelperProblem, distro: string, pm: HelperDiag["pm"] = null): string {
+export function problemWords(p: HelperProblem, distro: string, pm: HelperDiag["pm"] = null, detail: string | null = null): string {
   switch (p) {
     case "missing": return "Missing from this install: reinstall Ember.";
     case "path": return `Ember can't reach its helper from ${distro}: Windows drives aren't mounted there, so Linux apps in ${distro} can't be read.`;
@@ -215,6 +215,7 @@ export function problemWords(p: HelperProblem, distro: string, pm: HelperDiag["p
     case "pyatspi": return `To read Linux apps in ${distro}, install the accessibility packages there: \`${a11yPackages(pm)}\`, then reopen your Linux apps.`;
     case "bus": return `Ember can't find the session bus your Linux apps use in ${distro}, so it can't read them. Commands in ${distro} still work.`;
     case "root": return "Ember doesn't use Linux apps of a distro that runs as root.";
+    case "version": return detail ?? `Ember's accessibility helper in ${distro} is out of date or not matching this Ember. Update Ember, then reopen your Linux apps.`;
     case "nowslg": return "Update WSL to use Linux apps with Ember: run `wsl --update` in PowerShell.";
   }
 }
@@ -224,18 +225,20 @@ export function problemWords(p: HelperProblem, distro: string, pm: HelperDiag["p
  * where gsettings answers, `wsl-a11y:<distro>` (toolkit accessibility, with its fix). `diag` is the doctor's own look
  * inside (null: it couldn't run); `known` what the router's helper last found there.
  */
-export function helperDoctorRows(distro: string, o: { missing: boolean; diag: HelperDiag | null; known: { problem: HelperProblem | null; status: HelperStatusInfo | null } | null }): PlatformDoctorRow[] {
+export function helperDoctorRows(distro: string, o: { missing: boolean; diag: HelperDiag | null; known: { problem: HelperProblem | null; status: HelperStatusInfo | null; detail?: string | null } | null }): PlatformDoctorRow[] {
   const label = `Linux apps in ${distro}`;
   const helper = (status: PlatformDoctorRow["status"], detail: string): PlatformDoctorRow => ({ id: `wsl-helper:${distro}`, status, label, detail });
   const d = o.diag, pm = d?.pm ?? null;
   const rows: PlatformDoctorRow[] = [];
+  // A helper that refused on its protocol version is terminal and says what to do: no dependency look hides it.
   const problem: HelperProblem | null = o.missing ? "missing"
+    : o.known?.problem === "version" ? "version"
     : d?.uid === 0 || o.known?.status?.uid === 0 || o.known?.problem === "root" ? "root"
       : d?.wslg === false ? "nowslg"
         : d?.python3 === false ? "python3"
           : d?.pyatspi === false || o.known?.status?.pyatspi === false ? "pyatspi"
             : o.known?.problem ?? (o.known?.status?.bus === "none" ? "bus" : null);
-  if (problem) rows.push(helper(problem === "missing" ? "fail" : "warn", problemWords(problem, distro, pm)));
+  if (problem) rows.push(helper(problem === "missing" ? "fail" : "warn", problemWords(problem, distro, pm, o.known?.detail ?? null)));
   else if (!d && !o.known?.status) rows.push(helper("warn", `Ember couldn't look inside ${distro} just now.`));
   else rows.push(helper("ok", `Ember can read Linux apps in ${distro}`));
   const a11y = o.known?.status?.toolkitAccessibility ?? d?.a11y ?? null;

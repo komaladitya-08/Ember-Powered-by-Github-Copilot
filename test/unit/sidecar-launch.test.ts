@@ -28,6 +28,8 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
   const req = JSON.parse(line);
   const ok = result => setTimeout(() => send({ jsonrpc: "2.0", id: req.id, result }), Math.max(0, started + cold - Date.now()));
   switch (req.method) {
+    // The handshake: answered at once, also by a cold host (it needs no provider).
+    case "ping": return send({ jsonrpc: "2.0", id: req.id, result: { version: 3 } });
     case "whoami": return ok({ argv: process.argv.slice(2), base: process.env.EMBER_ATSPI_ID_BASE, enc: process.env.PYTHONIOENCODING ?? null, mine: process.env.EMBER_FAKE_MINE ?? null, told });
     case "remember_secrets":
       told += req.params.keys.length;
@@ -50,6 +52,7 @@ const send = m => process.stdout.write(JSON.stringify(m) + "\\n");
 process.parentPort.on("message", e => {
   for (const line of String(e.data).split("\\n").filter(Boolean)) {
     const req = JSON.parse(line);
+    if (req.method === "ping") send({ jsonrpc: "2.0", id: req.id, result: { version: 3 } });
     if (req.method === "whoami") send({ jsonrpc: "2.0", id: req.id, result: { argv: process.argv.slice(2), base: process.env.EMBER_ATSPI_ID_BASE, mine: process.env.EMBER_FAKE_MINE ?? null, pid: process.pid } });
     if (req.method === "slow") setTimeout(() => send({ jsonrpc: "2.0", id: req.id, result: "slow" }), req.params.ms);
   }

@@ -312,6 +312,7 @@ const readline = require("node:readline");
 const send = m => process.stdout.write(JSON.stringify(m) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const req = JSON.parse(line);
+  if (req.method === "ping") { send({ jsonrpc: "2.0", id: req.id, result: { version: 3 } }); return; }
   if (req.method === "die") { send({ jsonrpc: "2.0", id: req.id, result: "bye" }); setTimeout(() => process.exit(0), 20); return; }
   send({ jsonrpc: "2.0", id: req.id, result: { base: Number(process.env.EMBER_ATSPI_ID_BASE) } });
 });
