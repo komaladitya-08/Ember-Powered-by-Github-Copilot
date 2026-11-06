@@ -10,7 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
+import { CopilotClient, type ProviderConfig } from "@github/copilot-sdk";
 import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
@@ -49,6 +49,8 @@ import { afterTheStep } from "../policy/audit";
 import type { CommandService } from "../commands/types";
 import { createHash, randomUUID } from "node:crypto";
 import type { OneShot } from "../memory/learn";
+import { runtimeClientOptions } from "./runtime-env";
+import { redactGitHubTokens } from "./auth";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
@@ -591,7 +593,8 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
  * again (default Linux's "Reinstall Ember (sudo dnf reinstall ember).").
  */
 export function explainStartError(err: unknown, ctx: { source?: string; sourceName?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string; runtime?: string } = {}): string {
-  const msg = err instanceof Error ? err.message : String(err);
+  // A token the runtime's error quoted is never shown (BE audit #1).
+  const msg = redactGitHubTokens(err instanceof Error ? err.message : String(err));
   const from = ctx.source && SOURCE_TEXT[ctx.source] ? ` (${SOURCE_TEXT[ctx.source]})` : "";
   if (runtimeMissing(msg, ctx.runtime)) return `Ember's Copilot runtime is missing or can't start. ${ctx.reinstall ?? PLATFORM_WORDS.linux.reinstall}`;
   const files = fileTrouble(msg);
@@ -1309,16 +1312,8 @@ export class AgentHost {
       let client: CopilotClient;
       let login: string | undefined;
       for (let attempt = 1; ; attempt++) {
-        client = new CopilotClient({
-          mode: "empty",
-          baseDirectory: path.join(this.o.userData, "copilot"),
-          useLoggedInUser: false,
-          // With another model service in use, no GitHub sign-in goes to the runtime: requests go only to that service.
-          ...(token && !provider ? { gitHubToken: token } : {}),
-          connection: RuntimeConnection.forStdio({ path: this.o.runtimePath }),
-          logLevel: "warning",
-          env,
-        });
+        // The sign-in goes to the runtime in one place only, and no inherited GitHub credential goes with it (runtime-env.ts).
+        client = new CopilotClient(runtimeClientOptions({ userData: this.o.userData, runtimePath: this.o.runtimePath, token, provider: !!provider, env }));
         // Known before it starts, so a stop() that comes meanwhile stops it too.
         this.client = client;
         await client.start();

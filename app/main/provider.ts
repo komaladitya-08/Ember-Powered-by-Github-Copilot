@@ -18,7 +18,7 @@ import fs from "node:fs";
 import type { ProviderConfig } from "@github/copilot-sdk";
 import { applyAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "./admin";
 import { lenientJson, repairSettings, type Settings, type SettingsPatch } from "./settings";
-import type { SaveResult, SecretBox } from "./agent/auth";
+import { redactGitHubTokens, type SaveResult, type SecretBox } from "./agent/auth";
 import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
@@ -272,35 +272,57 @@ export async function providerStateOf(o: { settings: Settings; admin: LoadedAdmi
 /** `text` with every exact occurrence of each secret replaced (none, or one too short to be a key, changes nothing). */
 export function redact(text: string, secret: string | null | readonly string[]): string {
   const all = secret === null ? [] : typeof secret === "string" ? [secret] : secret;
-  return all.filter(s => s.length >= 8).reduce((t, s) => t.split(s).join("[key]"), text);
+  // Anything shaped like a GitHub token goes too, whichever it is (BE audit #1): the runtime's errors may quote its environment.
+  return redactGitHubTokens(all.filter(s => s.length >= 8).reduce((t, s) => t.split(s).join("[key]"), text));
 }
 
-/** A copy of `v` with `secret` redacted from every string in it, errors included (a depth limit keeps it finite). */
-function scrub(v: unknown, secret: readonly string[], depth = 0): unknown {
+/** Nesting past this is written as "[deep]", never raw. */
+const SCRUB_DEPTH = 8;
+
+/**
+ * A copy of `v` with `secret` redacted from every string in it: values, object keys, and an error's name, message, stack,
+ * code and cause. Errors become plain objects (a bare JSON.stringify of an Error is `{}`, and a logger prints these
+ * fields anyway). Beyond the depth limit a value is "[deep]" and a value inside itself "[circular]", so nothing is
+ * ever passed on raw and the walk is finite.
+ */
+function scrub(v: unknown, secret: readonly string[], depth = 0, path: object[] = []): unknown {
   if (typeof v === "string") return redact(v, secret);
-  if (depth > 6 || v === null || typeof v !== "object") return v;
-  if (v instanceof Error) {
-    const e = v as Error & { code?: unknown; cause?: unknown };
-    const out = new Error(redact(e.message, secret));
-    out.name = e.name;
-    out.stack = e.stack === undefined ? undefined : redact(e.stack, secret);
-    if (e.code !== undefined) (out as Error & { code?: unknown }).code = e.code;
-    if (e.cause !== undefined) (out as Error & { cause?: unknown }).cause = scrub(e.cause, secret, depth + 1);
+  if (typeof v === "function" || typeof v === "symbol") return `[${typeof v}]`;
+  if (v === null || typeof v !== "object") return v;
+  if (path.includes(v)) return "[circular]";
+  if (depth >= SCRUB_DEPTH) return "[deep]";
+  path.push(v);
+  try {
+    if (v instanceof Date) return v;
+    if (v instanceof Error) {
+      const e = v as Error & { code?: unknown; cause?: unknown };
+      const out: Record<string, unknown> = { name: scrub(e.name, secret), message: scrub(e.message, secret), stack: scrub(e.stack, secret, depth + 1, path) };
+      if (e.code !== undefined) out.code = scrub(e.code, secret, depth + 1, path);
+      if (e.cause !== undefined) out.cause = scrub(e.cause, secret, depth + 1, path);
+      return out;
+    }
+    if (Array.isArray(v)) return v.map(x => scrub(x, secret, depth + 1, path));
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v)) {
+      let x: unknown;
+      try { x = (v as Record<string, unknown>)[k]; } catch { x = "[unreadable]"; } // a getter that throws
+      out[redact(k, secret)] = scrub(x, secret, depth + 1, path);
+    }
     return out;
+  } finally {
+    path.pop();
   }
-  if (Array.isArray(v)) return v.map(x => scrub(x, secret, depth + 1));
-  return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, scrub(x, secret, depth + 1)]));
 }
 
 /**
- * `base` with the user's provider key (`secret()`, asked at each line) replaced in every message and field, errors
- * included: a model service's error text may quote the request it refused. Its children redact too.
+ * `base` with the user's provider key (`secret()`, asked at each line) replaced in every message, scope and field, errors
+ * included: a model service's error text may quote the request it refused. Its children redact too. (The logger itself
+ * then replaces anything shaped like a GitHub token in the finished line: logger.ts.)
  */
 export function redactingLogger(base: Logger, secret: () => string | null | readonly string[]): Logger {
   const list = (): string[] => { const s = secret(); return (s === null ? [] : typeof s === "string" ? [s] : [...s]).filter(x => x.length >= 8); };
   const clean = (fields?: Fields): Fields | undefined => {
-    const s = list();
-    return fields && s.length ? scrub(fields, s) as Fields : fields;
+    return fields ? scrub(fields, list()) as Fields : fields;
   };
   const msg = (m: string) => redact(m, list());
   return {
@@ -308,7 +330,7 @@ export function redactingLogger(base: Logger, secret: () => string | null | read
     info: (m, f) => base.info(msg(m), clean(f)),
     warn: (m, f) => base.warn(msg(m), clean(f)),
     error: (m, f) => base.error(msg(m), clean(f)),
-    child: scope => redactingLogger(base.child(scope), secret),
+    child: scope => redactingLogger(base.child(redact(scope, list())), secret),
     get file() { return base.file; },
   };
 }
