@@ -17,7 +17,7 @@ import { NEVER_LOOK_DEFAULTS } from "../../shared/never-look";
 import { LAUNCHERS } from "../hands/terminals";
 import { isNeverLook } from "../perception/elements";
 import { matchFrame } from "../perception/windows";
-import type { AxWindow, Bounds } from "../perception/sidecar";
+import { SidecarVersionError, type AxWindow, type Bounds } from "../perception/sidecar";
 import type { PlatformDoctorRow, Rect, StackedWindow } from "../platform/types";
 import type { WrapForWslOptions } from "./routed-sidecar";
 import type { WslFacts, WslService } from "./types";
@@ -89,6 +89,8 @@ interface DistroState {
   readying: Promise<DistroSidecar | null> | null;
   status: HelperStatusInfo | null;
   problem: HelperProblem | null;
+  /** The helper's version refusal in the user's words (problem "version"): shown as the row, kept until the distro stops. */
+  refusal: string | null;
   bus: string | null;
   /** The RAIL windows find_bus was last given (a new unmatched one asks again), and when. */
   scanned: Set<number>;
@@ -272,7 +274,7 @@ export class WslRouter {
   private state(name: string): DistroState {
     let st = this.states.get(name);
     if (!st) {
-      st = { name, sidecar: null, allow: false, verifiedPid: null, readying: null, status: null, problem: null, bus: null, scanned: new Set(), scannedAt: -Infinity, lastRail: -Infinity, retryAt: -Infinity };
+      st = { name, sidecar: null, allow: false, verifiedPid: null, readying: null, status: null, problem: null, refusal: null, bus: null, scanned: new Set(), scannedAt: -Infinity, lastRail: -Infinity, retryAt: -Infinity };
       this.states.set(name, st);
     }
     return st;
@@ -455,7 +457,9 @@ export class WslRouter {
 
   private async start(st: DistroState, wsl: WslService, facts: WslFacts, titles: string[], live: Set<string> | null): Promise<DistroSidecar | null> {
     // Root and no WSLg hold until the distro stops; the rest are tried again now and then (the user may install python3).
-    if (st.problem === "root" || st.problem === "nowslg" || st.problem === "missing" || this.d.now() < st.retryAt) return null;
+    // (A helper that speaks another protocol version is the same: new clients would be refused the same way, so none is
+    // made until the distro stops and starts, which is when an update there takes effect.)
+    if (st.problem === "root" || st.problem === "nowslg" || st.problem === "missing" || st.problem === "version" || this.d.now() < st.retryAt) return null;
     if (!facts.wslExe) return null;
     let names: Set<string>;
     try {
@@ -484,8 +488,15 @@ export class WslRouter {
     } catch (err) {
       st.allow = false;
       this.o.log.warn("wsl.helper_start_failed", { distro: st.name, err: String(err) });
-      st.problem = "start";
-      st.retryAt = this.d.now() + RETRY_MS;
+      if (err instanceof SidecarVersionError) {
+        // Terminal until the distro stops (forgetDistro): the sentence says what to do, and no retry makes a client agree.
+        st.problem = "version";
+        st.refusal = err.message;
+        st.status = null; // an older look's pyatspi or bus must not speak over the refusal
+      } else {
+        st.problem = "start";
+        st.retryAt = this.d.now() + RETRY_MS;
+      }
       this.stopHelper(st);
       return null;
     }
@@ -587,6 +598,7 @@ export class WslRouter {
     st.status = null;
     st.retryAt = -Infinity;
     if (st.problem !== "missing") st.problem = null;
+    st.refusal = null;
     for (const [p, n] of [...this.pidDistro]) if (n === st.name) this.pidDistro.delete(p);
   }
 
@@ -795,7 +807,7 @@ export class WslRouter {
       const st = this.states.get(d.name);
       const missing = !this.d.helpers.present();
       const diag = missing || !facts.wslExe ? null : await this.d.helpers.diag(d.name, facts.wslExe).catch(() => null);
-      rows.push(...helperDoctorRows(d.name, { missing, diag, known: st ? { problem: st.problem, status: st.status } : null }));
+      rows.push(...helperDoctorRows(d.name, { missing, diag, known: st ? { problem: st.problem, status: st.status, detail: st.refusal } : null }));
     }
     return rows;
   }

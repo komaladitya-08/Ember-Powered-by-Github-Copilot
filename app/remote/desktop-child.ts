@@ -11,7 +11,7 @@
 
 import { spawn } from "node:child_process";
 import { Perception } from "../main/perception";
-import { AtspiSidecar, pickPython, type AxWindow } from "../main/perception/sidecar";
+import { AtspiSidecar, pickPython, SidecarVersionError, type AxWindow } from "../main/perception/sidecar";
 import { isNeverLook } from "../main/perception/elements";
 import { isSecurityWindow, PolicyEngine, type TextMode } from "../main/policy/policy";
 import { isTerminalApp, launchApp, listApps, type DesktopApp } from "../main/hands/system";
@@ -125,7 +125,8 @@ async function start(init: InitArgs, log: Logger, onStop: () => void, onGone: (w
   let status;
   try {
     status = await Promise.race([sidecar.status(), new Promise<never>((_r, reject) => setTimeout(() => reject(new Error("timeout")), STATUS_MS))]);
-  } catch {
+  } catch (err) {
+    if (err instanceof SidecarVersionError) return fail(`Ember can't read apps on ${init.host}: its accessibility helper there is out of date. Ember will need to reinstall or update it: update Ember, then connect again.`);
     return fail(`Ember can't read apps on ${init.host}: its accessibility helper didn't start (python3 with pyatspi is needed there).`);
   }
   if (status.toolkitAccessibility === false || !(status.apps > 0)) {

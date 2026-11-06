@@ -15,6 +15,30 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import type { Logger } from "../logger";
+import { SIDECAR_PROTOCOL_VERSION } from "../../shared/sidecar-protocol";
+
+/**
+ * The helper's `ping` didn't report the protocol version Ember speaks (a stale script on another machine, a half-upgraded
+ * install): nothing else is sent to it, and this client doesn't start it again. `message` is the plain sentence for the
+ * user; `detail` finishes "Ember's accessibility helper can't read apps: …" in the setup check.
+ */
+export class SidecarVersionError extends Error {
+  readonly detail: string;
+  constructor(readonly expected: number, readonly got: string, where?: string) {
+    const reason = `out of date or not matching this Ember (it speaks protocol ${got}; Ember needs ${expected})`;
+    const fix = where ? "Ember will need to reinstall or update the helper there: update Ember, then reopen your Linux apps." : "Reinstall or update Ember.";
+    super(`Ember's accessibility helper${where ? ` in ${where}` : ""} is ${reason}. ${fix}`);
+    this.name = "SidecarVersionError";
+    this.detail = `it is ${reason}. ${fix}`;
+  }
+}
+
+/** What a ping's answer said, for the error (a number, a short string, or what kind of thing it wasn't). Never more than 20 characters. */
+function describeVersion(v: unknown): string {
+  if (typeof v === "number") return String(v).slice(0, 20);
+  if (typeof v === "string") return JSON.stringify(v.slice(0, 20));
+  return v === undefined ? "none" : "not a number";
+}
 
 export interface Bounds { x: number; y: number; width: number; height: number }
 
@@ -257,6 +281,8 @@ export interface SidecarLaunch {
    * stopped distro, §4.3). Default: always.
    */
   mayStart?: () => boolean;
+  /** Where the helper runs, when not on this computer (a WSL distro's name): the version error names it. */
+  where?: string;
   /** No new process after one exits (no revive): the next request starts one, if mayStart allows (critique wsl-20). */
   noRevive?: boolean;
   /**
@@ -400,7 +426,13 @@ interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; t
  * One sidecar process and the requests waiting on it; `answered`: it has answered something (it works); `warm`: it has
  * answered a request waited on (see SidecarLaunch.firstRequestMs).
  */
-interface Helper { child: HelperChild; pending: Map<number, Pending>; done: boolean; answered: boolean; warm: boolean }
+interface Helper {
+  child: HelperChild; pending: Map<number, Pending>; done: boolean; answered: boolean; warm: boolean;
+  /** Its ping (the protocol handshake) passed: until then nothing else is written to it, and `held` keeps the lines waiting. */
+  ready: boolean;
+  pingId: number;
+  held: string[];
+}
 
 /** A secret field's accessible: its app's bus name and its object path. */
 type SecretKey = [string, string];
@@ -423,6 +455,8 @@ export class AtspiSidecar {
   /** stop() was called: no helper is started again on its own (see revive). */
   private stopped = false;
   private reviving = false;
+  /** A process of this client reported another protocol version: none is started again by this client (a new one is made to try again). */
+  private incompatible: SidecarVersionError | null = null;
   /** The id blocks this instance's processes were given (ownsId): every one, across restarts. */
   private blocks = new Set<number>();
 
@@ -433,6 +467,7 @@ export class AtspiSidecar {
   constructor(private script: string, private log: Logger, private python = pickPython(), private env: NodeJS.ProcessEnv = process.env, private launch?: SidecarLaunch) {}
 
   private ensure(): Helper {
+    if (this.incompatible) throw this.incompatible;
     const live = this.helper;
     if (live && !live.done && !live.child.ended()) return live;
     if (live) this.retire(live, "accessibility helper stopped");
@@ -451,7 +486,7 @@ export class AtspiSidecar {
       this.log.error("sidecar.error", { err });
       throw new Error(`accessibility helper could not run (${err instanceof Error ? err.message : String(err)})`, { cause: err });
     }
-    const h: Helper = { child, pending: new Map(), done: false, answered: false, warm: false };
+    const h: Helper = { child, pending: new Map(), done: false, answered: false, warm: false, ready: false, pingId: this.nextId++, held: [] };
     this.helper = h;
     // A line past MAX_LINE_BYTES is no answer Ember can trust: that process is ended and a fresh one starts (fail closed).
     boundedLines(child.stdout, MAX_LINE_BYTES, line => this.answer(h, line), () => {
@@ -476,11 +511,17 @@ export class AtspiSidecar {
       this.log.warn("sidecar.stdin_error", { err });
       this.retire(h, "accessibility helper stopped", "SIGKILL");
     });
-    // Before anything else it is asked: the secret fields earlier processes knew (its answer isn't needed).
-    if (this.secrets.size || this.withheld.size) {
-      const params = { keys: [...this.secrets.values()], ...(this.withheld.size ? { withheld: [...this.withheld.values()] } : {}) };
-      child.send(JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method: "remember_secrets", params }) + "\n");
-    }
+    // Before anything else it is asked its protocol version (the host answers without starting its provider): nothing
+    // else, the secret fields earlier processes knew included, is written until it reports exactly Ember's.
+    const first = this.launch?.firstRequestMs;
+    const ms = Math.max(5000, first ?? 0);
+    const timer = setTimeout(() => {
+      h.pending.delete(h.pingId);
+      this.log.warn("sidecar.timeout", { method: "ping", timeoutMs: ms });
+      this.retire(h, `accessibility helper did not answer ping in ${ms} ms`, "SIGKILL");
+    }, ms);
+    h.pending.set(h.pingId, { resolve: () => undefined, reject: () => undefined, timer });
+    child.send(JSON.stringify({ jsonrpc: "2.0", id: h.pingId, method: "ping", params: {} }) + "\n");
     return h;
   }
 
@@ -506,7 +547,18 @@ export class AtspiSidecar {
       this.log.warn("sidecar.bad_line", { bytes: line.length, ...(json ? {} : { start: line.slice(0, 120) }) });
       return;
     }
+    // A retired helper (refused, timed out, replaced) is finished with: whatever it still says, a buffered line after a
+    // refusal included, must not start the secrets going again nor mark a newer client's state.
+    if (h.done || this.helper !== h) return;
     const id = typeof msg.id === "number" ? msg.id : null;
+    if (!h.ready) {
+      // Until the handshake passes only its one answer counts. Anything else (an answer to an id that was never sent, a
+      // held request's included) is ignored, so it can't resolve an operation that was never written; the ping's own
+      // timeout bounds a helper that says nothing else.
+      if (id !== null && id === h.pingId && h.pending.has(h.pingId)) this.handshake(h, msg);
+      else this.log.warn("sidecar.early_line", {});
+      return;
+    }
     if (id !== null) h.answered = true;
     const p = id !== null ? h.pending.get(id) : undefined;
     if (!p) return;
@@ -517,15 +569,43 @@ export class AtspiSidecar {
   }
 
   /**
+   * The ping's answer: exactly Ember's protocol version, or this process is refused (an error answer, no version, another
+   * number, a string, null all fail closed): every waiting request fails with the refusal, the process is killed, and this
+   * client starts none again. A refused handshake sets neither `answered` (no revive) nor `warm`.
+   */
+  private handshake(h: Helper, msg: { result?: unknown; error?: { message: string } }): void {
+    const p = h.pending.get(h.pingId);
+    if (p) { clearTimeout(p.timer); h.pending.delete(h.pingId); }
+    const result = msg.result as { version?: unknown } | null | undefined;
+    const version = msg.error || typeof result !== "object" || result === null ? undefined : result.version;
+    if (!msg.error && version === SIDECAR_PROTOCOL_VERSION) {
+      h.ready = true;
+      h.answered = true;
+      // The secret fields earlier processes knew come first (their answer isn't needed), then what waited.
+      if (this.secrets.size || this.withheld.size) {
+        const params = { keys: [...this.secrets.values()], ...(this.withheld.size ? { withheld: [...this.withheld.values()] } : {}) };
+        h.child.send(JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method: "remember_secrets", params }) + "\n");
+      }
+      for (const line of h.held.splice(0)) h.child.send(line);
+      return;
+    }
+    const err = new SidecarVersionError(SIDECAR_PROTOCOL_VERSION, msg.error ? "an error" : describeVersion(version), this.launch?.where);
+    this.incompatible = err;
+    this.log.warn("sidecar.version_mismatch", { expected: SIDECAR_PROTOCOL_VERSION, got: msg.error ? "error" : describeVersion(version) });
+    this.retire(h, err, "SIGKILL");
+  }
+
+  /**
    * This process is finished with: its waiting requests fail now. The next one starts at once when this one worked
    * (see revive), else the next request starts it.
    */
-  private retire(h: Helper, why: string, kill?: NodeJS.Signals): void {
+  private retire(h: Helper, why: string | Error, kill?: NodeJS.Signals): void {
     const current = this.helper === h;
     if (current) this.helper = null;
     h.done = true;
     if (kill && !h.child.ended()) h.child.kill(kill);
-    for (const p of h.pending.values()) { clearTimeout(p.timer); p.reject(new Error(why)); }
+    h.held = [];
+    for (const p of h.pending.values()) { clearTimeout(p.timer); p.reject(typeof why === "string" ? new Error(why) : why); }
     h.pending.clear();
     if (current && h.answered) this.revive();
   }
@@ -577,7 +657,8 @@ export class AtspiSidecar {
         this.retire(h, "accessibility helper was restarted (an earlier request took too long)", "SIGKILL");
       }, ms);
       h.pending.set(id, { resolve: v => resolve(v as T), reject, timer });
-      h.child.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      const line = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
+      if (h.ready) h.child.send(line); else h.held.push(line);
     });
   }
 

@@ -21,6 +21,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
   const ok = result => send({ jsonrpc: "2.0", id: req.id, result });
   if (stuck) return;
   switch (req.method) {
+    case "ping": return ok({ version: 3 });
     case "whoami": return ok({ pid: process.pid, base: process.env.EMBER_ATSPI_ID_BASE, enc: process.env.PYTHONIOENCODING });
     case "status":
       if (process.env.EMBER_FAKE_STATUS_LOG) require("node:fs").appendFileSync(process.env.EMBER_FAKE_STATUS_LOG, process.pid + "\\n");
