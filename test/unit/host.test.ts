@@ -3814,11 +3814,11 @@ describe("memory erasure at account boundaries", () => {
 describe("keeping the recent conversation across restarts (opt-in)", () => {
   const SHALL_I = "I can delete the 12 installers there older than a month. Shall I?";
   /** A host as main builds it: the saved copy in the data folder, the account lookup, the setting a switch. */
-  function kept(dir: string, o: { on?: () => boolean; account?: number | null; delayMs?: number; provider?: () => import("../../app/main/provider").ActiveProvider | null; resolve?: () => Promise<number | null> } = {}) {
+  function kept(dir: string, o: { on?: () => boolean; account?: number | null; delayMs?: number; provider?: () => import("../../app/main/provider").ActiveProvider | null; stream?: (e: { id: number; text: string; state: string }) => void; resolve?: () => Promise<number | null> } = {}) {
     const flag = { on: true };
     const store = new HistoryStore({ dir, log: quiet, delayMs: o.delayMs ?? 1 });
     const memory = { remember: () => "", context: () => "", forget: () => false, forgetAll() {}, resolveAccountId: o.resolve ?? (async () => o.account === undefined ? 7 : o.account) };
-    const made = makeHost({ userData: dir, memory, ...(o.provider ? { provider: o.provider } : {}), history: { store, enabled: o.on ?? (() => flag.on) } });
+    const made = makeHost({ userData: dir, memory, ...(o.provider ? { provider: o.provider } : {}), ...(o.stream ? { onAnswerStream: o.stream } : {}), history: { store, enabled: o.on ?? (() => flag.on) } });
     return { ...made, store, flag, file: path.join(dir, HISTORY_FILE) };
   }
   const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-keep-"));
@@ -3965,6 +3965,52 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     await k.store.flush();
     expect(fs.readFileSync(file, "utf8")).not.toMatch(/answerId|heardId/);
     await k.host.stop();
+  });
+
+  it("a streamed answer's id lives only in this run: saved without it, restored without it, so a new stream id 1 settles only on its own entry (Home streaming, B2)", async () => {
+    const dir = tmpDir();
+    const seen1: { id: number; text: string; state: string }[] = [];
+    const first = kept(dir, { stream: e => seen1.push(e) });
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("One");
+    conductorSession().emit("assistant.message_delta", { messageId: "a", deltaContent: "Whole answer." });
+    conductorSession().emit("assistant.message", { messageId: "a", content: "Whole answer." });
+    conductorSession().emit("session.idle", {});
+    await first.host.ask("Two");
+    conductorSession().emit("assistant.message_delta", { messageId: "b", deltaContent: "Half of it" });
+    await first.host.stopAnswer();
+    // Live: both streamed answers carry their stream id, the stopped one marked stopped.
+    const live = first.host.getTranscript().filter(e => e.who === "ember");
+    expect(live).toEqual([
+      expect.objectContaining({ text: "Whole answer.", answerId: seen1[0].id }),
+      expect.objectContaining({ text: "Half of it", stopped: true, answerId: seen1.at(-1)!.id }),
+    ]);
+    await first.store.flush();
+    // Saved: the interruption is kept, no per-run id is.
+    const file = fs.readFileSync(first.file, "utf8");
+    expect(file).not.toMatch(/answerId/);
+    expect(JSON.parse(file).entries.filter((e: { stopped?: boolean }) => e.stopped)).toHaveLength(1);
+    await first.host.stop();
+
+    // A restart: the restored lines have no id (the stopped one stays stopped), and ids start again at 1.
+    const seen2: { id: number; text: string; state: string }[] = [];
+    const second = kept(dir, { stream: e => seen2.push(e) });
+    await second.host.start(TOKEN, "stored");
+    const restored = second.host.getTranscript();
+    expect(restored).toHaveLength(4);
+    for (const e of restored) expect(e).not.toHaveProperty("answerId");
+    expect(restored.filter(e => e.stopped)).toEqual([expect.objectContaining({ who: "ember", text: "Half of it" })]);
+    await second.host.ask("Three");
+    conductorSession().emit("assistant.message_delta", { messageId: "c", deltaContent: "New words" });
+    conductorSession().emit("assistant.message", { messageId: "c", content: "New words" });
+    conductorSession().emit("session.idle", {});
+    expect(seen2[0].id).toBe(1);
+    const all = second.host.getTranscript();
+    expect(all.filter(e => e.answerId !== undefined)).toEqual([expect.objectContaining({ text: "New words", answerId: 1 })]);
+    expect(all.slice(0, 4)).toEqual(restored);
+    await second.store.flush();
+    expect(fs.readFileSync(second.file, "utf8")).not.toMatch(/answerId/);
+    await second.host.stop();
   });
 
   it("something said before the account is known doesn't replace the earlier saved copy: the saved lines come first, both are kept", async () => {

@@ -158,6 +158,22 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("shows one answer row tha
     await page.evaluate(e => window.__streamTest.push(e), [cut, { t: at(91), who: "problem" as const, text: "Lost it." }]);
     expect(await status.innerText()).toContain("couldn’t finish");
 
+    // Restored lines (no answerId) from a saved copy: a stopped one shows its note, and flips neither the composer
+    // status nor a new stream's row (F1, history).
+    const savedCut: TranscriptEntry = { t: at(95), who: "ember", text: "Saved partial", stopped: true };
+    await page.evaluate(() => window.__streamTest.push([]));
+    const before = await status.innerText();
+    await page.evaluate(e => window.__streamTest.push(e), [{ t: at(94), who: "you" as const, text: "Old question" }, savedCut]);
+    const restoredRow = page.locator("#conversation li.ember", { hasText: "Saved partial" });
+    expect(await restoredRow.locator("small").innerText()).toBe("Stopped before it finished");
+    expect(await status.innerText()).toBe(before);
+    expect(await status.innerText()).not.toContain("Reply received");
+    await page.evaluate(() => window.__streamTest.stream({ id: 8, text: "Streaming now", state: "streaming" }));
+    expect(await answer.count()).toBe(1);
+    await page.evaluate(e => window.__streamTest.push(e), [{ t: at(94), who: "you" as const, text: "Old question" }, savedCut]);
+    expect(await answer.count()).toBe(1);
+    await page.evaluate(() => window.__streamTest.stream({ id: 8, text: "Streaming now", state: "streaming" }));
+
     // Reset: nothing is left, and a late word of the old answer doesn't bring a row back.
     await page.evaluate(() => window.__streamTest.stream({ id: 8, text: "Words before the reset", state: "streaming" }));
     expect(await answer.count()).toBe(1);

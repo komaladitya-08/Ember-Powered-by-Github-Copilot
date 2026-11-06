@@ -113,6 +113,25 @@ describe("Home's streaming answer row", () => {
     expect(s.row).toBeNull();
   });
 
+  it("restored entries carry no id, so none of them settles a new stream that starts again at id 1 (history)", () => {
+    // After a restart main numbers streams from 1 again; the saved lines (even a stopped one) have no answerId.
+    const restored: Said[] = [
+      said("you", "Before", 0), said("ember", "An older answer", 1),
+      { ...said("ember", "Cut short", 2), stopped: true }, said("problem", "Couldn’t finish", 3),
+    ];
+    let s = streamEvent(NO_STREAM, ev(1, "Fresh"), restored, NOW);
+    expect(s.row).toMatchObject({ id: 1, text: "Fresh", phase: "streaming" });
+    s = streamEntries(s, restored);
+    expect(s.row).toMatchObject({ id: 1 });
+    // Not by an interrupted event either: the restored stopped line is no entry of this answer.
+    const cut = streamEvent(s, ev(1, "Fresh words", "interrupted"), restored, NOW);
+    expect(cut.row).toMatchObject({ id: 1, phase: "interrupted" });
+    // It settles on its own entry only, with the restored ones still above it.
+    const own = [...restored, mine(1, "ember", "Fresh words", 4)];
+    expect(streamEntries(s, own).row).toBeNull();
+    expect(streamEntries(cut, [...restored, mine(1, "ember", "Fresh words", 4, true)]).row).toBeNull();
+  });
+
   it("clears the row when the conversation is emptied, and ignores that answer's late words", () => {
     let s = streamEvent(NO_STREAM, ev(5, "Some words"), [said("you", "Hi")], NOW);
     s = streamEntries(s, []);
