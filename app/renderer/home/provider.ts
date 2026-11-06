@@ -9,8 +9,8 @@
 import type { EmberProviderApi, ProviderState } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, MODEL_ID, type ProviderType } from "../../shared/provider";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerConsentText, providerHint, providerTestText } from "./copy";
+import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerConsentText, providerHint, providerTestText } from "./copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
 
@@ -23,6 +23,8 @@ type Own = Settings["provider"];
 let save: (patch: SettingsPatch) => Promise<boolean> = async () => false;
 let own: Own | null = null;
 let state: ProviderState | null = null;
+/** `state` is the answer to the newest read (none pending, none failed): only then does it name where requests go. */
+let stateFresh = false;
 /** Replace was pressed: the key field shows although a key is saved. */
 let replacing = false;
 /** The card was put away with Not now (for this host): it doesn't come back until the switch is turned on again. */
@@ -91,20 +93,45 @@ function draw(): void {
   $("byok-no-keyring").hidden = keyring || saved;
   $("byok-no-keyring").textContent = PROVIDER_NO_KEYRING;
   $("byok-hint").textContent = providerHint({ managed, inForce: !!state?.inForce, on, host });
+  onDestination();
 }
 
-async function refresh(): Promise<void> {
-  const a = api();
-  if (!a) return;
-  try { state = await a.state(); } catch { state = null; /* drawn from the settings alone */ }
-  draw();
+/** Told when what the page knows of the provider changes (the words naming where requests go follow it). */
+let onDestination: () => void = () => undefined;
+export function onProviderDestination(fn: () => void): void { onDestination = fn; }
+
+/**
+ * Whether the user's own provider is in force, from main's own answer (ProviderState.inForce and .host, which main
+ * computes as it routes: on, agreed to for the host, allowed), not from the settings the page holds. Unknown while a read
+ * is pending or failed, or before the first settings: the page never guesses Copilot. Without the provider bridge there
+ * is no user provider, so that is known.
+ */
+export function ownProvider(): OwnProvider {
+  if (!api()) return { known: true, host: null };
+  if (!own || !state || !stateFresh) return { known: false };
+  return { known: true, host: state.inForce && state.host ? state.host : null };
+}
+
+const refresh = latestOnly<ProviderState>(
+  async () => { const a = api(); if (!a) throw new Error("no bridge"); return a.state(); },
+  r => {
+    state = r.ok ? r.value : null; stateFresh = r.ok;
+    draw();
+  },
+);
+
+/** A read is starting: until it answers, where requests go isn't known. */
+function reread(): Promise<void> {
+  stateFresh = false;
+  onDestination();
+  return refresh();
 }
 
 /** The settings changed (here, by voice or in the file): the group follows them. */
 export function providerSettings(s: Settings): void {
   own = s.provider;
   draw();
-  void refresh();
+  void reread();
 }
 
 /** Wires the group's controls; `saveSettings` is Home's own save (it says why a change couldn't be saved). */
@@ -112,7 +139,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
   save = saveSettings;
   const a = api();
   if (!a) { $("byok-h").hidden = true; $("byok").hidden = true; return; }
-  a.onChanged(() => void refresh());
+  a.onChanged(() => void reread());
   input("byok-on").addEventListener("change", e => {
     const on = (e.target as HTMLInputElement).checked;
     declinedFor = null;
@@ -176,12 +203,12 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     if (!key.trim()) { say(PROVIDER_WORDS.pasteKey, true); field.focus(); return; }
     void a.saveKey(key).then(r => {
       if (r.ok) { field.value = ""; replacing = false; say(PROVIDER_WORDS.keySaved); } else say(r.why, true);
-      return refresh();
+      return reread();
     }).then(() => { if (!replacing) ($("byok-key-replace") as HTMLButtonElement).focus(); });
   });
   $("byok-key-replace").addEventListener("click", () => { replacing = true; draw(); input("byok-key").focus(); });
   $("byok-key-remove").addEventListener("click", () => {
-    void a.removeKey().then(r => { say(r.ok ? PROVIDER_WORDS.keyRemoved : r.why, !r.ok); replacing = false; return refresh(); }).then(() => input("byok-key").focus());
+    void a.removeKey().then(r => { say(r.ok ? PROVIDER_WORDS.keyRemoved : r.why, !r.ok); replacing = false; return reread(); }).then(() => input("byok-key").focus());
   });
   $("byok-test").addEventListener("click", () => {
     const btn = $("byok-test") as HTMLButtonElement;
@@ -189,5 +216,5 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     say(PROVIDER_WORDS.testing);
     void a.test().then(r => say(providerTestText(r), !r.ok), () => say(PROVIDER_WORDS.testFailed, true)).finally(() => { btn.disabled = false; });
   });
-  void refresh();
+  void reread();
 }

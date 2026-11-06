@@ -73,13 +73,14 @@ jobs:
           EMBER_BROWSER_TEST: "1"
           EMBER_CONVERSATION_TEST: "1"
           EMBER_MEMORY_TEST: "1"
+          EMBER_MIC_RECIPIENT_TEST: "1"
           EMBER_SIGNOUT_FORGET_TEST: "1"
           EMBER_UIUX_TEST: "1"
           EMBER_VOICE_UI_TEST: "1"
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
           test -n "$browser_path"
-          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts
+          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts
       - run: npm run build:lab
       - name: The built-in GitHub App client id starts a sign-in (GitHub answers with a device code, never printed)
         run: |
