@@ -11,7 +11,7 @@
 export const CONVERSATION_SHOWN = 30;
 
 /** A message as the list compares it. */
-export interface Said { t: string; who: string; text: string; truncated?: boolean; stopped?: true }
+export interface Said { t: string; who: string; text: string; truncated?: boolean; stopped?: true; answerId?: number }
 
 const same = (a: Said, b: Said) => a.t === b.t && a.who === b.who && a.text === b.text && !!a.truncated === !!b.truncated && !!a.stopped === !!b.stopped;
 

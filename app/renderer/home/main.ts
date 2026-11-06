@@ -958,7 +958,8 @@ function renderConversation(raw: Entry[]): void {
   syncStreamRow(list);
   const latest = raw.at(-1);
   const newReply = latest && (latest.t !== conversationLastAtSend?.t || latest.who !== conversationLastAtSend?.who || latest.text !== conversationLastAtSend?.text);
-  if (conversationAwaitingReply && newReply && ["ember", "problem"].includes(latest.who)) {
+  // (An answer stopped short is not a reply received: the problem that follows it, or the Stop, says what happened.)
+  if (conversationAwaitingReply && newReply && (latest.who === "problem" || (latest.who === "ember" && !latest.stopped))) {
     conversationAwaitingReply = false;
     conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? "Ember couldn’t finish this reply. Review the message above; you can edit your request and send again." : "Reply received.";
   }

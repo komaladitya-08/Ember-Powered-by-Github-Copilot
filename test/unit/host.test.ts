@@ -333,6 +333,75 @@ describe("connecting and signing in", () => {
     await host.stop();
   });
 
+  it("after New conversation a fresh answer streams, finishes and stops normally while the retired session stays fenced (Home streaming, B1)", async () => {
+    const seen: { id: number; text: string; state: string }[] = [];
+    const { host } = makeHost({ onAnswerStream: e => seen.push(e) });
+    await host.start(TOKEN, "stored");
+    await host.ask("First");
+    const old = conductorSession();
+    old.emit("assistant.message_delta", { messageId: "a", deltaContent: "Old words" });
+    await host.newConversation();
+    const retired = seen.length;
+    old.emit("assistant.message_delta", { messageId: "a", deltaContent: " late" });
+    expect(seen.length).toBe(retired);
+    await host.ask("Second");
+    const fresh = conductorSession();
+    expect(fresh).not.toBe(old);
+    fresh.emit("assistant.message_delta", { messageId: "b", deltaContent: "Fresh " });
+    old.emit("assistant.message_delta", { messageId: "a", deltaContent: " stray" });
+    fresh.emit("assistant.message_delta", { messageId: "b", deltaContent: "words" });
+    expect(seen.slice(retired).map(e => e.text)).toEqual(["Fresh ", "Fresh words"]);
+    await host.stopAnswer();
+    old.emit("assistant.message_delta", { messageId: "a", deltaContent: " after stop" });
+    expect(seen.at(-1)).toMatchObject({ text: "Fresh words", state: "interrupted" });
+    const stopped = host.getTranscript().filter(e => e.who === "ember");
+    expect(stopped).toEqual([expect.objectContaining({ text: "Fresh words", stopped: true, answerId: seen.at(-1)!.id })]);
+    // A finished fresh answer works too.
+    await host.ask("Third");
+    const third = conductorSession();
+    third.emit("assistant.message_delta", { messageId: "c", deltaContent: "Done." });
+    third.emit("assistant.message", { messageId: "c", content: "Done." });
+    third.emit("session.idle");
+    expect(seen.at(-1)).toMatchObject({ text: "Done.", state: "done" });
+    await host.stop();
+  });
+
+  it("a streamed answer's entry carries its stream id, finished or stopped; other lines and unstreamed answers carry none (Home streaming, B2)", async () => {
+    const seen: { id: number; text: string; state: string }[] = [];
+    const { host } = makeHost({ onAnswerStream: e => seen.push(e) });
+    await host.start(TOKEN, "stored");
+    await host.ask("One");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "m", deltaContent: "Whole answer." });
+    session.emit("assistant.message", { messageId: "m", content: "Whole answer." });
+    session.emit("session.idle");
+    await host.ask("Two");
+    session.emit("assistant.message", { messageId: "n", content: "No deltas." });
+    session.emit("session.idle");
+    (host as any).remember("ember", "Reminder: stretch");
+    const embers = host.getTranscript().filter(e => e.who === "ember");
+    expect(embers.map(e => e.answerId)).toEqual([seen[0].id, undefined, undefined]);
+    await host.stop();
+  });
+
+  it("Stop and an error at the retention limit keep exactly one stopped entry, with its id (Home streaming, B3)", async () => {
+    for (const how of ["stop", "error"] as const) {
+      const seen: { id: number; text: string; state: string }[] = [];
+      const { host } = makeHost({ onAnswerStream: e => seen.push(e) });
+      await host.start(TOKEN, "stored");
+      await host.ask("Explain this");
+      for (let i = 0; i < CONVERSATION_LIMIT - 1; i++) (host as any).remember("you", `older ${i}`);
+      expect(host.getTranscript()).toHaveLength(CONVERSATION_LIMIT);
+      const session = conductorSession();
+      session.emit("assistant.message_delta", { messageId: "m", deltaContent: "Half of it" });
+      if (how === "stop") await host.stopAnswer(); else session.emit("session.error", { message: "boom", errorType: "query" });
+      const t = host.getTranscript();
+      expect(t.length).toBeLessThanOrEqual(CONVERSATION_LIMIT);
+      expect(t.filter(e => e.stopped && e.answerId === seen[0].id)).toHaveLength(1);
+      await host.stop();
+    }
+  });
+
   it("drops reply callbacks after Stop and from a disconnected session (review turn ownership)", async () => {
     const answers: string[] = [];
     const { host } = makeHost({ onAnswer: text => answers.push(text) });

@@ -70,7 +70,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("shows one answer row tha
     expect(await page.locator("#conversation").evaluate(el => el.closest("[aria-live]") === null && !el.hasAttribute("aria-live"))).toBe(true);
 
     // Completion: the transcript's answer replaces it; exactly one answer row with the final text.
-    const final: TranscriptEntry = { t: at(1), who: "ember", text: "Here is the start of an answer. And its end." };
+    const final: TranscriptEntry = { t: at(1), who: "ember", text: "Here is the start of an answer. And its end.", answerId: 1 };
     await page.evaluate(e => window.__streamTest.push(e), [you, final]);
     await page.evaluate(() => window.__streamTest.stream({ id: 1, text: "Here is the start of an answer. And its end.", state: "done" }));
     await expect.poll(() => rows.count()).toBe(2);
@@ -88,7 +88,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("shows one answer row tha
     expect(await answer.locator("p").innerText()).toBe("Half of a thou");
     expect(await answer.locator("small").innerText()).toBe("Stopped before it finished");
     expect(await answer.getAttribute("aria-busy")).toBeNull();
-    const stopped: TranscriptEntry = { t: at(2), who: "ember", text: "Half of a thou", stopped: true };
+    const stopped: TranscriptEntry = { t: at(2), who: "ember", text: "Half of a thou", stopped: true, answerId: 2 };
     const problem: TranscriptEntry = { t: at(3), who: "problem", text: "I lost the connection." };
     await page.evaluate(e => window.__streamTest.push(e), [you, final, stopped]);
     await expect.poll(() => answer.count()).toBe(0);
@@ -116,14 +116,56 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("shows one answer row tha
     await page.evaluate(e => window.__streamTest.push(e), [you, final, stopped, problem]);
     expect(await shown()).toEqual(expected);
 
+    // A reminder due mid-answer is another ember line: it never settles the row, and later words still show (B2).
+    const reminder: TranscriptEntry = { t: at(4), who: "ember", text: "Reminder: stretch" };
+    const list = [you, final, stopped, problem];
+    await page.evaluate(() => window.__streamTest.stream({ id: 5, text: "Writing the", state: "streaming" }));
+    await page.evaluate(e => window.__streamTest.push(e), [...list, reminder]);
+    expect(await answer.count()).toBe(1);
+    await page.evaluate(() => window.__streamTest.stream({ id: 5, text: "Writing the rest", state: "streaming" }));
+    expect(await answer.locator("p").innerText()).toBe("Writing the rest");
+    // An earlier answer in a delayed snapshot (after the first word) doesn't settle it either.
+    await page.evaluate(e => window.__streamTest.push(e), [you, final, stopped, problem]);
+    expect(await answer.count()).toBe(1);
+    // Its own entry does, once; the reminder and the rest stay.
+    const mineEntry: TranscriptEntry = { t: at(5), who: "ember", text: "Writing the rest.", answerId: 5 };
+    await page.evaluate(e => window.__streamTest.push(e), [...list, reminder, mineEntry]);
+    await expect.poll(() => answer.count()).toBe(0);
+    await page.evaluate(() => window.__streamTest.stream({ id: 5, text: "Writing the rest.", state: "done" }));
+    expect(await page.locator("#conversation li").count()).toBe(6);
+
+    // At the retention limit (60 kept, the front trimmed) a stopped answer is still exactly one row, also on replay (B3).
+    const filler = Array.from({ length: 59 }, (_, i): TranscriptEntry => ({ t: at(10 + i), who: i % 2 ? "ember" : "you", text: `Filler ${i}` }));
+    await page.evaluate(() => window.__streamTest.push([]));
+    await page.evaluate(e => window.__streamTest.push(e), filler);
+    await page.evaluate(() => window.__streamTest.stream({ id: 6, text: "Cut at the lim", state: "streaming" }));
+    await page.evaluate(() => window.__streamTest.stream({ id: 6, text: "Cut at the lim", state: "interrupted" }));
+    expect(await answer.count()).toBe(1);
+    const atLimit: TranscriptEntry[] = [...filler, { t: at(80), who: "ember", text: "Cut at the lim", stopped: true, answerId: 6 }];
+    await page.evaluate(e => window.__streamTest.push(e), atLimit);
+    await expect.poll(() => answer.count()).toBe(0);
+    await page.evaluate(e => window.__streamTest.push(e), atLimit);
+    expect(await page.locator("#conversation li p", { hasText: "Cut at the lim" }).count()).toBe(1);
+
+    // An error after partial output: the stopped entry is no "Reply received."; the problem sets the status (F1).
+    await page.evaluate(() => window.__streamTest.push([]));
+    await page.locator("#conversation-message").fill("Ask something");
+    await page.locator("#conversation-send").click();
+    const status = page.locator("#conversation-compose-status");
+    const cut: TranscriptEntry = { t: at(90), who: "ember", text: "Partial", stopped: true, answerId: 7 };
+    await page.evaluate(e => window.__streamTest.push(e), [cut]);
+    expect(await status.innerText()).not.toContain("Reply received");
+    await page.evaluate(e => window.__streamTest.push(e), [cut, { t: at(91), who: "problem" as const, text: "Lost it." }]);
+    expect(await status.innerText()).toContain("couldn’t finish");
+
     // Reset: nothing is left, and a late word of the old answer doesn't bring a row back.
-    await page.evaluate(() => window.__streamTest.stream({ id: 3, text: "Words before the reset", state: "streaming" }));
+    await page.evaluate(() => window.__streamTest.stream({ id: 8, text: "Words before the reset", state: "streaming" }));
     expect(await answer.count()).toBe(1);
     await page.evaluate(() => { window.__streamTest.forget(); });
     await expect.poll(() => rows.count()).toBe(0);
-    await page.evaluate(() => window.__streamTest.stream({ id: 3, text: "Words before the reset, late", state: "streaming" }));
+    await page.evaluate(() => window.__streamTest.stream({ id: 8, text: "Words before the reset, late", state: "streaming" }));
     expect(await rows.count()).toBe(0);
-    await page.evaluate(() => window.__streamTest.stream({ id: 4, text: "A new answer", state: "streaming" }));
+    await page.evaluate(() => window.__streamTest.stream({ id: 9, text: "A new answer", state: "streaming" }));
     await expect.poll(() => rows.count()).toBe(1);
     // A new conversation (the list emptied without "forgotten") clears it as well.
     await page.evaluate(() => window.__streamTest.push([]));
