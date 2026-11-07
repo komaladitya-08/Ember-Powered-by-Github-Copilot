@@ -1804,7 +1804,10 @@ class Engine extends Classifier {
     optionPaths(inner, !n);
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
-    this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
+    // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
+    // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
+    this.afterRun(key, inner.args, h.s, sc);
+    if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
     // `command printf -v …` and `time unset …` run the same built-ins.
     this.hiddenNames(key, inner.args, sc);
   }
