@@ -217,6 +217,9 @@ window.emberAsk.onContext(c => {
   sees.classList.toggle("private", c.privateWindow === true);
   document.getElementById("sees-full")!.textContent = view?.full ?? "";
   seesText.textContent = view?.text ?? "";
+  // Nothing to show once the quick look is done (no readable window, the desktop): the line is just its keys at the
+  // trailing edge, not a long empty strip (companion-7). Whole while it waits, so nothing jumps when a name comes.
+  document.querySelector(".meta")!.classList.toggle("bare", c.opened !== true && !view && !chip);
   // The field had the keyboard before this came, so its description isn't read again: a screen reader hears it here.
   const live = liveWords(said, c);
   if (live !== null) seesLive.textContent = said = live;

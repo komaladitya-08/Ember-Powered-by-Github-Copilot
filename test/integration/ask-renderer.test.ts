@@ -139,6 +139,37 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("narrows the line under the field to its keys once the quick look finds nothing to show, and keeps it whole while it waits (companion-7)", async () => {
+    const page = await pageAt();
+    try {
+      const meta = () => page.evaluate(() => {
+        const m = document.querySelector<HTMLElement>(".meta")!.getBoundingClientRect(), f = document.querySelector(".field")!.getBoundingClientRect();
+        const h = document.getElementById("hint")!.getBoundingClientRect();
+        return { width: m.width, right: m.right, fieldWidth: f.width, hint: h.width };
+      });
+      const context = (c: Partial<AskContext>) => page.evaluate(c => (window as unknown as TestWindow).askHarness.context({ sees: null, history: [], ...c } as AskContext), c);
+      // Opening, before the quick look: as wide as the field, so nothing jumps when what Ember sees arrives.
+      await context({ opened: true });
+      const waiting = await meta();
+      expect(waiting.width).toBeCloseTo(waiting.fieldWidth - 28, 0);
+      // The look found nothing (no readable window): just its keys, at the trailing edge, no long empty strip.
+      await context({});
+      const bare = await meta();
+      expect(bare.width).toBeLessThanOrEqual(bare.hint + 2 * 10 + 2 + 1);
+      expect(bare.right).toBeCloseTo(waiting.right, 0);
+      // A window's name to show, or another computer's: the whole line again.
+      await context({ sees: "Text Editor · Notes.txt" });
+      expect((await meta()).width).toBeCloseTo(waiting.width, 0);
+      await context({});
+      await context({ target: { id: "ssh:me@build", kind: "ssh", label: "me@build", state: "ready", can: "", active: true } } as Partial<AskContext>);
+      expect((await meta()).width).toBeCloseTo(waiting.width, 0);
+      // The next opening starts whole again.
+      await context({});
+      await context({ opened: true });
+      expect((await meta()).width).toBeCloseTo(waiting.width, 0);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("retains the draft and selection through late context, microphone updates and dismissal", async () => {
     const page = await pageAt();
     try {

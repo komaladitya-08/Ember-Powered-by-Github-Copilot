@@ -47,6 +47,8 @@ textarea:focus { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 255, 2
   border: 1px solid transparent; background: var(--glass); border-radius: var(--r-capsule);
   width: calc(100% - 28px); white-space: nowrap; overflow: hidden;
 }
+/* Nothing to show once the quick look is done: just the keys, at the trailing edge (main.ts sets it then only). */
+.meta.bare { width: auto; margin: 0 14px 0 auto; }
 /* What Ember will see: an eye, the window (shortened first), then what else is sent (never shortened). The line is
    as wide as the field from the start, so it doesn't jump when this arrives after the quick look. */
 .sees { min-width: 0; overflow: hidden; display: inline-flex; align-items: center; gap: 5px; color: var(--label); font-weight: 500; }

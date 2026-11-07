@@ -130,7 +130,8 @@ They share one emotion rig, so switching never changes behaviour.
   its mark (no shake, no flash). The Ask box grows out of Ember beneath it, and opens beside the
   bubble, never on it (the bubble never moves for it). On Linux it takes clicks only on what it
   shows (an X input shape the page reports), so a click in its clear margins reaches the app
-  beneath and closes it. In Calm, each of them
+  beneath and closes it. The line under its field is as wide as the field while the quick look
+  runs; when it finds nothing to show, it narrows to its keys at the trailing edge. In Calm, each of them
   fades over 150 ms instead.
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
