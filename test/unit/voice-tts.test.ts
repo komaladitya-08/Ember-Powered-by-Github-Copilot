@@ -6,6 +6,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { NATURAL_RECHECK_MS, REST_IN_BUBBLE, SPOKEN_MAX, SpeechStream, rememberedSlow, slowVerdict, speechChunks } from "../../app/voice/tts";
+import { spokenText } from "../../app/voice/spoken";
 import { Player, type PlayerAudio, type PlayerSource, playerAudio } from "../../app/renderer/mic/player";
 
 describe("the natural voice's too-slow verdict", () => {
@@ -88,6 +89,28 @@ describe("speechChunks", () => {
     expect(speechChunks("Use a short name, e.g. notes. Version 3.5 is out.")).toEqual(["Use a short name, e.g. notes.", "Version 3.5 is out."]);
   });
 
+  it("says each numbered step on its own, with its number at its start, not glued to the step before (voice-speaking-v1)", () => {
+    const said = (md: string) => speechChunks(spokenText(md));
+    expect(said("To change it:\n1. Open Settings\n2. Choose Privacy\n3. Turn off Location")).toEqual(["To change it:", "1. Open Settings.", "2. Choose Privacy.", "3. Turn off Location."]);
+    expect(said("To change it\n1. Open Settings\n2. Choose Privacy")).toEqual(["To change it.", "1. Open Settings.", "2. Choose Privacy."]);
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    expect(said(options)).toEqual(["You have three options:", "1. Move the files…", "2. Delete the duplicates.", "3. Leave everything as it is.", "Which would you like?"]);
+    expect(said("1) Keep it\n2) Delete it")).toEqual(["1) Keep it.", "2) Delete it."]);
+    for (const chunk of said(options)) expect(chunk).not.toMatch(/\d[.)]$/);
+    // As before: a number that starts a reply, "e.g." and "Dr." don't end a sentence.
+    expect(speechChunks("1. One thing to know is this.")).toEqual(["1. One thing to know is this."]);
+    expect(speechChunks("Ask Dr. Smith, e.g. by mail.")).toEqual(["Ask Dr. Smith, e.g. by mail."]);
+  });
+
+  it("keeps a list's items apart, as sentences (voice-speaking-3)", () => {
+    expect(speechChunks(spokenText("Your apps:\n- Text Editor\n- Calendar\n- Contacts\n- Firefox"))).toEqual(["Your apps: Text Editor.", "Calendar. Contacts.", "Firefox."]);
+  });
+
+  it("doesn't end a sentence at a.m., p.m. or a day's short name (voice-speaking-3)", () => {
+    expect(speechChunks("Meeting at 3:30 p.m. on Tue. with Dr. Smith. Bring the notes.")).toEqual(["Meeting at 3:30 p.m. on Tue. with Dr. Smith.", "Bring the notes."]);
+    expect(speechChunks("We sat. Then we left the room together.")).toEqual(["We sat.", "Then we left the room together."]);
+  });
+
   it("joins a very short piece to the one before it", () => {
     expect(speechChunks("The build finished in twelve seconds. OK. Next?")).toEqual(["The build finished in twelve seconds.", "OK. Next?"]);
   });
@@ -162,6 +185,23 @@ describe("SpeechStream", () => {
     const s = new SpeechStream();
     s.push("I opened the quarterly report, checked it");
     expect(s.push(" and more, then again")).toEqual([]);
+  });
+
+  it("says a list's items as they arrive, not all at the end (voice-speaking-3, voice-speaking-v1)", () => {
+    const markdown = "Your apps:\n- Firefox\n- Files\n- Terminal\n- Mail\n\nWhich one?";
+    const s = new SpeechStream();
+    const pieces: string[] = [];
+    for (let i = 0; i < markdown.length; i += 3) pieces.push(...s.push(markdown.slice(i, i + 3)));
+    expect(pieces).toEqual(["Your apps:", "Firefox.", "Files.", "Terminal.", "Mail."]);
+    expect(s.finish(markdown)).toEqual(["Which one?"]);
+    // Numbered steps too, each with its number, and the pieces chunk as the whole text does.
+    const steps = "To change it:\n1. Open Settings\n2. Choose Privacy\n3. Turn off Location";
+    const t = new SpeechStream();
+    const said: string[] = [];
+    for (let i = 0; i < steps.length; i += 3) said.push(...t.push(steps.slice(i, i + 3)));
+    said.push(...t.finish(steps));
+    expect(said).toEqual(["To change it:", "1. Open Settings.", "2. Choose Privacy.", "3. Turn off Location."]);
+    expect(said.flatMap(speechChunks)).toEqual(speechChunks(spokenText(steps)));
   });
 
   it("says a whole answer that wasn't streamed", () => {

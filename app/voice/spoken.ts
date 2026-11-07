@@ -75,13 +75,35 @@ const KEY_SAID: Readonly<Record<string, string>> = {
   pgup: "Page Up", pgdn: "Page Down",
 };
 
+/** A list's item or a heading, as Markdown writes them; and a line that is a rule between parts. */
+const ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S/;
+const HEADING = /^[ \t]{0,3}#{1,6}[ \t]+\S/;
+const RULE = /^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
+/** A line that ends as a sentence does already, or with a pause (a colon, a comma). */
+const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
+
+/**
+ * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
+ * own, so the voice pauses between them: "Firefox Files Terminal Mail" in one breath was heard as one name
+ * (voice-speaking-3). A line wrapped inside a paragraph is left as it is, and so is what is only shown in the bubble.
+ */
+function endLines(text: string): string {
+  const lines = text.split("\n");
+  return lines.map((line, i) => {
+    const body = line.trimEnd(), next = lines[i + 1];
+    if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
+    const alone = ITEM.test(body) || HEADING.test(body) || (next !== undefined && (!next.trim() || ITEM.test(next)));
+    return alone ? `${body}.` : line;
+  }).join("\n");
+}
+
 export function spokenText(markdown: string): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
     // Tables: a header row and its |---| line, and the rows after it.
     .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
-  return linkLabels(prose)
+  const plain = linkLabels(prose)
     .replace(/<?\b(?:https?:\/\/|www\.)([^\s/<>()]+?)(?:[/?#][^\s<>()]*?)?>?(?=[.,;:!?)]*(?:\s|$))/gi, (_m, host: string) => host.replace(/^www\./i, ""))
     .replace(/(?<![\\`])(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)/g, "$2")
     // Emphasis as CommonMark sees it: no space just inside a marker ("6 * 7 * 1" and "*.tmp and *.log" are said with their
@@ -89,7 +111,8 @@ export function spokenText(markdown: string): string {
     .replace(/\*\*(?=[^\s*])([^*\n]*[^\s*])\*\*/g, "$1")
     .replace(/(^|[\s(])__(?=[^\s_])([^_\n]*[^\s_])__(?=[.,!?;:)]*(?:\s|$))/g, "$1$2")
     .replace(/(^|[\s(])([*_])(?=[^\s*_])([^*_\n]*[^\s*_])\2(?=[\s.,!?;:)]|$)/g, "$1$3")
-    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1");
+  return endLines(plain)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+][ \t]+/gm, "")

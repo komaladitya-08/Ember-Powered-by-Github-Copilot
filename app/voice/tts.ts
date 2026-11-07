@@ -52,17 +52,23 @@ export const SPOKEN_MAX = 700;
 export const REST_IN_BUBBLE = "The rest is in the bubble.";
 
 /** Abbreviations whose full stop doesn't end a sentence. */
-const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig)\.$/i;
+const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig|a\.m|p\.m)\.$/i;
+/** A day's or a month's short name ("on Tue.", "Jan. 5"), with its capital: "We sat." still ends a sentence. */
+const SHORT_NAMES = /(?:^|\s)(?:Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.$/;
 
-/** Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending, in order. */
+/**
+ * Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending, in order. A list's item
+ * and a heading end at their line too, and a numbered step starts its own piece ("2. Choose Privacy"): its number is
+ * never said at the end of the step before it (voice-speaking-v1).
+ */
 function sentenceEnds(text: string): number[] {
   const ends: number[] = [];
-  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n/g;
+  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|(?<=^[ \t]{0,3}#{1,6}[ \t]+\S[^\n]*)\n/gm;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const end = m.index + m[0].length;
     const before = text.slice(0, end);
     // "e.g." and "Dr." don't end a sentence, nor does a numbered list's "1." at the start of a line.
-    if (m[0].startsWith(".") && (ABBREVIATIONS.test(before) || /(?:^|\n)[ \t]*\d+\.$/.test(before))) continue;
+    if (m[0].startsWith(".") && (ABBREVIATIONS.test(before) || SHORT_NAMES.test(before) || /(?:^|\n)[ \t]*\d+\.$/.test(before))) continue;
     ends.push(end);
   }
   return ends;
@@ -86,14 +92,15 @@ function cutAtClause(chunk: string, min: number, max: number): [string, string] 
  * cut at a comma, and very short ones joined to the next.
  */
 export function speechChunks(text: string): string[] {
-  const t = text.replace(/\s+/g, " ").trim();
+  // The ends are found before line breaks become spaces: a numbered step's "2." at the start of its line is no end.
+  const t = text.trim();
   if (!t) return [];
   const sentences: string[] = [];
   let from = 0;
-  for (const end of sentenceEnds(t)) { sentences.push(t.slice(from, end).trim()); from = end; }
-  if (from < t.length) sentences.push(t.slice(from).trim());
+  for (const end of sentenceEnds(t)) { sentences.push(t.slice(from, end)); from = end; }
+  if (from < t.length) sentences.push(t.slice(from));
   const out: string[] = [];
-  for (const s of sentences.filter(Boolean)) {
+  for (const s of sentences.map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean)) {
     let rest = s;
     for (;;) {
       const first = out.length === 0, max = first ? FIRST_MAX : CHUNK_MAX;

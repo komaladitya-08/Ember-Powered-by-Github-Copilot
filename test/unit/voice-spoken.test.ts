@@ -37,13 +37,26 @@ describe("spokenText", () => {
     ["Type ``a`b``.", "Type a`b."],
     ["Open www.redhat.com, then click **Login**.", "Open redhat.com, then click Login."],
     ["Use `ls -la` to list *all* files.", "Use ls -la to list all files."],
-    ["## Steps\n- First\n- Second\n\n1. One\n2. Two", "Steps\nFirst\nSecond\n1. One\n2. Two"],
+    ["## Steps\n- First\n- Second\n\n1. One\n2. Two", "Steps.\nFirst.\nSecond.\n1. One.\n2. Two."],
     ["| App | Size |\n|---|---|\n| Files | 2 MB |\nThat's all.", "(table shown in the bubble)\nThat's all."],
-    ["> Quoted\n\n---\n\nEnd ~~old~~ new", "Quoted\nEnd old new"],
+    ["> Quoted\n\n---\n\nEnd ~~old~~ new", "Quoted.\nEnd old new"],
     ["snake_case_name and 2*3*4 stay", "snake_case_name and 2*3*4 stay"],
     ["Say it *softly*, **firmly** or _slowly_ (*really*).", "Say it softly, firmly or slowly (really)."],
     ["**Ember**'s answer, in ***bold italics***.", "Ember's answer, in bold italics."],
   ])("%j", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  // A list's items, a heading, the line that leads into a list and a paragraph each end with a stop, so the voice
+  // pauses between them instead of saying "Firefox Files Terminal Mail" in one breath (voice-speaking-3).
+  it.each([
+    ["Your apps:\n- Text Editor\n- Calendar\n- Contacts", "Your apps:\nText Editor.\nCalendar.\nContacts."],
+    ["Open now\n* Firefox\n* Files", "Open now.\nFirefox.\nFiles."],
+    ["# Done\n\nI closed it\n\nAnything else?", "Done.\nI closed it.\nAnything else?"],
+    ["- **Done!**\n- Is it on?\n- Maybe, later;\n- See [the guide](https://example.com)", "Done!\nIs it on?\nMaybe, later;\nSee the guide."],
+    ["1) Keep it\n2) Delete it", "1) Keep it.\n2) Delete it."],
+    // A line wrapped inside a paragraph is one sentence still, and what is shown in the bubble keeps its words.
+    ["I opened the file and\nfound three errors.", "I opened the file and\nfound three errors."],
+    ["Run this:\n\n```sh\nls\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],
+  ])("ends the lines of %j so they are said apart (voice-speaking-3)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
 
   // Stars and underscores that aren't emphasis are said as they are shown: a marker with a space on its inner side is
   // none (CommonMark's flanking rule), and neither is "__" inside a file name (review #258).
