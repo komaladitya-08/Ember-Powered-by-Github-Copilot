@@ -19,7 +19,7 @@ import { REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, r
 import { MemoryService } from "../../app/main/memory/service";
 import type { MemoryOwnerReason } from "../../app/main/memory/owner";
 import { memoryPausedReply } from "../../app/shared/memory-owner";
-import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, memoryPaused, introFromForm, learnedLine, memoryProvenanceLabel, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
+import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, forgotLine, memoryPaused, introFromForm, learnedLine, memoryProvenanceLabel, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
 
 const quiet = { info: () => undefined, warn: () => undefined };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-memlearn-"));
@@ -184,7 +184,7 @@ describe("sleep-time refinement", () => {
   });
 });
 
-function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; model?: OneShot | null; inForce?: () => boolean; paused?: () => MemoryOwnerReason | null } = {}) {
+function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; model?: OneShot | null; inForce?: () => boolean; paused?: () => MemoryOwnerReason | null; onAskedForget?: (f: { id: string; text: string; derived: number; undo: string }) => void } = {}) {
   const { s, advance, at } = service();
   let askedAt: string | null = null;
   const said: string[] = [];
@@ -196,7 +196,7 @@ function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; mo
     memory: s, inForce: o.inForce ?? (() => true), questionsOn: () => o.questions ?? true,
     askedAt: () => askedAt, setAskedAt: iso => { askedAt = iso; },
     idle: () => o.idle ?? true, locked: () => o.locked ?? false,
-    say: text => { said.push(text); return true; }, openMemory: opened, paused: o.paused,
+    say: text => { said.push(text); return true; }, openMemory: opened, paused: o.paused, onAskedForget: o.onAskedForget,
     onLearned: items => learned.push(...items.map(i => `${i.source}: ${i.text}`)), onForgotAll: forgotAll, onForgot: forgot, log: quiet, now: at,
   });
   if (o.model !== undefined) l.setModel(o.model);
@@ -376,6 +376,25 @@ describe("getting to know you", () => {
     const other = learning({ inForce: () => false, paused: () => "other-account" });
     expect(other.l.intent("get to know me", { own: true })).toBe(memoryPausedReply("other-account").text);
     expect(other.opened).toHaveBeenCalledOnce();
+  });
+});
+
+describe("forget_memory's visible line and its Undo (memory-v2)", () => {
+  it("says in the conversation what the conductor forgot, in the fact's stored words, and Undo puts it back", () => {
+    const lines: { id: string; text: string; derived: number; undo: string }[] = [];
+    const { l, s } = learning({ onAskedForget: f => lines.push(f) });
+    l.introduce({ name: "Ram" });
+    const id = s.list()[0].id;
+    const tools = l.conductorMemory();
+    expect(tools.factText?.(id)).toBe("Likes to be called Ram");
+    expect(tools.factText?.("f999")).toBeNull();
+    expect(tools.forget(id)).toBe(true);
+    expect(lines).toEqual([{ id, text: "Likes to be called Ram", derived: 0, undo: expect.any(String) }]);
+    expect(s.list()).toEqual([]);
+    expect(l.restore(lines[0].undo)).toBe(true);
+    expect(s.list().map(i => i.text)).toEqual(["Likes to be called Ram"]);
+    expect(l.restore(lines[0].undo)).toBe(false);
+    expect(forgotLine("Likes to be called Ram")).toBe("Ember forgot: Likes to be called Ram");
   });
 });
 
@@ -777,7 +796,7 @@ describe("the second re-review of PR #142", () => {
     expect(remembered(s)).toEqual([]);
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     const handler = main.slice(main.indexOf("ipcMain.handle(IPC.memoryForget,"), main.indexOf("ipcMain.handle(IPC.memoryForgetAll,"));
-    expect(handler).toContain("learning.forget(id);");
+    expect(handler).toContain("return learning.forgetCounted(id);");
     // A locked or signed-out account refuses the action, so Undo cannot acknowledge a deletion that never ran.
     expect(handler).toMatch(/if \(!memoryOwner\.ready\) throw new Error/);
     expect(handler).toMatch(/if \(typeof id !== "string"[^\n]+throw new Error/);

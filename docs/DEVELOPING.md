@@ -210,7 +210,11 @@ runtime. It does not change the app's consent or speaking settings.
     only.
   - It never keeps passwords, codes, keys or card numbers.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
-    signing out forgets it all. The list says where each fact came from (you, our conversation, a task).
+    signing out forgets it all. The list says where each fact came from (you, our conversation, a task, Ember's
+    summary or guess). After Forget, focus goes to a line saying what went, with **Undo** for a minute, never to the
+    next row's Forget, so a second Enter forgets nothing more. **Forget all words** (Settings › Voice) asks first.
+  - Ember forgets a memory in conversation only when your own words ask it to and name what to forget; the
+    conversation then says "Ember forgot: …" with Undo.
   - Memory belongs to the verified GitHub account. While Ember can't open it, the pane says why instead of the list:
     "Checking your GitHub account…" while connecting, that memory works only with GitHub Copilot while your own
     model provider (or your organisation's model service) is in force, or that Ember couldn't check the account.

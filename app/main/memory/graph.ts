@@ -320,6 +320,33 @@ export class MemoryGraph {
     return n;
   }
 
+  /**
+   * Puts back what a Forget removed (Undo: MemoryService.restore): the entities first, then the facts, each only if
+   * nothing has its id now. An entity whose name another one has taken since gives its facts to that one.
+   */
+  putBack(entities: Entity[], facts: Fact[]): void {
+    const moved = new Map<string, string>();
+    for (const e of entities) {
+      if (this.entities.has(e.id)) continue;
+      const taken = [e.name, ...e.aliases].map(n => this.names.get(nameKey(n))).find(Boolean);
+      if (taken) moved.set(e.id, taken);
+      else this.putEntity(e);
+    }
+    for (const f of facts) {
+      if (this.facts.has(f.id)) continue;
+      const ids = [...new Set(f.entities.map(id => moved.get(id) ?? id))];
+      if (ids.every(id => this.entities.has(id))) this.facts.set(f.id, { ...f, entities: ids });
+    }
+  }
+
+  /** Closes a reopened fact again as it was (Undo of the Forget that reopened it), if it is still open and unchanged. */
+  reclose(id: string, invalidAt: string, supersededBy: string | null): boolean {
+    const f = this.facts.get(id);
+    if (!f || f.invalidAt || f.supersededBy) return false;
+    this.facts.set(id, { ...f, invalidAt, supersededBy: supersededBy && this.facts.has(supersededBy) ? supersededBy : null });
+    return true;
+  }
+
   /** Replaces a fact in place (consolidation's merges). */
   replaceFact(f: Fact): void {
     const current = this.facts.get(f.id);

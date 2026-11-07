@@ -52,6 +52,7 @@ const api: EmberHomeApi = {
   memory: () => ipcRenderer.invoke(IPC.memoryList),
   onMemory: fn => listen(IPC.memoryChanged, fn),
   forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
+  restoreMemory: token => ipcRenderer.invoke(IPC.memoryRestore, token),
   forgetAllMemory: () => ipcRenderer.invoke(IPC.memoryForgetAll),
   correctMemory: change => ipcRenderer.invoke(IPC.memoryCorrect, change),
   introduceMe: answers => ipcRenderer.invoke(IPC.memoryIntroduce, answers),

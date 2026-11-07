@@ -1505,6 +1505,12 @@ function start(): void {
       learnedLines = learnedLines.filter(l => l.fact !== id);
       if (learnedLines.length !== before) broadcast(IPC.conversationChanged, conversationNow());
     },
+    // forget_memory forgot what the user asked: the conversation says so, in the fact's own words, with Undo (memory-v2).
+    onAskedForget: f => {
+      const t = new Date().toISOString();
+      learnedLines = [...learnedLines, { t, who: "learned" as const, text: f.text.slice(0, 400), forgot: f.undo }].slice(-30);
+      broadcast(IPC.conversationChanged, conversationNow());
+    },
     log: log.child("memory"),
   });
   learningRef = learning;
@@ -2318,8 +2324,20 @@ function start(): void {
   ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
     if (!memoryOwner.ready) throw new Error("Ember couldn't finish deleting this memory. Wait until your saved memory is available, then try Undo or Forget again.");
     if (typeof id !== "string" || !id || id.length > 40) throw new Error("Ember couldn't finish deleting this memory. Try Forget again.");
-    // Through learning: its "Ember learned" line and "forget that" let go of it too.
-    learning.forget(id);
+    // Through learning: its "Ember learned" line and "forget that" let go of it too. Home says what went, with Undo.
+    return learning.forgetCounted(id);
+  }));
+  // Undo of a recent Forget (Home's list, or an "Ember forgot" line): only while the account's memory is open.
+  ipcMain.handle(IPC.memoryRestore, guard((token: unknown) => {
+    if (!memoryOwner.ready || !memoryOn()) throw new Error("Ember couldn't put this memory back. Wait until your saved memory is available, then try Undo again.");
+    if (typeof token !== "string" || token.length < 8 || token.length > 64) return false;
+    const restored = learning.restore(token);
+    // Its "Ember forgot" line goes: what it said is no longer true.
+    if (restored && learnedLines.some(l => l.forgot === token)) {
+      learnedLines = learnedLines.filter(l => l.forgot !== token);
+      broadcast(IPC.conversationChanged, conversationNow());
+    }
+    return restored;
   }));
   // A correction stays bound to the exact fact and current account view, without changing its source authority.
   ipcMain.handle(IPC.memoryCorrect, guard((change: unknown) => correctMemoryRequest(change, {

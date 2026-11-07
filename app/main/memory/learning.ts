@@ -68,6 +68,11 @@ export interface LearningDeps {
   onForgotAll?: () => void;
   /** One fact was forgotten: its "Ember learned" line goes. */
   onForgot?: (id: string) => void;
+  /**
+   * The conductor forgot a fact the user asked it to (forget_memory): the conversation says so ("Ember forgot: …", in
+   * the fact's stored words, never the model's), with Undo by `undo` (memory-v2).
+   */
+  onAskedForget?: (forgot: { id: string; text: string; derived: number; undo: string }) => void;
   log: MemoryLog;
   now?: () => number;
   budget?: Partial<LearnBudget>;
@@ -79,6 +84,7 @@ export interface LearningConductorMemory {
   context(query: string, history?: boolean): Promise<string>;
   forRequest(request: string, own: boolean): Promise<string>;
   forget(id: string): boolean;
+  factText(id: string): string | null;
   forgetAll(): void;
   heard(said: string, reply: string, own: boolean): void;
 }
@@ -184,7 +190,15 @@ export class MemoryLearning {
         }
         return text;
       },
-      forget: id => this.d.inForce() && this.forget(id),
+      forget: id => {
+        if (!this.d.inForce()) return false;
+        const gone = this.forgetCounted(id);
+        if (gone) {
+          try { this.d.onAskedForget?.({ id, ...gone }); } catch { this.d.log.warn("memory.delete_notice_failed"); }
+        }
+        return !!gone;
+      },
+      factText: id => (this.d.inForce() ? m.factText(id) : null),
       forgetAll: () => this.forgetAll(),
       heard: (said, reply, own) => { this.active(); this.learner.heard(said, reply, own); },
     };
@@ -198,8 +212,11 @@ export class MemoryLearning {
     return this.forgetCounted(id) !== null;
   }
 
-  /** `forget`, saying what went: the fact's words and how many of Ember's notes made from it went too (memory-3). */
-  forgetCounted(id: string): { text: string; derived: number } | null {
+  /**
+   * `forget`, saying what went: the fact's words, how many of Ember's notes made from it went too (memory-3), and the
+   * token `restore` takes to undo it.
+   */
+  forgetCounted(id: string): { text: string; derived: number; undo: string } | null {
     // A refinement still reading this fact must never reintroduce it in a summary after Forget.
     this.refining?.abort();
     ++this.recallRevision;
@@ -209,6 +226,13 @@ export class MemoryLearning {
       try { this.d.onForgot?.(id); } catch { this.d.log.warn("memory.delete_notice_failed"); }
     }
     return gone;
+  }
+
+  /** Undo of a recent Forget (Home's list, or the conversation's "Ember forgot" line): true if it was put back. */
+  restore(token: string): boolean {
+    if (!this.d.inForce()) return false;
+    ++this.recallRevision;
+    return this.d.memory.restore(token);
   }
 
   /** An explicit local correction retires readers and learned lines that still describe the old wording. */

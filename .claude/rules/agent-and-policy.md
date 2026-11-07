@@ -236,6 +236,10 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   `memory.consent.version >= FEATURE_CONSENT_VERSION.memory`, and the admin's `features.memory` not false. The host
   gives the conductor memory only then (`memoryWanted()`), and only then does it have remember, recall and
   forget_memory. With memory off, the tools and the prompt are today's exactly.
+- **forget_memory needs the user's own words** (`asksToForget(own, factText)`, conductor.ts: a forget request this
+  turn with a word of the fact after it; `own` is never unchecked speech or a routine's steps), and refuses when the
+  store can't say what the fact is (`factText` absent). What it forgot is said in the conversation in the fact's
+  stored words ("Ember forgot: …", `onAskedForget`), with Undo through `MemoryService.restore` (UNDO_FORGET_MS).
 - **A saved fact is the user's only in their own words, said the same way round** (`ownFact`, service.ts: `ownWords`
   and `samePolarity`, so "Priya is not my manager" never makes "Priya is the manager" theirs). Anything else is
   `conversation`.

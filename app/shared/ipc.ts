@@ -25,6 +25,10 @@ export interface ProjectWorkspaceReply {
   message?: string;
   opened?: { files: string[]; sizes?: (number | null)[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
 }
+/** How long Undo can put a forgotten memory back (ms): main keeps what it removed that long, and Home offers Undo. */
+export const MEMORY_UNDO_MS = 60_000;
+/** What one Forget removed: the fact's words, how many of Ember's notes went with it, and Undo's token (memory-7). */
+export interface MemoryForgotten { text: string; derived: number; undo: string }
 /** `reason`: why memory isn't open, so Home says it truthfully (memory-2); absent from an older main. */
 export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null }
 import type { HistoryProblemKind } from "./conversation";
@@ -95,6 +99,8 @@ export const IPC = {
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
   memoryForget: "memory:forget",
+  /** Undo of a recent Forget, by the token Forget gave (memory-7, memory-v2). */
+  memoryRestore: "memory:restore",
   memoryForgetAll: "memory:forget-all",
   memoryCorrect: "memory:correct",
   /** "Tell Ember about you": the answers, checked whole in main (IntroSchema) and kept as the user's own facts. */
@@ -382,7 +388,10 @@ export interface EmberHomeApi {
   /** What Ember remembers (newest first), and changes to it. */
   memory(): Promise<MemoryView>;
   onMemory(fn: (view: MemoryView) => void): () => void;
-  forgetMemory(id: string): Promise<void>;
+  /** Forgets one fact: what went (its words, Ember's notes made from it) and Undo's token, or null if it wasn't there. */
+  forgetMemory(id: string): Promise<MemoryForgotten | null>;
+  /** Undo of a recent Forget: true if it was put back, false once it is too late. */
+  restoreMemory(token: string): Promise<boolean>;
   forgetAllMemory(): Promise<void>;
   /** Saves one explicit local correction without changing the fact's original source authority. */
   correctMemory(change: MemoryCorrection): Promise<MemoryItem>;

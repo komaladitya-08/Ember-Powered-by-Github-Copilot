@@ -9,10 +9,12 @@
  * read somewhere, which is context and never more. Plain Node: no Electron.
  */
 
+import crypto from "node:crypto";
+import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { consolidateInSlices } from "./consolidate";
 import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
-import { ENTITY_KINDS, MAX_FACT_CHARS, type AddResult, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
+import { ENTITY_KINDS, MAX_FACT_CHARS, type AddResult, type Entity, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
 import { memoryRefusal } from "./guard";
 import { recall, type Recalled } from "./recall";
 import { memoryFile, type MemoryFile } from "./store";
@@ -26,6 +28,11 @@ export const UPKEEP_EVERY_MS = 30 * 60_000;
 export const CONTEXT_FACTS = 6;
 /** At least this share of a fact's words in what the user said makes it the user's own. */
 export const OWN_WORDS = 0.6;
+/**
+ * How long Undo can put a forgotten fact back exactly (ms): the fact, Ember's notes that went with it and what it had
+ * replaced, held in main's memory only (never written), and dropped at Forget everything and when Ember stops.
+ */
+export const UNDO_FORGET_MS = MEMORY_UNDO_MS;
 
 /**
  * One remembered fact as Settings lists it. `kind`: one of Ember's own notes, its summary of a subject or a guess drawn
@@ -87,6 +94,8 @@ export class MemoryService {
   private upkeepRun: { controller: AbortController; done: Promise<boolean> } | null = null;
   /** Changed since the last sleep-time pass. */
   private changed = false;
+  /** What each recent Forget removed, by its Undo token, until `until` (UNDO_FORGET_MS). */
+  private undoable = new Map<string, { entities: Entity[]; facts: Fact[]; reopened: { id: string; invalidAt: string; supersededBy: string | null }[]; until: number }>();
 
   constructor(private o: MemoryServiceOptions) {
     this.file = o.file ?? memoryFile(o.dir, err => o.log.warn("memory.broken_file", { err: err instanceof Error ? err.message : String(err) }));
@@ -113,6 +122,7 @@ export class MemoryService {
   stop(): void {
     if (this.upkeepTimer) { clearInterval(this.upkeepTimer); this.upkeepTimer = null; }
     this.cancelUpkeep();
+    this.undoable.clear();
     this.flush();
     this.o.semantic?.flush();
     this.o.semantic?.stop();
@@ -206,15 +216,23 @@ export class MemoryService {
     return this.forgetCounted(id) !== null;
   }
 
+  /** The words of an open fact, or null (forget_memory checks the user asked about it: memory-v2). */
+  factText(id: string): string | null {
+    const f = this.g.fact(id);
+    return f && !f.invalidAt ? f.text : null;
+  }
+
   /**
-   * `forget`, saying what went: the fact's words, and how many of Ember's own notes made from it went with it (its
-   * summaries and guesses, which hold its words: memory-3). Null if it wasn't there.
+   * `forget`, saying what went: the fact's words, how many of Ember's own notes made from it went with it (its
+   * summaries and guesses, which hold its words: memory-3), and the token `restore` takes to undo it. Null if it
+   * wasn't there.
    */
-  forgetCounted(id: string): { text: string; derived: number } | null {
+  forgetCounted(id: string): { text: string; derived: number; undo: string } | null {
     // Only an open fact gives back what it replaced: a closed one was itself replaced since, and reopening under it would
     // leave a single predicate with two open values.
     if (!this.g.fact(id)) return null;
     // Stage the edit separately: a failed disk write must not remove the visible fact or reopen its predecessor.
+    const before = this.g;
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
     const f = next.fact(id)!;
     const notes = next.notesFrom(id);
@@ -241,12 +259,54 @@ export class MemoryService {
     try { this.o.semantic?.changed(next); } catch { this.o.log.warn("memory.delete_index_failed"); }
     this.o.log.info("memory.forgot", { count: 1 + notes.length, reopened });
     try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
-    return { text: f.text, derived: shownNotes };
+    const undo = this.keepForUndo(before, next, [id, ...notes]);
+    return { text: f.text, derived: shownNotes, undo };
+  }
+
+  /**
+   * Undo of a recent Forget: puts back exactly what it removed and closes again what it had reopened, as one staged
+   * write (a failed write changes nothing). Once per token, within UNDO_FORGET_MS. False when it can't.
+   */
+  restore(token: string): boolean {
+    const u = this.undoable.get(token);
+    this.undoable.delete(token);
+    if (!u || this.now().getTime() > u.until) return false;
+    const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
+    next.putBack(u.entities, u.facts);
+    for (const r of u.reopened) next.reclose(r.id, r.invalidAt, r.supersededBy);
+    try { this.file.save(next); }
+    catch (err) {
+      this.o.log.warn("memory.restore_failed", { err: err instanceof Error ? err.message : String(err) });
+      throw new Error("Ember couldn't put this memory back. Try Undo again.", { cause: err });
+    }
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    this.cancelUpkeep();
+    this.graph = next;
+    this.changed = true;
+    try { this.o.semantic?.changed(next); } catch { this.o.log.warn("memory.restore_index_failed"); }
+    this.o.log.info("memory.restored", { count: u.facts.length });
+    try { this.o.onChange?.(); } catch { this.o.log.warn("memory.restore_notice_failed"); }
+    return true;
+  }
+
+  /** Keeps what `next` no longer has of `before` (the facts `gone`, orphaned entities, reopened facts) for Undo. */
+  private keepForUndo(before: MemoryGraph, next: MemoryGraph, gone: string[]): string {
+    const now = this.now().getTime();
+    for (const [k, u] of this.undoable) if (now > u.until) this.undoable.delete(k);
+    const facts = gone.map(x => before.fact(x)).filter((f): f is Fact => !!f);
+    const entities = before.allEntities().filter(e => !next.entity(e.id));
+    const reopened = before.allFacts().filter(f => f.invalidAt && f.supersededBy && gone.includes(f.supersededBy) && next.fact(f.id) && !gone.includes(f.id))
+      .map(f => ({ id: f.id, invalidAt: f.invalidAt!, supersededBy: f.supersededBy }));
+    const token = crypto.randomUUID();
+    this.undoable.set(token, { entities: structuredClone(entities), facts: structuredClone(facts), reopened, until: now + UNDO_FORGET_MS });
+    return token;
   }
 
   /** Forgets everything only after both persistent stores have been erased successfully. */
   forgetAll(): void {
     this.cancelUpkeep();
+    // Nothing forgotten earlier can come back after everything is.
+    this.undoable.clear();
     try {
       this.o.semantic?.forgetAll();
       this.file.erase();

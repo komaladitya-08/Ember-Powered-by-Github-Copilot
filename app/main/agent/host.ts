@@ -167,7 +167,8 @@ export interface AgentStatus {
  * the transcript then holds its words as an `ember` entry marked `stopped`.
  */
 export interface AnswerStream { id: number; text: string; state: "streaming" | "done" | "interrupted" }
-export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number; stopped?: true; answerId?: number }
+/** `forgot`: a "learned" line that says what Ember forgot when asked (memory-v2), with the token its Undo takes. */
+export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number; stopped?: true; answerId?: number; forgot?: string }
 
 /** How long to wait before each further try at a reconnect's account lookup (ms). */
 const ACCOUNT_RETRY_MS: readonly number[] = [1000, 3000];

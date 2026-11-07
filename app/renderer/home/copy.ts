@@ -90,6 +90,12 @@ export function memoryDeleteFailedText(err: unknown): string {
   return /^Ember couldn't finish deleting /.test(said) ? said : "Ember couldn't finish deleting memory. Try Forget again.";
 }
 
+/** A failed Undo of a Forget, in main's plain sentence when it is one, never an IPC or filesystem error. */
+export function memoryRestoreFailedText(err: unknown): string {
+  const said = ipcErrorText(err);
+  return /^Ember couldn't put this memory back/.test(said) ? said : "Ember couldn't put this memory back. Try Undo again.";
+}
+
 /** The same safe deletion failure, naming the action beside the learned line. */
 export function learnedUndoFailedText(err: unknown): string { return memoryDeleteFailedText(err).replace(/(try|Try) Forget again/g, "$1 Undo again"); }
 
@@ -345,6 +351,19 @@ export function memorySourceLabel(source: string): string {
 
 /** The conversation's line when Ember keeps something new on its own, and its Undo button's name for screen readers. */
 export const learnedLine = (text: string) => `Ember learned: ${text}`;
+/** The conversation's line when Ember forgot a fact you asked it to forget (memory-v2), and its Undo's name. */
+export const forgotLine = (text: string) => `Ember forgot: ${text}`;
+export const undoForgotLabel = (text: string) => `Undo: remember “${text}” again`;
+/**
+ * What Memory's list says after Forget, where focus goes (never the next row's Forget, so a second Enter forgets
+ * nothing more: memory-7), with Undo after it; and after Undo.
+ */
+export const memoryForgottenText = (text: string, derived = 0) =>
+  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.`;
+export const memoryPutBackText = (text: string) => `Put back: “${text.replace(/[“”]/g, "")}”.`;
+/** Undo of a Forget, once it has put the memory back; and when it can't any more. */
+export const MEMORY_PUT_BACK = "Put back";
+export const MEMORY_UNDO_EXPIRED = "It's too late to undo this. Tell Ember again if you want it remembered.";
 export const undoLearnedLabel = (text: string) => `Undo: forget “${text}”`;
 /** The line's button once main confirms the deletion. */
 export const LEARNED_UNDONE = "Forgotten";
@@ -357,6 +376,9 @@ export const MEMORY_SHOW_MORE = "Show more memories";
 export const MEMORY_NO_MATCHES = "No memories match. Try another word or source.";
 export const WORD_DELETE_FAILED = "Couldn't forget that correction. Try again.";
 export const WORDS_DELETE_FAILED = "Couldn't forget the corrections. Try again.";
+/** Forget all words' question (memory-7), with how many go. */
+export const forgetAllWordsAsk = (n: number) =>
+  `Forget ${n === 1 ? "the word" : `the ${n} words`} Ember learnt from your corrections? It will hear ${n === 1 ? "it" : "them"} as it did before.`;
 
 /** The visible page and all matching memories, without suggesting that hidden pages have been removed. */
 export function memoryCountText(shown: number, matched: number, all: number): string {
@@ -967,6 +989,8 @@ export const PERSONAL_TEXT = {
   wordsHeading: "Words Ember learnt",
   wordsEmpty: "No words learnt yet.",
   forgetAllWords: "Forget all words",
+  /** Forget all words asks first, as Forget everything does (memory-7); "Keep them" is the safe choice. */
+  forgetAllWordsKeep: "Keep them",
   conversation: "Keep listening after I call Ember",
   conversationHint: "Talk to Ember as you would to a person: no name needed after the first time, and you can cut in while it speaks or works. Ember stops talking, takes in what you said and carries on. Say “That's all” to finish, or it stops listening 30 seconds after everything goes quiet. Off, you have a few seconds after each answer.",
   suggest: "Suggest what I might say next",

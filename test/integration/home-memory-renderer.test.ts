@@ -209,6 +209,7 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps Undo truthful, preserves
     await expect.poll(() => page.locator("#words-list button").count()).toBe(2);
     expect(await page.evaluate(() => document.activeElement === document.querySelector("#words-list button"))).toBe(true);
     await page.locator("#words-forget-all").click();
+    await page.locator("#words-forget-yes").click();
     await expect.poll(() => page.locator("#words-note").innerText()).toContain("Couldn't forget");
     expect(await page.locator("#words-forget-all").getAttribute("aria-disabled")).toBeNull();
     await page.locator("#search").fill("memory");
@@ -312,6 +313,112 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("says why saved memory is pause
     expect(await page.locator("#memory-list .mem-from").allInnerTexts()).toEqual(["Ember's summary", "Ember's guess"]);
     await page.locator('a[href="#home-h"]').click();
     await expect.poll(() => page.locator("#whats-on").textContent()).toContain("Memory on");
+    expect(errors).toEqual([]);
+  } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+}, 60_000);
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("forgets one memory for two Enters, says what went with Undo, asks before forgetting every word, and undoes what Ember forgot when asked (memory-7, memory-v2)", async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
+  settings.memory = { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+  const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
+    admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
+  const rows: MemoryView["rows"] = [
+    { id: "a", text: "Likes to be called Ram", source: "user", at: "2026-11-04" },
+    { id: "b", text: "Works at Globex", source: "user", at: "2026-11-04" },
+    { id: "c", text: "Uses Firefox", source: "user", at: "2026-11-04" },
+  ];
+  const words: VoiceWord[] = [{ heard: "umber", meant: "Ember", at: "2026-11-04" }, { heard: "arc", meant: "Ark", at: "2026-11-04" }];
+  const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
+  const dist = path.resolve("dist");
+  const server = http.createServer((req, res) => {
+    const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
+    if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
+    const mime: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+    res.setHeader("content-type", mime[path.extname(file)] ?? "application/octet-stream");
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  type Probe = { forgets: string[]; restores: string[]; wordsForgotten: number };
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(seed => {
+      const listeners: Record<string, (value: unknown) => void> = {};
+      const probe: Probe = (window as unknown as { __probe: Probe }).__probe = { forgets: [], restores: [], wordsForgotten: 0 };
+      let shown = seed.rows;
+      const push = () => listeners.onMemory?.({ rows: shown, ownership: "ready", reason: null });
+      window.ember = new Proxy({}, { get: (_target, name: string) => {
+        if (name.startsWith("on")) return (fn: (value: unknown) => void) => { listeners[name] = fn; return () => { delete listeners[name]; }; };
+        if (name === "getStatus") return async () => seed.status;
+        if (name === "memory") return async () => ({ rows: shown, ownership: "ready", reason: null });
+        if (name === "conversation") return async () => [{ t: "2026-11-04T12:00:00Z", who: "learned", text: "Prefers tea", forgot: "token-forgot-1" }];
+        if (name === "voiceWords") return async () => seed.words;
+        if (name === "reminders") return async () => [];
+        if (name === "forgetVoiceWords") return async () => { probe.wordsForgotten++; };
+        if (name === "forgetMemory") return async (id: string) => {
+          probe.forgets.push(id);
+          const row = shown.find(r => r.id === id)!;
+          shown = shown.filter(r => r.id !== id);
+          // As main does: the list is pushed before the reply.
+          push();
+          await new Promise(resolve => setTimeout(resolve, 40));
+          return { text: row.text, derived: 1, undo: `token-${id}-0001` };
+        };
+        if (name === "restoreMemory") return async (token: string) => {
+          probe.restores.push(token);
+          if (token.startsWith("token-a")) { shown = seed.rows; push(); }
+          return true;
+        };
+        return () => new Promise(() => undefined);
+      } }) as EmberHomeApi;
+    }, { status, rows, words });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Renderer fixture didn't start.");
+    await page.goto(`http://127.0.0.1:${address.port}/app/renderer/home/index.html`);
+    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    const probe = () => page.evaluate(() => (window as unknown as { __probe: Probe }).__probe);
+    // What Ember forgot when asked says so in the conversation, and its Undo puts it back.
+    await expect.poll(() => page.locator("#conversation li.learned").innerText()).toContain("Ember forgot: Prefers tea");
+    await page.locator("#conversation li.learned button").click();
+    await expect.poll(() => page.locator("#conversation li.learned button").innerText()).toBe("Put back");
+    expect((await probe()).restores).toEqual(["token-forgot-1"]);
+    await page.locator('a[href="#memory-h"]').click();
+    await expect.poll(() => page.locator("#memory-list [data-memory-forget]").count()).toBe(3);
+    await page.locator("#memory-list [data-memory-forget]").first().focus();
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(140);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300);
+    expect((await probe()).forgets).toEqual(["a"]);
+    expect(await page.locator("#memory-list [data-memory-forget]").count()).toBe(2);
+    const said = page.locator("#memory-forgotten-text");
+    expect(await said.innerText()).toBe("Forgotten: “Likes to be called Ram”, and a note Ember made from it.");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-forgotten-text");
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-undo");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => said.innerText()).toBe("Put back: “Likes to be called Ram”.");
+    expect((await probe()).restores).toEqual(["token-forgot-1", "token-a-0001"]);
+    expect(await page.locator("#memory-list [data-memory-forget]").count()).toBe(3);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "memory-forgotten-status.png"), fullPage: true });
+    }
+    // Forget all words asks first; Esc and Keep them leave the words, Forget all words forgets them.
+    await page.locator('a[href="#voice-h"]').click();
+    await expect.poll(() => page.locator("#words-list button").count()).toBe(2);
+    await page.locator("#words-forget-all").click();
+    expect(await page.locator("#words-forget-confirm").isVisible()).toBe(true);
+    expect(await page.locator("#words-forget-title").innerText()).toBe("Forget the 2 words Ember learnt from your corrections? It will hear them as it did before.");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("words-forget-no");
+    await page.keyboard.press("Escape");
+    expect(await page.locator("#words-forget-confirm").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("words-forget-all");
+    await page.locator("#words-forget-all").click();
+    await page.locator("#words-forget-yes").click();
+    await expect.poll(async () => (await probe()).wordsForgotten).toBe(1);
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);

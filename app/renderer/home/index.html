@@ -388,6 +388,7 @@
       </div>
       <p class="hint" id="memory-count" role="status"></p>
       <ul class="plain-list memory-list" id="memory-list" aria-labelledby="memory-h"></ul>
+      <div class="agent-actions memory-forgotten" id="memory-forgotten" hidden><p class="hint" id="memory-forgotten-text" role="status" tabindex="-1"></p><button type="button" id="memory-undo" class="btn quiet small">Undo</button></div>
       <div class="agent-actions"><button type="button" id="memory-more" class="btn quiet" hidden></button></div>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
       <p class="hint" id="memory-owner" role="status" hidden></p>
@@ -492,6 +493,10 @@
       <ul class="plain-list" id="words-list" aria-labelledby="words-h"></ul>
       <p class="hint" id="words-note" role="status"></p>
       <div class="agent-actions"><button type="button" id="words-forget-all" class="btn quiet" hidden>Forget all words</button></div>
+      <div id="words-forget-confirm" class="consent" role="group" aria-labelledby="words-forget-title" hidden>
+        <p id="words-forget-title"></p>
+        <div class="agent-actions"><button type="button" id="words-forget-yes" class="btn quiet danger">Forget all words</button><button type="button" id="words-forget-no" class="btn quiet">Keep them</button></div>
+      </div>
       <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything. “Ember?” on its own tells you what Ember is doing, “What did I miss?” what finished while you were away, and “Ember, just show me” keeps results on screen.</p>
     </section>
 

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryService } from "../../app/main/memory/service";
+import { MemoryService, UNDO_FORGET_MS } from "../../app/main/memory/service";
 import { memoryFile } from "../../app/main/memory/store";
 import { SemanticMemory, vectorFile } from "../../app/main/memory/embed";
 import { MemoryLearning } from "../../app/main/memory/learning";
@@ -209,10 +209,52 @@ describe("forgetting a fact forgets what Ember made from it (memory-3)", () => {
 
   it("says how many of Ember's own notes went with it", () => {
     const s = refined();
-    expect(s.memory.forgetCounted(s.id("Has a medical"))).toEqual({ text: "Has a medical appointment every Tuesday", derived: 2 });
+    expect(s.memory.forgetCounted(s.id("Has a medical"))).toEqual({ text: "Has a medical appointment every Tuesday", derived: 2, undo: expect.any(String) });
     expect(forgotReply("Has a medical appointment every Tuesday", 2)).toBe("Forgotten: “Has a medical appointment every Tuesday”, and 2 notes I made from it.");
     expect(forgotReply("Likes tea", 1)).toBe("Forgotten: “Likes tea”, and a note I made from it.");
     expect(forgotReply("Likes tea")).toBe("Forgotten: “Likes tea”.");
+    s.memory.stop();
+  });
+});
+
+describe("Undo after Forget (memory-v2, memory-7)", () => {
+  it("puts a forgotten fact back exactly, with what it had replaced closed again and its vector, for a short while", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-11-07T10:00:00Z") });
+    const s = setup();
+    s.memory.remember("Lives in Leeds", [{ name: "User" }], "I live in Leeds", "lives_in");
+    s.memory.remember("Lives in York", [{ name: "User" }], "I live in York", "lives_in");
+    s.memory.flush(); await s.semantic.catchUp();
+    const before = s.file.load().toJSON();
+    const york = s.memory.list().find(i => i.text === "Lives in York")!;
+    const gone = s.memory.forgetCounted(york.id)!;
+    expect(s.memory.list().map(i => i.text)).toEqual(["Lives in Leeds"]);
+    expect(s.memory.restore(gone.undo)).toBe(true);
+    expect(s.file.load().toJSON()).toEqual(before);
+    expect(s.memory.list().map(i => i.text)).toEqual(["Lives in York"]);
+    await s.semantic.catchUp();
+    expect(s.semantic.size).toBe(2);
+    // Once only, and not after UNDO_FORGET_MS or Forget everything.
+    expect(s.memory.restore(gone.undo)).toBe(false);
+    const again = s.memory.forgetCounted(york.id)!;
+    vi.advanceTimersByTime(UNDO_FORGET_MS + 1);
+    expect(s.memory.restore(again.undo)).toBe(false);
+    const leeds = s.memory.forgetCounted(s.memory.list()[0].id)!;
+    s.memory.forgetAll();
+    expect(s.memory.restore(leeds.undo)).toBe(false);
+    expect(s.memory.list()).toEqual([]);
+    s.memory.stop();
+  });
+
+  it("puts back Ember's notes that went with the fact", () => {
+    const s = setup();
+    s.memory.remember("Has a medical appointment every Tuesday", [{ name: "User", kind: "person" }], "remember that I have a medical appointment every Tuesday");
+    const fact = s.memory.list()[0];
+    s.memory.refine(g => g.add({ text: "Is busy on Tuesdays", about: [{ name: "User" }], predicate: "reflection", source: "conversation", derivedFrom: [fact.id] }).kind === "added" ? 1 : 0);
+    const before = s.memory.list();
+    const gone = s.memory.forgetCounted(fact.id)!;
+    expect(s.memory.list()).toEqual([]);
+    expect(s.memory.restore(gone.undo)).toBe(true);
+    expect(s.memory.list()).toEqual(before);
     s.memory.stop();
   });
 });

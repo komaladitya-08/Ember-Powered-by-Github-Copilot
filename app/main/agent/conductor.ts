@@ -22,6 +22,7 @@ import type { ConversationContext } from "../../shared/ipc";
 import { CHARACTERS, type SettingsStore } from "../settings";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
+import { terms } from "../memory/text";
 import type { PromptCaps } from "../targets/types";
 
 export interface ConductorDeps {
@@ -142,6 +143,11 @@ export interface ConductorMemory {
   forRequest?(request: string, own: boolean): string | Promise<string>;
   forget(id: string): boolean;
   /**
+   * The words of the open fact `id`, or null when there is none: forget_memory forgets a fact only when the user's own
+   * words this turn ask to forget it (`asksToForget`), and refuses when this is absent (memory-v2).
+   */
+  factText?(id: string): string | null;
+  /**
    * A turn ended (not stopped): what the user said in it and Ember's answer, for memory to learn from off the hot path
    * (app/main/memory/learning.ts). `own`: the request was heard from the user (not where Ember can't tell them from its
    * speakers). Absent: nothing is learned but what remember saves.
@@ -177,7 +183,7 @@ const TARGET_ARG = z.string().min(1).max(80);
  * offer_connect are offered (§2.6); without it the tools are today's exactly.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; own?: () => string; now?: () => number }, routines?: RoutineTools): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string; own?: () => string }, reminders?: { store: Reminders; said: () => string; own?: () => string; now?: () => number }, routines?: RoutineTools): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
@@ -259,7 +265,17 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
         async ({ query, history }) => (await memory.store.context(query, history)) || "Nothing remembered about that."),
       checkedTool("forget_memory", "Forget a remembered fact the user asked you to forget, by its id from <memory> or recall (\"f3a9…\").",
         z.object({ id: z.string().min(1).max(40).describe("The fact's id, without brackets") }),
-        async ({ id }) => memory.store.forget(id.replace(/^\[|\]$/g, "")) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`),
+        async ({ id }) => {
+          const clean = id.replace(/^\[|\]$/g, "");
+          const text = memory.store.factText ? memory.store.factText(clean) : undefined;
+          if (text === null) return `Nothing remembered has the id ${id}. Use recall to find it.`;
+          // Only the user's own words this turn delete what Ember keeps about them, as for routines (memory-v2): never
+          // the model's reading of a task's results or a routine's steps, and never without knowing what the fact is.
+          if (text === undefined || !asksToForget(memory.own?.() ?? "", text)) {
+            return "Not forgotten: the user didn't ask in this request to forget it. Forget a memory only when they ask, and tell them they can use Forget in Settings › Memory.";
+          }
+          return memory.store.forget(clean) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`;
+        }),
     ] : []),
     ...(reminders ? reminderTools(reminders, !!routines) : []),
     ...(routines ? routineTools(routines) : []),
@@ -378,6 +394,26 @@ export function namesRoutine(said: string, name: string): boolean {
   if (!k) return false;
   const whole = new RegExp(`^(?:please\\s+)?(?:(?:run|start|do)\\s+(?:my\\s+|the\\s+)?)?${escaped(k)}(?:\\s+routine)?(?:[,\\s]+please)?$`, "i");
   return said.split("\n").some(line => whole.test(routineKey(line.replace(WAKE, ""))));
+}
+
+/**
+ * A request to forget something Ember remembers: "forget", "don't remember", "stop remembering", "unlearn", or
+ * "remove"/"delete"/"erase" with memory or what Ember knows. Never "don't forget", "never forget" or "to forget", and
+ * never "I don't remember" (the user saying they forgot).
+ */
+const FORGET_ASK = /(?<!\b(?:don'?t|do\s+not|never|not|to)\s+)\bforget\b|(?<!\b(?:i|we|they)\s+)\b(?:don'?t|do\s+not)\s+remember\b|\bstop\s+remembering\b|\bunlearn\b|\b(?:remove|delete|erase|drop|clear|wipe)\b(?=[^.?!\n]{0,60}\b(?:memory|memories|remember|remembered|know|knows)\b)/i;
+
+/**
+ * Whether what the user said this turn asks to forget the fact `fact` (memory-v2): a forget request, with a word of the
+ * fact after it ("forget that I work at Globex", "remove Priya from your memory"). "Forget about the dentist" doesn't
+ * forget "Works at Globex", and nothing but the user's own words reach here.
+ */
+export function asksToForget(said: string, fact: string): boolean {
+  const want = new Set(terms(fact));
+  return said.replace(/[\u2018\u2019]/g, "'").split("\n").some(line => {
+    const m = FORGET_ASK.exec(line);
+    return !!m && terms(line.slice(m.index)).some(t => want.has(t));
+  });
 }
 
 /** Words that ask for a routine to go. */
@@ -748,10 +784,11 @@ export class Conductor {
   }
 
   /** Memory's tools, while memory is on (deps.memory). */
-  private get memoryTools(): { store: ConductorMemory; said: () => string } | undefined {
+  private get memoryTools(): { store: ConductorMemory; said: () => string; own: () => string } | undefined {
     const store = this.deps.memory;
-    // Unchecked speech is not the owner’s evidence; saved routines retain their own provenance.
-    return store ? { store, said: () => this.saidOwn ? this.turnSaid : this.routineSaid } : undefined;
+    // Unchecked speech is not the owner’s evidence; saved routines retain their own provenance. Forgetting takes only
+    // the user's own words this turn, never a routine's steps (`own`).
+    return store ? { store, said: () => this.saidOwn ? this.turnSaid : this.routineSaid, own: () => this.saidOwn ? this.said : "" } : undefined;
   }
 
   /** The routine tools, while routines are on (deps.routines). */

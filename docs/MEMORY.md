@@ -173,6 +173,13 @@ download, so English-only MiniLM is the trade-off for now.
    What the step was planned as:
    - Setting `memory.on` (off), the first-use card and the admin key.
    - Conductor tools `remember` (facts the user states: source `user`), `recall` and `forget_memory`.
+     `forget_memory` forgets a fact only when the user's own words this turn ask to forget it, with a word of the
+     fact after the request (`asksToForget`: "forget that I work at Globex", "remove Priya from your memory"; never
+     "don't forget", a routine's steps or unchecked speech), as `delete_routine` does. What it forgot shows in the
+     conversation as "Ember forgot: …" in the fact's stored words, with Undo.
+   - Undo after any Forget (Home's list, "Ember forgot", "forget that") puts the fact back exactly: its notes, what
+     it had replaced closed again, its vector rebuilt (`MemoryService.restore`, once per Forget, within 60 seconds,
+     held in main's memory only and dropped at Forget everything).
    - Before each turn, the host recalls against the request and adds a `<memory>` block.
    - The persona rule appears only while memory is on, so today's prompts stay byte-identical (persona tests).
    - A `MemoryService` in main owns the graph, saves it after changes, and registers as a `StopPart`.

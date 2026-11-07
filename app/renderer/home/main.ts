@@ -7,13 +7,14 @@
  */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
-import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
+import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
+import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import type { HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  memoryOwnerOffersErase, memoryOwnerText, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -49,7 +50,7 @@ import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent }
 import { CONVERSATION_EDIT, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
-import { mountLearnedUndo } from "./learned-undo";
+import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
 import { mountMemoryCorrection } from "./memory-correction";
 import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
 import type { TaskEntry } from "../../shared/activity";
@@ -916,10 +917,11 @@ function conversationRow(e: Entry): HTMLLIElement {
   li.className = e.who;
   // "Ember learned: …" with Undo (forgets that fact): a small line of its own, not a message.
   if (e.who === "learned") {
-    const text = Object.assign(document.createElement("p"), { textContent: learnedLine(e.text) });
+    const text = Object.assign(document.createElement("p"), { textContent: e.forgot ? forgotLine(e.text) : learnedLine(e.text) });
     li.append(text);
     const id = e.fact;
-    if (id) mountLearnedUndo(li, e.text, id, window.ember.forgetMemory);
+    if (e.forgot) mountForgotUndo(li, e.text, e.forgot, window.ember.restoreMemory);
+    else if (id) mountLearnedUndo(li, e.text, id, async fact => { await window.ember.forgetMemory(fact); });
     return li;
   }
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
@@ -1173,7 +1175,15 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
     button.setAttribute("aria-label", forgetMemoryLabel(row.text));
     button.dataset.memoryForget = "";
-    button.addEventListener("click", () => { void deleteMemory(button, () => window.ember.forgetMemory(read().id)); });
+    button.addEventListener("click", () => {
+      // One Forget at a time, and never one that focus just landed on as its row's neighbour went: a second Enter or a
+      // repeating key forgets nothing more (memory-7).
+      if (memoryForgetting || KeyedRows.justFocused(button)) return;
+      const row = read();
+      memoryForgetting = true;
+      void deleteMemory(button, async () => { showForgotten(row.text, await window.ember.forgetMemory(row.id)); })
+        .finally(() => { memoryForgetting = false; });
+    });
     const correct = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: MEMORY_CORRECTION.correct });
     correct.dataset.memoryCorrect = row.id;
     correct.addEventListener("click", () => memoryCorrection.open(read()));
@@ -1198,6 +1208,8 @@ function renderMemory(rows: MemoryRow[]): void {
   if (unavailable && filters.contains(document.activeElement)) $("memory-on").focus();
   filters.hidden = unavailable;
   $("memory-list").hidden = unavailable;
+  // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause).
+  if (unavailable && !$("memory-forgotten").hidden) hideForgotten();
   $("memory-count").hidden = unavailable;
   $("memory-count").textContent = memoryCountText(page.rows.length, page.total, rows.length);
   const more = $("memory-more");
@@ -1225,6 +1237,51 @@ $("memory-more").addEventListener("click", () => {
   renderMemory(memoryRows);
   // Move into the newly revealed page, including when Show more has reached the end and disappeared.
   $("memory-list").children[before]?.querySelector<HTMLElement>("button")?.focus();
+});
+/** A Forget in the list is under way (memory-7). */
+let memoryForgetting = false;
+/** Undo for the last Forget: its token and the fact's words, until MEMORY_UNDO_MS. */
+let memoryUndo: { token: string; text: string } | null = null;
+let memoryUndoTimer: ReturnType<typeof setTimeout> | undefined;
+/** After Forget: what went, with Undo, where focus goes (the status line, never the next row's Forget: memory-7). */
+function showForgotten(text: string, gone: MemoryForgotten | null): void {
+  clearTimeout(memoryUndoTimer);
+  const said = $("memory-forgotten-text"), undo = $("memory-undo") as HTMLButtonElement;
+  said.textContent = memoryForgottenText(gone?.text ?? text, gone?.derived ?? 0);
+  memoryUndo = gone ? { token: gone.undo, text: gone.text } : null;
+  undo.hidden = !memoryUndo;
+  undo.removeAttribute("aria-disabled");
+  undo.setAttribute("aria-label", undoForgotLabel(gone?.text ?? text));
+  $("memory-forgotten").hidden = false;
+  said.focus();
+  // Main lets go of what Undo needs after MEMORY_UNDO_MS: the line goes a little before, and focus with it to the switch.
+  memoryUndoTimer = setTimeout(() => hideForgotten(), MEMORY_UNDO_MS - 2000);
+}
+function hideForgotten(): void {
+  clearTimeout(memoryUndoTimer);
+  memoryUndo = null;
+  const box = $("memory-forgotten");
+  const had = box.contains(document.activeElement);
+  box.hidden = true;
+  if (had) $("memory-on").focus();
+}
+$("memory-undo").addEventListener("click", () => {
+  const undo = $("memory-undo") as HTMLButtonElement, said = $("memory-forgotten-text");
+  const u = memoryUndo;
+  if (!u || undo.getAttribute("aria-disabled") === "true") return;
+  undo.setAttribute("aria-disabled", "true");
+  $("memory-error").textContent = "";
+  void window.ember.restoreMemory(u.token).then(put => {
+    clearTimeout(memoryUndoTimer);
+    memoryUndo = null;
+    undo.hidden = true;
+    said.textContent = put ? memoryPutBackText(u.text) : MEMORY_UNDO_EXPIRED;
+    said.focus();
+    memoryUndoTimer = setTimeout(() => hideForgotten(), 10_000);
+  }, err => {
+    undo.removeAttribute("aria-disabled");
+    $("memory-error").textContent = memoryRestoreFailedText(err);
+  });
 });
 const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0; renderMemory(view.rows); renderStatus(); };
 /** Memory's settings as they are, so a change to one of its fields keeps the others (the patch replaces it whole). */
