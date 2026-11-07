@@ -267,6 +267,8 @@ reported in every PR that touches it.
      handle's 15 against 21, the whole tree 8.7–10.1 % of a core against 11.4–15.2 %; Home's hero 11.5 against 18.4).
      Fidgets and the handle's idle saccades are most of what is left. They will stop drawing entirely after about 10 s
      still, and wake on any state change.
+   - The main process moves Ember 60 times a second only while it or the pointer moves, and about 10 once both have
+     been still for 2 s (`tickGap`): main at rest 1.0–1.15 % of a core against 1.8–2.2 %.
    - Software compositing (no GPU) gets a cheaper still frame.
    - Target: renderers plus GPU process under 2 % at idle.
 2. **Fewer live windows.** Follow PR #100's pattern on every OS:
