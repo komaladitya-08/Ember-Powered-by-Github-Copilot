@@ -257,7 +257,8 @@ reported in every PR that touches it.
    Adopt one only with a reviewed licence, a SHA-256 pin and a clear win.
 3. **Speech-shaped answers.** For voice turns the persona already asks for 1–3 short sentences. Add spoken-style
    rules: contractions, numbers said as words, no lists. Pick the voice's speed and pauses per sentence type
-   (questions rise, lists get pauses).
+   (questions rise, lists get pauses). (Partly built 2026-11-07: money, clock times, paths, "~" and "#N" are said as
+   words, emoji aren't said, and a list's items end with a pause: `spokenText`, app/voice/spoken.ts.)
 
 ### Phase 5: cost almost nothing at idle
 

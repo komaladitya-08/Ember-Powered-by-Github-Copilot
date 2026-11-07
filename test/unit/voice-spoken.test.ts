@@ -26,6 +26,47 @@ describe("spokenText says keys, menu paths and symbols as people say them", () =
   });
 });
 
+describe("spokenText says money, times, paths and numbers as people say them, and no emoji (voice-speaking-2)", () => {
+  it.each([
+    ["That's $5.", "That's 5 dollars."],
+    ["It costs $12.50 a month.", "It costs 12 dollars 50 a month."],
+    ["It costs $1.05, or $1.", "It costs 1 dollar and 5 cents, or 1 dollar."],
+    ["Only $0.99 now.", "Only 99 cents now."],
+    ["It's £3.20, about €11.", "It's 3 pounds 20, about 11 euros."],
+    ["That's 50p, I mean £0.50.", "That's 50p, I mean 50 pence."],
+    ["They raised $2.5M and then $3 billion.", "They raised 2.5 million dollars and then 3 billion dollars."],
+    ["It came to $1,234.56.", "It came to 1,234 dollars 56."],
+    ["The meeting is at 14:00.", "The meeting is at 14 hundred."],
+    ["Reminder at 10:00.", "Reminder at 10 o'clock."],
+    ["It starts at 9:05 AM and ends at 3:30 p.m.", "It starts at 9 oh 5 AM and ends at 3 30 p.m."],
+    ["At 3:00 pm, or 00:00.", "At 3 pm, or midnight."],
+    ["Meeting on Tue. with Dr. Smith, from Jan. 5.", "Meeting on Tuesday with Dr. Smith, from January 5."],
+    ["The answer is 42%. That's ~75% of it.", "The answer is 42%. That's about 75% of it."],
+    ["See issue #45.", "See issue number 45."],
+    ["The file is at `~/Documents/report.pdf`, 2.4 MB.", "The file is at report.pdf in Documents, 2.4 MB."],
+    ["I saved C:\\Users\\alex\\Documents\\notes.txt for you.", "I saved notes.txt in Documents for you."],
+    ["Copied 1,234 files to /mnt/backup.", "Copied 1,234 files to backup."],
+    ["It's in ~/Ember/report.pdf and ~/notes.txt.", "It's in report.pdf in Ember and notes.txt in your home folder."],
+    ["Done ✅ I closed 3 windows 🎉", "Done. I closed 3 windows"],
+    ["Hey there! :) How are you?", "Hey there! How are you?"],
+    ["Great job 👍🏽, and 👨‍👩‍👧 too.", "Great job, and too."],
+  ])("%j is said %j", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it("says nothing for an answer that is only emoji", () => {
+    expect(spokenText("🎉🎉")).toBe("");
+    expect(spokenText("- 🎉\n- ✅")).toBe("");
+  });
+
+  it.each([
+    // Not money, times or paths: said as before.
+    "Use $HOME and A$5 as they are.",
+    "The ratio is 16:9, and John 3:16 is a verse.",
+    "It ran for 10:00:05 in all.",
+    "Read and/or write 1/2 of it, at github.com/foo/bar.",
+    "Install C++ and © 2026 Ember™.",
+  ])("leaves %j as it is", text => expect(spokenText(text)).toBe(text.replace("John 3:16", "John 3 16")));
+});
+
 describe("spokenText", () => {
   it.each([
     ["Run this:\n\n```bash\nsudo dnf install foo\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],
