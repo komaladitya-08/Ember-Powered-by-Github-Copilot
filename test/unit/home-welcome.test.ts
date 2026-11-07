@@ -9,7 +9,7 @@ import { CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
 import { CONSENT_CHANGES, CONSENT_VERSION, consentChangesSince } from "../../app/shared/consent";
 import {
   CONSENT_AGAIN, CONSENT_CHANGE_SOURCES, CONSENT_SOURCES, CONSENT_TEXT, recheckMessage, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
-  gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
+  gated, plainChecks, serviceSummary, signInView, SKIP_OWN, SKIP_SIGN_IN, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
 const read = (f: string) => readFileSync(new URL(`../../app/${f}`, import.meta.url), "utf8");
@@ -163,7 +163,8 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "signed-out", signingIn: false, managedProvider: false }).retry).toBe(true);
     expect(signInView({ phase: "ready", signingIn: false, managedProvider: false }).retry).toBe(false);
     expect(SCRIPT).toContain("waitLink = p.link ?? null;");
-    expect(SCRIPT).toContain("$(\"w-check-again\").hidden = !((v.retry && agent?.signInWith === \"github-cli\") || waitLink);");
+    // Not while the user's own provider is in use: there is no GitHub sign-in to look for (first-run-1).
+    expect(SCRIPT).toContain("$(\"w-check-again\").hidden = !((v.retry && agent?.signInWith === \"github-cli\" && !ownInUse()) || waitLink);");
     expect(PAGE).toContain("<button type=\"button\" class=\"btn quiet small\" id=\"w-check-again\">Check again</button>");
   });
 
@@ -182,6 +183,18 @@ describe("the sign-in step", () => {
     const rows = summaryRows({ character: "Cinder", size: 60, signedIn: "Your own provider (api.example.com)", voice: "off", keys: null, copilot: false });
     expect(rows[1]).toEqual({ label: "Model service", value: "Your own provider (api.example.com)" });
     expect(SCRIPT).toContain("const to = stepBefore(step, ownInUse());");
+  });
+
+  it("names the user's own provider while it connects or fails too, with no GitHub, Copilot or sign-in words (first-run-1)", () => {
+    const starting = signInText({ managed: false, own: "localhost:11434", ownPhase: "starting" });
+    const failing = signInText({ managed: false, own: "localhost:11434", ownPhase: "error" });
+    expect(starting).toEqual({ title: "Your own model provider", lead: "I'm connecting to the model provider you set up (localhost:11434). You can change it later in Settings › Models & connections." });
+    expect(failing).toEqual({ title: "Your own model provider", lead: "I can't connect to the model provider you set up (localhost:11434) yet: the line below says why. You can check its details here, or later in Settings › Models & connections." });
+    for (const w of [starting.title, starting.lead, failing.lead, SKIP_OWN]) expect(w, w).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
+    // Ready reads as before.
+    expect(signInText({ managed: false, own: "localhost:11434", ownPhase: "ready" })).toEqual(signInText({ managed: false, own: "localhost:11434" }));
+    expect(SKIP_SIGN_IN).toContain("sign in later");
+    expect(SKIP_OWN).toBe("You can go on for now and check it later in Settings › Models & connections. Until I'm connected, I can't answer or act.");
   });
 
   it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {
@@ -209,7 +222,8 @@ describe("the sign-in step", () => {
     expect(askWhy({ locked: false, noSignIn: false })).toBe("Sign in first, then you can ask me something.");
     const row = summaryRows({ character: "Cinder", size: 60, signedIn: "Locked down by your organisation", voice: "off", keys: null, copilot: false })[1];
     expect(row).toEqual({ label: "Model service", value: "Locked down by your organisation" });
-    expect(SCRIPT).toContain(': locked() ? "Locked down by your organisation" : null,');
+    expect(serviceSummary({ ready: false, locked: true, managed: false })).toBe("Locked down by your organisation");
+    expect(serviceSummary({ ready: false, locked: true, managed: true })).toBe("Locked down by your organisation");
   });
 
   it("offers the user's own provider in the lead only where it is offered (first-run-7)", () => {
@@ -335,6 +349,24 @@ describe("“Your Ember”", () => {
       { label: "Character", value: "Wisp, 72 px" }, { label: "Copilot", value: "Signed in as octo" }, { label: "“Hey Ember”", value: "On" },
       { label: "Ask", value: "Ctrl+Alt+Space" }, { label: "Stop everything", value: "Ctrl+Alt+X" }, { label: "Settings", value: "Ctrl+Alt+E" },
     ]);
+  });
+
+  it("names the service Ember is connected through, and one with nothing to sign in to by name while it isn't connected (first-run-c1-3)", () => {
+    const user = { kind: "user", host: "localhost:11434" };
+    expect(serviceSummary({ ready: true, locked: false, managed: false, login: "octo" })).toBe("Signed in as octo");
+    expect(serviceSummary({ ready: true, locked: false, managed: false })).toBe("Connected");
+    expect(serviceSummary({ ready: true, locked: false, managed: true })).toBe("Your organisation's model service");
+    expect(serviceSummary({ ready: true, locked: false, managed: false, service: user, login: "octo" })).toBe("Your own provider (localhost:11434)");
+    // Not connected: Copilot isn't signed in yet; the user's own provider and the organisation's service have no sign-in.
+    expect(serviceSummary({ ready: false, locked: false, managed: false })).toBeNull();
+    expect(serviceSummary({ ready: false, locked: false, managed: false, service: user })).toBe("Your own provider (localhost:11434), not connected yet");
+    expect(serviceSummary({ ready: false, locked: false, managed: true })).toBe("Your organisation's model service, not connected yet");
+    expect(serviceSummary({ ready: false, locked: false, managed: false, service: { kind: "admin", host: "models.corp.example" } })).toBe("Your organisation's model service, not connected yet");
+    for (const service of [user, undefined]) {
+      const value = serviceSummary({ ready: false, locked: false, managed: !service, service });
+      expect(summaryRows({ character: "Cinder", size: 60, signedIn: value, voice: "off", keys: null, copilot: false })[1].value).not.toMatch(/signed in/i);
+    }
+    expect(SCRIPT).toContain("signedIn: serviceSummary({");
   });
 
   it("names no shortcut another app holds, and says when Copilot isn't signed in yet", () => {

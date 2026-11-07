@@ -161,19 +161,25 @@ export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>>
 
 /**
  * The sign-in step's title and lead: an organisation's own model service (`managed`) has nothing to sign in to, and
- * neither has the user's own provider once Ember is connected to it (`own`, its host: first-run-1). Under the
- * organisation's lockdown (`locked`; `held` until a restart reads a changed policy) nothing connects at all, so the step
- * says that, never that a service runs (first-run-v1). The lead offers the user's own provider only where it is
- * offered (`ownOffered`, first-run-7).
+ * neither has the user's own provider once Ember uses it (`own`, its host: first-run-1), whether it is connected,
+ * still connecting or failing (`ownPhase`; ready when absent), so no GitHub, Copilot or sign-in words are said then.
+ * Under the organisation's lockdown (`locked`; `held` until a restart reads a changed policy) nothing connects at all,
+ * so the step says that, never that a service runs (first-run-v1). The lead offers the user's own provider only where
+ * it is offered (`ownOffered`, first-run-7).
  */
-export function signInText(o: { managed: boolean; locked?: boolean; held?: boolean; own?: string | null; ownOffered?: boolean }): { title: string; lead: string } {
+export function signInText(o: { managed: boolean; locked?: boolean; held?: boolean; own?: string | null; ownPhase?: "ready" | "starting" | "error"; ownOffered?: boolean }): { title: string; lead: string } {
   if (o.locked) {
     return o.held
       ? { title: "Restart me to use your organisation's new policy", lead: "Your organisation changed my policy while I was running, so I can't connect to a model service until you restart me." }
       : { title: "Your organisation has locked me down", lead: "Your organisation's policy for me has a problem, so I can't connect to a model service for now. Ask your administrator to fix it." };
   }
   if (o.managed) return { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." };
-  if (o.own) return { title: "Your own model provider", lead: `I'm connected to the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.` };
+  if (o.own) {
+    const lead = o.ownPhase === "starting" ? `I'm connecting to the model provider you set up (${o.own}). You can change it later in Settings › Models & connections.`
+      : o.ownPhase === "error" ? `I can't connect to the model provider you set up (${o.own}) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.`
+        : `I'm connected to the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`;
+    return { title: "Your own model provider", lead };
+  }
   if (o.ownOffered === false) return { ...STEP_TEXT["sign-in"], lead: STEP_TEXT["sign-in"].lead.replace(OWN_OFFER, "") };
   return STEP_TEXT["sign-in"];
 }
@@ -226,6 +232,8 @@ export const CHECK_AGAIN = "Check again";
 
 /** What "Skip for now" leaves for later, and where. */
 export const SKIP_SIGN_IN = "You can sign in later in Settings › Models & connections. Until then I can't answer or act.";
+/** The same, while the user's own provider connects or fails: there is nothing to sign in to (first-run-1). */
+export const SKIP_OWN = "You can go on for now and check it later in Settings › Models & connections. Until I'm connected, I can't answer or act.";
 
 /**
  * A setup row in plain words: a short title, what it means for the user, how serious it is (`held`: Ember can't read,
@@ -384,6 +392,19 @@ export function summaryRows(o: {
   if (o.keys?.stop) rows.push({ label: "Stop everything", value: o.keys.stop });
   if (o.keys?.settings) rows.push({ label: "Settings", value: o.keys.settings });
   return rows;
+}
+
+/**
+ * The card's model service row: the service Ember is connected through; while it isn't, the user's own provider
+ * (`service` kind "user") or the organisation's (`managed`, or kind "admin") by name, never "Not signed in yet" for a
+ * service with nothing to sign in to (first-run-c1-3); null while Copilot isn't signed in yet.
+ */
+export function serviceSummary(o: { ready: boolean; locked: boolean; managed: boolean; service?: { kind: string; host: string }; login?: string }): string | null {
+  const own = o.service?.kind === "user" ? `Your own provider (${o.service.host})` : null;
+  if (o.ready) return own ?? (o.managed ? "Your organisation's model service" : o.login ? `Signed in as ${o.login}` : "Connected");
+  if (o.locked) return "Locked down by your organisation";
+  if (own) return `${own}, not connected yet`;
+  return o.managed || o.service?.kind === "admin" ? "Your organisation's model service, not connected yet" : null;
 }
 
 /** Under the card: where to change it all later. */

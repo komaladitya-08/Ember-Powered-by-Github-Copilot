@@ -24,8 +24,8 @@ import {
   ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
-  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
-  DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
+  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
+  DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
 /** What the settings window lends the welcome. */
@@ -167,7 +167,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-count").textContent = stepCount(step);
     const text = step === "sign-in" ? signInText({
       managed: !!status?.admin.provider, locked: locked(), held: !!status?.admin.held,
-      own: agent?.phase === "ready" && ownInUse() ? agent.service?.host : null, ownOffered: ownOffer().offered,
+      own: ownInUse() ? agent?.service?.host : null, ownPhase: agent?.phase === "ready" || agent?.phase === "error" ? agent.phase : "starting", ownOffered: ownOffer().offered,
     }) : step === "consent" && changes().length ? CONSENT_AGAIN : STEP_TEXT[step];
     $("w-title").textContent = text.title;
     $("w-lead").textContent = text.lead;
@@ -248,14 +248,15 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (line.textContent !== detail) line.textContent = detail;
     line.className = `w-status ${signInMessage?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
     $("w-signin-later").hidden = v.primary === "continue" && !v.why;
-    $("w-signin-later").textContent = SKIP_SIGN_IN;
+    // The user's own provider has nothing to sign in to, later or now (first-run-1).
+    $("w-signin-later").textContent = ownInUse() ? SKIP_OWN : SKIP_SIGN_IN;
     if (!signingIn) { $("w-code").hidden = true; waitLink = null; }
     // A sign-in made elsewhere (the GitHub CLI's): the page main offers, and Check again, which looks for it.
     const open = $("w-open-page");
     open.hidden = !waitLink;
     open.textContent = waitLink ?? "";
     // Ember's own GitHub App signs in here; Check again is for a build that signs in through the GitHub CLI.
-    $("w-check-again").hidden = !((v.retry && agent?.signInWith === "github-cli") || waitLink);
+    $("w-check-again").hidden = !((v.retry && agent?.signInWith === "github-cli" && !ownInUse()) || waitLink);
     $("w-check-again").textContent = CHECK_AGAIN;
     $("w-signin-more").hidden = open.hidden && $("w-check-again").hidden;
     $("w-signin-later").hidden = $("w-signin-later").hidden || managed();
@@ -267,6 +268,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     let extras: FailureAction[] = [];
     signInPrimary = v.primary === "sign-in" ? "sign-in" : "continue";
     if (fv) { signInPrimary = fv.primary; extras = fv.others; }
+    // The user's own provider already in use, still connecting: its details, never "Use my own provider" (first-run-1).
+    else if (!signingIn && v.skip && ownInUse()) extras = ["provider"];
     else if (!signingIn && v.primary !== "continue" && offer.offered) extras = ["own-provider"];
     else if (!signingIn && v.skip && offer.offered) extras = ["own-provider"];
     // A policy that forbids the user's own provider says so; Copilot's step is then the only way and the choice isn't drawn.
@@ -661,8 +664,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const keys = status?.platform?.shortcuts;
     const rows = summaryRows({
       character: name, size: s?.size ?? DEFAULT_SIZE, voice: voiceState(),
-      signedIn: signedIn() ? (agent?.service?.kind === "user" ? `Your own provider (${agent.service.host})` : status?.admin.provider ? "Your organisation's model service" : agent?.login ? `Signed in as ${agent.login}` : "Connected")
-        : locked() ? "Locked down by your organisation" : null,
+      signedIn: serviceSummary({ ready: signedIn(), locked: locked(), managed: !!status?.admin.provider, service: agent?.service, login: agent?.login }),
       keys: keys ? { ask: keys.ask.label, stop: keys.stop.label, settings: keys.settings.label } : null,
       copilot: !agent?.service && !status?.admin.provider && !locked(),
     });
@@ -745,8 +747,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       signInMessage = { text, tone };
       render();
     };
-    window.ember.retrySignIn().then(r => show(retryMessage(r, r.found && agent?.phase === "ready"), r.found ? "" : "error"),
-      err => show(ipcErrorText(err), "error"));
+    window.ember.retrySignIn().then(r => {
+      // The user's own provider reconnects too, but a GitHub sign-in found or not says nothing about it: its own
+      // status line follows (first-run-1).
+      if (ownInUse()) { if (signInMessage === checking) { signInMessage = null; render(); } return; }
+      show(retryMessage(r, r.found && agent?.phase === "ready"), r.found ? "" : "error");
+    }, err => show(ipcErrorText(err), "error"));
   }
   $("w-stop").addEventListener("click", () => { void window.ember.stopEverything(); });
   $("w-ask").addEventListener("click", () => {

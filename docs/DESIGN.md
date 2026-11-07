@@ -426,9 +426,11 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   “Check my provider's details” (or Try again for the network), with no GitHub account, sign-in or Copilot words, in
   first run, Home and the bubble's title alike (integrations-3). Once connected, “Models I'll use” names both models
   with the premium-request multiplier where Copilot gives one, and says so when tasks work from text only; Change is
-  optional. A setup fix that fails says so in its own row. Once Ember is connected to the user's own provider, the
-  sign-in step, its status line and **Your Ember**'s “Model service” row name that provider, never Copilot, and Back
-  from the setup check returns to the provider's step (first-run-1).
+  optional. A setup fix that fails says so in its own row. Once Ember uses the user's own provider, connected, still
+  connecting or failing, the sign-in step, its status line and **Your Ember**'s “Model service” row name that provider,
+  with no GitHub, Copilot or sign-in words and no “Use my own provider”, and Back from the setup check returns to the
+  provider's step (first-run-1). A service with nothing to sign in to that isn't connected yet (the user's own, the
+  organisation's) is named on **Your Ember** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay
   put from step to step and a short step no longer leaves the window's lower half empty. A still step indicator

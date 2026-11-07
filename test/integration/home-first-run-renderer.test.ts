@@ -485,6 +485,57 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(z) resumed while the user's own provider connects or fails, the sign-in step names it, with no Copilot or sign-in words (first-run-1, first-run-c1-3)", async () => {
+    const service = { kind: "user", host: "localhost:11434" };
+    const own = { on: true, baseUrl: "http://localhost:11434/v1", conductor: "llama3.2:3b", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "localhost:11434" } };
+    const p = await open({ provider: own, providerState: { inForce: true, host: "localhost:11434", agreed: true }, agent: { ...SIGNED_OUT, phase: "starting", detail: "Connecting…", service } });
+    const words = async () => [await p.locator("#w-title").innerText(), await p.locator("#w-lead").innerText(), ...(await p.locator("#w-signin-later:visible, #w-signin-help:visible, #w-signin-line").allInnerTexts())].join(" | ");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await p.locator("#w-lead").innerText()).toBe("I'm connecting to the model provider you set up (localhost:11434). You can change it later in Settings › Models & connections.");
+    expect(await p.locator("#w-signin-line").innerText()).toBe("Connecting to your own provider (localhost:11434)…");
+    expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
+    expect(await buttons(p)).not.toContain("Use my own provider");
+    expect(await buttons(p)).toContain("Check my provider's details");
+    // The local server isn't running: the provider's own words, and what can be done about it.
+    const detail = "Ember can't reach the model server on this computer (localhost:11434). Start it, and Ember will connect in a moment.";
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "error", reason: "network", detail, service });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(detail);
+    expect(await p.locator("#w-lead").innerText()).toBe("I can't connect to the model provider you set up (localhost:11434) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.");
+    expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
+    const shown = await buttons(p);
+    expect(shown).toEqual(expect.arrayContaining(["Try again", "Check my provider's details", "Skip for now"]));
+    expect(shown).not.toContain("Use my own provider");
+    expect(shown).not.toContain("Check again");
+    // Try again reconnects; what it found of a GitHub sign-in says nothing about this provider.
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("retry");
+    await settle(p, "retry", { found: false, source: null, hint: "Ember signs in through the GitHub CLI. Install it, then press Check again." });
+    await p.waitForTimeout(50);
+    expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
+    expect(await p.locator("#w-signin-line").innerText()).toBe(detail);
+    // Skip, then on to Your Ember: the provider by name, not "Not signed in yet" (first-run-c1-3).
+    await p.locator("#w-alt").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
+    expect(await p.locator("#w-try-ask-text").innerText()).toBe("Once I'm connected, you can ask me something.");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    const summary = await p.locator("#w-summary").innerText();
+    expect(summary).toContain("Your own provider (localhost:11434), not connected yet");
+    expect(summary).not.toMatch(/Copilot|signed in/i);
+    // The organisation's service that isn't answering: named too.
+    const q = await open({ admin: { provider: "https://models.corp.example/v1" }, agent: { ...SIGNED_OUT, phase: "error", reason: "network", detail: "Ember can't reach models.corp.example.", service: { kind: "admin", host: "models.corp.example" } } });
+    await next(q).click();
+    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Checking this computer");
+    await next(q).click();
+    await next(q).click();
+    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Your Ember");
+    expect(await q.locator("#w-summary").innerText()).toContain("Your organisation's model service, not connected yet");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+    expect((q as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(o) under the organisation's lockdown the steps say so, never that a service runs or to sign in (first-run-v1)", async () => {
     const p = await open({ admin: { error: "The policy file is writable by others.", provider: null }, agent: { ...SIGNED_OUT, phase: "error", reason: "policy", detail: "Your organisation's policy stops me from connecting." } });
     expect(await p.locator("#w-title").innerText()).toBe("Your organisation has locked me down");
