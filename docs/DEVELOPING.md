@@ -114,11 +114,13 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
 cache (test/temp-folder.ts).
 
-After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, speech-consent, reminders/desk and natural-voice renderer journeys with
-`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
-and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium. The exact file list is in `.github/workflows/ci.yml`.
-The same workflow enables `EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1` for native approval and task-card
-journeys on X11. `EMBER_KITTEN_TEST=1` requires actual synthesis with the verified default Kitten model in native
+After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, sign-out and forget, microphone, speech-consent, reminders/desk, natural-voice, integrations and panes renderer journeys with
+`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
+and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium (each journey skips without its switch, so leave none out).
+The exact file list is in `.github/workflows/ci.yml`. Its `el8` job runs the Linux desktop suites with
+`EMBER_PROJECT_TEST=1 EMBER_CONVERSATION_LIVE=1 EMBER_ATSPI_TEST=1 EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1`
+(the last two for native approval and task-card journeys on X11; without the first two, project-live and
+conversation-history-live skip), under `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24"`. `EMBER_KITTEN_TEST=1` requires actual synthesis with the verified default Kitten model in native
 speech integration tests. `node scripts/voice/prepare.mjs` includes it; the gate needs a supported native sherpa
 runtime. It does not change the app's consent or speaking settings.
 

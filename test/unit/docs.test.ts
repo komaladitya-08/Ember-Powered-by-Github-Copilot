@@ -185,6 +185,27 @@ describe("docs/DEVELOPING.md", () => {
     expect(head).toContain(`Voice Match (${mb(VOICE_MODELS.find(m => m.id === "speaker")!.bytes)} MB)`);
   });
 
+  it("gives CI's renderer journeys and el8 suites with every switch CI sets, here and in CLAUDE.md's gate (install-docs-v2)", () => {
+    const ci = read(".github/workflows/ci.yml");
+    // The checks job's renderer step (its env block) and the el8 job's desktop suites (its sudo line), in CI's order.
+    const rendererEnv = /- name: [^\n]*renderer journeys\n {8}env:\n((?: {10}EMBER_\w+: "1"\n)+)/.exec(ci)?.[1] ?? "";
+    const renderer = [...rendererEnv.matchAll(/(EMBER_\w+): "1"/g)].map(m => `${m[1]}=1`).join(" ");
+    const el8 = /sudo -u ci env "PATH=\$PATH" HOME=\/home\/ci ((?:EMBER_\w+=1 )+)\\\n\s+dbus-run-session/.exec(ci)?.[1].trim() ?? "";
+    expect(renderer).toContain("EMBER_SIGNOUT_FORGET_TEST=1");
+    expect(el8).toContain("EMBER_ATSPI_TEST=1");
+    const dev = read("docs/DEVELOPING.md");
+    for (const line of [renderer, el8]) expect(dev, line).toContain(`\`${line}\``);
+    const claude = read("CLAUDE.md");
+    const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(claude)?.[1] ?? "";
+    const journeys = gate.split("\n").find(l => l.includes("EMBER_CHROMIUM_PATH")) ?? "";
+    expect(journeys).toContain(`${renderer} EMBER_CHROMIUM_PATH=`);
+    // After the build it needs, before the lab build, as CI runs it.
+    const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);
+    expect(order.indexOf(journeys.trim().split(/\s+#/)[0])).toBe(order.indexOf("npm run build") + 1);
+    const desktop = claude.split("\n").find(l => l.startsWith("- Linux desktop suites")) ?? "";
+    expect(desktop).toContain(`\`${el8} dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- <files>\``);
+  });
+
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
     const paths = [...WINDOWS_MIC_FIX.matchAll(/Settings › [^()]+?microphone/g)].map(m => m[0]);
     expect(paths.length).toBe(2);
