@@ -418,6 +418,7 @@ function render(status: Status): void {
   $("about-note").textContent = `Ember ${status.appVersion}`;
   renderSettingsNotice(status.settingsNotice);
   applySettings(status.settings);
+  applyVoiceSettings(status.settings);
   targetsStatus(status);
   extensionsStatus(status);
 }
@@ -879,7 +880,8 @@ window.ember.onSignInProgress(p => {
 void window.ember.agentStatus().then(renderAgent);
 window.ember.onAgentStatus(renderAgent);
 
-// The snapshot never puts back what a newer push already set (status-fence.ts); a failed one is asked for again.
+// One snapshot initialises all settings, including voice, so retries recover every control together.
+// It never puts back what a newer push already set (status-fence.ts); a failed one is asked for again.
 function loadStatus(): Promise<Status> {
   const ticket = statusFence.begin();
   return window.ember.getStatus().then(st => statusFence.apply(ticket, st));
@@ -1966,4 +1968,3 @@ window.ember.onVoiceProgress(p => {
 void window.ember.voiceStatus().then(renderVoice);
 window.ember.onVoiceStatus(renderVoice);
 window.ember.onSettingsChanged(applyVoiceSettings);
-loadStatus().then(st => applyVoiceSettings(st.settings), () => { /* startStatus asks again; pushes follow changes */ });

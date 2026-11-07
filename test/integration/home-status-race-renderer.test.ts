@@ -100,7 +100,7 @@ describe.skipIf(process.env.EMBER_STATUS_RACE_TEST !== "1")("Home startup snapsh
     await expect.poll(() => held(page)).toBeGreaterThan(0);
     await push(page, B);
     await settle(page, 0, "resolve", statusOf(A));
-    // Every held request (Home asks twice at start) answers with the older snapshot.
+    // Every held request answers with the older snapshot.
     for (let i = 1; i < await held(page); i++) await settle(page, i, "resolve", statusOf(A));
     await page.waitForTimeout(300);
     const now = await shown(page);
@@ -144,6 +144,50 @@ describe.skipIf(process.env.EMBER_STATUS_RACE_TEST !== "1")("Home startup snapsh
     expect((await shown(page)).character).toBe(B.character);
     await page.close();
     expect(errors.filter(e => !/Main is busy/.test(e))).toEqual([]);
+  }, 30_000);
+
+  it("restores the saved microphone switch and consent after every initial status request fails", async () => {
+    const { page, errors } = await openHome(A);
+    await expect.poll(() => held(page)).toBeGreaterThan(0);
+    const first = await held(page);
+    for (let i = 0; i < first; i++) await settle(page, i, "reject");
+    await expect.poll(() => held(page), { timeout: 5000 }).toBeGreaterThan(first);
+    const recovered = statusOf(B);
+    recovered.settings.wakeWord = true;
+    recovered.settings.voice.consent = true;
+    recovered.settings.speakResults = true;
+    await settle(page, first, "resolve", recovered);
+    await expect.poll(() => page.locator("#wake").isChecked()).toBe(true);
+    expect(await page.locator("#speak-results").isChecked()).toBe(true);
+    await page.locator('a[href="#voice-h"]').click();
+    // Turn listening off and back on. Saved consent must not be requested again.
+    await page.locator("#wake").click();
+    await page.locator("#wake").click();
+    expect(await page.locator("#consent").isHidden()).toBe(true);
+    expect(errors).toEqual([]);
+    await page.close();
+  }, 30_000);
+
+  it("keeps voice settings and the provider pushed while a retry is pending", async () => {
+    const { page, errors } = await openHome(A);
+    await expect.poll(() => held(page)).toBeGreaterThan(0);
+    const first = await held(page);
+    for (let i = 0; i < first; i++) await settle(page, i, "reject");
+    await expect.poll(() => held(page), { timeout: 5000 }).toBeGreaterThan(first);
+    const newer = settingsFor(B);
+    newer.wakeWord = true;
+    newer.voice.consent = true;
+    await page.evaluate(({ s, p }) => {
+      window.__provider = p;
+      window.__emit("onSettingsChanged", s);
+      window.__providerChanged();
+    }, { s: newer, p: providerFor(B) });
+    await settle(page, first, "resolve", statusOf(A));
+    await expect.poll(() => page.locator("#size").inputValue()).toBe(String(B.size));
+    expect(await page.locator("#wake").isChecked()).toBe(true);
+    expect(await page.locator("#consent-text .model-recipient").first().textContent()).toContain(B.host);
+    expect(errors).toEqual([]);
+    await page.close();
   }, 30_000);
 
   it("(e) treats the recipient as unknown, and Agree waits, until a status has arrived", async () => {
