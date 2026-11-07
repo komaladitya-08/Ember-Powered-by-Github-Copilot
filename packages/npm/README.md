@@ -46,7 +46,9 @@ What Ember prints after that goes to `.<v>-start.log` beside the version folder.
 | Linux x64 | `Ember-<v>-x86_64.AppImage` (made executable) | `$XDG_CACHE_HOME/ember-npm/<v>` (default `~/.cache`) |
 
 If the download doesn't match `SHA256SUMS`, nothing is installed. On macOS Ember is started with `open`, so macOS asks
-for Accessibility and Screen Recording permissions for Ember itself. On Linux the AppImage needs `fusermount` (on RHEL 8
+for Accessibility and Screen Recording permissions for Ember itself. Its setup check warns that Ember isn't in the
+Applications folder, as the cache isn't: its **Move to Applications** takes Ember out of the cache (the next `ember`
+downloads it again), so for permissions that last across updates install the dmg from the Releases page instead. On Linux the AppImage needs `fusermount` (on RHEL 8
 and its family, `sudo dnf install fuse`); without it, run `APPIMAGE_EXTRACT_AND_RUN=1 ember`. Linux packages (RPMs for EL8) are on the Releases page too.
 
 ## Launcher options
@@ -75,13 +77,28 @@ installer is killed, its `.<version>-install-lock` folder may remain beside the 
 after checking that no installer is running. An interruption between publication renames may also leave the previous
 copy in `.<version>-<random>/previous`; restore it before retrying offline. Crash recovery is not automatic.
 
+## Update
+
+Quit Ember, then run `npm i -g ember-copilot@latest` and start `ember` again (or run `npx ember-copilot@latest`). The
+first start downloads and checks the new version, then removes the older versions from the cache; one that is still
+running, or that another installer is working on, stays until the next update.
+
 ## Uninstall
 
-```bash
-npm rm -g ember-copilot
-```
+1. In Ember's settings, turn off **Start Ember when I log in** (its login entry points into the cache), remove Ember's
+   helper from any computer you added over SSH (**Remove helper** in Settings › Computers), and quit Ember.
+2. Delete the cache folder: `%LOCALAPPDATA%\ember-npm` on Windows, `~/Library/Caches/ember-npm` on macOS, or
+   `~/.cache/ember-npm` on Linux (`$XDG_CACHE_HOME/ember-npm` when that is set). If you moved it with
+   `EMBER_NPM_CACHE`, `ember --npm-where` prints where this version is, so run it before the next step.
+3. Remove the launcher:
 
-and delete the cache folder above (`ember --npm-where` prints it).
+   ```bash
+   npm rm -g ember-copilot
+   ```
+
+4. To remove what Ember keeps as well (its settings, logs, audit log, speech models, Voice Match voiceprint and
+   sign-in), delete its data folder: `~/.config/ember` on Linux, `%LOCALAPPDATA%\ember` on Windows, or
+   `~/Library/Application Support/ember` on macOS.
 
 ## License
 

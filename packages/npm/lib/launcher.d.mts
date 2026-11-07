@@ -8,6 +8,7 @@ export declare function notReleased(version: string, env?: Record<string, string
 export declare function packageVersion(): string;
 export declare function ensureInstalled(o: { version: string; platform?: string; arch?: string; env?: Record<string, string | undefined>; force?: boolean }): Promise<{ dir: string; exe: string; app: string; fresh: boolean }>;
 export declare function launchCommand(platform: string, installed: { exe: string; app: string }, args: string[]): { file: string; args: string[] };
+export declare function pruneVersions(o: { parent: string; keep: string; platform?: string; running?: () => string }): string[];
 export declare function runMode(args: string[]): { attached: boolean; args: string[] };
 export declare function start(cmd: { file: string; args: string[] }, o: { attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }): Promise<number>;
 export declare function main(argv: string[]): Promise<number>;

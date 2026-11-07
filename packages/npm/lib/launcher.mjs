@@ -297,6 +297,59 @@ export function launchCommand(platform, installed, args) {
 }
 
 /**
+ * The command lines of the programs running now (`ps`; on Windows nothing, where a running Ember's folder can't be
+ * renamed anyway). Throws when they can't be read, so nothing is removed then.
+ * @returns {string}
+ */
+function runningCommands() {
+  if (process.platform === "win32") return "";
+  const r = spawnSync("ps", ["-axo", "command="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  if (r.error || r.status !== 0) throw new Error("ps failed");
+  return r.stdout;
+}
+
+/**
+ * Removes the cache's other versions once `keep` is installed, so each update doesn't leave the last one (200–600 MB)
+ * behind. Only a complete install (its marker in place) is removed, never one whose installer holds its lock or whose
+ * folder a running program's command line names, nor anything that isn't a version folder. Each goes by renaming it
+ * aside first, which fails on Windows while Ember runs from it, and is skipped quietly on any failure; one left half
+ * removed is retried next time. Its start log goes with it.
+ * @param {{ parent: string; keep: string; platform?: string; running?: () => string }} o
+ * @returns {string[]} the versions removed
+ */
+export function pruneVersions(o) {
+  const p = (o.platform ?? process.platform) === "win32" ? pathWin32 : pathPosix;
+  let names, running;
+  try {
+    names = fs.readdirSync(o.parent);
+    running = (o.running ?? runningCommands)();
+  } catch {
+    return []; // Can't tell what is there or what runs: keep everything.
+  }
+  const removed = [];
+  for (const name of names) {
+    const leftover = /^\.trash-/.test(name);
+    if (!leftover && (name === o.keep || !/^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(name))) continue;
+    const dir = p.join(o.parent, name);
+    try {
+      if (!leftover) {
+        if (!fs.existsSync(p.join(dir, MARKER)) || fs.existsSync(p.join(o.parent, `.${name}-install-lock`)) || running.includes(dir)) continue;
+        const aside = p.join(o.parent, `.trash-${name}-${process.pid}`);
+        fs.renameSync(dir, aside);
+        removed.push(name);
+        fs.rmSync(p.join(o.parent, `.${name}-start.log`), { force: true });
+        fs.rmSync(aside, { recursive: true, force: true });
+      } else {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    } catch {
+      // In use, or not ours to remove: left for the next update.
+    }
+  }
+  return removed;
+}
+
+/**
  * How the launcher runs Ember for `args`: the setup check (`doctor` or `--doctor`, passed on as `--doctor`, which the
  * AppImage's AppRun and Ember.exe both take) attached, so its report and exit code reach the terminal; anything else
  * detached, since Ember keeps running.
@@ -385,6 +438,11 @@ export async function main(argv) {
     return 0;
   }
   const installed = await ensureInstalled({ version, force: flags.has("--npm-reinstall") });
+  if (installed.fresh) {
+    const p = process.platform === "win32" ? pathWin32 : pathPosix;
+    const removed = pruneVersions({ parent: p.dirname(installed.dir), keep: version });
+    if (removed.length) say(`removed the older ${removed.length === 1 ? "version" : "versions"} ${removed.join(", ")} from the cache`);
+  }
   if (flags.has("--npm-install-only")) { process.stdout.write(`${installed.exe}\n`); return 0; }
   const mode = runMode(args);
   const p = process.platform === "win32" ? pathWin32 : pathPosix;

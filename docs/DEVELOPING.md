@@ -2152,5 +2152,7 @@ recovery after an interrupted installer; locks are never automatically stolen. `
 run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
 Ember that stops at once is reported with what it said and its exit code. The AppImage's AppRun and the RPM's `ember`
-take `--doctor` as well as `doctor`. Tests in
+take `--doctor` as well as `doctor`. After a fresh install, `pruneVersions()` removes the cache's other complete
+versions (renamed aside first, so a Windows Ember running from one keeps it), never one whose installer holds its
+lock or whose folder a running program's command line (`ps -axo command=`) names. Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.
