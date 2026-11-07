@@ -100,7 +100,7 @@ import { wrapWindowsForWsl } from "./wsl/routed-windows";
 import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
 import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
-import { needsUser, settingsSection, setupIdle } from "../shared/setup-attention";
+import { FINISH_SETUP, handleIdle, needsUser, settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
@@ -630,7 +630,8 @@ function start(): void {
   let greetTimer: NodeJS.Timeout | null = null;
 
   // The handle says Ready only once Copilot is connected.
-  let lastState: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null, idle: "Not connected" };
+  // Before first run is done, that it needs finishing (first-run-8).
+  let lastState: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null, idle: handleIdle(settings.get().onboarded, "Not connected") };
   let confirmer: Confirmer | null = null;
   /** Which tasks the owner asked for in a verified voice: their own questions may take a short spoken yes (voice-answer.ts). */
   const voiceTrust = new TaskVoiceTrust();
@@ -654,8 +655,8 @@ function start(): void {
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
   /** The setup rows as last read (none until then), for the handle's word: a status change doesn't read them again. */
   let setupSeen: EnvReport["checks"] = [];
-  /** The handle's word: the agent's ("Ready", or why Ember can't answer yet). */
-  const idleNow = (status: Parameters<typeof idleWord>[0]) => idleWord(status);
+  /** The handle's word: the agent's ("Ready", or why Ember can't answer yet), or "Finish setting up" before first run is done. */
+  const idleNow = (status: Parameters<typeof idleWord>[0]) => handleIdle(settings.get().onboarded, idleWord(status));
   /**
    * The setup row that holds Ember back while Copilot is ready, in a few words ("Fix “Screen reading”", review #95):
    * the handle says it when nothing more urgent is going on (a task, a question), never in place of those.
@@ -822,6 +823,8 @@ function start(): void {
     // ask.spurious_after_menu, only puts away an ask box that opened with no item's click at all: a click on "Ask
     // Ember…", whatever caused it, counts as a pick.)
     const menu = Menu.buildFromTemplate([
+      // First run isn't done (the handle says "Finish setting up"): the way back to it comes first (first-run-8).
+      ...(settings.get().onboarded ? [] : [{ label: `${FINISH_SETUP}…`, click: () => { opens = true; showHome(); } }, { type: "separator" as const }]),
       // What the user was in was read before the handle took focus: looking again would find the handle.
       { ...keyed("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
       { ...keyed("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
@@ -2585,6 +2588,8 @@ function start(): void {
         greet();
       });
     }
+    // The handle's word follows: "Finish setting up" until first run is done, the agent's own after (first-run-8).
+    if (s.onboarded !== wasOnboarded) { const st = agent?.getStatus(); showState({ idle: st ? idleNow(st) : handleIdle(s.onboarded, "Not connected") }); }
     wasOnboarded = s.onboarded;
   });
 
