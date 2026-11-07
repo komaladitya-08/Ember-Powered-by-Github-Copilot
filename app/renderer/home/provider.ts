@@ -11,7 +11,7 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
-import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerConsentText, providerHint, providerTestText } from "./copy";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerCardShown, providerConsentText, providerHint, providerTestText, providerTestWaits } from "./copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
 
@@ -32,6 +32,8 @@ let replacing = false;
 let declinedFor: string | null = null;
 /** The host the card was last drawn for (null: no card up). */
 let cardHost: string | null = null;
+/** The host of an address just entered: if the card comes up for it, that is said (focus has moved on by then). */
+let announceFor: string | null = null;
 /** "I agree" is armed as Ember's questions are: not for 500 ms after a redraw for another host, and only for the host pressed. */
 const agreeGuard = new AgreeGuard();
 
@@ -69,6 +71,11 @@ function draw(): void {
   // The card: on, with an address, not agreed to for it, and not put away for it.
   const asking = on && !!host && !agreedFor(p, host) && declinedFor !== host;
   $("byok-consent").hidden = !asking;
+  // The card came up for an address just entered (Tab has moved on to the next field): said, never silent (integrations-7).
+  if (announceFor !== null && host === announceFor) {
+    if (asking && cardHost !== host && !$("byok-consent").contains(document.activeElement)) say(providerCardShown(host));
+    announceFor = null;
+  }
   // The host the card names, remembered: "I agree" is for it, whatever the field says by the time it is clicked.
   cardHost = asking ? host : null;
   agreeGuard.drawn(cardHost);
@@ -76,6 +83,10 @@ function draw(): void {
   // Nothing goes to a host the card isn't agreed for, Test connection included: it waits for the yes.
   const test = $("byok-test") as HTMLButtonElement;
   test.disabled = !agreedFor(p, host) || !!managed;
+  // Disabled, it says why beside it (and to a screen reader on the button).
+  const waits = providerTestWaits({ host, agreed: agreedFor(p, host), managed: !!managed });
+  $("byok-test-why").hidden = !on || waits === null;
+  $("byok-test-why").textContent = waits ?? "";
   // Fields keep what is being typed: only one without the focus is rewritten from the settings.
   const fill = (id: string, v: string) => { const el = input(id); if (document.activeElement !== el) el.value = v; };
   if (document.activeElement !== select("byok-type")) select("byok-type").value = p.type;
@@ -183,6 +194,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     const problem = v ? endpointProblem(v) : null;
     if (problem) { say(problem, true); return; }
     say("");
+    announceFor = v ? endpointHost(v) : null;
     void change({ baseUrl: v });
   });
   const model = (id: string, key: "conductor" | "worker") => input(id).addEventListener("change", e => {

@@ -378,6 +378,29 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(v) Home says the provider's note came up when the endpoint is entered, and why Test connection waits (integrations-7, WCAG 4.1.3)", async () => {
+    const p = await open({ home: true, provider: { on: true, baseUrl: "" } });
+    const test = p.locator("#byok-test");
+    await expect.poll(() => test.isVisible()).toBe(true);
+    expect(await test.isDisabled()).toBe(true);
+    expect(await test.getAttribute("aria-describedby")).toBe("byok-test-why");
+    expect(await p.locator("#byok-test-why").innerText()).toBe("Enter the endpoint to test it.");
+    await p.locator("#byok-url").fill("http://127.0.0.1:18108/v1");
+    await p.keyboard.press("Tab");
+    // Focus moved on to the next field while the card came up above: it is said, in the status line.
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Read the note above: Ember sends nothing to 127.0.0.1:18108 until you agree.");
+    expect(await p.locator("#byok-msg").getAttribute("role")).toBe("status");
+    expect(await focusedId(p)).not.toBe("byok-url");
+    expect(await test.isDisabled()).toBe(true);
+    expect(await p.locator("#byok-test-why").innerText()).toBe("Test connection works once you agree to the note above for 127.0.0.1:18108.");
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-card-announced.png"), fullPage: true });
+    }
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(j) Copilot's own default is reviewed as Copilot's, not as an inactive provider's models (FE #4)", async () => {
     const p = await open({ agent: readyAgent({ models: [], conductorModel: null, workerModel: null }), provider: { on: false, conductor: "gpt-own-a", worker: "gpt-own-b" } });
     await expect.poll(() => p.locator("#w-models").isVisible()).toBe(true);

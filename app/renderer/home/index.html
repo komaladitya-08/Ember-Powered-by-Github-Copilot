@@ -299,7 +299,8 @@
           <label class="choice"><span>Wire API</span><select id="byok-wire"><option value="">Chat completions</option><option value="responses">Responses</option></select></label>
           <div class="field-row" id="byok-azure-row"><label for="byok-azure">Azure API version</label><input id="byok-azure" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder="2024-10-21"></div>
         </details>
-        <div class="agent-actions byok-field"><button type="button" id="byok-test" class="btn quiet">Test connection</button></div>
+        <div class="agent-actions byok-field"><button type="button" id="byok-test" class="btn quiet" aria-describedby="byok-test-why">Test connection</button></div>
+        <p class="row-note byok-field" id="byok-test-why" hidden></p>
       </div>
       <p class="hint byok-msg" id="byok-msg" role="status" aria-live="polite"></p>
       <p class="hint" id="byok-hint"></p>

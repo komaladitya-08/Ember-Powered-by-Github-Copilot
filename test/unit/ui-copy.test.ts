@@ -24,7 +24,7 @@ import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal } from "../../app/main/agent/composer-refusal";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerConsentText, recipientWords, providerHint, providerTestText } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerCardShown, providerConsentText, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -830,6 +830,14 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerHint({ managed: null, inForce: true, on: true, host: "localhost:11434" })).toBe("Ember sends your requests to localhost:11434 instead of Copilot. A change applies from your next message; tasks already running finish where they started.");
     expect(providerHint({ managed: "organisation", inForce: false, on: false, host: null })).toBe("Managed by your organisation: Ember uses its model service.");
     expect(providerHint({ managed: "off", inForce: false, on: true, host: "x.example.com" })).toBe("Managed by your organisation: Ember uses GitHub Copilot.");
+  });
+
+  it("says the note came up for an address just entered, and why Test connection waits (integrations-7)", () => {
+    expect(providerCardShown("127.0.0.1:18108")).toBe("Read the note above: Ember sends nothing to 127.0.0.1:18108 until you agree.");
+    expect(providerTestWaits({ host: null, agreed: false, managed: false })).toBe("Enter the endpoint to test it.");
+    expect(providerTestWaits({ host: "models.example.com", agreed: false, managed: false })).toBe("Test connection works once you agree to the note above for models.example.com.");
+    expect(providerTestWaits({ host: "models.example.com", agreed: true, managed: false })).toBeNull();
+    expect(providerTestWaits({ host: "models.example.com", agreed: false, managed: true })).toBeNull();
   });
 
   it("reports a connection test in one sentence, and says why a key can't be kept", () => {

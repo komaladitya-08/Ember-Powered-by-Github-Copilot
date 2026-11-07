@@ -401,6 +401,16 @@ export const PROVIDER_WORDS = {
   badAzure: "Enter the API version as Azure writes it, such as 2024-10-21.",
 } as const;
 
+/** Said when the card appears for an address just entered: focus has moved on, so it is announced (integrations-7, WCAG 4.1.3). */
+export const providerCardShown = (host: string) => `Read the note above: Ember sends nothing to ${host} until you agree.`;
+
+/** Why Test connection waits, beside it (its aria-describedby), or null when it can be pressed or the organisation set it. */
+export function providerTestWaits(o: { host: string | null; agreed: boolean; managed: boolean }): string | null {
+  if (o.managed || o.agreed) return null;
+  if (!o.host) return "Enter the endpoint to test it.";
+  return `Test connection works once you agree to the note above for ${o.host}.`;
+}
+
 /** What "Test connection" found, in one sentence: connected (with how many models it lists), or main's reason why not. */
 export function providerTestText(r: { ok: true; host: string; models: number | null } | { ok: false; why: string }): string {
   if (!r.ok) return r.why;
