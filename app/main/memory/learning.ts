@@ -304,8 +304,8 @@ export class MemoryLearning {
     }
     // "Forget that" first: never an answer to a question (the interview's or Ember's own).
     if (isForgetThat(text)) {
-      // ("Forget it" with memory off is as likely "never mind": the conversation takes it.)
-      if (!this.d.inForce()) return /\bit\b/i.test(text) ? null : this.notInForce("forget");
+      // A bare "forget that" while memory isn't in force is as likely "never mind": the conversation takes it.
+      if (!this.d.inForce()) return null;
       const last = this.recent.at(-1);
       // Nothing kept lately: said in code, since forget_memory needs words that name the fact (memory-v1).
       if (!last || now - last.at > FORGET_THAT_MS) return NOTHING_TO_FORGET;

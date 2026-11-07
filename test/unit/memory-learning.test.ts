@@ -445,7 +445,8 @@ describe("“forget that”, the instruction check and the conversation's line",
     expect(off.opened).toHaveBeenCalledOnce();
     expect(off.l.intent("Ember, please forget that I work at Globex", { own: true })).toBe(FORGET_OFF);
     expect(FORGET_OFF).toBe("Memory is off, so I can't change what's saved. I've opened Memory in Settings.");
-    expect(off.l.intent("forget that", { own: true })).toBe(FORGET_OFF);
+    // A bare "forget that" is as likely "never mind" while memory is off: the conversation's.
+    expect(off.l.intent("forget that", { own: true })).toBeNull();
     const paused = learning({ inForce: () => false, paused: () => "own-provider" });
     expect(paused.l.intent("don't forget that I'm vegetarian", { own: true })).toBe(memoryPausedReply("own-provider").text);
     expect(paused.l.intent("Forget my address", { own: true })).toBe(memoryPausedReply("own-provider").text);
