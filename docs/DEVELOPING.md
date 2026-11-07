@@ -1065,8 +1065,9 @@ Ember that **Ask Ember** started doesn't open the ask box again when it restarts
 
 `ember doctor` (or `npm run doctor` in a checkout) prints "Ember <v> setup check" with the settings window's rows: the
 session, **Transparent windows** (the compositor), **Screen reading**, **Mouse and keyboard** (XTest), Copilot sign-in
-or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (speech-dispatcher),
-Ember's desk, **Window sandbox** and **Copilot's file watchers** (inotify), and says what to do about each problem. On a
+or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (Ember's own Kitten
+voice where it runs natively, with speech-dispatcher as its fallback; it warns only when neither can speak), Ember's
+desk, **Window sandbox** and **Copilot's file watchers** (inotify), and says what to do about each problem. On a
 Linux other than the RHEL 8 family, the operating system row says Ember is tested on RHEL 8 and may work but isn't
 supported. It exits 1 if Ember can't work. **Start Ember when I log in** in the settings window adds
 `~/.config/autostart/ember.desktop` (marked `X-Ember-Managed=true`); an `ember.desktop` you made yourself is left alone,
