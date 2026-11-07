@@ -58,8 +58,14 @@ export type QuestionPanel =
 
 export interface Question {
   title: string;
-  /** What the bubble is titled with once answered (e.g. the task's name). */
+  /** What the bubble is titled with once answered (e.g. the task's name), and its "Your task:" line unless `taskLine` says. */
   context?: string;
+  /**
+   * What its "Your task:" line says in place of `context` ("": no line): the user's own words, quoted, where the step
+   * came up unasked or text on screen tried to steer the task, so the model's goal never reads as their request under
+   * "You didn't ask for this" (tasks-approvals-5).
+   */
+  taskLine?: string;
   prompt: string;
   options: { id: string; label: string; primary?: boolean }[];
   /** The task asking (its id): the question's bubble, and the one after the answer, belong to it. */
@@ -82,6 +88,12 @@ export interface Question {
    * cells each with all of its content, one to a line. Shown as the sentence shows typed text (policy.ts typedUnits).
    */
   detail?: string;
+}
+
+/** What question `q`'s "Your task:" line says (its taskLine, else its context), or "" for no line: the bubble's and the prompt card's. */
+export function taskLineOf(q: Pick<Question, "context" | "taskLine" | "prompt">): string {
+  const t = (q.taskLine ?? q.context ?? "").trim();
+  return t && t !== q.prompt ? t : "";
 }
 
 /**
@@ -500,11 +512,11 @@ export class Confirmer {
   /** The bubble for question `p`: shown when it comes up, and again when its whole text has been read or paged on. */
   private bubbleOf(p: Pending): BubbleState {
     // The whole task, so a step like "press Enter" is read as part of what the user asked for (typing and saving too).
-    const task = p.q.context?.trim();
+    const task = taskLineOf(p.q);
     const panel = p.q.panel;
     return {
       visible: true, mood: "attention", title: p.q.title,
-      thought: task && task !== p.q.prompt ? `${p.q.prompt}\nYour task: ${task}` : p.q.prompt,
+      thought: task ? `${p.q.prompt}\nYour task: ${task}` : p.q.prompt,
       // A panel question is answered in its window, which names the keys while they work there; its step says how to
       // get there from the keyboard (the bubble's own buttons are mouse-only). Until all of a whole text has been shown,
       // the approve key shows its next part: the keys say that, not "allow".

@@ -3372,10 +3372,11 @@ export class Worker {
     const app = this.window.app ? ` in ${friendlyApp(this.window.app)}` : "";
     const prompt = `${this.place ? "Fill" : "Borrow your keyboard to fill"} ${jobs.length} cell${jobs.length > 1 ? "s" : ""}${app}${this.place ? " on my desk" : ""}: ${list}?${added ? ` ${added}` : ""}`;
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
+    const taskLine = this.tainted ? this.ownWordsLine() : undefined;
     this.asked = true;
     // On another computer the question says where (§2.4), as every other question of a task does.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
-    const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: "cursor_text", cells: jobs.length, ...(this.window.app ? { app: friendlyApp(this.window.app) } : {}), onDesk: !!this.place }));
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4307,13 +4308,15 @@ export class Worker {
       ? [{ id: "once", label: "Allow", primary: true }, { id: "always", label: `Always in ${friendlyApp(req.app)}` }, { id: "deny", label: "Not now" }]
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
+    // A step that came up unasked, or a task text on screen tried to steer: its task line quotes the user, not the goal.
+    const taskLine = decision.aligned === false || this.tainted ? this.ownWordsLine() : undefined;
     this.asked = true;
     // On another computer the question says where (§2.4): a badge in the bubble, and in the spoken question.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     // Once text on screen tried to steer Ember, every step it asks about looks risky too (it is asked every time).
     const risky = !!decision.risky || this.steered;
-    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4331,6 +4334,18 @@ export class Worker {
       return null;
     }
     return this.refused(answer);
+  }
+
+  /**
+   * A question's task line in the user's own words (Question.taskLine; tasks-approvals-5): what they said for this task,
+   * each line a sentence, on one line in curly quotes, at most 200 characters. "" (no line) for a task given none of
+   * their words, whose only words are the model's goal.
+   */
+  private ownWordsLine(): string {
+    if (this.spec.userWords === undefined) return "";
+    const said = this.userWords.split("\n").map(l => l.trim()).filter(Boolean).map((l, i, all) => (i < all.length - 1 && !/[.!?…]$/.test(l) ? `${l}.` : l)).join(" ");
+    if (!said) return "";
+    return `“${said.length > 200 ? `${said.slice(0, 199).trimEnd()}…` : said}”`;
   }
 
   /**

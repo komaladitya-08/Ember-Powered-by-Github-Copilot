@@ -27,7 +27,7 @@ import { IDLE_BUBBLE } from "../../shared/overlay";
 import type { OS } from "../../shared/shortcuts";
 import { DISTRO_NAME, HOST_ID, LOCAL_TARGET, parseTargetId, targetIdOf, type TargetId, type TargetSummary, type TargetsAct } from "../../shared/targets";
 import { commandMode, type LoadedAdminPolicy } from "../admin";
-import type { Question } from "../agent/confirm";
+import { taskLineOf, type Question } from "../agent/confirm";
 import type { ApprovalRefusal } from "../../shared/remote-ui";
 import type { NoticeBoard, NoticeBubble, NoticeOptions } from "../agent/presenter";
 import type { Emotion } from "@ember/characters";
@@ -1907,10 +1907,12 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         promptWindow.showConsent(q.n, p.consent, true);
       } else {
         if (!promptWindow.showApproval) return false;
-        const { title, prompt, detail, where, options, risky, context } = q.question;
+        const { title, prompt, detail, where, options, risky } = q.question;
+        // Its task line as the bubble shows it: the user's own words where the question quotes them (tasks-approvals-5).
+        const context = taskLineOf(q.question);
         promptWindow.showApproval({ id: `approval-${q.n}`, kind: "approval", n: q.n, title, prompt,
           ...(detail ? { detail } : {}), ...(where ? { where } : {}),
-          ...(risky ? { risky: true } : {}), ...(context?.trim() ? { context: context.trim().slice(0, 2000) } : {}), options: options.map(o => ({ ...o })) });
+          ...(risky ? { risky: true } : {}), ...(context ? { context: context.slice(0, 2000) } : {}), options: options.map(o => ({ ...o })) });
       }
       return true;
     },
