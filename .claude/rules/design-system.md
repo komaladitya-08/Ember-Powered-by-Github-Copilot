@@ -261,7 +261,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - State stays readable when still: the mic halo holds, the glow stays lit, and the presence ring holds its state (listening all lit, acting's segment steady).
 - **Moving and drawing.**
   - To move anything that follows Ember, write `transform` on an empty, unstyled wrapper (`.eb-mount`, `#stage`), never an inline transform, left or top on the styled glass element: that cost about 25% more overlay CPU.
-  - Draw character canvases on demand with `requestDraw()` at the rig's frame gaps, never in a free-running loop. Once Ember has dozed off and its face has settled, draw nothing until something happens.
+  - Draw character canvases on demand with `requestDraw()` at the rig's frame gaps, never in a free-running loop. An awake Ready face with nothing passing waits `restingGap()` (packages/characters: about 6 frames a second, never past its next blink or fidget), and its time passes through `frameSeconds()` so blinks and the breath keep their pace. Once Ember has dozed off and its face has settled, draw nothing until something happens.
   - Code that runs every frame sends IPC only when its value changed.
 
 ## Scrollbars, icon and the bubble

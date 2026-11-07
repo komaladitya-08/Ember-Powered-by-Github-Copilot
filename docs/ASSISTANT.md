@@ -262,8 +262,11 @@ reported in every PR that touches it.
 ### Phase 5: cost almost nothing at idle
 
 1. **Draw less.**
-   - The handle already drops to about 15 fps when still. It will stop drawing entirely after about 10 s still, and
-     wake on any state change. Same for each overlay.
+   - The overlay, the handle and Home's hero draw an awake Ready face at rest about 6 times a second (`restingGap`;
+     measured on Xvfb with xcompmgr, Home closed: the overlay's canvas 14–17 drawings a second against 23–24, the
+     handle's 15 against 21, the whole tree 8.7–10.1 % of a core against 11.4–15.2 %; Home's hero 11.5 against 18.4).
+     Fidgets and the handle's idle saccades are most of what is left. They will stop drawing entirely after about 10 s
+     still, and wake on any state change.
    - Software compositing (no GPU) gets a cheaper still frame.
    - Target: renderers plus GPU process under 2 % at idle.
 2. **Fewer live windows.** Follow PR #100's pattern on every OS:

@@ -41,6 +41,9 @@ They share one emotion rig, so switching never changes behaviour.
     sends its level at least every half second, and the rig lets go of one older than 1.5 s, so a voice
     that stops without saying so never leaves the mouth moving; the system's voice gives no level, so
     the mouth keeps its syllable flap;
+  - awake and Ready with nothing passing, only the breath and the idle float move, under a third of a pixel a
+    step: the overlay, the handle and Home's hero draw it about 6 times a second (`restingGap`, `RESTING_FRAME_MS`),
+    waking in time for the next blink or fidget, where they drew 15–24 times a second;
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
     something happens (it drew every 110 ms);
   - while a question is up, the idle float stops and the body's springs settle without wobbling;

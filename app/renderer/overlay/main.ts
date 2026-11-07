@@ -14,7 +14,7 @@ import { activityItems, planItems } from "./view";
 import { HAND_WORDS, applyViewPatch, diffViews, type ViewDoc } from "../../shared/view";
 import { ViewRenderer, fitView } from "../shared/view-dom";
 import { clockText } from "../../shared/activity";
-import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
+import { Rig, FACTORIES, PRESETS, frameSeconds, restingGap, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
 import { ReasoningBubble, onPress, plainStream, snapToDevice } from "@ember/bubble";
 import { canvasSize, watchPixels } from "../shared/pixels";
 import { LEVEL_STEPS } from "../../shared/level";
@@ -41,6 +41,7 @@ const LIVELY_MS = 22;
  * 10-16 % more of a core than over the old opaque glass (blending what is under the glass at 45 frames a second).
  */
 const TALKING_MS = 33;
+/** A face at rest that isn't Ready, or with the bubble up; an awake Ready face waits restingGap's (about 6 a second: rp-4). */
 const RESTING_MS = 55;
 /** Dozing: the face still settling into sleep. Once it has, nothing is drawn until something happens. */
 const DOZING_MS = 110;
@@ -799,10 +800,13 @@ function requestDraw(delay = 0): void {
 }
 
 let last = performance.now();
+/** The resting gap the last drawing waited for (restingGap's, else 0): its time passes in full (frameSeconds). */
+let planned = 0;
 function draw(now: number): void {
   rafPending = false;
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.1));
+  const dt = frameSeconds(now - last, planned);
   last = now;
+  planned = 0;
   const size = settings?.size ?? 60;
   const scale = size / 100;
 
@@ -875,7 +879,11 @@ function draw(now: number): void {
     const lively = busy || talking;
     // Asleep and settled: the last frame stays, and nothing is drawn until Ember or the cursor moves or the state
     // changes (onFrame, onState). Drawing on at 110 ms cost idle wakeups for a picture that didn't change.
-    if (!(rig.asleep && rig.settled && !urgent && !lively)) requestDraw(urgent ? 0 : busy ? LIVELY_MS : talking ? TALKING_MS : rig.asleep ? DOZING_MS : RESTING_MS);
+    // Awake at rest with no bubble up, only the breath and the idle float move: drawn about 6 times a second, waking for
+    // the next blink or fidget (restingGap). At 55 ms the overlay drew 23-24 times a second for that (rp-4).
+    const rest = showBubble ? RESTING_MS : restingGap(rig, RESTING_MS);
+    if (!urgent && !lively && !rig.asleep && rest > RESTING_MS) planned = rest;
+    if (!(rig.asleep && rig.settled && !urgent && !lively)) requestDraw(urgent ? 0 : busy ? LIVELY_MS : talking ? TALKING_MS : rig.asleep ? DOZING_MS : rest);
   } else {
     // Hidden or on another display: sleep until a frame brings Ember here.
     showStage(false);

@@ -6,7 +6,7 @@
  * Commands, Extensions, Comfort & access, and Setup & about.
  */
 
-import { Rig, FACTORIES, type Character } from "@ember/characters";
+import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import type { HistoryProblemKind } from "../../shared/conversation";
@@ -649,10 +649,13 @@ function paint(canvas: HTMLCanvasElement, rig: Rig, character: Character, dt: nu
 }
 
 let last = performance.now();
+/** The resting gap the last frame waited for (restingGap's, else 0): its time passes in full (frameSeconds). */
+let planned = 0;
 function frame(now: number): void {
   drawPending = false;
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  const dt = frameSeconds(now - last, planned, 50);
   last = now;
+  planned = 0;
   // Hidden, minimised or scrolled away: nothing is drawn until it shows again (drawSoon is called then).
   if (!canBeSeen() || !onScreen.size) return;
   const drawn: Rig[] = [];
@@ -661,7 +664,11 @@ function frame(now: number): void {
   const motion = looking || drawn.some(r => r.motion === "brisk") ? 0 : drawn.some(r => r.motion === "gentle") ? 1 : 2;
   looking = false;
   // In a window the user isn't working in (behind another, or minimised: X11 doesn't always say hidden), less often.
-  drawSoon((document.hasFocus() ? [0, 33, 66] : [33, 66, 110])[motion]);
+  const gap = (document.hasFocus() ? [0, 33, 66] : [33, 66, 110])[motion];
+  // Every face shown awake at rest, Ready: about 6 frames a second, waking for the next blink (rp-4).
+  const rest = motion === 2 && drawn.length ? Math.min(...drawn.map(r => restingGap(r, gap))) : gap;
+  if (rest > gap) planned = rest;
+  drawSoon(rest);
 }
 drawSoon();
 
