@@ -264,6 +264,19 @@ describe("README.md", () => {
     for (const os of ["Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)", "Install on Windows", "Install on macOS"]) expect(flat(section(readme, os)), os).toMatch(/Releases page/);
   });
 
+  it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {
+    const page = read("app/renderer/home/index.html").replace(/&amp;/g, "&");
+    const headings = new Set([...page.matchAll(/<h[23][^>]*>([^<]+)<\/h[23]>/g)].map(m => m[1].trim()));
+    // Ember's own settings, as the README writes them: Settings › **Section › Subsection**, or "open **Section**".
+    const refs = [...readme.matchAll(/Settings › \*\*([^*]+)\*\*/g)].flatMap(m => m[1].split(" › "));
+    refs.push(...[...readme.matchAll(/\bopen \*\*([^*]+)\*\*/g)].map(m => m[1]));
+    expect(refs.length).toBeGreaterThan(4);
+    for (const r of refs) expect([...headings], r).toContain(r);
+    expect(readme).not.toMatch(/in its Copilot section|open \*\*Copilot\*\*/);
+    // First run's steps and buttons, as its words name them.
+    for (const words of ["**Sign in to GitHub** step", "**Use my own provider** on the **Sign in to GitHub** step", "**Agree and check the models**"]) expect(flat(readme)).toContain(words);
+  });
+
   it("says how to remove Ember on every OS, with the folders it leaves behind", () => {
     const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
     const removes = (text: string) => expect(text.split("To remove Ember")[1] ?? "").toMatch(/turn off \*\*Start Ember when I log in\*\*/);

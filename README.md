@@ -214,7 +214,7 @@ Ember checks each model against its SHA-256 and uses that folder without downloa
 
 Ember needs a **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on
 the **Copilot CLI** policy). Once you have agreed to how Ember works in its first window, press **Sign in with GitHub**
-in its Copilot section. Your browser opens GitHub's device page: enter the code Ember shows (**Copy** puts it on the
+on its **Sign in to GitHub** step (later, in Settings › **Models & connections**). Your browser opens GitHub's device page: enter the code Ember shows (**Copy** puts it on the
 clipboard) and approve. Ember connects within a few seconds, with no restart. It keeps the sign-in encrypted by your
 system (the GNOME keyring, Windows' own protection or the macOS Keychain); where it can't, you sign in again the next
 time Ember starts. Ember's own GitHub sign-in lasts eight hours at a time: Ember renews it by itself before it runs out
@@ -236,13 +236,17 @@ GitHub CLI. Install it, run `gh auth login` in a terminal, and press **Connect w
 
 ## Use your own model provider
 
-Instead of GitHub Copilot, Ember can use a model service of your own: in its settings, open **Copilot** and turn on
-**Use my own model provider**. Choose the **Provider** (OpenAI-compatible, Azure OpenAI or Anthropic), enter its
-**Endpoint** (an `https://` address, or `http://localhost:…` for a model server on this computer such as Ollama or LM
-Studio), paste the **API key** and press **Save**, and enter the **Conversation model** (and, if it differs, a **Model
-for tasks** that understands images). Ember first shows what it will send to that service, screenshots of the windows
-it works in included, and uses it only once you agree. **Test connection** checks the address and the key. A change
-applies from your next message, without a restart.
+Instead of GitHub Copilot, Ember can use a model service of your own. In its first window, press **Use my own
+provider** on the **Sign in to GitHub** step: choose the provider's type (OpenAI-compatible, Azure OpenAI or
+Anthropic), enter its address (an `https://` address, or `http://localhost:…` for a model server on this computer such
+as Ollama or LM Studio, which may need no key), its API key and the name of a model, then press **Agree and check the
+models**. Ember first shows what it will send to that service, screenshots of the windows it works in included, and
+uses it only once you agree; the check says what the service answered. **Back** takes you to GitHub Copilot instead.
+
+Later, open Settings › **Models & connections** and turn on **Use my own model provider** under **Model provider**:
+choose the **Provider**, enter its **Endpoint**, paste the **API key** and press **Save**, and enter the
+**Conversation model** (and, if it differs, a **Model for tasks** that understands images). **Test connection** checks
+the address and the key. A change applies from your next message, without a restart.
 
 The key is kept encrypted by your system's keyring, apart from Ember's settings, and goes only to that service; Ember
 never shows it again (**Replace** and **Remove** are there), and signing out deletes it. Where there is no keyring
