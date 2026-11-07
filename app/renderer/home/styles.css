@@ -544,7 +544,9 @@ html { scroll-padding-top: 16px; }
   -webkit-mask: var(--sym-chevron) center / 12px no-repeat; transition: transform 260ms var(--spring-snappy);
 }
 .fold[open] > summary::before { transform: rotate(90deg); }
-.fold > summary h2 { margin: 0; }
+.fold > summary h2, .fold > summary h3.sub { margin: 0; }
+/* "Before Ember starts" again after setup (safety-privacy-9), on the pane's own surface. */
+.privacy-terms .terms { margin: 4px 0 8px; }
 @media (hover: hover) { .fold > summary:hover::before { background: var(--fg); } }
 .fold > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .fold-note { color: var(--muted); font: var(--type-callout); margin-left: auto; }

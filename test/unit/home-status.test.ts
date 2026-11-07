@@ -193,6 +193,12 @@ describe("Search settings", () => {
     for (const q of ["erase", "delete"]) expect(searchMatches(q, panes).map(p => p.pane), q).toEqual(expect.arrayContaining(["conversation-h", "memory-h"]));
   });
 
+  it("finds what Ember reads, sends and keeps by the words people look for it with (safety-privacy-9)", () => {
+    const panes = ["conversation-h", "privacy-h", "privacy-terms-h", "activity-h"].map(id => ({ pane: id, text: id, alias: SEARCH_ALIASES[id] }));
+    for (const q of ["screenshot", "data", "usage statistics", "privacy policy", "kept", "audit"]) expect(searchMatches(q, panes)[0]?.pane, q).toBe("privacy-terms-h");
+    expect(fs.readFileSync("app/renderer/home/index.html", "utf8")).toContain('<details class="fold" id="privacy-terms-fold" aria-labelledby="privacy-terms-h">');
+  });
+
   it("says how many it found and where, for a screen reader", () => {
     expect(searchMessage("", 0, 0)).toBe("");
     expect(searchMessage("zzz", 0, 0)).toBe("Nothing found. Try another word.");

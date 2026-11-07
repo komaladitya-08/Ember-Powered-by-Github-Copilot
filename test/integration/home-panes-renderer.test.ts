@@ -322,3 +322,28 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person edits its lists (202
     await page.close();
   });
 });
+
+describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product audit)", () => {
+  it("shows what Ember reads, sends and keeps, word for word as before it started, and Search finds it (safety-privacy-9)", async () => {
+    const page = await open("privacy");
+    const fold = page.locator("#privacy-terms-fold");
+    expect(await fold.isVisible()).toBe(true);
+    await fold.locator("summary").click();
+    const shown = await page.locator("#privacy-terms").evaluate(e => e.textContent);
+    const consent = await page.locator("#w-full ul.terms").evaluate(e => e.textContent);
+    expect(shown).toBe(consent);
+    expect(shown).toContain("It sends no usage statistics.");
+    expect(shown).toContain("~/.config/ember");
+    // The copy keeps no ids: each still names one element.
+    expect(await page.locator("#privacy-terms [id]").count()).toBe(0);
+    await fold.locator("summary").click();
+    expect((await results(page, "screenshot"))[0]).toBe("Apps & privacy: What Ember reads, sends and keeps");
+    expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(false);
+    await page.locator("#search").press("Enter");
+    await expect.poll(() => fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.closest("details")?.id)).toBe("privacy-terms-fold");
+    await evidence(page, "privacy-terms");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+});

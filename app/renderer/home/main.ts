@@ -1657,7 +1657,23 @@ let pane = "home";
 /** A section's pane (its `data-pane`: the page's own sections, not first run's steps, which use the same attribute). */
 const paneOf = (el: Element) => el.closest<HTMLElement>(".home > [data-pane]")?.dataset.pane ?? null;
 /** Shows pane `p` (every other pane's sections are taken off the page) and marks its link. */
+/**
+ * Apps & privacy's "What Ember reads, sends and keeps" (safety-privacy-9): first run's "Before Ember starts", copied
+ * whole as it reads now (the OS's keys, the model service, the data folder, how long the record is kept), so the two
+ * never differ. Copied again whenever it opens or its pane shows; the copy keeps no ids of its own.
+ */
+function syncPrivacyTerms(): void {
+  const source = document.querySelector("#w-full ul.terms");
+  if (!source) return;
+  const copy = source.cloneNode(true) as HTMLElement;
+  for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
+  copy.setAttribute("aria-label", "What Ember reads, sends and keeps");
+  $("privacy-terms").replaceChildren(copy);
+}
+$("privacy-terms-fold").addEventListener("toggle", () => { if (($("privacy-terms-fold") as HTMLDetailsElement).open) syncPrivacyTerms(); });
+
 function showPane(p: string, glide = false, remember = true): void {
+  if (p === "privacy") syncPrivacyTerms();
   if (p !== pane) dismissForgetConfirms(); // an open question would stay modal over a pane it isn't in, and its inert marks would block the focus that follows
   pane = p;
   if (remember) try { localStorage.setItem("ember.home.pane", p); } catch { /* storage blocked: the window opens on Home */ }
@@ -1748,12 +1764,15 @@ function searchItems(): { pane: string; text: string; alias?: string; el: HTMLEl
   const items: { pane: string; text: string; alias?: string; el: HTMLElement }[] = [];
   for (const el of document.querySelectorAll<HTMLElement>(`.home > [data-pane] :is(${SEARCHED})`)) {
     const p = paneOf(el);
+    // A fold's heading is found as its summary, once, by the heading's words (the note beside it isn't its name).
+    if (el.matches("h2, h3") && el.closest("summary")) continue;
+    const head = el.matches("summary") ? el.querySelector<HTMLElement>("h2, h3") : null;
     // Its words as shown (home-6): a pop-up's choices still find it, after the settings named by their own words.
-    const text = shownText(el);
+    const text = shownText(head ?? el);
     if (!p || hiddenHere(el) || !text.trim()) continue;
     const pick = el instanceof HTMLLabelElement && el.control instanceof HTMLSelectElement ? el.control : el.querySelector("select");
     const options = pick ? [...pick.options].map(o => o.textContent ?? "").join(" ") : "";
-    items.push({ pane: p, text, alias: [SEARCH_ALIASES[el.id], options].filter(Boolean).join(" ") || undefined, el });
+    items.push({ pane: p, text, alias: [SEARCH_ALIASES[(head ?? el).id], options].filter(Boolean).join(" ") || undefined, el });
   }
   return items;
 }
