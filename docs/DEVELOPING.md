@@ -1979,6 +1979,11 @@ refused key points at the key in settings, a usage limit says to try later, file
 fewer or smaller ones, and the two-minute wait says so. "Try again" is left for a failure nothing says more about. The
 log keeps the error's type and status code only, never its words (the service may quote the files).
 
+A request or a project command under way goes on while the settings window is minimised or hidden, and its answer is
+there when it shows again. Closing the window, the screen locking, the policy changing, Stop everything and the
+page crashing still end it, and closing the window clears the answer and an unapplied patch (save a workspace to keep
+them).
+
 Open **Run a project command** to choose a local starting folder and enter a command. Ember applies the
 same settings, classifier and stop controls as its command window. Each run waits for approval of the
 exact command and folder. Output stays in the command window. The connected model does not receive it.

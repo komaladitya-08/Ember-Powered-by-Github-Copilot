@@ -481,7 +481,9 @@ function start(): void {
     const win = home;
     win.once("show", () => bringToFront(win));
     const shown = (on: boolean) => () => { if (!win.isDestroyed()) win.webContents.send(IPC.homeVisibility, on); };
-    const hidden = () => { shown(false)(); cancelHomeListenOnce(); projectJob?.abort(); };
+    // Project work under way goes on while the window is minimised or hidden (integrations-6): closing it, a crash, the
+    // screen lock, the policy and Stop everything still end it.
+    const hidden = () => { shown(false)(); cancelHomeListenOnce(); };
     win.on("minimize", hidden); win.on("hide", hidden); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
       cancelHomeListenOnce();
@@ -2069,8 +2071,11 @@ function start(): void {
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
-  const projectAvailable = () => consented() && screenLock?.locked === false && policy.features.actions !== false &&
-    agent?.getStatus().phase === "ready" && home?.isVisible() && !home.isMinimized();
+  /** Project work under way may go on: the settings window open, shown or not (integrations-6). */
+  const projectContinues = () => consented() && screenLock?.locked === false && policy.features.actions !== false &&
+    agent?.getStatus().phase === "ready" && !!home && !home.isDestroyed();
+  /** Project work may start: also with the settings window in view, where it is asked for. */
+  const projectAvailable = () => projectContinues() && home?.isVisible() && !home.isMinimized();
   ipcMain.handle(IPC.projectPick, guard(async (): Promise<ProjectSelection> => {
     const names = projectFiles.length ? projectNames(projectFiles) : [];
     const owner = home;
@@ -2147,9 +2152,9 @@ function start(): void {
       const { mode, question, includePrevious } = input.data;
       const prompt = await projectPrompt(files, mode, question, run.signal, userData, mode === "patch" ? sources : undefined,
         includePrevious ? projectExchange : null);
-      if (run.signal.aborted || projectFiles !== files || host !== agent || !projectAvailable()) return { error: "Project request cancelled." };
+      if (run.signal.aborted || projectFiles !== files || host !== agent || !projectContinues()) return { error: "Project request cancelled." };
       const answer = await host.runProject(prompt, run);
-      if (run.signal.aborted || !projectAvailable()) return { error: "Project request cancelled." };
+      if (run.signal.aborted || !projectContinues()) return { error: "Project request cancelled." };
       if (!answer) return { error: PROJECT_MODEL_FAILED };
       projectPatch = mode === "patch" ? draftProjectPatch(answer, sources) : null;
       const shown = answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer;
@@ -2220,7 +2225,7 @@ function start(): void {
     const run = projectJob = new AbortController();
     try {
       return await host.runProjectCommand(parsed.data, folder.path, service, run.signal,
-        () => projectFolder === folder && projectAvailable() === true && folder.current());
+        () => projectFolder === folder && projectContinues() === true && folder.current());
     } catch {
       return run.signal.aborted ? "Project command stopped." : "Couldn't finish the command. Check the command window.";
     } finally {

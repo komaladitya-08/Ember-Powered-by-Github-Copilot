@@ -61,6 +61,15 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
     await home.locator("#project-mode").selectOption("patch");
     await home.locator("#project-question").fill(request);
     await home.locator("#project-send").click();
+    // Hidden while the model works (Cmd+H, or minimised where a window manager reports it): the request goes on and its
+    // answer is there when the window shows again, not "Project request cancelled." (integrations-6).
+    const homeWindow = (show: boolean) => app!.evaluate(({ BrowserWindow }, on) => {
+      const w = BrowserWindow.getAllWindows().find(x => x.webContents.getURL().includes("/renderer/home/index.html"));
+      if (on) w?.show(); else w?.hide();
+    }, show);
+    await homeWindow(false);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await homeWindow(true);
     expect(await home.locator("#project-running").innerText()).toContain(request);
     expect(await home.locator("#project-running").innerText()).toContain("greeting.ts");
     expect(await home.locator("#project-running").innerText()).not.toContain("other.ts");
