@@ -94,10 +94,6 @@ export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything righ
 export function composerSendHint(os: OS = "linux"): string {
   return `Up to ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters. ${keyLabel("Return", os)} adds a new line. ${keyLabel(os === "darwin" ? "cmd+Return" : "ctrl+Return", os)} sends.`;
 }
-/** Main's listen-once reason as Home says it: there its Download is right below Listen once, not "in Settings" (home-11). */
-export function homeListenOnce<T extends { phase: string; detail: string }>(s: T | undefined): T | undefined {
-  return s && s.detail === "Download speech models in Settings first." ? { ...s, detail: "Download speech models below first." } : s;
-}
 /** Said once as a message goes over the limit, and when Send is tried while it is (home-5). */
 export const COMPOSER_OVER = `This message is longer than ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters. Shorten it to send it.`;
 export function conversationMatchesText(text: string, query: string): boolean {

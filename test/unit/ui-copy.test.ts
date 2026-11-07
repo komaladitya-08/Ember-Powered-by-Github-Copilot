@@ -1023,12 +1023,13 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
   });
 
   it("says in Home that the speech models' Download is right below Listen once, not \"in Settings\" (home-11)", () => {
-    const blocked = { phase: "blocked" as const, detail: "Download speech models in Settings first." };
-    expect(conv.homeListenOnce(blocked)).toEqual({ phase: "blocked", detail: "Download speech models below first." });
-    expect(conv.homeListenOnce({ phase: "blocked" as const, detail: "The screen is locked." })).toEqual({ phase: "blocked", detail: "The screen is locked." });
-    expect(conv.homeListenOnce(undefined)).toBeUndefined();
-    // The sentence it rewords is main's own (app/main/voice.ts): a change there must change this too.
-    expect(readFileSync("app/main/voice.ts", "utf8")).toContain(`"${blocked.detail}"`);
+    // Main words it for Settings itself (listenOnceInSettings, voice-listening-8), so Home shows what it is sent.
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain('return source === "home" ? listenOnceInSettings(heard) : heard;');
+    expect(readFileSync("app/main/voice.ts", "utf8")).toContain('if (s.reason === "needs-models") return { ...s, detail: "Download the speech models below first." };');
+    const home = readFileSync("app/renderer/home/main.ts", "utf8");
+    expect(home).toContain("if (v !== voice) showListenOnce(v.listenOnce);");
+    expect(home).not.toContain("Download speech models in Settings first.");
   });
 
   it("writes every apostrophe Ember shows straight, never U+2019 (accessibility-visual-6, home-11)", () => {

@@ -51,7 +51,7 @@ import { memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, toda
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, homeListenOnce, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -2095,7 +2095,7 @@ let voice: VoiceStatus | null = null;
 const showListenOnce = mountListenOnce(
   $("voice-listen-once") as HTMLButtonElement,
   $("voice-listen-once-detail"),
-  on => window.ember.listenOnce(on).then(s => homeListenOnce(s) ?? s),
+  on => window.ember.listenOnce(on),
   LISTEN_ONCE_READY,
 );
 /** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
@@ -2122,7 +2122,7 @@ $("voice-fix").addEventListener("click", () => {
   }).finally(() => { btn.disabled = false; });
 });
 function renderVoice(v: VoiceStatus): void {
-  if (v !== voice) showListenOnce(homeListenOnce(v.listenOnce));
+  if (v !== voice) showListenOnce(v.listenOnce);
   voice = v;
   renderVoiceFix();
   const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
