@@ -630,8 +630,11 @@ speech capability where that runtime is supported.
 
 **Default and optional voices.** Kitten Nano 0.8 FP32 downloads 63.8 MB as part of the standard model manifest. Its
 complete Apache-2.0 archive includes the matching style tables and phonemiser data. It uses one CPU thread and the
-measured `NATURAL_MAX_RTF` <= 0.5 gate; a slow verdict is kept for a week per model/provider/thread configuration.
-Corrupt, future and expired verdicts are ignored. A failed gate uses the local system voice.
+measured `NATURAL_MAX_RTF` <= 0.5 gate, timed afresh at every start (an optional voice's slow verdict is kept for a
+week per model/provider/thread configuration; corrupt, future and expired verdicts are ignored). A failed gate, a reply
+Kitten couldn't make or its process ending uses the local system voice for the rest of the session, and Settings ›
+Voice says which ("too slow just now", "stopped working", "couldn't load") with **Try again**, which loads and times
+Kitten again at once.
 
 Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) remains an explicit optional download in Voice settings. Saving
 a choice while off does not enable speech or start that download. Enabling or changing the optional model names the

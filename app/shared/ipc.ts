@@ -242,6 +242,8 @@ export type NaturalVoiceStatus = (
     model?: "kitten" | "kokoro" | "supertonic";
     /** Current/last usable local engine, including an explicit system-voice fallback. */
     voice?: "kitten" | "kokoro" | "supertonic" | "system";
+    /** `wont-load` after it had loaded: a reply it couldn't make, or its process ended (Home: "stopped working"). */
+    stopped?: true;
   };
 
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */

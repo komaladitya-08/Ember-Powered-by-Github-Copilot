@@ -98,6 +98,16 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("uses the baseline voice and 
     expect(await use.innerText()).toBe("Use Kitten Nano");
     await use.click();
     expect(await page.evaluate(() => window.__naturalTest.patches.at(-1)?.voice)).toMatchObject({ natural: false, naturalModel: "kitten" });
+    // Kitten stopped working, or was too slow just now: Try again times it afresh (voice-speaking-6).
+    await page.evaluate(() => window.__naturalTest.status({ state: "wont-load", model: "kitten", voice: "system", stopped: true }));
+    expect(await page.locator("#natural-text").innerText()).toBe("Kitten Nano stopped working, so Ember uses this computer's system voice when available. Try again, or restart Ember.");
+    await page.locator("#natural-retry").click();
+    expect(await page.evaluate(() => window.__naturalTest.retries)).toBe(2);
+    await page.evaluate(() => window.__naturalTest.status({ state: "too-slow", model: "kitten", voice: "system" }));
+    expect(await page.locator("#natural-retry").isVisible()).toBe(true);
+    if (process.env.EMBER_UI_EVIDENCE) await page.locator("#natural-row").screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "kitten-too-slow-retry.png") });
+    await page.evaluate(() => window.__naturalTest.status({ state: "on", model: "kitten", voice: "kitten" }));
+    expect(await page.locator("#natural-retry").isHidden()).toBe(true);
     await page.evaluate(() => window.__naturalTest.models([]));
     expect(await model.isEnabled()).toBe(true);
     expect(await model.evaluate(select => [...(select as HTMLSelectElement).options].map(option => [option.value, option.disabled]))).toEqual([["kitten", false], ["kokoro", true], ["supertonic", true]]);

@@ -59,6 +59,24 @@ describe("effective voice status", () => {
     expect(naturalVoiceView({ state: "on", model: "kokoro", voice: "kitten" }, "kokoro").text).toContain("Ember uses Kitten Nano.");
   });
 
+  it("offers Try again when Kitten stopped working or was too slow just now, and says what happened (voice-speaking-6)", () => {
+    expect(naturalVoiceView({ state: "wont-load", model: "kitten", voice: "system", stopped: true })).toEqual({
+      text: "Kitten Nano stopped working, so Ember uses this computer's system voice when available. Try again, or restart Ember.", retry: true, busy: false,
+    });
+    expect(naturalVoiceView({ state: "wont-load", model: "kitten", voice: "system" })).toEqual({
+      text: "Kitten Nano couldn't load, so Ember uses this computer's system voice when available. Try again, or restart Ember.", retry: true, busy: false,
+    });
+    expect(naturalVoiceView({ state: "too-slow", model: "kitten", voice: "system" })).toEqual({
+      text: "Kitten Nano was too slow just now, perhaps because this computer was busy, so Ember uses this computer's system voice when available. Try again when it's less busy.", retry: true, busy: false,
+    });
+    // Kitten that can't run here at all, and an optional voice timed too slow (kept for a week), offer none.
+    expect(naturalVoiceView({ state: "needs-native", model: "kitten", voice: "system" }).retry).toBe(false);
+    expect(naturalVoiceView({ state: "too-slow", model: "kokoro", voice: "kitten" }, "kokoro").retry).toBe(false);
+    const ui = fs.readFileSync(path.resolve("app/renderer/home/natural-voice.ts"), "utf8");
+    expect(ui).toContain("retry.hidden = !view.retry || !allowed(current);");
+    expect(fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")).toContain("ipcMain.handle(IPC.voiceNaturalRetry, guard(() => voice?.retryNaturalVoice()));");
+  });
+
   it("offers download retry for the optional voices, not Kitten, and never displays more than 99% while downloading", () => {
     expect(naturalVoiceView({ state: "failed", model: "supertonic", detail: "Check the network." }, "supertonic").retry).toBe(true);
     const failed = naturalVoiceView({ state: "failed", model: "kokoro", voice: "kitten", detail: "Check the network." }, "kokoro");

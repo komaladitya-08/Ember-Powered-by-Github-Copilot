@@ -2109,7 +2109,7 @@ function start(): void {
   }));
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
   // Only while the setting, with the organisation's policy applied, wants it (off where voice or speech is: admin.ts).
-  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => { if (naturalVoiceOn(settings.get())) voice?.retryNaturalVoice(); }));
+  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => voice?.retryNaturalVoice()));
   const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay, approval: confirmer?.waiting ?? false });
   presenceChanged = () => broadcast(IPC.presenceChanged, presence());
   ipcMain.handle(IPC.presence, guard(presence));

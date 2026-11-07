@@ -251,6 +251,8 @@ export class VoiceService {
   private tts: { proc: UtilityProcess; ready: boolean } | null = null;
   private voiceIdle: NodeJS.Timeout | null = null;
   private ttsFailures = 0;
+  /** Ember's own voice failed after it had loaded (a reply it couldn't make, or its process ended): Home says it stopped. */
+  private ttsStopped = false;
   /** Replies are numbered; those up to `ttsHushed` were hushed (their late audio is dropped). */
   private ttsId = 0;
   private ttsHushed = 0;
@@ -892,14 +894,18 @@ export class VoiceService {
 
   /** Effective requested model and actual local engine, including baseline Kitten when the legacy toggle is false. */
   get naturalStatus(): NaturalVoiceStatus {
-    return { ...this.natural, model: this.selectedVoice, voice: this.currentVoice };
+    return { ...this.natural, model: this.selectedVoice, voice: this.currentVoice, ...(this.natural.state === "wont-load" && this.ttsStopped && this.selectedVoice === "kitten" ? { stopped: true as const } : {}) };
   }
 
-  /** Try again after the natural voice's download failed (Home's button): the check and the download start again now. */
+  /**
+   * Try again (Home's button) after the natural voice's download failed, or Kitten stopped working or was too slow just
+   * now (voice-speaking-6): the check, and the download or the timing, start again now.
+   */
   retryNaturalVoice(): void {
     if (this.naturalFetch) return;
     this.naturalOff = this.naturalWanted && this.o.naturalSupported === false;
     this.ttsFailures = 0;
+    this.ttsStopped = false;
     this.checkNatural();
   }
 
@@ -1088,7 +1094,7 @@ export class VoiceService {
       }
       this.o.log.warn("voice.tts_exit", { code });
       this.ttsFailures++;
-      this.voiceFailed();
+      this.voiceFailed("load", tts.ready);
     });
     proc.on("message", (m: TtsProcessMessage) => {
       if (this.tts !== tts) return;
@@ -1097,7 +1103,7 @@ export class VoiceService {
       const pending = this.ttsPending.get(m.id);
       if (m.id <= this.ttsHushed || !pending) return;
       if (m.type === "audio") { pending.remaining = m.remaining; pending.send(VOICE.audio, { id: m.id, samples: m.samples, rate: m.rate } satisfies SpeechAudio); return; }
-      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro" || this.ttsInfo?.voice === "supertonic") this.kokoroFailed(); else this.voiceFailed(); return; }
+      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro" || this.ttsInfo?.voice === "supertonic") this.kokoroFailed(); else this.voiceFailed("load", true); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
       if (!this.saidSpeaking) { this.awaitingSpeechStart = true; this.speakingUntil = Date.now() + SPEECH_START_MS; }
@@ -1204,8 +1210,9 @@ export class VoiceService {
    * Retire a failed synthesiser for this session. The page drains already generated audio before the local system
    * voice says only the remaining chunks. Later streamed sentences use that same engine, never overlap it.
    */
-  private voiceFailed(reason: "slow" | "load" | "native" = "load"): void {
+  private voiceFailed(reason: "slow" | "load" | "native" = "load", stopped = false): void {
     this.ttsFailures = VOICE_FAILURES;
+    this.ttsStopped = stopped;
     this.switchVoice = false;
     this.currentVoice = "system";
     this.setNatural({ state: reason === "native" ? "needs-native" : reason === "slow" ? "too-slow" : "wont-load" });

@@ -1100,8 +1100,14 @@ export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: Natur
     case "downloading": return { text: `Downloading ${name}… ${Math.max(0, Math.min(99, Math.round(s.percent)))}%`, retry: false, busy: true };
     case "ready": return { text: `${name} is ready for Ember's next reply.`, retry: false, busy: false };
     case "on": return { text: s.voice && s.voice !== model ? `${name} is selected. ${fallback}` : `Ember speaks in ${name}.`, retry: false, busy: false };
-    case "too-slow": return { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
-    case "wont-load": return { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
+    // Kitten is timed again at every start, so a busy moment or one failure needn't cost it the session (voice-speaking-6):
+    // Try again loads and times it now. An optional voice's slow verdict is kept for a week.
+    case "too-slow": return model === "kitten"
+      ? { text: `${name} was too slow just now, perhaps because this computer was busy, so Ember uses this computer's system voice when available. Try again when it's less busy.`, retry: true, busy: false }
+      : { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
+    case "wont-load": return model === "kitten"
+      ? { text: `${name} ${s.stopped ? "stopped working" : "couldn't load"}, so Ember uses this computer's system voice when available. Try again, or restart Ember.`, retry: true, busy: false }
+      : { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
     case "needs-native": return { text: `${name} isn't available on this computer. ${fallback}`, retry: false, busy: false };
     case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model !== "kitten", busy: false };
     default: return { text: `${name} is selected. ${fallback}`, retry: false, busy: false };

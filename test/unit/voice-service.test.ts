@@ -1727,6 +1727,35 @@ describe("speech models", () => {
       expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Night Light is on.", append: true });
     });
 
+    it("says Kitten stopped working when it fails after it spoke, and brings it back on Try again (voice-speaking-6)", async () => {
+      const { v } = service(true, { neuralVoice: true, native: true });
+      v.speak("Night Light is on.");
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900, rate: 22_050, voice: kitten() });
+      electron.procs[0].emit("message", { type: "failed", id: 1, message: "Synthesis failed" });
+      await flush();
+      expect(v.naturalStatus).toEqual({ state: "wont-load", model: "kitten", voice: "system", stopped: true });
+      v.retryNaturalVoice();
+      expect(v.naturalStatus).toEqual({ state: "checking", model: "kitten", voice: "system" });
+      expect(electron.procs).toHaveLength(2);
+      electron.procs[1].emit("message", { type: "ready", loadMs: 900, rate: 22_050, voice: kitten() });
+      expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+      // The next reply is said in Kitten again, not the system voice.
+      v.speak("Back in Kitten.");
+      expect(posted(electron.procs[1], "say")).toEqual([expect.objectContaining({ text: "Back in Kitten." })]);
+    });
+
+    it("times Kitten again on Try again after a busy moment made it too slow (voice-speaking-6)", async () => {
+      const { v } = service(true, { neuralVoice: true, native: true });
+      v.speak("A reply.");
+      electron.procs[0].emit("message", { type: "error", message: "too slow here: 0.81 of real time", reason: "slow" });
+      await flush();
+      expect(v.naturalStatus).toEqual({ state: "too-slow", model: "kitten", voice: "system" });
+      v.retryNaturalVoice();
+      expect(electron.procs).toHaveLength(2);
+      electron.procs[1].emit("message", { type: "ready", loadMs: 900, rate: 22_050, voice: kitten() });
+      expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+    });
+
     it("logs which voice speaks, on which build, how fast", async () => {
       const { log: l, lines } = recording();
       const { v } = service(true, { neuralVoice: true, native: true, log: l });
