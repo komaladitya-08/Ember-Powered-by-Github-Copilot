@@ -1384,6 +1384,7 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
+    ...(voice?.micLabel ? { micLabel: voice.micLabel } : {}),
     modelsReady: voice?.modelsReady ?? false,
     modelsMissing: (voice?.missingModels ?? VOICE_MODELS).map(m => m.id), modelsBytes: voice ? modelsBytes(voice.missingModels) : VOICE_MODELS_BYTES,
     ...(voice?.isDownloading ? { downloading: true } : {}),
@@ -1400,7 +1401,8 @@ function start(): void {
     const phase = voice?.listenOnceStatus.phase;
     if (manualCall && (phase === undefined || phase === "ready" || phase === "blocked")) clearManualCall();
     const ask = listenOnceStatus("ask");
-    const key = JSON.stringify([ask, listenOnceStatus("home")]);
+    // (The microphone's name too: Settings' voice line names it, and a headset plugged in changes it.)
+    const key = JSON.stringify([ask, listenOnceStatus("home"), voice?.micLabel ?? null]);
     if (key === lastListenStatus) return;
     lastListenStatus = key;
     askWindow.setListenOnce(ask);

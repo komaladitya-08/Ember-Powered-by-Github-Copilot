@@ -198,6 +198,8 @@ export interface ListenOnceStatus {
 export interface VoiceStatus {
   state: MicState;
   detail: string | null;
+  /** The microphone Ember hears through while it captures, as the system names it (kept on this computer). */
+  micLabel?: string;
   /** Listening can start: the wake word, voice activity and speech recognition models are in. */
   modelsReady: boolean;
   /** The models not in yet (or damaged), which the download fetches, and their size together. */

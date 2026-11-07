@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { idleLine, micAnnouncement, micBadge, MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import type { MicState } from "../../app/shared/voice";
 import { HandleLive } from "../../app/renderer/handle/live";
+import { heardThrough } from "../../app/renderer/home/copy";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const STATES: MicState[] = ["off", "needs-models", "downloading", "starting", "waiting", "active", "muted", "error"];
@@ -52,6 +53,17 @@ describe("the microphone badge", () => {
     const tag = /<i id="mic"[^>]*>/.exec(read("app/renderer/handle/index.html"))![0];
     expect(tag).toContain('role="img"');
     expect(tag).not.toContain("aria-hidden");
+  });
+
+  it("says in Settings which microphone Ember listens through (voice-listening-v2)", () => {
+    expect(heardThrough("Listening for “Ember”", "waiting", null, "Built-in Audio Analog Stereo")).toBe("Listening for “Ember” through Built-in Audio Analog Stereo");
+    // Only while it listens for its name, and never over a detail (an error, Learning your voice…).
+    expect(heardThrough("Hearing you…", "active", null, "Headset")).toBe("Hearing you…");
+    expect(heardThrough("Learning your voice.", "waiting", "Learning your voice.", "Headset")).toBe("Learning your voice.");
+    expect(heardThrough("Listening for “Ember”", "waiting", null, undefined)).toBe("Listening for “Ember”");
+    const home = read("app/renderer/home/main.ts");
+    expect(home).toContain("const text = heardThrough(v.detail && v.state === \"error\" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);");
+    expect(read("app/main/main.ts")).toContain("...(voice?.micLabel ? { micLabel: voice.micLabel } : {}),");
   });
 
   it("says Ember is learning a voice, not listening for “Hey Ember”, while Voice Match is taught (voice-listening-v1)", () => {

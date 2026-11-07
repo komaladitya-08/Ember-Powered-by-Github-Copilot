@@ -307,6 +307,22 @@ describe("VoiceService", () => {
     expect(main).toContain('if (confirmer?.waiting) return blocked("Answer Ember’s question first.");');
   });
 
+  it("says which microphone it hears through while it captures, and nothing once it doesn't (voice-listening-v2)", async () => {
+    const { v } = service();
+    expect(v.micLabel).toBeNull();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    const mic = captured();
+    expect(v.micLabel).toBe("Test microphone");
+    electron.ipcMain.emit(VOICE.status, { sender: mic.webContents }, { state: "capturing", device: `  ${"Headset ".repeat(30)}`, rate: 16000, context: "running" });
+    expect(v.micLabel).toHaveLength(80);
+    electron.ipcMain.emit(VOICE.status, { sender: mic.webContents }, { state: "capturing", device: "", rate: 16000, context: "running" });
+    expect(v.micLabel).toBeNull();
+    v.setMuted(true);
+    expect(v.micLabel).toBeNull();
+  });
+
   it("says what to do next when a temporary Listen once's voice process stops (voice-listening-8)", async () => {
     const { v } = service();
     expect(v.listenOnce()).toBe(true);

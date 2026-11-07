@@ -230,6 +230,8 @@ export class VoiceService {
   private micLost = false;
   /** The microphone sends only digital silence (the voice line says so until sound comes back). */
   private micSilent = false;
+  /** The capturing microphone's name as the system gives it (Settings shows it; voice-listening-v2), or "". */
+  private micDevice = "";
   /** The voice process hears the speakers' own stream (speaker rejection runs: Linux with parec). */
   private monitorOn = false;
   /** Starting again after listening broke: the timer, how many times in a row, and when the current process got ready. */
@@ -314,6 +316,7 @@ export class VoiceService {
       else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
       else if (s.state === "capturing") {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
+        this.micDevice = typeof s.device === "string" ? s.device.trim().slice(0, 80) : "";
         if (this.micLost) { this.micLost = false; this.setState("waiting"); }
         this.armListenOnce();
       }
@@ -372,6 +375,11 @@ export class VoiceService {
 
   get micState(): MicState {
     return this.state;
+  }
+
+  /** Which microphone Ember hears through, while it captures (null: none, or the system gave no name). */
+  get micLabel(): string | null {
+    return this.capturing && this.micDevice ? this.micDevice : null;
   }
 
   get listenOnceStatus(): ListenOnceStatus {
@@ -1476,6 +1484,7 @@ export class VoiceService {
   private closeMic(): void {
     const mic = this.mic;
     this.mic = null;
+    this.micDevice = "";
     if (this.hushMeasure?.page === "mic") this.hushMeasure = null;
     if (mic && !mic.isDestroyed()) mic.destroy();
     // Its meter goes with it (the page that sends the levels is gone, so no null would ever come), and its speech.

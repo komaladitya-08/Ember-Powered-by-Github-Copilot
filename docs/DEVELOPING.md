@@ -496,6 +496,8 @@ In settings, turn on **Listen for “Hey Ember”**, read and accept the microph
 the standard speech models (about 220 MB of downloads, once; agreeing to the microphone note starts the download, and
 the note says so). Listening needs 130 MB of that, Ember's Kitten voice 64 MB and Voice Match 27 MB. **Cancel download**
 beside its progress stops it, as turning listening off does; what was half fetched is removed.
+While it listens, the voice line names the microphone it hears through (“Listening for “Ember” through Built-in Audio
+Analog Stereo”): Ember uses the system's default input, so choose another in the system's sound settings.
 Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name; a
 pause to think after a word such as “the” or “and” waits 0.9 s more for the rest.
 Ember answers out loud in the default Kitten voice when its native runtime and model are ready, or a local system

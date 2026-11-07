@@ -575,6 +575,15 @@ export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: nu
   return `Download ${parts.length ? parts.join(" and ") : "speech models"} (${mb})`;
 }
 
+/**
+ * Settings' voice line names the microphone Ember hears through while it listens for its name ("Listening for “Ember”
+ * through Built-in Audio Analog Stereo"): on a computer with several, the system's default may be the wrong one, and
+ * nothing said which (voice-listening-v2). Never over a detail (an error, Learning your voice).
+ */
+export function heardThrough(text: string, state: string, detail: string | null, micLabel: string | undefined): string {
+  return state === "waiting" && !detail && micLabel ? `${text} through ${micLabel}` : text;
+}
+
 export const SPEAK_NO_VOICE = "Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.";
 export const LISTEN_ONCE_READY = "Press Listen once, then say one request without saying “Hey Ember”.";
 

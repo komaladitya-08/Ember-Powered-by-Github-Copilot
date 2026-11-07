@@ -10,7 +10,7 @@ import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import type { HistoryProblemKind } from "../../shared/conversation";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, heardThrough, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
@@ -1854,7 +1854,7 @@ function renderVoice(v: VoiceStatus): void {
   if (v !== voice) showListenOnce(v.listenOnce);
   voice = v;
   renderVoiceFix();
-  const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;
+  const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
   $("voice-text").textContent = text;
   // Off, the switch above says so: no lone "Off" row under it (UI audit #15). Screen readers still hear the change.
   $("voice-text").parentElement!.hidden = v.state === "off";
