@@ -39,15 +39,15 @@ const VALUE = String.raw`["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))\S+`;
  * home", "to unlock it"), a preposition and one to four words. A hyphen inside a word ("e-mail") isn't a separator.
  */
 const FOR_WHAT = String.raw`(?:\s+(?:for|to|at|on|of|in|into|with|from)(?:\s+[^\s:=]+){1,4}?)?`;
-/** "is", "was", "are", or ":", "=", a spaced "-" or one before a digit ("PIN-4821"). */
-const SAYS = String.raw`(?:\s*[:=]|\s*-(?=\s|\d)|\s+(?:is|was|are|were)\s)\s*`;
+/** "is", "'s", "was", "are", "is:", or ":", "=", a spaced "-" or one before a digit ("PIN-4821"). */
+const SAYS = String.raw`(?:\s*[:=]|\s*-(?=\s|\d)|['’]s\s|\s+(?:is|was|are|were)(?:\s*[:=])?\s)\s*`;
 
 /**
  * "my password is…", "PIN: 1234", "the wifi key is…", "the password for the HR portal is…": a secret's name, perhaps
  * what it is for, then its value (not a word like "required").
  */
 const TOLD_SECRET = new RegExp(
-  String.raw`\b(?:pass(?:word|phrase|code|wd)|pin|passcode|otp|2fa code|verification code|recovery (?:code|key)|seed phrase|unlock phrase|security (?:question )?answer|answer to (?:my|the|a) security question|cvv|cvc|wi-?fi (?:key|password)|api[ _-]?(?:key|token)|secret[ _-]?key)s?\b${FOR_WHAT}${SAYS}${VALUE}`,
+  String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:my|the|a) security question|cvv|cvc|wi-?fi (?:key|password)|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)s?\b${FOR_WHAT}${SAYS}${VALUE}`,
   "i",
 );
 
@@ -61,6 +61,23 @@ const BARE_PASSWORD = new RegExp(
 );
 /** A PIN with four or more digits straight after ("the phone unlock PIN 1379", "PIN number 4821"). */
 const BARE_PIN = /\bpin(?:\s+(?:code|number))?\s+\d{4,12}\b/i;
+/** A card's security code with its digits straight after ("…with CVV 123", "CVC 4821"). */
+const BARE_CVV = /\b(?:cvv2?|cvc2?|csc)\s*(?:code|number)?\s*[:#]?\s*\d{3,4}\b/i;
+/** "Use hunter2 as the password for…": a value said before the secret's name ("…as the PIN pad app" names no PIN). */
+const USED_AS = new RegExp(String.raw`\buse\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))\S+["'”]?\s+as\s+(?:the|my|our|your|a)?\s*(?:pass(?:word|phrase|code)|pin|pw)s?(?=\s*$|[.,;!?]|\s+(?:for|on|at|to|of|in|with)\b)`, "i");
+/**
+ * A login with its user name and password together ("Login for the router: admin / P@ssw0rd", "credentials for staging
+ * are admin and hunter22"): only when the second has a digit or a symbol, so "Login for the wiki is via SSO and Okta"
+ * stays a fact.
+ */
+const LOGIN_PAIR = new RegExp(
+  String.raw`\b(?:login|log-in|sign-in|credentials?|creds)\b${FOR_WHAT}${SAYS}["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))\S+\s*(?:/|,|\band\b|\bwith\b)\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
+  "i",
+);
+/** "Wifi: BlueSky99": the network's key, only with a digit or a symbol in it ("Wifi: slow" is a fact). */
+const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}/i;
+/** A seed phrase on its own ("seed: abandon ability able about above absent"): six or more lowercase words. */
+const SEED_WORDS = /\bseed\b\s*(?::|=|\bis\b)\s*(?:[a-z]+\s+){5,}[a-z]+/;
 /** "user priya, pass hunter2": "pass" as a password, but only after a user name or login, since it is a common word. */
 const LOGIN_PASS = /\b(?:user(?:name)?|login)\b[^\n]{0,60}?\bpass\b(?:\s*[:=]\s*|\s+)["'“]?[^\s"'”,;]{3,}/i;
 /**
@@ -68,8 +85,19 @@ const LOGIN_PASS = /\b(?:user(?:name)?|login)\b[^\n]{0,60}?\bpass\b(?:\s*[:=]\s*
  * "Garage code: 7734", "backup codes are 1234-5678", "the safe combination is 32-18-04"). "The door code changes on
  * Monday" and "the access code for the conference is on the invite" have no digits where the value would be.
  */
+const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|lockbox|padlock|vault|house|flat|apartment|office`;
 const PLACE_CODE = new RegExp(
-  String.raw`\b(?:door|gate|garage|alarm|safe|lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|lockbox|padlock)\s+(?:code|combination|combo|pin)s?\b${FOR_WHAT}(?:${SAYS}|\s+)["'“]?\d(?:[-\s]?\d){2,}`,
+  // "Garage opener code": one word may stand between the place and its code; "keycode" is one on its own.
+  String.raw`\b(?:(?:${PLACES})(?:\s+[a-z]+)?\s+(?:code|combination|combo|pin)s?|key ?codes?|door ?codes?)\b${FOR_WHAT}(?:${SAYS}|\s+)["'“]?#?\d(?:[-\s]?\d){2,}`,
+  "i",
+);
+/**
+ * The code or combination first, then what it opens ("the code for the front door is 4821", "the combination to my bike
+ * lock is 1234", "the code to the safe is 32-18-04"), with digits for its value. "The area code for London is 020" names
+ * no place that locks, and "the code for the report is in GitHub" has no digits.
+ */
+const CODE_FOR_PLACE = new RegExp(
+  String.raw`\b(?:code|combination|combo|pin|keycode)s?\s+(?:for|to|of|at|on)\s+(?:[^\s:=]+\s+){0,3}?(?:${PLACES})\b${SAYS}["'“]?#?\d(?:[-\s]?\d){2,}`,
   "i",
 );
 /** A social security number beside its name ("my SSN is 123-45-6789", "social security number 123 45 6789"). */
@@ -114,7 +142,8 @@ export function memoryRefusal(text: string): string | null {
   if (redactSecrets(probe) !== probe) return "it holds a password, token or key";
   // The redactor hides a key only with its END line too: a key's first line alone is still a key's start (audit).
   if (PRIVATE_KEY_START.test(text)) return "it holds a private key";
-  if (TOLD_SECRET.test(text) || BARE_PASSWORD.test(text) || BARE_PIN.test(text) || LOGIN_PASS.test(text) || PLACE_CODE.test(text)) {
+  if (TOLD_SECRET.test(text) || BARE_PASSWORD.test(text) || BARE_PIN.test(text) || LOGIN_PASS.test(text) || PLACE_CODE.test(text)
+    || CODE_FOR_PLACE.test(text) || BARE_CVV.test(text) || USED_AS.test(text) || LOGIN_PAIR.test(text) || WIFI_KEY.test(text) || SEED_WORDS.test(text)) {
     return "it holds a password, PIN or code";
   }
   for (const m of text.match(CARD) ?? []) {

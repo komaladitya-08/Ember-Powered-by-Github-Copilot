@@ -98,6 +98,28 @@ describe("what memory never keeps", () => {
     expect(g.toJSON().facts).toEqual([]);
   });
 
+  // The phrasings the re-rating still found kept (memory-1, round two).
+  const SAID_OTHERWISE = [
+    "My password's hunter2", "Password is: summer", "Use hunter2 as the password for the staging DB", "The garage opener code is 5512",
+    "The combination to my bike lock is 1234", "Login for the router: admin / P@ssw0rd", "Credentials for staging are admin and hunter22",
+    `My AWS secret access key is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`, "The code for the front door is 4821", "The code to the safe is 32-18-04",
+    "Gate code is #4821", "The office keycode is 4821", "My card ends 4242 and expires 04/29 with CVV 123",
+    "Recovery phrase is abandon ability able about above absent absorb abstract absurd abuse access accident", "Bitcoin seed: abandon ability able",
+    "Wifi: BlueSky99", "pw: hunter2!", "My Netflix login is ram@example.com and Summer2024",
+  ];
+  it.each(SAID_OTHERWISE.map(s => [s]))("refuses %j too (memory-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+
+  it.each([
+    ["The area code for London is 020"], ["The random seed is 42"], ["Login for the wiki is via SSO and Okta"], ["Uses a combination of tabs and spaces"],
+    ["The garage opener is broken"], ["The gate code changes every month"], ["Wifi is slow on Fridays"], ["Seeds the database before tests"],
+    ["The recovery phrase is stored in the safe"], ["Uses the same password for nothing"], ["The office is on floor 4"], ["The code for the report is in GitHub"],
+    ["Use Firefox as the default browser"], ["Use Edge as the PIN pad app"], ["Credentials for staging are in 1Password"], ["The CVV is on the back of the card"],
+  ])("keeps the look-alike %j too (memory-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],

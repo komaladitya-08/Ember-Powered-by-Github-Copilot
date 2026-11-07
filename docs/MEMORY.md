@@ -65,7 +65,8 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - What the user said is never dropped for age.
 - `guard.ts`: refuses any fact holding a token, key, password, PIN, code, card number, IBAN or social security
   number, however it is said: "the password for the HR portal is…", "VPN password hunter2", "my debit card pin 4821",
-  "the door code is 4821". It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  "the door code is 4821", "the code for the front door is 4821", "use hunter2 as the password for…", "login for the
+  router: admin / P@ssw0rd", "…with CVV 123", a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value. Secrets are refused whole, never
   stored redacted.
