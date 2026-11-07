@@ -5,6 +5,7 @@
  */
 
 import type { BubbleState } from "../shared/overlay";
+import { onThisComputer } from "../shared/provider";
 import { setupHello, type SetupRow } from "../shared/setup-attention";
 import type { HeldShortcuts, ShortcutTable } from "../shared/shortcuts";
 
@@ -47,6 +48,32 @@ export interface HelloInputs {
    * said in place of everything else, since nothing else at start-up says it. null or absent: none.
    */
   cannotWork?: string | null;
+  /**
+   * The model service the connection uses when it isn't Copilot (the agent's status): the hello names it, by its host,
+   * and never GitHub, Copilot or the network (first-run-r1).
+   */
+  service?: { kind: string; host: string };
+}
+
+/** A model service that isn't Copilot, as the hello names it. */
+function serviceName(s: { kind: string; host: string }): string {
+  return s.kind === "user" ? `your model provider (${s.host})` : s.kind === "admin" ? `your organisation's model service (${s.host})` : `the model service (${s.host})`;
+}
+
+/** Not connected yet: what the hello says, for Copilot or the service in use. */
+function notConnected(i: HelloInputs): string {
+  if (i.service) {
+    const it = serviceName(i.service);
+    return i.settingsOpen ? `I can't connect to ${it} yet: Models & connections in the settings window says why.` : `I can't connect to ${it} yet. Open settings${i.settingsKey ? ` (${i.settingsKey})` : ""} to see why.`;
+  }
+  return i.settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${i.settingsKey ? ` (${i.settingsKey})` : ""} to connect me.`;
+}
+
+/** A retry waits: for the network with Copilot; for the service in use, by name, and a model server here to be started. */
+function waitingFor(service: HelloInputs["service"]): string {
+  if (!service) return "I can't reach GitHub yet: I'll connect as soon as the network is back.";
+  if (service.kind === "user" && onThisComputer(service.host)) return `I can't reach the model server on this computer (${service.host}) yet. Start it, and I'll connect in a moment.`;
+  return `I can't reach ${serviceName(service)} yet. I'll connect as soon as it answers.`;
 }
 
 export interface Hello {
@@ -64,10 +91,7 @@ export function hello(i: HelloInputs): Hello {
   const connected = i.phase !== "signed-out" && i.phase !== "error";
   const gaps = connected ? setupHello(i.rows, i.settingsOpen) : null;
   const where = i.overlay ? "I'll stay by your cursor." : "This session can't show me beside your cursor, so I'll wait here.";
-  const thought = i.waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
-    : !connected
-      ? i.settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${i.settingsKey ? ` (${i.settingsKey})` : ""} to connect me.`
-      : `${where}${gaps ? ` ${gaps}` : ""} ${i.keys}`;
+  const thought = i.waiting ? waitingFor(i.service) : !connected ? notConnected(i) : `${where}${gaps ? ` ${gaps}` : ""} ${i.keys}`;
   const settled = connected && !gaps;
   return {
     thought,

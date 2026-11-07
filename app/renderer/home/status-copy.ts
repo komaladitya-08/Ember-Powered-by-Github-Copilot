@@ -55,6 +55,14 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
 }
 
 /**
+ * The status panel's connect button while Ember isn't connected, by the service that isn't (the agent's status kind):
+ * Copilot's sign-in, the user's own provider's details, or where the organisation's service says why (first-run-r1).
+ */
+export function connectLabel(service?: string): string {
+  return service === "user" ? "Check my provider…" : service ? "Models & connections…" : "Connect Copilot…";
+}
+
+/**
  * The link under the tagline to the setup check, when a row needs the user (the same count as the sidebar's badge and
  * the check's note, UI audit #6); null when none does. The tagline already says how many fail; `held` rows hold Ember
  * back without failing (it can't read or use apps), and are to fix, as first run says (first-run-5).

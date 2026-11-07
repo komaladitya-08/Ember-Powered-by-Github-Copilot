@@ -47,7 +47,7 @@ import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./a
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
-import { memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
+import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
@@ -285,6 +285,7 @@ function renderStatus(): void {
   const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;
   // Locked down, connecting can't help (safety-privacy-4): no Connect button.
   $("p-connect").hidden = !notConnected || locked;
+  setText("p-connect", connectLabel(agent?.service?.kind));
   $("p-ask").classList.toggle("quiet", notConnected);
   $("p-waiting").hidden = !asking;
   const setup = setupLinkText(failing, toLook, toFix);

@@ -282,6 +282,36 @@ describe("Ember's hello once it starts", () => {
     });
   });
 
+  it("names the user's own provider or the organisation's service that can't be reached, never GitHub, Copilot or the network (first-run-r1)", () => {
+    const local = { kind: "user", host: "localhost:11434" };
+    const remote = { kind: "user", host: "api.example.com" };
+    const org = { kind: "admin", host: "models.corp.example" };
+    // A retry waits: what it waits for, and for a model server on this computer, that it isn't running.
+    expect(hello(at({ phase: "error", waiting: true, service: local }))).toEqual({
+      thought: "I can't reach the model server on this computer (localhost:11434) yet. Start it, and I'll connect in a moment.", mood: "error", actions: [], holdMs: 15000,
+    });
+    expect(hello(at({ phase: "error", waiting: true, service: { kind: "user", host: "[::1]:1234" } })).thought).toContain("on this computer ([::1]:1234)");
+    expect(hello(at({ phase: "error", waiting: true, service: remote })).thought).toBe("I can't reach your model provider (api.example.com) yet. I'll connect as soon as it answers.");
+    expect(hello(at({ phase: "error", waiting: true, service: org })).thought).toBe("I can't reach your organisation's model service (models.corp.example) yet. I'll connect as soon as it answers.");
+    // Not connected: where to see why, by the settings window and the key Ember holds.
+    expect(hello(at({ phase: "error", service: remote }))).toEqual({
+      thought: "I can't connect to your model provider (api.example.com) yet. Open settings (Ctrl+Alt+E) to see why.", mood: "attention", actions: settingsButton, holdMs: 15000,
+    });
+    expect(hello(at({ phase: "error", service: remote, settingsKey: null })).thought).toBe("I can't connect to your model provider (api.example.com) yet. Open settings to see why.");
+    expect(hello(at({ phase: "error", service: org, settingsOpen: true })).thought).toBe("I can't connect to your organisation's model service (models.corp.example) yet: Models & connections in the settings window says why.");
+    for (const service of [local, remote, org]) {
+      for (const more of [{ waiting: true }, { waiting: false }, { settingsOpen: true }]) {
+        expect(hello(at({ phase: "error", service, ...more })).thought, JSON.stringify([service, more])).not.toMatch(/GitHub|Copilot|network/);
+      }
+    }
+    // Connected through it: as ever.
+    expect(hello(at({ service: remote }))).toEqual(hello(at({})));
+    // main gives the hello the connection's service.
+    const greet = MAIN.slice(MAIN.indexOf("  const greet = () => {"), MAIN.indexOf("  const busyTasks = "));
+    expect(greet).toContain("const service = agent?.getStatus().service;");
+    expect(greet).toMatch(/hello\(\{[^}]*\bservice, cannotWork \}\)/);
+  });
+
   it("says first why Ember can't work here at all, in place of everything else", () => {
     // main's reason (a desktop session Ember can't use, the organisation's lockdown) comes before Copilot and the rows.
     const why = "This is a Wayland session, so I can't see your screen or use your mouse here.";

@@ -376,6 +376,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#provider-details").getAttribute("class")).not.toContain("quiet");
     for (const id of ["own-provider", "switch-account", "sign-in", "connection-help"]) expect(await shown(id), id).toBe(false);
     expect(await shown("retry")).toBe(true);
+    // The status panel's connect button names the provider's details, never Copilot (first-run-r1).
+    expect(await shown("p-connect")).toBe(true);
+    expect(await p.locator("#p-connect").textContent()).toBe("Check my provider…");
     await p.locator("#provider-details").click();
     expect(await focusedId(p)).toBe("byok-conductor");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);

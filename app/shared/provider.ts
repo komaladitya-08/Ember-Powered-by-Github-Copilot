@@ -57,6 +57,11 @@ export function keyNeeded(url: string): boolean {
   return !u || !LOCAL_HOSTS.has(u.hostname.toLowerCase());
 }
 
+/** Whether a host as Ember names it (with its port: "localhost:11434", "[::1]:1234") is this computer. */
+export function onThisComputer(host: string): boolean {
+  return LOCAL_HOSTS.has(host.replace(/:\d+$/, "").toLowerCase());
+}
+
 /** How long "I agree" ignores activation after the card is drawn for a new host: confirm.ts's own arm delay. */
 export const AGREE_ARM_MS = 500;
 

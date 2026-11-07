@@ -290,7 +290,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
   you, then two facts (which of listening, memory and commands are on; today's tasks by outcome and the steps you
   allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
-  takes that place while Copilot isn't connected, and nothing does while the organisation's policy locks Ember down)
+  takes that place while Ember isn't connected, **Check my provider…** for the user's own provider and **Models &
+  connections…** for the organisation's service (first-run-r1), and nothing does while the organisation's policy locks
+  Ember down)
   beside a quiet **Stop everything** and the stop chord. Under them two quiet links, **Write to Ember** (the
   composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
 - **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",

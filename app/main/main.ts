@@ -737,7 +737,9 @@ function start(): void {
     // session helps until the policy is fixed), then a session Ember can't use (Wayland, no X display, #240). Else what
     // Ember says and for how long (hello.ts): connected, it names a setup row that holds it back (review #95).
     const cannotWork = modelServiceRefusal(admin) ?? sessionGreeting(readEnvironment());
-    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], cannotWork });
+    // The user's own provider or the organisation's service is named, never GitHub or Copilot (first-run-r1).
+    const service = agent?.getStatus().service;
+    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], service, cannotWork });
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);

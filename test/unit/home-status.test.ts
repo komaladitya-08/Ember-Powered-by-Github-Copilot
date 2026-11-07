@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
+import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
 import { checksNote, COMPOSER_THINKING, COMPOSER_WAIT_MS, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { THINK_SLOW_MS } from "../../app/main/agent/presenter";
@@ -58,6 +58,13 @@ describe("Home's status panel", () => {
     expect(tagline({ ...t, locked: true, held: true })).toBe("Your organisation changed Ember's policy, so Ember can't answer or act until you restart it.");
     for (const w of [tagline({ ...t, locked: true }), statusWord({ ...base, locked: true }).word]) expect(w).not.toMatch(/Connect|Not connected|Copilot/);
     expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("$(\"p-connect\").hidden = !notConnected || locked;");
+  });
+
+  it("labels the connect button by the service that isn't connected, never Copilot for another (first-run-r1)", () => {
+    expect(connectLabel()).toBe("Connect Copilot…");
+    expect(connectLabel("user")).toBe("Check my provider…");
+    expect(connectLabel("admin")).toBe("Models & connections…");
+    expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("setText(\"p-connect\", connectLabel(agent?.service?.kind));");
   });
 
   it("counts the tasks at work and those waiting from Task activity's list", () => {
