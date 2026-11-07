@@ -84,6 +84,16 @@ describe("gate 2 for commands (§3.16)", () => {
     expect(await gateCommand(input({ spec: resent, classify: classifier(() => [RM, extra]).classify }))).toMatchObject({ status: "ok" });
   });
 
+  it("agrees with the PC about an ordinary bash loop or if, and still asks for a zsh one (commands-remote-2)", async () => {
+    const real = (command: string, shell: RunSpec["shell"] = "bash") =>
+      gateCommand(input({ spec: spec({}, { command, shell }), classify: classifyCommand, facts: facts({ shells: ["bash", "zsh"], shellPaths: { bash: "/usr/bin/bash", zsh: "/usr/bin/zsh" } }) }));
+    expect((await real("for i in 1 2 3; do echo $i; done")).status).toBe("ok");
+    expect((await real("if [ -f package.json ]; then npm test; fi")).status).toBe("ok");
+    expect((await real("while read -r l; do echo \"$l\"; done < list.txt")).status).toBe("ok");
+    expect(await real("for i in 1 2; do echo $i; done", "zsh")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
+    expect(await real("zsh -c 'while true { rm -rf ~ }'")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
+  });
+
   it("counts an approval 120 s old or older as none", async () => {
     const s = spec({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], approval: { ageMs: APPROVAL_MAX_MS } });
     expect(await gateCommand(input({ spec: s, classify: classifier(() => [RM]).classify }))).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.approvalMissing });

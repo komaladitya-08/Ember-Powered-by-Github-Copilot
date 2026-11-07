@@ -36,7 +36,7 @@ import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output"
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
-import { judgeScripts, newTaskWrites, noteWrites, type ScriptIo, type TaskWrites } from "./scripts";
+import { judgeScripts, newTaskWrites, noteWrites, withoutReadFlow, type ScriptIo, type TaskWrites } from "./scripts";
 import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
@@ -741,6 +741,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const real = new Map<string, string>();
   probe.forEach((p, i) => { const r = found[i].real; if (r !== null && r !== p) real.set(p, r); });
   if (real.size) cls = j.classifyCommand(a.command, shell, { ...cctx, real });
+  // An sh or bash loop or `if` asks only for what its commands do, as in a script (commands-remote-2).
+  cls = withoutReadFlow(cls, shell);
 
   // Step 6: the branch facts a push's announcement needs.
   const git: GitFacts | null = cls.needsGit ? await within(svc.runner.gitFacts(cwd), PROBE_MS, null) : null;

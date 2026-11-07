@@ -166,6 +166,13 @@ Ember stops and asks before a command that:
   aliases it can't see, unusual syntax, and interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window.").
 
+**Loops and `if` on a command line** are read as they are in a script (below): in bash or sh, `if`, `for`, `while`
+and `until` and a plain `[[ … ]]` test don't ask by themselves, because Ember judges every command inside them. So
+`for i in 1 2 3; do echo $i; done` and `if [ -f package.json ]; then npm test; fi` run, `if [ -f x ]; then rm x; fi`
+asks only to delete x, and `while read -r l; do …; done < list.txt` isn't taken for a command waiting for your typing.
+zsh's, PowerShell's and cmd's `if` and `for` still ask, and so do a loop in a shell the command starts (`bash -c '…'`),
+a loop whose variable is `PATH` or another that changes how commands are found, `case`, functions and `{ … }` groups.
+
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the
 like), Ember reads the script first, on the computer that runs it, and judges its text as it judges a command: a
@@ -173,8 +180,9 @@ script that deletes, publishes or reads secrets asks ("In t.sh: Deletes build an
 asked for that kind of operation, and one that would touch Ember's own safety files is refused. A script also asks
 when Ember can't read all of it: an sh or bash script's `if`, `for` and `while` and a plain `[[ … ]]` test are read
 (the commands inside them are judged), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
-uses `-v`, a variable in a file name, more than 64 commands or more than 8,000 characters ask, and so do zsh's `if`,
-`for` and `while` and PowerShell's and cmd's `if` and `for`; the card then says why ("Ember can't read all of
+uses `-v`, a variable in a file name, a loop whose variable is `PATH` or the like, more than 64 commands or more than
+8,000 characters ask, and so do zsh's `if`, `for` and `while` (also from a bash script's `zsh -c '…'`) and
+PowerShell's and cmd's `if` and `for`; the card then says why ("Ember can't read all of
 build.sh (it has more commands than Ember can check one by one).", "In build.sh: Ember can't tell what cat is
 given."). When you named the script ("run the build script", "run build.sh") and that is all the card says, it doesn't
 add "You didn't ask for this."; a script that deletes, publishes or reads secrets still says it unless your words ask

@@ -15,7 +15,7 @@
 
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
-import { SAYS, SCRIPT_UNSURE, type ClassificationExtra, type ScriptRef } from "./classify";
+import { FLOW_WRAPPER, SAYS, SCRIPT_UNSURE, type ClassificationExtra, type ScriptRef } from "./classify";
 import { isUnder, pathEnv, physicalForm, type PathEnv } from "./paths";
 import { OTHER_SHELLS, POSIX_SHELLS } from "./tables";
 import type { Classification, ClassifyContext, Finding, PathFact, RunnerFacts, ShellId } from "./types";
@@ -190,8 +190,8 @@ async function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 /**
  * The classifier reads an sh or bash script's if, then, else, for, while, until, do and done as words it can't follow,
  * though it classifies every command in them (a condition, a loop's body, a substitution in its list) and leaves a
- * variable in a file argument unresolved (which asks): inside such a script, these words alone don't make it ask
- * (review #27). A plain `[[ … ]]` test doesn't either (plainTest). case, functions, traps, select and `{ … }` groups
+ * variable in a file argument unresolved (which asks): inside such a script, or on such a command line, these words
+ * alone don't make it ask (review #27, commands-remote-2; readThrough). A plain `[[ … ]]` test doesn't either (plainTest). case, functions, traps, select and `{ … }` groups
  * (whose commands the classifier doesn't read) still ask, and so do zsh's flow words (its short forms run the command
  * after the condition: `if [[ -n x ]] rm -rf ~`) and PowerShell's and cmd's if and for, whose blocks the classifier
  * doesn't read inside.
@@ -213,6 +213,34 @@ function plainTest(f: Finding, got: Classification): boolean {
   const c = got.commands[f.at];
   if (f.rule !== "unclear.keyword" || f.program !== "[[" || c?.program !== "[[") return false;
   return c.args.indexOf("]]") === c.args.length - 1 && !c.args.some(a => a !== null && TEST_RUNS.has(a));
+}
+
+/**
+ * Whether a finding is only an sh or bash flow word or a plain `[[ … ]]` test that Ember reads through (review #27,
+ * commands-remote-2): in `shell`'s own text, not a nested shell's (`zsh -c 'while true { rm -rf ~ }'` hides its rm
+ * behind zsh's short form), or a wrapper's.
+ */
+export function readThrough(f: Finding, got: Classification, shell: ShellId): boolean {
+  if (!FLOW_SHELLS.has(shell) || !(SCRIPT_FLOW.has(f.rule) || plainTest(f, got))) return false;
+  const c = got.commands[f.at];
+  if (!c || c.family !== "posix") return false;
+  // The keyword's own place: the program (`for`, `done`, `[[`), else the last wrapper of its name (`then` in `then make`).
+  const k = c.program === f.program ? c.wrappers.length : c.wrappers.lastIndexOf(f.program);
+  return k >= 0 && c.wrappers.slice(0, k).every(w => FLOW_WRAPPER.has(w));
+}
+
+/**
+ * A command line's classification without the flow words and plain tests Ember reads through (readThrough): a loop or
+ * an `if` on an sh or bash command line asks only for what its commands do, as in a script (commands-remote-2).
+ */
+export function withoutReadFlow(cls: Classification, shell: ShellId): Classification {
+  const findings = cls.findings.filter(f => !readThrough(f, cls, shell));
+  if (findings.length === cls.findings.length) return cls;
+  // The words Ember read through aren't code it can't see: what the command may write is its commands' (a classification
+  // that doesn't say what else it writes keeps its answer).
+  const x = cls as Partial<ClassificationExtra>;
+  const anywhere = typeof x.writesUnplaced === "boolean" ? x.writesUnplaced || findings.some(f => f.cls === "unclear" || f.cls === "escape") : x.writesAnywhere;
+  return { ...cls, findings, ...(typeof anywhere === "boolean" ? { writesAnywhere: anywhere } : {}) } as Classification;
 }
 
 /** The widening that names the script a finding came from (`script:build.sh`): the user's words may name it (intent.ts). */
@@ -361,7 +389,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       if (real.size) got = classify(text, shell, { ...sctx, real });
       refuse ??= got.refuse;
       for (const f of got.findings) {
-        if (FLOW_SHELLS.has(shell) && (SCRIPT_FLOW.has(f.rule) || plainTest(f, got))) continue;
+        if (readThrough(f, got, shell)) continue;
         const says = unreadFinding(f) ? unreadPart(name, f.says) : `In ${name}: ${f.says}`;
         if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script", scriptTag(name)] });
       }

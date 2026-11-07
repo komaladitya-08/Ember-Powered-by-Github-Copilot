@@ -246,6 +246,14 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(w.audit.find(e => e.phase === "decided")).toMatchObject({ verdict: "run", command: "ls build && echo zq9-$((40+2))" });
   }, 20_000);
 
+  it("runs an ordinary loop and if without asking, and reads a file through its loop (commands-remote-2)", async () => {
+    fs.writeFileSync(path.join(w.work, "list.txt"), "a\nb\n");
+    const { result } = await run("for i in 1 2 3; do echo zq$i; done; if [ -d build ]; then echo built; fi; while read -r l; do echo got-$l; done < list.txt", "");
+    expect(w.cards).toEqual([]);
+    expect(result.resultType).toBe("success");
+    for (const want of ["zq3", "built", "got-b"]) expect(result.textResultForLlm).toContain(want);
+  }, 20_000);
+
   it("asks before `rm -r build` (the user didn't ask), shows the whole command on the card, and runs it after Allow", async () => {
     const { result } = await run("rm -r build", "");
     expect(w.cards).toHaveLength(1);

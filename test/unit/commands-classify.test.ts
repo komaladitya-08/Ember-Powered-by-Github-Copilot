@@ -526,3 +526,33 @@ describe("the card's words from the classifier (review #214)", () => {
     for (const l of all) expect(l).not.toMatch(/is given\.|a translated string|\^ escapes/);
   });
 });
+
+describe("loops and ifs (commands-remote-2)", () => {
+  const rules = (cmd: string, shell: ShellId = "bash") => classifyCommand(cmd, shell, contextOf("linux")).findings.map(f => f.rule);
+
+  it("doesn't call a read interactive when its loop or if is given a file or text to read", () => {
+    for (const fed of [
+      "while read -r l; do echo \"$l\"; done < list.txt",
+      "while read -r l; do echo \"$l\"; done <<< \"a b\"",
+      "while read -r l; do echo \"$l\"; done <<EOF\na\nEOF",
+      "while true; do read -r l || break; echo \"$l\"; done < list.txt",
+      "if read -r first; then echo \"$first\"; fi < list.txt",
+      "while read -r a; do while read -r b; do echo; done < inner.txt; done < outer.txt",
+      "while read -r a; do if true; then echo; fi; done < list.txt",
+    ]) expect(rules(fed), fed).not.toContain("unclear.interactive");
+    // Nothing to read but the user's typing, a closer it can't pair up, or a nested shell's loop: it still says so.
+    for (const bare of [
+      "while read -r l; do echo \"$l\"; done",
+      "while read -r a; do while read -r b; do echo; done; done < x.txt; read -r c",
+      "done < list.txt; read -r l",
+      "bash -c 'while read -r l; do echo; done' < list.txt",
+    ]) expect(rules(bare), bare).toContain("unclear.interactive");
+  });
+
+  it("reads a for loop's variable as an assignment: one that changes how commands are found or run is unclear", () => {
+    expect(rules("for i in 1 2; do echo $i; done")).not.toContain("unclear.assignment");
+    for (const risky of ["for PATH in /tmp/x; do ls; done", "for LD_PRELOAD in /tmp/x.so; do ls; done", "for GIT_SSH_COMMAND in x; do git fetch; done", "for $v in a; do ls; done"]) {
+      expect(rules(risky), risky).toContain("unclear.assignment");
+    }
+  });
+});
