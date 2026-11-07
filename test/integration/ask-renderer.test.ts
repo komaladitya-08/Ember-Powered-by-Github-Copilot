@@ -118,6 +118,27 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("leaves Esc and ↑ to an input method while it composes a word, and closes or goes back only after (companion-5)", async () => {
+    const page = await pageAt();
+    try {
+      const input = page.locator("#q");
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ sees: null, history: ["An earlier request"] }));
+      await input.fill("にほ");
+      const key = (k: string, composing: boolean) => input.evaluate((e, a) => e.dispatchEvent(new KeyboardEvent("keydown", { key: a.k, isComposing: a.composing, bubbles: true, cancelable: true })), { k, composing });
+      // Esc cancels the half-composed word in the input method, not the whole box.
+      await key("Escape", true);
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.closes)).toBe(0);
+      // ↑ moves within the input method's candidates, not to an earlier request.
+      await key("ArrowUp", true);
+      expect(await input.inputValue()).toBe("にほ");
+      // Composition over: Esc closes the box as always, and ↑ goes back through earlier requests.
+      await key("ArrowUp", false);
+      expect(await input.inputValue()).toBe("An earlier request");
+      await key("Escape", false);
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.closes)).toBe(1);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("retains the draft and selection through late context, microphone updates and dismissal", async () => {
     const page = await pageAt();
     try {

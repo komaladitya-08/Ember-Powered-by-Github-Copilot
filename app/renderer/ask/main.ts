@@ -175,7 +175,8 @@ input.addEventListener("keydown", e => {
     return;
   }
   if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-  if (!historyKey(input.value, input.selectionStart, input.selectionEnd, e.key)) return;
+  // An input method composing a word uses ↑ and ↓ for its candidates (companion-5).
+  if (e.isComposing || !historyKey(input.value, input.selectionStart, input.selectionEnd, e.key)) return;
   const text = history.step(e.key === "ArrowUp" ? -1 : 1, input.value);
   if (text === null) return;
   e.preventDefault();
@@ -188,7 +189,8 @@ input.addEventListener("input", fit);
 new MutationObserver(fit).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
 // A small work area can narrow the window independently of the text size; measure every wrapped row again.
 new ResizeObserver(() => { fitMeta(); fit(); }).observe(form);
-window.addEventListener("keydown", e => { if (e.key === "Escape") window.emberAsk.close(); });
+// Esc while an input method composes a word cancels that word, not the box (companion-5).
+window.addEventListener("keydown", e => { if (e.key === "Escape" && !e.isComposing) window.emberAsk.close(); });
 window.addEventListener("focus", () => input.focus());
 // The box went away: what was left in it (after Esc, or a click away) is selected, so typing replaces it when it opens
 // again instead of running on from it ("draftwhat can you do"); End or a click keeps it. Done now, while nothing can be
