@@ -123,6 +123,35 @@ export const APP_NAMES: Readonly<Record<OS, Readonly<Record<string, string>>>> =
   }),
 };
 
+/**
+ * The password managers and password prompts on every OS's never-look list (shared/never-look.ts), as people say them
+ * on any OS (safety-privacy-v2: What Ember did said "Read in Keepassxc"). Looked up after the OS's own table, which
+ * stays as it was. GNOME's Seahorse is "Passwords and Keys", as its launcher says.
+ */
+const PASSWORD_APPS = table({
+  keepassxc: "KeePassXC",
+  "org.keepassxc.keepassxc": "KeePassXC",
+  keepass: "KeePass",
+  "1password": "1Password",
+  bitwarden: "Bitwarden",
+  lastpass: "LastPass",
+  dashlane: "Dashlane",
+  nordpass: "NordPass",
+  roboform: "RoboForm",
+  enpass: "Enpass",
+  keeper: "Keeper",
+  strongbox: "Strongbox",
+  macpass: "MacPass",
+  seahorse: "Passwords and Keys",
+  "org.gnome.seahorse": "Passwords and Keys",
+  "org.gnome.seahorse.application": "Passwords and Keys",
+  "passwords and keys": "Passwords and Keys",
+  "keychain access": "Keychain Access",
+  polkit: "Password prompt (polkit)",
+  credentialuibroker: "Windows Security",
+  securityagent: "Password prompt (SecurityAgent)",
+});
+
 let appOs: OS = "linux";
 
 /** Which OS's names friendlyApp uses: called once at start-up (main with its platform's OS, the settings window with Status.platform.os). */
@@ -180,6 +209,8 @@ function familiar(names: Readonly<Record<string, string>>, n: string): string {
   const known = names[n.toLowerCase()];
   // An empty name is a real answer: a program that is never worth naming (Windows' frame host for packaged apps).
   if (known !== undefined) return known;
+  const password = PASSWORD_APPS[n.toLowerCase()];
+  if (password !== undefined) return password;
   if (/^libreoffice/i.test(n)) return "LibreOffice";
   // A desktop id (org.example.App, also with more parts): its last part, known or capitalised.
   if (/^[a-z]{2,}(\.[\w-]+){2,}$/i.test(n)) {

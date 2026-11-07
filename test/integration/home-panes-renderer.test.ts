@@ -261,6 +261,36 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     await page.close();
   }, 30_000);
 
+  it("shows every tag whole at each text size, and an Always in an app as a lasting grant (safety-privacy-10)", async () => {
+    const at = minutesAgo(1);
+    const thunderbird = { app: "thunderbird", kind: "click", element: { role: "push button", name: "Send" } };
+    const entries: ActivityEntry[] = [
+      { t: at, event: "decision", verdict: "allow", autonomy: true, ...thunderbird },
+      { t: at, event: "confirm", answer: "always", ...thunderbird },
+      { t: at, event: "confirm", answer: "once", ...thunderbird },
+      { t: at, event: "confirm", answer: "deny", ...thunderbird },
+      { t: at, event: "confirm", answer: "expired", ...thunderbird },
+      { t: at, event: "action", ok: false, error: "it didn't work", ...thunderbird },
+      { t: at, event: "decision", verdict: "deny", kind: "read", app: "keepassxc", reason: "this app is on the user's never-look list" },
+      { t: at, event: "command", phase: "decided", verdict: "announce", shell: "bash", target: "local", reason: "r" },
+      { t: at, event: "remote", step: "connected", host: "build-01" },
+    ];
+    const page = await open("home", { activity: entries, viewport: { width: 700, height: 900 } });
+    await page.locator("#activity-fold > summary").click();
+    await expect.poll(() => lineCount(page)).toBe(entries.length);
+    const tags = await page.locator("#activity .tag").allInnerTexts();
+    expect(tags).toEqual(expect.arrayContaining(["Without asking", "Always allowed", "You allowed", "You said no", "No answer", "Didn't work", "Refused", "Announced", "Connected"]));
+    expect(await page.locator("#activity").innerText()).toContain("Read in KeePassXC");
+    expect(await page.locator("#activity").innerText()).toContain("From now on Ember may act in Thunderbird without asking first");
+    for (const size of ["", "large", "larger"]) {
+      await page.evaluate(sz => { if (sz) document.documentElement.dataset.textSize = sz; else delete document.documentElement.dataset.textSize; }, size);
+      const cut = await page.locator("#activity .tag").evaluateAll(els => els.filter(e => e.scrollWidth > e.clientWidth).map(e => e.textContent));
+      expect(cut, size || "default").toEqual([]);
+    }
+    await evidence(page, "activity-tags");
+    await page.close();
+  });
+
   it("never says Ember did nothing when its first read of the record fails (home-10)", async () => {
     const page = await open("home", { activity: "fail" });
     await page.locator("#activity-fold > summary").click();

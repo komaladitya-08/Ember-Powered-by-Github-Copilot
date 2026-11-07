@@ -843,9 +843,12 @@ function commandEnd(e: ActivityEntry, what: string): EntryView {
   }
 }
 
-/** An answer to one of Ember's questions: "You allowed", "You said no"… (the same tags as the confirm lines). */
+/**
+ * An answer to one of Ember's questions: "You allowed", "You said no"… (the same tags as the confirm lines). "Always in
+ * <app>" is a lasting grant, not a one-off yes, so it has its own tag (safety-privacy-10).
+ */
 function answerTag(answer: unknown): Pick<EntryView, "tag" | "cls"> {
-  return answer === "once" || answer === "always" ? { tag: "You allowed", cls: "ok" }
+  return answer === "always" ? { tag: "Always allowed", cls: "ok" } : answer === "once" ? { tag: "You allowed", cls: "ok" }
     : answer === "deny" ? { tag: "You said no", cls: "no" } : answer === "stopped" ? { tag: "Stopped", cls: "no" } : { tag: "No answer", cls: "no" };
 }
 
@@ -959,6 +962,8 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       if (e.verdict === "allow") return e.autonomy === true ? { tag: "Without asking", cls: "", what } : null; // (otherwise the action line says it)
       return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: userWords(e.reason) };
     case "confirm":
+      // A lasting grant says what it changes, as Apps & privacy's list of them does.
+      if (e.answer === "always") return { ...answerTag(e.answer), what, why: `From now on Ember may act in ${e.app ? friendlyApp(e.app) : "this app"} without asking first, but it still asks before anything hard to undo.` };
       return { ...answerTag(e.answer), what };
     case "action":
       return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: userWords(forUser(e.error)) };

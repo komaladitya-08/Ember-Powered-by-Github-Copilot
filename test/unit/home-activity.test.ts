@@ -135,6 +135,21 @@ describe("What Ember did: the whole record, a page at a time (safety-privacy-5)"
   });
 });
 
+describe("What Ember did: tags and names (safety-privacy-10, safety-privacy-v2)", () => {
+  it("tells a lasting grant from a one-off yes, and says what it changes", () => {
+    const send = { t, event: "confirm", kind: "click", app: "gedit", element: { role: "push button", name: "Save" } };
+    expect(describeEntry({ ...send, answer: "once" })).toEqual({ tag: "You allowed", cls: "ok", what: "Click “Save” in gedit" });
+    expect(describeEntry({ ...send, answer: "always" })).toEqual({ tag: "Always allowed", cls: "ok", what: "Click “Save” in gedit", why: "From now on Ember may act in gedit without asking first, but it still asks before anything hard to undo." });
+  });
+
+  it("names a password manager it refused to read as people say it", () => {
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "keepassxc", reason: "this app is on the user's never-look list" }))
+      .toEqual({ tag: "Refused", cls: "no", what: "Read in KeePassXC", why: "This app is on your never-look list." });
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "1password", reason: "r" })?.what).toBe("Read in 1Password");
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "seahorse", reason: "r" })?.what).toBe("Read in Passwords and Keys");
+  });
+});
+
 describe("What Ember did: when the record can't be read (home-10)", () => {
   it("says the list may be old, or that nothing can show yet, and where the whole record is", () => {
     expect(activityProblemText(true)).toBe("Ember couldn't read its record just now, so this list may be out of date. It tries again every few seconds; the whole record is in the folder below.");
