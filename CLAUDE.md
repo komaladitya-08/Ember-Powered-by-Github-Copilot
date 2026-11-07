@@ -20,7 +20,7 @@ Topic rules in `.claude/rules/` load when you open matching files:
 
 ## Commands
 
-Use Node 22.12 or later and npm 11.6.2 (`engines` and `packageManager` in package.json). npm 10 crashes with "Cannot read properties of null (reading edgesOut)"; fix it with `npm install -g npm@11.6.2`. Install with `npm ci`. Where the Electron binary can't download, `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci` is enough for lint, typecheck, unit tests and build; `npx install-electron` fetches the binary later.
+Use Node 22.12 or later and npm 11.6.2 (`engines` and `packageManager` in package.json). npm 10 crashes with "Cannot read properties of null (reading edgesOut)"; fix it with `npm install -g npm@11.6.2` (for docs/DEVELOPING.md §3's root-owned /opt/node22, `sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2`). Install with `npm ci`. Where the Electron binary can't download, `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci` is enough for lint, typecheck, unit tests and build; `npx install-electron` fetches the binary later.
 
 ```sh
 npm run dev                    # build into dist/app (scripts/build-app.mjs) and launch Electron; on a Mac: npm run dev:mac

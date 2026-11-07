@@ -140,6 +140,22 @@ describe("docs/DEVELOPING.md", () => {
     expect(flat(section(dev, "7. Packages"))).toContain(`\`~/.config/autostart/ember.desktop\` (marked \`${marker}\`); an \`ember.desktop\` you made yourself is left alone`);
   });
 
+  it("§3 leaves /opt/node22 owned by root and upgrades npm there as root, so a normal account can follow it (install-docs-8)", () => {
+    const dev = read("docs/DEVELOPING.md");
+    const s3 = section(dev, "3. Install Node 22 and npm 11");
+    // Node's tarball is owned by uid 1001, and tar run as root keeps its owners unless told not to.
+    const tar = s3.split("\n").find(l => /\btar -?\w*x/.test(l) || /\btar --/.test(l)) ?? "";
+    expect(tar).toMatch(/^sudo mkdir -p \/opt\/node22 && sudo tar --no-same-owner -xJf node-v[\d.]+-linux-x64\.tar\.xz -C \/opt\/node22 --strip-components=1$/);
+    // sudo's secure_path leaves /opt/node22/bin out, so npm runs through env with Node's PATH.
+    const root = "sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2";
+    expect(s3).toContain(`\n${root}\n`);
+    // The RHEL 8 sections (§1–§9) never upgrade npm there as the user, which fails with EACCES.
+    const rhel = dev.slice(dev.indexOf("## 1. "), dev.indexOf("## 10. Windows"));
+    expect(rhel.replaceAll(root, "").match(/npm install -g npm@/g) ?? []).toEqual([]);
+    expect(section(dev, "9. Troubleshooting")).toContain(`\`${root}\``);
+    expect(read("CLAUDE.md")).toContain(`\`${root}\``);
+  });
+
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
     const paths = [...WINDOWS_MIC_FIX.matchAll(/Settings › [^()]+?microphone/g)].map(m => m[0]);
     expect(paths.length).toBe(2);

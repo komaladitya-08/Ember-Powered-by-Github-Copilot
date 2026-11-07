@@ -48,13 +48,15 @@ glibc 2.28):
 
 ```bash
 curl -fsSLO https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-x64.tar.xz
-sudo mkdir -p /opt/node22 && sudo tar -xJf node-v22.22.0-linux-x64.tar.xz -C /opt/node22 --strip-components=1
+sudo mkdir -p /opt/node22 && sudo tar --no-same-owner -xJf node-v22.22.0-linux-x64.tar.xz -C /opt/node22 --strip-components=1
 echo 'export PATH=/opt/node22/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
-npm install -g npm@11.6.2
+sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2
 ```
 
 npm 10 crashes while resolving the test tools (`Cannot read properties of null (reading
-'edgesOut')`), so npm 11 is required.
+'edgesOut')`), so npm 11 is required. Node's tarball is owned by uid 1001, which tar run as root would keep
+(`--no-same-owner` makes root the owner instead), so /opt/node22 is root's and npm upgrades itself there as root;
+`sudo env PATH=…` is needed because sudo's `secure_path` leaves /opt/node22/bin out.
 
 ## 4. Turn on accessibility
 
@@ -1156,7 +1158,7 @@ On Linux (Windows: §10.9, macOS: §11.8):
 |---|---|
 | Setup check says "Wayland session" | Log in with **GNOME on Xorg** (§1) |
 | `The SUID sandbox helper binary was found, but is not configured correctly` | User namespaces are disabled (common on STIG-hardened machines; check `sysctl user.max_user_namespaces`, 0 means disabled). For development only: `npx electron . --no-sandbox`. The RPM installs the setuid sandbox helper, so installed Ember works there; `ember doctor` checks it. |
-| `npm ci` fails with `edgesOut` | Upgrade npm: `npm install -g npm@11.6.2` |
+| `npm ci` fails with `edgesOut` | Upgrade npm: `sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2` for the Node in /opt/node22 (§3); a Node of your own (nvm, a user prefix) upgrades without sudo. `EACCES` there means /opt/node22 isn't root's: `sudo chown -R root:root /opt/node22` |
 | Electron download fails | `npx install-electron` |
 | Ember doesn't react to “Hey Ember” | Check the **Voice** section: the models must be downloaded and the state must say “Listening for ‘Hey Ember’”. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
 | "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf` |
