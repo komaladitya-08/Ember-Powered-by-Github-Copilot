@@ -622,6 +622,26 @@ describe("a run's tab", () => {
     expect(setup({ textScale: () => { throw new Error("no settings"); } }).ctl.termSize()).toEqual({ cols: 90, rows: 12 });
   });
 
+  it("starts the next run at what fits the new window after an enlarged one was closed, not at the old size (commands-remote-1)", () => {
+    const { ipc, ctl, page, win } = setup();
+    ctl.show();
+    // The user enlarged the window to read a log: its page said a bigger fit.
+    ipc.send(COMMANDS_EXTRA_IPC.size, page(), { cols: 152, rows: 39 });
+    expect(ctl.termSize()).toEqual({ cols: 152, rows: 39 });
+    const old = page();
+    win().close();
+    // The next window opens at its own size, so the next run starts at that one's fit until its page measures.
+    expect(ctl.termSize()).toEqual({ cols: 90, rows: 12 });
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card({ mode: "run" }), run);
+    expect(page().last().tabs[0]).toMatchObject({ cols: 90, rows: 12 });
+    // A size from the closed window's page that comes late counts for nothing; the new page's own does.
+    ipc.send(COMMANDS_EXTRA_IPC.size, old, { cols: 152, rows: 39 });
+    expect(ctl.termSize()).toEqual({ cols: 90, rows: 12 });
+    ipc.send(COMMANDS_EXTRA_IPC.size, page(), { cols: 89, rows: 12 });
+    expect(ctl.termSize()).toEqual({ cols: 89, rows: 12 });
+  });
+
   it("shows a note while running (a distro starting) and the size the page said fits", () => {
     const { ipc, ctl, page } = setup();
     ctl.show();

@@ -325,6 +325,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       win = null;
       view = null;
       closeAsk = false;
+      // The next window opens at its own size, not at what this one was enlarged to (commands-remote-1).
+      size = null;
       // Closed during a countdown: the user didn't get to see it to the end, so no command waiting there runs (fail
       // closed), and the window doesn't come back for the next one.
       cancelAnnouncements(true);
