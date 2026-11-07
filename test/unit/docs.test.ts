@@ -25,7 +25,9 @@ import * as targetCopy from "../../app/renderer/overlay/target-copy";
 import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
+import { SHORTCUTS } from "../../app/shared/shortcuts";
 import { ISSUES_URL } from "../../app/shared/support";
+import { STEP_TEXT, WELCOME_STEPS } from "../../app/renderer/home/welcome-copy";
 import { CLEAR_SPEECH, MEMORY_MODEL, MEMORY_MODEL_BYTES, NATURAL_VOICE, SUPERTONIC_VOICE } from "../../app/voice/models";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
@@ -356,6 +358,23 @@ describe("README.md", () => {
     const speech = flat(section(read("docs/DEVELOPING.md"), "How speech runs (native synthesis, native or WebAssembly listening)"));
     expect(speech).toContain("Supertonic 3");
     expect(speech).toContain("**Hear me more clearly** (`voice.clearHearing`, Settings › Voice)");
+  });
+
+  it("says what you need before the downloads, and what happens at first start after the installs (install-docs-7)", () => {
+    const headings = readme.split("\n").filter(l => /^## /.test(l));
+    const at = (h: string) => headings.indexOf(h);
+    expect(at("## What you need")).toBeGreaterThan(-1);
+    expect(at("## What you need")).toBeLessThan(at("## Download"));
+    const need = flat(section(readme, "What you need"));
+    for (const w of ["**GitHub account with Copilot**", "**Copilot CLI**", "your own model provider", "**GNOME on Xorg**", "MB of memory", "GB of disk"]) expect(need, w).toContain(w);
+    // First steps come after every install section, and follow the first window's steps in its own words.
+    expect(at("## First steps")).toBeGreaterThan(at("## Install on macOS"));
+    const first = flat(section(readme, "First steps"));
+    expect(first).toContain(`${WELCOME_STEPS.length} steps`);
+    for (const step of ["consent", "sign-in", "checks", "try"] as const) expect(first, step).toContain(`**${STEP_TEXT[step].title}**`);
+    // The keys a first-time person needs, Linux's as the other sections name them (Shortcuts has every OS's).
+    for (const id of ["ask", "stop"] as const) expect(first, id).toContain(SHORTCUTS.linux[id].label);
+    expect(first).toContain("`ember doctor`");
   });
 
   it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {

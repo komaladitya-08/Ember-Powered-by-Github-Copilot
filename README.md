@@ -13,6 +13,18 @@ Ember runs on:
 
 Ember's desk, a private display where Ember can work out of your way, is Linux-only.
 
+## What you need
+
+- A **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on the
+  **Copilot CLI** policy), or instead your own model provider or your organisation's model service (see **Use your own
+  model provider** below).
+- One of the computers above. On Linux, log in to a **GNOME on Xorg** session: on GNOME on Wayland, Ember reads apps
+  but takes no screenshots and doesn't borrow the mouse or keyboard.
+- About 1 GB of disk for Ember and its standard speech models, and each optional extra's size again if you turn it on
+  (**Computers without internet access** lists them).
+- About 600 MB of memory while Ember is idle and listening, and about 550 MB more with **Hear me more clearly**.
+- A microphone only for “Hey Ember”: everything else works typed.
+
 ## Download
 
 This README describes 0.1.1, which isn't published yet. Until it is,
@@ -191,6 +203,20 @@ Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Termin
 : > ~/ember-doctor.txt
 open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --doctor; cat ~/ember-doctor.txt
 ```
+
+## First steps
+
+1. Start Ember from your apps (Linux), the Start menu (Windows) or Applications (macOS). Its first window takes you
+   through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree), **Sign
+   in to GitHub** (or **Use my own provider**), **Checking this computer** (what to fix, with a button where Ember can
+   do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Your Ember**, a summary
+   of what you chose.
+2. To ask, press Ctrl+Alt+Space (on Windows Win+Alt+Space, on a Mac Control+Shift+Command+Space; see **Shortcuts**),
+   type your request and press Enter. Ember answers in its bubble beside your cursor, and asks "May I?" before it does
+   something in an app.
+3. To stop, press Ctrl+Alt+X or say “Ember, stop”: everything stops at once.
+4. If something doesn't work, run the setup check (`ember doctor`, the AppImage's `doctor`, `.\ember-doctor.cmd` on
+   Windows, or the `open` command above on a Mac), or open Ember's settings with Ctrl+Alt+E.
 
 ## Hear about new versions
 
