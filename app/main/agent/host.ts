@@ -43,7 +43,7 @@ import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { copilotOneShot } from "./one-shot";
-import { PROJECT_SYSTEM } from "./project";
+import { PROJECT_SYSTEM, ProjectModelError, projectFailureText, type ProjectModelFailure } from "./project";
 import { runCommandTool } from "../commands/flow";
 import { DEFAULT_TERM_SIZE } from "../commands/window";
 import { afterTheStep } from "../policy/audit";
@@ -776,7 +776,9 @@ const agrees = (reply: string, asked: string): boolean => {
 };
 
 export class AgentHost {
-  private projectModel: ReturnType<typeof copilotOneShot> | null = null;
+  private projectModel: ((system: string, prompt: string, signal: AbortSignal, onFailure?: (f: ProjectModelFailure) => void) => Promise<string | null>) | null = null;
+  /** The model service project requests go to, for the words of their errors. */
+  private projectService: ServiceKind = false;
   private projectRun: AbortController | null = null;
   private client: CopilotClient | null = null;
   /** The connected runtime, for the extensions' marketplaces (null until Copilot is ready). */
@@ -1974,10 +1976,11 @@ export class AgentHost {
       this.conversationService = service;
       if (gen !== this.gen) return;
 
-      this.projectModel = (system, prompt, signal) => copilotOneShot({
+      this.projectModel = (system, prompt, signal, onFailure) => copilotOneShot({
         client, model: this.status.conductorModel, provider: provider?.config,
-        workDir: path.join(this.o.userData, "copilot", "empty-workdir"), log: this.o.log.child("project"), purpose: "project",
+        workDir: path.join(this.o.userData, "copilot", "empty-workdir"), log: this.o.log.child("project"), purpose: "project", onFailure,
       })(system, prompt, signal);
+      this.projectService = kindOf(provider);
       const where = provider?.kind === "user" ? serviceHost(provider.config.baseUrl) : null;
       const signedIn = login ? `Signed in as ${login}.` : where ? `Connected to ${where}.` : "Connected.";
       this.setStatus({
@@ -2720,11 +2723,20 @@ export class AgentHost {
     return first.replace(/\s+(?:Don't|Finish the task).*$/, "").slice(0, 320);
   }
 
+  /**
+   * The model's answer to a project request, or null when it was stopped or can't be asked now. A call the model
+   * service refused or couldn't finish throws ProjectModelError with one sentence for the cause (integrations-5).
+   */
   async runProject(prompt: string, run: AbortController): Promise<string | null> {
     if (run.signal.aborted || this.projectRun || this.status.phase !== "ready" || this.providerMoved() || !this.projectModel || this.o.screenLocked?.()) return null;
     this.projectRun = run;
     try {
-      return await this.projectModel(PROJECT_SYSTEM, prompt, run.signal);
+      let failure: ProjectModelFailure | null = null;
+      const answer = await this.projectModel(PROJECT_SYSTEM, prompt, run.signal, f => { failure = f; });
+      if (answer === null && failure && !run.signal.aborted) {
+        throw new ProjectModelError(projectFailureText(failure, { provider: this.projectService, settingsKey: this.o.settingsKey ? this.o.settingsKey() : this.sys.shortcuts?.settings.label }));
+      }
+      return answer;
     } finally {
       if (this.projectRun === run) this.projectRun = null;
     }

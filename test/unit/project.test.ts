@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { projectCommandFolder, projectCommandText, projectNames, projectPrompt, projectRequest, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { projectCommandFolder, projectCommandText, projectFailureText, projectNames, projectPrompt, projectRequest, PROJECT_MODEL_FAILED, PROJECT_SYSTEM } from "../../app/main/agent/project";
 import { applyProjectPatch, draftProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
-import { copilotOneShot } from "../../app/main/agent/one-shot";
+import { copilotOneShot, type OneShotFailure } from "../../app/main/agent/one-shot";
 import type { Logger } from "../../app/main/logger";
 
 let dir: string;
@@ -134,6 +134,38 @@ it("accepts a single command and binds it to the chosen local folder", async () 
   await fs.rename(folder, folder + "-old");
   await fs.mkdir(folder);
   expect(selected.current()).toBe(false);
+});
+
+it("says why the model service refused a project request, and logs its kind, never its words (integrations-5)", async () => {
+  const listeners: ((e: unknown) => void)[] = [];
+  let refusal: { errorType: string; statusCode: number; message: string } = { errorType: "authentication", statusCode: 401, message: "Incorrect API key provided: sk-…; your file said 'secret plan'" };
+  const session = {
+    rpc: { tools: { initializeAndValidate: vi.fn().mockResolvedValue(undefined), getCurrentMetadata: vi.fn().mockResolvedValue({ tools: [] }) } },
+    on: (fn: (e: unknown) => void) => { listeners.push(fn); return () => undefined; },
+    // As the SDK does: the session's error event, then a rejection with its words only.
+    sendAndWait: vi.fn(async () => { for (const fn of listeners) fn({ type: "session.error", data: refusal }); throw new Error(refusal.message); }),
+    abort: vi.fn().mockResolvedValue(undefined),
+  };
+  const client = { createSession: vi.fn().mockResolvedValue(session), deleteSession: vi.fn().mockResolvedValue(undefined) };
+  const warn = vi.fn();
+  const failures: OneShotFailure[] = [];
+  const call = copilotOneShot({ client: client as never, model: "m", workDir: dir, log: { warn } as unknown as Logger, purpose: "project", onFailure: f => failures.push(f) });
+  expect(await call(PROJECT_SYSTEM, "Review this file.", new AbortController().signal)).toBeNull();
+  expect(failures[0]).toMatchObject({ errorType: "authentication", statusCode: 401 });
+  expect(projectFailureText(failures[0], { provider: "user", settingsKey: "Ctrl+Alt+E" })).toBe("Your model service refused the request. Check its API key in Ember's settings (Ctrl+Alt+E).");
+  expect(warn).toHaveBeenCalledWith("project.model_failed", { errorType: "authentication", statusCode: 401, timedOut: false });
+  expect(JSON.stringify(warn.mock.calls)).not.toContain("secret plan");
+  refusal = { errorType: "rate_limit", statusCode: 429, message: "Rate limit reached" };
+  await call(PROJECT_SYSTEM, "Again.", new AbortController().signal);
+  expect(projectFailureText(failures[1], { provider: "user" })).toBe("The model service's usage limit was reached for now. Try again a bit later.");
+  expect(client.deleteSession).toHaveBeenCalledTimes(2);
+});
+
+it("words a project's own failures for the files, the wait and the unknown (integrations-5)", () => {
+  expect(projectFailureText({ message: "prompt token count of 140000 exceeds the limit of 128000" })).toBe("The selected files and request are more than the model can take in at once. Choose fewer or smaller files.");
+  expect(projectFailureText({ message: "one-shot timed out", timedOut: true })).toBe("The model took more than two minutes over it. Try fewer or smaller files, or a shorter request.");
+  expect(projectFailureText({ message: "fetch failed ECONNREFUSED" }, { provider: "user" })).toBe("I can't reach your model service right now. Check the network, then ask again.");
+  expect(projectFailureText(null)).toBe(PROJECT_MODEL_FAILED);
 });
 
 it("verifies the temporary Copilot session before sending and deletes it after an answer", async () => {

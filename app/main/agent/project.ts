@@ -6,6 +6,7 @@ import { z } from "zod";
 import { memoryRefusal } from "../memory/guard";
 import type { ProjectMode, ProjectSelection } from "../../shared/ipc";
 import type { ProjectExchange } from "./project-workspaces";
+import { friendlyError, type ServiceKind } from "./presenter";
 
 export const PROJECT_FILES = 6;
 const FILE_BYTES = 24 * 1024;
@@ -13,6 +14,28 @@ const TOTAL_BYTES = 64 * 1024;
 const textFile = /\.(?:[cm]?[jt]sx?|py|go|rs|rb|java|kt|swift|cs|[ch](?:pp)?|sh|ps1|css|html|sql|json|toml|ya?ml|md|rst|txt|diff|patch)$/i;
 const privateName = /(?:^\.|secret|credential|passwd|password|private.?key|token|\.lock$)/i;
 export class ProjectInputError extends Error {}
+
+/** Why a project request's model call failed, as the model service said it (never the prompt, which holds the files). */
+export interface ProjectModelFailure { message: string; errorType?: string; statusCode?: number; timedOut?: boolean }
+/** A project request the model service refused or couldn't finish: `message` is one plain sentence for Projects. */
+export class ProjectModelError extends Error {}
+/** The generic sentence, kept only for a failure nothing says more about. */
+export const PROJECT_MODEL_FAILED = "The model didn't finish the project request. Try again.";
+
+/**
+ * What Projects says when the model call failed (integrations-5): the conversation's own sentence for the cause
+ * (friendlyError: a refused key, a usage limit, a model that isn't there, the service down), and words of its own where
+ * a project differs, a request over the model's limit (the files, not the conversation) and the two-minute wait.
+ */
+export function projectFailureText(f: ProjectModelFailure | null, ctx: { provider?: ServiceKind; settingsKey?: string | null } = {}): string {
+  if (!f) return PROJECT_MODEL_FAILED;
+  if (f.timedOut) return "The model took more than two minutes over it. Try fewer or smaller files, or a shorter request.";
+  const m = `${f.errorType ?? ""} ${f.message}`;
+  if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens|context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) {
+    return "The selected files and request are more than the model can take in at once. Choose fewer or smaller files.";
+  }
+  return friendlyError(f.message, f.errorType, { statusCode: f.statusCode, provider: ctx.provider, settingsKey: ctx.settingsKey });
+}
 
 export const projectRequest = z.object({
   mode: z.enum(["review", "plan", "patch"]),

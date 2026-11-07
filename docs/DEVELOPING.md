@@ -1974,6 +1974,11 @@ confirm the destination. If the source has changed since you sent it, draft the 
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
 unsupported diff formats remain available as text.
 
+A request the model service refuses or can't finish says why in the conversation's words (`projectFailureText`): a
+refused key points at the key in settings, a usage limit says to try later, files over the model's limit say to choose
+fewer or smaller ones, and the two-minute wait says so. "Try again" is left for a failure nothing says more about. The
+log keeps the error's type and status code only, never its words (the service may quote the files).
+
 Open **Run a project command** to choose a local starting folder and enter a command. Ember applies the
 same settings, classifier and stop controls as its command window. Each run waits for approval of the
 exact command and folder. Output stays in the command window. The connected model does not receive it.

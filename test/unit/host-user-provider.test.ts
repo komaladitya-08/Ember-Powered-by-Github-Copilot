@@ -12,7 +12,7 @@ import path from "node:path";
 import type { Logger } from "../../app/main/logger";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- a pretend SDK */
-const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[] }));
+const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[], refuse: null as null | { errorType: string; statusCode: number; message: string } }));
 vi.mock("@github/copilot-sdk", async importOriginal => {
   const real = await importOriginal<typeof import("@github/copilot-sdk")>();
   class FakeClient {
@@ -25,7 +25,16 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async listSessions() { return []; }
     async deleteSession() { /* nothing */ }
     ping() { return Promise.resolve({}); }
-    async createSession(cfg: any) { sim.sessions.push(cfg); return { sessionId: cfg.sessionId ?? `s${sim.sessions.length}`, on: (fn: (e: any) => void) => { sim.listeners.push(fn); return () => undefined; }, rpc: { tools: { initializeAndValidate: async () => ({}), getCurrentMetadata: async () => ({ tools: [] }) } }, disconnect: async () => undefined }; }
+    async createSession(cfg: any) {
+      sim.sessions.push(cfg);
+      const own: ((e: any) => void)[] = [];
+      // A project request: the service's refusal as the SDK passes it (the event, then its words alone).
+      const sendAndWait = async () => {
+        if (!sim.refuse) return { data: { content: "An answer." } };
+        for (const fn of own) fn({ type: "session.error", data: sim.refuse });
+        throw new Error(sim.refuse.message);
+      };
+      return { sessionId: cfg.sessionId ?? `s${sim.sessions.length}`, sendAndWait, abort: async () => undefined, on: (fn: (e: any) => void) => { own.push(fn); sim.listeners.push(fn); return () => undefined; }, rpc: { tools: { initializeAndValidate: async () => ({}), getCurrentMetadata: async () => ({ tools: [] }) } }, disconnect: async () => undefined }; }
     async resumeSession(id: string) { throw new Error(`Session not found: ${id}`); }
   }
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
@@ -203,6 +212,22 @@ describe("AgentHost with the user's own model provider", () => {
     // Copilot's own words stay as they were.
     expect(idleWord({ phase: "error", reason: "network" })).toBe("Offline");
     expect(idleWord({ phase: "error", reason: "network", service: { kind: "admin", host: "x" } })).toBe("Offline");
+  });
+
+  it("says why the provider refused a project request instead of \"Try again\" (integrations-5)", async () => {
+    sim.clients = []; sim.sessions = [];
+    const { host } = makeHost(() => OWN);
+    expect(await host.start(null)).toBe("ready");
+    expect(await host.runProject("Review this.", new AbortController())).toBe("An answer.");
+    sim.refuse = { errorType: "authentication", statusCode: 401, message: "Incorrect API key provided" };
+    try {
+      await expect(host.runProject("Review this.", new AbortController())).rejects.toThrow(/^Your model service refused the request\. Check its API key in Ember's settings/);
+      sim.refuse = { errorType: "rate_limit", statusCode: 429, message: "Rate limit reached" };
+      await expect(host.runProject("Review this.", new AbortController())).rejects.toThrow("The model service's usage limit was reached for now. Try again a bit later.");
+    } finally {
+      sim.refuse = null;
+      await host.stop();
+    }
   });
 
   it("reconnects for a changed model", async () => {

@@ -65,7 +65,7 @@ import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectCommandFolder, projectCommandText, projectNames, projectSelection, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, type ProjectSource } from "./agent/project";
+import { projectCommandFolder, projectCommandText, projectNames, projectSelection, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, type ProjectSource } from "./agent/project";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -2150,7 +2150,7 @@ function start(): void {
       if (run.signal.aborted || projectFiles !== files || host !== agent || !projectAvailable()) return { error: "Project request cancelled." };
       const answer = await host.runProject(prompt, run);
       if (run.signal.aborted || !projectAvailable()) return { error: "Project request cancelled." };
-      if (!answer) return { error: "The model didn't finish the project request. Try again." };
+      if (!answer) return { error: PROJECT_MODEL_FAILED };
       projectPatch = mode === "patch" ? draftProjectPatch(answer, sources) : null;
       const shown = answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer;
       projectExchange = memoryRefusal(answer) ? null : { mode, question, answer: shown };
@@ -2160,7 +2160,8 @@ function start(): void {
         ...(projectPatch ? { patch: { name: projectPatch.source.name, diff: projectPatch.diff } } : {}),
       };
     } catch (err) {
-      return { error: run.signal.aborted ? "Project request cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't read the selected files. Choose them again." };
+      // The model service's refusal says what to do about it (integrations-5); a file that couldn't be read says which.
+      return { error: run.signal.aborted ? "Project request cancelled." : err instanceof ProjectInputError || err instanceof ProjectModelError ? err.message : "Couldn't read the selected files. Choose them again." };
     } finally {
       if (projectJob === run) projectJob = null;
     }
