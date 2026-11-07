@@ -3099,7 +3099,7 @@ function start(): void {
       }),
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),
-      userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secrets()).child("agent"), setState, provider: providerNow, admin: () => policy, signInWith: signInWith(),
+      userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secrets()).child("agent"), setState, provider: providerNow, probeProvider: () => providers.api.test(), admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).

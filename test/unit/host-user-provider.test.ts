@@ -12,7 +12,7 @@ import path from "node:path";
 import type { Logger } from "../../app/main/logger";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- a pretend SDK */
-const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[] }));
+const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[] }));
 vi.mock("@github/copilot-sdk", async importOriginal => {
   const real = await importOriginal<typeof import("@github/copilot-sdk")>();
   class FakeClient {
@@ -25,30 +25,35 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async listSessions() { return []; }
     async deleteSession() { /* nothing */ }
     ping() { return Promise.resolve({}); }
-    async createSession(cfg: any) { sim.sessions.push(cfg); return { sessionId: cfg.sessionId ?? `s${sim.sessions.length}`, on: () => () => undefined, rpc: { tools: { initializeAndValidate: async () => ({}), getCurrentMetadata: async () => ({ tools: [] }) } }, disconnect: async () => undefined }; }
+    async createSession(cfg: any) { sim.sessions.push(cfg); return { sessionId: cfg.sessionId ?? `s${sim.sessions.length}`, on: (fn: (e: any) => void) => { sim.listeners.push(fn); return () => undefined; }, rpc: { tools: { initializeAndValidate: async () => ({}), getCurrentMetadata: async () => ({ tools: [] }) } }, disconnect: async () => undefined }; }
     async resumeSession(id: string) { throw new Error(`Session not found: ${id}`); }
   }
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, noticeTitle, stillConnectingTitle } from "../../app/main/agent/host";
+import { AgentHost, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, idleWord, noticeTitle, stillConnectingTitle } from "../../app/main/agent/host";
 import type { BubbleState, EmberState } from "../../app/shared/overlay";
 import { SettingsStore } from "../../app/main/settings";
-import type { ActiveProvider } from "../../app/main/provider";
+import { providerDown, type ActiveProvider, type TestResult } from "../../app/main/provider";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const TOKEN = "gho_" + "t".repeat(36); // not a real token
 const KEY = "sk-" + "k".repeat(40); // not a real key
 const OWN: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: KEY }, models: { conductor: "gpt-4.1", worker: null } };
 
-function makeHost(provider: () => ActiveProvider | null) {
+function makeHost(provider: () => ActiveProvider | null, probeProvider?: () => Promise<TestResult>) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-own-"));
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
   const statuses: string[] = [];
-  const host = new AgentHost({ userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: s => statuses.push(JSON.stringify(s)), provider });
+  const host = new AgentHost({ userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: s => statuses.push(JSON.stringify(s)), provider, ...(probeProvider ? { probeProvider } : {}) });
   return { host, statuses };
 }
+
+const until = async (cond: () => boolean, ms = 5000) => { for (const t0 = Date.now(); !cond() && Date.now() - t0 < ms;) await new Promise(r => setTimeout(r, 10)); return cond(); };
+/** A model server on this computer (Ollama's address shape), with no key. */
+const LOCAL: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "http://127.0.0.1:18109/v1" }, models: { conductor: "llama3.2:3b", worker: null } };
+const REFUSED: TestResult = { ok: false, why: "Ember can't reach 127.0.0.1:18109. Check the address and the network.", cause: "refused" };
 
 describe("AgentHost with the user's own model provider", () => {
   it("sends no GitHub sign-in to the runtime and gives the sessions the provider's config and models", async () => {
@@ -144,6 +149,60 @@ describe("AgentHost with the user's own model provider", () => {
     now = OWN;
     await host.providerChanged();
     expect(host.getStatus().phase).toBe("ready");
+  });
+
+  it("says the model server on this computer isn't running instead of Connected, and connects once it answers (integrations-1)", async () => {
+    sim.clients = []; sim.sessions = [];
+    let answer: TestResult = REFUSED;
+    let probes = 0;
+    const { host } = makeHost(() => LOCAL, async () => { probes++; return answer; });
+    expect(await host.start(null)).toBe("error");
+    expect(host.getStatus()).toMatchObject({
+      phase: "error", reason: "network", service: { kind: "user", host: "127.0.0.1:18109" },
+      detail: "Ember can't reach the model server on this computer (127.0.0.1:18109). Start it, and Ember will connect in a moment.",
+    });
+    expect(idleWord(host.getStatus())).toBe("Can't connect");
+    // Nothing else was started for a server that isn't there (each retry is the one GET, not a runtime).
+    expect(sim.clients).toHaveLength(0);
+    expect(probes).toBe(1);
+    // The server is started: the next try (here the network's change; else the 15 s retry) connects.
+    answer = { ok: true, host: "127.0.0.1:18109", models: 1 };
+    host.networkChanged(true);
+    expect(await until(() => host.getStatus().phase === "ready")).toBe(true);
+    expect(host.getStatus().detail).toBe("Connected to 127.0.0.1:18109.");
+    await host.stop();
+  });
+
+  it("leaves Ready when a turn on its provider fails and nothing answers there, and never probes a remote host at the start (integrations-1)", async () => {
+    sim.clients = []; sim.sessions = []; sim.listeners = [];
+    let answer: TestResult = { ok: true, host: "models.example.com", models: 3 };
+    let probes = 0;
+    const { host } = makeHost(() => OWN, async () => { probes++; return answer; });
+    expect(await host.start(null)).toBe("ready");
+    // A remote host's test goes through other proxy settings than the runtime's: it never vetoes a connect.
+    expect(probes).toBe(0);
+    // A turn that failed with an answer (a status code) says it itself: nothing is asked.
+    for (const fn of sim.listeners) fn({ type: "session.error", data: { errorType: "query", statusCode: 400, message: "Bad request" } });
+    await new Promise(r => setTimeout(r, 20));
+    expect(probes).toBe(0);
+    answer = { ok: false, why: "Ember can't reach models.example.com. Check the address and the network.", cause: "unreachable" };
+    for (const fn of sim.listeners) fn({ type: "session.error", data: { errorType: "query", message: "fetch failed" } });
+    expect(await until(() => host.getStatus().phase === "error")).toBe(true);
+    expect(probes).toBe(1);
+    expect(host.getStatus()).toMatchObject({ reason: "network", detail: "Ember can't reach models.example.com. Check the address and the network: Ember will try again in a moment." });
+    await host.stop();
+  });
+
+  it("words what nothing answering at the provider means, and lets an answer through (integrations-1)", () => {
+    expect(providerDown(REFUSED, "127.0.0.1:18109", true)).toBe("Ember can't reach the model server on this computer (127.0.0.1:18109). Start it, and Ember will connect in a moment.");
+    expect(providerDown({ ok: false, why: "localhost:11434 didn't answer within 10 seconds.", cause: "timeout" }, "localhost:11434", true)).toBe("localhost:11434 didn't answer within 10 seconds. Ember will try again in a moment.");
+    expect(providerDown({ ok: false, why: "x", cause: "refused" }, "models.example.com", false)).toBe("Ember can't reach models.example.com. Check the address and the network: Ember will try again in a moment.");
+    // Something is there: the key, the model list or a certificate is the request's to explain.
+    expect(providerDown({ ok: false, why: "models.example.com didn't accept the API key. Check it, or replace it." }, "models.example.com", false)).toBeNull();
+    expect(providerDown({ ok: true, host: "127.0.0.1:18109", models: null }, "127.0.0.1:18109", true)).toBeNull();
+    // Copilot's own words stay as they were.
+    expect(idleWord({ phase: "error", reason: "network" })).toBe("Offline");
+    expect(idleWord({ phase: "error", reason: "network", service: { kind: "admin", host: "x" } })).toBe("Offline");
   });
 
   it("reconnects for a changed model", async () => {

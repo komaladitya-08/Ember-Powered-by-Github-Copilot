@@ -16,7 +16,8 @@ import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, LOST_RECONNECTING, Presenter, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
-import type { ActiveProvider } from "../provider";
+import { providerDown, type ActiveProvider, type TestResult } from "../provider";
+import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
 import { modelsManaged, type AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
@@ -285,6 +286,12 @@ export interface HostOptions {
    * turns), and tasks already running finish on the endpoint they started with.
    */
   provider?: ProviderConfig | (() => ActiveProvider | null);
+  /**
+   * The user's own provider's connection test (main: the provider service's, the one GET of Test connection, to the
+   * agreed host only, its key only there). Asked before a model server on this computer is connected to, and after a
+   * turn there fails without an answer, so the status never says Connected while nothing listens (integrations-1).
+   */
+  probeProvider?: () => Promise<TestResult>;
   /** Admin lockdown (/etc/ember/policy.json). */
   admin?: () => AdminPolicy;
   /**
@@ -516,6 +523,9 @@ const HELD_RECHECK_MS = 250;
 const CONNECT_WAIT_MS = 15_000;
 export const PROVIDER_MOVED_TASK = "The model service changed before this task could start. Ask me again and I'll use the new one.";
 
+/** Nothing answers at the user's own provider (providerDown's sentence): the start stops there, and is tried again. */
+class ProviderDown extends Error {}
+
 /** What a connection's endpoint is, to tell a change: its kind, config (key included: kept in memory only), models and the key's id (a re-saved key is another owner of the saved conversation). */
 function providerKey(p: ActiveProvider | null): string {
   return p ? JSON.stringify([p.kind, p.config, p.models ?? null, p.keyId ?? null]) : "";
@@ -610,14 +620,17 @@ export function stillConnectingTitle(service?: ActiveProvider["kind"]): string {
   return `I'm still connecting to ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}`;
 }
 
-/** What Ember's handle says when nothing else is going on: a few words (the pill is narrow). */
-export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks">): string {
+/**
+ * What Ember's handle says when nothing else is going on: a few words (the pill is narrow). The user's own provider
+ * unreached is "Can't connect", not "Offline": a model server on this computer that isn't running (integrations-1).
+ */
+export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks"> & { service?: AgentStatus["service"] }): string {
   if (s.phase === "ready") return "Ready";
   if (s.phase === "starting") return "Connecting…";
   if (s.phase === "signed-out") return "Not connected";
   if (s.waitingForTasks) return "Waiting for tasks";
   switch (s.reason) {
-    case "network": return "Offline";
+    case "network": return s.service?.kind === "user" ? "Can't connect" : "Offline";
     case "sign-in": return "Sign-in refused";
     case "no-access": return "No Copilot access";
     case "models": return "No model";
@@ -631,7 +644,7 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
  * Why a request asked now would go unanswered, in the handle's word (idleWord), or null when Ember can answer it (ready)
  * or may still (connecting: a request waits a moment for the connection). The Ask box says it (companion-6).
  */
-export function unansweredWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks"> | undefined): string | null {
+export function unansweredWord(s: Parameters<typeof idleWord>[0] | undefined): string | null {
   return !s || s.phase === "ready" || s.phase === "starting" ? null : idleWord(s);
 }
 
@@ -852,6 +865,7 @@ export class AgentHost {
   private hintOwed = false;
   /** A refused sign-in is being checked with Copilot (checkSignIn): one check at a time. */
   private checkingSignIn = false;
+  private checkingProvider = false;
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
@@ -1026,6 +1040,8 @@ export class AgentHost {
   private conversationEvent(e: PresenterEvent): void {
     // Copilot refused the sign-in mid-session (revoked, expired, the seat removed): it is asked whether it still holds.
     if (e.type === "session.error" && (e.data?.errorType === "authentication" || e.data?.statusCode === 401)) void this.checkSignIn(this.gen);
+    // A turn on the user's own provider failed with no answer from it (no status code): is anything listening there?
+    else if (e.type === "session.error" && this.active?.kind === "user" && typeof e.data?.statusCode !== "number") void this.checkProvider(this.gen);
     if (e.type !== "user.message" || (e as { agentId?: string }).agentId) return;
     const said = typeof e.data?.content === "string" ? e.data.content : undefined;
     const i = said === undefined ? -1 : this.queued.findIndex(r => r.prompt === said);
@@ -1072,6 +1088,30 @@ export class AgentHost {
       this.o.log.warn("agent.sign_in_check_failed", { err });
     } finally {
       this.checkingSignIn = false;
+    }
+  }
+
+  /**
+   * A turn on the user's own provider failed without an answer (integrations-1): its connection test is made. If nothing
+   * answers (a model server on this computer that was stopped, a host gone from the network), Ember leaves Ready for
+   * the reason, so the handle, Home and the next request say why at once, and reconnects later as a start that can't
+   * reach it does (each try asks the provider first). Never while a task is under way: the reconnect would cut it off.
+   */
+  private async checkProvider(gen: number): Promise<void> {
+    const p = this.active;
+    const probe = this.o.probeProvider;
+    if (p?.kind !== "user" || !probe || this.checkingProvider || gen !== this.gen || this.status.phase !== "ready" || this.tasksAtWork()) return;
+    this.checkingProvider = true;
+    try {
+      const down = providerDown(await probe(), serviceHost(p.config.baseUrl), !keyNeeded(p.config.baseUrl));
+      if (!down || gen !== this.gen || this.status.phase !== "ready" || this.tasksAtWork()) return;
+      this.o.log.warn("agent.provider_unreachable", { during: "turn" });
+      this.setStatus({ phase: "error", reason: "network", detail: down });
+      this.retryLater();
+    } catch (err) {
+      this.o.log.warn("agent.provider_check_failed", { err });
+    } finally {
+      this.checkingProvider = false;
     }
   }
 
@@ -1526,6 +1566,14 @@ export class AgentHost {
     });
     let unreachable = false;
     try {
+      // A model server on this computer (Ollama, LM Studio) is asked first whether it listens: nothing else would ask it
+      // before the first request, which then waits about 24 s to fail (integrations-1). Only there: a remote host's
+      // test goes through Electron's proxy settings, which may differ from the runtime's, so it can't veto a connect.
+      if (provider?.kind === "user" && this.o.probeProvider && !keyNeeded(provider.config.baseUrl)) {
+        const down = providerDown(await this.o.probeProvider(), serviceHost(provider.config.baseUrl), true);
+        if (gen !== this.gen) return;
+        if (down) throw new ProviderDown(down);
+      }
       const env = await this.runtimeEnv();
       if (gen !== this.gen) return;
       let client: CopilotClient;
@@ -1957,6 +2005,14 @@ export class AgentHost {
       this.watchHealth(client, gen);
     } catch (err) {
       if (gen !== this.gen) return;
+      if (err instanceof ProviderDown) {
+        // Said as the test said it, and tried again as an offline start is (15 s, 30 s, then every minute).
+        this.o.log.warn("agent.provider_unreachable", { during: "start" });
+        this.setStatus({ phase: "error", reason: "network", detail: err.message });
+        await this.doStop();
+        if (gen === this.gen) this.retryLater();
+        return;
+      }
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
       this.o.log.error("agent.start_failed", { err, online, unreachable });

@@ -858,6 +858,15 @@ until the card below is agreed for the endpoint's host: nothing at all goes to a
 or without a key. It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
 headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever address the service named.
 
+- **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
+  main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn there
+  fails without an answer from it (no status code). Where nothing answers (`providerDown`: refused, timed out or
+  unreachable), Ember leaves Ready for that reason: the status says "Ember can't reach the model server on this computer
+  (127.0.0.1:11434). Start it, and Ember will connect in a moment.", the handle "Can't connect", and the next request
+  says why at once instead of waiting about 24 s. It tries again as an offline start does (15 s, 30 s, then every
+  minute, and at once on the next request), each try only that GET. A remote host isn't asked at a start: Electron's
+  fetch follows the system's proxy settings, which can differ from the runtime's, so its test may not veto a connect.
+  An answer that refuses the key or has no model list never counts as down: the request says that itself.
 - **Consent.** Turning it on with an address shows a card naming the endpoint's host and everything that goes there
   instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
   only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again. The

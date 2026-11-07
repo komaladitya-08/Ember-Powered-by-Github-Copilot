@@ -305,10 +305,15 @@ describe("Test connection", () => {
     expect(await testConnection(settings(), STORED, answer(503))).toEqual({ ok: false, why: "Your model service had a problem on its side. Try again in a moment." });
     const thrown = vi.fn<FetchLike>(async () => { throw Object.assign(new TypeError(`fetch failed for ${KEY}`), { cause: { code: "ECONNREFUSED" } }); });
     const r = await testConnection(settings(), STORED, thrown);
-    expect(r).toEqual({ ok: false, why: "Ember can't reach models.example.com. Check the address and the network." });
+    // Nothing listens there: said so as a cause too, which the status uses (integrations-1).
+    expect(r).toEqual({ ok: false, why: "Ember can't reach models.example.com. Check the address and the network.", cause: "refused" });
     expect(JSON.stringify(r)).not.toContain(KEY);
     const late = vi.fn<FetchLike>(async () => { throw new DOMException("The operation timed out.", "TimeoutError"); });
-    expect(await testConnection(settings(), STORED, late)).toEqual({ ok: false, why: "models.example.com didn't answer within 10 seconds." });
+    expect(await testConnection(settings(), STORED, late)).toEqual({ ok: false, why: "models.example.com didn't answer within 10 seconds.", cause: "timeout" });
+    const lost = vi.fn<FetchLike>(async () => { throw new Error("net::ERR_NAME_NOT_RESOLVED"); });
+    expect(await testConnection(settings(), STORED, lost)).toMatchObject({ ok: false, cause: "unreachable" });
+    const electron = vi.fn<FetchLike>(async () => { throw new Error("net::ERR_CONNECTION_REFUSED"); });
+    expect(await testConnection(settings(), STORED, electron)).toMatchObject({ ok: false, cause: "refused" });
   });
 
   it("makes no request without a usable address", async () => {

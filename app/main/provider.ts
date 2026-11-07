@@ -520,8 +520,13 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
   return { url: `${base}/models`, headers: key ? { authorization: `Bearer ${key}` } : {} };
 }
 
-/** What the test found: the service answered (and how many models it lists, when it says), or why not in one sentence. */
-export type TestResult = { ok: true; host: string; models: number | null } | { ok: false; why: string };
+/**
+ * What the test found: the service answered (and how many models it lists, when it says), or why not in one sentence.
+ * `cause` says when nothing answered at all: "refused" (nothing listens there, as when a model server on this computer
+ * isn't running), "timeout", or "unreachable" (any other network failure). Absent for an answer that refused the
+ * request, a certificate or a redirect: something is there.
+ */
+export type TestResult = { ok: true; host: string; models: number | null } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" };
 
 /**
  * Makes testRequest's request and says what came of it, in plain words (never the service's raw text). Nothing at all is
@@ -549,9 +554,24 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     return { ok: true, host, models };
   } catch (err) {
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
-    if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.` };
+    if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };
     if (/redirect/i.test(msg)) return { ok: false, why: `${host} sent Ember to another address. Enter the address it moved to.` };
     if (/certificate|self.signed|ERR_CERT_/i.test(msg)) return { ok: false, why: `Ember can't verify ${host}'s certificate.` };
-    return { ok: false, why: `Ember can't reach ${host}. Check the address and the network.` };
+    // Electron's fetch says net::ERR_CONNECTION_REFUSED (ERR_ADDRESS_UNREACHABLE for an ::1 with no IPv6), Node's ECONNREFUSED.
+    const refused = /ECONNREFUSED|ERR_CONNECTION_REFUSED|ERR_ADDRESS_UNREACHABLE/.test(msg);
+    return { ok: false, why: `Ember can't reach ${host}. Check the address and the network.`, cause: refused ? "refused" : "unreachable" };
   }
+}
+
+/**
+ * Why the user's own provider can't take a request now, from a connection test (integrations-1): one sentence for the
+ * status, or null when something answered (a refused key or a missing model list is the request's to say, not
+ * this). `local`: the endpoint is on this computer (shared/provider.ts keyNeeded false), where nothing listening means
+ * the model server (Ollama, LM Studio) isn't running. Each says Ember tries again: the host does (retryLater).
+ */
+export function providerDown(r: TestResult, host: string, local: boolean): string | null {
+  if (r.ok || !r.cause) return null;
+  if (r.cause === "timeout") return `${r.why} Ember will try again in a moment.`;
+  if (local) return `Ember can't reach the model server on this computer (${host}). Start it, and Ember will connect in a moment.`;
+  return `Ember can't reach ${host}. Check the address and the network: Ember will try again in a moment.`;
 }
