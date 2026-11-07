@@ -84,7 +84,7 @@ import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
 import { PersonalVoice } from "./personal/service";
 import { wordsStore } from "./personal/words-store";
-import { speakSettings, speaksAloud } from "../shared/speech";
+import { speakSettings, speaksAloud, speechSilenced } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform, switchArgs } from "./platform";
@@ -1045,8 +1045,18 @@ function start(): void {
   const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
   /** The acknowledgement said for the answer now streaming (its first words don't say it again: afterAck). */
   let ackSaid: string | null = null;
+  /**
+   * Speaking turned off while Ember talks (Never chosen, the screen reader it spoke for gone): what it is saying stops
+   * now, not at the end of the answer (voice-speaking-4, WCAG 1.4.2). On every settings change, and before each
+   * sentence of an answer (a screen reader going says nothing to Ember). Whether Ember may speak now.
+   */
+  const silenceIfOff = (): boolean => {
+    const allowed = maySpeak();
+    if (speechSilenced(!!voice?.speaking, allowed)) { cancelAck(); voice?.hush(); }
+    return allowed;
+  };
   const sayStreamed = (chunks: string[]) => {
-    if (answerInterrupted || confirmer?.waiting || !maySpeak()) return;
+    if (answerInterrupted || confirmer?.waiting || !silenceIfOff()) return;
     for (const chunk of chunks) {
       const c = afterAck(chunk, ackSaid);
       ackSaid = null;
@@ -3445,6 +3455,7 @@ function start(): void {
       voice?.setLearning(on);
     });
     settings.onChange(next => applyNaturalVoicePreference(voice, next.voice));
+    settings.onChange(() => silenceIfOff());
     settings.onChange(next => voice?.setClearHearing(next.voice.clearHearing));
     let conversations = settings.get().voice.conversation;
     settings.onChange(next => {

@@ -407,6 +407,11 @@ export class VoiceService {
     return this.saidSpeaking || this.ttsPending.size > 0 || this.speakingUntil > Date.now();
   }
 
+  /** Ember is speaking, or about to: main stops it when speaking is turned off, and offers Stop speaking meanwhile. */
+  get speaking(): boolean {
+    return this.talking;
+  }
+
   listenOnce(): boolean {
     if (this.listenOnceStatus.phase !== "ready") return false;
     this.dropFollowUp();

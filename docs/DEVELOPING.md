@@ -316,7 +316,8 @@ answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N** (not now)
 question shows the keys). **Always** is a click only: a global key could take an app's own shortcut and grant for good
 by accident. A hidden Ember shows itself to ask, and with **Speak replies, questions and results out loud** set to
 **Always** (the default), or a screen reader running and it set to **When a screen reader runs**, it says the question
-out loud; **Never** keeps it quiet even for a screen reader. Buttons that send, delete, pay and the like, risky
+out loud; **Never** keeps it quiet even for a screen reader, and chosen while Ember talks it stops at once (as does a
+screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
 for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did

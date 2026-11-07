@@ -6,7 +6,7 @@ import { SpeechStream } from "../../app/voice/tts";
 import { endsWithQuestion, spokenText } from "../../app/voice/spoken";
 import { TurnLatency } from "../../app/main/turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "../../app/main/acknowledge";
-import { speaksAloud } from "../../app/shared/speech";
+import { speaksAloud, speechSilenced } from "../../app/shared/speech";
 import { IPC } from "../../app/shared/ipc";
 import { taskNotice } from "../../app/main/agent/tasks";
 
@@ -20,7 +20,9 @@ function wiring() {
   const signOut = source.slice(source.indexOf("  ipcMain.handle(IPC.signOut,"), source.indexOf("  ipcMain.handle(IPC.cancelSignIn,"));
   expect(speech.length).toBeGreaterThan(500);
   expect(callbacks.length).toBeGreaterThan(500);
-  const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), micState: "waiting" };
+  const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), micState: "waiting", speaking: false };
+  /** The speaking choice (always, as by default here) and whether a screen reader runs. */
+  const prefs = { speak: true, speakWithScreenReader: true, reader: true };
   const agent = { answerOpen: false, tasks: null, pauseAnswer: vi.fn(), forgetConversation: vi.fn(async (): Promise<void> => undefined), start: vi.fn(async (): Promise<void> => undefined) };
   const broadcast = vi.fn();
   const voicePreference = { natural: true, naturalModel: "kitten" };
@@ -29,12 +31,12 @@ function wiring() {
   const code = ts.transpile(`
     let lastAskByVoice = false, turnAnswer = "", lastReply = "";
     const log = { info() {} }, policy = { features: {} }, screenLock = null;
-    const sys = { a11y: { screenReaderOn: () => true } };
+    const sys = { a11y: { screenReaderOn: () => prefs.reader } };
     let askedAt = 0;
     let manualCall = null;
     const syncListenOnce = () => {};
     const lastState = { bubble: { visible: false } }, showState = () => {};
-    const settings = { get: () => ({ speak: "always", speakResults: true, voice: voicePreference }) }, userAway = () => false, notify = () => {};
+    const settings = { get: () => ({ speak: prefs.speak, speakWithScreenReader: prefs.speakWithScreenReader, speakResults: true, voice: voicePreference }) }, userAway = () => false, notify = () => {};
     let signOutHandler;
     const ipcMain = { handle: (_channel, callback) => { signOutHandler = callback; } }, guard = fn => fn;
     let signOuts = 0, currentToken = null, askHistory = [], learnedLines = [];
@@ -44,12 +46,12 @@ function wiring() {
     ${signOut}
     return {
       ${callbacks} ${taskCallback} ${transcriptCallback} ${learnedForgot}
-      interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech, signOut: () => signOutHandler(),
+      interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech, signOut: () => signOutHandler(), silenceIfOff,
       manualListening: on => { manualCall = on ? { source: "ask" } : null; },
     };
   `, { target: ts.ScriptTarget.ES2022 });
-  const run = new Function("SpeechStream", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", code);
-  const callbacksUnderTest = run(SpeechStream, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice) as {
+  const run = new Function("SpeechStream", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "speechSilenced", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", "prefs", code);
+  const callbacksUnderTest = run(SpeechStream, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, speechSilenced, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice, prefs) as {
     onTurnStart(turn: { text: string; spoken: boolean; manual?: true }): void;
     onAnswerDelta(text: string): void;
     onAnswer(text: string): void;
@@ -61,9 +63,10 @@ function wiring() {
     signOut(): Promise<void>;
     interrupt(): void;
     pause(): void;
+    silenceIfOff(): boolean;
     manualListening(on: boolean): void;
   };
-  return { ...callbacksUnderTest, voice, personal, agent, confirmer, broadcast, voicePreference };
+  return { ...callbacksUnderTest, voice, personal, agent, confirmer, broadcast, voicePreference, prefs };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -218,6 +221,41 @@ describe("main's answer speech ownership", () => {
     w.onTurnEnd(false);
     expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Would you like the first report?", { append: false });
     expect(w.voice.followUp).not.toHaveBeenCalled();
+  });
+
+  it("stops what Ember is saying at once when speaking is set to Never, not at the end of the answer (voice-speaking-4)", () => {
+    const w = wiring();
+    w.onTurnStart({ text: "Tell me about the reports", spoken: false });
+    w.onAnswerDelta("The first sentence. The second");
+    expect(w.voice.speak).toHaveBeenCalledOnce();
+    w.voice.speaking = true;
+    const hushes = w.voice.hush.mock.calls.length;
+    // Settings › Voice › Speak: Never (main runs this on every settings change).
+    w.prefs.speak = false; w.prefs.speakWithScreenReader = false;
+    expect(w.silenceIfOff()).toBe(false);
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
+    // Once quiet, another change hushes nothing more, and the rest of the answer isn't said.
+    w.voice.speaking = false;
+    w.silenceIfOff();
+    w.onAnswerDelta(" sentence. The third sentence.");
+    w.onAnswer("The first sentence. The second sentence. The third sentence.");
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
+    expect(w.voice.speak).toHaveBeenCalledOnce();
+    expect(fs.readFileSync("app/main/main.ts", "utf8")).toContain("settings.onChange(() => silenceIfOff());");
+  });
+
+  it("stops talking at the next sentence when the screen reader it spoke for has gone (voice-speaking-4)", () => {
+    const w = wiring();
+    w.prefs.speak = false; // "While a screen reader runs", the default.
+    w.onTurnStart({ text: "Tell me about the reports", spoken: false });
+    w.onAnswerDelta("The first sentence. The second");
+    expect(w.voice.speak).toHaveBeenCalledOnce();
+    w.voice.speaking = true;
+    const hushes = w.voice.hush.mock.calls.length;
+    w.prefs.reader = false;
+    w.onAnswerDelta(" sentence. The third sentence.");
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
+    expect(w.voice.speak).toHaveBeenCalledOnce();
   });
 
   it("keeps background results on cards during a foreground request and appends them after playback", () => {
