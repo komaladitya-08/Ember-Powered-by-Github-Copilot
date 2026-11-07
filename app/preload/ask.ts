@@ -11,6 +11,7 @@ const api: EmberAskApi = {
   onTyped: fn => { ipcRenderer.on(IPC.askTyped, (_e, t: { text: string; submit: boolean; cancel: boolean }) => fn(t)); },
   onHidden: fn => { ipcRenderer.on(IPC.askHidden, () => fn()); },
   fit: rows => ipcRenderer.send(IPC.askFit, rows),
+  voiceSettings: () => ipcRenderer.send(IPC.askVoiceSettings),
 };
 
 contextBridge.exposeInMainWorld("emberAsk", api);

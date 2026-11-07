@@ -5,7 +5,7 @@
 
 import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
-import { IPC, type AskContext, type ListenOnceStatus } from "../shared/ipc";
+import { IPC, listenOnceShown, type AskContext, type ListenOnceStatus } from "../shared/ipc";
 import type { OS } from "../shared/shortcuts";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
@@ -36,6 +36,13 @@ export const WAIT_TIP_OPENINGS = 5;
 export function showsWaitTip(holds: boolean, opened: number): boolean {
   return !holds && opened < WAIT_TIP_OPENINGS;
 }
+/**
+ * The rows an opening reserves before the page measures them: the field's line, Listen once's two (none where the
+ * organisation turned voice off: companion-3), and one each for the wait tip and the suggestions.
+ */
+export const askOpeningRows = (c: AskContext): number =>
+  1 + (listenOnceShown(c.listenOnce) ? 2 : 0) + (c.tip ? 1 : 0) + (c.suggestions?.length ? 1 : 0);
+
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
 /** Gap to the work area's edges and to Ember's handle. */
@@ -339,7 +346,7 @@ export class AskWindow {
     let bounds = askBounds(near, display.workArea, this.keepOff(), scale);
     this.up = !near || bounds.y + bounds.height <= near.y;
     // Reserve the first rows before showing; the page measures any further wrapping at the work area's width.
-    const rows = 3 + (this.context.tip ? 1 : 0) + (this.context.suggestions?.length ? 1 : 0);
+    const rows = askOpeningRows(this.context);
     if (rows > 1) bounds = grownBounds(bounds, rows, display.workArea, this.up, this.keepOff(), scale);
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }

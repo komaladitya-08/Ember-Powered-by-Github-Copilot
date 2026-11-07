@@ -2,6 +2,8 @@ import type { ListenOnceStatus } from "../../shared/ipc";
 
 const listening = (s: ListenOnceStatus | undefined): boolean =>
   s?.phase === "starting" || s?.phase === "listening" || s?.phase === "checking";
+/** Main says listening can't start now (its detail says why): the control is unavailable, never a press that does nothing. */
+const blocked = (s: ListenOnceStatus | undefined): boolean => s?.phase === "blocked";
 
 /** The same one-request control in Ask and Home. Main owns the session and every permission check. */
 export function mountListenOnce(
@@ -18,7 +20,10 @@ export function mountListenOnce(
   const draw = () => {
     const label = listening(status) ? "Cancel listening" : "Listen once";
     if (button.textContent !== label) button.textContent = label;
-    button.setAttribute("aria-disabled", String(!status || !!pending));
+    // Drawn as disabled (opacity 0.4), where a press in flight only waits (companion-3: it was drawn and announced as
+    // available, and a press only flashed "Checking the microphone…").
+    button.setAttribute("data-blocked", String(!pending && blocked(status)));
+    button.setAttribute("aria-disabled", String(!status || !!pending || blocked(status)));
     const text = pending?.revision === revision
       ? pending.on ? "Checking the microphone…" : "Cancelling…"
       : error || (status ? status.detail || ready : "Checking the microphone…");
@@ -32,7 +37,7 @@ export function mountListenOnce(
     draw();
   };
   const toggle = async () => {
-    if (!status || pending) return;
+    if (!status || pending || blocked(status)) return;
     const change = pending = { on: !listening(status), revision };
     error = "";
     draw();

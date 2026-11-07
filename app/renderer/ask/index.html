@@ -25,6 +25,8 @@
     <div id="listen-once-row" class="listen-once">
       <button type="button" id="listen-once" aria-describedby="listen-once-detail" aria-disabled="true">Listen once</button>
       <span id="listen-once-detail" role="status" aria-atomic="true"></span>
+      <!-- The speech models aren't downloaded: only Settings fixes that, so this goes there instead of a dead control. -->
+      <button type="button" id="voice-setup" hidden>Set up voice in Settings…</button>
     </div>
     <!-- What the user might say next: Ember's suggestions (said so by the caption); choosing one sends it as if typed. -->
     <div id="suggest" class="suggest" role="group" aria-labelledby="suggest-cap" hidden><span id="suggest-cap" class="suggest-cap">Ember suggests</span></div>

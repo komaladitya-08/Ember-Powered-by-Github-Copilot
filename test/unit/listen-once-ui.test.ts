@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ListenOnceStatus } from "../../app/shared/ipc";
+import { listenOnceShown, type ListenOnceStatus } from "../../app/shared/ipc";
 import { boxRows } from "../../app/renderer/ask/field";
 import { mountListenOnce } from "../../app/renderer/shared/listen-once";
+
+vi.mock("electron", () => ({ BrowserWindow: class {}, Menu: {}, screen: {}, ipcMain: { on() {} } }));
+const { askOpeningRows } = await import("../../app/main/ask");
 
 function control(request: (on: boolean) => Promise<ListenOnceStatus>) {
   const button = Object.assign(new EventTarget(), { textContent: "", setAttribute: vi.fn() });
@@ -12,7 +15,7 @@ function control(request: (on: boolean) => Promise<ListenOnceStatus>) {
 }
 
 describe("Listen once controls", () => {
-  it("shows why listening is blocked, lets main recheck, and switches to Cancel during capture", async () => {
+  it("shows why listening is blocked as a control that can't be used now, takes no press, and switches to Cancel during capture (companion-3)", async () => {
     const request = vi.fn(async (on: boolean): Promise<ListenOnceStatus> => on
       ? { phase: "listening", detail: "Listening for one request…" }
       : { phase: "ready", detail: "" });
@@ -21,6 +24,14 @@ describe("Listen once controls", () => {
     expect(request).not.toHaveBeenCalled();
     ui.update({ phase: "blocked", detail: "The microphone is muted." });
     expect(ui.detail.textContent).toBe("The microphone is muted.");
+    // Announced as unavailable (WCAG 4.1.2), not as a button that flashes "Checking the microphone…" and does nothing.
+    expect(ui.button.setAttribute).toHaveBeenLastCalledWith("aria-disabled", "true");
+    await ui.click();
+    expect(request).not.toHaveBeenCalled();
+    expect(ui.detail.textContent).toBe("The microphone is muted.");
+    // Main says when the block lifts (it pushes the status): then a press listens.
+    ui.update({ phase: "ready", detail: "" });
+    expect(ui.button.setAttribute).toHaveBeenLastCalledWith("aria-disabled", "false");
     await ui.click();
     expect(request).toHaveBeenLastCalledWith(true);
     expect(ui.button.textContent).toBe("Cancel listening");
@@ -60,5 +71,18 @@ describe("Listen once controls", () => {
   it("adds room for the control and a wrapped explanation alongside the existing rows", () => {
     expect(boxRows(1, false, false, 0, 1)).toBe(2);
     expect(boxRows(4, true, true, 1, 2)).toBe(9);
+  });
+
+  it("is left out of Ask only where the organisation turned voice off, and Ask opens without its rows then (companion-3)", () => {
+    expect(listenOnceShown(undefined)).toBe(true);
+    expect(listenOnceShown({ phase: "ready", detail: "" })).toBe(true);
+    expect(listenOnceShown({ phase: "blocked", detail: "Answer Ember's question first." })).toBe(true);
+    expect(listenOnceShown({ phase: "blocked", detail: "Download speech models in Settings first.", fix: "settings" })).toBe(true);
+    expect(listenOnceShown({ phase: "blocked", detail: "Your organisation has turned voice off.", fix: "admin" })).toBe(false);
+    const context = (listenOnce?: ListenOnceStatus) => ({ sees: null, history: [], ...(listenOnce ? { listenOnce } : {}) });
+    expect(askOpeningRows(context())).toBe(3);
+    expect(askOpeningRows({ ...context({ phase: "blocked", detail: "", fix: "settings" }), tip: true, suggestions: ["What's next?"] })).toBe(5);
+    expect(askOpeningRows(context({ phase: "blocked", detail: "Your organisation has turned voice off.", fix: "admin" }))).toBe(1);
+    expect(askOpeningRows({ ...context({ phase: "blocked", detail: "", fix: "admin" }), suggestions: ["What's next?"] })).toBe(2);
   });
 });

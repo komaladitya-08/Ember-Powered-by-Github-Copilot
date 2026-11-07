@@ -21,6 +21,9 @@ interface Harness {
   rows: number;
   calls: { kind: "ask" | "suggestion"; text: string }[];
   closes: number;
+  /** Presses that asked main to listen, and the way to Settings for voice. */
+  listens: number;
+  voiceSettings: number;
   context(c: AskContext): void;
   typed(t: Typed): void;
   hidden(): void;
@@ -51,7 +54,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       await route.fulfill({ body: fs.readFileSync(file), contentType });
     });
     await page.addInitScript(() => {
-      const state: Harness = { rows: 3, calls: [], closes: 0, context() {}, typed() {}, hidden() {}, listen() {} };
+      const state: Harness = { rows: 3, calls: [], closes: 0, listens: 0, voiceSettings: 0, context() {}, typed() {}, hidden() {}, listen() {} };
       (window as unknown as TestWindow).askHarness = state;
       window.emberAsk = {
         ask: text => { state.calls.push({ kind: "ask", text }); },
@@ -62,7 +65,8 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
         onTyped: fn => { state.typed = fn; },
         onHidden: fn => { state.hidden = fn; },
         onListenOnce: fn => { state.listen = fn; },
-        listenOnce: async () => ({ phase: "ready", detail: "" }),
+        listenOnce: async () => { state.listens++; return { phase: "ready", detail: "" }; },
+        voiceSettings: () => { state.voiceSettings++; },
       };
     });
     await page.goto("http://ember.test/renderer/ask/index.html");
@@ -153,7 +157,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
           return {
             scale, rows: (window as unknown as TestWindow).askHarness.rows, clipped: form.scrollHeight > form.clientHeight + 1,
             fieldHeight: document.querySelector(".field")!.getBoundingClientRect().height,
-            controls: [...document.querySelectorAll<HTMLButtonElement>("button")].map(b => {
+            controls: [...document.querySelectorAll<HTMLButtonElement>("button:not([hidden])")].map(b => {
               const r = b.getBoundingClientRect(), css = getComputedStyle(b);
               return { text: b.textContent, height: r.height, left: r.left, right: r.right, bottom: r.bottom,
                 clipped: b.scrollHeight > b.clientHeight + 1 || b.scrollWidth > b.clientWidth + 1, border: css.borderTopStyle };
@@ -179,6 +183,54 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([{ kind: "suggestion", text: suggestions[2] }]);
     } finally { await page.close(); }
   }, 60_000);
+
+  it("shows a blocked Listen once as unavailable, offers Settings for missing speech models and leaves it out where the organisation turned voice off (companion-3)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => { const h = (window as unknown as TestWindow).askHarness; return { rows: h.rows, listens: h.listens, voiceSettings: h.voiceSettings }; });
+      // Each opening: main has reserved its rows (askOpeningRows, listen-once-ui.test.ts); the page asks for others only
+      // when what it shows needs them (rows stays -1 when it agrees).
+      const open = (listenOnce: ListenOnceStatus) => page.evaluate(l => {
+        const h = (window as unknown as TestWindow).askHarness;
+        h.rows = -1;
+        h.context({ opened: true, sees: null, history: [], listenOnce: l });
+      }, listenOnce);
+      const button = page.locator("#listen-once");
+      // Waiting on something that passes (a question up): the row stays, its button announced and drawn as unavailable.
+      await open({ phase: "blocked", detail: "Answer Ember's question first." });
+      expect(await button.getAttribute("aria-disabled")).toBe("true");
+      expect(await button.evaluate(e => getComputedStyle(e).opacity)).toBe("0.4");
+      await button.click({ force: true });
+      expect((await harness()).listens).toBe(0);
+      expect(await page.locator("#listen-once-detail").textContent()).toBe("Answer Ember's question first.");
+      expect((await harness()).rows).toBe(-1);
+      // Only Settings' Download fixes this: one button that goes there, no dead control.
+      await open({ phase: "blocked", detail: "Download speech models in Settings first.", fix: "settings" });
+      expect(await button.isVisible()).toBe(false);
+      expect(await page.locator("#listen-once-detail").isVisible()).toBe(false);
+      const setup = page.getByRole("button", { name: "Set up voice in Settings…", exact: true });
+      expect(await setup.isVisible()).toBe(true);
+      expect(await setup.getAttribute("aria-disabled")).toBeNull();
+      await setup.click();
+      expect(await harness()).toMatchObject({ rows: -1, listens: 0, voiceSettings: 1 });
+      // Turned off by the organisation: nothing here can change that, so the row is left out and the box is a row shorter.
+      await open({ phase: "blocked", detail: "Your organisation has turned voice off.", fix: "admin" });
+      expect(await page.locator("#listen-once-row").isVisible()).toBe(false);
+      expect(await page.locator("#listen-once-row").evaluate(e => (e as HTMLElement).offsetHeight)).toBe(0);
+      expect((await harness()).rows).toBe(-1);
+      // The row going while the box is open (the organisation's policy can't change then, but a status can): one row now.
+      await open({ phase: "ready", detail: "" });
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.listen({ phase: "blocked", detail: "Your organisation has turned voice off.", fix: "admin" }));
+      expect((await harness()).rows).toBe(1);
+      // Ready again: Listen once is back and works.
+      await open({ phase: "ready", detail: "" });
+      expect(await button.isVisible()).toBe(true);
+      expect(await setup.isVisible()).toBe(false);
+      expect(await button.getAttribute("aria-disabled")).toBe("false");
+      await button.click();
+      expect((await harness()).listens).toBe(1);
+    } finally { await page.close(); }
+  }, 30_000);
 
   it("keeps every suggestion reachable when a small work area caps the window's height", async () => {
     const page = await pageAt(300);

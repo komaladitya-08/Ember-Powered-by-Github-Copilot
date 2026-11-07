@@ -167,6 +167,10 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
     const row = page.locator("#natural-row"), select = page.locator("#natural-model"), use = page.locator("#natural-use");
     await expect.poll(() => row.isVisible()).toBe(true);
     expect(await page.locator("#natural").count()).toBe(0);
+    // Listen once can't start (main says why under it): announced and drawn as unavailable, not as a live button (companion-3).
+    expect(await page.locator("#voice-listen-once").getAttribute("aria-disabled")).toBe("true");
+    expect(await page.locator("#voice-listen-once").evaluate(e => getComputedStyle(e).opacity)).toBe("0.4");
+    expect(await page.locator("#voice-listen-once-detail").innerText()).toBe("Allow the microphone first.");
     expect(await select.inputValue()).toBe("kokoro");
     expect(await select.isEnabled()).toBe(true);
     expect(await page.locator("#natural-text").innerText()).toContain("Kokoro isn't available");

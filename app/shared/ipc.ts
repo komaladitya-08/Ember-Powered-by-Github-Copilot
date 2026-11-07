@@ -131,6 +131,8 @@ export const IPC = {
   askFit: "agent:ask-fit",
   /** The ask box went away: what was left in its field is selected, so typing replaces it when the box opens again. */
   askHidden: "agent:ask-hidden",
+  /** The ask box's "Set up voice in Settings…" (speech models not downloaded): Home opens at Voice. */
+  askVoiceSettings: "agent:ask-voice-settings",
   listenOnce: "voice:listen-once",
   listenOnceStatus: "voice:listen-once-status",
   /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
@@ -178,7 +180,16 @@ export interface SignInProgress {
 export interface ListenOnceStatus {
   phase: "ready" | "blocked" | "starting" | "listening" | "checking";
   detail: string;
+  /**
+   * A block that nothing in the moment lifts (companion-3): `settings`, the speech models aren't downloaded (Ask offers
+   * the way to Settings' Download instead of a control that can't work); `admin`, the organisation turned voice off
+   * (Ask leaves Listen once out).
+   */
+  fix?: "settings" | "admin";
 }
+
+/** Whether the Ask box shows its Listen once row: always, but where the organisation turned voice off (companion-3). */
+export const listenOnceShown = (s: ListenOnceStatus | undefined): boolean => !(s?.phase === "blocked" && s.fix === "admin");
 
 export interface VoiceStatus {
   state: MicState;
@@ -511,6 +522,8 @@ export interface EmberAskApi {
   onHidden(fn: () => void): void;
   /** The page needs `rows` rows (the field's 1 to 4 lines, and one for the note when a paste was cut): the box grows to fit. */
   fit?(rows: number): void;
+  /** "Set up voice in Settings…": the box closes and Home opens at Voice, where the speech models are downloaded. */
+  voiceSettings?(): void;
 }
 
 /**

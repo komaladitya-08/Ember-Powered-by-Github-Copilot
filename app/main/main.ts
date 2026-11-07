@@ -980,6 +980,8 @@ function start(): void {
     commandCardUp = q?.question.panel?.kind === "command";
     // The voice process hears a short "no" in a follow-up window as an answer while a question is up (engine.ts).
     voice?.questionUp(q !== null);
+    // "Answer Ember's question first." comes and goes with it (Listen once takes no press while it holds: companion-3).
+    syncListenOnce();
     targets?.questionChanged(q);
     presenceChanged();
     stepAside();
@@ -1365,14 +1367,16 @@ function start(): void {
   const listenOnceStatus = (source: "ask" | "home"): ListenOnceStatus => {
     const s = settings.get();
     const blocked = (detail: string): ListenOnceStatus => ({ phase: "blocked", detail });
-    if (policy.features.voice === false) return blocked("Your organisation has turned voice off.");
+    if (policy.features.voice === false) return { ...blocked("Your organisation has turned voice off."), fix: "admin" };
     if (!consented()) return blocked("Finish Ember's setup first.");
     if (screenLock?.locked) return blocked("The screen is locked.");
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
     if (confirmer?.waiting) return blocked("Answer Ember's question first.");
     if (agent?.answerOpen) return blocked("Wait for Ember's answer to finish.");
-    return voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
+    const heard = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
+    // Without the speech models only Settings' Download helps: Ask offers the way there (companion-3).
+    return heard.phase === "blocked" && voice && !voice.modelsReady && !voice.isDownloading ? { ...heard, fix: "settings" } : heard;
   };
   const clearManualCall = () => {
     const call = manualCall;
@@ -2426,6 +2430,13 @@ function start(): void {
     void askEmber(t);
   });
   ipcMain.on(IPC.askClose, event => { if (askWindow.owns(event.sender)) askWindow.hide(); });
+  // "Set up voice in Settings…" (the speech models aren't downloaded): Home at Voice, its Download in view.
+  ipcMain.on(IPC.askVoiceSettings, event => {
+    if (!askWindow.owns(event.sender) || !isTrustedSender(event.senderFrame?.url ?? "")) return;
+    askWindow.hide();
+    showHome();
+    sendToHome(IPC.focusSection, "voice:voice-download");
+  });
   // One of Ember's suggestions chosen in the Ask box: only one it offers now, sent as Ember's words the user chose.
   ipcMain.on(IPC.askSuggestion, (event, text: unknown) => {
     if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;

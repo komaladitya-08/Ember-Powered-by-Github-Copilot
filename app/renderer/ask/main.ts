@@ -2,7 +2,7 @@
  * The "Ask Ember" box: type a request, Enter sends it (Shift+Enter adds a line), ↑/↓ go through earlier questions, Esc
  * closes.
  */
-import type { AskContext, EmberAskApi } from "../../shared/ipc";
+import { listenOnceShown, type AskContext, type EmberAskApi, type ListenOnceStatus } from "../../shared/ipc";
 import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
@@ -98,13 +98,22 @@ function fit(): void {
   if (rows !== shownRows) { shownRows = rows; window.emberAsk.fit?.(rows); }
   form.classList.toggle("constrained", form.scrollHeight > form.clientHeight + 1);
 }
-const showListenOnce = mountListenOnce(
-  document.getElementById("listen-once") as HTMLButtonElement,
-  document.getElementById("listen-once-detail")!,
-  on => window.emberAsk.listenOnce(on),
-  "Say one request after you press Listen once.",
-  fit,
-);
+const listenButton = document.getElementById("listen-once") as HTMLButtonElement;
+const listenDetail = document.getElementById("listen-once-detail")!;
+const voiceSetup = document.getElementById("voice-setup") as HTMLButtonElement;
+voiceSetup.addEventListener("click", () => window.emberAsk.voiceSettings?.());
+const drawListenOnce = mountListenOnce(listenButton, listenDetail, on => window.emberAsk.listenOnce(on), "Say one request after you press Listen once.", fit);
+/**
+ * Listen once as main says it stands. A block nothing here can lift isn't a control that can't work (companion-3):
+ * speech models not downloaded, the way to Settings' Download instead; voice off by the organisation, no row at all.
+ */
+function showListenOnce(s: ListenOnceStatus | undefined): void {
+  const setup = s?.phase === "blocked" && s.fix === "settings";
+  listenRow.hidden = !listenOnceShown(s);
+  listenButton.hidden = listenDetail.hidden = setup;
+  voiceSetup.hidden = !setup;
+  drawListenOnce(s);
+}
 window.emberAsk.onListenOnce(showListenOnce);
 /**
  * Ember's suggestions of what to ask next (each opening brings them, or none): chips that send their words as if typed.
@@ -197,7 +206,7 @@ window.emberAsk.onContext(c => {
     setTimeout(grown, 250);
     tip.hidden = c.tip !== true;
     tip.textContent = tip.title = c.tip === true ? WAIT_TIP : "";
-    shownRows = boxRows(1, false, c.tip === true, c.suggestions?.length ? 1 : 0, 2);
+    shownRows = boxRows(1, false, c.tip === true, c.suggestions?.length ? 1 : 0, listenOnceShown(c.listenOnce) ? 2 : 0);
     showSuggestions(c.suggestions ?? []);
   }
   if (c.listenOnce) showListenOnce(c.listenOnce);
