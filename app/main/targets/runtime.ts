@@ -787,8 +787,11 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       signal?.removeEventListener("abort", drop);
     }
   };
-  /** What a consent card that didn't come back yes ends with in the settings window: the user's no, or why nobody was asked. */
-  const cardNo = (said: "no" | "unshown"): string => (said === "unshown" ? CARD_UNSHOWN : "Not now.");
+  /**
+   * What a consent card that didn't come back yes ends with in the settings window: why nobody was asked, or for the
+   * user's Not now what stayed as it was (`kept`: "Commands stay off on build-01.", commands-remote-4).
+   */
+  const cardNo = (said: "no" | "unshown", kept: string): ActResult => (said === "unshown" ? { ok: false, message: CARD_UNSHOWN } : { ok: false, message: kept, declined: true });
 
   // ── Connecting ──
   /** What each host's connecting bubble says now (its progress rewrites it only when this changes). */
@@ -919,7 +922,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const first = words.connecting(label, { step: "checking" });
     progressSaid.set(hostId, first.text);
     bubble(`connecting:${hostId}`, say(first, [`conn:${hostId}:cancel`], "working"));
-    const stopped = (message: string): ActResult => { c.state = "closed"; c.abort = null; refresh(); hideBubble(`connecting:${hostId}`); return { ok: false, message }; };
+    const stopped = (message: string, declined = false): ActResult => { c.state = "closed"; c.abort = null; refresh(); hideBubble(`connecting:${hostId}`); return { ok: false, message, ...(declined ? { declined: true as const } : {}) }; };
     /** The connect failed: said until the user closes it (it may be the only place the reason shows), and kept for the row. */
     const fail = (message: string, retry = false, said = message): ActResult => {
       c.state = "closed";
@@ -930,7 +933,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       return { ok: false, message };
     };
     /** A consent card that didn't come back yes: cancelled meanwhile or Not now end quietly; one nobody saw is said, with Try again. */
-    const notYes = (said: "no" | "unshown"): ActResult => (abort.signal.aborted ? stopped("Cancelled.") : said === "unshown" ? fail(CARD_UNSHOWN, true) : stopped("Not now."));
+    const notYes = (said: "no" | "unshown"): ActResult => (abort.signal.aborted ? stopped("Cancelled.") : said === "unshown" ? fail(CARD_UNSHOWN, true) : stopped(`Ember didn't connect to ${label}.`, true));
     try {
       // What ssh -G makes of it now: a changed user, hostname or port (or a card never accepted) asks again (§7.4).
       const now = await conn.resolve(host.dest, { ...(host.port ? { port: host.port } : {}), ...(host.extra ? { extra: host.extra } : {}), ...(host.via ? { via: host.via } : {}) });
@@ -1066,7 +1069,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     };
     const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", id), facts: sshFacts(host, resolved) });
     const said = await askCard(card);
-    if (said !== "yes") return said === "unshown" ? refused(CARD_UNSHOWN) : { ok: false, message: "Not now." };
+    if (said !== "yes") return said === "unshown" ? refused(CARD_UNSHOWN) : { ok: false, message: `${hostPart(raw.dest)} wasn't added.`, declined: true };
     try { saveHost({ ...host, consent: consentGiven("ssh", parts.now()) }); } catch (err) {
       log.warn("targets.host_save_failed", { err });
       return refused("Ember couldn't save that computer.");
@@ -1137,7 +1140,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const d = defaultDistro(wslFacts);
       const card = wslConsent({ ...(d ? { target: targetIdOf("wsl", d.name), targetLabel: distroLabel(d.name) } : { target: LOCAL_TARGET, targetLabel: "WSL" }), byok: cardService() });
       const said = await askCard(card);
-      if (said !== "yes") return { ok: false, message: cardNo(said) };
+      if (said !== "yes") return cardNo(said, "WSL stays off.");
       settings.update({ targets: { ...settings.own().targets, wsl: { on: true, consent: consentGiven("wsl", parts.now()) } } });
     } else {
       settings.update({ targets: { ...own, wsl: { ...own.wsl, on: true } } });
@@ -1159,7 +1162,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (!consentCurrent("commands", was?.consent)) {
         const card = commandsConsent({ os: deps.os, stopKey: stopKeyNow(), target: id, targetLabel: e.label, facts: cardFacts(e) });
         const said = await askCard(card);
-        if (said !== "yes") return { ok: false, message: cardNo(said) };
+        if (said !== "yes") return cardNo(said, e.kind === "local" ? "Commands stay off on this computer." : `Commands stay off ${e.kind === "wsl" ? "in" : "on"} ${e.label}.`);
         const own = settings.own().commands;
         settings.update({ commands: { ...own, [id]: { on: true, askEvery: askEvery ?? own[id]?.askEvery ?? false, consent: consentGiven("commands", parts.now()) } } });
         refresh();
@@ -1813,7 +1816,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           hideBubble(`connected:${hostId}`);
           void setCommands(targetIdOf("ssh", hostId), true).then(r => {
             if (r.ok) bubble(`connected:${hostId}`, say(words.commandsOn(hostId), [], "good"), INFO_MS);
-            else if (r.message !== "Not now.") bubble(`connected:${hostId}`, say(words.commandsStayOff(hostId, r.message ?? ""), [], "failed"), INFO_MS);
+            else if (!("declined" in r && r.declined)) bubble(`connected:${hostId}`, say(words.commandsStayOff(hostId, r.message ?? ""), [], "failed"), INFO_MS);
           }, err => log.warn("targets.commands_switch_failed", { err }));
         }
         else { hideBubble(); void disconnect(hostId); }

@@ -9,6 +9,7 @@ import type { OS } from "../../shared/shortcuts";
 import { parseTargetId, type TargetId, type TargetKind, type TargetSummary, type TargetsAct } from "../../shared/targets";
 import type { Settings } from "../../main/settings";
 import type { CommandMode } from "../../main/commands/types";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 
 export const COMPUTERS_HEADING = "Computers";
 /** The section's intro: the page's own (Linux's, and macOS's), and Windows', the only OS with WSL (review #198). */
@@ -282,6 +283,21 @@ export const ACT_FAILED = "That didn't work. Try again.";
 export function actResult(r: unknown, done: string): string {
   const ok = !!r && typeof r === "object" && (r as { ok?: unknown }).ok === true;
   return ok ? done : actMessage(r) ?? ACT_FAILED;
+}
+
+/** Under a switch while its first-use card is open in the prompt window (commands-remote-4). */
+export const CARD_PENDING = "Ember asks first: answer in the window that opens.";
+
+/**
+ * What the page says while an act is under way: CARD_PENDING when turning on commands or WSL needs their first-use card
+ * (no agreement to the current card in the settings the page has), else null. The runtime decides; this only says it.
+ */
+export function cardPending(a: TargetsAct, s: Settings | null): string | null {
+  if (!s) return null;
+  const current = (r: { version: number } | undefined, feature: "commands" | "wsl") => !!r && r.version >= FEATURE_CONSENT_VERSION[feature];
+  if (a.kind === "commands" && a.on && !current(s.commands?.[a.id]?.consent, "commands")) return CARD_PENDING;
+  if (a.kind === "wsl" && a.on && !current(s.targets?.wsl?.consent, "wsl")) return CARD_PENDING;
+  return null;
 }
 
 /** What the add form says while its card or the connection is pending (review #188). */

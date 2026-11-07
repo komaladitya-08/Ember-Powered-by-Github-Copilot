@@ -102,6 +102,24 @@ describe("each “Ask me before every command” switch names its computer (revi
   });
 });
 
+describe("a switch whose first-use card is open says where to answer it (commands-remote-4)", () => {
+  it("says to answer in the window that opens only when turning on needs the card", () => {
+    const agreed = { version: 99, at: "2026-11-01T00:00:00.000Z" };
+    expect(cc.cardPending({ kind: "commands", id: "local", on: true }, settings())).toBe(cc.CARD_PENDING);
+    expect(cc.cardPending({ kind: "commands", id: "ssh:build-01", on: true }, settings({ commands: { "ssh:build-01": { on: false, askEvery: false, consent: { version: 0, at: null } } } }))).toBe(cc.CARD_PENDING);
+    expect(cc.cardPending({ kind: "commands", id: "local", on: true }, settings({ commands: { local: { on: false, askEvery: false, consent: agreed } } }))).toBeNull();
+    expect(cc.cardPending({ kind: "commands", id: "local", on: false }, settings())).toBeNull();
+    expect(cc.cardPending({ kind: "wsl", on: true }, settings({ targets: { ...settings().targets, wsl: { on: false, consent: { version: 0, at: null } } } }))).toBe(cc.CARD_PENDING);
+    expect(cc.cardPending({ kind: "wsl", on: true }, settings({ targets: { ...settings().targets, wsl: { on: false, consent: agreed } } }))).toBeNull();
+    expect(cc.cardPending({ kind: "openCommands" }, settings())).toBeNull();
+    expect(cc.cardPending({ kind: "commands", id: "local", on: true }, null)).toBeNull();
+    expect(cc.CARD_PENDING).toBe("Ember asks first: answer in the window that opens.");
+    // The page says it while the act is under way, then the act's own answer.
+    const page = readFileSync(new URL("../../app/renderer/home/computers.ts", import.meta.url), "utf8");
+    expect(page).toMatch(/const pending = cardPending\(a, settings\);\s*if \(pending\) say\(msg, pending\);/);
+  });
+});
+
 describe("adding a computer keeps what was typed until it is added (review #159, #188)", () => {
   it("clears the field only when the host was added, and says what failed otherwise", () => {
     expect(cc.addResult({ ok: true })).toEqual({ clear: true, message: "" });

@@ -524,9 +524,22 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     for (const consent of ["no", "forged"] as const) {
       const r = rig({ consent });
       const res = await r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: true });
-      expect(res).toEqual({ ok: false, message: "Not now." });
+      expect(res).toEqual({ ok: false, message: "Commands stay off on this computer.", declined: true });
       expect(r.settings.get().commands.local).toBeUndefined();
     }
+  });
+
+  it("says what Not now on a first-use card left as it was, not \"Not now.\" (commands-remote-4)", async () => {
+    const ssh = rig({ consent: "no", settings: withHosts([hostRecord("build-01")]) });
+    await expect(ssh.invoke(TARGETS_IPC.act, ssh.home, { kind: "commands", id: "ssh:build-01", on: true })).resolves.toEqual({ ok: false, message: "Commands stay off on build-01.", declined: true });
+    const w = rig({ consent: "no", os: "win32", wslFacts: wslFacts([ubuntu()]) });
+    await expect(w.invoke(TARGETS_IPC.act, w.home, { kind: "wsl", on: true })).resolves.toEqual({ ok: false, message: "WSL stays off.", declined: true });
+    expect(w.settings.get().targets.wsl.on).toBe(false);
+    const a = rig({ consent: "no" });
+    await expect(a.invoke(TARGETS_IPC.act, a.home, { kind: "add", dest: "deploy@build-03" })).resolves.toEqual({ ok: false, message: "build-03 wasn't added.", declined: true });
+    expect(a.settings.get().targets.hosts).toEqual([]);
+    const c = rig({ consent: "no", settings: withHosts([hostRecord("build-01", { consent: { version: 0, at: null } })]) });
+    await expect(c.invoke(TARGETS_IPC.act, c.home, { kind: "connect", hostId: "build-01" })).resolves.toEqual({ ok: false, message: "Ember didn't connect to build-01.", declined: true });
   });
 
   it("says Ember couldn't show a card nobody saw (no window to show it in), never Not now as if the user had said no", async () => {
@@ -646,7 +659,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
   it("asks again when the machine reached isn't the one the user said yes to, and disconnects on Not now", async () => {
     const r = rig({ consent: "no", settings: withHosts([hostRecord("build-01", { machineIdHash: "b".repeat(64) })]) });
     const res = await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
-    expect(res).toEqual({ ok: false, message: "Not now." });
+    expect(res).toEqual({ ok: false, message: "Ember didn't connect to build-01.", declined: true });
     expect(r.cards[0].body[0]).toMatch(/isn't the computer Ember connected to before/);
     expect(r.conns.disconnect).toHaveBeenCalledWith("build-01");
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
@@ -666,7 +679,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     // Not now: nothing changes; and the card is asked once per click, never in a loop.
     const no = rig({ consent: "no", settings: withHosts([hostRecord("build-01", { machineIdHash: "b".repeat(64) })]) });
     no.failConnect(changed());
-    await expect(no.invoke(TARGETS_IPC.act, no.home, { kind: "connect", hostId: "build-01" })).resolves.toEqual({ ok: false, message: "Not now." });
+    await expect(no.invoke(TARGETS_IPC.act, no.home, { kind: "connect", hostId: "build-01" })).resolves.toEqual({ ok: false, message: "Ember didn't connect to build-01.", declined: true });
     expect(no.settings.get().targets.hosts[0].machineIdHash).toBe("b".repeat(64));
     const twice = rig({ settings: withHosts([hostRecord("build-01", { machineIdHash: "b".repeat(64) })]) });
     twice.failConnect(changed());
