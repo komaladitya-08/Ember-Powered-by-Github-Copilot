@@ -97,6 +97,28 @@ function fit(): void {
   const rows = boxRows(lines, full, !tip.hidden, suggestRows, listenRows);
   if (rows !== shownRows) { shownRows = rows; window.emberAsk.fit?.(rows); }
   form.classList.toggle("constrained", form.scrollHeight > form.clientHeight + 1);
+  reportShape();
+}
+/** What main last heard of where the box shows something. */
+let shapeSent = "";
+/**
+ * Where the box takes clicks (window-local CSS px, which are DIP): what it shows, each part a little wider for its edge,
+ * so a click in its clear margins or beside a short row reaches the app beneath and closes the box (companion-4: main
+ * gives the window that input shape on Linux). Layout boxes, not drawn ones: the opening's scale doesn't shrink it. A
+ * box the work area cuts short scrolls, so all of it takes the wheel and clicks.
+ */
+function reportShape(): void {
+  if (!window.emberAsk.shape) return;
+  const PAD = 2, at = { x: form.offsetLeft, y: form.offsetTop - form.scrollTop };
+  const parts = form.classList.contains("constrained")
+    ? [{ x: form.offsetLeft, y: form.offsetTop, width: form.offsetWidth, height: form.offsetHeight }]
+    : [...form.children].filter((el): el is HTMLElement => el instanceof HTMLElement && !el.classList.contains("sr") && el.offsetHeight > 0
+      && getComputedStyle(el).visibility !== "hidden")
+      .map(el => ({ x: at.x + el.offsetLeft - PAD, y: at.y + el.offsetTop - PAD, width: el.offsetWidth + 2 * PAD, height: el.offsetHeight + 2 * PAD }));
+  const key = JSON.stringify(parts);
+  if (key === shapeSent) return;
+  shapeSent = key;
+  window.emberAsk.shape(parts);
 }
 const listenButton = document.getElementById("listen-once") as HTMLButtonElement;
 const listenDetail = document.getElementById("listen-once-detail")!;

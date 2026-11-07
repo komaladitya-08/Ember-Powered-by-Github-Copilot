@@ -1097,6 +1097,8 @@ function start(): void {
     keepOff: () => handle?.bounds ?? null,
     // The answer or question Ember shows: the box opens beside it, not on it (companion-1).
     bubble: () => overlay?.bubbleRect() ?? null,
+    // Clicks only on what it shows, where the window system can say so (Linux's input shape: companion-4).
+    shape: (w, rects) => platform.overlay.setInputRegion(w, rects, screen.getDisplayMatching(w.getBounds()).scaleFactor || 1),
     windowId: w => ownId(w),
     floating: platform.overlay.floating("ask"),
     // A click into another app once the box has had the keyboard closes it there, also in the handover (review #84).

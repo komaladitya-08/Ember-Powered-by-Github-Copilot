@@ -24,6 +24,8 @@ interface Harness {
   /** Presses that asked main to listen, and the way to Settings for voice. */
   listens: number;
   voiceSettings: number;
+  /** Where the page last said the box takes clicks (window-local CSS px). */
+  shape: { x: number; y: number; width: number; height: number }[] | null;
   context(c: AskContext): void;
   typed(t: Typed): void;
   hidden(): void;
@@ -54,7 +56,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       await route.fulfill({ body: fs.readFileSync(file), contentType });
     });
     await page.addInitScript(() => {
-      const state: Harness = { rows: 3, calls: [], closes: 0, listens: 0, voiceSettings: 0, context() {}, typed() {}, hidden() {}, listen() {} };
+      const state: Harness = { rows: 3, calls: [], closes: 0, listens: 0, voiceSettings: 0, shape: null, context() {}, typed() {}, hidden() {}, listen() {} };
       (window as unknown as TestWindow).askHarness = state;
       window.emberAsk = {
         ask: text => { state.calls.push({ kind: "ask", text }); },
@@ -67,6 +69,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
         onListenOnce: fn => { state.listen = fn; },
         listenOnce: async () => { state.listens++; return { phase: "ready", detail: "" }; },
         voiceSettings: () => { state.voiceSettings++; },
+        shape: rects => { state.shape = rects; },
       };
     });
     await page.goto("http://ember.test/renderer/ask/index.html");
@@ -253,6 +256,38 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       await page.locator("#q").press("Backspace");
       expect(await chips.first().isVisible()).toBe(true);
       expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.rows)).toBe(rows);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("takes clicks only where it shows something, so one in its clear margins or beside a short row reaches the app (companion-4)", async () => {
+    const page = await pageAt();
+    try {
+      await page.evaluate(suggestions => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions, listenOnce: { phase: "ready", detail: "" } }), suggestions.slice(1));
+      await fit(page);
+      const takes = (p: { x: number; y: number }) => page.evaluate(p => ((window as unknown as TestWindow).askHarness.shape ?? []).some(r => p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height), p);
+      const centre = async (selector: string) => {
+        const r = (await page.locator(selector).first().boundingBox())!;
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2, right: r.x + r.width, top: r.y };
+      };
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.shape?.length ?? 0)).toBeGreaterThan(0);
+      // What it shows takes clicks: the field, Send, Listen once, each suggestion.
+      for (const selector of ["#q", "#send", "#listen-once", "#suggest button"]) expect(await takes(await centre(selector)), selector).toBe(true);
+      // Its clear margins and the room right of the short suggestions row don't (the verifier's two XTest clicks).
+      const row = await centre("#suggest");
+      expect(await takes({ x: row.right + 40, y: row.y })).toBe(false);
+      expect(await takes({ x: 3, y: row.top - 2 })).toBe(false);
+      expect(await takes({ x: 3, y: 30 })).toBe(false);
+      // Suggestions put away while a request is typed take no click either.
+      const chip = await centre("#suggest button");
+      await page.locator("#q").press("w");
+      expect(await takes(chip)).toBe(false);
+      expect(await takes(await centre("#q"))).toBe(true);
+      // A box the work area cuts short scrolls: all of it takes the wheel and clicks.
+      await page.locator("#q").press("Backspace");
+      await fit(page, 120);
+      expect(await page.locator("#form").evaluate(e => e.classList.contains("constrained"))).toBe(true);
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.shape?.length)).toBe(1);
+      expect(await takes({ x: 520, y: 100 })).toBe(true);
     } finally { await page.close(); }
   }, 30_000);
 

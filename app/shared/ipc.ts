@@ -133,6 +133,8 @@ export const IPC = {
   askHidden: "agent:ask-hidden",
   /** The ask box's "Set up voice in Settings…" (speech models not downloaded): Home opens at Voice. */
   askVoiceSettings: "agent:ask-voice-settings",
+  /** Where the ask box shows something (window-local DIP): it takes clicks only there where the window system can say so. */
+  askShape: "agent:ask-shape",
   listenOnce: "voice:listen-once",
   listenOnceStatus: "voice:listen-once-status",
   /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
@@ -524,6 +526,8 @@ export interface EmberAskApi {
   fit?(rows: number): void;
   /** "Set up voice in Settings…": the box closes and Home opens at Voice, where the speech models are downloaded. */
   voiceSettings?(): void;
+  /** Where the page shows something (window-local CSS px): the box takes clicks there only, on Linux (companion-4). */
+  shape?(rects: { x: number; y: number; width: number; height: number }[]): void;
 }
 
 /**

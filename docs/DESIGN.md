@@ -128,7 +128,9 @@ They share one emotion rig, so switching never changes behaviour.
   decision moves. Streamed text is drawn at most 15 times a second. A card's plan dot fills as its
   step starts, and a finished card's tick settles in once on the reward spring; a failure just shows
   its mark (no shake, no flash). The Ask box grows out of Ember beneath it, and opens beside the
-  bubble, never on it (the bubble never moves for it). In Calm, each of them
+  bubble, never on it (the bubble never moves for it). On Linux it takes clicks only on what it
+  shows (an X input shape the page reports), so a click in its clear margins reaches the app
+  beneath and closes it. In Calm, each of them
   fades over 150 ms instead.
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).

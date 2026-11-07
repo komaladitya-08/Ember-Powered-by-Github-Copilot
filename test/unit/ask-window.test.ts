@@ -149,6 +149,51 @@ describe("the ask box", () => {
     expect(win.visible).toBe(false);
   });
 
+  it("takes clicks only on what it shows where the window system can say so, so one beside it reaches the app (companion-4)", () => {
+    const shapes: { x: number; y: number; width: number; height: number }[][] = [];
+    let can = true;
+    const ask = new AskWindow({ shape: (_w, rects) => { shapes.push(rects.map(r => ({ ...r }))); return can; } });
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    const field = { x: 8, y: 8, width: 544, height: 50 }, line = { x: 22, y: 60, width: 516, height: 23 };
+    const report = (rects: unknown) => win.heard.get("agent:ask-shape")!({}, rects);
+    // Said while hidden: kept for the opening (a hidden box takes no pointer at all).
+    report([field, line]);
+    expect(shapes).toEqual([]);
+    ask.show({ x: 400, y: 300 });
+    expect(win.ignoreMouse).toBe(false);
+    expect(shapes.at(-1)).toEqual([field, line]);
+    // What it shows changed while open (a row came or went): the region follows.
+    report([field]);
+    expect(shapes.at(-1)).toEqual([field]);
+    // Nothing from the page that isn't a short list of boxes.
+    const before = shapes.length;
+    for (const bad of [null, "x", [{ x: 0, y: 0, width: 10 }], [{ ...field, width: Number.NaN }], [{ ...field, height: 0 }], Array.from({ length: 17 }, () => field)]) report(bad);
+    expect(shapes.length).toBe(before);
+    // Hidden: the pointer off it, as before; reports wait for the next opening.
+    ask.hide();
+    expect(win.ignoreMouse).toBe(true);
+    report([field, line]);
+    expect(shapes.length).toBe(before);
+    // Where the window system can't shape it (Windows, macOS), the whole box takes clicks, as it always did.
+    can = false;
+    ask.show({ x: 400, y: 300 });
+    expect(win.ignoreMouse).toBe(false);
+  });
+
+  it("is never shaped as an opaque panel (no compositor), which is all box", () => {
+    const shapes: unknown[] = [];
+    const ask = new AskWindow({ shape: (_w, rects) => { shapes.push(rects); return true; } });
+    ask.setOpaque(true);
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    win.heard.get("agent:ask-shape")!({}, [{ x: 8, y: 8, width: 544, height: 50 }]);
+    ask.show({ x: 400, y: 300 });
+    expect(shapes).toEqual([]);
+  });
+
   it("grows with its field as lines are added or pasted, upward above Ember, and opens one line tall again (review #70)", () => {
     const ask = new AskWindow();
     ask.show({ x: 400, y: 500 });

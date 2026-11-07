@@ -260,8 +260,21 @@ export class AskWindow {
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
     windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
-    settleMs?: number; onHide?: () => void; bubble?: () => Box | null;
+    settleMs?: number; onHide?: () => void; bubble?: () => Box | null; shape?: (w: BrowserWindow, rects: readonly Box[]) => boolean;
   } = {}) {}
+
+  /** Where the page shows something (window-local DIP), as it last said: none yet, all of the box takes clicks. */
+  private shown: Box[] = [];
+
+  /**
+   * The box takes clicks only where it shows something, where the window system can say so (`shape`: Linux's input
+   * shape), so a click in its clear margins reaches the app beneath and closes the box (companion-4); elsewhere, and
+   * before the page has said, all of it does, as always. Never as an opaque panel, which is all box.
+   */
+  private applyShape(win: BrowserWindow): void {
+    if (!this.o.shape || this.builtOpaque || !this.shown.length || win.isDestroyed() || !win.isVisible()) return;
+    try { this.o.shape(win, this.shown); } catch { /* all of the box takes clicks, as before */ }
+  }
 
   /** The box is still being handed the keyboard: a blur now is that handover, not the user (OPENING_MS, settleMs). */
   private handingOver(): boolean {
@@ -334,6 +347,15 @@ export class AskWindow {
     // The page asks for the rows its field and note need (Shift+Enter, a pasted traceback, a paste cut at the limit):
     // only this box's page is heard here.
     win.webContents.ipc.on(IPC.askFit, (_e, rows: unknown) => { if (this.win === win && typeof rows === "number" && Number.isFinite(rows)) this.fit(rows); });
+    // Where it shows something: a short list of boxes inside a window this size, or nothing is changed.
+    win.webContents.ipc.on(IPC.askShape, (_e, rects: unknown) => {
+      if (this.win !== win || !Array.isArray(rects) || !rects.length || rects.length > 16) return;
+      const ok = (r: unknown): r is Box => !!r && typeof r === "object" && ["x", "y", "width", "height"].every(k => Number.isFinite((r as Record<string, unknown>)[k]) && Math.abs((r as Record<string, number>)[k]) <= 10_000)
+        && (r as Box).width > 0 && (r as Box).height > 0;
+      if (!rects.every(ok)) return;
+      this.shown = rects.map(r => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
+      this.applyShape(win);
+    });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
     win.webContents.on("render-process-gone", () => { if (this.win === win) this.hide(); if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
@@ -361,6 +383,8 @@ export class AskWindow {
     this.openingTries = 0;
     this.keyboardAt = 0;
     win.show();
+    // Pointer back on, which gives an X window its whole input region again: then only where it shows something.
+    this.applyShape(win);
     win.focus();
     // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
     try { this.o.takeFocus?.(this.idOf(win)); } catch { /* the keyboard stays where the window manager put it */ }

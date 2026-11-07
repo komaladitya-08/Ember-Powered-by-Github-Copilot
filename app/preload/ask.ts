@@ -12,6 +12,7 @@ const api: EmberAskApi = {
   onHidden: fn => { ipcRenderer.on(IPC.askHidden, () => fn()); },
   fit: rows => ipcRenderer.send(IPC.askFit, rows),
   voiceSettings: () => ipcRenderer.send(IPC.askVoiceSettings),
+  shape: rects => ipcRenderer.send(IPC.askShape, rects),
 };
 
 contextBridge.exposeInMainWorld("emberAsk", api);
