@@ -45,7 +45,7 @@ export type ActivityEvent =
   /** Copilot answered again (a retry worked). */
   | { type: "heard" }
   /** Copilot has been quiet a while (true), or is heard again (false). */
-  | { type: "slow"; on: boolean }
+  | { type: "slow"; on: boolean; words?: string }
   /** Past 80% of the task's step or time limit. */
   | { type: "near-limit" }
   /** Something went wrong, in Ember's words. */
@@ -90,6 +90,8 @@ export class ActivityLog {
   private retrying: ActivityItem | null = null;
   /** What it was doing before a question or a retry took the live line. */
   private doing: string;
+  /** The live line while the model is slow: the worker's words for the service in use (integrations-v1). */
+  private slowWords = "Still waiting for Copilot…";
 
   constructor(startedAt: number) {
     this.doing = "Starting…";
@@ -216,6 +218,7 @@ export class ActivityLog {
         return true;
       }
       case "slow":
+        if (e.words) this.slowWords = e.words;
         if (a.slow === e.on) return false;
         a.slow = e.on;
         a.live = this.liveNow();
@@ -246,7 +249,7 @@ export class ActivityLog {
     const a = this.a;
     if (a.asking) return STATUS_WORDS.waiting;
     if (a.retry) return retryWords(a.retry);
-    if (a.slow) return "Still waiting for Copilot…";
+    if (a.slow) return this.slowWords;
     return this.doing;
   }
 

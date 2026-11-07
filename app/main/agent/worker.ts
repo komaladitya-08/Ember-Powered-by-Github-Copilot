@@ -1861,7 +1861,8 @@ export class Worker {
         }, {
           slowMs: d.limits?.turnSlowMs, silentMs: d.limits?.turnSilentMs,
           // The task's card and its bubble say so (without a compositor the card's task row is one short line).
-          onSlow: slow => { if (!this.halted) { d.onProgress(slow ? "Still waiting for Copilot…" : "Working…"); d.presenter.stalled(slow); this.activity({ type: "slow", on: slow }); } },
+          // Named for the service in use, never Copilot when it isn't (integrations-v1).
+          onSlow: slow => { if (!this.halted) { const waiting = d.presenter.stillWaiting(); d.onProgress(slow ? waiting : "Working…"); d.presenter.stalled(slow); this.activity({ type: "slow", on: slow, words: waiting }); } },
         });
         const unwatch = session.on(e => watch.event(e));
         const send = async (prompt: string) => {

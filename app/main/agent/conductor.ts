@@ -16,7 +16,7 @@ import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfi
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
 import { NO_CAPS, emberSystemMessage } from "./persona";
-import { friendlyError, type Presenter, type ServiceKind } from "./presenter";
+import { friendlyError, noAnswer, notAnswering, type Presenter, type ServiceKind } from "./presenter";
 import type { Logger } from "../logger";
 import type { ConversationContext } from "../../shared/ipc";
 import { CHARACTERS, type SettingsStore } from "../settings";
@@ -987,7 +987,7 @@ export class Conductor {
       if (stopped) return;
       // The connection was replaced meanwhile: the user is asked to ask again, and the host drops it from its queue
       // as for a send that failed (it is already reconnecting).
-      this.deps.presenter.fail(NO_ANSWER);
+      this.deps.presenter.fail(noAnswer(this.deps.service ?? !!this.deps.provider));
       throw new ConnectionLost("the connection was replaced while memory was read");
     }
     const routines = this.routinesLine(text);
@@ -1104,13 +1104,14 @@ export class Conductor {
       this.stops++;
       this.dispatch = Promise.resolve();
       this.unstarted = [];
-      this.deps.presenter.fail(NO_ANSWER);
+      // Named for the service in use, never Copilot when it isn't (integrations-v1).
+      this.deps.presenter.fail(noAnswer(this.deps.service ?? !!this.deps.provider));
       this.deps.onSilentTurn?.();
       this.endSilentTurn();
       return;
     }
     if (this.deps.onStuck) this.deps.onStuck(why);
-    else this.deps.presenter.fail("Copilot isn't answering. Ask me again in a moment.");
+    else this.deps.presenter.fail(notAnswering(this.deps.service ?? !!this.deps.provider));
   }
 
   /**

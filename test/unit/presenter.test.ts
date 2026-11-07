@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -1197,6 +1197,41 @@ describe("a wait for Copilot says so and can be stopped (UI audit #4)", () => {
     expect(last().bubble).toMatchObject({ mood: "thinking", title: STILL_WAITING, streaming: true, actions: [STOP_ANSWER] });
     p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Checking" } });
     expect(last().bubble).toMatchObject({ mood: "thinking", title: "Thinking…", actions: [] });
+  });
+
+  it("names the model service in use while it waits, never Copilot when it isn't (integrations-v1, reliability-performance-v3)", () => {
+    for (const [service, words] of [["user", "Still waiting for your model provider…"], [true, "Still waiting for the model service…"], [false, STILL_WAITING]] as const) {
+      const states: Partial<EmberState>[] = [];
+      vi.useFakeTimers();
+      const p = new Presenter(s => states.push(s), undefined, undefined, undefined, undefined, service);
+      const last = () => states[states.length - 1];
+      p.userPrompt("are you there?");
+      vi.advanceTimersByTime(THINK_SLOW_MS);
+      expect(last().bubble, String(service)).toMatchObject({ mood: "thinking", title: words, actions: [STOP_ANSWER] });
+      expect(p.stillWaiting()).toBe(words);
+      p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Checking" } });
+      expect(last().bubble, String(service)).toMatchObject({ title: "Thinking…", actions: [] });
+      // A turn that goes quiet, and is heard from again: the title it had comes back.
+      p.stalled(true);
+      expect(last().bubble?.title).toBe(words);
+      p.stalled(false);
+      expect(last().bubble?.title).toBe("Thinking…");
+      vi.useRealTimers();
+    }
+    expect(stillWaiting("user")).not.toMatch(/Copilot/);
+    expect(notAnswering("user")).toBe("Your model provider isn't answering. Ask me again in a moment.");
+    expect(notAnswering(true)).toBe("The model service isn't answering. Ask me again in a moment.");
+    expect(notAnswering()).toBe("Copilot isn't answering. Ask me again in a moment.");
+    expect(problemTitle(notAnswering("user"), "user")).toBe("Your model provider isn't answering");
+    expect(problemTitle(notAnswering(true), true)).toBe("The model service isn't answering");
+    expect(problemTitle(notAnswering(), false)).toBe("Copilot isn't answering");
+    // The worker's card line and the conductor's silent turn take the same words.
+    const src = (f: string) => readFileSync(new URL(`../../app/main/agent/${f}`, import.meta.url), "utf8");
+    expect(src("worker.ts")).toContain("const waiting = d.presenter.stillWaiting();");
+    expect(src("conductor.ts")).toContain("this.deps.presenter.fail(notAnswering(this.deps.service ?? !!this.deps.provider));");
+    expect(src("conductor.ts")).toContain("this.deps.presenter.fail(noAnswer(this.deps.service ?? !!this.deps.provider));");
+    expect(noAnswer("user")).toBe("Your model provider didn't answer. Ask me again in a moment.");
+    expect(noAnswer()).toBe("Copilot didn't answer. Ask me again in a moment.");
   });
 
   it("never says it is still waiting once Copilot has said something", () => {

@@ -170,7 +170,7 @@ export function problemTitle(said: string, provider: ServiceKind = false): strin
   if (/model I'm set to use/i.test(said)) return "That model isn't available";
   if (/too much for me/i.test(said)) return "Too much at once";
   if (/can't reach|\bnetwork\b/i.test(said)) return provider ? "I can't reach the model service" : "I can't reach Copilot";
-  if (/isn't answering|didn't answer|not answering/i.test(said)) return "Copilot isn't answering";
+  if (/isn't answering|didn't answer|not answering/i.test(said)) return provider === "user" ? "Your model provider isn't answering" : provider ? "The model service isn't answering" : "Copilot isn't answering";
   if (/stopped unexpectedly/i.test(said)) return "Copilot stopped";
   if (/file watchers/i.test(said)) return "Copilot can't work right now";
   return `${service} had a problem`;
@@ -543,6 +543,31 @@ export const NO_REPLY = "Copilot ended that turn without an answer. Please ask m
 export const STILL_WAITING = "Still waiting for Copilot…";
 
 /**
+ * That title for the model service in use (`provider`, ServiceKind): Copilot, the organisation's service or a test
+ * server (true), or the user's own provider ("user"), so a slow wait never blames a service that isn't in use
+ * (integrations-v1, reliability-performance-v3).
+ */
+export function stillWaiting(provider: ServiceKind = false): string {
+  return provider === "user" ? "Still waiting for your model provider…" : provider ? "Still waiting for the model service…" : STILL_WAITING;
+}
+
+/** One of stillWaiting's titles (whichever service it named). */
+const isStillWaiting = (title: string) => title === stillWaiting(false) || title === stillWaiting(true) || title === stillWaiting("user");
+
+/** The model service in use, as a sentence starts with it. */
+const serviceName = (provider: ServiceKind) => (provider === "user" ? "Your model provider" : provider ? "The model service" : "Copilot");
+
+/** What a turn that is stuck says, for the model service in use (conductor.ts, when nothing else handles it). */
+export function notAnswering(provider: ServiceKind = false): string {
+  return `${serviceName(provider)} isn't answering. Ask me again in a moment.`;
+}
+
+/** What a turn that got nothing back says, for the model service in use (conductor.ts NO_ANSWER is Copilot's). */
+export function noAnswer(provider: ServiceKind = false): string {
+  return `${serviceName(provider)} didn't answer. Ask me again in a moment.`;
+}
+
+/**
  * How long "Thinking…" may show with nothing from Copilot before the bubble says it is still waiting and offers Stop
  * (ms): about 10 s is where a wait needs to say so and give a way out (docs/DESIGN.md "Bubble and motion").
  */
@@ -620,7 +645,7 @@ export class Presenter {
   private readonly heldSettingsKey: () => string | null;
   /** The stop chord as Ember holds it now ("Ctrl+Alt+X"; PresenterOptions.stopKey), named by an announcement. */
   private readonly heldStopKey: () => string | null;
-  /** The title "Still waiting for Copilot…" replaced (see stalled). */
+  /** The title "Still waiting for …" replaced (see stalled). */
   private stalledTitle = "";
   /** "Thinking…" with nothing from Copilot yet: after THINK_SLOW_MS it says it is still waiting, with Stop (see slowThinking). */
   private thinkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -659,6 +684,16 @@ export class Presenter {
   /** Which model service is in use now (see the constructor's `service`). */
   private get provider(): ServiceKind {
     return typeof this.service === "function" ? this.service() : this.service;
+  }
+
+  /** "Still waiting for …" for the service in use now (a task's card line says the same: worker.ts onSlow). */
+  stillWaiting(): string {
+    return stillWaiting(this.provider);
+  }
+
+  /** What a turn that got nothing back says, for the service in use now. */
+  notAnswering(): string {
+    return notAnswering(this.provider);
   }
 
   constructor(
@@ -1028,9 +1063,9 @@ export class Presenter {
 
   private slowThinking(): void {
     const b = this.state.bubble;
-    if (this.silent || this.produced || !b.visible || b.mood !== "thinking" || b.title === STILL_WAITING) return;
+    if (this.silent || this.produced || !b.visible || b.mood !== "thinking" || isStillWaiting(b.title)) return;
     this.stalledTitle = b.title;
-    this.apply({ bubble: { ...b, title: STILL_WAITING, actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), { ...STOP_ANSWER }] } });
+    this.apply({ bubble: { ...b, title: this.stillWaiting(), actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), { ...STOP_ANSWER }] } });
   }
 
   /**
@@ -1041,8 +1076,8 @@ export class Presenter {
     this.cancelSlow();
     // (A task's bubble: its turn's watch says when it is heard from again, through stalled(false).)
     const b = this.state.bubble;
-    if (this.work !== "reply" || (b.title !== STILL_WAITING && !b.actions.some(a => a.id === STOP_ANSWER.id))) return;
-    this.apply({ bubble: { ...b, title: b.title === STILL_WAITING ? this.stalledTitle : b.title, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
+    if (this.work !== "reply" || (!isStillWaiting(b.title) && !b.actions.some(a => a.id === STOP_ANSWER.id))) return;
+    this.apply({ bubble: { ...b, title: isStillWaiting(b.title) ? this.stalledTitle : b.title, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
   }
 
   /**
@@ -1081,10 +1116,10 @@ export class Presenter {
     const b = this.state.bubble;
     // The conversation's bubble offers Stop meanwhile (a task's card has its own).
     const stop = this.work === "reply" ? [{ ...STOP_ANSWER }] : [];
-    if (on && this.busy && !this.silent && b.title !== STILL_WAITING) {
+    if (on && this.busy && !this.silent && !isStillWaiting(b.title)) {
       this.stalledTitle = b.title;
-      this.apply({ bubble: { ...b, title: STILL_WAITING, actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), ...stop] } });
-    } else if (!on && b.title === STILL_WAITING) {
+      this.apply({ bubble: { ...b, title: this.stillWaiting(), actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), ...stop] } });
+    } else if (!on && isStillWaiting(b.title)) {
       this.apply({ bubble: { ...b, title: this.stalledTitle, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
     }
   }

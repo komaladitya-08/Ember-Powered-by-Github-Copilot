@@ -81,7 +81,7 @@ They share one emotion rig, so switching never changes behaviour.
   "Without asking" tag in the accent tint, set only by Ember (`BubbleState.autonomous`): a task's
   own note never carries it. When
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
-  with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. A problem
+  (or "Still waiting for your model provider…" or "…for the model service…" when that is the one in use) with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. A problem
   offers **Open settings** where settings can fix it, otherwise **Try again** where asking again is
   safe (the conversation's own request, whose turn ran no tool). An answer whose turn started a task
   says "Its card in the corner shows how it's going.", so the bubble and the card tell one story. Under a finished
@@ -175,7 +175,7 @@ Ember is two places at once, each for one kind of work.
   - how the task works now, under its title: "In the background", "On my desk", or "Using your mouse and keyboard"
     in the accent;
   - a **live line** in Ember's own words: what it is doing now and where ("Clicking in Text Editor…", "Thinking…",
-    "Waiting for you" while its question is up, "Retrying…", "Still waiting for Copilot…");
+    "Waiting for you" while its question is up, "Retrying…", "Still waiting for Copilot…", named for the service in use);
   - the worker's own note under it (`report_progress`'s `intent`, else its `text`), in the secondary label: the
     model's words, never set as Ember's;
   - a **telemetry row** of at most three items in footnote type, weight 500 and tabular figures: the plan's step

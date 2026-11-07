@@ -90,6 +90,15 @@ describe("a task's live line", () => {
     expect(l.card().live).toBe("Thinking…");
   });
 
+  it("names the user's own provider on the card while it is quiet, never Copilot (integrations-v1)", () => {
+    const { l } = log();
+    l.add({ type: "turn" }, T0);
+    l.add({ type: "slow", on: true, words: "Still waiting for your model provider…" }, T0 + 30_000);
+    expect(l.card().live).toBe("Still waiting for your model provider…");
+    l.add({ type: "slow", on: false, words: "Still waiting for your model provider…" }, T0 + 31_000);
+    expect(l.card().live).toBe("Thinking…");
+  });
+
   it("ends with the state's word from the one table, and takes nothing after", () => {
     const { l, step } = log();
     step("click", 0);
