@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { EmberHomeApi } from "../../app/shared/ipc";
 import type { TranscriptEntry } from "../../app/main/agent/host";
+import { CONVERSATION_SHOWN } from "../../app/renderer/home/conversation-view";
 
 declare global {
   interface Window {
@@ -91,7 +92,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
       window.__conversationTest.push(seed.map((entry, i) => i ? entry : { ...entry, text: "A uniquely earlier request with updated details" }));
       window.__conversationTest.resolveInitial();
     }, entries);
-    await expect.poll(() => page.locator("#conversation li").count()).toBe(30);
+    await expect.poll(() => page.locator("#conversation li").count()).toBe(CONVERSATION_SHOWN);
     await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
     await page.locator("#conversation-message").fill("My unsent draft");
     await page.locator('a[href="#voice-h"]').click();
@@ -333,5 +334,31 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await expect.poll(() => late.page.evaluate(() => document.activeElement === [...document.querySelectorAll("#conversation > li.ember")].at(-1))).toBe(true);
       expect(errors.concat(late.errors)).toEqual([]);
     } finally { await late.page.close(); }
+  }, 60_000);
+
+  it("puts the composer and Task activity within reach of a long conversation, by pointer and by keyboard (home-v2)", async () => {
+    const { page, errors } = await home(exchange(30));
+    try {
+      // The latest few messages, the rest a click away: the composer no longer sits six window-heights down (4,195 px).
+      await expect.poll(() => page.locator("#conversation > li").count()).toBe(6);
+      expect(await page.locator("#conversation-earlier").innerText()).toBe("Show 24 earlier messages");
+      const composer = await page.evaluate(() => document.getElementById("conversation-message")!.getBoundingClientRect().top + scrollY);
+      expect(composer).toBeLessThan(2.25 * 640);
+      // Two quiet links in the status panel: to the composer, and to Task activity.
+      await page.getByRole("button", { name: "Write to Ember" }).click();
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-message");
+      await expect.poll(async () => { const r = await rect(page, "#conversation-message"); return r.top >= 0 && r.bottom <= r.height; }).toBe(true);
+      await page.evaluate(() => window.scrollTo({ top: 0 }));
+      await page.getByRole("button", { name: "Task activity" }).click();
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("tasks-h");
+      // From the keyboard: the link comes before any message's Copy and Edit, and Enter takes the focus to the composer.
+      await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); window.scrollTo({ top: 0 }); });
+      let presses = 0;
+      while (presses < 40 && await page.evaluate(() => document.activeElement?.textContent) !== "Write to Ember") { await page.keyboard.press("Tab"); presses++; }
+      expect(presses).toBeLessThan(20);
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-message");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
   }, 60_000);
 });

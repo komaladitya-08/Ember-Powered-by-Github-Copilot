@@ -289,6 +289,9 @@ function renderStatus(): void {
   setText("p-setup", setup ?? "");
 }
 $("p-setup").addEventListener("click", () => showSection("checks"));
+// However long the conversation, the composer and Task activity below it are a step away (home-v2).
+$("p-write").addEventListener("click", () => showSection("conversation:message"));
+$("p-tasks").addEventListener("click", () => showSection("tasks"));
 $("p-connect").addEventListener("click", () => showSection("copilot"));
 // Home opens the exact live approval in its own focusable window; main owns question identity and authority.
 const openApproval = () => { void window.ember.openApproval(); };

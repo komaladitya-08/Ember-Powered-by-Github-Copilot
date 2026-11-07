@@ -41,21 +41,21 @@ describe("Home's conversation", () => {
     expect(conversationSearchCount(0)).toBe("0 matching messages in this session.");
     expect(conversationSearchCount(1)).toBe("1 matching message in this session.");
   });
-  it("shows the latest thirty messages, or every one once asked", () => {
-    expect(CONVERSATION_SHOWN).toBe(30);
-    expect(conversationShown(range(0, 45), false)).toEqual(range(15, 45));
+  it("shows the latest six messages, so the composer stays within reach, or every one once asked (home-v2)", () => {
+    expect(CONVERSATION_SHOWN).toBe(6);
+    expect(conversationShown(range(0, 45), false)).toEqual(range(39, 45));
     expect(conversationShown(range(0, 45), true)).toHaveLength(45);
     expect(conversationShown(range(0, 3), false)).toHaveLength(3);
     expect(earlierLabel(0)).toBeNull();
     expect(earlierLabel(1)).toBe("Show 1 earlier message");
-    expect(earlierLabel(15)).toBe("Show 15 earlier messages");
+    expect(earlierLabel(39)).toBe("Show 39 earlier messages");
   });
 
   it("adds a new message in place and takes the oldest shown off the top, also once main's 60 entries are full", () => {
     // A growing conversation: nothing goes, the new one is added.
     expect(conversationChange(range(0, 10), range(0, 11))).toEqual({ drop: 0, add: [msg(10)] });
-    // Past thirty shown: the oldest shown goes as a new one comes.
-    expect(conversationChange(conversationShown(range(0, 30), false), conversationShown(range(0, 31), false))).toEqual({ drop: 1, add: [msg(30)] });
+    // Past six shown: the oldest shown goes as a new one comes.
+    expect(conversationChange(conversationShown(range(0, 6), false), conversationShown(range(0, 7), false))).toEqual({ drop: 1, add: [msg(6)] });
     // At main's cap the transcript itself drops its oldest: the rows are matched by what they are, never by index.
     const before = conversationShown(range(10, 70), false);
     const after = conversationShown(range(12, 72), false);

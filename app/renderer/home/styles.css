@@ -70,6 +70,9 @@ body:not(.first-run) .hero-text #tagline { margin-top: 4px; font: var(--type-cal
 .status-facts dd { margin: 2px 0 0; font: var(--type-callout); font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .status-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .stop-hint { margin: 0; color: var(--muted); font: var(--type-footnote); }
+/* Below the conversation's latest messages: the composer and Task activity, a step away however long it grows (home-v2). */
+.status-jumps { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 12px 0 0; font: var(--type-callout); }
+.status-jumps .link { font: var(--type-callout); font-weight: 500; }
 @media (max-width: 560px) { .status-facts { grid-template-columns: minmax(0, 1fr); } }
 
 /* ───── Panes: one at a time once Ember has started (the sidebar picks it); the first run shows its own parts ───── */

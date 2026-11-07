@@ -267,12 +267,13 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   you, then two facts (which of listening, memory and commands are on; today's tasks by outcome and the steps you
   allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
   takes that place while Copilot isn't connected, and nothing does while the organisation's policy locks Ember down)
-  beside a quiet **Stop everything** and the stop chord.
+  beside a quiet **Stop everything** and the stop chord. Under them two quiet links, **Write to Ember** (the
+  composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
 - **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",
   "Needs fixing", never a code such as OK), in one column as wide as the widest word (a subgrid, so the labels line
   up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows.
-- **The conversation** is part of the page, not a box that scrolls inside it: its latest 30 messages, then **Show
-  earlier messages**. Home searches all 60 retained session entries, shows explicit per-answer truncation beyond
+- **The conversation** is part of the page, not a box that scrolls inside it: its latest 6 messages (so the composer
+  and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries, shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. Edit only fills the composer; a fresh Send is required. Home sends
   no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer and its
   buttons in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. **Read the last

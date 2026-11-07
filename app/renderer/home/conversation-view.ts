@@ -7,8 +7,11 @@
  * screen reader keeps its place).
  */
 
-/** Messages shown until "Show earlier messages" is pressed. */
-export const CONVERSATION_SHOWN = 30;
+/**
+ * Messages shown until "Show earlier messages" is pressed: the latest few, so the composer and Task activity below them
+ * stay within reach (thirty put the composer about 4,200 px down a 640 px window, sixty Tab stops in: home-v2).
+ */
+export const CONVERSATION_SHOWN = 6;
 
 /** A message as the list compares it. */
 export interface Said { t: string; who: string; text: string; truncated?: boolean; stopped?: true; answerId?: number }

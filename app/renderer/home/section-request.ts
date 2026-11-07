@@ -16,7 +16,7 @@ export const LATEST_ANSWER = "latest-answer";
 
 /** The controls a request may focus, by the name main uses (main's openSettings). */
 const CONTROLS: Readonly<Record<string, string>> = {
-  "conversation:latest": LATEST_ANSWER,
+  "conversation:latest": LATEST_ANSWER, "conversation:message": "conversation-message",
   "computers:host": "host-add", "computers:wsl": "wsl-on", "access:ask": "p-ask", "access:stop": "p-stop",
   // "Work without asking" by voice (autonomy-intent.ts): its switch, or its card's agree button (the card shown first).
   "privacy:autonomy-on": "autonomy-on", "privacy:autonomy-yes": "autonomy-yes",
