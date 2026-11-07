@@ -110,7 +110,7 @@ import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
-import { releasePage, UpdateChecker } from "./updates";
+import { releasePage, UpdateChecker, updateNotice } from "./updates";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
@@ -1018,8 +1018,19 @@ function start(): void {
   };
   /** The user isn't looking at Ember right now (idle, or Ember hidden). */
   const userAway = () => (overlay?.isHidden() ?? false) || powerMonitor.getSystemIdleTime() >= 30;
-  const notify = (title: string, body: string) => {
-    try { if (Notification.isSupported()) new Notification({ title, body: notificationBody(body), silent: false }).show(); } catch (err) { log.warn("notify.failed", { err }); }
+  /** Notifications with a click, kept until they close: one that is garbage-collected never reports its click. */
+  const clickable = new Set<Notification>();
+  const notify = (title: string, body: string, onClick?: () => void) => {
+    try {
+      if (!Notification.isSupported()) return;
+      const n = new Notification({ title, body: notificationBody(body), silent: false });
+      if (onClick) {
+        clickable.add(n);
+        n.on("click", () => { clickable.delete(n); onClick(); });
+        n.on("close", () => clickable.delete(n));
+      }
+      n.show();
+    } catch (err) { log.warn("notify.failed", { err }); }
   };
   let askHistory: string[] = [];
   /**
@@ -1895,7 +1906,8 @@ function start(): void {
     checked: at => { try { settings.update({ updates: { ...settings.get().updates, checkedAt: at } }); } catch (err) { log.warn("updates.not_saved", { err }); } },
     announce: version => {
       settings.update({ updates: { ...settings.get().updates, told: version } });
-      notify("Ember: a new version is out", `Ember ${version} is out. Open Ember's settings to see what's new.`);
+      const notice = updateNotice(version);
+      notify(notice.title, notice.body, () => { showHome(); sendToHome(IPC.focusSection, notice.section); });
     },
     changed: status => broadcast(IPC.updatesChanged, status),
   });

@@ -3,8 +3,10 @@
  * GitHub with no token, each version is announced once, a bad reply stays quiet, and the link is built from the number.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CHECK_EVERY_MS, FIRST_CHECK_MS, isNewer, newestVersion, releasePage, RELEASES_URL, UpdateChecker, versionOf } from "../../app/main/updates";
+import { CHECK_EVERY_MS, FIRST_CHECK_MS, isNewer, newestVersion, releasePage, RELEASES_URL, UpdateChecker, updateNotice, versionOf } from "../../app/main/updates";
 import { applyAdminPolicy, managedKeys, parseAdminPolicy } from "../../app/main/admin";
 import { updateStatusText, UPDATES_CONSENT_TEXT } from "../../app/renderer/home/copy";
 import { SettingsSchema } from "../../app/main/settings";
@@ -218,5 +220,21 @@ describe("Home's words", () => {
     expect(updateStatusText({ phase: "checking", latest: null, checkedAt: null })).toBe("Checking…");
     expect(updateStatusText({ phase: "off", latest: null, checkedAt: null })).toBe("");
     expect(updateStatusText({ phase: "current", latest: null, checkedAt: null })).toBe("You have the latest version.");
+  });
+});
+
+describe("the notice that a new version is out", () => {
+  it("opens Home's Updates section at See what's new… when clicked (install-docs-11)", () => {
+    const notice = updateNotice("0.2.0");
+    expect(notice).toEqual({ title: "Ember: a new version is out", body: "Ember 0.2.0 is out. Open Ember's settings to see what's new.", section: "updates:updates-open" });
+    // The section's heading and the button it focuses, which shows while a version is out (home/main.ts showSection).
+    const home = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
+    const [section, control] = notice.section.split(":");
+    expect(home).toContain(`<h2 id="${section}-h" tabindex="-1">Updates</h2>`);
+    expect(home).toMatch(new RegExp(`<button type="button" id="${control}" class="btn small" hidden>See what's new…</button>`));
+    // main.ts shows it with a click that opens Home there, as the handle menu's items do.
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
+    expect(main).toContain("notify(notice.title, notice.body, () => { showHome(); sendToHome(IPC.focusSection, notice.section); });");
+    expect(main).toContain('n.on("click", () => { clickable.delete(n); onClick(); });');
   });
 });

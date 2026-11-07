@@ -222,7 +222,8 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 
 Ember doesn't update itself. To hear when a new version is out, turn on **Tell me when a new version is out** under
 **Updates** in its settings and agree to its note. Once a day Ember then asks GitHub, sends nothing about you, and tells
-you once. It never downloads or installs anything: you install the new version as above. The source of the voice's
+you once, in a notification that opens **Updates** when you click it (**See what's new…** there opens the release's
+page). It never downloads or installs anything: you install the new version as above. The source of the voice's
 GPL-licensed part is on each release, as `source-*.zip`.
 
 ## Computers without internet access

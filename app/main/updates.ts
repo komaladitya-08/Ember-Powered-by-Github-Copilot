@@ -55,6 +55,15 @@ export function releasePage(version: string): string | null {
   return v ? `https://github.com/${REPO}/releases/tag/v${v.join(".")}` : null;
 }
 
+/**
+ * The system notification that `version` is out, and where clicking it leads: Home's Updates section, at its "See
+ * what's new…" (shown while a newer version is out; the section's heading otherwise). The body still says where to go,
+ * for a notification centre that doesn't pass the click on.
+ */
+export function updateNotice(version: string): { title: string; body: string; section: string } {
+  return { title: "Ember: a new version is out", body: `Ember ${version} is out. Open Ember's settings to see what's new.`, section: "updates:updates-open" };
+}
+
 export interface UpdateCheckerOptions {
   /** Electron's net.fetch in main, so the system's proxy is used. */
   fetch: (url: string, init: RequestInit) => Promise<Response>;
