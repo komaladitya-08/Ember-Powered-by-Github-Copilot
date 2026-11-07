@@ -301,3 +301,24 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     await page.close();
   }, 30_000);
 });
+
+describe.skipIf(gate)("Home's Apps & privacy, as the person edits its lists (2026-11-07 product audit)", () => {
+  it("says what removing an entry from Never look at or an app's Always changed, with focus on the next Remove (safety-privacy-11)", async () => {
+    const neverLook = [...DEFAULT_SETTINGS.privacy.neverLook];
+    const page = await open("privacy", { settings: { grants: { thunderbird: "act", gedit: "act" } } });
+    const removeKeePass = page.getByRole("button", { name: "Remove KeePassXC", exact: true });
+    await expect.poll(() => removeKeePass.isVisible()).toBe(true);
+    await removeKeePass.click();
+    // Main saves it and sends the settings back: the list is drawn again without it.
+    await page.evaluate(async list => {
+      const st = await (window as unknown as { ember: { getStatus(): Promise<{ settings: Record<string, unknown> }> } }).ember.getStatus();
+      window.__pane.emit("onSettingsChanged", { ...st.settings, privacy: { ...(st.settings.privacy as object), neverLook: list } });
+    }, neverLook.filter(x => x !== "keepassxc"));
+    await expect.poll(() => page.locator("#never-look-msg").innerText()).toBe("Removed KeePassXC. Ember may read its windows now; Restore defaults puts it back.");
+    expect(await focusedName(page)).toBe(`Remove ${"Seahorse"}`);
+    await page.getByRole("button", { name: "Remove Thunderbird", exact: true }).click();
+    await expect.poll(() => page.locator("#grants-msg").innerText()).toBe("Removed Thunderbird. Ember asks again before its first action there.");
+    expect(await page.evaluate(() => window.__pane.calls)).toContain(`save:${JSON.stringify({ grants: { gedit: "act" } })}`);
+    await page.close();
+  });
+});

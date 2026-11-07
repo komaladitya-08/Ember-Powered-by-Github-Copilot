@@ -130,6 +130,24 @@ export function neverLookLabel(item: string): string {
   return NEVER_LOOK_NAMES[item.trim().toLowerCase()] ?? item;
 }
 
+/** The never-look entries that are the system's password prompts, which Ember never reads whatever the list says. */
+const PROMPT_ENTRIES: ReadonlySet<string> = new Set(["polkit", "credentialuibroker", "securityagent"]);
+
+/**
+ * What Apps & privacy says once an entry is off Never look at (safety-privacy-11: Remove was silent, while Add said
+ * "Added …"): what that changes, and for one of `os`'s defaults that Restore defaults puts it back.
+ */
+export function neverLookRemovedText(item: string, os: OS = "linux"): string {
+  const key = item.trim().toLowerCase();
+  const back = NEVER_LOOK_BY_OS[os].includes(key) ? "; Restore defaults puts it back" : "";
+  return `Removed ${neverLookLabel(item)}. ${PROMPT_ENTRIES.has(key) ? "Ember still never reads password prompts" : "Ember may read its windows now"}${back}.`;
+}
+
+/** What Apps & privacy says once an app is off "Apps Ember may act in without asking first". */
+export function grantRemovedText(app: string): string {
+  return `Removed ${app}. Ember asks again before its first action there.`;
+}
+
 /** The defaults of `os` (Linux's unless the status names another) that are missing from `list` (case-insensitive). */
 export function missingDefaults(list: readonly string[], os: OS = "linux"): string[] {
   return missingFor(list, os);

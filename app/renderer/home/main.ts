@@ -35,7 +35,7 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
 import { modelDestination, recipientWords } from "./copy";
-import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText } from "./copy";
+import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
@@ -1896,7 +1896,9 @@ function renderPrivacy(s: Settings): void {
       const next = { ...s.grants };
       delete next[app];
       focusAfter = { list: "grants", index: i };
-      void save({ grants: next });
+      $("grants-msg").textContent = "";
+      // Said once it is saved, as Add is (safety-privacy-11): focus has moved on to the next Remove by then.
+      void save({ grants: next }).then(ok => { if (ok) $("grants-msg").textContent = grantRemovedText(friendlyApp(app)); });
     }, managed.has("grants")))
     : [Object.assign(document.createElement("li"), { className: "empty", textContent: confirmEvery ? "None." : "None: Ember asks before its first action in each app." })]));
   // The user's own entries (with Remove), then the organisation's (locked).
@@ -1907,7 +1909,7 @@ function renderPrivacy(s: Settings): void {
       ...own.map((item, i) => row(neverLookLabel(item), () => {
         focusAfter = { list: "never-look", index: i };
         listMsg("");
-        void save({ privacy: { neverLook: own.filter(x => x !== item) } });
+        void save({ privacy: { neverLook: own.filter(x => x !== item) } }).then(ok => { if (ok) listMsg(neverLookRemovedText(item, platform?.os)); });
       }, false)),
       ...theirs.map(item => row(neverLookLabel(item), () => {}, null)),
     ]

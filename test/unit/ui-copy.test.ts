@@ -1050,6 +1050,15 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.conversationNewQuestion(12, true)).toBe("Start a new conversation? This clears the 12 messages here and deletes the copy saved on this computer.");
   });
 
+  it("says what removing an entry from Never look at or an app's Always changes (safety-privacy-11)", () => {
+    expect(conv.neverLookRemovedText("keepassxc", "linux")).toBe("Removed KeePassXC. Ember may read its windows now; Restore defaults puts it back.");
+    expect(conv.neverLookRemovedText("Thunderbird", "linux")).toBe("Removed Thunderbird. Ember may read its windows now.");
+    // A password prompt stays unread whatever the list says.
+    expect(conv.neverLookRemovedText("polkit", "linux")).toBe("Removed Password prompts (polkit). Ember still never reads password prompts; Restore defaults puts it back.");
+    expect(conv.neverLookRemovedText("credentialuibroker", "win32")).toBe("Removed Password prompts (Windows Security). Ember still never reads password prompts; Restore defaults puts it back.");
+    expect(conv.grantRemovedText("Thunderbird")).toBe("Removed Thunderbird. Ember asks again before its first action there.");
+  });
+
   it("names what deleting all routines and reminders deletes, with each plural right and no count of zero (integrations-10)", () => {
     expect(reminderDeleteScope(1, 0)).toBe("Delete your routine? This removes saved reminders too.");
     expect(reminderDeleteScope(3, 0)).toBe("Delete all 3 routines? This removes saved reminders too.");
