@@ -65,6 +65,10 @@ export interface UpdateCheckerOptions {
   told(): string | null;
   /** A newer version than `told()`: tell the user, and remember it. */
   announce(version: string): void;
+  /** When it last asked GitHub (ISO, kept in the settings), or null: a restart then waits out the day (integrations-v3). */
+  lastChecked?(): string | null;
+  /** It asked GitHub at `at` (ISO): keep it for the next start. */
+  checked?(at: string): void;
   changed(status: UpdateStatus): void;
   log: { warn(event: string, fields?: Record<string, unknown>): void };
   now?: () => Date;
@@ -90,8 +94,29 @@ export class UpdateChecker {
   refresh(): void {
     if (!this.o.allowed()) { this.stop(); this.phase = "idle"; this.latest = null; this.checkedAt = null; }
     // Announcing changes the settings, which lands here mid-look: that look schedules the next one itself.
-    else if (!this.timer && !this.looking) this.schedule(FIRST_CHECK_MS);
+    else if (!this.timer && !this.looking) {
+      this.checkedAt ??= this.lastLook();
+      this.schedule(this.firstWait());
+    }
     this.o.changed(this.status);
+  }
+
+  /** The last look's time as kept, or null when there is none or it can't be read. */
+  private lastLook(): string | null {
+    const at = this.o.lastChecked?.() ?? null;
+    return at !== null && Number.isFinite(Date.parse(at)) ? at : null;
+  }
+
+  /**
+   * How long the first look waits: a minute after start, or until a day after the last look when that is later, so
+   * restarting Ember never asks GitHub more than once a day (integrations-v3). Never more than a day: a clock set back
+   * doesn't stop it looking.
+   */
+  private firstWait(): number {
+    const at = this.lastLook();
+    if (at === null) return FIRST_CHECK_MS;
+    const due = Date.parse(at) + CHECK_EVERY_MS - (this.o.now?.() ?? new Date()).getTime();
+    return Math.min(CHECK_EVERY_MS, Math.max(FIRST_CHECK_MS, due));
   }
 
   stop(): void {
@@ -125,6 +150,7 @@ export class UpdateChecker {
       if (text.length > MAX_REPLY_CHARS) throw new Error("reply too long");
       const newest = newestVersion(JSON.parse(text));
       this.checkedAt = (this.o.now?.() ?? new Date()).toISOString();
+      this.o.checked?.(this.checkedAt);
       this.latest = newest !== null && isNewer(newest, this.o.current) ? newest : null;
       this.phase = this.latest ? "available" : "current";
       const told = this.o.told();
@@ -132,6 +158,8 @@ export class UpdateChecker {
     } catch (err) {
       this.phase = "failed";
       this.o.log.warn("updates.check_failed", { err: err instanceof Error ? err.name : "unknown" });
+      // A look that failed counts too: Home says Ember tries again tomorrow, and a restart keeps to that.
+      if (this.o.allowed()) this.o.checked?.((this.o.now?.() ?? new Date()).toISOString());
     }
     this.o.changed(this.status);
     return this.status;

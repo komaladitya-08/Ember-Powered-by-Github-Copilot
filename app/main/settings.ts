@@ -267,12 +267,14 @@ export const SettingsSchema = z.object({
   /**
    * Telling the user a newer Ember is out (app/main/updates.ts): off until they turn it on and agree to its note in Home
    * (`consent`, FEATURE_CONSENT_VERSION.updates). `told`: the last version announced, so each one is announced once.
+   * `checkedAt`: when it last asked GitHub (ISO), so a restart keeps to once a day (integrations-v3).
    */
   updates: z.object({
     on: z.boolean().default(false),
     consent: ConsentRecord,
     told: z.string().max(32).nullable().default(null),
-  }).default({ on: false, consent: { version: 0, at: null }, told: null }),
+    checkedAt: z.string().max(40).nullable().default(null),
+  }).default({ on: false, consent: { version: 0, at: null }, told: null, checkedAt: null }),
   /**
    * "Work without asking" (app/main/policy/autonomy.ts, PLAN.md §2 Approvals): off until the user turns it on and agrees
    * to its card in Home (`consent`, FEATURE_CONSENT_VERSION.autonomy). While on, ordinary steps in the enabled `scopes`

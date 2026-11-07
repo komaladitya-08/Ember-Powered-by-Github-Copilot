@@ -53,6 +53,15 @@ describe("SettingsStore", () => {
     expect(r.recoveredFrom && fs.existsSync(r.recoveredFrom)).toBe(true);
   });
 
+  it("keeps when updates last asked GitHub, and repairs a bad time without losing the rest (integrations-v3)", () => {
+    expect(DEFAULT_SETTINGS.updates.checkedAt).toBeNull();
+    const agreed = { version: 1, at: "2026-11-05T09:00:00.000Z" };
+    fs.writeFileSync(file, JSON.stringify({ updates: { on: true, consent: agreed, told: "0.2.0", checkedAt: "2026-11-05T10:01:00.000Z" } }));
+    expect(new SettingsStore(file).load().settings.updates).toEqual({ on: true, consent: agreed, told: "0.2.0", checkedAt: "2026-11-05T10:01:00.000Z" });
+    fs.writeFileSync(file, JSON.stringify({ updates: { on: true, consent: agreed, told: "0.2.0", checkedAt: 42 } }));
+    expect(new SettingsStore(file).load().settings.updates).toEqual({ on: true, consent: agreed, told: "0.2.0", checkedAt: null });
+  });
+
   it("recovers from a corrupt file", () => {
     fs.writeFileSync(file, "{ not json");
     const r = new SettingsStore(file).load();

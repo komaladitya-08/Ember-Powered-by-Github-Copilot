@@ -92,6 +92,62 @@ describe("the update checker", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps to once a day across restarts: a start soon after a look asks nothing until the day is out (integrations-v3)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T10:00:00Z"));
+    let kept: string | null = null;
+    const fetch = vi.fn(async () => reply([release("v0.1.1")]));
+    const start = () => {
+      const c = new UpdateChecker({
+        fetch: fetch as never, current: "0.1.1", allowed: () => true, told: () => null, announce: vi.fn(), changed: vi.fn(), log: { warn: vi.fn() },
+        lastChecked: () => kept, checked: at => { kept = at; },
+      });
+      c.refresh();
+      return c;
+    };
+    const first = start();
+    await vi.advanceTimersByTimeAsync(FIRST_CHECK_MS);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(kept).toBe("2026-11-05T10:01:00.000Z");
+    first.stop();
+    // Two hours later Ember starts again (three times): nothing is asked for the next 22 hours.
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+    const again = [start(), start(), start()];
+    expect(again[0].status).toMatchObject({ phase: "idle", checkedAt: "2026-11-05T10:01:00.000Z" });
+    await vi.advanceTimersByTimeAsync(22 * 60 * 60 * 1000 - 1);
+    expect(fetch).toHaveBeenCalledOnce();
+    again[1].stop(); again[2].stop();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    again[0].stop();
+  });
+
+  it("counts a failed look, waits at most a day for a clock set back, and ignores a time it can't read (integrations-v3)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T10:00:00Z"));
+    const run = async (kept: string | null, fetch = vi.fn(async () => reply([release("v0.1.1")]))) => {
+      const saved: string[] = [];
+      const c = new UpdateChecker({
+        fetch: fetch as never, current: "0.1.1", allowed: () => true, told: () => null, announce: vi.fn(), changed: vi.fn(), log: { warn: vi.fn() },
+        lastChecked: () => kept, checked: at => { saved.push(at); },
+      });
+      c.refresh();
+      return { c, fetch, saved };
+    };
+    const failed = await run(null, vi.fn(async () => { throw new TypeError("offline"); }));
+    await vi.advanceTimersByTimeAsync(FIRST_CHECK_MS);
+    expect(failed.saved).toEqual(["2026-11-05T10:01:00.000Z"]);
+    failed.c.stop();
+    const future = await run("2027-01-01T00:00:00.000Z");
+    await vi.advanceTimersByTimeAsync(CHECK_EVERY_MS);
+    expect(future.fetch).toHaveBeenCalledOnce();
+    future.c.stop();
+    const unreadable = await run("yesterday");
+    await vi.advanceTimersByTimeAsync(FIRST_CHECK_MS);
+    expect(unreadable.fetch).toHaveBeenCalledOnce();
+    unreadable.c.stop();
+  });
+
   it("asks GitHub alone, with no token and no version of Ember", async () => {
     const { c, fetch } = checker();
     await c.check();
@@ -137,11 +193,11 @@ describe("the update checker", () => {
 
 describe("the setting", () => {
   it("is off by default, with no consent", () => {
-    expect(SettingsSchema.parse({}).updates).toEqual({ on: false, consent: { version: 0, at: null }, told: null });
+    expect(SettingsSchema.parse({}).updates).toEqual({ on: false, consent: { version: 0, at: null }, told: null, checkedAt: null });
   });
   it("can be turned off by the administrator, and is off under lockdown", () => {
     const policy = parseAdminPolicy(JSON.stringify({ features: { updates: false } }), "test").policy;
-    const on = { ...SettingsSchema.parse({}), updates: { on: true, consent: { version: 1, at: "x" }, told: null } };
+    const on = { ...SettingsSchema.parse({}), updates: { on: true, consent: { version: 1, at: "x" }, told: null, checkedAt: null } };
     expect(applyAdminPolicy(on, policy).updates.on).toBe(false);
     expect(managedKeys(policy)).toContain("updates");
     expect(parseAdminPolicy("not json", "test").policy.features.updates).toBe(false);
@@ -156,6 +212,9 @@ describe("Home's words", () => {
   it("says each state in a sentence", () => {
     expect(updateStatusText({ phase: "available", latest: "0.2.0", checkedAt: null })).toBe("Ember 0.2.0 is out.");
     expect(updateStatusText({ phase: "failed", latest: null, checkedAt: null })).toBe("Couldn't check for updates. Ember will try again tomorrow.");
+    // Started again within a day of a look: no "shortly" (integrations-v3).
+    expect(updateStatusText({ phase: "idle", latest: null, checkedAt: null })).toBe("Ember will check shortly.");
+    expect(updateStatusText({ phase: "idle", latest: null, checkedAt: "2026-11-05T10:01:00.000Z" })).toBe("Ember checks once a day. Check now looks at once.");
     expect(updateStatusText({ phase: "checking", latest: null, checkedAt: null })).toBe("Checking…");
     expect(updateStatusText({ phase: "off", latest: null, checkedAt: null })).toBe("");
     expect(updateStatusText({ phase: "current", latest: null, checkedAt: null })).toBe("You have the latest version.");

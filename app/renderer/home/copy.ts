@@ -588,7 +588,8 @@ export function updateStatusText(s: UpdateStatus): string {
     case "current": return "You have the latest version.";
     case "checking": return "Checking…";
     case "failed": return "Couldn't check for updates. Ember will try again tomorrow.";
-    case "idle": return "Ember will check shortly.";
+    // Started again within the day of a look: the next one waits out the day (integrations-v3).
+    case "idle": return s.checkedAt ? "Ember checks once a day. Check now looks at once." : "Ember will check shortly.";
     default: return "";
   }
 }

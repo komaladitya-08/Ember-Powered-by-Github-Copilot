@@ -1890,6 +1890,8 @@ function start(): void {
       return consented() && policy.features.updates !== false && u.on && u.consent.version >= FEATURE_CONSENT_VERSION.updates;
     },
     told: () => settings.get().updates.told,
+    lastChecked: () => settings.get().updates.checkedAt,
+    checked: at => { try { settings.update({ updates: { ...settings.get().updates, checkedAt: at } }); } catch (err) { log.warn("updates.not_saved", { err }); } },
     announce: version => {
       settings.update({ updates: { ...settings.get().updates, told: version } });
       notify("Ember: a new version is out", `Ember ${version} is out. Open Ember's settings to see what's new.`);

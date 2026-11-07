@@ -1507,14 +1507,14 @@ function renderUpdates(s: UpdateStatus): void {
 }
 $("updates-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
-  const own = settings?.updates ?? { on: false, consent: { version: 0, at: null }, told: null };
+  const own = settings?.updates ?? { on: false, consent: { version: 0, at: null }, told: null, checkedAt: null };
   // First time: the note comes first, and focus moves to it so it is read and answered.
   if (on && own.consent.version < UPDATES_VERSION) { $("updates-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("updates-yes").focus(); return; }
   void save({ updates: { ...own, on } });
 });
 $("updates-yes").addEventListener("click", () => {
   $("updates-consent").hidden = true;
-  void save({ updates: { on: true, told: settings?.updates.told ?? null, consent: { version: UPDATES_VERSION, at: new Date().toISOString() } } });
+  void save({ updates: { on: true, told: settings?.updates.told ?? null, checkedAt: settings?.updates.checkedAt ?? null, consent: { version: UPDATES_VERSION, at: new Date().toISOString() } } });
   $("updates-on").focus();
 });
 $("updates-no").addEventListener("click", () => { $("updates-consent").hidden = true; $("updates-on").focus(); });
