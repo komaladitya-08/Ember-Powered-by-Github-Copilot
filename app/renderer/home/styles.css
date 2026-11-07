@@ -353,6 +353,9 @@ progress[hidden] { display: none; }
 .conversation li.learned::before { content: none; }
 .conversation li.learned p { order: 0; flex: 1; min-width: 0; max-width: none; margin: 0; background: transparent; padding: 2px 6px; border-radius: 0; color: var(--muted); font: var(--type-footnote); }
 .conversation li.learned .btn { flex: none; }
+/* Where the lines kept from before Ember restarted end (home-8): those above are for reading, this conversation below. */
+.conversation li.restored-end { display: block; margin: 6px 14px; padding: 8px 0 2px; border-top: 1px solid var(--separator); color: var(--muted); font: var(--type-footnote); text-align: center; text-wrap: pretty; }
+.conversation li.restored-end::before { content: none; }
 /* Memory's list: the fact, and where it came from under it. */
 .mem-fact { display: grid; gap: 2px; min-width: 0; }
 .mem-fact > span { min-width: 0; overflow-wrap: anywhere; }

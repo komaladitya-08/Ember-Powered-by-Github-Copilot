@@ -38,8 +38,8 @@ describe("Home's conversation", () => {
   it("finds retained text without markup interpretation, including earlier messages and multiline code", () => {
     expect(conversationMatchesText("Earlier <script>message</script>\nconst answer = 42;", " SCRIPT ")).toBe(true);
     expect(conversationMatchesText("Earlier message", "missing")).toBe(false);
-    expect(conversationSearchCount(0)).toBe("0 matching messages in this session.");
-    expect(conversationSearchCount(1)).toBe("1 matching message in this session.");
+    expect(conversationSearchCount(0)).toBe("0 matching messages in this conversation.");
+    expect(conversationSearchCount(1)).toBe("1 matching message in this conversation.");
   });
   it("shows the latest six messages, so the composer stays within reach, or every one once asked (home-v2)", () => {
     expect(CONVERSATION_SHOWN).toBe(6);

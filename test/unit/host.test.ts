@@ -3848,6 +3848,25 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     await second.host.stop();
   });
 
+  it("marks the lines it brought back as restored for Home, and none said since (home-8)", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("What's the weather like?");
+    say("Sunny, about 20 degrees.");
+    await first.host.stop();
+    const second = kept(dir);
+    await second.host.start(TOKEN, "stored");
+    await second.host.ask("And tomorrow?");
+    say("Rain in the afternoon.");
+    expect(second.host.getTranscript().map(e => [e.text, e.restored ?? false])).toEqual([
+      ["What's the weather like?", true], ["Sunny, about 20 degrees.", true], ["And tomorrow?", false], ["Rain in the afternoon.", false],
+    ]);
+    // The mark is Home's only: the copy saved again holds none.
+    await second.host.stop();
+    expect(fs.readFileSync(second.file, "utf8")).not.toContain("restored");
+  });
+
   it("is inert: a restored question is not agreed to by a later yes, and restored words are not the task's", async () => {
     const dir = tmpDir();
     const first = kept(dir);

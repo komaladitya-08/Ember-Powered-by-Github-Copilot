@@ -166,7 +166,11 @@ export interface AgentStatus {
  * the transcript then holds its words as an `ember` entry marked `stopped`.
  */
 export interface AnswerStream { id: number; text: string; state: "streaming" | "done" | "interrupted" }
-export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number; stopped?: true; answerId?: number }
+export interface TranscriptEntry {
+  t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number; stopped?: true; answerId?: number;
+  /** Brought back from before Ember restarted (keepConversation): for reading only, which Home marks (home-8). Never saved. */
+  restored?: true;
+}
 
 /** How long to wait before each further try at a reconnect's account lookup (ms). */
 const ACCOUNT_RETRY_MS: readonly number[] = [1000, 3000];
@@ -1157,8 +1161,9 @@ export class AgentHost {
     return this.retry !== null;
   }
 
+  /** The conversation as Home shows it: the lines restored from before a restart say so (`restored`, home-8). */
   getTranscript(): TranscriptEntry[] {
-    return [...this.transcript];
+    return this.transcript.map(e => (this.restored.has(e) ? { ...e, restored: true } : e));
   }
 
   /**

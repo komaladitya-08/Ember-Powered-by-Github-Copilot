@@ -56,7 +56,17 @@ export function conversationMatchesText(text: string, query: string): boolean {
   return text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 }
 export function conversationSearchCount(matches: number): string {
-  return matches === 1 ? "1 matching message in this session." : `${matches} matching messages in this session.`;
+  return matches === 1 ? "1 matching message in this conversation." : `${matches} matching messages in this conversation.`;
+}
+/**
+ * Under the last message kept from before Ember restarted (keepConversation): those are for reading, and the model
+ * starts a fresh conversation, so nothing above it is context for what is sent now (home-8).
+ */
+export const CONVERSATION_RESTORED_END = "The messages above are from before Ember restarted, for you to read. Ember doesn't remember them: it starts afresh below.";
+/** When a message was said: its time (`clock`), with its day first when that isn't today (a restored line, home-8). */
+export function conversationWhen(t: string, clock: string, now = new Date()): string {
+  const day = dayLabel(t, now);
+  return day === "Today" ? clock : `${day}, ${clock}`;
 }
 
 /** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */

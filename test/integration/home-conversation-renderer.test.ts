@@ -100,10 +100,10 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
     expect(await page.locator("#conversation-message").inputValue()).toBe("My unsent draft");
     await page.locator("#conversation-search").fill("uniquely earlier");
     await expect.poll(() => page.locator("#conversation li:visible").count()).toBe(1);
-    expect(await page.locator("#conversation-search-status").innerText()).toBe("1 matching message in this session.");
+    expect(await page.locator("#conversation-search-status").innerText()).toBe("1 matching message in this conversation.");
     expect(await page.locator("#conversation li:visible p").innerText()).toContain("updated details");
     await page.locator("#conversation-search").fill("missing text");
-    expect(await page.locator("#conversation-search-status").innerText()).toBe("0 matching messages in this session.");
+    expect(await page.locator("#conversation-search-status").innerText()).toBe("0 matching messages in this conversation.");
     await page.locator("#conversation-search").fill("");
     const answer = page.locator("#conversation li.ember").last();
     expect(await answer.locator("p").innerText()).toBe(long);
@@ -402,6 +402,32 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.locator("#conversation-send").click();
       await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual([long.slice(-1900)]);
       expect(await page.locator("#conversation-count").isHidden()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("marks once where the messages kept from before a restart end, so they don't read as this conversation (home-8)", async () => {
+    const yesterday = (h: number) => new Date(Date.now() - 86_400_000 + h * 60_000).toISOString();
+    const restored: TranscriptEntry[] = [
+      { t: yesterday(0), who: "you", text: "Clean up my Downloads folder", restored: true },
+      { t: yesterday(1), who: "ember", text: "I can delete the 12 installers there. Shall I?", restored: true },
+    ];
+    const { page, errors } = await home(restored);
+    try {
+      const rows = () => page.locator("#conversation > li").evaluateAll(els => els.map(e => e.classList.contains("restored-end") ? "|" : (e.querySelector("p")?.textContent ?? "")));
+      const end = page.locator("#conversation > li.restored-end");
+      await expect.poll(rows).toEqual([restored[0].text, restored[1].text, "|"]);
+      expect(await end.innerText()).toBe("The messages above are from before Ember restarted, for you to read. Ember doesn't remember them: it starts afresh below.");
+      // Their day is said, not only a time that reads as today's.
+      expect(await page.locator("#conversation > li.you time").first().innerText()).toMatch(/^Yesterday, /);
+      // The live conversation goes on below it; the mark stays where the restored lines end.
+      const live = await reply(page, restored, "Yes please", 4);
+      expect(await rows()).toEqual([restored[0].text, restored[1].text, "|", "Yes please", live.at(-1)!.text]);
+      expect(await end.count()).toBe(1);
+      // While searching, the matches alone.
+      await page.locator("#conversation-search").fill("installers");
+      expect(await end.isHidden()).toBe(true);
+      expect(await page.locator("#conversation-search-status").innerText()).toBe("1 matching message in this conversation.");
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);

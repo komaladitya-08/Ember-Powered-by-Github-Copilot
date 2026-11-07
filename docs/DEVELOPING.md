@@ -172,8 +172,9 @@ runtime. It does not change the app's consent or speaking settings.
     latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
     atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
     signed-in account is known and is the one that saved them (a file of another account, or while the account can't be
-    told, is never shown; another account's file is deleted). The saved lines are for the person to read: the model starts a
-    fresh session at every launch and never sees them, a restored question is not one a later "yes" agrees to, and nothing
+    told, is never shown; another account's file is deleted). The saved lines are for the person to read, and Home says
+    so under the last of them, with their day beside their time: the model starts a fresh session at every launch and
+    never sees them, a restored question is not one a later "yes" agrees to, and nothing
     is spoken, sent or run again. A file that can't be read (not JSON, another version, too large) is moved to
     `conversation.json.broken` and Ember starts empty. Turning the switch off, **New conversation**, **Sign out** and
     **Forget everything** (Memory) delete `conversation.json` (and `.broken`), and a write queued before any of them can't

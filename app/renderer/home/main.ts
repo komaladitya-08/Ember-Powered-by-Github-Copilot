@@ -48,7 +48,7 @@ import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whats
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, CONVERSATION_EDIT, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerCount, COMPOSER_OVER, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountLearnedUndo } from "./learned-undo";
@@ -972,7 +972,9 @@ function conversationRow(e: Entry): HTMLLIElement {
     return li;
   }
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
-  const t = Object.assign(document.createElement("time"), { textContent: time(e.t), dateTime: e.t });
+  // A line kept from before a restart may be days old: its day is said too (home-8).
+  const when = e.restored ? conversationWhen(e.t, time(e.t)) : time(e.t);
+  const t = Object.assign(document.createElement("time"), { textContent: when, dateTime: e.t });
   const text = Object.assign(document.createElement("p"), { textContent: e.text });
   // A request Ember heard: "That's not what I said" finds its row by this (personal.ts markHeard).
   if (e.heardId) li.dataset.heardId = String(e.heardId);
@@ -980,7 +982,7 @@ function conversationRow(e: Entry): HTMLLIElement {
   const actions = Object.assign(document.createElement("div"), { className: "conversation-message-actions" });
   if (e.who === "ember" || e.who === "you") {
     const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
-    copy.setAttribute("aria-label", `Copy ${e.who === "you" ? "your message" : "Ember’s answer"} from ${time(e.t)}`);
+    copy.setAttribute("aria-label", `Copy ${e.who === "you" ? "your message" : "Ember’s answer"} from ${when}`);
     copy.addEventListener("click", () => {
       copy.disabled = true;
       void window.ember.copyText(e.text).then(() => { conversationComposeStatus.textContent = "Copied message."; }, () => {
@@ -991,7 +993,7 @@ function conversationRow(e: Entry): HTMLLIElement {
   }
   if (e.who === "you") {
     const edit = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Edit" });
-    edit.setAttribute("aria-label", `Edit your message from ${time(e.t)} as a new request`);
+    edit.setAttribute("aria-label", `Edit your message from ${when} as a new request`);
     edit.addEventListener("click", () => {
       // Editing has no IPC side effect: Send is a new, deliberate typed request, never a tool/voice/suggestion replay.
       if (conversationDraftBeforeEdit === null) conversationDraftBeforeEdit = conversationMessage.value;
@@ -1019,6 +1021,8 @@ let conversationAllShown = false;
 let conversationAll: Entry[] = [];
 /** The answer being written: one row that grows in place (conversation-stream.ts), kept apart from the messages' rows. */
 let answerStream = NO_STREAM;
+/** Where the lines kept from before a restart end (home-8): one row, moved as the list changes. */
+const restoredEnd = Object.assign(document.createElement("li"), { className: "restored-end", textContent: CONVERSATION_RESTORED_END });
 let streamRowEl: HTMLLIElement | null = null;
 let streamRowId = 0;
 /** Draws the answer being written (or stopped short) as the last row; the same element for every word of one answer. */
@@ -1060,6 +1064,7 @@ function renderConversation(raw: Entry[]): void {
   const list = $("conversation");
   // Out of the way while the messages' rows change (their changes count rows from the top), back at the end after.
   streamRowEl?.remove();
+  restoredEnd.remove();
   const searching = !!conversationSearch.value.trim();
   const shown = conversationShown(entries, conversationAllShown || searching);
   const { drop, add } = conversationChange(shownConversation, shown);
@@ -1073,6 +1078,10 @@ function renderConversation(raw: Entry[]): void {
     if (match) matches++;
   }
   $("conversation-search-status").textContent = searching ? conversationSearchCount(matches) : "";
+  // Under the last line kept from before a restart: those are for reading, and this conversation starts below (home-8).
+  let lastRestored = -1;
+  for (let i = 0; i < shown.length; i++) if (shown[i].restored) lastRestored = i;
+  if (lastRestored >= 0 && !searching) list.children[lastRestored].after(restoredEnd);
   syncStreamRow(list);
   const latest = raw.at(-1);
   const newReply = latest && (latest.t !== conversationLastAtSend?.t || latest.who !== conversationLastAtSend?.who || latest.text !== conversationLastAtSend?.text);

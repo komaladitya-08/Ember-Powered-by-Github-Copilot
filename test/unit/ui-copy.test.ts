@@ -944,4 +944,14 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.composerCount(3240)).toBe("3,240 of 2,000 characters, 1,240 too many.");
     expect(conv.COMPOSER_OVER).toBe("This message is longer than 2,000 characters. Shorten it to send it.");
   });
+
+  it("marks where the messages kept from before a restart end, and searches the conversation, not a session (home-8)", () => {
+    expect(conv.CONVERSATION_RESTORED_END).toBe("The messages above are from before Ember restarted, for you to read. Ember doesn't remember them: it starts afresh below.");
+    expect(conv.conversationSearchCount(1)).toBe("1 matching message in this conversation.");
+    expect(conv.conversationSearchCount(3)).toBe("3 matching messages in this conversation.");
+    // A restored line from another day says which; today's keep the time alone.
+    const now = new Date(2026, 10, 7, 15, 0);
+    expect(conv.conversationWhen(new Date(2026, 10, 7, 9, 5).toISOString(), "9:05 AM", now)).toBe("9:05 AM");
+    expect(conv.conversationWhen(new Date(2026, 10, 6, 9, 5).toISOString(), "9:05 AM", now)).toBe("Yesterday, 9:05 AM");
+  });
 });
