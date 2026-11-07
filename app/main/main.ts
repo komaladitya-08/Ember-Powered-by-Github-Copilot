@@ -1369,9 +1369,10 @@ function start(): void {
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
     if (confirmer?.waiting) return blocked("Answer Ember’s question first.");
-    if (agent?.answerOpen) return blocked("Wait for Ember’s answer to finish.");
     const now = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
-    return source === "home" ? listenOnceInSettings(now) : now;
+    // An answer on its way: Listen once stops it first, as a wake does (requestListenOnce; voice-listening-7).
+    const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;
+    return source === "home" ? listenOnceInSettings(answer) : answer;
   };
   const clearManualCall = () => {
     const call = manualCall;
@@ -1410,6 +1411,8 @@ function start(): void {
     if (!on) {
       if (manualCall?.source === source) voice?.cancelListenOnce();
     } else if (voice && listenOnceStatus(source).phase === "ready") {
+      // Ember answering or talking: the answer stops first, as on a wake (its tasks go on; VoiceService hushes the voice).
+      if (agent?.answerOpen) agent.interruptAnswer();
       // Home is Ember’s own window. Ask uses the desktop view taken before Ask took the keyboard.
       manualCall = { source, context: source === "ask" ? askContextRead : Promise.resolve(null) };
       if (!voice.listenOnce()) clearManualCall();

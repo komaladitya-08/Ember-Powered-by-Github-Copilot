@@ -364,6 +364,8 @@ export class VoiceService {
         else this.idleSpeaker();
       }
       this.openFollowUp();
+      // Listen once pressed while Ember talked: it listens now that Ember has stopped.
+      if (!on) this.armListenOnce();
       this.o.onListenOnce?.();
     });
   }
@@ -382,12 +384,19 @@ export class VoiceService {
     if (this.muted) return blocked("Unmute the microphone first.");
     if (this.enrolling) return blocked("Finish teaching Ember your voice first.");
     if (!this.modelsReady) return this.downloading ? blocked("Speech models are downloading.") : { ...blocked("Download speech models in Settings first."), reason: "needs-models" };
-    if (this.saidSpeaking || this.ttsPending.size || this.speakingUntil > Date.now()) return blocked("Wait until Ember finishes speaking.");
-    if (!this.wanted) return { phase: "ready", detail: this.manualDetail || "Opens the microphone for one request." };
+    // Ember talking: Listen once hushes it first, as "Hey Ember" does (it was blocked, and the keyboard had no other way
+    // to cut in but Stop response or Stop everything: voice-listening-7).
+    const hushFirst = this.talking ? "Stops Ember talking, then listens for one request." : "";
+    if (!this.wanted) return { phase: "ready", detail: hushFirst || this.manualDetail || "Opens the microphone for one request." };
     if (this.state === "error") return { ...blocked("Check the microphone and voice status in Settings."), reason: "voice-error" };
     if (!this.capturing || !this.readyAt || !this.proc) return blocked("The microphone or speech recogniser is getting ready.");
     if (this.state === "active") return blocked("Ember is already listening.");
-    return { phase: "ready", detail: this.manualDetail };
+    return { phase: "ready", detail: hushFirst || this.manualDetail };
+  }
+
+  /** Ember is speaking, or about to (a reply on its way to the page, or speech asked for that hasn't started yet). */
+  private get talking(): boolean {
+    return this.saidSpeaking || this.ttsPending.size > 0 || this.speakingUntil > Date.now();
   }
 
   listenOnce(): boolean {
@@ -396,8 +405,11 @@ export class VoiceService {
     this.manualGeneration++;
     this.manualSilent = false;
     const temporary = !this.wanted;
+    // Ember stops talking first; the window opens once the page says it has (armListenOnce, and VOICE.speaking).
+    const hush = this.talking;
     this.manual = { phase: "starting", temporary, armed: false, timer: setTimeout(() => this.cancelListenOnce("The microphone did not get ready. Try again."), 30_000) };
     this.manual.timer.unref();
+    if (hush) this.hush();
     if (temporary) {
       const manual = this.manual;
       void this.start().catch(() => { if (this.manual === manual) this.cancelListenOnce("Couldn't start the microphone. Try again."); });
@@ -409,7 +421,7 @@ export class VoiceService {
 
   private armListenOnce(): void {
     const manual = this.manual;
-    if (!manual || manual.armed || !this.readyAt || !this.capturing || !this.proc) return;
+    if (!manual || manual.armed || !this.readyAt || !this.capturing || !this.proc || this.talking) return;
     manual.armed = true;
     clearTimeout(manual.timer);
     // The voice process ends the window itself, by MANUAL_MAX_MS at the latest: this catches one that never says so.

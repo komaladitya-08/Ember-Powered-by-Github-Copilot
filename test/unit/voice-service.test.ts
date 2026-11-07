@@ -282,6 +282,31 @@ describe("VoiceService", () => {
     },
   );
 
+  it("lets Listen once stop Ember talking first, then listen once it has stopped (the keyboard's way to cut in; voice-listening-7)", async () => {
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    const mic = captured();
+    v.speak("Here is a long answer, read out sentence by sentence.");
+    speaking(mic, true);
+    expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "Stops Ember talking, then listens for one request." });
+    const hushes = mic.webContents.send.mock.calls.filter(c => c[0] === VOICE.hush).length;
+    expect(v.listenOnce()).toBe(true);
+    // Hushed at once; nothing heard until the page says Ember's voice has stopped (its own words aren't the request).
+    expect(mic.webContents.send.mock.calls.filter(c => c[0] === VOICE.hush).length).toBe(hushes + 1);
+    expect(posted(proc, "listen-once")).toHaveLength(0);
+    expect(v.listenOnceStatus.phase).toBe("starting");
+    speaking(mic, false);
+    expect(posted(proc, "listen-once")).toHaveLength(1);
+    // Main stops an answer on its way first, as a wake does; a question still has to be answered first.
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).not.toContain("Wait for Ember’s answer to finish.");
+    expect(main).toContain(`const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;`);
+    expect(main).toMatch(/listenOnceStatus\(source\)\.phase === "ready"\) \{\s*\/\/[^\n]*\n\s*if \(agent\?\.answerOpen\) agent\.interruptAnswer\(\);/);
+    expect(main).toContain('if (confirmer?.waiting) return blocked("Answer Ember’s question first.");');
+  });
+
   it("says what to do next when a temporary Listen once's voice process stops (voice-listening-8)", async () => {
     const { v } = service();
     expect(v.listenOnce()).toBe(true);
@@ -305,7 +330,7 @@ describe("VoiceService", () => {
     // Anything else reads the same in Ask and in Settings.
     const ready = { phase: "ready", detail: "Request heard." } as const;
     expect(listenOnceInSettings(ready)).toBe(ready);
-    expect(readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain('return source === "home" ? listenOnceInSettings(now) : now;');
+    expect(readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain('return source === "home" ? listenOnceInSettings(answer) : answer;');
   });
 
   it("keeps a manual request until Voice Match finishes, then accepts it only once", async () => {
