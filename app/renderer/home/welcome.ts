@@ -475,7 +475,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       provField("w-p-key").placeholder = ownState?.keySaved ? "A key is saved. Paste a new one to replace it" : "Paste your key";
     }
     const host = endpointHost(provField("w-p-url").value.trim());
-    const consent = host ? providerConsentText(host) : "Once you enter the address, I'll say here exactly what is sent to it.";
+    const consent = host ? providerConsentText(host, "first-run") : "Once you enter the address, I'll say here exactly what is sent to it.";
     if ($("w-p-consent").textContent !== consent) $("w-p-consent").textContent = consent;
     const result = $("w-p-result");
     if (result.textContent !== providerCheck.line) result.textContent = providerCheck.line;

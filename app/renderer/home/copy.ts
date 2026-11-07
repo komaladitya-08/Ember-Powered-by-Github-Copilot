@@ -255,10 +255,14 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
 /**
  * The own model provider's card (Copilot › Model provider, FEATURE_CONSENT_VERSION.provider), shown when the user turns
  * it on, and again for another host: where everything Copilot would get goes instead, screenshots included, and where
- * the key goes. Change its words only with a bump of that version.
+ * the key goes. Change its words only with a bump of that version (a bump turns every agreed provider off until it is
+ * agreed again, so Ember would answer through Copilot meanwhile). Its last sentence says how to go back to Copilot
+ * where the card is shown: Home's switch, or first run's Back, which has no switch (`where`, first-run-10); what is
+ * sent, kept and where the key goes are the same words in both.
  */
-export function providerConsentText(host: string): string {
-  return `Ember will send what it would send to GitHub Copilot to ${host} instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to ${host}. Turn this off to go back to Copilot.`;
+export function providerConsentText(host: string, where: "home" | "first-run" = "home"): string {
+  const back = where === "first-run" ? "Back takes you to GitHub Copilot instead." : "Turn this off to go back to Copilot.";
+  return `Ember will send what it would send to GitHub Copilot to ${host} instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to ${host}. ${back}`;
 }
 
 /** Where Ember's model requests go right now (see `modelDestination`). `host` only: never a path, key or credentials. */

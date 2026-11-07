@@ -160,6 +160,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-p-needs").innerText()).toContain("API key");
     await p.fill("#w-p-url", "https://api.example.com/v1");
     expect(await p.locator("#w-p-consent").innerText()).toContain("api.example.com");
+    // The step has no switch to turn off: its Back is the way to Copilot (first-run-10).
+    expect(await p.locator("#w-p-consent").innerText()).toMatch(/Back takes you to GitHub Copilot instead\.$/);
+    expect(await p.locator("#w-p-consent").innerText()).not.toContain("Turn this off");
     // Empty fields are told what to fill, and nothing is saved or sent.
     await next(p).click();
     expect(await p.locator("#w-p-result").innerText()).toBe("Paste the API key first.");

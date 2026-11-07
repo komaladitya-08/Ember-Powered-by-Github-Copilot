@@ -812,6 +812,12 @@ describe("Comfort & access › Glass (the Glass setting)", () => {
 
 describe("the Model provider group's words (Copilot section)", () => {
   it("names the endpoint's host in the card, with screenshots and the key's destination, in sentence case and British spelling", () => {
+    // First run has no switch: its last sentence is the step's Back, and every word about what is sent is the same (first-run-10).
+    const home = providerConsentText("models.example.com");
+    const firstRun = providerConsentText("models.example.com", "first-run");
+    expect(firstRun.endsWith(" Back takes you to GitHub Copilot instead.")).toBe(true);
+    expect(firstRun.replace(" Back takes you to GitHub Copilot instead.", "")).toBe(home.replace(" Turn this off to go back to Copilot.", ""));
+    expect(readFileSync("app/renderer/home/welcome.ts", "utf8")).toContain('providerConsentText(host, "first-run")');
     expect(providerConsentText("models.example.com")).toBe("Ember will send what it would send to GitHub Copilot to models.example.com instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to models.example.com. Turn this off to go back to Copilot.");
   });
 
