@@ -25,7 +25,8 @@ it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps the conversation a
     version: 1, onboarded: true, wakeWord: false, consent: { version: CONSENT_VERSION, at: new Date().toISOString() },
   }));
   const saved = path.join(userData, HISTORY_FILE);
-  const ASKED = "Please remember the word pineapple-history-marker.";
+  // Not a request to remember: with memory off, that is answered in code (memory-v1) and never reaches the model.
+  const ASKED = "Please repeat the word pineapple-history-marker.";
   const ANSWERED = "Noted: answer-history-marker.";
   const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: ANSWERED }) });
   let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
