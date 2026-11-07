@@ -257,7 +257,10 @@ not, and their timezone or hours. Every answer is optional; while memory is off 
 explicit yes). Main checks the answers with `IntroSchema` (strict, bounded) and keeps them as `user` facts with a
 label Ember wrote ("Likes to be called Ram"), each replacing the one before. "Ember, get to know me" asks the same
 aloud, answered by the host before the conversation (`intent`): "skip" skips, "that's all" stops, and an answer heard
-where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Asked while memory is off, it opens
+where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Spoken answers are kept as said,
+except that the name question keeps only the name: "Call me Ram", "My name is Ram", "It's Ram" and "Ram, please"
+all keep "Likes to be called Ram" (`nameFrom`), and "call me <a short name>" answers it rather than ending the
+interview as a request would (memory-6). Asked while memory is off, it opens
 Settings at memory's note.
 
 **Consent.** The note now says Ember learns as you go and that your words, its replies and its tasks' results go to

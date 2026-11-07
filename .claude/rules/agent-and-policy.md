@@ -260,8 +260,9 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     recall tool (`context`), whose query the model wrote and the screen may steer;
   - keep within `LEARN_BUDGET` and `REFINE_PER_DAY`; register nothing long-running outside its `memory` StopPart;
   - a fact the user gives (introduction, interview, an answer to Ember's question) is `user` only when they said it
-    (`own`); a request (`looksLikeRequest`) or "forget that" is never taken as an answer; Ember's question is built
-    from a name alone (`gapQuestion`), never one that reads like an order;
+    (`own`); a request (`looksLikeRequest`) or "forget that" is never taken as an answer, except "call me <a short
+    name>" to the interview's name question (`Interview.answers`), whose name is kept without its lead-in
+    (`nameFrom`); Ember's question is built from a name alone (`gapQuestion`), never one that reads like an order;
   - forgetting an open fact reopens what it had replaced (`reopenSuperseded`), so Undo puts the old value back, and
     goes through `MemoryLearning.forget()` so its "Ember learned" line and "forget that" let go of it too;
   - a summary or reflection records what it was made from (`derivedFrom`); forgetting or correcting a fact forgets

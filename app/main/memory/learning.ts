@@ -318,10 +318,10 @@ export class MemoryLearning {
       if (ask) return this.notInForce(ask);
     }
     // A request ("open Thunderbird and send the report to Bob") is never an answer: the question is let go of and the
-    // conversation takes the request.
+    // conversation takes the request. "Call me Ram" to the interview's name question is its answer (memory-6).
     const request = looksLikeRequest(text);
     if (this.interview) {
-      if (!this.d.inForce() || request) { this.interview = null; return null; }
+      if (!this.d.inForce() || (request && !this.interview.answers(text))) { this.interview = null; return null; }
       const step = this.interview.answer(text, how.own);
       this.interviewAt = now;
       this.keepAll(step.keep);

@@ -375,6 +375,28 @@ describe("getting to know you", () => {
     expect(answerFacts("style", "whatever suits")[0].text).toBe("Likes answers: whatever suits");
   });
 
+  it("keeps the name from a spoken “Call me Ram” or “My name is Ram”, not the whole sentence (memory-6)", () => {
+    const called = (said: string) => answerFacts("name", said).map(f => f.text);
+    for (const said of ["Call me Ram.", "You can call me Ram", "Just call me Ram, please", "My name is Ram", "My name's Ram", "I'm Ram", "I am Ram", "It's Ram", "Ram, please", "Ram, thanks", "Just Ram", "Ram is fine"]) {
+      expect(called(said), said).toEqual(["Likes to be called Ram"]);
+    }
+    // The rest is kept exactly as said, and a bare lead-in falls back to the whole answer.
+    expect(called("call me Dr Ana Lopez")).toEqual(["Likes to be called Dr Ana Lopez"]);
+    expect(called("Call me")).toEqual(["Likes to be called Call me"]);
+    // Only the name question is read this way: the other answers stay word for word.
+    expect(answerFacts("hours", "I'm in London, nine to five.").map(f => f.text)).toEqual(["Timezone and working hours: I'm in London, nine to five"]);
+    // Said aloud in the interview, “Call me Ram” answers the question, not a phone call to make: the interview goes on.
+    const { l, s } = learning();
+    l.intent("get to know me", { own: true });
+    expect(l.intent("Call me Ram.", { own: true })).toBe("What's your role, and what do you work on?");
+    expect(s.list().map(i => [i.text, i.source])).toEqual([["Likes to be called Ram", "user"]]);
+    // A real request still lets the question go, as before.
+    const other = learning();
+    other.l.intent("get to know me", { own: true });
+    expect(other.l.intent("call Bob on Teams", { own: true })).toBeNull();
+    expect(other.s.list()).toEqual([]);
+  });
+
   it("makes the spoken interview's “spoken or not” answer Ember's real speaking choice, only in the user's own words (memory-5)", () => {
     const spoken: boolean[] = [];
     const { l } = learning({ setSpoken: on => spoken.push(on) });
