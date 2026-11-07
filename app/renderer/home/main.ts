@@ -1459,8 +1459,23 @@ function renderMemory(rows: MemoryRow[]): void {
     if (document.activeElement === $("memory-on")) memoryFocusBack.el.focus();
     memoryFocusBack = null;
   }
-  // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause).
-  if (unavailable && !$("memory-forgotten").hidden) hideForgotten();
+  // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause), and
+  // waits out of sight while the same account is checked again, its Undo with it (memory-8).
+  if (forgottenHeld && forgottenHeld.epoch !== memoryEpoch) hideForgotten();
+  if (unavailable && !$("memory-forgotten").hidden) {
+    const box = $("memory-forgotten");
+    if (memoryUndo && forgottenEpoch === memoryEpoch) {
+      forgottenHeld = { epoch: memoryEpoch, focused: box.contains(document.activeElement) };
+      box.hidden = true;
+      if (forgottenHeld.focused) $("memory-on").focus();
+    } else hideForgotten();
+  }
+  if (!unavailable && forgottenHeld) {
+    const held = forgottenHeld;
+    forgottenHeld = null;
+    $("memory-forgotten").hidden = false;
+    if (held.focused && document.activeElement === $("memory-on")) $("memory-forgotten-text").focus();
+  }
   // An empty list says so in its own row, never "0 of 0 memories" above it (memory-13).
   $("memory-count").hidden = unavailable || !rows.length;
   $("memory-count").textContent = memoryCountText(page.rows.length, page.total, rows.length);
@@ -1498,6 +1513,12 @@ let memoryForgetting = false;
 /** Undo for the last Forget: its token and the fact's words, until MEMORY_UNDO_MS. */
 let memoryUndo: { token: string; text: string } | null = null;
 let memoryUndoTimer: ReturnType<typeof setTimeout> | undefined;
+/**
+ * The "Forgotten … Undo" line, held out of sight while the same account is checked again (a reconnect: memory-8): the
+ * epoch it belongs to, and whether focus was in it. It comes back with the list; another account's epoch drops it.
+ */
+let forgottenHeld: { epoch: number; focused: boolean } | null = null;
+let forgottenEpoch = -1;
 /** After Forget: what went, with Undo, where focus goes (the status line, never the next row's Forget: memory-7). */
 function showForgotten(text: string, gone: MemoryForgotten | null): void {
   clearTimeout(memoryUndoTimer);
@@ -1508,6 +1529,8 @@ function showForgotten(text: string, gone: MemoryForgotten | null): void {
   undo.removeAttribute("aria-disabled");
   undo.setAttribute("aria-label", undoForgotLabel(gone?.text ?? text));
   $("memory-forgotten").hidden = false;
+  forgottenEpoch = memoryEpoch;
+  forgottenHeld = null;
   said.focus();
   // Main lets go of what Undo needs after MEMORY_UNDO_MS: the line goes a little before, and focus with it to the switch.
   memoryUndoTimer = setTimeout(() => hideForgotten(), MEMORY_UNDO_MS - 2000);
@@ -1515,6 +1538,7 @@ function showForgotten(text: string, gone: MemoryForgotten | null): void {
 function hideForgotten(): void {
   clearTimeout(memoryUndoTimer);
   memoryUndo = null;
+  forgottenHeld = null;
   const box = $("memory-forgotten");
   const had = box.contains(document.activeElement);
   box.hidden = true;

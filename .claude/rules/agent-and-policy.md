@@ -286,8 +286,9 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   the conversation word it through app/shared/memory-owner.ts; only `other-account`, `unowned` and memory left after
   signing out are offered Forget everything (`memoryOwnerOffersErase`). Main's `memoryEpoch` (in every view) moves on
   only when memory is for another account or none (`MemoryEpochAccount`): a reconnect's `checking`, a failed check's
-  `unverified` and the same account verified again hold it, so Home keeps a correction draft and focus out of sight
-  and brings them back; memory itself still opens only once `MemoryOwner.ready` (memory-8).
+  `unverified` and the same account verified again hold it, so Home keeps a correction draft, the "Forgotten" line
+  with its Undo and focus out of sight and brings them back; memory itself still opens only once `MemoryOwner.ready`
+  (memory-8).
 - **Better recall's vectors are facts too** (embed.ts): only in `memory-vectors.json` (0600, through `vectorFile()`),
   dropped with a forgotten fact, erased by `forgetAll()` and Remove, never sent anywhere. The model runs only in the
   "Ember memory" process (embed-process.ts, a `StopPart` through `SemanticMemory.stop()`), is fetched only from Settings

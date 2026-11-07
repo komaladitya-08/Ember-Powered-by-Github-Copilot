@@ -166,7 +166,7 @@ download, so English-only MiniLM is the trade-off for now.
   signing out is offered Forget everything; Home's status line says "Memory paused", Tell Ember about you says why
   instead of its questions, and "get to know me" answers with the same reason. A reconnect (a network retry, the
   runtime restarting) checks the account again: the list is hidden meanwhile, but if the same account comes back
-  Home keeps its correction draft, the search and where focus was, and a Better recall download goes on (only the
+  Home keeps its correction draft, the search, a "Forgotten" line with its Undo and where focus was, and a Better recall download goes on (only the
   model's use waits). Main's epoch moves on, and Home lets go of them, only for another account or none
   (`MemoryEpochAccount`, memory-8).
 - **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off.

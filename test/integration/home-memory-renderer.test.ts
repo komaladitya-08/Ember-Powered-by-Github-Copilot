@@ -594,6 +594,7 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
         if (name === "getStatus") return async () => seed.status;
         if (name === "memory") return async () => ({ rows: seed.rows, ownership: "ready", reason: null, epoch: 1 });
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
+        if (name === "forgetMemory") return async (id: string) => ({ text: seed.rows.find(r => r.id === id)!.text, derived: 0, undo: `token-${id}-0001` });
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status, rows });
@@ -635,8 +636,26 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
     await page.locator("#memory-questions").focus();
     await push(back);
     expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-questions");
-    // Another account (the epoch moves on): the draft goes, as before.
+    // What was just forgotten, with its Undo, comes back with the list too (memory-8).
     await page.locator("#memory-query").fill("");
+    await page.locator('[data-memory-correct="b"]').locator("..").locator("[data-memory-forget]").focus();
+    await page.keyboard.press("Enter");
+    const forgotten = page.locator("#memory-forgotten");
+    await expect.poll(() => forgotten.isVisible()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-forgotten-text");
+    await push(checking);
+    expect(await forgotten.isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-on");
+    await push({ ...back, rows: rows.filter(r => r.id !== "b") });
+    expect(await forgotten.isVisible()).toBe(true);
+    expect(await page.locator("#memory-forgotten-text").innerText()).toBe("Forgotten: “Priya leads the platform team”.");
+    expect(await page.locator("#memory-undo").isVisible()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-forgotten-text");
+    // Another account (the epoch moves on): the draft goes, as before, and so does what was forgotten.
+    await push({ rows: [], ownership: "locked", reason: "other-account", epoch: 2 });
+    await push({ ...back, epoch: 2 });
+    expect(await forgotten.isHidden()).toBe(true);
+    await push(back);
     await page.locator('[data-memory-correct="a"]').click();
     await correction.fill("A private unfinished draft");
     await push({ rows: [], ownership: "locked", reason: "checking", epoch: 1 });
