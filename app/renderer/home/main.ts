@@ -34,7 +34,7 @@ import {
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
-import { modelDestination, recipientWords } from "./copy";
+import { modelDestination, recipientWords, type ModelDestination } from "./copy";
 import { mountProject } from "./project";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
 import { mountNaturalVoice } from "./natural-voice";
@@ -53,12 +53,15 @@ import { mountLearnedUndo } from "./learned-undo";
 import { mountMemoryCorrection } from "./memory-correction";
 import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
 import type { TaskEntry } from "../../shared/activity";
+import { STATUS_RETRIES, STATUS_RETRY_MS, StatusFence } from "./status-fence";
 
 declare global {
   interface Window { ember: EmberHomeApi }
 }
 
 const $ = (id: string) => document.getElementById(id)!;
+/** Where the startup snapshot meets the pushes that are newer than it. */
+const statusFence = new StatusFence();
 const PITCH: Record<string, string> = {
   cinder: "Coal critter with ember eyes and helping hands",
   wisp: "A living flame; its fire is its mood",
@@ -415,6 +418,7 @@ function render(status: Status): void {
   $("about-note").textContent = `Ember ${status.appVersion}`;
   renderSettingsNotice(status.settingsNotice);
   applySettings(status.settings);
+  applyVoiceSettings(status.settings);
   targetsStatus(status);
   extensionsStatus(status);
 }
@@ -467,7 +471,7 @@ function renderSettingsNotice(notice: string | null): void {
   el.hidden = !notice;
   el.textContent = notice ?? "";
 }
-window.ember.onSettingsNotice(renderSettingsNotice);
+window.ember.onSettingsNotice(n => { statusFence.pushedNotice(n); renderSettingsNotice(n); });
 
 // ───── Organisation policy ─────
 let managed = new Set<string>();
@@ -485,8 +489,8 @@ let lastAdmin: Status["admin"] | null = null;
  */
 function renderRecipient(): void {
   const a = lastAdmin;
-  if (!a) return;
-  const d = modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
+  // No status yet: the policy (which can fix the provider or lock Ember down) is unknown, so the recipient is too.
+  const d: ModelDestination = a ? modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() }) : { kind: "unknown" };
   const service = document.querySelector<HTMLElement>("#w-full #model-service");
   // The locked-down line replaces the sentence (and this span) altogether.
   if (service && d.kind !== "none") service.textContent = recipientWords(d, true);
@@ -499,6 +503,7 @@ function renderRecipient(): void {
   if (d.kind === "unknown") yes.setAttribute("aria-disabled", "true"); else yes.removeAttribute("aria-disabled");
 }
 onProviderDestination(renderRecipient);
+renderRecipient();
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
@@ -875,7 +880,19 @@ window.ember.onSignInProgress(p => {
 void window.ember.agentStatus().then(renderAgent);
 window.ember.onAgentStatus(renderAgent);
 
-void window.ember.getStatus().then(render);
+// One snapshot initialises all settings, including voice, so retries recover every control together.
+// It never puts back what a newer push already set (status-fence.ts); a failed one is asked for again.
+function loadStatus(): Promise<Status> {
+  const ticket = statusFence.begin();
+  return window.ember.getStatus().then(st => statusFence.apply(ticket, st));
+}
+function startStatus(attempt = 0): void {
+  loadStatus().then(render, () => {
+    if (attempt < STATUS_RETRIES) setTimeout(() => startStatus(attempt + 1), STATUS_RETRY_MS * (attempt + 1));
+  });
+}
+startStatus();
+window.ember.onSettingsChanged(s => statusFence.pushedSettings(s));
 window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
 window.ember.onSettingsChanged(targetsSettings);
@@ -1951,4 +1968,3 @@ window.ember.onVoiceProgress(p => {
 void window.ember.voiceStatus().then(renderVoice);
 window.ember.onVoiceStatus(renderVoice);
 window.ember.onSettingsChanged(applyVoiceSettings);
-void window.ember.getStatus().then(st => applyVoiceSettings(st.settings));

@@ -560,10 +560,14 @@ function start(): void {
   // targets runtime, kept a few seconds, and waited for briefly (the rows from before show while a slow one finishes).
   const targetChecks = targetChecksSource(() => targets?.doctorRows() ?? Promise.resolve([]), { keepMs: 15_000, waitMs: 3000, now: () => Date.now() });
   const environmentNow = async (fresh = false) => withTargetChecks(readEnvironment(), await targetChecks(fresh));
-  ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
+  ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => {
+    // Awaited first: settings and the notice are read after it, so the snapshot is at least as new as any push sent while
+    // the checks ran (Home also keeps a push that arrives meanwhile: app/renderer/home/status-fence.ts).
+    const environment = await environmentNow();
+    return {
     appVersion: app.getVersion(),
     settings: settings.get(),
-    environment: await environmentNow(),
+    environment,
     logFile: log.file,
     settingsNotice,
     admin: { source: admin.source, error: admin.error ?? null, ...(admin.held ? { held: true } : {}), managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
@@ -571,7 +575,8 @@ function start(): void {
       neverLook: policy.neverLook, commands: { local: commandMode(admin, "local"), wsl: commandMode(admin, "wsl"), ssh: commandMode(admin, "ssh") },
       sshHostsLimited: policy.ssh?.allowedHosts !== undefined },
     platform: platformStatus(),
-  })));
+    };
+  }));
   // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
   ipcMain.handle(IPC.activity, guard(() => audit?.recent(500) ?? []));
   /** The administrator's never-look entries are applied on top; they never go into the user's own list. */
