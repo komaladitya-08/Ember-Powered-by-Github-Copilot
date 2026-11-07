@@ -303,8 +303,13 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("says why saved memory is pause
     await page.evaluate(() => (window as unknown as { __push: (view: MemoryView) => void }).__push({ rows: [], ownership: "locked", reason: "other-account" }));
     expect(await owner.textContent()).toBe("This saved memory belongs to another GitHub account, so Ember keeps it hidden. Use Forget everything to clear it.");
     expect(await page.locator("#memory-forget-all").isHidden()).toBe(false);
-    await page.evaluate(() => (window as unknown as { __push: (view: MemoryView) => void }).__push({ rows: [], ownership: "ready", reason: null }));
+    await page.evaluate(() => (window as unknown as { __push: (view: MemoryView) => void }).__push({ rows: [
+      { id: "s1", text: "Works on Atlas with Priya", source: "conversation", at: "2026-11-04", kind: "summary" },
+      { id: "g1", text: "Is busy on Tuesdays", source: "task", at: "2026-11-04", kind: "guess" },
+    ], ownership: "ready", reason: null }));
     expect(await page.locator("#ay-name").isVisible()).toBe(true);
+    // Ember's own notes say they are Ember's, not the conversation's (memory-3).
+    expect(await page.locator("#memory-list .mem-from").allInnerTexts()).toEqual(["Ember's summary", "Ember's guess"]);
     await page.locator('a[href="#home-h"]').click();
     await expect.poll(() => page.locator("#whats-on").textContent()).toContain("Memory on");
     expect(errors).toEqual([]);

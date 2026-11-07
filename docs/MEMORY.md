@@ -214,7 +214,13 @@ download, so English-only MiniLM is the trade-off for now.
    - contradictions closed (`MemoryGraph.closeFact`, never deleted), only by an equal or stronger source, and never
      a `user` fact: only the user changes what they said (review of PR #142); and only for a fact about the same thing
      (the same predicate, or `similarity` of at least `SAME_THING`, 0.5);
-   - reflections from two or more facts, at confidence 0.4, never `user`.
+   - reflections from two or more facts, at confidence 0.4, never `user`, kept with the predicate `reflection`.
+
+   Summaries and reflections record the facts they were made from (`derivedFrom`, at most 40). Forgetting or
+   correcting a fact forgets every note made from it, open or closed, in the same write (`MemoryGraph.notesFrom`;
+   an older summary with no such record goes when it is about the same subject and newer), and "forget that" says
+   "and 2 notes I made from it". Home lists them as "Ember's summary" and "Ember's guess", and the model sees "Ember's
+   own summary" and "Ember's own guess", never "from our conversation".
 
    The model only proposes: ids must be among the facts it was shown, and every new fact goes through `add()`. At
    most one pass an idle stretch and 6 a day; the kill switch (`memory` StopPart) abandons it.

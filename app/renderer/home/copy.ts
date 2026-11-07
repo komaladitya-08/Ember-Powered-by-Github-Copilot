@@ -378,7 +378,11 @@ export const MEMORY_CORRECTION = {
   failed: "Ember couldn't save this correction. Your words are still here; try again.",
 } as const;
 /** A corrected sentence still names its original source, including its original authority. */
-export function memoryProvenanceLabel(source: string, correctedAt?: string): string { return `${memorySourceLabel(source)}${correctedAt ? " · Corrected by you" : ""}`; }
+/** Where a listed fact came from; one of Ember's own notes says so whatever it was drawn from (memory-3). */
+export function memoryProvenanceLabel(source: string, correctedAt?: string, kind?: "summary" | "guess"): string {
+  const from = kind === "summary" ? "Ember's summary" : kind === "guess" ? "Ember's guess" : memorySourceLabel(source);
+  return `${from}${correctedAt ? " · Corrected by you" : ""}`;
+}
 export const correctMemoryLabel = (text: string) => `Correct memory: ${text}`;
 /** Correction failures use main's plain bounded sentences; arbitrary IPC/filesystem details remain private. */
 export function memoryCorrectionFailedText(error: unknown): string {

@@ -7,6 +7,9 @@ import { MemoryService } from "../../app/main/memory/service";
 import { memoryFile } from "../../app/main/memory/store";
 import { SemanticMemory, vectorFile } from "../../app/main/memory/embed";
 import { MemoryLearning } from "../../app/main/memory/learning";
+import type { Fact } from "../../app/main/memory/graph";
+import { applyRefinement, recentFacts } from "../../app/main/memory/refine";
+import { forgotReply } from "../../app/main/memory/questions";
 
 const dirs: string[] = [];
 const failure = () => { throw Object.assign(new Error("read-only filesystem"), { code: "EROFS" }); };
@@ -150,5 +153,66 @@ describe("durable memory deletion", () => {
     expect(s.vectors.load("a".repeat(64)).ids()).not.toContain(id);
     s.memory.forgetAll(); await s.semantic.catchUp(); s.semantic.flush();
     expect(fs.existsSync(s.vectors.path)).toBe(false); s.memory.stop();
+  });
+});
+
+describe("forgetting a fact forgets what Ember made from it (memory-3)", () => {
+  /** Two of the user's facts, then one idle pass's summary and guess drawn from them both. */
+  function refined() {
+    const s = setup();
+    s.memory.remember("Works at Globex on the billing team", [{ name: "User", kind: "person" }, { name: "Globex", kind: "organisation" }], "remember that I work at Globex on the billing team");
+    s.memory.remember("Has a medical appointment every Tuesday", [{ name: "User", kind: "person" }], "remember that I have a medical appointment every Tuesday");
+    let shown: Fact[] = [];
+    s.memory.refine(g => { shown = recentFacts(g, null); return 0; });
+    s.memory.refine(g => {
+      const r = applyRefinement(g, {
+        summaries: [{ entity: "User", summary: "Works at Globex on billing and has a medical appointment every Tuesday" }], contradictions: [],
+        reflections: [{ fact: "Is usually busy on Tuesdays because of medical appointments", about: [{ name: "User", kind: "person" }], from: shown.map(f => f.id) }],
+      }, shown);
+      return r.summaries + r.reflections;
+    });
+    const id = (start: string) => s.memory.list().find(i => i.text.startsWith(start))!.id;
+    return { ...s, id };
+  }
+
+  it("leaves none of a forgotten fact's summary or guess in the list or in what goes to Copilot", async () => {
+    const s = refined();
+    expect(s.memory.list().map(i => [i.text, i.kind ?? null])).toEqual(expect.arrayContaining([
+      ["Works at Globex on billing and has a medical appointment every Tuesday", "summary"],
+      ["Is usually busy on Tuesdays because of medical appointments", "guess"],
+    ]));
+    expect(s.memory.forget(s.id("Has a medical"))).toBe(true);
+    expect(s.memory.list().map(i => i.text)).toEqual(["Works at Globex on the billing team"]);
+    const sent = await s.memory.context("Am I free on Tuesday? Medical appointment?");
+    expect(sent).not.toMatch(/Tuesday|medical/i);
+    expect(new MemoryService({ dir: s.dir, log: s.log }).list().map(i => i.text)).toEqual(["Works at Globex on the billing team"]);
+    s.memory.stop();
+  });
+
+  it("forgets what Ember made from a fact the user corrects, since it holds the old words", () => {
+    const s = refined();
+    const fact = s.memory.list().find(i => i.text.startsWith("Has a medical"))!;
+    s.memory.correct(fact, "Has a dentist appointment every Tuesday");
+    expect(s.memory.list().map(i => i.text).sort()).toEqual(["Has a dentist appointment every Tuesday", "Works at Globex on the billing team"]);
+    s.memory.stop();
+  });
+
+  it("also forgets an older summary of the same thing that has no record of what it came from", () => {
+    const s = setup();
+    s.memory.remember("Has a medical appointment every Tuesday", [{ name: "User", kind: "person" }], "remember that I have a medical appointment every Tuesday");
+    s.memory.refine(g => g.add({ text: "Has a medical appointment every Tuesday and works late", about: [{ name: "User" }], predicate: "summary", single: true, source: "conversation", confidence: 0.5 }).kind === "added" ? 1 : 0);
+    const fact = s.memory.list().find(i => i.text === "Has a medical appointment every Tuesday")!;
+    expect(s.memory.forget(fact.id)).toBe(true);
+    expect(s.memory.list()).toEqual([]);
+    s.memory.stop();
+  });
+
+  it("says how many of Ember's own notes went with it", () => {
+    const s = refined();
+    expect(s.memory.forgetCounted(s.id("Has a medical"))).toEqual({ text: "Has a medical appointment every Tuesday", derived: 2 });
+    expect(forgotReply("Has a medical appointment every Tuesday", 2)).toBe("Forgotten: “Has a medical appointment every Tuesday”, and 2 notes I made from it.");
+    expect(forgotReply("Likes tea", 1)).toBe("Forgotten: “Likes tea”, and a note I made from it.");
+    expect(forgotReply("Likes tea")).toBe("Forgotten: “Likes tea”.");
+    s.memory.stop();
   });
 });

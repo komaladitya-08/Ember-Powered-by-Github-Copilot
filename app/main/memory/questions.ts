@@ -124,5 +124,7 @@ export function gapFact(name: string, answer: string): NewFact {
 const FORGET_THAT = /^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:forget|don'?t\s+remember)\s+(?:that|it|this)(?:\s+please)?[.!]*$/i;
 export const isForgetThat = (text: string) => FORGET_THAT.test(text.trim());
 
-export const forgotReply = (text: string) => `Forgotten: “${text.replace(/[“”]/g, "")}”.`;
+/** The reply to "forget that": the fact, and how many of Ember's own notes made from it went too (memory-3). */
+export const forgotReply = (text: string, derived = 0) =>
+  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} I made from it` : ""}.`;
 export const NOTHING_TO_FORGET = "I haven't kept anything from just now.";

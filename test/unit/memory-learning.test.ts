@@ -19,7 +19,7 @@ import { REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, r
 import { MemoryService } from "../../app/main/memory/service";
 import type { MemoryOwnerReason } from "../../app/main/memory/owner";
 import { memoryPausedReply } from "../../app/shared/memory-owner";
-import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, memoryPaused, introFromForm, learnedLine, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
+import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, memoryPaused, introFromForm, learnedLine, memoryProvenanceLabel, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
 
 const quiet = { info: () => undefined, warn: () => undefined };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-memlearn-"));
@@ -173,6 +173,9 @@ describe("sleep-time refinement", () => {
     const reflection = g.allFacts(true).find(f => f.text.startsWith("Plans"))!;
     expect(reflection.source).toBe("conversation");
     expect(reflection.confidence).toBe(REFLECTION_CONFIDENCE);
+    // Each note says what it was made from, so forgetting one of those forgets it too (memory-3).
+    expect([reflection.predicate, reflection.derivedFrom]).toEqual(["reflection", [a.id, c.id]]);
+    expect([...g.allFacts(true).find(f => f.predicate === "summary")!.derivedFrom!].sort()).toEqual([a.id, b.id, c.id].sort());
     // A second summary closes the first, which stays as history.
     applyRefinement(g, parseRefinement(JSON.stringify({ summaries: [{ entity: "Atlas", summary: "Atlas: due in April, with Priya" }] }))!, recentFacts(g, null));
     const summaries = g.allFacts().filter(f => f.predicate === "summary");
@@ -430,6 +433,9 @@ describe("Home's words for memory", () => {
 
   it("says where each fact came from, what was learned with its Undo, and what Save kept", () => {
     expect(["user", "conversation", "task"].map(memorySourceLabel)).toEqual(["You told me", "From our conversation", "From a task"]);
+    // Ember's own notes say so, whatever they were drawn from (memory-3).
+    expect(memoryProvenanceLabel("conversation", undefined, "summary")).toBe("Ember's summary");
+    expect(memoryProvenanceLabel("task", "2026-11-04T12:00:00Z", "guess")).toBe("Ember's guess · Corrected by you");
     expect(learnedLine("Prefers short answers")).toBe("Ember learned: Prefers short answers");
     expect(undoLearnedLabel("Prefers short answers")).toBe("Undo: forget “Prefers short answers”");
     expect([null, 0, 1, 3].map(aboutYouSaved)).toEqual(["Not saved: memory is off.", "Nothing to save yet: answer any question you like.", "Saved 1 answer.", "Saved 3 answers."]);

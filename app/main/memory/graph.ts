@@ -31,6 +31,8 @@ export const MAX_FACT_CHARS = 400;
 export const MAX_FACTS = 5000;
 /** Facts with the same polarity at least this alike (./text.ts similarity) about the same entities are one fact. */
 export const DUPLICATE = 0.8;
+/** The most facts one of Ember's own notes (a summary or a reflection) records it was made from: a pass reads 40. */
+export const MAX_DERIVED = 40;
 
 const Iso = z.string().min(10).max(40);
 const Id = z.string().min(1).max(40);
@@ -68,6 +70,11 @@ export const FactSchema = z.object({
   /** Explicit local corrections change the sentence, never its source or authority. Legacy facts omit these. */
   revision: z.number().int().safe().min(0).optional(),
   correctedAt: Iso.optional(),
+  /**
+   * The facts one of Ember's own notes was made from (a `summary` or `reflection`, ./refine.ts): forgetting or
+   * correcting one of them forgets the note too, since it holds their words (memory-3). Older notes omit it.
+   */
+  derivedFrom: z.array(Id).max(MAX_DERIVED).optional(),
 });
 export type Fact = z.infer<typeof FactSchema>;
 
@@ -95,6 +102,8 @@ export interface NewFact {
   confidence?: number;
   /** When it became true, if not now. */
   validAt?: string;
+  /** What it was made from, when Ember wrote it (a summary or a reflection): see Fact.derivedFrom. */
+  derivedFrom?: string[];
 }
 
 export type AddResult =
@@ -199,15 +208,18 @@ export class MemoryGraph {
     const polarity = negated(text);
     const same = this.allFacts(true).find(f => sameEntities(f.entities, entities) && similarity(f.text, text) >= DUPLICATE && negated(f.text) === polarity);
     if (same) {
-      // Said again: surer (the stronger source wins), and fresh.
-      const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source) };
+      // Said again: surer (the stronger source wins), and fresh. A note made again records what it rests on now too.
+      const from = mergeDerived(same.derivedFrom, input.derivedFrom);
+      const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source), ...(from ? { derivedFrom: from } : {}) };
       this.facts.set(fact.id, fact);
       return { kind: "reinforced", fact };
     }
 
+    const from = mergeDerived(undefined, input.derivedFrom);
     const fact: Fact = {
       id: this.clock.id("f"), text, entities, predicate, source: input.source, confidence,
       validAt: input.validAt ?? now, invalidAt: null, supersededBy: null, createdAt: now, lastUsedAt: null, uses: 0,
+      ...(from ? { derivedFrom: from } : {}),
     };
     const closed: Fact[] = [];
     if (input.single && predicate) {
@@ -231,6 +243,32 @@ export class MemoryGraph {
       const f = this.facts.get(id);
       if (f) this.facts.set(id, { ...f, lastUsedAt: now, uses: f.uses + 1 });
     }
+  }
+
+  /**
+   * Ember's own notes that hold `id`'s words, open or closed, and the notes made from those in turn: every fact whose
+   * `derivedFrom` names one of them, and an older summary with no such record about the same subject written after
+   * it (memory-3). Never `id` itself, and never a fact the user said.
+   */
+  notesFrom(id: string): string[] {
+    const root = this.facts.get(id);
+    if (!root) return [];
+    const out = new Set<string>();
+    const queue = [id];
+    while (queue.length) {
+      const from = queue.shift()!;
+      for (const f of this.facts.values()) {
+        if (f.id === id || out.has(f.id) || f.source === "user" || !f.derivedFrom?.includes(from)) continue;
+        out.add(f.id);
+        queue.push(f.id);
+      }
+    }
+    // Summaries from before notes recorded their sources: any about one of its entities, written after it.
+    for (const f of this.facts.values()) {
+      if (f.id === id || out.has(f.id) || f.source === "user" || f.predicate !== "summary" || f.derivedFrom) continue;
+      if (f.createdAt >= root.createdAt && f.entities.some(e => root.entities.includes(e))) out.add(f.id);
+    }
+    return [...out];
   }
 
   /** Forgets one fact for good (not closed: gone). True if it was there. */
@@ -331,6 +369,11 @@ export class MemoryGraph {
 }
 
 const sameEntities = (a: string[], b: string[]) => a.length === b.length && a.every(id => b.includes(id));
+/** Two records of what a note was made from, together (MAX_DERIVED at most), or undefined for none. */
+const mergeDerived = (a: string[] | undefined, b: string[] | undefined): string[] | undefined => {
+  const all = [...new Set([...(a ?? []), ...(b ?? [])])].slice(0, MAX_DERIVED);
+  return all.length ? all : undefined;
+};
 /** 0 is most trusted. */
 const rank = (s: Source) => SOURCES.indexOf(s);
 const stronger = (a: Source, b: Source): Source => (rank(a) <= rank(b) ? a : b);

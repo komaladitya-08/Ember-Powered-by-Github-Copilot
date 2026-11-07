@@ -27,11 +27,20 @@ export const CONTEXT_FACTS = 6;
 /** At least this share of a fact's words in what the user said makes it the user's own. */
 export const OWN_WORDS = 0.6;
 
-/** One remembered fact as Settings lists it. */
-export interface MemoryItem { id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string }
+/**
+ * One remembered fact as Settings lists it. `kind`: one of Ember's own notes, its summary of a subject or a guess drawn
+ * from several facts (./refine.ts), which Home labels as Ember's rather than as the conversation (memory-3).
+ */
+export interface MemoryItem { id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string; kind?: "summary" | "guess" }
 
-const memoryItem = (f: Fact): MemoryItem => ({ id: f.id, text: f.text, source: f.source, at: f.validAt,
-  ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }) });
+/** Which of Ember's own notes a fact is, if it is one (`summary`, `reflection`). */
+export const noteKind = (f: Pick<Fact, "predicate">): MemoryItem["kind"] => (f.predicate === "summary" ? "summary" : f.predicate === "reflection" ? "guess" : undefined);
+
+const memoryItem = (f: Fact): MemoryItem => {
+  const kind = noteKind(f);
+  return { id: f.id, text: f.text, source: f.source, at: f.validAt,
+    ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }), ...(kind ? { kind } : {}) };
+};
 
 export interface MemoryLog { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void }
 
@@ -170,7 +179,13 @@ export class MemoryService {
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
     const corrected = { ...next.fact(current.id)!, text: clean, revision, correctedAt: this.now().toISOString() };
     next.replaceFact(corrected);
-    try { this.file.save(next); }
+    // Ember's notes made from the old words would keep them: they go in the same write (memory-3).
+    const notes = next.notesFrom(current.id);
+    for (const n of notes) next.forgetFact(n);
+    try {
+      for (const n of notes) this.o.semantic?.forget(n);
+      this.file.save(next);
+    }
     catch (err) {
       this.o.log.warn("memory.correction_failed", { err: err instanceof Error ? err.message : String(err) });
       throw new Error("Ember couldn't save this correction. The original memory is unchanged. Try again.", { cause: err });
@@ -188,17 +203,30 @@ export class MemoryService {
 
   /** Forgets one fact by id, and reopens what it had replaced (Undo puts the old value back). True if it was there. */
   forget(id: string): boolean {
+    return this.forgetCounted(id) !== null;
+  }
+
+  /**
+   * `forget`, saying what went: the fact's words, and how many of Ember's own notes made from it went with it (its
+   * summaries and guesses, which hold its words: memory-3). Null if it wasn't there.
+   */
+  forgetCounted(id: string): { text: string; derived: number } | null {
     // Only an open fact gives back what it replaced: a closed one was itself replaced since, and reopening under it would
     // leave a single predicate with two open values.
-    if (!this.g.fact(id)) return false;
+    if (!this.g.fact(id)) return null;
     // Stage the edit separately: a failed disk write must not remove the visible fact or reopen its predecessor.
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
     const f = next.fact(id)!;
-    const reopened = !f.invalidAt ? next.reopenSuperseded(id) : 0;
-    next.forgetFact(id);
+    const notes = next.notesFrom(id);
+    // The notes the user could see in the list: older closed ones are history.
+    const shownNotes = notes.filter(n => !next.fact(n)!.invalidAt).length;
+    let reopened = 0;
+    // A note that replaced an older one gives it back, unless that one goes too.
+    for (const x of [id, ...notes]) if (!next.fact(x)?.invalidAt) reopened += next.reopenSuperseded(x);
+    for (const x of [id, ...notes]) next.forgetFact(x);
     try {
       // Derived data first. If the graph write fails, missing vectors can safely be rebuilt from the retained graph.
-      this.o.semantic?.forget(id);
+      for (const x of [id, ...notes]) this.o.semantic?.forget(x);
       this.file.save(next);
     } catch (err) {
       try { this.o.semantic?.changed(this.g); } catch { this.o.log.warn("memory.delete_index_recovery_failed"); }
@@ -211,9 +239,9 @@ export class MemoryService {
     this.changed = true;
     // The deletion is durable; derived work and view notifications cannot reverse its acknowledgement.
     try { this.o.semantic?.changed(next); } catch { this.o.log.warn("memory.delete_index_failed"); }
-    this.o.log.info("memory.forgot", { count: 1, reopened });
+    this.o.log.info("memory.forgot", { count: 1 + notes.length, reopened });
     try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
-    return true;
+    return { text: f.text, derived: shownNotes };
   }
 
   /** Forgets everything only after both persistent stores have been erased successfully. */

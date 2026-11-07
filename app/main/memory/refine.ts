@@ -7,6 +7,8 @@
  * - contradictions: a fact a newer one says otherwise about, closed (never deleted). A fact the user said is never
  *   closed here: only the user changes what they said;
  * - reflections: a higher-level fact drawn from two or more facts, at a low confidence, never the user's own.
+ * Summaries and reflections record the facts they were made from (`derivedFrom`): forgetting or correcting one of those
+ * forgets them too, since they hold its words (memory-3).
  *
  * The model only proposes: every change is checked against the graph here (the ids it names must be among those it was
  * shown, every new fact goes through MemoryGraph.add() and its guard). Plain Node.
@@ -101,7 +103,7 @@ export function applyRefinement(g: MemoryGraph, r: Refinement, shown: Fact[]): R
     if (!from.length) continue;
     const source = weakestBelowUser(from.map(f => f.source));
     // `single`: the new summary closes the one before (kept, closed, so the rewrite can be audited).
-    const added = g.add({ text: s.summary, about: [{ name: e.name }], predicate: "summary", single: true, source, confidence: SUMMARY_CONFIDENCE });
+    const added = g.add({ text: s.summary, about: [{ name: e.name }], predicate: "summary", single: true, source, confidence: SUMMARY_CONFIDENCE, derivedFrom: from.map(f => f.id) });
     if (added.kind === "added") report.summaries++;
   }
 
@@ -125,7 +127,8 @@ export function applyRefinement(g: MemoryGraph, r: Refinement, shown: Fact[]): R
     if (from.length < 2 || soundsLikeInstruction(x.fact)) continue;
     // Never the user's own: the weakest source among what it rests on, and at least `conversation`.
     const source = weakestBelowUser(from.map(f => f.source));
-    const added = g.add({ text: x.fact, about: x.about.map(a => ({ name: a.name, ...(kindOf(a.kind) ? { kind: kindOf(a.kind) } : {}) })), source, confidence: REFLECTION_CONFIDENCE });
+    // `reflection` and what it rests on: Home calls it Ember's guess, and forgetting one of those forgets it (memory-3).
+    const added = g.add({ text: x.fact, about: x.about.map(a => ({ name: a.name, ...(kindOf(a.kind) ? { kind: kindOf(a.kind) } : {}) })), predicate: "reflection", source, confidence: REFLECTION_CONFIDENCE, derivedFrom: from.map(f => f.id) });
     if (added.kind === "added") report.reflections++;
   }
   return report;

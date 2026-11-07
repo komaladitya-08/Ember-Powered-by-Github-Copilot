@@ -195,15 +195,20 @@ export class MemoryLearning {
    * and its "Ember learned" line goes (`onForgot`). True if it was there.
    */
   forget(id: string): boolean {
+    return this.forgetCounted(id) !== null;
+  }
+
+  /** `forget`, saying what went: the fact's words and how many of Ember's notes made from it went too (memory-3). */
+  forgetCounted(id: string): { text: string; derived: number } | null {
     // A refinement still reading this fact must never reintroduce it in a summary after Forget.
     this.refining?.abort();
     ++this.recallRevision;
-    const had = this.d.memory.forget(id);
+    const gone = this.d.memory.forgetCounted(id);
     this.recent = this.recent.filter(r => r.id !== id);
-    if (had) {
+    if (gone) {
       try { this.d.onForgot?.(id); } catch { this.d.log.warn("memory.delete_notice_failed"); }
     }
-    return had;
+    return gone;
   }
 
   /** An explicit local correction retires readers and learned lines that still describe the old wording. */
@@ -275,7 +280,8 @@ export class MemoryLearning {
       if (!this.d.inForce()) return null;
       const last = this.recent.at(-1);
       if (!last || now - last.at > FORGET_THAT_MS) return null;
-      return this.forget(last.id) ? forgotReply(last.text) : null;
+      const gone = this.forgetCounted(last.id);
+      return gone ? forgotReply(last.text, gone.derived) : null;
     }
     // A request ("open Thunderbird and send the report to Bob") is never an answer: the question is let go of and the
     // conversation takes the request.

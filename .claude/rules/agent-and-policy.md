@@ -259,6 +259,8 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     from a name alone (`gapQuestion`), never one that reads like an order;
   - forgetting an open fact reopens what it had replaced (`reopenSuperseded`), so Undo puts the old value back, and
     goes through `MemoryLearning.forget()` so its "Ember learned" line and "forget that" let go of it too;
+  - a summary or reflection records what it was made from (`derivedFrom`); forgetting or correcting a fact forgets
+    those notes in the same staged write (`notesFrom`), so nothing Ember wrote keeps a forgotten fact's words;
   - every change to the graph tells Better recall (`semantic.changed()`: `remember`, `learn`, `refine`, a reopen), and
     the recall tool goes through `MemoryService.context()` for its matches by meaning; `forRequest` awaits it.
 - **Changing memory's note** (`MEMORY_CONSENT_TEXT`) means bumping `FEATURE_CONSENT_VERSION.memory` (now 2).

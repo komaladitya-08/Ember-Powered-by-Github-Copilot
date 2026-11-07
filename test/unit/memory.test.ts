@@ -243,6 +243,14 @@ describe("the memory block a model sees", () => {
     g.add({ text: "Lives in York", about: [{ name: "User" }], predicate: "lives_in", single: true, source: "user" });
     expect(factLine(g.fact("f1")!)).toBe("- [f1] (you told me, 2026-10-01, no longer true since 2026-10-02) Lives in Leeds");
   });
+
+  it("tells the model which lines are Ember's own summaries and guesses, not the conversation (memory-3)", () => {
+    const g = new MemoryGraph(undefined, clock());
+    g.add({ text: "Works on Atlas with Priya", about: [{ name: "User" }], predicate: "summary", single: true, source: "conversation", derivedFrom: ["f9"] });
+    g.add({ text: "Is busy on Tuesdays", about: [{ name: "User" }], predicate: "reflection", source: "task", derivedFrom: ["f8", "f9"] });
+    expect(factLine(g.fact("f1")!)).toBe("- [f1] (Ember's own summary, 2026-10-01) Works on Atlas with Priya");
+    expect(factLine(g.fact("f2")!)).toBe("- [f2] (Ember's own guess, 2026-10-01) Is busy on Tuesdays");
+  });
 });
 
 describe("sleep-time consolidation", () => {

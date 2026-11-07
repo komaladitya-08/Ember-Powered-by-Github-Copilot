@@ -1169,7 +1169,7 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     const row = read();
     const li = document.createElement("li");
     const fact = Object.assign(document.createElement("span"), { className: "mem-fact" });
-    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memorySourceLabel(row.source) }));
+    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memoryProvenanceLabel(row.source, row.correctedAt, row.kind) }));
     const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
     button.setAttribute("aria-label", forgetMemoryLabel(row.text));
     button.dataset.memoryForget = "";
@@ -1183,7 +1183,7 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
   },
   update: (li, row) => {
     li.querySelector<HTMLElement>(".mem-fact > span")!.textContent = row.text;
-    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt);
+    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind);
     li.querySelector<HTMLElement>("[data-memory-forget]")!.setAttribute("aria-label", forgetMemoryLabel(row.text));
     li.querySelector<HTMLElement>("[data-memory-correct]")!.setAttribute("aria-label", correctMemoryLabel(row.text));
   },
