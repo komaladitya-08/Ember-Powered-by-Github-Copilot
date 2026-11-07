@@ -857,6 +857,25 @@ describe("VoiceService", () => {
     expect(fs.readdirSync(root)).toEqual([]);
   });
 
+  for (const how of ["Cancel", "listening off"] as const) {
+    it(`stops the speech models' download on ${how}, back to needing them, saying it was cancelled (voice-listening-6)`, async () => {
+      const { v, states } = service(false);
+      await v.setWanted(true);
+      let aborted = false;
+      electron.net.fetch.mockImplementation((_url: string, init: { signal: AbortSignal }) => new Promise((_, reject) => init.signal.addEventListener("abort", () => { aborted = true; reject(new Error("aborted")); })));
+      const done = v.downloadModels(() => undefined);
+      const failed = expect(done).rejects.toThrow(/cancelled/);
+      expect(v.isDownloading).toBe(true);
+      if (how === "Cancel") v.cancelDownload(); else await v.setWanted(false);
+      await failed;
+      expect(aborted).toBe(true);
+      expect(v.isDownloading).toBe(false);
+      expect(states.at(-1)).toEqual(how === "Cancel" ? { s: "needs-models", detail: "Download cancelled." } : { s: "off", detail: "Download cancelled." });
+      expect(modelsReady(root)).toBe(false);
+      expect(fs.readdirSync(root).filter(f => f.startsWith(".download-"))).toEqual([]);
+    });
+  }
+
   it("gives up on a download that stalls", async () => {
     vi.useFakeTimers();
     const { v, states } = service(false);

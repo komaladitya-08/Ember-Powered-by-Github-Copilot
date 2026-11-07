@@ -562,9 +562,14 @@ export function forgetMemoryLabel(text: string): string {
  * The speech models' download button: what it fetches and its size. Listening's own models missing: "speech models"
  * (everything missing comes with them); otherwise the voice models that are missing (Kitten Nano, Voice Match).
  */
-export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: number): string {
+/** The download's size as the Download button and the consent card say it ("220 MB"; Kitten alone to a tenth). */
+export function modelsSize(missing: readonly SpeechModelId[], bytes: number): string {
   const onlyVoice = missing.length === 1 && missing[0] === "tts";
-  const mb = `${Math.max(1, onlyVoice ? Math.round(bytes / 1e5) / 10 : Math.round(bytes / 1e6))} MB`;
+  return `${Math.max(1, onlyVoice ? Math.round(bytes / 1e5) / 10 : Math.round(bytes / 1e6))} MB`;
+}
+
+export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: number): string {
+  const mb = modelsSize(missing, bytes);
   const listening = missing.some(id => id === "kws" || id === "vad" || id === "asr");
   const parts = listening ? ["speech models"] : [...(missing.includes("tts") ? ["Kitten Nano"] : []), ...(missing.includes("speaker") ? ["Voice Match"] : [])];
   return `Download ${parts.length ? parts.join(" and ") : "speech models"} (${mb})`;

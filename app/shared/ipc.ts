@@ -58,6 +58,7 @@ export const IPC = {
   ask: "agent:ask",
   voiceStatus: "voice:status",
   voiceDownload: "voice:download",
+  voiceDownloadCancel: "voice:download-cancel",
   voiceProgress: "voice:progress",
   /** Voice Match: teach Ember the owner's voice, stop doing so, or forget the voiceprint. */
   voiceMatchEnrol: "voice:match-enrol",
@@ -382,6 +383,8 @@ export interface EmberHomeApi {
   voiceStatus(): Promise<VoiceStatus>;
   onVoiceStatus(fn: (s: VoiceStatus) => void): () => void;
   downloadVoice(): Promise<void>;
+  /** Stops the speech models' download under way (Cancel beside its progress). */
+  cancelVoiceDownload(): Promise<void>;
   /** Fetches the natural voice again after its download failed. */
   retryNaturalVoice(): Promise<void>;
   /** Voice Match: starts teaching Ember the owner's voice (false: Ember isn't listening, so it can't), or stops; forgets the voiceprint. */

@@ -206,6 +206,8 @@ export class VoiceService {
   /** The natural voice was turned on while the screen was locked: it is decided once it is unlocked. */
   private naturalOnUnlock = false;
   private downloading: Promise<void> | null = null;
+  /** Cancels the speech models' download (Cancel beside its progress, or listening turned off: voice-listening-6). */
+  private downloadAbort: AbortController | null = null;
   /** Until when Ember is speaking, or about to: a follow-up window waits until it's done. */
   private speakingUntil = 0;
   private speechGeneration = 0;
@@ -588,7 +590,8 @@ export class VoiceService {
   async setWanted(on: boolean): Promise<void> {
     if (this.manual?.temporary) this.cancelListenOnce();
     this.wanted = on;
-    if (!on) { this.cancelRetry(); this.teardown(); this.setState("off"); return; }
+    // Listening turned off: its download stops too, rather than run on unseen (voice-listening-6).
+    if (!on) { this.cancelDownload(); this.cancelRetry(); this.teardown(); this.setState("off"); return; }
     await this.start();
   }
 
@@ -641,7 +644,9 @@ export class VoiceService {
       // muting, or being off) carries on as it was, and settings shows the download's own progress (isDownloading).
       if (!this.modelsReady) this.setState("downloading");
       const ids = missing.map(m => m.id);
-      this.downloading = ensureModels(this.userRoot, electronDownloader, progress, ids)
+      const abort = new AbortController();
+      this.downloadAbort = abort;
+      this.downloading = ensureModels(this.userRoot, electronDownloader, progress, ids, abort.signal)
         .then(() => {
           this.o.log.info("voice.models_ready", { models: ids, bytes: modelsBytes(missing) });
           for (const id of ids) this.notBundled.delete(id); // (the user's own copy is used: it verified)
@@ -653,12 +658,15 @@ export class VoiceService {
         .catch((err: unknown) => {
           // Never left on "Downloading…": back to what it was, saying why (the download button offers a retry).
           const message = err instanceof Error ? err.message : String(err);
-          this.o.log.warn("voice.download_failed", { message });
-          const detail = `Couldn't download the speech models. ${downloadHelp(message, modelsBytes(missing))}`;
-          this.setState(this.state !== "downloading" ? this.state : !this.wanted ? "off" : this.muted ? "muted" : "needs-models", detail);
-          throw err;
+          const cancelled = abort.signal.aborted;
+          if (cancelled) this.o.log.info("voice.download_cancelled", { models: ids });
+          else this.o.log.warn("voice.download_failed", { message });
+          const detail = cancelled ? "Download cancelled." : `Couldn't download the speech models. ${downloadHelp(message, modelsBytes(missing))}`;
+          // (Cancelled while listening ran on, fetching only Ember's voice or Voice Match: the voice line stays as it is.)
+          if (!cancelled || this.state === "downloading" || this.state === "off") this.setState(this.state !== "downloading" ? this.state : !this.wanted ? "off" : this.muted ? "muted" : "needs-models", detail);
+          throw cancelled ? new Error("cancelled", { cause: err }) : err;
         })
-        .finally(() => { this.downloading = null; this.o.onModels?.(); });
+        .finally(() => { this.downloading = null; if (this.downloadAbort === abort) this.downloadAbort = null; this.o.onModels?.(); });
       this.o.onModels?.(); // (settings hides the button and shows the download's progress)
     }
     await this.downloading;
@@ -666,6 +674,11 @@ export class VoiceService {
     if (this.proc) this.setVoiceprint(this.o.voiceprint?.() ?? null);
     if (this.wanted) await this.start();
     else if (this.state === "downloading") this.setState("off");
+  }
+
+  /** Stops the speech models' download under way, if any: downloadModels then rejects, and the state says "Download cancelled.". */
+  cancelDownload(): void {
+    this.downloadAbort?.abort();
   }
 
   /**

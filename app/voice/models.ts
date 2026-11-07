@@ -376,18 +376,20 @@ export async function fetchModel(root: string, m: ModelDownload, download: Downl
  * what is fetched (the bytes of the models not yet in place), counting an archive's download as DOWNLOAD_SHARE of its
  * share, and checking and unpacking it as the rest.
  */
-export async function ensureModels(root: string, download: Downloader, progress: ModelsProgress = () => undefined, ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id)): Promise<ModelPaths> {
+/** `signal`: the download is cancelled (Cancel, or listening turned off): what is half fetched goes, and it rejects. */
+export async function ensureModels(root: string, download: Downloader, progress: ModelsProgress = () => undefined, ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id), signal?: AbortSignal): Promise<ModelPaths> {
   fs.mkdirSync(root, { recursive: true });
   const fetching = VOICE_MODELS.filter(m => ids.includes(m.id) && !verified(root, m));
   const total = modelsBytes(fetching);
   let done = 0;
   for (const m of fetching) {
+    if (signal?.aborted) throw new Error("cancelled");
     fs.rmSync(marker(root, m), { force: true });
     const base = done, share = m.kind === "file" ? 1 : DOWNLOAD_SHARE;
     const downloaded = Math.floor(m.bytes * share);
     // (A file has nothing to unpack, and its check is quick.)
     await fetchModel(root, m, download, bytes => progress(base + Math.min(downloaded, Math.floor(bytes * share)), total),
-      m.kind === "file" ? undefined : fraction => progress(base + downloaded + Math.floor((m.bytes - downloaded) * fraction * 0.99), total, "unpacking"));
+      m.kind === "file" ? undefined : fraction => progress(base + downloaded + Math.floor((m.bytes - downloaded) * fraction * 0.99), total, "unpacking"), signal);
     fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
     done += m.bytes;
     progress(done, total);

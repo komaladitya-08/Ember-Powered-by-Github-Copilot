@@ -2462,6 +2462,7 @@ function start(): void {
     }
     broadcast(IPC.voiceStatus, voiceStatus());
   }));
+  ipcMain.handle(IPC.voiceDownloadCancel, guard(() => { voice?.cancelDownload(); }));
   ipcMain.on(IPC.ask, (event, text: unknown) => {
     if (!askWindow.owns(event.sender) || typeof text !== "string") return;
     askWindow.hide();

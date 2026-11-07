@@ -38,6 +38,7 @@ const api: EmberHomeApi = {
   onVoiceStatus: fn => listen<VoiceStatus>(IPC.voiceStatus, fn),
   listenOnce: on => ipcRenderer.invoke(IPC.listenOnce, on),
   downloadVoice: () => ipcRenderer.invoke(IPC.voiceDownload),
+  cancelVoiceDownload: () => ipcRenderer.invoke(IPC.voiceDownloadCancel),
   retryNaturalVoice: () => ipcRenderer.invoke(IPC.voiceNaturalRetry),
   enrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchEnrol),
   cancelEnrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchCancel),

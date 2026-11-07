@@ -10,7 +10,7 @@ import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import type { HistoryProblemKind } from "../../shared/conversation";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
@@ -1875,6 +1875,14 @@ function renderVoice(v: VoiceStatus): void {
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
   ($("voice-progress") as HTMLProgressElement).hidden = !downloading;
+  // Its Cancel, while it runs (voice-listening-6); when it goes with focus on it, focus goes back to Download.
+  const cancel = $("voice-download-cancel") as HTMLButtonElement;
+  const hadCancel = document.activeElement === cancel;
+  cancel.hidden = !downloading;
+  if (hadCancel && cancel.hidden) focusFirst(["voice-download", "wake"]);
+  // The consent card says that agreeing downloads the models, and how much (modelsDownloadLabel's size).
+  $("consent-models").hidden = !v.modelsMissing.length;
+  $("consent-models-size").textContent = modelsSize(v.modelsMissing, v.modelsBytes);
   const missing = v.speechMissing === true;
   if (missing !== speechMissing) {
     speechMissing = missing;
@@ -1996,9 +2004,11 @@ $("speak").addEventListener("change", e => { void save(speakSettings((e.target a
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();
-  // The button goes while it downloads: focus stays in the section.
-  focusFirst(["wake"]);
+  // The button goes while it downloads: focus moves to its Cancel, shown now.
+  $("voice-download-cancel").hidden = false;
+  focusFirst(["voice-download-cancel", "wake"]);
 });
+$("voice-download-cancel").addEventListener("click", () => { void window.ember.cancelVoiceDownload(); });
 window.ember.onVoiceProgress(p => {
   const bar = $("voice-progress") as HTMLProgressElement;
   bar.hidden = false;
