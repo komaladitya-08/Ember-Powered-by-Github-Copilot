@@ -77,9 +77,13 @@ const SHELL_NAME: Readonly<Record<ShellId, string>> = { bash: "bash", zsh: "zsh"
 /** Between a number and its unit: a no-break space, so "3.2 s" never wraps into "3.2" and "s". */
 const NB = "\u00a0";
 
-/** A duration as the window says it: "3.2 s" under 10 s, "12 s" under a minute, then "2 min" or "2 min 5 s". */
+/**
+ * A duration as the window says it: "less than 0.1 s" (never "0 s", commands-remote-5), "3.2 s" under 10 s, "12 s"
+ * under a minute, then "2 min" or "2 min 5 s".
+ */
 export function durationText(ms: number): string {
   const s = Math.max(0, Number.isFinite(ms) ? ms : 0) / 1000;
+  if (s < 0.05) return `less than 0.1${NB}s`;
   if (s < 9.95) {
     const t = Math.round(s * 10) / 10;
     return `${Number.isInteger(t) ? t.toFixed(0) : t.toFixed(1)}${NB}s`;

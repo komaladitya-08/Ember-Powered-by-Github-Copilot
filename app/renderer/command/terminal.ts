@@ -19,6 +19,8 @@ export interface RunTerminal {
   open(host: HTMLElement): void;
   readonly opened: boolean;
   setInteractive(on: boolean): void;
+  /** The run has ended: its cursor goes, and stays gone whatever output comes after (commands-remote-5). */
+  end(): void;
   /** Mirrors its output for a screen reader (review #43), while one runs. */
   setScreenReader(on: boolean): void;
   /** Draws its type at the page's text scale (its columns and rows stay as the run started, §3.10). */
@@ -96,8 +98,17 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
     term.textarea.tabIndex = interactive ? 0 : -1;
     term.textarea.setAttribute("aria-readonly", String(!interactive));
   };
+  // A finished run's terminal shows no cursor (DECTCEM off), so it doesn't look as if it waits for typing; written again
+  // after any output that comes later (a page that loads again replays it, a program's own "show the cursor" with it).
+  let ended = false;
+  const HIDE_CURSOR = "\x1b[?25l";
   return {
-    write: bytes => term.write(bytes, refreshMirror),
+    write: bytes => { term.write(bytes, refreshMirror); if (ended) term.write(HIDE_CURSOR); },
+    end() {
+      if (ended) return;
+      ended = true;
+      term.write(HIDE_CURSOR);
+    },
     open(host) {
       if (opened) return;
       opened = true;

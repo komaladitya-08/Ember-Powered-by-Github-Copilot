@@ -339,6 +339,13 @@ describe("the command window's words (§8.5)", () => {
     expect(commandCopy.durationText(2_000)).toBe("2\u00a0s");
   });
 
+  it("says a run that took under 0.05 s took less than 0.1 s, never 0 s (commands-remote-5)", () => {
+    for (const ms of [0, 20, 49]) expect(commandCopy.durationText(ms), String(ms)).toBe("less than 0.1\u00a0s");
+    expect(commandCopy.durationText(50)).toBe("0.1\u00a0s");
+    expect(say({ ms: 20 })).toBe("Finished in less than 0.1\u00a0s.");
+    expect(say({ code: 2, ms: 20 })).toBe("Ended with exit code 2 after less than 0.1\u00a0s.");
+  });
+
   it("says whether typing reaches the command, and what it waits for", () => {
     expect(keep(commandCopy.typingHint({ interactive: true, ended: false }))).toBe("Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.");
     expect(keep(commandCopy.typingHint({ interactive: true, ended: false }, "win32"))).toBe("Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.");

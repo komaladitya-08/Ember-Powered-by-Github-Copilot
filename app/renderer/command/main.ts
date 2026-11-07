@@ -488,6 +488,7 @@ function render(): void {
     if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;
     e.typing.hidden = !t.typing;
     e.term.setInteractive(t.interactive);
+    if (t.ended) e.term.end();
     e.term.setScreenReader(v?.screenReader === true);
     if (e.ended !== t.ended) {
       e.ended = t.ended;

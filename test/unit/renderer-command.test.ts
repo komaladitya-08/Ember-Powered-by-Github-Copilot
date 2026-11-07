@@ -68,7 +68,8 @@ function fakeXterm() {
     onData() { return { dispose: () => {} }; }
     attachCustomKeyEventHandler() {}
     hasSelection() { return false; }
-    write() {}
+    readonly written: (string | Uint8Array)[] = [];
+    write(data: string | Uint8Array) { this.written.push(data); }
     refresh() {}
     focus() {}
     dispose() {}
@@ -255,6 +256,26 @@ describe("the terminal's options (\u00a73.10)", () => {
     run.setTextScale(1);
     expect(xt.fontSets).toBe(sets);
     expect(xt.textarea.style.left).toBe(s.left);
+  });
+});
+
+describe("a run's terminal once the run has ended (commands-remote-5)", () => {
+  it("hides its cursor, also after output it replays, so it doesn't look as if it waits for typing", () => {
+    const made = fakeXterm();
+    const run = createRunTerminal({ cols: 90, rows: 12, interactive: true, mac: false, screenReader: false, scale: 1, onInput: () => {} }, made.Term);
+    const xt = made.terms[0] as unknown as { written: (string | Uint8Array)[] };
+    run.write(new TextEncoder().encode("done\r\n"));
+    expect(xt.written).toHaveLength(1);
+    run.end();
+    expect(xt.written.at(-1)).toBe("\x1b[?25l");
+    // Once only, however often it is told.
+    run.end();
+    expect(xt.written.filter(w => w === "\x1b[?25l")).toHaveLength(1);
+    // Output written after the end (a page that loads again replays it, with a program's own "show the cursor") keeps it hidden.
+    run.write(new TextEncoder().encode("\x1b[?25h"));
+    expect(xt.written.at(-1)).toBe("\x1b[?25l");
+    // The page tells every ended run's terminal so, a new tab of an ended run too.
+    expect(read("main.ts")).toMatch(/e\.term\.setInteractive\(t\.interactive\);\s*if \(t\.ended\) e\.term\.end\(\);/);
   });
 });
 
