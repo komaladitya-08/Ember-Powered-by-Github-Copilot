@@ -232,6 +232,30 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("keeps the field where it is when the first letter typed puts the suggestions away, and back when it is cleared (companion-v1)", async () => {
+    const page = await pageAt();
+    try {
+      await page.evaluate(suggestions => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions, listenOnce: { phase: "ready", detail: "" } }), suggestions.slice(1));
+      await fit(page);
+      const rows = await page.evaluate(() => (window as unknown as TestWindow).askHarness.rows);
+      const chips = page.locator("#suggest button");
+      expect(await chips.first().isVisible()).toBe(true);
+      // Main keeps the box's bottom beside Ember (it grows upward): fewer rows would move the field and its caret
+      // 48 px down under the user's eyes on the first letter.
+      await page.locator("#q").press("w");
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.rows)).toBe(rows);
+      // Put away all the same: not seen, not in the accessibility tree, no click or Tab lands on one.
+      expect(await chips.first().isVisible()).toBe(false);
+      expect(await page.getByRole("button", { name: suggestions[1], exact: true }).count()).toBe(0);
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => document.activeElement?.closest("#suggest") === null)).toBe(true);
+      await page.locator("#q").press("Backspace");
+      expect(await chips.first().isVisible()).toBe(true);
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.rows)).toBe(rows);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("keeps every suggestion reachable when a small work area caps the window's height", async () => {
     const page = await pageAt(300);
     try {

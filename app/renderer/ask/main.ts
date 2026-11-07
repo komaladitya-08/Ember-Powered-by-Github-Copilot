@@ -117,7 +117,9 @@ function showListenOnce(s: ListenOnceStatus | undefined): void {
 window.emberAsk.onListenOnce(showListenOnce);
 /**
  * Ember's suggestions of what to ask next (each opening brings them, or none): chips that send their words as if typed.
- * They show only while the field is empty, so they never sit beside a request being written.
+ * They show only while the field is empty, so they never sit beside a request being written; put away, they keep their
+ * room, so the box keeps its height and the field doesn't jump (companion-v1: main keeps the box's bottom by Ember, and
+ * the first letter moved the field 48 px down).
  */
 function showSuggestions(list: string[]): void {
   suggested = list.slice(0, 3);
@@ -132,7 +134,8 @@ function showSuggestions(list: string[]): void {
   syncSuggestions();
 }
 function syncSuggestions(): void {
-  suggest.hidden = !suggested.length || input.value.trim() !== "";
+  suggest.hidden = !suggested.length;
+  suggest.classList.toggle("away", input.value.trim() !== "");
 }
 /** Earlier questions (↑/↓), and what was being typed meanwhile. */
 const history = new AskHistory();

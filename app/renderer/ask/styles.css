@@ -90,6 +90,8 @@ html[data-glass="clear"] .cut { color: var(--label); }
 }
 .suggest { flex-wrap: wrap; }
 .suggest[hidden] { display: none; }
+/* Put away while a request is typed: unseen, out of the accessibility tree and untouchable, but keeping its room. */
+.suggest.away { visibility: hidden; }
 .suggest-cap { flex: none; max-width: 100%; font: var(--type-footnote); line-height: 16px; color: var(--label-2); }
 .listen-once { width: calc(100% - 28px); }
 .listen-once[hidden], .listen-once [hidden] { display: none; }
