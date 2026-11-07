@@ -232,6 +232,8 @@ export class MemoryService {
       this.file.save(next);
     }
     catch (err) {
+      // The notes' vectors may be gone already: rebuilt from the graph, which still holds them.
+      if (notes.length) try { this.o.semantic?.changed(this.g); } catch { this.o.log.warn("memory.correction_index_recovery_failed"); }
       this.o.log.warn("memory.correction_failed", { err: err instanceof Error ? err.message : String(err) });
       throw new Error("Ember couldn't save this correction. The original memory is unchanged. Try again.", { cause: err });
     }

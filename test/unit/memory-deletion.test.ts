@@ -199,6 +199,20 @@ describe("forgetting a fact forgets what Ember made from it (memory-3)", () => {
     s.memory.stop();
   });
 
+  it("keeps the notes and their vectors when a correction that would forget them can't be saved (memory-3)", async () => {
+    const s = refined();
+    await s.semantic.catchUp();
+    const before = s.memory.list(), vectors = s.semantic.size;
+    const fact = before.find(i => i.text.startsWith("Has a medical"))!;
+    const save = vi.spyOn(s.file, "save").mockImplementation(failure);
+    expect(() => s.memory.correct(fact, "Has a dentist appointment every Tuesday")).toThrow(/couldn't save this correction/);
+    save.mockRestore();
+    expect(s.memory.list()).toEqual(before);
+    await s.semantic.catchUp();
+    expect(s.semantic.size).toBe(vectors);
+    s.memory.stop();
+  });
+
   it("also forgets an older summary of the same thing that has no record of what it came from", () => {
     const s = setup();
     s.memory.remember("Has a medical appointment every Tuesday", [{ name: "User", kind: "person" }], "remember that I have a medical appointment every Tuesday");
