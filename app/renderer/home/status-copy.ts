@@ -53,11 +53,14 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
 
 /**
  * The link under the tagline to the setup check, when a row needs the user (the same count as the sidebar's badge and
- * the check's note, UI audit #6); null when none does. The tagline already says how many fail.
+ * the check's note, UI audit #6); null when none does. The tagline already says how many fail; `held` rows hold Ember
+ * back without failing (it can't read or use apps), and are to fix, as first run says (first-run-5).
  */
-export function setupLinkText(failing: number, look: number): string | null {
+export function setupLinkText(failing: number, look: number, held = 0): string | null {
   if (failing) return "Open the setup check";
-  return look ? `The setup check has ${look === 1 ? "1 thing" : `${look} things`} worth a look` : null;
+  const n = (k: number) => (k === 1 ? "1 thing" : `${k} things`);
+  if (held) return `The setup check has ${n(held)} to fix`;
+  return look ? `The setup check has ${n(look)} worth a look` : null;
 }
 
 /** How many tasks work now and how many wait for the user (from Task activity's list). */

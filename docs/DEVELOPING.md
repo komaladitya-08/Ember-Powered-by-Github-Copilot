@@ -1029,7 +1029,10 @@ session, **Transparent windows** (the compositor), **Screen reading**, **Mouse a
 or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (speech-dispatcher),
 Ember's desk, **Window sandbox** and **Copilot's file watchers** (inotify), and says what to do about each problem. On a
 Linux other than the RHEL 8 family, the operating system row says Ember is tested on RHEL 8 and may work but isn't
-supported. It exits 1 if Ember can't work. **Start Ember when I log in** in the settings window adds
+supported. It exits 1 if Ember can't work. A warning that keeps Ember from reading or using apps (Screen reading
+missing, say) is counted as one to fix and named in its last line ("1 thing to fix so Ember can read and use your apps
+(Screen reading), and 7 worth a look."), as first run and the settings window's setup check, its badge and Home's link
+say it. **Start Ember when I log in** in the settings window adds
 `~/.config/autostart/ember.desktop` (marked `X-Ember-Managed=true`); an `ember.desktop` you made yourself is left alone,
 and the settings window says it is there.
 

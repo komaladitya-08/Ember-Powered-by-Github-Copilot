@@ -11,6 +11,7 @@ import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { FALLBACK_SHORTCUTS, SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
+import { holdsBack } from "../shared/setup-attention";
 import { LISTENING_MODELS, VOICE_MODELS, modelsBytes, type ModelId } from "../voice/models";
 import { cliSteps, type SignInWith } from "./agent/github-app";
 
@@ -279,7 +280,13 @@ export function formatDoctor(checks: DoctorCheck[]): string {
     ...(c.fix && c.status !== "ok" ? [`${" ".repeat(width + 8)}→ ${c.fix}`] : []),
   ]);
   const fails = checks.filter(c => c.status === "fail").length, warns = checks.filter(c => c.status === "warn").length;
-  lines.push("", fails ? `${fails} problem${fails > 1 ? "s" : ""} to fix before Ember can work${warns ? `, and ${warns} thing${warns > 1 ? "s" : ""} worth a look` : ""}.`
-    : warns ? `Ember can work. ${warns} thing${warns > 1 ? "s" : ""} worth a look.` : "Everything Ember needs is in place.");
+  // A warning that holds Ember back (it can't read, see or use apps: setup-attention.ts) is to fix, as first run and
+  // Home say it, and named, so it isn't lost among the optional ones (first-run-5).
+  const held = checks.filter(c => c.status === "warn" && holdsBack(c));
+  const things = (n: number) => `${n} thing${n > 1 ? "s" : ""}`;
+  const rest = warns - held.length;
+  lines.push("", fails ? `${fails} problem${fails > 1 ? "s" : ""} to fix before Ember can work${warns ? `, and ${things(warns)} worth a look` : ""}.`
+    : held.length ? `${things(held.length)} to fix so Ember can read and use your apps (${held.map(c => c.label).join(", ")})${rest ? `, and ${rest} worth a look` : ""}.`
+      : warns ? `Ember can work. ${things(warns)} worth a look.` : "Everything Ember needs is in place.");
   return lines.join("\n");
 }

@@ -240,6 +240,8 @@ function save(patch: SettingsPatch): Promise<boolean> {
 let failing = 0;
 /** Setup rows that don't fail but need the user: the status panel's link under the tagline names them (it opens the pane). */
 let toLook = 0;
+/** Setup rows that hold Ember back (failing, or it can't read or use apps): to fix, as first run says (first-run-5). */
+let toFix = 0;
 function renderTagline(): void {
   // The tagline leaves the rows worth a look to the link under it, which goes to them (owner review).
   const text = tagline({
@@ -280,7 +282,7 @@ function renderStatus(): void {
   $("p-connect").hidden = !notConnected || locked;
   $("p-ask").classList.toggle("quiet", notConnected);
   $("p-waiting").hidden = !asking;
-  const setup = setupLinkText(failing, toLook);
+  const setup = setupLinkText(failing, toLook, toFix);
   $("p-setup").hidden = !setup;
   setText("p-setup", setup ?? "");
 }
@@ -358,10 +360,11 @@ function renderChecks(environment: Status["environment"]): void {
   failing = environment.checks.filter(c => c.status === "fail").length;
   const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
   toLook = view.needing - failing;
-  renderSetupBadge(view.needing, failing);
+  toFix = view.held;
+  renderSetupBadge(view.needing, failing, view.held);
   const note = $("checks-note");
-  // As `ember doctor` says it ("worth a look"), counted in words (copy.ts checksNote): the same count as the tagline's
-  // and the sidebar's badge (UI audit #6).
+  // As first run and `ember doctor` say it ("to fix" for a row that holds Ember back, else "worth a look"), counted in
+  // words (copy.ts checksNote): the same count as the tagline's and the sidebar's badge (UI audit #6, first-run-5).
   note.textContent = view.note;
   note.className = `fold-note${failing ? " fail" : view.needing ? " warn" : ""}`;
   // A row needs the user (it fails, holds back reading or using apps, or has a button): the check opens by itself
@@ -373,10 +376,10 @@ function renderChecks(environment: Status["environment"]): void {
 }
 
 /** The sidebar's Setup link carries how many rows need the user, so a warning is seen from anywhere (review #95). */
-function renderSetupBadge(needing: number, fails: number): void {
+function renderSetupBadge(needing: number, fails: number, held: number): void {
   const link = document.querySelector<HTMLAnchorElement>("#jump a[href=\"#checks-h\"]");
   if (!link) return;
-  const b = setupBadge(needing, fails);
+  const b = setupBadge(needing, fails, held);
   let el = link.querySelector<HTMLElement>(".jump-badge");
   if (!b) { el?.remove(); return; }
   if (!el) el = link.appendChild(document.createElement("span"));

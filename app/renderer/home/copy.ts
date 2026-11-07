@@ -12,7 +12,7 @@ import { parseTargetId } from "../../shared/targets";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { onboardingRest } from "./computers-copy";
-import { needsUser, type SetupRow } from "../../shared/setup-attention";
+import { holdsBack, needsUser, type SetupRow } from "../../shared/setup-attention";
 import { sideOf, type HandlePosition } from "../../shared/handle-place";
 import { CONVERSATION_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
 import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
@@ -183,26 +183,31 @@ function things(n: number): string {
 
 /**
  * The badge on the sidebar's Setup link: the count shown, the words a screen reader adds, and its tone (null: none).
- * Failing rows are counted as the heading's note counts them; else the rows that need the user (setupView's `needing`).
+ * Rows to fix (failing ones, and `held`: warnings that hold Ember back, setup-attention.ts holdsBack) are counted as
+ * the heading's note counts them, red only for a failure; else the rows that need the user (setupView's `needing`).
  */
-export function setupBadge(needing: number, failing = 0): { text: string; label: string; tone: "fail" | "warn" } | null {
-  const n = failing || needing;
+export function setupBadge(needing: number, failing = 0, held = 0): { text: string; label: string; tone: "fail" | "warn" } | null {
+  const fix = Math.max(failing, held);
+  const n = fix || needing;
   if (!n) return null;
-  return { text: String(n), label: `, ${things(n)} ${failing ? "to fix" : "worth a look"}`, tone: failing ? "fail" : "warn" };
+  return { text: String(n), label: `, ${things(n)} ${fix ? "to fix" : "worth a look"}`, tone: failing ? "fail" : "warn" };
 }
 
 /**
- * The note by the Setup check heading: how many rows fail, else how many need the user (setupView's `needing`, the
- * count the tagline and the sidebar's badge give, UI audit #6), counted in words (review #160), as `ember doctor` says it.
+ * The note by the Setup check heading: how many rows are to fix (`fix`: those that hold Ember back, failures
+ * included), else how many need the user (setupView's `needing`, the count the tagline and the sidebar's badge give, UI
+ * audit #6), counted in words (review #160), as first run and `ember doctor` say it (first-run-5).
  */
-export function checksNote(failing: number, needing: number): string {
-  return failing ? `${things(failing)} to fix` : needing ? `${things(needing)} worth a look` : "All good";
+export function checksNote(fix: number, needing: number): string {
+  return fix ? `${things(fix)} to fix` : needing ? `${things(needing)} worth a look` : "All good";
 }
 
 /** What the setup check shows, and what the window remembers between statuses. */
 export interface SetupView {
   failing: number;
   warn: number;
+  /** Rows that hold Ember back (setup-attention.ts holdsBack): failures, and warnings about reading, seeing or using apps. */
+  held: number;
   /** Rows that need the user (setup-attention.ts needsUser): failing ones, and warnings that hold Ember back or have a button. */
   needing: number;
   /** Open the fold now (once per window: a user who closes it isn't overruled by the next status). */
@@ -221,7 +226,8 @@ export function setupView(rows: readonly SetupRow[], before: { opened: boolean; 
   const failing = rows.filter(r => r.status === "fail").length;
   const warn = rows.filter(r => r.status === "warn").length;
   const needing = rows.filter(needsUser).length;
-  return { failing, warn, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(failing, needing) };
+  const held = rows.filter(holdsBack).length;
+  return { failing, warn, held, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(held, needing) };
 }
 
 /** What a screen reader hears when Start has done its work and gone (review #50). */

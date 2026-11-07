@@ -170,17 +170,18 @@ describe("the setup check in the settings window", () => {
 
   it("stays on the first-run screen until Start once a row needed the user, so fixing one row never hides the others (review #94)", () => {
     const v1 = setupView(MAC_FIRST, first);
-    expect(v1).toMatchObject({ failing: 1, needing: 3, open: true, beforeStart: true, note: "1 thing to fix" });
+    expect(v1).toMatchObject({ failing: 1, held: 3, needing: 3, open: true, beforeStart: true, note: "3 things to fix" });
     // Accessibility allowed: Screen Recording and Input Monitoring keep their buttons on screen.
     const v2 = setupView(allowed(MAC_FIRST, "accessibility"), { opened: true, beforeStart: v1.beforeStart });
-    expect(v2).toMatchObject({ failing: 0, needing: 2, open: false, beforeStart: true, note: "2 things worth a look" });
+    // Each of them still holds Ember back, so it is still to fix, as first run says (first-run-5).
+    expect(v2).toMatchObject({ failing: 0, held: 2, needing: 2, open: false, beforeStart: true, note: "2 things to fix" });
     // Everything allowed: the list (all OK) stays where the user was working until Start.
     expect(setupView(allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"), { opened: true, beforeStart: v2.beforeStart }))
       .toMatchObject({ needing: 0, beforeStart: true, note: "All good" });
   });
 
   it("opens and shows before Start for a warning with a fix, such as Linux's accessibility switch (review #161)", () => {
-    expect(setupView(LINUX_A11Y_OFF, first)).toMatchObject({ failing: 0, needing: 1, open: true, beforeStart: true, note: "1 thing worth a look" });
+    expect(setupView(LINUX_A11Y_OFF, first)).toMatchObject({ failing: 0, held: 1, needing: 1, open: true, beforeStart: true, note: "1 thing to fix" });
     // A warning with nothing to do keeps the fold shut and the first-run screen as it was.
     const other = LINUX_A11Y_OFF.map(r => (r.id === "accessibility" ? { id: r.id, label: r.label, status: "ok" as const } : r.id === "os" ? { ...r, status: "warn" as const } : r));
     // The note counts what the tagline and the sidebar's badge count: nothing needs the user, so all is good (UI audit #6).
@@ -593,7 +594,7 @@ describe("the call sites", () => {
     for (const call of [
       "setupView(environment.checks", // renderChecks (#94, #160, #161)
       "toggle(\"after-setup\", !checksBeforeStart)", // the check before Start (#94)
-      "renderSetupBadge(view.needing, failing)", // the sidebar's badge (#95)
+      "renderSetupBadge(view.needing, failing, view.held)", // the sidebar's badge (#95, first-run-5)
       "[c.fix, c.alt]", // a row's second button (#99)
       "turnedOffWords(a.features, platform?.os)", // the policy line (#221; admin-copy.ts)
       "v.speechMissing === true", // the note under Speak (#101)

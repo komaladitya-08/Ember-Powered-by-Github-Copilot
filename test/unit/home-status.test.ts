@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage } from "../../app/renderer/home/search-copy";
 import { checksNote, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
+import { formatDoctor } from "../../app/main/doctor";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
 import { IPC, TASKS_PUSH_MS } from "../../app/shared/ipc";
 
@@ -75,7 +76,7 @@ describe("Home's status panel", () => {
 describe("the setup counts (UI audit #6)", () => {
   it("are the same in the tagline, the sidebar's badge and the setup check's note", () => {
     const rows = [
-      { id: "accessibility", label: "Screen reading", status: "warn" as const, fix: "a11y" },
+      { id: "location", label: "Applications folder", status: "warn" as const, fix: "move-to-applications" },
       { id: "os", label: "Operating system", status: "warn" as const },
       { id: "desktop", label: "Desktop", status: "warn" as const },
       { id: "ssh", label: "SSH client", status: "warn" as const },
@@ -90,6 +91,22 @@ describe("the setup counts (UI audit #6)", () => {
     expect(setupLinkText(0, v.needing)).toBe("The setup check has 1 thing worth a look");
     expect(setupLinkText(2, 0)).toBe("Open the setup check");
     expect(setupLinkText(0, 0)).toBeNull();
+  });
+
+  it("call a row that holds Ember back one to fix, everywhere first run and the doctor do (first-run-5)", () => {
+    const rows = [
+      { id: "accessibility", label: "Screen reading", status: "warn" as const, detail: "Python accessibility bindings are missing." },
+      { id: "os", label: "Operating system", status: "warn" as const, detail: "Another Linux." },
+      { id: "ssh", label: "SSH client", status: "warn" as const, detail: "No SSH client found." },
+    ];
+    const v = setupView(rows, { opened: false, beforeStart: false });
+    expect(v).toMatchObject({ failing: 0, held: 1, needing: 1, note: "1 thing to fix" });
+    expect(setupBadge(v.needing, v.failing, v.held)).toEqual({ text: "1", label: ", 1 thing to fix", tone: "warn" });
+    expect(setupLinkText(v.failing, v.needing - v.failing, v.held)).toBe("The setup check has 1 thing to fix");
+    // The doctor names it and stops calling Ember fine; only a failure makes it say Ember can't work.
+    const end = formatDoctor(rows).split("\n").at(-1);
+    expect(end).toBe("1 thing to fix so Ember can read and use your apps (Screen reading), and 2 worth a look.");
+    expect(formatDoctor(rows.slice(1)).split("\n").at(-1)).toBe("Ember can work. 2 things worth a look.");
   });
 });
 
