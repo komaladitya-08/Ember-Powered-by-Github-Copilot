@@ -1786,6 +1786,16 @@ class Engine extends Classifier {
     this.noteProgram(prog);
     this.assignments(assigns, sc, nameArg.v);
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
+    // As simple() checks a program's name and a Windows program's arguments: `then`, `do` and `time` run it as if it
+    // stood first (commands-remote-c1-1).
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what is looked for here
+    if (/[\x00-\x1f\x7f]/.test(nameArg.v)) this.unclear("unclear.program", "It runs a program Ember can't name.");
+    if (pn.interop) {
+      this.windowsReach = true;
+      if (words.slice(1).some(a => a.v !== null && (a.v.includes("\t") || a.v.includes("\"") || (a.v.endsWith("\\") && a.v.length > 1)))) {
+        this.unclear("unclear.interop-args", "Windows would get different arguments than this shows.");
+      }
+    }
     const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn };
     // Native rows only: a wrapper runs a program, never a cmdlet or a cmd built-in.
     if (pn.isPath) {
