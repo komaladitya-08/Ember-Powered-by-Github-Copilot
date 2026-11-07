@@ -3,9 +3,11 @@
  * the fact from the code or the packaging data and checks the docs say it, so a change on one side shows up here.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { announcement, type BubbleView } from "@ember/bubble";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { GH_INSTALL } from "../../app/main/agent/github-app";
@@ -53,6 +55,12 @@ function section(text: string, heading: string): string {
   if (at < 0) throw new Error(`no section "${heading}"`);
   const end = level.findIndex((n, i) => i > at && n > 0 && n <= level[at]);
   return lines.slice(at, end < 0 ? undefined : end).join("\n");
+}
+/** Every key a zod object schema takes, at every level ("features.voice", "provider.azure.apiVersion"). */
+function policyKeys(schema: z.ZodType, at = ""): string[] {
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodDefault || schema instanceof z.ZodNullable) return policyKeys(schema.unwrap() as z.ZodType, at);
+  if (!(schema instanceof z.ZodObject)) return [at];
+  return Object.entries(schema.shape as Record<string, z.ZodType>).flatMap(([k, v]) => policyKeys(v, at ? `${at}.${k}` : k));
 }
 
 /**
@@ -1057,19 +1065,35 @@ describe("CHANGELOG.md", () => {
     expect(flat(changelog)).toContain("Voice starts again by itself when it stops answering or its speech recognition keeps failing (after 1, 5, then 30 seconds).");
   });
 
-  it("names in this version's notes every policy features key the published Ember doesn't know, which locks it down (install-docs-v1)", () => {
-    // The `features` keys of the newest published release, frozen from its admin.ts (`git show v0.1.0:app/main/admin.ts`).
-    // The schema is strict, so that Ember reads a policy with any other key as broken and locks down: the notes the
-    // release publishes (release.mjs) must name each one and tell administrators to update Ember first. Once this
-    // version is published, freeze its keys here instead.
-    const published = { version: "0.1.0", features: ["voice", "speak", "actions", "cursor", "desk", "screenImages", "wsl", "ssh"] };
-    const features = Object.keys(AdminPolicySchema.shape.features.unwrap().shape);
-    expect(features).toEqual(expect.arrayContaining(published.features));
-    const newer = features.filter(k => !published.features.includes(k));
-    expect(newer.length).toBeGreaterThan(0);
-    const notes = flat(releaseNotes(changelog, version, { repo: "o/r", ref: `v${version}` }));
-    expect(newer.filter(k => !notes.includes(`\`features.${k}\``)), `named in ${version}'s notes`).toEqual([]);
-    expect(notes).toContain(`Ember ${published.version} doesn't know them: it reads a policy with one as broken and locks down`);
+  it("names for administrators every policy key the published Ember doesn't know, which locks it down (install-docs-v1)", () => {
+    // Every key of the newest published release's policy, at every level, frozen from its admin.ts (`git show
+    // v0.1.0:app/main/admin.ts`). The schema is strict throughout, so that Ember reads a policy with any other key as
+    // broken and locks down: the notes the release publishes (release.mjs) must name each one under "For administrators"
+    // and tell them to update Ember first. Once this version is published, freeze its keys here instead.
+    const published = {
+      version: "0.1.0",
+      keys: [
+        "features.voice", "features.speak", "features.actions", "features.cursor", "features.desk", "features.screenImages",
+        "features.wsl", "features.ssh", "neverLook", "confirmEveryAction", "allowGrants", "maxActionsPerMinute",
+        "models.allowed", "models.conductor", "models.worker", "provider.type", "provider.baseUrl", "provider.apiKeyFile",
+        "provider.wireApi", "provider.azure.apiVersion", "auditRetentionDays", "commands.local", "commands.wsl",
+        "commands.ssh", "ssh.allowedHosts", "ssh.desktop", "ssh.requireConsoleConsent", "ssh.runtimeMirror",
+        "ssh.commandGraceSeconds",
+      ],
+    };
+    const keys = policyKeys(AdminPolicySchema);
+    expect(keys).toEqual(expect.arrayContaining(published.keys));
+    const newer = keys.filter(k => !published.keys.includes(k));
+    const admins = flat(section(releaseNotes(changelog, version, { repo: "o/r", ref: `v${version}` }), "For administrators"));
+    expect(newer.filter(k => !admins.includes(`\`${k}\``)), `named in ${version}'s notes for administrators`).toEqual([]);
+    if (newer.length) expect(admins).toContain(`Ember ${published.version} doesn't know them: it reads a policy with one as broken and locks down`);
+  });
+
+  it("keeps the published 0.1.0's notes word for word (install-docs-4)", () => {
+    // `git show v0.1.0:CHANGELOG.md` from its heading on: a release's notes stay what it was published with, and what a
+    // later version changes goes in that version's own section.
+    const published = section(changelog, "0.1.0 (2026-10-31)").replace(/\r\n/g, "\n").trimEnd();
+    expect(createHash("sha256").update(published).digest("hex")).toBe("5277a56b459959d94a200f51f02477aebc9d9d65358c1d3fcc875b275442e4c6");
   });
 
   it("names the same best-effort computers as the README", () => {

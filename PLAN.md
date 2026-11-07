@@ -808,7 +808,9 @@ the optional downloads with their sizes and hosts, and all 15 `features` keys wi
 down. The npm launcher runs the setup check attached, reports an Ember that fails to start and removes older cached
 versions; clicking the new-version notification opens Home's Updates section. CHANGELOG.md's 0.1.0 section is the
 published text again, and 0.1.1 has its own sections, a Getting it list and the administrators' line, guarded by
-docs.test.ts (install-docs-4 and -v1, skipped by the docs package, were done when the lanes were brought together).
+docs.test.ts, which also pins 0.1.0's section to the published text (install-docs-4 and -v1, which the docs package
+skipped because it could not edit CHANGELOG.md, were done afterwards with these notes, so of the 3 skipped only
+memory-10 is left).
 
 **Consent.** `FEATURE_CONSENT_VERSION.memory` went from 3 to 4: memory's note now says what goes to Copilot with every
 request and that the idle tidy sends up to 40 facts up to 6 times a day (memory-5, memory-9).

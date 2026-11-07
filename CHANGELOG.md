@@ -1,6 +1,6 @@
 # Release notes
 
-## 0.1.1 (2026-11-03)
+## 0.1.1 (2026-11-07)
 
 Ember 0.1.1 is an unsigned beta, as 0.1.0 was: Windows (SmartScreen, Smart App Control) and macOS (Gatekeeper) stop
 its first start, and [README.md](README.md) says what to do and how to install it on each computer. Checks by hand
@@ -76,7 +76,7 @@ the automated tests don't stand in for them.
   out, security settings, dangerous commands), and a task that a page tried to steer goes back to asking. Say “Ember,
   work without asking” (Voice Match must recognise you) or “Ember, ask me first again”.
 - **Work without asking covers more everyday steps**: it also presses OK on a message box whose only button is OK,
-  with nothing to choose or tick (it says "Answering a message box in …"), types a list or a letter with line breaks
+  with nothing to choose or tick (it says “Answering a message box in …”), types a list or a letter with line breaks
   into Notepad, gedit, TextEdit or another plain text editor with the borrowed keyboard, and fills spreadsheet cells,
   all announced. A dialog with a Cancel, a check box or any other control, or one that asks a question, says what has
   happened or will happen or is long, is cut short, is a web page's, an installer's or a permission prompt, or is in a
@@ -97,14 +97,15 @@ the automated tests don't stand in for them.
 
 ### Voice
 
-- **Call Ember by its name**: “Ember, open the terminal” (“Hey Ember” and “OK Ember” work too). The name heard inside
+- **Call Ember by its name**: “Ember, open my calendar” (“Hey Ember” and “OK Ember” work too). The name heard inside
   another word (“remember”, “September”, “the embers”) shows nothing: a wake by the bare name shows once the recogniser
   has heard the name start what was said. While Ember speaks, “Hey Ember” makes it stop and listen, on Windows and
   macOS too.
 - **Ember speaks in its own voice**, Kitten Nano 0.8 (its voice files are 63.8 MB), made on this computer sentence by
   sentence while Copilot is still writing. Should it be missing, fail or be too slow, the system's most natural voice
-  speaks (a Natural voice on Windows 11, a Premium or Enhanced one on a Mac). **Voice** in Settings › **Voice** also
-  offers Kokoro (350 MB), downloaded only once you choose it, which speaks where the computer is fast enough for it.
+  speaks (a Natural voice on Windows 11, a Premium or Enhanced one on a Mac). On Windows and macOS, **Voice** in
+  Settings › **Voice** also offers Kokoro (350 MB), downloaded only once you choose it, which speaks where the computer
+  is fast enough for it.
 - **Ember speaks out loud by default** now; 0.1.0 spoke only while a screen reader ran. Choose Always, When a screen
   reader runs or Never in **Speak replies, questions and results out loud** (Settings › **Voice**; an organisation
   that turns speaking off shows it as Never, managed).
@@ -114,7 +115,7 @@ the automated tests don't stand in for them.
   hearing a request takes about a third of the CPU. Nothing more is downloaded. Where they can't run, listening runs on
   WebAssembly and replies use the system's voice; `ember doctor` says which under **Speech**.
 - **Voice Match**: Settings › **Voice** › **Answer questions with my voice** teaches Ember your voice from four short
-  phrases. It decides only whose voice may answer Ember's questions (above), never who Ember hears. "Ember, stop" still
+  phrases. It decides only whose voice may answer Ember's questions (above), never who Ember hears. “Ember, stop” still
   works for anyone. Your voiceprint (256 numbers that describe how your voice sounds; it can't be turned back into
   speech) stays on this computer, in `voiceprint.json` in Ember's data folder, readable by you alone; **Forget my
   voice** deletes it.
@@ -154,20 +155,20 @@ the automated tests don't stand in for them.
   once a day asks about a name it keeps finding nothing on (**Ask me questions now and then** turns that off). Only
   what you say yourself counts as yours; what it reads on screen or in a task's result never does, nor speech it can't
   tell from its own speakers, and it never learns an instruction or a one-off order as a preference. A new fact shows
-  in the conversation as "Ember learned: …" with **Undo** (which puts back what it replaced); "Ember, forget that"
+  in the conversation as “Ember learned: …” with **Undo** (which puts back what it replaced); “Ember, forget that”
   works too. The list says where each fact came from.
 - **Tell Ember about you**: what to call you, your role and work, the apps you use most, how you like answers, your
   timezone or hours, each optional, in Settings › Memory and as an optional step of first run. Or say “Ember, get to
   know me” for a short spoken version.
 - Memory's note says all this. While a changed note waits for you to agree, Ember remembers nothing more (Home says
-  "Memory paused"); what it kept stays until you do. Learning uses a few short requests of its own (at most 12 an hour
+  “Memory paused”); what it kept stays until you do. Learning uses a few short requests of its own (at most 12 an hour
   and 60 a day, plus 6 a day while you're away).
 - For administrators: `features.memory: false` (and a lockdown) turns all of it off.
 
 ### Better recall
 
 - **Ember finds what you told it when you ask in other words** (Settings › **Memory** › **Better recall**, shown while
-  memory is on): "Who is my manager?" finds "Priya leads the platform team". **Download (23 MB)** fetches a small
+  memory is on): “Who is my manager?” finds “Priya leads the platform team”. **Download (23 MB)** fetches a small
   language model (all-MiniLM-L6-v2) from Hugging Face (`huggingface.co`, served from `*.hf.co`), checked against its
   pinned SHA-256; nothing is fetched until you click it, and turning memory off cancels a download under way. It runs
   only on this computer, in a process of its own that ends after 5 idle minutes. On 80 questions asked in other words
@@ -200,7 +201,7 @@ the automated tests don't stand in for them.
   address), browse it, and add a plugin; its tools join the conversation between turns, with no restart. Only you add,
   turn off or remove one. Ember loads only a plugin's MCP servers, never its hooks, agents, skills or rules.
 - **Ember decides every call**: a read-only tool from an extension you agreed to runs and is recorded in What Ember
-  did; anything that changes or sends something asks you every time, with no "Always". After "Not now" Ember doesn't
+  did; anything that changes or sends something asks you every time, with no “Always”. After “Not now” Ember doesn't
   try again. Results are treated as information, never instructions, and one that reads as instructions to an AI
   makes every later call ask.
 - **Changed tools stop**: Ember remembers each tool as you agreed to it. If an extension's tool changes later, even
@@ -309,7 +310,8 @@ the automated tests don't stand in for them.
 - **Pause to think mid-request.** After a word such as “the” or “and”, Ember waits 0.9 seconds more for the rest:
   “And make the text a… bit bigger” is now one request.
 - **Cancel the speech models' download** with **Cancel download** beside its progress; turning listening off stops it
-  too, and the microphone note says that agreeing downloads the models (220 MB).
+  too, and where the models aren't installed yet the microphone note says that agreeing downloads them (about
+  220 MB).
 - **Settings names the microphone Ember hears through** (“Listening for “Ember” through …”), and the handle says
   “Listening for “Ember”” as Settings does. Listen once points to the download right below it, **Forget my voice**
   says it also forgets the words Ember learnt, and in a conversation with music playing Ember says to start with
@@ -429,7 +431,7 @@ the automated tests don't stand in for them.
 - **Only Forget is red in Settings › Memory.** Correct… is in the words' colour, a long memory's two buttons stay
   side by side (and apart in a contrast theme), and an empty list no longer says “0 of 0 memories”.
 - **Faster with a large memory:** with 5,000 memories, Ember finds what bears on a request in about 20 ms instead of
-  over 100 ms, with the same results.
+  100 to 135 ms, with the same results.
 - **A reconnect no longer wipes what you were doing in Memory.** A correction you were typing, your search and where
   focus was come back once Ember has checked your GitHub account again, and a Better recall download carries on.
 
@@ -450,8 +452,9 @@ the automated tests don't stand in for them.
   after its first look, Ember looks for them in the background.
 - **Home tells you when Ember closed unexpectedly last time,** and the log records it, so a crash can be told apart
   from a quit.
-- **The log file can be copied or shown in Files** from Setup & about › About this build, and the troubleshooting
-  guide says what to do when Ember is slow or busy and what to share in a report.
+- **About this build shows where the log file is** (Setup & about), with **Copy** for its path and **Show in Files**
+  (Finder on a Mac, File Explorer on Windows), and the troubleshooting guide says what to do when Ember is slow or busy
+  and what to share in a report.
 
 #### Install and docs
 
@@ -528,36 +531,58 @@ the automated tests don't stand in for them.
   sleep on a network that is still settling no longer loses the conversation or the selected project.
 - Projects: a workspace library that can't be read is set aside as `.broken`, with a message, so new workspaces can be
   saved. Making a model session has a time limit, Cancel ends it at once, and a project request may take 2 minutes.
-- Safety: the command reviewer's session is checked for tools like every other session. At most 40 actions a minute now
-  counts all tasks together. `tailscale` is classified: `funnel`, `serve` and `file cp` ask as publishing, `up`, `down`,
-  `set`, `login`, `logout` and `ssh` as system changes.
-- Idle cost: the handle's face stops drawing once it has dozed off and settled, and a question no longer hashes every
-  remembered fact again unless something changed.
+- Safety: the Copilot session that reviews commands is checked, like every other, to hold no tool Ember didn't give it.
+  At most 40 actions a minute now counts all tasks together. `tailscale` is classified: `funnel`, `serve` and
+  `file cp` ask as publishing, `up`, `down`, `set`, `login`, `logout` and `ssh` as system changes.
+- Idle cost: the handle's face stops drawing once it has dozed off and settled, and a question no longer works through
+  every remembered fact again unless one changed.
 - Wording: sign-in says a GitHub account needs Copilot before the browser opens, and common refusals say who can fix
-  them, without "seat" or `gh auth login`.
+  them, without “seat” or `gh auth login`.
 
 ### UI and speech follow-up on 4 November
 
-- Ask provides a visible Send action, comfortable scaled controls, wrapping suggestions and scrolling in small work areas.
-- Home supports an inline transient conversation, search, full-answer Copy, explicit Edit then Send, and Stop response separately from Stop everything. Delayed updates cannot restore another account's draft or transcript.
-- Projects has its own destination, per-file removal and size feedback, an immutable running-request snapshot, readable code/diffs and native exports of reviewed output. Exports cannot overwrite selected source files or Ember's private data.
-- Open approval reaches the exact live question in a keyboard-focusable card. Pointer approvals commit on release inside the unchanged target; moving away cancels. Reading task details and More time postpone card dismissal.
-- Memory controls retain focus, deletion reports actual success, and local query/source filters and pages make retained facts easier to find. Explicit corrections save durably, retain source authority and invalidate stale recall/learning work. Settings search offers selectable labelled matches.
-- Upcoming reminders show their words, local due time and persistence state. Edits preserve timers on failed saves, text-only changes preserve seconds, and bulk deletion names its scope before confirmation.
-- The desk offers explicit read-only app text with private fields omitted. It retains consent, lock and action-identity protection.
-- Recognition preserves intended dictated repeats and numeric sequences while retaining whole-sentence loop recovery. Neural voices release after two idle minutes.
+- The Ask box has a Send button, controls that grow with the text size, suggestions that wrap, and scrolls where there
+  is little room.
+- Home holds the conversation, with search, Copy for a whole answer, Edit then Send, and Stop response apart from Stop
+  everything. A late update can't bring back another account's draft or conversation.
+- Projects has a pane of its own: you can remove its files one at a time and see their sizes, a running request keeps
+  the files and model service it started with, code and changes show as text to read, and a reviewed answer is saved
+  only through the system's Save dialog, never over a file you chose or Ember's own data.
+- **Open approval** opens the very question that is waiting, in a card you can reach with the keyboard. A click counts
+  when you let go over the same, unchanged button; moving away first cancels it. Reading a task's details, or More
+  time, keeps its card up longer.
+- Settings › Memory keeps keyboard focus where it was, says whether a Forget really worked, and has search, a filter
+  by where each fact came from and pages. A correction is saved before it shows, keeps where the fact came from, and
+  stops recall and learning from using the old words. Search settings lists its matches with their labels, to choose
+  from.
+- Upcoming reminders show their words, when they are due in your time and whether they last past a restart. A change
+  that can't be saved leaves the reminder as it was, changing only its words keeps its time to the second, and
+  deleting them all says what goes before you confirm.
+- Ember's desk can show you the text of an app on it when you ask, to read only, with private fields left out, and
+  only while you have agreed, the screen is unlocked and it is the same desk.
+- Speech recognition keeps words and numbers you repeat on purpose and still drops a sentence it repeated by mistake.
+  Ember's voice lets go of its memory after two minutes unused.
 
 ### Reliability fixes on 3 November
 
-- Remote command output cannot replace the real process's exit code or signal.
-- Concurrent checkbox requests recheck their desired state under the window lease, so two requests to turn one on do not toggle it off again.
-- Stop and task deadlines return control when task startup or request submission stalls; late work cannot start after cancellation.
-- Interrupted replies cannot resume from delayed old speech chunks. Queued typed and spoken requests keep their own speech and follow-up ownership; a short “No” still answers an ordinary clarification.
-- Windows window discovery retries a changing window order instead of missing a window raised during enumeration.
-- Windows recognises both spellings of the stored-credentials dialog and refuses program text in Explorer's Address Bar.
-- Linux recognises buttons on newer AT-SPI releases, including controls that reveal passwords. A click on a GTK list checkbox uses the checkbox rather than selecting its row.
-- A Kokoro voice that is too slow is remembered for a week, avoiding repeated startup benchmarks. Changes to the model, providers or thread configuration trigger a fresh check.
-- Extensions consistently admit dotted tool names, pin complete tool descriptions, and give provider-appropriate sign-in advice. Settings accurately describe unavailable hosted connectors and the supported MCP plugin path.
+- A command on another computer can't hide its real exit code or signal behind what it prints.
+- Two requests to turn the same check box on no longer turn it off again: each looks at the box again once it has the
+  window to itself.
+- Stop and a task's time limit work even when a task hangs while it starts or sends its request, and nothing left over
+  starts after a stop.
+- A reply you cut off doesn't start speaking again from late pieces of it. Requests waiting their turn, typed or
+  spoken, each keep their own way of being answered (out loud or not, listened after or not); a short “No” still
+  answers when Ember asks what you meant.
+- On Windows, a window brought up while Ember lists the windows is no longer missed.
+- On Windows, Ember knows the saved-credentials dialog by both its spellings, and won't type a program into Explorer's
+  address bar.
+- On Linux, Ember knows the buttons of newer accessibility releases, those that show a password included, and a click
+  on a check box in a list goes to the box instead of selecting its row.
+- When Kokoro is too slow on a computer, Ember remembers that for a week instead of timing it at every start, and
+  times it again when the model or how it runs changes.
+- Extensions take tools with dots in their names, remember each tool's whole description, and give sign-in advice that
+  fits the service. Settings says plainly that hosted connectors aren't available yet, and how to add plugins with MCP
+  servers.
 
 ## 0.1.0 (2026-10-31)
 
