@@ -209,7 +209,7 @@ export const SKIP_SIGN_IN = "You can sign in later in Settings › Models & conn
  * see or use apps until it's fixed), its fix's buttons (from the row), and a command to copy when the fix is one the
  * user runs themselves (Linux's packages).
  */
-export interface PlainCheck { id: string; title: string; text: string; held: boolean; tone: "warn" | "fail"; fix?: string; alt?: string; command?: string }
+export interface PlainCheck { id: string; title: string; text: string; held: boolean; tone: "ok" | "warn" | "fail"; fix?: string; alt?: string; command?: string }
 
 /** The command a row's detail tells the user to run ("…: sudo dnf install python3-pyatspi"), if any. */
 export function fixCommand(detail: string): string | undefined {
@@ -233,9 +233,21 @@ const PLAIN: Readonly<Record<string, { title: string; text: string }>> = {
   os: { title: "This system isn't one I'm tested on", text: "I may still work here." },
 };
 
-/** The rows the checks step shows (only those that need the user), in plain words. */
-export function plainChecks(rows: readonly (SetupRow & { alt?: string; detail?: string })[]): PlainCheck[] {
-  return rows.filter(needsUser).map(r => {
+/**
+ * A row whose fix took but leaves the user something to do (environment.ts Check `next`): what is done and what is left,
+ * by row id (first-run-3).
+ */
+const PLAIN_NEXT: Readonly<Record<string, { title: string; text: string }>> = {
+  accessibility: { title: "Screen reading is on", text: "Restart apps that were already open, or log out and in, so I can read them." },
+};
+
+/** The row's fix took, and something is left for the user to do that first run says (`next`, with words for it). */
+const leftToDo = (r: SetupRow & { next?: boolean }) => r.status === "ok" && !!r.next && !!PLAIN_NEXT[r.id.split(":")[0]];
+
+/** The rows the checks step shows (those that need the user, and those a fix left something to do for), in plain words. */
+export function plainChecks(rows: readonly (SetupRow & { alt?: string; detail?: string; next?: boolean })[]): PlainCheck[] {
+  return rows.filter(r => needsUser(r) || leftToDo(r)).map(r => {
+    if (leftToDo(r)) return { id: r.id, ...PLAIN_NEXT[r.id.split(":")[0]], held: false, tone: "ok" as const };
     const p = PLAIN[r.id.split(":")[0]] ?? { title: r.label, text: "This needs a look before I can do everything." };
     // No button fixes it here: the command to run, or the details' advice.
     const command = r.fix ? undefined : fixCommand(r.detail ?? "");
@@ -244,10 +256,13 @@ export function plainChecks(rows: readonly (SetupRow & { alt?: string; detail?: 
   });
 }
 
-/** The checks step's headline: all good, things that hold Ember back, or only things worth a look. */
-export function checksHeadline(rows: readonly SetupRow[]): { text: string; tone: "ok" | "warn" | "fail" } {
+/** The checks step's headline: all good, things that hold Ember back, only things worth a look, or something left to do. */
+export function checksHeadline(rows: readonly (SetupRow & { next?: boolean })[]): { text: string; tone: "ok" | "warn" | "fail" } {
   const held = rows.filter(holdsBack).length;
   const look = rows.filter(needsUser).length;
+  const left = rows.filter(leftToDo).length;
+  // A fix that took but leaves a restart to the user is never "everything is ready" (first-run-3).
+  if (!look && left) return { text: left === 1 ? "Ready, with one thing left for you to do." : `Ready, with ${left} things left for you to do.`, tone: "ok" };
   if (!look) return { text: "Everything I need is ready.", tone: "ok" };
   // One severity on the step: red only when a row fails outright, the same mark on the headline and on the row.
   const tone = rows.some(r => r.status === "fail") ? "fail" : "warn";

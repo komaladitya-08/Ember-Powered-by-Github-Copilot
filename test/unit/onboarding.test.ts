@@ -354,7 +354,9 @@ const doctorRow = (i: EnvInputs, id: string) => doctorChecks({
 describe("Linux's accessibility switch after Turn on", () => {
   it("keeps saying that apps already open need a restart, for as long as this Ember runs (review #98)", () => {
     const on = linux({ applied: ["enable-accessibility"] });
-    expect(row(on, "accessibility")).toMatchObject({ status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them." });
+    expect(row(on, "accessibility")).toMatchObject({ status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them.", next: true });
+    // So first run keeps the row (first-run-3); a row switched on before Ember started has nothing left to do.
+    expect(row(linux(), "accessibility")?.next).toBeUndefined();
     // Switched on before Ember started (or by hand): nothing to restart for Ember's sake.
     expect(row(linux(), "accessibility")?.detail).toBe("Accessibility is on");
     expect(afterFix([], "enable-accessibility")).toEqual(["enable-accessibility"]);

@@ -103,6 +103,8 @@ export interface Check {
   fix?: FixId | TargetFixId;
   /** A second button, for when `fix` was used and didn't take (macOS: Reset Ember's permissions, review #99). */
   alt?: FixId;
+  /** OK now that its fix took, but the user still has something to do (its detail says what), so first run keeps it (first-run-3). */
+  next?: true;
 }
 
 export interface EnvReport {
@@ -291,7 +293,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
       checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: `Accessibility is off, so Ember can only see screenshots. Turn it on, then ${LINUX_A11Y_RESTART}.`, fix: "enable-accessibility" });
     } else if (a.enabled && i.applied?.includes("enable-accessibility")) {
       // Turned on from this setup check: apps opened before still can't be read until they restart (Qt, Chromium, Firefox).
-      checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them." });
+      checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them.", next: true });
     } else {
       checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: a.enabled ? "Accessibility is on" : "Accessibility bus available" });
     }

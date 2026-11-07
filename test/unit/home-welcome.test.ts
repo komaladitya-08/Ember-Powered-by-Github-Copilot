@@ -238,6 +238,15 @@ describe("the checks step", () => {
     expect(checksLater(ok)).toBe("");
   });
 
+  it("keeps saying to restart apps already open after Turn on, never that everything is ready (first-run-3)", () => {
+    const after = LINUX.map(r => (r.id === "accessibility" ? { id: r.id, label: r.label, status: "ok" as const, detail: "On. Restart apps that were already open, or log out and in, so Ember can read them.", next: true as const } : r));
+    expect(plainChecks(after)).toEqual([{ id: "accessibility", title: "Screen reading is on", text: "Restart apps that were already open, or log out and in, so I can read them.", held: false, tone: "ok" }]);
+    expect(checksHeadline(after)).toEqual({ text: "Ready, with one thing left for you to do.", tone: "ok" });
+    expect(checksNext(after)).toBe("Continue");
+    // Switched on before Ember started: nothing left to do.
+    expect(checksHeadline(after.map(r => ({ ...r, next: undefined })))).toEqual({ text: "Everything I need is ready.", tone: "ok" });
+  });
+
   it("names each row's state in words in the details", () => {
     expect(["ok", "warn", "fail"].map(s => checkState(s as "ok"))).toEqual(["Ready", "Worth a look", "Needs fixing"]);
   });

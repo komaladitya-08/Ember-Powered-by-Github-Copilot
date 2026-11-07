@@ -908,6 +908,8 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice, #provider-off)
 .w-try-text .chord { margin-left: 6px; }
 .w-sym { flex: none; width: 20px; height: 20px; background: var(--yellow); -webkit-mask: var(--sym-failed) center / contain no-repeat; }
 .w-check[data-tone="fail"] .w-sym { background: var(--red); }
+/* Done, with something left for the user (a restart): the done symbol, the words say what is left. */
+.w-check[data-tone="ok"] .w-sym { background: var(--green); -webkit-mask-image: var(--sym-done); }
 /* A try not done yet is an empty ring; done, a filled check that lands once (a completion flourish). */
 .w-tick { flex: none; position: relative; width: 20px; height: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--control-edge); }
 .w-tick::after {

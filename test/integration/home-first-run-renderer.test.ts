@@ -296,7 +296,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#m-worker-label").innerText()).toBe("Model for tasks (text only)");
   });
 
-  it("(g) a rejected setup fix shows in its row, is announced, and can be retried (FE #6)", async () => {
+  it("(g) a rejected setup fix shows in its row, is announced, and can be retried (FE #6); one that took keeps what is left to do (first-run-3)", async () => {
     const check = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Accessibility is off.", fix: "enable-accessibility" };
     const p = await open({ agent: readyAgent(), checks: [check] });
     await next(p).click();
@@ -315,8 +315,13 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(async () => (await calls(p)).filter(c => c.startsWith("fix:")).length).toBe(2);
     // A new attempt clears the old failure from the row until it fails again.
     expect(await p.locator("#w-checks .w-check-fail").count()).toBe(0);
-    await settle(p, "fix", { checks: [{ ...check, status: "ok" }], versions: {} }, 1);
+    await settle(p, "fix", { checks: [{ ...check, status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them.", next: true }], versions: {} }, 1);
     await expect.poll(() => p.locator("#w-checks .w-check-fail").count()).toBe(0);
+    // It took, and the restart it still needs stays on the step, not only in the closed details (first-run-3).
+    await expect.poll(() => p.locator("#w-checks-head").innerText()).toBe("Ready, with one thing left for you to do.");
+    expect(await p.locator("#w-checks").isVisible()).toBe(true);
+    expect(await p.locator("#w-checks").innerText()).toContain("Restart apps that were already open");
+    expect(await p.locator("#w-checks [data-fix='enable-accessibility']").count()).toBe(0);
   });
 
   it("(h) Back while the card's yes is on its way: the provider is turned off again and nothing is tested", async () => {
