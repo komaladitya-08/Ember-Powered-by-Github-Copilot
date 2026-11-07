@@ -1203,6 +1203,8 @@ function start(): void {
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
+    // A typed "stop" while a task is at work stops everything at once, before any screen read (tasks-approvals-v2).
+    if (agent?.stopsNow(text)) return;
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); syncHandle(); }
     // A Stop while the screen is read (or the brain connects) drops the request.
@@ -1289,7 +1291,7 @@ function start(): void {
     { name: "memory", stop: () => { learningRef?.stopNow(); betterRecallRef?.semantic.stop(); } },
   ], log.child("killswitch"), () => audit);
   /** Ctrl+Alt+X, "Ember, stop", Stop in the handle's menu or in settings: everything stops at once. */
-  const stopEverything = (source: "hotkey" | "voice" | "menu" | "settings") => {
+  const stopEverything = (source: "hotkey" | "voice" | "typed" | "menu" | "settings") => {
     // An acknowledgement still waiting isn't said after a stop.
     resetAnswerSpeech();
     const pulled = killSwitch.pull(source);
@@ -3218,6 +3220,8 @@ function start(): void {
         },
         open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
       },
+      // A typed "stop" while a task is at work: the kill switch, as "Ember, stop" is (tasks-approvals-v2).
+      stopEverything: () => stopEverything("typed"),
       onTaskFinished: t => {
         // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
         if (maySpeak() && settings.get().speakResults && !agent?.answerOpen && !manualCall && voice?.micState !== "active") voice?.speak(spokenText(t.text), { append: true });

@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "../../app/main/agent/status";
 import type { Task } from "../../app/main/agent/tasks";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -297,5 +297,15 @@ describe("retryRequest", () => {
 
   it("leaves anything more to the conversation, whose words are its own", () => {
     for (const t of ["try again and delete the draft", "try again tomorrow at 9", "send it again", "try again with Firefox", "don't try again", ""]) expect(retryRequest(t), t).toBe(false);
+  });
+});
+
+describe("stopRequest", () => {
+  it("hears a typed stop of everything, as “Ember, stop” is heard (tasks-approvals-v2)", () => {
+    for (const t of ["stop", "Stop!", "stop it", "stop that", "Ember, stop", "stop everything", "Stop all tasks", "stop the task", "please stop", "cancel", "cancel that", "cancel everything", "stop now", "hey Ember, stop everything please"]) expect(stopRequest(t), t).toBe(true);
+  });
+
+  it("leaves a stop of something else to the conversation", () => {
+    for (const t of ["stop the music", "stop the timer at 5", "cancel my 3pm meeting", "don't stop", "stop sharing my screen", "how do I stop a task?", ""]) expect(stopRequest(t), t).toBe(false);
   });
 });

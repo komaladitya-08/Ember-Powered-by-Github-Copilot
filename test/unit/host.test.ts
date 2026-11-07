@@ -2407,6 +2407,31 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.stop();
   });
 
+  it("stops everything at once on a typed “stop” while a task is at work, with no Copilot turn (tasks-approvals-v2)", async () => {
+    let stops = 0;
+    const { host, session, tool } = await withTasks({ stopEverything: () => { stops++; } });
+    await host.ask("tidy my desktop", mail);
+    await tool("start_task")({ goal: "tidy my desktop" });
+    const sent = session.sent.length;
+    expect(await host.ask("stop everything", mail)).toBe(true);
+    expect(stops).toBe(1);
+    expect(session.sent).toHaveLength(sent);
+    // Stopping something else is the conversation's.
+    await host.ask("stop the music", mail);
+    expect(stops).toBe(1);
+    expect(session.sent.length).toBe(sent + 1);
+    await host.stop();
+  });
+
+  it("leaves a typed “stop” with nothing at work to the conversation (tasks-approvals-v2)", async () => {
+    let stops = 0;
+    const { host, session } = await withTasks({ stopEverything: () => { stops++; } });
+    await host.ask("stop", mail);
+    expect(stops).toBe(0);
+    expect(session.sent.at(-1)).toContain("stop");
+    await host.stop();
+  });
+
   it("says a third task waits for one of the two at work, never that it started (tasks-approvals-7)", async () => {
     const { host, tool } = await withTasks();
     await host.ask("tidy my desktop", mail);

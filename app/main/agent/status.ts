@@ -205,6 +205,18 @@ export function retryRequest(text: string): boolean {
   return !!t && t.length <= 40 && RETRY_RE.test(t);
 }
 
+/** "Stop", "stop everything", "cancel that", with "please" or the name about them: a stop of everything, nothing more. */
+const STOP_RE = new RegExp(String.raw`^${LEAD}(?:please[,\s]+)?(?:stop|cancel)(?: (?:it|that|this|everything|all(?: (?:the )?tasks)?|(?:the |my )?tasks?))?(?:[,\s]+please)?${TAIL}$`, "i");
+
+/**
+ * Whether typed `text` asks Ember to stop everything (tasks-approvals-v2): while a task is at work the host stops it at
+ * once, as "Ember, stop" does, rather than wait for Copilot. Never a stop of something else ("stop the music").
+ */
+export function stopRequest(text: string): boolean {
+  const t = norm(text).replace(/!+$/, "");
+  return !!t && t.length <= 40 && STOP_RE.test(t);
+}
+
 /** "Systems check", "are you working?", "is everything OK?": Ember reports on itself. */
 const HEALTH_RE = new RegExp(String.raw`^${LEAD}(?:(?:run (?:a )?)?(?:systems? check|diagnostics?|self[- ]check)|system status|are you (?:ok|okay|alright|all right|working(?: properly)?)|is everything (?:ok|okay|alright|all right|working))${TAIL}$`, "i");
 

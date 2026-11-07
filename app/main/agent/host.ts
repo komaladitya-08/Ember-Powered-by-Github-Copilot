@@ -59,7 +59,7 @@ import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 
@@ -269,6 +269,8 @@ export interface HostOptions {
   onAnswerStream?: (e: AnswerStream) => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; endedBy?: StopCause; summary: string; text: string }) => void;
+  /** Main's kill switch (KillSwitch.pull with source "typed"): a typed "stop" while a task is at work (stopsNow). */
+  stopEverything?: () => void;
   /** The conversation changed (the settings window shows it). */
   /** `why`: "new-conversation" when only the chat was started over (not an account's conversation forgotten). */
   onTranscript?: (entries: TranscriptEntry[], why?: "new-conversation") => void;
@@ -2461,6 +2463,7 @@ export class AgentHost {
    */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
+    if (this.stopsNow(text)) return true;
     // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
     const cutIn = how.replaces === true && (this.conductor?.turnOpen ?? false);
     if (cutIn) {
@@ -2678,6 +2681,19 @@ export class AgentHost {
     } finally {
       if (this.projectRun === run) this.projectRun = null;
     }
+  }
+
+  /**
+   * A typed "stop" or "stop everything" (stopRequest) while a task is running or waiting: the kill switch at once, as
+   * "Ember, stop" is, never a Copilot turn that may take seconds to call cancel_task, or a notice while it connects
+   * (tasks-approvals-v2). Stopping is safe, so it needs no Voice Match. True when it stopped; false leaves the request
+   * to the conversation (nothing at work, or a stop of something else).
+   */
+  stopsNow(text: string): boolean {
+    if (!this.o.stopEverything || !stopRequest(text) || !this.tasksAtWork()) return false;
+    this.o.log.info("agent.stop_local");
+    this.o.stopEverything();
+    return true;
   }
 
   /**

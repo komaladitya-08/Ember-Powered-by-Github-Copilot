@@ -336,7 +336,8 @@ acts in authentication windows. While a password prompt (polkit, keyring, sudo) 
 take screenshots or press keys; while GNOME Shell's own prompt is up (or the shell is too busy to tell), it also sends
 no window's text or titles with your request and takes no step in any app, until the prompt is done. If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
-**Ctrl+Alt+X** (or “Ember, stop”, or **Stop everything** in the handle menu) stops every task, question, borrowed mouse,
+**Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop” in the Ask box while a task is
+at work) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
 are listed in **Apps & privacy** in the settings window (with **Remove**), next to the never-look list, which you can
 edit there too. **Send screenshots for tasks** there (on by default) turns tasks' screenshots off from the next task:
