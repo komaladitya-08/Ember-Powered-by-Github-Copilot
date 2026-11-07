@@ -186,7 +186,8 @@ export function spokenText(markdown: string): string {
     .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
   const plain = linkLabels(prose)
     .replace(EMOJI_BETWEEN, "$1. ")
-    .replace(EMOJI_ANY, "")
+    // Before a word, a space stays where there was one, or goes between two words the emoji joined ("Saved✅Next").
+    .replace(EMOJI_ANY, (m: string, at: number, all: string) => (at > 0 && /[\p{L}\p{N}]/u.test(all[at + m.length] ?? "") && (/^[ \t]/.test(m) || /[\p{L}\p{N}]/u.test(all[at - 1])) ? " " : ""))
     .replace(EMOTICON, "")
     // An item that was only emoji is no item.
     .replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]*$/gm, "")

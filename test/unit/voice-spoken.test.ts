@@ -50,6 +50,7 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["Done ✅ I closed 3 windows 🎉", "Done. I closed 3 windows"],
     ["Hey there! :) How are you?", "Hey there! How are you?"],
     ["Great job 👍🏽, and 👨‍👩‍👧 too.", "Great job, and too."],
+    ["Saved✅next time, ✅Done.", "Saved next time, Done."],
   ])("%j is said %j", (text, said) => expect(spokenText(text)).toBe(said));
 
   it("says nothing for an answer that is only emoji", () => {
