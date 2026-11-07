@@ -132,8 +132,8 @@ function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
   hint.setAttribute("aria-live", "polite");
   hint.hidden = true;
   const row = el("div", "buttons");
-  // A command that deletes data gets a quiet marker on its card, and its Allow doesn't stand out (as the host-key card's
-  // "Trust and connect" doesn't): habit shouldn't carry the user through it (review #275).
+  // A dangerous command gets a quiet marker on its card, and its Allow doesn't stand out (as the host-key card's "Trust
+  // and connect" doesn't), as the bubble's risky question: habit shouldn't carry the user through it (review #275).
   const risky = isRiskyCard(card);
   root.classList.toggle("risky", risky);
   const allow = el("button", risky ? "btn quiet" : "btn", ALLOW_LABEL);

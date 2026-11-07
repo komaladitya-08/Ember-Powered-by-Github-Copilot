@@ -274,7 +274,9 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.askHeading({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }))).toBe("Ember wants to run this command in Ubuntu (WSL)");
     expect(commandCopy.isRiskyCard({ classes: ["destroy"] })).toBe(true);
     expect(commandCopy.isRiskyCard({ classes: ["remote-delete", "publish"] })).toBe(true);
-    expect(commandCopy.isRiskyCard({ classes: ["publish"] })).toBe(false);
+    // Every danger class, as the bubble tags it "Risky step" (commands-remote-v3); a card asked only by policy has none.
+    for (const c of ["publish", "secret", "system", "escape", "unclear"] as const) expect(commandCopy.isRiskyCard({ classes: [c] }), c).toBe(true);
+    expect(commandCopy.isRiskyCard({ classes: [] })).toBe(false);
     expect(commandCopy.isRiskyCard({})).toBe(false);
     expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("About to run this, as you asked");
     // A command the review cleared (the user didn't ask for exactly it) says so in the announcement's heading.

@@ -214,8 +214,10 @@ then why it asks ("Deletes build and everything in it.", "Pushes feature-x to or
 "This can reach your Windows files."); then the model's reason, quoted. "You didn't ask for this." means your words
 asked for nothing of the kind; when they asked for that kind of step but not exactly this one ("push my changes" for
 `git push origin main`, "reinstall the dependencies" for `npm ci`) the card says "Your words don't name exactly this,
-so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. A command that deletes data has a yellow bar
-on its card's edge, and its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
+so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. A
+command that asks for what it does (deleting, publishing, secrets, system changes, downloading and running code, or
+what Ember can't read with certainty), which the bubble tags "Risky step", has a yellow bar on its card's edge, and
+its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
 stay at the bottom of the card while a long command scrolls; **Allow** stays off until the whole command has been in
 view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y)
 works only while that card shows the whole command (not while the window is blank after its page crashed, until the

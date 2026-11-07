@@ -22,9 +22,13 @@ export function askHeading(card: Pick<CommandCard, "target" | "targetLabel">): s
   return `${ASK_HEADING} ${kind === "wsl" ? "in" : "on"} ${outsideText(card.targetLabel, 64)}`;
 }
 
-/** A card for a command that deletes data (here or in a remote service): it gets a quiet marker and no prominent Allow (review #275). */
+/**
+ * A card for a dangerous command (any danger class: the bubble tags its question "Risky step" then): it gets a quiet
+ * marker and no prominent Allow, so nothing invites a reflex yes (review #275, commands-remote-v3). A card asked only by
+ * policy (the organisation, "ask every", root without a finding) has none and keeps the filled Allow.
+ */
 export function isRiskyCard(card: Pick<CommandCard, "classes">): boolean {
-  return Array.isArray(card.classes) && card.classes.some(c => c === "destroy" || c === "remote-delete");
+  return Array.isArray(card.classes) && card.classes.length > 0;
 }
 /** The announcement's heading: nothing runs yet, it starts when the countdown ends (review #269). */
 export const ANNOUNCE_HEADING = "About to run this, as you asked";
