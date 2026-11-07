@@ -23,7 +23,7 @@ import type { Logger } from "../logger";
 import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
-import { TaskManager, statusWord, taskOutcome, titleOf, type Task, type WorkerLike } from "./tasks";
+import { TaskManager, statusWord, taskOutcome, titleOf, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -268,7 +268,7 @@ export interface HostOptions {
   /** The answer being written, for Home's conversation (see AnswerStream). */
   onAnswerStream?: (e: AnswerStream) => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
-  onTaskFinished?: (task: { title: string; status: string; summary: string; text: string }) => void;
+  onTaskFinished?: (task: { title: string; status: string; endedBy?: StopCause; summary: string; text: string }) => void;
   /** The conversation changed (the settings window shows it). */
   /** `why`: "new-conversation" when only the chat was started over (not an account's conversation forgotten). */
   onTranscript?: (entries: TranscriptEntry[], why?: "new-conversation") => void;
@@ -1649,7 +1649,7 @@ export class AgentHost {
           // Quitting: nothing more is shown or said.
           if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
           // A task on another computer says where when it is spoken or notified ("On build-01: done. …", §6).
-          this.o.onTaskFinished?.({ title: task.title, status: task.status, summary, text: binding?.kind === "ssh" ? `On ${binding.label}: ${text}` : text });
+          this.o.onTaskFinished?.({ title: task.title, status: task.status, ...(task.endedBy ? { endedBy: task.endedBy } : {}), summary, text: binding?.kind === "ssh" ? `On ${binding.label}: ${text}` : text });
           this.dropAnnouncement(task.id);
           // Shown when nothing else holds the bubble (an answer, a question, "Listening…"), then it goes on its own.
           const o = OUTCOME[task.status === "done" || task.status === "cancelled" ? task.status : "failed"];

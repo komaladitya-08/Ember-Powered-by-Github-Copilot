@@ -54,7 +54,8 @@ import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine, isRiskyLabel } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
-import { Confirmer, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
+import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
+import { taskNotice } from "./agent/tasks";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
@@ -2896,8 +2897,11 @@ function start(): void {
     // in force each day, so nothing is pruned once a changed policy holds Ember locked down (review #106).
     audit.pruneDaily(() => auditRetentionDays(admin), err => log.warn("audit.prune_failed", { err }));
     confirmer = new Confirmer(showState, {
-      // A question waits 2 minutes for an answer, 20 with more time to read and answer.
+      // A question waits 2 minutes for an answer, 20 with more time to read and answer; its answer, and the note that it
+      // ran out of time, stay ten times as long too (tasks-approvals-4).
       timeoutMs: () => 120_000 * readTime(),
+      answerMs: () => ANSWER_MS * readTime(),
+      expiredMs: () => EXPIRED_MS * readTime(),
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.
       blocked: () => (borrowRef?.driving ?? false) || (inputRef?.pointerLags === true && Date.now() - (borrowRef?.lastSyntheticKeyAt ?? 0) < 500),
@@ -3216,7 +3220,9 @@ function start(): void {
       onTaskFinished: t => {
         // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
         if (maySpeak() && settings.get().speakResults && !agent?.answerOpen && !manualCall && voice?.micState !== "active") voice?.speak(spokenText(t.text), { append: true });
-        if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
+        // (And one whose question went unanswered while they were away: it needed them, tasks-approvals-4.)
+        const notice = taskNotice(t);
+        if (userAway() && notice) notify(notice.title, notice.body);
       },
       isOnline: () => net.isOnline(),
       // "Not authenticated" while GitHub can't be reached is a network problem, not a bad sign-in.

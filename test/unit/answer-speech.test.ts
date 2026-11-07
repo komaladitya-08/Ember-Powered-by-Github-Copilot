@@ -8,6 +8,7 @@ import { TurnLatency } from "../../app/main/turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "../../app/main/acknowledge";
 import { speaksAloud } from "../../app/shared/speech";
 import { IPC } from "../../app/shared/ipc";
+import { taskNotice } from "../../app/main/agent/tasks";
 
 function wiring() {
   const source = fs.readFileSync("app/main/main.ts", "utf8");
@@ -47,8 +48,8 @@ function wiring() {
       manualListening: on => { manualCall = on ? { source: "ask" } : null; },
     };
   `, { target: ts.ScriptTarget.ES2022 });
-  const run = new Function("SpeechStream", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", code);
-  const callbacksUnderTest = run(SpeechStream, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, IPC, broadcast, voicePreference, voice, personal, agent, confirmer) as {
+  const run = new Function("SpeechStream", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", code);
+  const callbacksUnderTest = run(SpeechStream, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice) as {
     onTurnStart(turn: { text: string; spoken: boolean; manual?: true }): void;
     onAnswerDelta(text: string): void;
     onAnswer(text: string): void;

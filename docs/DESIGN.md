@@ -190,8 +190,9 @@ Ember is two places at once, each for one kind of work.
     Settings"; a refusal with policy's reason; a question and how it was answered; the worker's notes, marked as
     its words), each with a static state symbol and when it happened. Closed until the user opens it, kept open by
     task id across updates;
-  - when it ends, what it found or made, as a **view**, and on a failure **Try again** (the same request starts again
-    as a new task, asking every question again) beside **Close**.
+  - when it ends, what it found or made, as a **view**, and on a failure, or a question that ran out of time while the
+    user was away, **Try again** (the same request starts again as a new task, asking every question again) beside
+    **Close**. Never after "Not now", a Stop or the mouse taken back: those were the user's own choice.
 
   The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
   Retrying, Done, Didn't finish, Stopped) and `app/main/agent/activity.ts`, which builds a task's activity from its

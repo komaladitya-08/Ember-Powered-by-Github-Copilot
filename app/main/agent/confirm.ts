@@ -89,6 +89,11 @@ export interface Question {
  * shows, or, with nothing waiting, the bubble empties (ConfirmerTiming.afterAnswer).
  */
 export const ANSWER_MS = 1500;
+/**
+ * How long a timed-out question's note stays (ConfirmerTiming.expiredMs), unless something replaces it: the user was
+ * away, so a 1.5 s note was gone before they could come back and read it (tasks-approvals-4).
+ */
+export const EXPIRED_MS = 10_000;
 
 /** What the bubble says when a question timed out: nothing was approved, and it was not a refusal. */
 /** Under a timed-out question's thought: how to review it (the bubble has no button once the question has gone). */
@@ -146,8 +151,12 @@ export interface ConfirmerTiming {
   armMs?: number;
   /** The pause between one question being answered and the next appearing. */
   gapMs?: number;
-  /** How long a question's answer shows before afterAnswer (default ANSWER_MS). */
-  answerMs?: number;
+  /**
+   * How long a question's answer shows before afterAnswer (default ANSWER_MS), and a timed-out question's note (default
+   * EXPIRED_MS): read as each shows, so main scales them by the user's More time to read and answer.
+   */
+  answerMs?: number | (() => number);
+  expiredMs?: number | (() => number);
   /**
    * A question's answer (`shown`, the very bubble it wrote) has been up `answerMs` and no question has come up since:
    * main takes it down unless something replaced it (afterAnswerPatch). Absent (tests, the eval): it stays as before.
@@ -190,7 +199,8 @@ export class Confirmer {
   private readKeyHint: ConfirmerTiming["readKeyHint"];
   private panelReady: ConfirmerTiming["panelReady"];
   private panelHint: ConfirmerTiming["panelHint"];
-  private answerMs: number;
+  private answerMs: number | (() => number);
+  private expiredMs: number | (() => number);
   private afterAnswer: ConfirmerTiming["afterAnswer"];
   /** The answer's bubble is up: afterAnswer runs when this fires. */
   private answerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -212,6 +222,7 @@ export class Confirmer {
     this.panelReady = t.panelReady;
     this.panelHint = t.panelHint;
     this.answerMs = t.answerMs ?? ANSWER_MS;
+    this.expiredMs = t.expiredMs ?? EXPIRED_MS;
     this.afterAnswer = t.afterAnswer;
   }
 
@@ -510,16 +521,24 @@ export class Confirmer {
     };
   }
 
-  /** The answer `shown` went up: unless a question replaces it first, afterAnswer hears of it answerMs later. */
-  private answerShown(shown: BubbleState): void {
+  /**
+   * The answer `shown` went up: unless a question replaces it first, afterAnswer hears of it answerMs later (expiredMs
+   * for a timed-out question's note).
+   */
+  private answerShown(shown: BubbleState, expired = false): void {
     this.cancelAnswer();
     const after = this.afterAnswer;
     if (!after) return;
+    const fallback = expired ? EXPIRED_MS : ANSWER_MS;
+    const ms = expired ? this.expiredMs : this.answerMs;
+    let wait = fallback;
+    // A setting that can't be read, or isn't a time: the usual time.
+    try { const v = typeof ms === "function" ? ms() : ms; if (Number.isFinite(v) && v >= 0) wait = v; } catch { /* the usual time */ }
     this.answerTimer = setTimeout(() => {
       this.answerTimer = null;
       if (this.current) return;
       try { after(shown); } catch { /* main's bubble only: the next bubble replaces it anyway */ }
-    }, this.answerMs);
+    }, wait);
   }
 
   private cancelAnswer(): void {
@@ -539,7 +558,7 @@ export class Confirmer {
       const yes = !!answer && answer !== "deny";
       const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : expired ? EXPIRED_THOUGHT : "Okay, I won't.", step: expired && !yes ? EXPIRED_STEP : null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
       this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: shown });
-      this.answerShown(shown);
+      this.answerShown(shown, expired && !yes);
     }
     p.resolve(answer);
     if (wasCurrent) this.onChange?.(null);

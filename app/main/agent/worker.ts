@@ -230,6 +230,8 @@ export interface WorkerResult {
   declined?: boolean;
   /** Stopped because a question ran out of time unanswered and nothing was done after that: not a "Not now". */
   expired?: boolean;
+  /** Stopped because the user took the mouse back from Ember (its summary need not say so: TaskManager's endedBy). */
+  tookOver?: boolean;
   /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
   view?: ViewDoc;
 }
@@ -1900,7 +1902,7 @@ export class Worker {
     if (this.expired && !this.declined && !this.result?.success) return { success: false, stopped: true, expired: true, summary: this.result?.summary || "My question ran out of time with no answer, so I didn't do it." };
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
     const result = this.result ?? { success: false, summary: lastWordsSummary(lastAnswer) };
-    return this.userTookOver && !result.success ? { ...result, stopped: true } : result;
+    return this.userTookOver && !result.success ? { ...result, stopped: true, tookOver: true } : result;
   }
 
   /**

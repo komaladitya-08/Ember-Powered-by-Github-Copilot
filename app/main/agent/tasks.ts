@@ -23,6 +23,8 @@ import type { TaskActivity, TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+/** Why a stopped task stopped (Task.endedBy). */
+export type StopCause = "expired" | "declined" | "took-over" | "stop";
 
 export interface Task {
   id: string;
@@ -40,6 +42,12 @@ export interface Task {
    * so a catch-up doesn't say "you stopped it".
    */
   stopReason?: string;
+  /**
+   * How a stopped task ended, from Ember's own flags (never model text): its question went unanswered ("expired"), the
+   * user said "Not now" ("declined"), took the mouse back ("took-over"), or stopped it ("stop"). Set only once it is
+   * stopped, so a catch-up says "you stopped it" only when they did (tasks-approvals-v1).
+   */
+  endedBy?: StopCause;
   mode?: "do" | "guide";
   /** The target it acts on, fixed for its life (absent: this computer). */
   targetId?: TargetId;
@@ -143,14 +151,28 @@ export interface StartOptions {
   typedOnly?: boolean;
 }
 
-/** A task the user may try again from its card: one that did work (not a guide) and failed. */
-const retryable = (t: Task) => t.status === "failed" && t.mode === "do";
+/**
+ * A task the user may try again from its card: one that did work (not a guide) and failed, or whose question went
+ * unanswered while they were away (tasks-approvals-4: a timeout is no refusal, and Try again asks every question again).
+ * Never one they said "Not now" to, stopped or took the mouse back from.
+ */
+const retryable = (t: Task) => t.mode === "do" && (t.status === "failed" || (t.status === "cancelled" && t.endedBy === "expired"));
 
 /** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
 const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
 
 /** How a finished task went, in the user's words: "stopped", never "cancelled". */
 export const statusWord = (s: TaskStatus) => (s === "cancelled" ? "stopped" : s);
+
+/**
+ * The notification for a finished task while the user is away from the computer (main's onTaskFinished): one that
+ * finished, couldn't finish, or whose question went unanswered (tasks-approvals-4: it needed them, and they weren't
+ * there). Null for one the user stopped themselves, which needs no telling.
+ */
+export function taskNotice(t: { title: string; status: string; endedBy?: StopCause; summary: string }): { title: string; body: string } | null {
+  if (t.status === "cancelled" && t.endedBy !== "expired") return null;
+  return { title: t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, body: t.summary };
+}
 
 /** One line for the conversation: "Tidy the desktop: done. Moved 3 files." or "Tidy the desktop: stopped." */
 export function taskOutcome(t: Pick<Task, "title" | "status" | "result">): string {
@@ -349,7 +371,7 @@ export class TaskManager {
     if (q >= 0) {
       const [{ task }] = this.queue.splice(q, 1);
       if (this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
-      else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." });
+      else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." }, "stop");
       return;
     }
     const r = this.running.get(id);
@@ -540,8 +562,10 @@ export class TaskManager {
     this.running.delete(task.id);
     try {
       if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
-      // Stopped by the user (Stop, taking the mouse back, "Not now"): calm, not a failure.
-      else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
+      // Stopped by the user (Stop, taking the mouse back, "Not now"), or its question went unanswered: calm, not a
+      // failure. A Stop is a Stop whatever the worker said as it wound down.
+      else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result,
+        abort.signal.aborted ? "stop" : result.expired ? "expired" : result.declined ? "declined" : result.tookOver ? "took-over" : "stop");
     } finally {
       // Whatever a listener did, the worker lets go and the queue moves on (review #79).
       try {
@@ -561,12 +585,13 @@ export class TaskManager {
     }
   }
 
-  private finish(task: Task, status: TaskStatus, result: WorkerResult): void {
+  private finish(task: Task, status: TaskStatus, result: WorkerResult, endedBy?: StopCause): void {
     this.stopping.delete(task.id);
     this.logs.get(task.id)?.log.add({ type: "end", status: status === "done" ? "done" : status === "failed" ? "failed" : "stopped" }, Date.now());
-    // Only a failure can be tried again: what it was asked with goes for the rest.
-    if (status !== "failed") this.specs.delete(task.id);
     task.status = status;
+    if (status === "cancelled") task.endedBy = endedBy ?? "stop";
+    // Only a failure (or a question that went unanswered) can be tried again: what it was asked with goes for the rest.
+    if (!retryable(task)) this.specs.delete(task.id);
     task.result = result;
     // finish_task's view takes the live view's place (one rev on, so the card draws only what changed); without one,
     // the live view stays as the result.
@@ -579,7 +604,8 @@ export class TaskManager {
     // The card first: the screen shows how it went even when its record or a listener fails (review #79).
     this.publish();
     // Open/hovered/focused cards pause their countdown; More time applies to every result, including failures/views.
-    const duration = status === "failed" || task.view ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000;
+    // (A question that went unanswered stays as long: the user was away, and comes back to read it.)
+    const duration = status === "failed" || task.endedBy === "expired" || task.view ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000;
     this.expiry.set(task.id, { remaining: duration * this.readScale(), since: Date.now(), timer: null });
     this.expireLater(task.id);
     this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });

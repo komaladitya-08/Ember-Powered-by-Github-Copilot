@@ -273,3 +273,19 @@ describe("AgentHost's status answer", () => {
     expect(answers).toEqual([RESULTS_REPLY.loudSilent, RESULTS_REPLY.failed]);
   });
 });
+
+describe("how a stopped task ended, in the catch-up and the status answer (tasks-approvals-v1)", () => {
+  it("never says “you stopped it” about a task whose question ran out of time, or one the user said Not now to", () => {
+    const tasks = [
+      task({ id: "a", title: "Send the Q3 report to Priya", status: "cancelled", endedBy: "expired", finished: NOW - 1000 }),
+      task({ id: "b", title: "Empty the trash", status: "cancelled", endedBy: "declined", finished: NOW - 2000 }),
+      task({ id: "c", title: "Fill in the form", status: "cancelled", endedBy: "took-over", finished: NOW - 3000 }),
+    ];
+    const caught = catchUpReply(tasks, NOW);
+    expect(caught).not.toContain("you stopped it");
+    expect(caught).toBe("3 tasks finished. “Send the Q3 report to Priya”: my question to you wasn't answered in time. “Empty the trash”: you said not now. “Fill in the form”: you took the mouse back.");
+    expect(statusReply("status", [tasks[0]], NOW)).toBe("Nothing's running right now. The last thing was “Send the Q3 report to Priya”: my question to you wasn't answered in time.");
+    // A real Stop still says so.
+    expect(catchUpReply([task({ status: "cancelled", endedBy: "stop", finished: NOW - 1000 })], NOW)).toBe("One task finished. “Tidy the desktop”: you stopped it.");
+  });
+});

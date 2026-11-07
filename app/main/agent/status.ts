@@ -7,7 +7,7 @@
  * user's words, shown as they already are on the task's card. Pure, so it is unit-tested without Electron.
  */
 
-import type { Task } from "./tasks";
+import type { StopCause, Task } from "./tasks";
 import { plainText } from "./presenter";
 
 /** Recent enough to be "the last thing I did" (a finished task's card has usually gone by then). */
@@ -90,10 +90,15 @@ function lastFinished(tasks: readonly Task[], now: number): Task | null {
 
 /** How a finished task went, in a few words. */
 const OUTCOME: Record<"done" | "failed" | "cancelled", string> = { done: "done", failed: "it didn't finish", cancelled: "you stopped it" };
+/** How a stopped one ended (Task.endedBy, Ember's own flags): "you stopped it" only for a Stop (tasks-approvals-v1). */
+const STOPPED_BY: Record<StopCause, string> = {
+  expired: "my question to you wasn't answered in time", declined: "you said not now", "took-over": "you took the mouse back", stop: "you stopped it",
+};
 
-/** How `t` went: "you stopped it" only when the user did (else why it stopped: its computer went). */
+/** How `t` went: "you stopped it" only when the user did (else why it stopped: its computer went, its question went unanswered). */
 function outcomeOf(t: Task): string {
   if (t.status === "cancelled" && t.stopReason) return brief(t.stopReason).replace(/[.!?…]+$/u, "");
+  if (t.status === "cancelled" && t.endedBy) return STOPPED_BY[t.endedBy];
   return OUTCOME[t.status as keyof typeof OUTCOME] ?? "done";
 }
 

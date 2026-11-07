@@ -159,7 +159,7 @@ describe("docs/DEVELOPING.md", () => {
   });
 
   it("says a failed task card goes on its own after about a minute, as the task list times it (review #147)", () => {
-    const ms = Number(/status === "failed" \|\| task\.view \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(read("app/main/agent/tasks.ts"))?.[1].replace(/_/g, ""));
+    const ms = Number(/status === "failed" \|\| task\.endedBy === "expired" \|\| task\.view \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(read("app/main/agent/tasks.ts"))?.[1].replace(/_/g, ""));
     expect(ms).toBe(60_000);
     const asking = flat(section(read("docs/DEVELOPING.md"), "Asking Ember to do things"));
     expect(asking).not.toMatch(/a failed card stays until you close it/);
