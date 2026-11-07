@@ -87,17 +87,17 @@ describe.skipIf(!required && (!xvfb || !built))("a crash of Ember's main process
     expect(log()).not.toContain("app.previous_run_ended");
     expect(fs.existsSync(marker())).toBe(true);
 
-    // The next start finds it.
+    // The next start finds it (Home's note waited for: its status may come a moment after the window).
     home = await launch();
-    expect(log()).toContain("app.previous_run_ended");
-    expect(await home.locator("#run-notice").isVisible()).toBe(true);
+    await expect.poll(() => log(), { timeout: 10_000 }).toContain("app.previous_run_ended");
+    await expect.poll(() => home.locator("#run-notice").isVisible(), { timeout: 10_000 }).toBe(true);
     expect(await home.locator("#run-notice").innerText()).toMatch(/^Ember closed unexpectedly last time\. Its log shows what it was doing until then: .*ember\.log$/);
 
     // A normal quit removes this run's marker and says so in the log.
     const quit = exited();
     await app!.evaluate(({ app: electronApp }) => { electronApp.quit(); }).catch(() => undefined);
     await quit;
-    expect(fs.existsSync(marker())).toBe(false);
+    await expect.poll(() => fs.existsSync(marker()), { timeout: 5000 }).toBe(false);
     expect(log()).toMatch(/app\.quit/);
 
     // And the start after it says nothing.
