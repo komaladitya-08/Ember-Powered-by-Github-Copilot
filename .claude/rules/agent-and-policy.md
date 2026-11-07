@@ -65,7 +65,7 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 ## Policy and confirmation
 
 - **Decisions.** Describe each action as an `ActionRequest`, and let `PolicyEngine.decide()` (app/main/policy/policy.ts) decide it. Build question text from the request (`describe(r)`), never from model output.
-- **Matching.** Normalise labels with `normalizeLabel`/`foldLabel` before matching word lists. Policy checks a risky step against `TaskSpec.userWords`, never against the conductor's goal string.
+- **Matching.** Normalise labels with `normalizeLabel`/`foldLabel` before matching word lists. Policy checks a risky step against `TaskSpec.userWords`, never against the conductor's goal string. A bare "try again" (`retryRequest`, status.ts) right after the line of a task that may be tried again carries that task's own words (`TaskManager.askedWith`, host.ts `retriedWords`): never its goal, never for unchecked or suggested words, never after a "Not now" or a Stop.
 - **New risky verbs.** Add each one to `RISKY` and to the per-language `RISKY_WORDS`/`RISKY_ANYWHERE` lists (verbs that only a control acts on: `RISKY_ACT*`; one OS's words: `RISKY_EXTRA[os]` in vocabulary.ts). These are confirmed every time:
   - risky actions themselves;
   - OK or Yes in a dialog about one of them;

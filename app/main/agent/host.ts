@@ -59,7 +59,7 @@ import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, statusQuestion, statusReply } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 
@@ -863,6 +863,11 @@ export class AgentHost {
   private unreachable: string | null = null;
   /** A finished task's line in the transcript: its result as it said it (without the title the conversation wrote). */
   private readonly results = new WeakMap<TranscriptEntry, string>();
+  /**
+   * A line of a task that may be tried again (it failed, or its question went unanswered): the user's own words it was
+   * asked with (TaskManager.askedWith), which a "try again" right after it carries (tasks-approvals-1).
+   */
+  private readonly retryWords = new WeakMap<TranscriptEntry, { userWords: string; commandWords?: string; typedOnly?: boolean }>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
   private readonly presenter: Presenter;
   /** Bubbles of Ember's own that are no turn's or task's (the targets runtime's), written through the shared bubble. */
@@ -1305,6 +1310,13 @@ export class AgentHost {
     const apart = (a: TranscriptEntry, b: TranscriptEntry) => Date.parse(a.t) - Date.parse(b.t);
     const requestText = retainedConversationText(r.words).text;
     let at = log.map(e => e.who === "you" && !this.restored.has(e) && e.text === requestText).lastIndexOf(true);
+    // "Try again" right after a task that didn't finish: that task's own words go with it (tasks-approvals-1).
+    const again = this.retriedWords(r, at);
+    if (again) {
+      said.unshift(again.userWords);
+      if (typed.length) typed.unshift(again.commandWords ?? again.userWords);
+      at = 0;
+    }
     for (let n = 0; at > 0 && n < 3; n++) {
       const reply = log[at].text;
       const last = log[at - 1];
@@ -1323,8 +1335,8 @@ export class AgentHost {
       else if (this.voiceUnchecked.has(before)) heardLeft = true;
       at = k;
     }
-    const left = typed.length < said.length;
-    const voiced = left && heardLeft;
+    const left = typed.length < said.length || again?.commandWords !== undefined;
+    const voiced = left && (heardLeft || (again?.commandWords !== undefined && !again.typedOnly));
     // The steps of a routine this turn ran (run_routine): the user's own words when they saved it, so its tasks' risky
     // steps get the usual question rather than "you didn't ask for this". Never words for commands: a step saved as
     // "delete the build folder" must not make `rm -rf build` the user's own request now (it asks, as any dangerous
@@ -1337,6 +1349,23 @@ export class AgentHost {
       ...(left || steps ? { commandWords: typed.join("\n") } : {}),
       ...((steps || left) && !voiced ? { typedOnly: true } : {}),
     };
+  }
+
+  /**
+   * The words of the task a bare "try again" (retryRequest) asks for again, or null (tasks-approvals-1): the line before
+   * request `r` (at `at` in the transcript; Ember's lines aside) is of a task that may be tried again (it failed, or its
+   * question went unanswered: never one the user said "Not now" to or stopped), at most ten minutes before, and the
+   * request is the user's own (not heard where Ember can't tell them from its speakers, not a suggestion). Those are
+   * the words that task was asked with, as its card's Try again carries them: never its goal, which the model wrote.
+   */
+  private retriedWords(r: UserRequest, at: number): { userWords: string; commandWords?: string; typedOnly?: boolean } | null {
+    const log = this.transcript;
+    if (at <= 0 || r.voiceUnchecked || r.suggested || !retryRequest(r.words)) return null;
+    let k = at - 1;
+    while (k >= 0 && log[k].who === "ember") k--;
+    const line = log[k];
+    if (!line || line.who !== "task" || this.restored.has(line) || Date.parse(log[at].t) - Date.parse(line.t) > 10 * 60_000) return null;
+    return this.retryWords.get(line) ?? null;
   }
 
   /** A word of the answer (of the chat `chat`: a retired chat's late words are dropped). */
@@ -1643,6 +1672,8 @@ export class AgentHost {
           const view = task.view ? viewText(task.view) : "";
           const said = this.underGen(hg, () => this.remember("task", view ? `${text}\n${view}` : text));
           if (summary) this.results.set(said, summary);
+          const asked = tasks?.askedWith(task.id);
+          if (asked && !why) this.retryWords.set(said, asked);
           // Memory learns from what a finished task found (source `task`: context, never the user's word).
           if (this.memoryOn && task.status === "done" && summary && !why) this.o.memory?.taskDone?.(task.title, view ? `${summary}\n${view}` : summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).

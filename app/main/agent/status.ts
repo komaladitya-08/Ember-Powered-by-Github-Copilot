@@ -193,6 +193,18 @@ export function catchUpReply(tasks: readonly Task[], now: number): string {
   return `${head} ${lines.join(" ")}${more ? ` And ${more} more.` : ""}${still}`;
 }
 
+/** "Try again", "one more time", "have another go", with "please" or the name about them: nothing more. */
+const RETRY_RE = new RegExp(String.raw`^${LEAD}(?:please[,\s]+)?(?:(?:try|do) (?:it |that )?again|retry(?: it| that)?|again|one more time|(?:have|give it) another (?:go|try))(?:[,\s]+please)?${TAIL}$`, "i");
+
+/**
+ * Whether `text` only asks Ember to try again (tasks-approvals-1): after a task that didn't finish, the user means that
+ * request, so the host carries its words (never more: "try again and delete the draft" is a request of its own).
+ */
+export function retryRequest(text: string): boolean {
+  const t = norm(text);
+  return !!t && t.length <= 40 && RETRY_RE.test(t);
+}
+
 /** "Systems check", "are you working?", "is everything OK?": Ember reports on itself. */
 const HEALTH_RE = new RegExp(String.raw`^${LEAD}(?:(?:run (?:a )?)?(?:systems? check|diagnostics?|self[- ]check)|system status|are you (?:ok|okay|alright|all right|working(?: properly)?)|is everything (?:ok|okay|alright|all right|working))${TAIL}$`, "i");
 

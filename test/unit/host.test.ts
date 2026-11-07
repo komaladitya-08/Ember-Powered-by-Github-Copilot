@@ -2405,6 +2405,68 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     expect(ends).toEqual([[first, "steered"]]);
     await host.stop();
   });
+
+  describe("“try again” after a task that didn't finish asks for that task again (tasks-approvals-1)", () => {
+    /** The host with tasks whose workers end as `outcomes` say, in turn (then as withTasks's do). */
+    async function retrying(outcomes: { success: boolean; summary: string; stopped?: boolean; declined?: boolean }[]) {
+      const made = await withTasks();
+      const d = (made.host.tasks as any).d;
+      const make = d.makeWorker;
+      d.makeWorker = (spec: { goal: string }) => { const w = make(spec); const r = outcomes.shift(); return r ? { ...w, run: async () => r } : w; };
+      const say = (text: string) => { made.session.emit("assistant.message_delta", { deltaContent: text }); made.session.emit("assistant.message", { content: text }); made.session.emit("session.idle", {}); };
+      const ended = async (n: number) => vi.waitFor(() => expect(made.host.getTranscript().filter(e => e.who === "task")).toHaveLength(n));
+      return { ...made, say, ended };
+    }
+    const engine = new PolicyEngine({ neverLook: () => [], grants: () => ({ thunderbird: "act" }) });
+    const send = (words?: string) => engine.decide({ taskId: "x", kind: "click", app: "thunderbird", window: "W", element: { role: "push button", name: "Send" }, goal: words });
+
+    it("carries the failed task's own words, so the Send the user asked for isn't called unasked, but not after their “Not now”", async () => {
+      const { host, specs, tool, say, ended } = await retrying([
+        { success: false, summary: "I couldn't find the Send button." },
+        { success: false, stopped: true, declined: true, summary: "You said not now, so I left it." },
+      ]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("Ember, try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      // The user's words, never the goal the model wrote.
+      expect(specs[1].userWords).toBe("send the report to Ana\nEmber, try again");
+      expect(send(specs[1].userWords).aligned).toBeUndefined();
+      expect(send(specs[1].userWords).prompt).not.toMatch(/didn't ask/);
+      // That one ended on the user's "Not now": asking again doesn't make the step theirs (it asks, saying so).
+      await ended(2);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toBe("try again");
+      expect(send(specs[2].userWords).aligned).toBe(false);
+      await host.stop();
+    });
+
+    it("never for words heard where Ember can't tell the user from its speakers, or anything more than a retry", async () => {
+      const { host, specs, tool, say, ended } = await retrying([
+        { success: false, summary: "I couldn't find the Send button." },
+        { success: false, summary: "I couldn't find the Send button." },
+      ]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("try again", mail, undefined, { voiceUnchecked: true });
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("try again");
+      await ended(2);
+      await host.ask("try again and delete the draft", mail);
+      await tool("start_task")({ goal: "Send the report to Ana and delete the draft" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toBe("try again and delete the draft");
+      await host.stop();
+    });
+  });
 });
 
 describe("review round 6: a task's bubbles say whose they are", () => {

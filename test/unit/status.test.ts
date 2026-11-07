@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
 import type { Task } from "../../app/main/agent/tasks";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -287,5 +287,15 @@ describe("how a stopped task ended, in the catch-up and the status answer (tasks
     expect(statusReply("status", [tasks[0]], NOW)).toBe("Nothing's running right now. The last thing was “Send the Q3 report to Priya”: my question to you wasn't answered in time.");
     // A real Stop still says so.
     expect(catchUpReply([task({ status: "cancelled", endedBy: "stop", finished: NOW - 1000 })], NOW)).toBe("One task finished. “Tidy the desktop”: you stopped it.");
+  });
+});
+
+describe("retryRequest", () => {
+  it("hears a bare “try again” and its kin, which carry the failed task's words (tasks-approvals-1)", () => {
+    for (const t of ["try again", "Ember, try again.", "Try that again please", "please try it again", "again", "one more time", "Have another go", "give it another try", "retry", "Hey Ember, do it again"]) expect(retryRequest(t), t).toBe(true);
+  });
+
+  it("leaves anything more to the conversation, whose words are its own", () => {
+    for (const t of ["try again and delete the draft", "try again tomorrow at 9", "send it again", "try again with Firefox", "don't try again", ""]) expect(retryRequest(t), t).toBe(false);
   });
 });

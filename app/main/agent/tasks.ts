@@ -356,6 +356,19 @@ export class TaskManager {
   }
 
   /**
+   * The user's own words a task that may be tried again was asked with (its userWords, and those its commands hear):
+   * what a spoken "try again" carries, as Try again on its card does (tasks-approvals-1). Never its goal, which the
+   * model wrote. Null for a task that can't be tried again.
+   */
+  askedWith(id: string): { userWords: string; commandWords?: string; typedOnly?: boolean } | null {
+    const t = this.tasks.get(id);
+    const spec = this.specs.get(id);
+    if (!t || !spec || !retryable(t) || spec.opts.userWords === undefined) return null;
+    const o = spec.opts;
+    return { userWords: o.userWords!, ...(o.commandWords !== undefined ? { commandWords: o.commandWords } : {}), ...(o.typedOnly ? { typedOnly: true } : {}) };
+  }
+
+  /**
    * What a running task is held up by: its question waiting for the user's answer ("answer"), or a Stop it is winding
    * down from ("stopping"); null otherwise (as its card says: "waiting" and TASK_STOPPING).
    */
