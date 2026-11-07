@@ -431,3 +431,91 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("forgets one memory for two Ent
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("paints only Forget red, keeps a long memory's two buttons on one line inside the group, and counts nothing in an empty list (memory-13)", async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
+  settings.memory = { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+  const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
+    admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
+  const rows: MemoryView["rows"] = [
+    { id: "a", text: "Likes to be called Ram", source: "user", at: "2026-11-04" },
+    { id: "b", text: "Priya leads the platform team and reviews the user's pull requests every Thursday afternoon before the release train leaves", source: "conversation", at: "2026-11-04" },
+    { id: "c", text: "Prefers short answers", source: "user", at: "2026-11-04", revision: 1, correctedAt: "2026-11-04T12:00:00Z" },
+  ];
+  const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
+  const dist = path.resolve("dist");
+  const server = http.createServer((req, res) => {
+    const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
+    if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
+    const mime: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+    res.setHeader("content-type", mime[path.extname(file)] ?? "application/octet-stream");
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(seed => {
+      const listeners: Record<string, (value: unknown) => void> = {};
+      (window as unknown as { __push: (view: MemoryView) => void }).__push = view => listeners.onMemory?.(view);
+      window.ember = new Proxy({}, { get: (_target, name: string) => {
+        if (name.startsWith("on")) return (fn: (value: unknown) => void) => { listeners[name] = fn; return () => { delete listeners[name]; }; };
+        if (name === "getStatus") return async () => seed.status;
+        if (name === "memory") return async () => ({ rows: seed.rows, ownership: "ready", reason: null });
+        if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
+        return () => new Promise(() => undefined);
+      } }) as EmberHomeApi;
+    }, { status, rows });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Renderer fixture didn't start.");
+    await page.goto(`http://127.0.0.1:${address.port}/app/renderer/home/index.html`);
+    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    await page.locator('a[href="#memory-h"]').click();
+    await expect.poll(() => page.locator("#memory-list [data-memory-forget]").count()).toBe(3);
+    // Each row's Forget and Correct…, the list's box, and the colours they are painted in.
+    const measure = () => page.evaluate(() => {
+      const list = document.getElementById("memory-list")!.getBoundingClientRect();
+      const probe = Object.assign(document.createElement("span"), { style: "color: var(--red-text)" });
+      document.body.append(probe);
+      const red = getComputedStyle(probe).color;
+      probe.remove();
+      return { red, fg: getComputedStyle(document.body).color, listRight: list.right, rows: [...document.querySelectorAll("#memory-list li")].map(li => {
+        const forget = li.querySelector("[data-memory-forget]")!, correct = li.querySelector("[data-memory-correct]")!;
+        const f = forget.getBoundingClientRect(), c = correct.getBoundingClientRect();
+        return { forget: getComputedStyle(forget).color, correct: getComputedStyle(correct).color, fTop: f.top, cTop: c.top, fRight: f.right, cLeft: c.left, cRight: c.right };
+      }) };
+    });
+    for (const width of [560, 1000]) for (const size of ["default", "larger"]) for (const forced of [false, true]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ forcedColors: forced ? "active" : "none" });
+      await page.evaluate(textSize => { document.documentElement.dataset.textSize = textSize; }, size);
+      const m = await measure();
+      const at = `${width}px, ${size}${forced ? ", forced colours" : ""}`;
+      for (const [i, row] of m.rows.entries()) {
+        // Correct… changes nothing until it is saved: it is never painted as destructive as Forget is.
+        if (!forced) { expect(row.forget, `${at}, row ${i}`).toBe(m.red); expect(row.correct, `${at}, row ${i}`).toBe(m.fg); }
+        // Side by side on one line, even beside a two-line memory.
+        expect(Math.abs(row.fTop - row.cTop), `${at}, row ${i}`).toBeLessThan(1);
+        // Drawn with an edge, they never touch or run past the group's edge.
+        if (forced) { expect(row.cLeft - row.fRight, `${at}, row ${i}`).toBeGreaterThanOrEqual(4); expect(row.cRight, `${at}, row ${i}`).toBeLessThanOrEqual(m.listRight - 4); }
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), at).toBe(true);
+      if (process.env.EMBER_UI_EVIDENCE) {
+        fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+        await page.locator("#memory-list").screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `memory-rows-${width}-${size}${forced ? "-forced" : ""}.png`) });
+      }
+    }
+    await page.emulateMedia({ forcedColors: "none" });
+    expect(await page.locator("#memory-count").innerText()).toBe("3 of 3 memories");
+    // An empty list says only that it is empty, not "0 of 0 memories".
+    await page.evaluate(() => (window as unknown as { __push: (view: MemoryView) => void }).__push({ rows: [], ownership: "ready", reason: null }));
+    await expect.poll(() => page.locator("#memory-list").innerText()).toContain("Nothing yet");
+    expect(await page.locator("#memory-count").isHidden()).toBe(true);
+    expect(await page.locator("#memory-count").textContent()).toBe("");
+    await page.evaluate(seed => (window as unknown as { __push: (view: MemoryView) => void }).__push({ rows: seed, ownership: "ready", reason: null }), rows);
+    expect(await page.locator("#memory-count").isHidden()).toBe(false);
+    expect(errors).toEqual([]);
+  } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+}, 60_000);

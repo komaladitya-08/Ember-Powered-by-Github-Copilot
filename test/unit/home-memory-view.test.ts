@@ -131,6 +131,8 @@ describe("memory retrieval", () => {
   it("labels filtered counts and settings results with enough context to choose between them", () => {
     expect(memoryCountText(50, 5000, 5000)).toBe("50 of 5000 memories");
     expect(memoryCountText(1, 1, 5000)).toBe("1 of 1 matching memory (5000 total)");
+    // An empty list counts nothing: its row says it is empty (memory-13).
+    expect(memoryCountText(0, 0, 0)).toBe("");
     expect(settingsResultText("Memory", "  Better\n recall  ")).toBe("Memory: Better recall");
   });
 });

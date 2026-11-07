@@ -439,8 +439,10 @@ Answers and fenced code are inert text with Copy controls; native export writes 
 answer/diff to a chosen destination, with overwrite/freshness checks. It cannot overwrite a selected source file
 or Ember's private data, and never substitutes for Apply patch approval.
 
-Memory has query/source filters, counts and pages of 50. Surviving memory and learned-word controls keep their
-DOM identity and keyboard focus through background updates. Undo acknowledges only successful deletion and stays
+Memory has query/source filters, counts and pages of 50 (no count over an empty list). Each row ends with Forget,
+a `--red-text` text button, and Correct… in the words' colour, side by side on one line however long the fact,
+and apart, inside the group, when forced colours give them an edge. Surviving memory and learned-word controls
+keep their DOM identity and keyboard focus through background updates. Undo acknowledges only successful deletion and stays
 retryable on failure. An unavailable account hides facts and returns focus to the memory switch. Correct… opens
 one local draft (up to 400 characters); Save correction is explicit, checks the exact account/revision and saves
 durably before publication. Correction preserves original source/authority and adds Corrected by you. It invalidates

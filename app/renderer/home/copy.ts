@@ -391,8 +391,9 @@ export const WORDS_DELETE_FAILED = "Couldn't forget the corrections. Try again."
 export const forgetAllWordsAsk = (n: number) =>
   `Forget ${n === 1 ? "the word" : `the ${n} words`} Ember learnt from your corrections? It will hear ${n === 1 ? "it" : "them"} as it did before.`;
 
-/** The visible page and all matching memories, without suggesting that hidden pages have been removed. */
+/** The visible page and all matching memories, without suggesting that hidden pages have been removed; nothing for none (memory-13). */
 export function memoryCountText(shown: number, matched: number, all: number): string {
+  if (!all) return "";
   return matched === all ? `${shown} of ${all} ${all === 1 ? "memory" : "memories"}` : `${shown} of ${matched} matching ${matched === 1 ? "memory" : "memories"} (${all} total)`;
 }
 

@@ -1228,7 +1228,8 @@ function renderMemory(rows: MemoryRow[]): void {
   $("memory-list").hidden = unavailable;
   // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause).
   if (unavailable && !$("memory-forgotten").hidden) hideForgotten();
-  $("memory-count").hidden = unavailable;
+  // An empty list says so in its own row, never "0 of 0 memories" above it (memory-13).
+  $("memory-count").hidden = unavailable || !rows.length;
   $("memory-count").textContent = memoryCountText(page.rows.length, page.total, rows.length);
   const more = $("memory-more");
   const moreWasFocused = document.activeElement === more;

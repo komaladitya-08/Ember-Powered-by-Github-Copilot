@@ -356,6 +356,12 @@ progress[hidden] { display: none; }
 .mem-fact { display: grid; gap: 2px; min-width: 0; }
 .mem-fact > span { min-width: 0; overflow-wrap: anywhere; }
 .mem-from { color: var(--muted); font: var(--type-footnote); }
+/* Its two buttons stay side by side at the row's end, however long the fact: Forget in red, Correct… (which changes
+   nothing until saved) in the words' colour. Their words sit 16px apart; only the last one's padding hangs past the
+   edge (memory-13). */
+.memory-list li > .agent-actions { flex: none; flex-wrap: nowrap; gap: 0; }
+.memory-list .agent-actions .btn.quiet:not(:last-child) { margin-right: 0; }
+.memory-list .agent-actions [data-memory-correct] { color: var(--fg); }
 /* "Tell Ember about you": memory off, the line and its button sit on one row. */
 .about-off:not(.consent) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .about-off .row-note { margin: 0; min-width: 0; padding-right: 0; }
@@ -1017,6 +1023,9 @@ html.calm .w-card > * { transition-delay: 0s; }
 @media (forced-colors: active) {
   .search-result { border: 1px solid ButtonText; }
   .memory-filters input, .memory-filters select, .memory-correction textarea, .search-results { border: 1px solid ButtonText; }
+  /* Drawn with an edge, a memory's buttons stand apart and stay inside the group (memory-13). */
+  .memory-list li > .agent-actions { gap: 6px; }
+  .memory-list .agent-actions .btn.quiet { margin-right: 0; }
 }
 
 /* Project context stays inspectable and removable without clearing the authored request. */
