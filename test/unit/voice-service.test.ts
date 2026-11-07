@@ -305,6 +305,30 @@ describe("VoiceService", () => {
     expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "Request heard." });
   });
 
+  it("waits for a request still being spoken at Listen once's 8 s deadline, and says it was heard (voice-listening-1)", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const { v, events } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    v.listenOnce();
+    const generation = (posted(proc, "listen-once")[0] as { generation?: number }).generation;
+    const send = (e: VoiceEvent) => proc.emit("message", { ...e, generation });
+    send({ type: "listening", on: true, reason: "manual", window: "manual" });
+    // The request began at 7 s and ran to 17 s (the engine caps it at 20 s from the press, MANUAL_MAX_MS).
+    vi.advanceTimersByTime(19_000);
+    expect(v.listenOnceStatus.phase).toBe("listening");
+    const request = { type: "utterance", text: "Open the calendar and show me next Tuesday afternoon.", ms: 0, window: "manual" } as const;
+    send(request);
+    expect(events.filter(e => e.type === "utterance")).toEqual([request]);
+    expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "Request heard." });
+    // The voice process going quiet is still caught, past the engine's own limit.
+    v.listenOnce();
+    vi.advanceTimersByTime(23_001);
+    expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "Listening timed out. Try again." });
+  });
+
   it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     const { v, events } = service();

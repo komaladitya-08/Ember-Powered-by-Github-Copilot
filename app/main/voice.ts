@@ -17,7 +17,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { CLEAR_SPEECH, SUPERTONIC_VOICE, ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
 import type { ModelPaths } from "../voice/sherpa";
-import type { VoiceEvent } from "../voice/engine";
+import { MANUAL_MAX_MS, type VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import type { TtsProcessMessage, VoiceInfo } from "../voice/tts-process";
 import { nativePackage } from "../voice/runtime";
@@ -56,6 +56,7 @@ const RESTART_MS = [1000, 5000, 30_000];
  * longest piece of work, 21 s of speech to transcribe, took 1.4 s as measured; ms).
  */
 const ALIVE_MS = 15_000;
+/** Listen once: how long speech may take to start (ms); a request under way then is heard to its end (MANUAL_MAX_MS). */
 const LISTEN_ONCE_MS = 8000;
 const LISTEN_ONCE_CHECK_MS = 3000;
 /** What the voice line says while the screen is locked (review #81). */
@@ -406,7 +407,8 @@ export class VoiceService {
     if (!manual || manual.armed || !this.readyAt || !this.capturing || !this.proc) return;
     manual.armed = true;
     clearTimeout(manual.timer);
-    manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), LISTEN_ONCE_MS + LISTEN_ONCE_CHECK_MS);
+    // The voice process ends the window itself, by MANUAL_MAX_MS at the latest: this catches one that never says so.
+    manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), MANUAL_MAX_MS + LISTEN_ONCE_CHECK_MS);
     manual.timer.unref();
     this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS });
   }
@@ -1340,6 +1342,10 @@ export class VoiceService {
         if (m.on) manual.phase = "listening";
         else if (m.reason === "done") {
           manual.phase = "checking";
+          // Heard: only Voice Match's check is left, which gets LISTEN_ONCE_CHECK_MS.
+          clearTimeout(manual.timer);
+          manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), LISTEN_ONCE_CHECK_MS);
+          manual.timer.unref();
           if (temporary) { this.capturing = false; this.closeMic(); }
         }
         this.setState(m.on ? "active" : "waiting");

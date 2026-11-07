@@ -49,7 +49,7 @@ Automated tests use synthetic audio. Hands-on acceptance covers built-in and ext
 
 ## Voice and task controls
 
-- **Listen once** in Ask and Home takes one request. With wake listening off, Ember starts the recogniser on demand and closes temporary microphone capture before answering. With wake listening on, it returns to listening for the wake word. It explains when listening is unavailable. Opening Ask with its shortcut gives a keyboard route.
+- **Listen once** in Ask and Home takes one request. With wake listening off, Ember starts the recogniser on demand and closes temporary microphone capture before answering. With wake listening on, it returns to listening for the wake word. It explains when listening is unavailable. Speech must start within 8 s of the press; a request still being said then is heard to its end (at most 20 s from the press, where what was heard so far is sent and Ember says it only caught the first part). Opening Ask with its shortcut gives a keyboard route.
 - **Thinking effort for tasks** uses the selected Copilot task model's advertised levels. The choice is validated as each new task starts. The default, unsupported models, and provider or policy conditions are handled by the same model settings.
 - The recognition benchmark reports helped and harmed reference words separately, and includes an intentional repetition set. In one Windows run across 68 synthetic clips, the normal voice fixtures had two helped words and one harmed word after vocabulary correction. The intentional repetition set had a raw word error rate of 28.9% over 38 words. Use a held-out device corpus to choose changes to endpointing, repetition handling and recognition.
 

@@ -529,6 +529,12 @@ const BUSY_SHARE = 0.25;
 const KEEP_AFTER_FRAMES = 10;
 const SPEECH_CAP_FRAMES = 313;
 const LONG_CAP_FRAMES = 625;
+/**
+ * Listen once's deadline is for speech to start by: a request still being spoken then goes on to its end (it was thrown
+ * away at the deadline, and Home said "No request heard": voice-listening-1), within the caps above, and never past this
+ * long from the press (ms), where it is sent as heard so far, `cut`. VoiceService's own wait is set above it.
+ */
+export const MANUAL_MAX_MS = 20_000;
 /** A request reaching the cap was cut when the speaker's voice was heard in its last second. */
 const STILL_TALKING_FRAMES = 32;
 const BREATH_FRAMES = 3;
@@ -920,7 +926,13 @@ export class VoiceEngine {
   feed(frame: Float32Array, capturedAt?: number): void {
     const now = this.now();
     if (this.mode.kind === "listening" && this.mode.reason === "manual") {
-      if (now >= this.mode.until) { this.endListening("timeout"); return; }
+      if (now >= this.manualFrom + MANUAL_MAX_MS) {
+        for (const seg of this.backend.flushVad()) this.handleSegment(this.trim(seg), true);
+        if (this.mode.kind === "listening") this.endListening("timeout");
+        return;
+      }
+      // No speech under way at the deadline: nothing more is waited for. Speech under way goes on (the end of feed()).
+      if (now >= this.mode.until && !this.backend.speaking()) { this.endListening("timeout"); return; }
       else if (capturedAt === undefined || capturedAt <= Math.max(this.manualFrom, this.selfSpeakingUntil)) return;
       else if (!this.manualReady) {
         this.manualReady = true;
