@@ -590,6 +590,11 @@ export const TRY_AGAIN = { id: "ui:retry", label: "Try again" } as const;
 export const TASK_IN_CORNER = "Its card in the corner shows how it's going.";
 /** The bubble after the conversation's Stop. */
 export const STOPPED_ANSWER = "Okay, I've stopped.";
+/** What the bubble says when the runtime stopped under Ember and it reconnects by itself (host.ts lost). */
+export const LOST_RECONNECTING = "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.";
+/** The same bubble once Copilot is connected again (reconnected), with Try again (rp-6), or without a request to offer. */
+export const RECONNECTED_RETRY = "I'm connected again. Try again?";
+export const RECONNECTED = "I'm connected again. Ask me again.";
 
 /** What Ember's body does during each tool. */
 export const TOOL_GESTURES: Record<string, Gesture> = {
@@ -922,8 +927,9 @@ export class Presenter {
    * settings can fix it (settingsHelps): a runtime that reconnects by itself needs nothing from there.
    */
   fail(message: string): void {
-    // (Taken before the request owed a turn is let go: a send that failed offers that request again.)
-    const retry = this.retryCandidate();
+    // (Taken before the request owed a turn is let go: a send that failed offers that request again. The runtime found
+    // gone just after, the problem on screen keeps offering it: the request never reached the model, rp-6.)
+    const retry = this.retryCandidate() ?? this.retryRequest;
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
@@ -1002,6 +1008,18 @@ export class Presenter {
   clear(): void {
     this.held = false;
     if (this.visible) this.hide();
+  }
+
+  /**
+   * Copilot is connected again after the problem that said `text` (host.ts lost: "I'm reconnecting; ask me again in a
+   * moment."): a bubble still saying so says it is back now, keeping its Try again and the time it had (rp-6: it said it
+   * was reconnecting for about 10 s after it had, with no button). Anything else on screen is left alone.
+   */
+  reconnected(text: string): void {
+    const b = this.state.bubble;
+    if (!b.visible || b.mood !== "error" || b.thought !== forBubble(text) || this.busy) return;
+    const again = b.actions.some(a => a.id === TRY_AGAIN.id);
+    this.apply({ bubble: { ...b, mood: "idle", title: "Connected again", thought: again ? RECONNECTED_RETRY : RECONNECTED } });
   }
 
   /**

@@ -15,7 +15,7 @@ import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, Presenter, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import { BubbleOwner, LOST_RECONNECTING, Presenter, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import type { ActiveProvider } from "../provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
 import { modelsManaged, type AdminPolicy } from "../admin";
@@ -890,6 +890,8 @@ export class AgentHost {
   private pinned = false;
   /** What the last "I can't reach Copilot" (or "I need Copilot first") notice said, until Ember is connected again. */
   private unreachable: string | null = null;
+  /** The bubble says the runtime stopped and Ember is reconnecting (lost): once ready, it says Copilot is back (rp-6). */
+  private reconnectingShown = false;
   /** A finished task's line in the transcript: its result as it said it (without the title the conversation wrote). */
   private readonly results = new WeakMap<TranscriptEntry, string>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
@@ -1434,6 +1436,8 @@ export class AgentHost {
     this.status = { ...this.status, ...cleared, ...patch, waitingForTasks: this.reconnectAfterTasks !== null };
     // Connected again: a notice saying why Ember couldn't answer no longer holds (one still up goes).
     if (this.status.phase === "ready" && this.unreachable !== null) { this.presenter.withdraw(this.unreachable); this.unreachable = null; }
+    // Connected again after the runtime stopped: a bubble still saying it is reconnecting says it is back (rp-6).
+    if (this.status.phase === "ready" && this.reconnectingShown) { this.reconnectingShown = false; this.presenter.reconnected(LOST_RECONNECTING); }
     this.o.onStatus(this.status);
   }
 
@@ -2060,7 +2064,7 @@ export class AgentHost {
     // Its tasks were cut off: they end as failed (the user stopped nothing), and the next conductor hears so.
     this.cutOff = cut;
     // An answer cut off half-way says so, instead of vanishing.
-    if (says || this.presenter.busy || why === "send failed") this.presenter.fail(says ?? "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
+    if (says || this.presenter.busy || why === "send failed") { this.presenter.fail(says ?? LOST_RECONNECTING); this.reconnectingShown = !says; }
     else this.presenter.reset();
     this.setStatus({ phase: "error", reason: says || stalled ? "not-answering" : "runtime", detail: detail ?? (says ? "Copilot isn't answering. Reconnecting…" : "Copilot stopped unexpectedly. Reconnecting…") });
     if (!stalled) {

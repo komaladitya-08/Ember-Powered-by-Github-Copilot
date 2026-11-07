@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, LOST_RECONNECTING, NO_REPLY, Presenter, RECONNECTED, RECONNECTED_RETRY, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -1040,6 +1040,33 @@ describe("a problem's buttons follow what failed (review #18)", () => {
     const worker = readFileSync(new URL("../../app/main/agent/worker.ts", import.meta.url), "utf8");
     expect(worker).toContain("this.d.presenter.note(a.text);");
     expect(worker).not.toContain("this.d.presenter.progress(a.text);");
+  });
+
+  it("keeps offering a failed send's request when its runtime is found gone, then says Copilot is back (rp-6)", () => {
+    const { p, last } = setup();
+    p.userPrompt("Hello after the kill");
+    // The conductor's word as the send fails, then the host's as it finds the runtime gone and reconnects.
+    p.fail(friendlyError("Connection is disposed."));
+    p.fail(LOST_RECONNECTING);
+    expect(last().bubble).toMatchObject({ mood: "error", thought: LOST_RECONNECTING, actions: [TRY_AGAIN] });
+    expect(p.retryRequest).toBe("Hello after the kill");
+    // Connected again: the words say so, Try again stays, and the bubble keeps the time it had.
+    p.reconnected(LOST_RECONNECTING);
+    expect(last().bubble).toMatchObject({ visible: true, mood: "idle", title: "Connected again", thought: RECONNECTED_RETRY, actions: [TRY_AGAIN] });
+    expect(RECONNECTED_RETRY).toBe("I'm connected again. Try again?");
+    expect(p.takeRetry()).toBe("Hello after the kill");
+    vi.advanceTimersByTime(12_100);
+    expect(last().bubble?.visible).toBe(false);
+    // Without a request to offer, it says only that Copilot is back.
+    const other = setup();
+    other.p.fail(LOST_RECONNECTING);
+    other.p.reconnected(LOST_RECONNECTING);
+    expect(other.last().bubble).toMatchObject({ thought: RECONNECTED, actions: [] });
+    // Anything else on screen is left alone.
+    other.p.fail("fetch failed ECONNRESET");
+    const before = other.last().bubble;
+    other.p.reconnected(LOST_RECONNECTING);
+    expect(other.last().bubble).toEqual(before);
   });
 
   it("offers nothing for a runtime that stopped and reconnects by itself", () => {

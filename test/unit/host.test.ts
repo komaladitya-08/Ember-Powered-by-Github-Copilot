@@ -104,7 +104,7 @@ import { AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWor
 import type { ActiveProvider } from "../../app/main/provider";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
-import { Presenter, expandedBubble } from "../../app/main/agent/presenter";
+import { Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
@@ -1129,6 +1129,25 @@ describe("asking", () => {
     expect(screen().bubble).toMatchObject({ visible: true, title: "I need Copilot first" });
     // Signing in is what to do next, as the greeting says it: Needs you, not a problem (review #15).
     expect(screen()).toMatchObject({ emotion: "curious", bubble: { mood: "attention", actions: [{ id: "ui:settings", label: "Open settings" }] } });
+  });
+});
+
+describe("a runtime that dies under a request (rp-6)", () => {
+  it("offers Try again for the request that never went, and says Copilot is back once it is, not that it is reconnecting", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    await host.start(TOKEN, "stored");
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    sim.onSend = () => undefined;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(host.getStatus().phase).toBe("ready");
+    // Reconnected in a tenth of a second: the bubble says so (it said "I'm reconnecting; ask me again" for 12 s, with no
+    // button), and offers the request again, which never reached the model (no tool ran).
+    expect(screen().bubble).toMatchObject({ visible: true, thought: RECONNECTED_RETRY, actions: [TRY_AGAIN] });
+    expect(screen().bubble?.thought).not.toMatch(/reconnecting/i);
+    expect(host.takeRetry()).toBe("Hello after the kill");
+    const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
   });
 });
 
