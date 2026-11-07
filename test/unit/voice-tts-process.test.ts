@@ -113,6 +113,24 @@ describe("Ember's voice process", () => {
     expect(p.sent()).not.toContainEqual({ type: "done", id: 1 });
   });
 
+  it("makes only a few seconds ahead of playback, so a new reply is made at once when it cuts in (voice-speaking-10)", async () => {
+    const p = await speechProcess();
+    p.init();
+    const port = (process as unknown as { parentPort: EventEmitter }).parentPort;
+    // Ten sentences of about 6 s each (the stand-in voice says 15 characters a second).
+    const sentence = (i: number) => `This is sentence number ${i} of a long answer, and it goes on for a while longer than that.`;
+    port.emit("message", { data: { type: "say", id: 1, text: Array.from({ length: 10 }, (_, i) => sentence(i)).join(" ") } });
+    await vi.waitFor(() => expect(p.sent().filter(m => m.type === "audio").length).toBeGreaterThanOrEqual(2));
+    await new Promise(r => setTimeout(r, 50));
+    const made = p.sent().filter(m => m.type === "audio").length;
+    // About 8 s ahead of playback: two or three chunks of the eleven, the rest made as it plays.
+    expect(made).toBeLessThanOrEqual(3);
+    port.emit("message", { data: { type: "hush", id: 1 } });
+    port.emit("message", { data: { type: "say", id: 2, text: "New reply." } });
+    await vi.waitFor(() => expect(p.sent()).toContainEqual({ type: "done", id: 2 }), { timeout: 500 });
+    expect(p.sent().filter(m => m.type === "audio" && (m as { id?: number }).id === 1)).toHaveLength(made);
+  });
+
   it.each(["throw", "empty"])("reports the exact ungenerated suffix before a later chunk fails (%s)", async kind => {
     const p = await speechProcess();
     p.init();

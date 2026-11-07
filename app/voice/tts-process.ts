@@ -47,6 +47,15 @@ let rate = 24_000;
 let hushed = 0;
 const queue: { id: number; chunks: string[] }[] = [];
 let busy = false;
+/**
+ * At most this much speech is made ahead of what the page has played. A chunk being made can't be stopped, so a reply
+ * that cuts in waits for it; made all at once, a long answer kept this process busy while it was heard
+ * (voice-speaking-10). A CHUNK_MAX chunk (about 7 s of speech) takes at most 3.5 s to make at NATURAL_MAX_RTF.
+ */
+const AHEAD_MS = 8_000;
+/** When the speech made so far will have played (Date.now()): on the page it can only end later, never sooner. */
+let playsUntil = 0;
+let wait: ReturnType<typeof setTimeout> | null = null;
 
 const parent = process.parentPort;
 const send = (m: TtsProcessMessage) => parent.postMessage(m);
@@ -121,11 +130,15 @@ function step(): void {
   const item = queue[0];
   if (!item || !tts) { busy = false; return; }
   busy = true;
+  // Enough is made: the next chunk is made as playback nears it (a hush starts it at once).
+  const ahead = playsUntil - Date.now();
+  if (item.chunks.length && ahead > AHEAD_MS) { wait = setTimeout(() => { wait = null; step(); }, ahead - AHEAD_MS); return; }
   const chunk = item.chunks.shift();
   if (chunk !== undefined) {
     try {
       const audio = tts.generate({ text: chunk, sid, speed: 1.0 });
       if (!audio.samples.length) throw new Error("The voice produced no audio.");
+      playsUntil = Math.max(playsUntil, Date.now()) + (audio.samples.length / audio.sampleRate) * 1000;
       if (item.id > hushed) send({ type: "audio", id: item.id, samples: audio.samples, rate: audio.sampleRate, remaining: item.chunks.join(" ") });
     } catch (err) {
       // Main lets the local system voice say only the ungenerated remainder.
@@ -164,5 +177,8 @@ parent.on("message", e => {
     if (!busy) { busy = true; setImmediate(step); }
   } else if (m.type === "hush") {
     hushed = Math.max(hushed, m.id);
+    // Every reply made so far is hushed (main hushes up to its latest), and the page stopped playing it.
+    playsUntil = 0;
+    if (wait) { clearTimeout(wait); wait = null; setImmediate(step); }
   }
 });

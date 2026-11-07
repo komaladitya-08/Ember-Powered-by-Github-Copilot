@@ -111,6 +111,28 @@ describe("speechChunks", () => {
     expect(speechChunks("We sat. Then we left the room together.")).toEqual(["We sat.", "Then we left the room together."]);
   });
 
+  const LONG = "I looked through the folder you mentioned and found the quarterly reports from last year together with the drafts that were never sent to the finance team for review.";
+
+  it("starts a long first sentence with no comma before a joining word, not after its full stop (voice-speaking-8)", () => {
+    const [first, ...rest] = speechChunks(LONG);
+    expect(first).toBe("I looked through the folder you mentioned");
+    expect(first.length).toBeLessThanOrEqual(90);
+    expect([first, ...rest].join(" ")).toBe(LONG);
+    // No joining word: at the last space that fits.
+    const plain = "Supercalifragilistic expialidocious antidisestablishmentarianism floccinaucinihilipilification pneumonoultramicroscopic.";
+    expect(speechChunks(plain)[0].length).toBeLessThanOrEqual(90);
+    // A comma still comes first, and a sentence of up to 90 characters is said whole.
+    expect(speechChunks("I can't do that one, because it would delete files from your home folder without a way back.")[0]).toBe("I can't do that one,");
+    expect(speechChunks("I looked through the folder you mentioned and found nothing there at all.")).toEqual(["I looked through the folder you mentioned and found nothing there at all."]);
+  });
+
+  it("keeps every piece to 120 characters, so a new answer never waits long behind one being made (voice-speaking-10)", () => {
+    const text = `${LONG} The largest one is the October summary, which has the revenue tables and the notes from the planning meeting that you asked me about earlier this week. I can open any of them for you.`;
+    const chunks = speechChunks(text);
+    for (const c of chunks) expect(c.length, c).toBeLessThanOrEqual(120);
+    expect(chunks.join(" ")).toBe(text);
+  });
+
   it("joins a very short piece to the one before it", () => {
     expect(speechChunks("The build finished in twelve seconds. OK. Next?")).toEqual(["The build finished in twelve seconds.", "OK. Next?"]);
   });
@@ -169,6 +191,18 @@ describe("SpeechStream", () => {
   it("starts at a first clause of 18 characters and four words, not only at 25 (“I can't do that one,”)", () => {
     expect(new SpeechStream().push("I can't do that one, because")).toEqual(["I can't do that one,"]);
     expect(new SpeechStream().push("Here's what I found: the project")).toEqual(["Here's what I found:"]);
+  });
+
+  it("starts a long first sentence with no comma before a joining word, before Copilot has written its full stop (voice-speaking-8)", () => {
+    const long = "I looked through the folder you mentioned and found the quarterly reports from last year together with the drafts that were never sent to the finance team for review. Shall I open them?";
+    const s = new SpeechStream();
+    const said: { at: number; piece: string }[] = [];
+    for (let i = 0; i < long.length; i += 3) for (const piece of s.push(long.slice(i, i + 3))) said.push({ at: i + 3, piece });
+    expect(said[0].piece).toBe("I looked through the folder you mentioned");
+    expect(said[0].at).toBeLessThan(long.indexOf("review."));
+    expect([...said.map(x => x.piece), ...s.finish(long)].join(" ")).toBe(long);
+    // A comma-less first sentence of up to 90 characters still waits for its end.
+    expect(new SpeechStream().push("I looked through the folder you mentioned and found nothing there at")).toEqual([]);
   });
 
   it("waits for the sentence when the first clause is too short to say alone", () => {

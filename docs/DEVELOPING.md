@@ -716,10 +716,15 @@ A streamed answer is spoken from its first clause once that has at least 18 char
 one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
 character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
-field…" starts with "The bench has a name field,"). A Markdown list is said item by item: each item, a heading, the
-line that leads into a list and a paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts),
-a numbered step starts its own piece with its number ("2. Choose Privacy", never "Open Settings 2."), and a streamed
-list is said as each item's line ends, not after the whole answer.
+field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
+before its first joining word ("and", "which", "with"…) once it has 4 words, or else at its last space before 90 ("I
+looked through the folder you mentioned | and found…"), streamed or whole. No piece of speech is longer than 120
+characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
+(`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
+it. A Markdown list is said item by item: each item, a heading, the line that leads into a list and a paragraph end
+with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
+its number ("2. Choose Privacy", never "Open Settings 2."), and a streamed list is said as each item's line ends, not
+after the whole answer.
 
 **When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
 lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,
