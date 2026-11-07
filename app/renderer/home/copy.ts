@@ -415,9 +415,13 @@ export function providerTestWaits(o: { host: string | null; agreed: boolean; man
 }
 
 /** What "Test connection" found, in one sentence: connected (with how many models it lists), or main's reason why not. */
-export function providerTestText(r: { ok: true; host: string; models: number | null } | { ok: false; why: string }): string {
+export function providerTestText(r: { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string }): string {
   if (!r.ok) return r.why;
   if (r.models === null) return `Connected to ${r.host}.`;
+  // Named, so the exact id ("llama3.2:3b", not "llama3.2") can be chosen rather than typed blind (integrations-9).
+  const ids = r.ids ?? [];
+  if (r.models === 1 && ids.length) return `Connected to ${r.host}. It lists 1 model: ${ids[0]}.`;
+  if (ids.length) return `Connected to ${r.host}. It lists ${r.models} models, such as ${ids.slice(0, 2).join(" and ")}.`;
   return `Connected to ${r.host}. It lists ${r.models} ${r.models === 1 ? "model" : "models"}.`;
 }
 

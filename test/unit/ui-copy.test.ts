@@ -844,6 +844,10 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerTestText({ ok: true, host: "models.example.com", models: 3 })).toBe("Connected to models.example.com. It lists 3 models.");
     expect(providerTestText({ ok: true, host: "models.example.com", models: 1 })).toBe("Connected to models.example.com. It lists 1 model.");
     expect(providerTestText({ ok: true, host: "localhost:1234", models: null })).toBe("Connected to localhost:1234.");
+    // The models it names, so the exact id can be chosen (integrations-9).
+    expect(providerTestText({ ok: true, host: "localhost:11434", models: 1, ids: ["llama3.2:3b"] })).toBe("Connected to localhost:11434. It lists 1 model: llama3.2:3b.");
+    expect(providerTestText({ ok: true, host: "models.example.com", models: 12, ids: ["gpt-4.1", "gpt-4o", "o3"] })).toBe("Connected to models.example.com. It lists 12 models, such as gpt-4.1 and gpt-4o.");
+    expect(providerTestText({ ok: true, host: "models.example.com", models: 12, ids: ["gpt-4.1"] })).toBe("Connected to models.example.com. It lists 12 models, such as gpt-4.1.");
     expect(providerTestText({ ok: false, why: "models.example.com needs an API key." })).toBe("models.example.com needs an API key.");
     // With the way forward (integrations-13).
     expect(PROVIDER_NO_KEYRING).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.");

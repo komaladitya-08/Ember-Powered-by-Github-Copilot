@@ -292,8 +292,9 @@
           <p class="row-note" id="byok-no-keyring" hidden></p>
           <div class="key-saved" id="byok-key-saved" hidden><span class="key-state">Key saved</span><button type="button" id="byok-key-replace" class="btn quiet small">Replace</button><button type="button" id="byok-key-remove" class="btn quiet small remove">Remove</button></div>
         </div>
-        <div class="field-row byok-field"><label for="byok-conductor">Conversation model</label><input id="byok-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1"></div>
-        <div class="field-row byok-field"><label for="byok-worker">Model for tasks (must understand images)</label><input id="byok-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation"></div>
+        <div class="field-row byok-field"><label for="byok-conductor">Conversation model</label><input id="byok-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1" list="byok-models"></div>
+        <div class="field-row byok-field"><label for="byok-worker">Model for tasks (must understand images)</label><input id="byok-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation" list="byok-models"></div>
+        <datalist id="byok-models"></datalist>
         <details class="fold byok-advanced byok-field" id="byok-fold">
           <summary>Advanced</summary>
           <label class="choice"><span>Wire API</span><select id="byok-wire"><option value="">Chat completions</option><option value="responses">Responses</option></select></label>

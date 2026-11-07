@@ -863,7 +863,9 @@ Anthropic), **Endpoint** (https, or plain http only for a server on this compute
 such as Ollama at `http://localhost:11434/v1` or LM Studio at `http://localhost:1234/v1`), **API key**, the
 **Conversation model** and **Model for tasks** (the conversation's when empty; it must take images), and under
 **Advanced** the wire API (`completions` or `responses`) and Azure's API version. **Test connection** makes one GET of the
-service's model list with the saved key and says in one sentence what came of it. It is disabled, and main refuses it,
+service's model list with the saved key and says in one sentence what came of it, naming one or two of the models it
+lists; up to 50 of their ids (`listedModelIds`: `data[].id`, or Ollama's `models[].name`, each a `MODEL_ID`) are
+offered as suggestions in both model fields, set as option values only. It is disabled, and main refuses it,
 until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
 or without a key. A line under it says why it waits (its `aria-describedby`), and when the card comes up for an
 address just entered, the status line says "Read the note above: Ember sends nothing to <host> until you agree."

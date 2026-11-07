@@ -646,7 +646,8 @@ export interface ProviderState {
 export type ProviderDone = { ok: true } | { ok: false; why: string };
 
 /** "Test connection": the service answered (`models`: how many it lists, when it says), or why not in one sentence. */
-export type ProviderTest = { ok: true; host: string; models: number | null } | { ok: false; why: string };
+/** `ids`: the models it names, as suggestions for the model fields (at most 50, each a MODEL_ID). */
+export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string };
 
 /** The settings window's provider API (`window.emberProvider`, app/preload/home.ts). */
 export interface EmberProviderApi {

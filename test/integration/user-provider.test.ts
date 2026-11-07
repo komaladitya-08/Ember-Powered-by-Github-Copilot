@@ -193,6 +193,6 @@ describe("the user's own model provider on the real Copilot runtime", () => {
     expect(mock.requests.length).toBe(before);
     const agreed = { ...p, consent: { version: FEATURE_CONSENT_VERSION.provider, at: new Date().toISOString(), host } };
     const r = await testConnection(agreed, { key: KEY, host }, globalThis.fetch as unknown as FetchLike);
-    expect(r).toEqual({ ok: true, host, models: 1 });
+    expect(r).toEqual({ ok: true, host, models: 1, ids: ["mock-model"] });
   });
 });

@@ -109,6 +109,12 @@ function draw(): void {
   onDestination();
 }
 
+/** The models the last Test connection named, offered in both model fields (values only: the service's text, never markup). */
+function suggestModels(ids: readonly string[]): void {
+  const list = $("byok-models");
+  list.replaceChildren(...ids.filter(id => MODEL_ID.test(id)).slice(0, 50).map(id => { const o = document.createElement("option"); o.value = id; return o; }));
+}
+
 /** Told when what the page knows of the provider changes (the words naming where requests go follow it). */
 let onDestination: () => void = () => undefined;
 export function onProviderDestination(fn: () => void): void { onDestination = fn; }
@@ -231,7 +237,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     const btn = $("byok-test") as HTMLButtonElement;
     btn.disabled = true;
     say(PROVIDER_WORDS.testing);
-    void a.test().then(r => say(providerTestText(r), !r.ok), () => say(PROVIDER_WORDS.testFailed, true)).finally(() => { btn.disabled = false; });
+    void a.test().then(r => { say(providerTestText(r), !r.ok); if (r.ok) suggestModels(r.ids ?? []); }, () => say(PROVIDER_WORDS.testFailed, true)).finally(() => { btn.disabled = false; });
   });
   void reread();
 }

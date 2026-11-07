@@ -401,6 +401,21 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(x) Test connection names the provider's models and offers them in both model fields (integrations-9)", async () => {
+    const consent = { version: 1, at: "2026-11-07T12:00:00Z", host: "127.0.0.1:11434" };
+    const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:11434/v1", consent } });
+    const test = p.locator("#byok-test");
+    await expect.poll(() => test.isDisabled()).toBe(false);
+    expect(await p.locator("#byok-test-why").isVisible()).toBe(false);
+    await test.click();
+    await settle(p, "test", { ok: true, host: "127.0.0.1:11434", models: 3, ids: ["llama3.2:3b", "qwen2.5:7b", "phi4"] });
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Connected to 127.0.0.1:11434. It lists 3 models, such as llama3.2:3b and qwen2.5:7b.");
+    expect(await p.locator("#byok-models option").evaluateAll(os => os.map(o => (o as HTMLOptionElement).value))).toEqual(["llama3.2:3b", "qwen2.5:7b", "phi4"]);
+    expect(await p.locator("#byok-conductor").getAttribute("list")).toBe("byok-models");
+    expect(await p.locator("#byok-worker").getAttribute("list")).toBe("byok-models");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(w) Home's key row on a computer with no keyring says how to get one (integrations-13)", async () => {
     const p = await open({ home: true, provider: { on: true, baseUrl: "https://api.example.com/v1" }, providerState: { keyring: false } });
     await expect.poll(() => p.locator("#byok-no-keyring").isVisible()).toBe(true);

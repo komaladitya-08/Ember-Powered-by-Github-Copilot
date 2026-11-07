@@ -23,7 +23,7 @@ import { redactGitHubTokens, type SaveResult, type SecretBox } from "./agent/aut
 import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
-import { endpointHost, MAX_API_KEY } from "../shared/provider";
+import { endpointHost, MAX_API_KEY, MODEL_ID } from "../shared/provider";
 import type { ProviderState } from "../shared/ipc";
 
 /** The user's provider settings (SettingsSchema `provider`). */
@@ -526,7 +526,26 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
  * isn't running), "timeout", or "unreachable" (any other network failure). Absent for an answer that refused the
  * request, a certificate or a redirect: something is there.
  */
-export type TestResult = { ok: true; host: string; models: number | null } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" };
+export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" };
+
+/** The most model ids the test passes on for the model fields' suggestions. */
+export const TEST_IDS_MAX = 50;
+
+/**
+ * The model ids a model list names (`data[].id`, as OpenAI, Azure and Anthropic write them; `models[].name` or `.model`,
+ * as Ollama does), each a MODEL_ID, without repeats, at most TEST_IDS_MAX (integrations-9). Anything else is left out:
+ * they are shown as suggestions, never run.
+ */
+export function listedModelIds(list: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (const m of list) {
+    if (out.length >= TEST_IDS_MAX) break;
+    const o = m && typeof m === "object" ? m as { id?: unknown; name?: unknown; model?: unknown } : null;
+    const id = typeof o?.id === "string" ? o.id : typeof o?.name === "string" ? o.name : typeof o?.model === "string" ? o.model : null;
+    if (id && MODEL_ID.test(id) && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
 
 /**
  * Makes testRequest's request and says what came of it, in plain words (never the service's raw text). Nothing at all is
@@ -546,12 +565,14 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     if (res.status === 404) return { ok: false, why: `${host} answered, but has no model list at that address. Check the endpoint and the provider.` };
     if (!res.ok) return { ok: false, why: friendlyError(`HTTP ${res.status}`, undefined, { statusCode: res.status, provider: "user", settingsKey: null }) };
     let models: number | null = null;
+    let ids: string[] = [];
     try {
       const body = await res.json() as { data?: unknown; models?: unknown };
       const list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
       models = list ? list.length : null;
+      if (list) ids = listedModelIds(list);
     } catch { /* answered, with a body that isn't a list: still connected */ }
-    return { ok: true, host, models };
+    return { ok: true, host, models, ...(ids.length ? { ids } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
     if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };

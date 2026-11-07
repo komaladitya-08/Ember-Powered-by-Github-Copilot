@@ -11,7 +11,7 @@ import path from "node:path";
 import { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, repairSettings, type Settings } from "../../app/main/settings";
 import {
-  KEY_NO_KEYRING, ProviderKeyStore, activeProvider, apiKeyProblem, providerSummary, testConnection, testRequest, userProviderConfig, userProviderFromFile,
+  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, listedModelIds, providerSummary, testConnection, testRequest, userProviderConfig, userProviderFromFile,
   userProviderInForce, type FetchLike,
 } from "../../app/main/provider";
 import { PROVIDER_BAD_REQUEST, PROVIDER_FAILED, registerProviderIpc, type ProviderApi, type ProviderIpcEvent } from "../../app/main/provider-ipc";
@@ -293,7 +293,7 @@ describe("Test connection", () => {
 
   it("makes one GET that refuses redirects, so the key goes nowhere but the address entered", async () => {
     const fetch = answer(200, { data: [{ id: "a" }, { id: "b" }] });
-    expect(await testConnection(settings(), STORED, fetch)).toEqual({ ok: true, host: "models.example.com", models: 2 });
+    expect(await testConnection(settings(), STORED, fetch)).toEqual({ ok: true, host: "models.example.com", models: 2, ids: ["a", "b"] });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: "GET", redirect: "error" });
   });
@@ -314,6 +314,18 @@ describe("Test connection", () => {
     expect(await testConnection(settings(), STORED, lost)).toMatchObject({ ok: false, cause: "unreachable" });
     const electron = vi.fn<FetchLike>(async () => { throw new Error("net::ERR_CONNECTION_REFUSED"); });
     expect(await testConnection(settings(), STORED, electron)).toMatchObject({ ok: false, cause: "refused" });
+  });
+
+  it("names the models it lists, as suggestions, keeping only real ids and at most 50 (integrations-9)", async () => {
+    const shown = await testConnection(settings(), STORED, answer(200, { data: [{ id: "gpt-4.1" }, { id: "has space" }, { id: "<b>x</b>" }, { id: "gpt-4.1" }, { id: 7 }, {}, { id: "o3-mini" }] }));
+    expect(shown).toEqual({ ok: true, host: "models.example.com", models: 7, ids: ["gpt-4.1", "o3-mini"] });
+    // Ollama's own list names them by name.
+    expect(listedModelIds([{ name: "llama3.2:3b" }, { model: "qwen2.5:7b" }])).toEqual(["llama3.2:3b", "qwen2.5:7b"]);
+    const many = Array.from({ length: 80 }, (_, i) => ({ id: `m-${i}` }));
+    expect(listedModelIds(many)).toHaveLength(TEST_IDS_MAX);
+    expect(TEST_IDS_MAX).toBe(50);
+    // A list with none it can name says only how many.
+    expect(await testConnection(settings(), STORED, answer(200, { data: [{ object: "model" }] }))).toEqual({ ok: true, host: "models.example.com", models: 1 });
   });
 
   it("makes no request without a usable address", async () => {
