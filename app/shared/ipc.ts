@@ -31,7 +31,7 @@ import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
 import type { TargetSummary } from "./targets";
-import type { Installed, MarketplaceEntry } from "./extensions";
+import type { Installed, Marketplace, MarketplaceEntry } from "./extensions";
 import type { TaskControlAction, TaskEntry } from "./activity";
 
 /** Main pushes Home's Task activity at most this often (a task's steps can come many a second). */
@@ -570,7 +570,7 @@ export interface ExtensionsState {
   /** The organisation allows extensions, and Ember isn't locked down. */
   allowed: boolean;
   installed: Installed[];
-  marketplaces: { name: string; source: string }[];
+  marketplaces: Marketplace[];
   /** The user agreed to extensions' first-use card at its current version (absent without the runtime). */
   consented?: boolean;
   /** Set when the list couldn't be read: one plain sentence. */

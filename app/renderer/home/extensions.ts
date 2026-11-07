@@ -7,13 +7,13 @@
  */
 
 import type { ExtensionsState, Status, EmberExtensionsApi } from "../../shared/ipc";
-import type { Installed, MarketplaceEntry } from "../../shared/extensions";
+import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
 import { marketplaceSource } from "../../shared/extensions-input";
 import {
   BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, EXTENSIONS_FAILED, EXTENSIONS_LOADING, INSTALLED_EMPTY, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
   addedMarketplace, added, addingMarketplace, agreedAgain, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
-  consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion, removed,
-  toolBadge, type ConsentCard, type ItemAction,
+  consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
+  removed, removedMarketplace, toolBadge, type ConsentCard, type ItemAction,
 } from "./extensions-copy";
 
 declare global { interface Window { emberExtensions?: EmberExtensionsApi } }
@@ -282,10 +282,11 @@ function installedItem(i: Installed): HTMLLIElement {
   return li;
 }
 
-function marketItem(m: { name: string; source: string }): HTMLLIElement {
+function marketItem(m: Marketplace): HTMLLIElement {
+  const row = marketplaceRow(m);
   const li = el("li", "ext-market");
   const text = el("span", "ext-text");
-  text.append(el("b", "ext-name", m.name), el("span", "ext-meta", m.source));
+  text.append(el("b", "ext-name", row.name), el("span", "ext-meta", row.meta));
   li.append(text);
   // Turned off by the organisation: listed, but nothing to browse or change.
   if (!state?.allowed) return li;
@@ -293,14 +294,18 @@ function marketItem(m: { name: string; source: string }): HTMLLIElement {
   const key = `market:${m.name}`;
   const open = button(browsing?.name === m.name ? "Browsing" : "Browse", "btn quiet small", `${key}:browse`, () => void browse(m.name), browseLabel(m.name));
   if (browsing?.name === m.name) open.setAttribute("aria-current", "true");
-  const remove = button("Remove", "btn quiet small danger", `${key}:remove`, () => {
-    if (!window.confirm(removeMarketplaceQuestion(m.name))) return;
-    const a = api();
-    if (!a) return;
-    if (browsing?.name === m.name) browsing = null;
-    void run(key, () => a.removeMarketplace(m.name), null);
-  }, removeMarketplaceLabel(m.name));
-  actions.append(open, remove);
+  actions.append(open);
+  // Copilot's own marketplace and the organisation's can't be removed: no Remove that would do nothing (integrations-4).
+  if (row.removable) {
+    const remove = button("Remove", "btn quiet small danger", `${key}:remove`, () => {
+      if (!window.confirm(removeMarketplaceQuestion(m.name))) return;
+      const a = api();
+      if (!a) return;
+      if (browsing?.name === m.name) browsing = null;
+      void run(key, () => a.removeMarketplace(m.name), removedMarketplace(m.name));
+    }, removeMarketplaceLabel(m.name));
+    actions.append(remove);
+  }
   li.append(actions);
   return li;
 }
@@ -314,7 +319,7 @@ function entryNode(e: MarketplaceEntry): HTMLLIElement {
   if (c.description) li.append(el("p", "ext-desc", c.description));
   li.append(el("p", "ext-meta", c.meta));
   if (asking?.kind === "entry" && asking.entry.marketplace === e.marketplace && asking.entry.name === e.name) {
-    li.append(consentNode(consentCard(e)));
+    li.append(consentNode(consentCard({ ...e, builtIn: state?.marketplaces.some(m => m.name === e.marketplace && m.builtIn) === true })));
     return li;
   }
   const foot = el("div", "ext-card-foot");

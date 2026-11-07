@@ -298,7 +298,7 @@ describe("the administrator's switch for extensions", () => {
 
   it("starts with extensions off and unagreed", () => {
     expect(DEFAULT_SETTINGS.extensions).toEqual({ on: false, consent: { version: 0, at: null } });
-    expect(FEATURE_CONSENT_VERSION.extensions).toBe(2);
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(3);
   });
 });
 
@@ -631,6 +631,27 @@ describe("ExtensionsService", () => {
     const s = new ExtensionsService(deps());
     expect(await s.install("local-market", "skills-only")).toEqual({ ok: false, why: "It has no tools Ember can use. Ember uses only a plugin's MCP servers." });
     expect(await s.list()).toEqual([]);
+  });
+
+  it("marks Copilot's built-in marketplace and refuses to remove it in words, never silently (integrations-4)", async () => {
+    const removed: string[] = [];
+    const rpc = (remove: (a: { name: string }) => Promise<unknown>) => () => ({ rpc: { plugins: { marketplaces: {
+      list: async () => ({ marketplaces: [{ name: "awesome-copilot", source: "GitHub: github/awesome-copilot", isDefault: true }, { name: "corp", source: "GitHub: corp/p", managed: true }, { name: "octo", source: "GitHub: octo/tools" }] }),
+      remove,
+    } } } }) as never;
+    const s = new ExtensionsService(deps({ client: rpc(async ({ name }) => {
+      if (name === "awesome-copilot") throw new Error(`Marketplace "${name}" is a default marketplace and cannot be removed`);
+      removed.push(name); return {};
+    }) }));
+    expect(await s.marketplaces()).toEqual([
+      { name: "awesome-copilot", source: "GitHub: github/awesome-copilot", builtIn: true },
+      { name: "corp", source: "GitHub: corp/p", managed: true },
+      { name: "octo", source: "GitHub: octo/tools" },
+    ]);
+    expect(await s.removeMarketplace("awesome-copilot")).toEqual({ ok: false, why: "Copilot's built-in marketplace can't be removed. Nothing from it runs unless you add an item and agree." });
+    expect(await s.removeMarketplace("octo")).toEqual({ ok: true });
+    expect(removed).toEqual(["octo"]);
+    expect(await new ExtensionsService(deps({ client: () => null })).removeMarketplace("octo")).toEqual({ ok: false, why: "Ember isn't connected to Copilot yet." });
   });
 
   it("refuses to install or list marketplaces while the organisation turns extensions off", async () => {
@@ -1070,12 +1091,13 @@ describe("ExtensionsService", () => {
 
 describe("extensions' first-use card", () => {
   it("is pinned to FEATURE_CONSENT_VERSION.extensions: change its words only with a bump of that version", () => {
-    const hash = (kind: "plugin" | "connector") => {
-      const c = consentCard({ name: "N", kind, source: "S", marketplace: "M" });
+    const hash = (kind: "plugin" | "connector", builtIn = false) => {
+      const c = consentCard({ name: "N", kind, source: "S", marketplace: "M", builtIn });
       return crypto.createHash("sha256").update([c.title, ...c.lines, c.yes, c.no].join("\n")).digest("hex");
     };
-    expect(FEATURE_CONSENT_VERSION.extensions).toBe(2);
-    expect([hash("plugin"), hash("connector")]).toEqual(["430fb53f7b9eb2c7d866ba26817bea7c32572308a22099d01d3b203cb0beccc3", "8f9a73553bd891993a365437aaf5528dceabb10802ab41b2be1c431b48885a88"]);
+    // 3: a plugin from Copilot's built-in marketplace is no longer said to come from one "you added" (integrations-4).
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(3);
+    expect([hash("plugin"), hash("connector"), hash("plugin", true)]).toEqual(["430fb53f7b9eb2c7d866ba26817bea7c32572308a22099d01d3b203cb0beccc3", "8f9a73553bd891993a365437aaf5528dceabb10802ab41b2be1c431b48885a88", "ef19526fc00c2e459955dccede9c806f0787edd608d2b8a0ff8dedc2489d619a"]);
   });
 
   it("is recorded only by agree(), from Home, and only while the organisation allows extensions", async () => {

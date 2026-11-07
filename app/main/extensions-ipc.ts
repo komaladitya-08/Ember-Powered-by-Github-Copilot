@@ -110,7 +110,7 @@ export function registerExtensionsIpc(
     try { return outcome(await api!.addMarketplace(source)); } catch (err) { return raw(EXTENSIONS_IPC.addMarketplace, err); }
   });
 
-  change(EXTENSIONS_IPC.removeMarketplace, one, name => done(api!.removeMarketplace(name)));
+  change(EXTENSIONS_IPC.removeMarketplace, one, async name => outcome(await api!.removeMarketplace(name)));
   change(EXTENSIONS_IPC.install, (m, n) => { const a = extensionsName(m), b = extensionsName(n); return a && b ? [a, b] as [string, string] : null; },
     async (m, n) => outcome(await api!.install(m, n)));
   change(EXTENSIONS_IPC.uninstall, one, id => done(api!.uninstall(id)));

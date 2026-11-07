@@ -29,7 +29,8 @@ import { injectionSignals } from "../perception/injection";
 import type { AuditLog } from "../policy/audit";
 import type { Settings, SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import type { ConnectResult, ExtensionsApi, Installed, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
+import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
+import { MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
@@ -259,11 +260,12 @@ export class ExtensionsService implements ExtensionsApi {
     return c.rpc;
   }
 
-  async marketplaces(): Promise<{ name: string; source: string }[]> {
+  async marketplaces(): Promise<Marketplace[]> {
     if (!this.allowed()) return [];
     try {
       const r = await this.rpc().plugins.marketplaces.list();
-      return r.marketplaces.map(m => ({ name: m.name, source: m.source }));
+      // Copilot's own (isDefault) and the organisation's (managed) can't be removed: Home shows them so (integrations-4).
+      return r.marketplaces.map(m => ({ name: m.name, source: m.source, ...(m.isDefault ? { builtIn: true } : {}), ...(m.managed ? { managed: true } : {}) }));
     } catch (err) {
       this.o.log.warn("extensions.marketplaces_failed", { err });
       return [];
@@ -298,10 +300,22 @@ export class ExtensionsService implements ExtensionsApi {
     }
   }
 
-  async removeMarketplace(name: string): Promise<void> {
-    if (typeof name !== "string" || !name) return;
-    try { await this.rpc().plugins.marketplaces.remove({ name, force: true }); } catch (err) { this.o.log.warn("extensions.marketplace_remove_failed", { err }); }
-    this.changed(false);
+  /** Removes a marketplace the user added; one built into Copilot or set by the organisation is refused, saying so. */
+  async removeMarketplace(name: string): Promise<{ ok: true } | { ok: false; why: string }> {
+    if (typeof name !== "string" || !name) return { ok: false, why: "Ember couldn't remove that marketplace." };
+    try {
+      await this.rpc().plugins.marketplaces.remove({ name, force: true });
+      this.changed(false);
+      return { ok: true };
+    } catch (err) {
+      this.o.log.warn("extensions.marketplace_remove_failed", { err });
+      const msg = (err as Error)?.message ?? "";
+      if (msg === "not connected") return { ok: false, why: "Ember isn't connected to Copilot yet." };
+      // The runtime refuses its own defaults ("… is a default marketplace and cannot be removed").
+      if (/\bdefault marketplace\b/i.test(msg)) return { ok: false, why: MARKETPLACE_BUILT_IN_KEPT };
+      if (/\bmanaged\b/i.test(msg)) return { ok: false, why: MARKETPLACE_MANAGED_KEPT };
+      return { ok: false, why: why(err, "Ember couldn't remove that marketplace.") };
+    }
   }
 
   /** The folder the runtime keeps a marketplace's catalogue in: a local one's own, else its cache (found by name). */

@@ -99,6 +99,14 @@ describe("extensions on the real Copilot runtime", () => {
       log, os: "linux", launcher: { execPath: process.execPath, script: launcher },
       env: { ...process.env, GH_TOKEN: "gho_not_for_extensions", EXAMPLE_API_KEY: "k" },
     });
+    // The runtime's own marketplace is marked built in, and Remove says why it stays (integrations-4).
+    const markets = await service.marketplaces();
+    expect(markets.filter(m => m.builtIn).map(m => m.name)).toEqual(["awesome-copilot"]);
+    expect(markets.find(m => m.name === "local-market")).toMatchObject({ name: "local-market" });
+    expect(markets.find(m => m.name === "local-market")?.builtIn).toBeUndefined();
+    for (const m of markets.filter(x => x.builtIn)) {
+      expect(await service.removeMarketplace(m.name)).toEqual({ ok: false, why: "Copilot's built-in marketplace can't be removed. Nothing from it runs unless you add an item and agree." });
+    }
     expect((await service.browse("local-market")).map(e => e.name)).toEqual(["fake", "evil"]);
     expect(await service.install("local-market", "fake")).toMatchObject({ ok: true });
     const [review] = await service.list();

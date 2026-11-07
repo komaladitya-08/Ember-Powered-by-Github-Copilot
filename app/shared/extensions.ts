@@ -21,6 +21,11 @@ export interface MarketplaceEntry { marketplace: string; name: string; descripti
   readOnlyTools?: number; changingTools?: number;
   /** A trust tier the marketplace states (none of today's do). */
   trust?: string }
+/**
+ * A marketplace the runtime knows: `builtIn` is one Copilot ships with (its isDefault; it can't be removed), `managed`
+ * one the organisation's managed settings provide (it can't be removed here either).
+ */
+export interface Marketplace { name: string; source: string; builtIn?: boolean; managed?: boolean }
 /** A connector's connect result. */
 export type ConnectResult = { state: "connected" } | { state: "consent"; url: string } | { state: "pending" } | { ok: false; why: string };
 export interface ExtensionsApi {
@@ -30,9 +35,10 @@ export interface ExtensionsApi {
   /** Records that agreement (and turns extensions on); Home calls it from the card's yes. */
   agree(): Promise<void>;
   list(): Promise<Installed[]>;
-  marketplaces(): Promise<{ name: string; source: string }[]>;
+  marketplaces(): Promise<Marketplace[]>;
   addMarketplace(source: string): Promise<{ ok: true } | { ok: false; why: string }>;
-  removeMarketplace(name: string): Promise<void>;
+  /** Refused, in one sentence, for a marketplace built into Copilot or set by the organisation. */
+  removeMarketplace(name: string): Promise<{ ok: true } | { ok: false; why: string }>;
   browse(marketplace: string): Promise<MarketplaceEntry[]>;
   install(marketplace: string, name: string): Promise<{ ok: true; id: string } | { ok: false; why: string }>; // after Home's consent card
   uninstall(id: string): Promise<void>;

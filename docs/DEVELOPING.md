@@ -257,7 +257,12 @@ runtime. It does not change the app's consent or speaking settings.
     **Agree again**; Ember stops using the changed tools until then.
   - **Marketplaces** takes a GitHub repository (`owner/repo`, or its `https://github.com/…` address) or any `https://`
     address (no `http`, user names or passwords); **Browse** shows its entries as cards (name, kind, description,
-    publisher, source, version, and **Added** once added).
+    publisher, source, version, and **Added** once added). Copilot's own marketplace (`awesome-copilot`, the runtime's
+    `isDefault`) is listed as **Built into Copilot** and one the organisation's managed settings provide as **Set by
+    your organisation**, neither with **Remove** (the runtime refuses to remove them, and main says so in a sentence
+    rather than nothing); a plugin from Copilot's own says it is listed in a marketplace built into Copilot, never
+    one "you added" (`FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
+    from the address the user added.
   - **Connectors** lists GitHub's catalog. **Connect** opens GitHub's consent page in the system browser (main opens
     only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
     again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.

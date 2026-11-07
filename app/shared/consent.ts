@@ -38,7 +38,7 @@ export function consentChangesSince(agreed: number): string[] {
  * card again, and nothing else. `provider`: the user's own model provider (Home's Copilot section), agreed to per
  * endpoint host (settings `provider.consent.host`).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 3, routines: 1, extensions: 2, autonomy: 2, provider: 1, updates: 1 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 3, routines: 1, extensions: 3, autonomy: 2, provider: 1, updates: 1 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

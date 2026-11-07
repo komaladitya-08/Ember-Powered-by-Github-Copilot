@@ -6,7 +6,7 @@
  * as computers-copy.ts is. Sentence case, British spelling, curly quotes around names. Renderer-safe.
  */
 
-import type { Installed, Kind, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
+import type { Installed, Kind, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 
 export const EXTENSIONS_HEADING = "Extensions";
 export const EXTENSIONS_INTRO = "Extensions give Ember more tools through plugins from marketplaces you add. Only you can add them, here.";
@@ -151,7 +151,16 @@ export const MARKETPLACE_PLACEHOLDER = "owner/repo or https://…";
 export const MARKETPLACE_FIELD_LABEL = "Marketplace's GitHub repository or address";
 export const MARKETPLACE_ADD = "Add";
 export const MARKETPLACE_INVALID = "Type a GitHub repository as owner/repo, or an address that starts with https://.";
-export const MARKETPLACES_HINT = "Ember fetches each marketplace's list from the address you add, and nothing from it runs until you add an item and agree.";
+export const MARKETPLACES_HINT = "Browse fetches a marketplace's list: from GitHub for one built into Copilot, else from the address you added. Nothing from it runs until you add an item and agree.";
+/** Why Remove was refused: Copilot keeps its own, and the organisation's managed settings keep theirs (integrations-4). */
+export const MARKETPLACE_BUILT_IN_KEPT = "Copilot's built-in marketplace can't be removed. Nothing from it runs unless you add an item and agree.";
+export const MARKETPLACE_MANAGED_KEPT = "Your organisation set this marketplace, so it can't be removed here.";
+/** A marketplace's row: where it is from, and whether Remove is offered (never for Copilot's own or the organisation's). */
+export function marketplaceRow(m: Marketplace): { name: string; meta: string; removable: boolean } {
+  const whose = m.builtIn ? "Built into Copilot" : m.managed ? "Set by your organisation" : null;
+  return { name: m.name, meta: whose ? `${whose} · ${m.source}` : m.source, removable: !m.builtIn && !m.managed };
+}
+export const removedMarketplace = (name: string) => `Removed the marketplace “${name}”.`;
 export const addingMarketplace = (source: string) => `Adding ${source}…`;
 export const addedMarketplace = (source: string) => `Added ${source}.`;
 export const removeMarketplaceQuestion = (name: string) => `Remove the marketplace “${name}”? What you added from it stays until you remove it.`;
@@ -246,10 +255,12 @@ export interface ConsentCard { title: string; lines: string[]; tools?: ToolInfo[
  * The card shown before each add or connect: what Ember will and won't do with the item, and where it reaches. The
  * marketplace's own description isn't in it (it is the publisher's text, not Ember's promise).
  */
-export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source" | "marketplace" | "reaches">): ConsentCard {
+export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source" | "marketplace" | "reaches"> & { builtIn?: boolean }): ConsentCard {
   const connector = e.kind === "connector";
+  // A marketplace built into Copilot wasn't added by the user, so the card never says it was (integrations-4).
   const reach = connector
     ? `It connects to “${e.name}” through GitHub's Copilot service. You sign in to it on GitHub's page, in your browser, and what its tools send and receive goes through GitHub.`
+    : e.builtIn ? `It comes from ${e.source}, listed in “${e.marketplace}”, a marketplace built into Copilot. Its tools may run on this computer and reach the internet.`
     : `It comes from ${e.source}, listed in the marketplace “${e.marketplace}” you added. Its tools may run on this computer and reach the internet.`;
   return {
     title: connector ? `Before you connect “${e.name}”` : `Before you add “${e.name}”`,
