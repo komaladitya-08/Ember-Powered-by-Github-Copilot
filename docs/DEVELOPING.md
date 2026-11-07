@@ -530,7 +530,9 @@ words), and stops it when what the recognizer made of it isn't Ember's own words
 (`BACKCHANNEL`). What is said then replaces the reply on its way (`AgentHost.ask` `replaces`); tasks go on. It never
 approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
 level while a conversation is open (app/renderer/mic/output-watch.ts: Chromium gives system audio only with a screen's
-video, which is stopped at once), Linux uses the speakers' stream, macOS can't tell yet. With the switch off, after Ember
+video, which is stopped at once), Linux uses the speakers' stream, macOS can't tell yet. The first time something said
+then without the name isn't heard, the status line says “Music or a video is playing: say “Ember” first.” for 5 s
+(engine.ts `dropped`), once a conversation. With the switch off, after Ember
 answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows, macOS and Linux without

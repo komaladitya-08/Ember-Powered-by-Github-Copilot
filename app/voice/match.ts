@@ -175,7 +175,7 @@ export class VoiceGate {
     const generation = this.revision;
     const owner = this.owner;
     // Over a song with no name said: only a voice that can be told apart from it is heard.
-    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) return;
+    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send({ type: "dropped", reason: "over-sound" }); return; }
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.
     const anchor = this.anchor;
@@ -198,7 +198,7 @@ export class VoiceGate {
         if (!e.overSound) this.send(e);
         return;
       }
-      if (e.overSound && score < OVER_SOUND_MATCH) return;
+      if (e.overSound && score < OVER_SOUND_MATCH) { if (generation === this.revision) this.send({ type: "dropped", reason: "over-sound" }); return; }
       // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its

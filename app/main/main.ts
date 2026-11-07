@@ -1668,11 +1668,18 @@ function start(): void {
   const FOLLOW_UP_STATUS = "Listening for a follow-up…";
   /** The status line through a conversation: the microphone is open for what is said next. */
   const CONVERSATION_STATUS = "Listening…";
+  /**
+   * Said once a conversation, for a few seconds, when what was said over music or a video without the name wasn't heard
+   * (engine.ts `dropped`): it vanished without a sign, and Ember looked deaf (voice-listening-10).
+   */
+  const OVER_SOUND_STATUS = "Music or a video is playing: say “Ember” first.";
+  let overSoundSaid = false;
   /** A conversation is open (engine.ts CONVERSATION_IDLE_MS), and what keeps it told whether anything is at work. */
   let conversing = false;
   let conversingTimer: NodeJS.Timeout | null = null;
   const conversationOpen = (on: boolean) => {
     if (on !== conversing) voice?.watchOutput(on);
+    if (on !== conversing) overSoundSaid = false;
     conversing = on;
     if (conversingTimer) clearInterval(conversingTimer);
     conversingTimer = null;
@@ -1737,6 +1744,12 @@ function start(): void {
           const shown = lastState.bubble;
           if (!(agent?.releaseBubble(shown) ?? false) && shown.visible) hideIfStill(shown, 4000);
         }
+        break;
+      case "dropped":
+        if (!conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
+        overSoundSaid = true;
+        setStatus("listen", OVER_SOUND_STATUS);
+        setTimeout(() => { if (statusBy.listen === OVER_SOUND_STATUS) setStatus("listen", conversing ? CONVERSATION_STATUS : null); }, 5000).unref?.();
         break;
       case "speech":
         // (Counted by scripts/voice/echo-check.mjs: speech heard while Ember's own voice plays is its echo.)

@@ -102,7 +102,12 @@ export type VoiceEvent =
    */
   | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; verified?: true; short?: true; restScore?: number }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came); it is heard all the same (match.ts). */
-  | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number };
+  | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number }
+  /**
+   * What was said in a conversation over other sound, without the name, wasn't heard: it can't be told from the song's
+   * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10).
+   */
+  | { type: "dropped"; reason: "over-sound" };
 
 export interface EngineOptions {
   /** Audio kept before a wake so a one-breath command isn't cut (seconds). */

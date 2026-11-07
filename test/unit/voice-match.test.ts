@@ -12,6 +12,7 @@ import { fbank } from "../../app/voice/fbank";
 import { APPROVAL_MIN_SECONDS, ENROL_LIMITS, Enrolment, VoiceGate, afterWakePhrase, voicedSeconds, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, averagePrint, consistentPrints, decodePrint, encodePrint, similarity, unit } from "../../app/voice/voiceprint";
 import { voiceprintStore } from "../../app/main/voiceprint-store";
+import { PERSONAL_TEXT } from "../../app/renderer/home/copy";
 import type { VoiceEvent } from "../../app/voice/engine";
 
 const sherpa = createRequire(import.meta.url)("sherpa-onnx");
@@ -67,22 +68,32 @@ const joined = (...parts: Float32Array[]) => { const a = new Float32Array(parts.
 describe("VoiceGate", () => {
   const utterance = (text: string): VoiceEvent => ({ type: "utterance", text, ms: 100, window: "wake" });
 
-  it("hears nothing said over a song with no name while Voice Match is off (it can't tell the singer from the owner)", () => {
+  it("hears nothing said over a song with no name while Voice Match is off (it can't tell the singer from the owner), and says it dropped it (voice-listening-10)", () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
     g.event({ ...utterance("Dancing in the moonlight."), overSound: true } as VoiceEvent, Float32Array.from([0, 1]));
-    expect(sent).toEqual([]);
+    expect(sent).toEqual([{ type: "dropped", reason: "over-sound" }]);
   });
 
-  it("over a song with no name, hears the owner and drops any other voice without a word", async () => {
+  it("over a song with no name, hears the owner and drops any other voice without a word against it (only that it was dropped; voice-listening-10)", async () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
     g.setOwner(owner);
     g.event({ ...utterance("Dancing in the moonlight."), overSound: true } as VoiceEvent, Float32Array.from([0, 1]));
     g.event({ ...utterance("Turn it down."), overSound: true } as VoiceEvent, ownerAudio(APPROVAL_MIN_SECONDS + 0.1));
     await flush();
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ type: "utterance", text: "Turn it down." });
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toEqual({ type: "dropped", reason: "over-sound" });
+    expect(sent[1]).toMatchObject({ type: "utterance", text: "Turn it down." });
+    expect(sent.some(e => e.type === "rejected")).toBe(false);
+  });
+
+  it("says once a conversation, on the status line, that what was said over the music wasn't heard, and the hint says to use the name (voice-listening-10)", () => {
+    const main = fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toContain('const OVER_SOUND_STATUS = "Music or a video is playing: say “Ember” first.";');
+    expect(main).toMatch(/case "dropped":\s*if \(!conversing \|\| overSoundSaid \|\| statusBy\.listen !== CONVERSATION_STATUS\) break;\s*overSoundSaid = true;\s*setStatus\("listen", OVER_SOUND_STATUS\);/);
+    expect(main).toContain("if (on !== conversing) overSoundSaid = false;");
+    expect(PERSONAL_TEXT.conversationHint).toContain("no name needed after the first time (while music or a video plays, start with “Ember”)");
   });
 
   it("lets every voice through while Voice Match is off", () => {
