@@ -88,6 +88,12 @@ export interface BubbleState {
    * update of the bubble's words drops it.
    */
   autonomous?: boolean;
+  /**
+   * The conversation's turn has heard nothing from the model service for a while ("Still waiting for …", with Stop):
+   * still thinking, but said once to screen readers with its step, the keyboard's way to stop (accessibility-visual-2).
+   * Set only by the Presenter, and only while its title says so.
+   */
+  stalled?: boolean;
 }
 
 /**

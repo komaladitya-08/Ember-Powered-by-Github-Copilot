@@ -496,6 +496,47 @@ describe("Presenter: tasks and guides sharing the bubble (review round 4)", () =
   });
 });
 
+describe("Presenter: a wait that hears nothing from Copilot (accessibility-visual-2)", () => {
+  it("is said to screen readers once, with the keyboard's ways to stop, and is no longer a stall once Copilot answers", () => {
+    const { p, last } = setup();
+    p.userPrompt("what time is it in Tokyo");
+    expect(last().bubble).toMatchObject({ mood: "thinking", step: null });
+    expect(last().bubble?.stalled).toBeUndefined();
+    vi.advanceTimersByTime(THINK_SLOW_MS);
+    expect(last().bubble).toMatchObject({ mood: "thinking", title: STILL_WAITING, stalled: true, actions: [STOP_ANSWER], step: "Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops everything." });
+    p.event({ type: "user.message", data: { content: "what time is it in Tokyo" } });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Noon." } });
+    expect(last().bubble?.stalled).toBeUndefined();
+    expect(last().bubble?.step ?? null).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("names only the keys Ember holds", () => {
+    const states: Partial<EmberState>[] = [];
+    vi.useFakeTimers();
+    const p = new Presenter(s => states.push(s), undefined, undefined, undefined, undefined, undefined, { stopKey: () => null, settingsKey: () => null });
+    p.userPrompt("hello");
+    vi.advanceTimersByTime(THINK_SLOW_MS);
+    expect(states.at(-1)?.bubble).toMatchObject({ stalled: true, step: "Or use Stop response in Ember's settings, on Home." });
+    // The task's turn watch says the same, for the conversation's bubble.
+    vi.useRealTimers();
+  });
+
+  it("a stall the turn's watch reports (stalled) says so too, and gives back what the bubble showed", () => {
+    const { p, last } = setup();
+    p.userPrompt("check the disk");
+    p.event({ type: "user.message", data: { content: "check the disk" } });
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Looking" } });
+    const before = last().bubble;
+    p.stalled(true);
+    expect(last().bubble).toMatchObject({ title: STILL_WAITING, stalled: true });
+    p.stalled(false);
+    expect(last().bubble?.stalled).toBeUndefined();
+    expect(last().bubble).toMatchObject({ title: before?.title, step: before?.step ?? null });
+    vi.useRealTimers();
+  });
+});
+
 describe("Presenter: a question asked while the turn before is still ending (review round 9, BLD9-1)", () => {
   it("keeps thinking without a neutral flash or a hide timer while the next question waits for its turn", () => {
     const { p, states, last } = setup();

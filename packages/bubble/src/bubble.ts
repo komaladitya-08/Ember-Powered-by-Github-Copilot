@@ -101,6 +101,11 @@ export interface BubbleView {
   wholeSeen?: boolean;
   /** A question about a risky step: heard as such first ("Risky step."), as the eye sees its tag. */
   risky?: boolean;
+  /**
+   * A thinking bubble that heard nothing from the model service for a while ("Still waiting for Copilot…", with Stop):
+   * news, so it is said once with its step (the keyboard's way to stop), though it still thinks (accessibility-visual-2).
+   */
+  stalled?: boolean;
 }
 
 /** A step row as heard: its parts as a list ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). */
@@ -114,10 +119,7 @@ const sentence = (s: string): string => (/[.!?…:]$/.test(s) ? s : `${s}.`);
  * "" means say nothing. A bubble from another computer says which first.
  */
 export function announcement(v: BubbleView, speaker = "Ember"): string {
-  if (!v.visible || v.streaming) return "";
-  const text = v.thought.trim();
-  const title = v.title.trim();
-  const both = title && text ? `${/[.!?…:]$/.test(title) ? title : `${title}.`} ${text}` : title || text;
+  if (!v.visible) return "";
   const where = v.where?.replace(/\s+/g, " ").trim();
   const at = where ? `, ${where}` : "";
   // A question's step row says how to answer it (or where it is shown whole), a problem's how the keyboard reaches what
@@ -125,6 +127,15 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
   // what it points at, is not read.)
   const hint = stepWords(v.step);
   const end = sentence;
+  // Still thinking, but a wait that heard nothing is news: its title and the keyboard's way to stop, once.
+  if (v.stalled && v.mood === "thinking") {
+    const said = v.title.trim();
+    return said ? `${speaker} says${at}: ${hint ? `${end(said)} ${end(hint)}` : said}` : "";
+  }
+  if (v.streaming) return "";
+  const text = v.thought.trim();
+  const title = v.title.trim();
+  const both = title && text ? `${/[.!?…:]$/.test(title) ? title : `${title}.`} ${text}` : title || text;
   const withHint = hint ? `${end(both)} ${end(hint)}` : both;
   // A question's whole text is heard whole too (the block that shows it is for the eye), after its sentence, and until
   // all of it has been shown, that Allow waits for that: the approve key shows it a part at a time (its step says so).
@@ -738,6 +749,7 @@ export class ReasoningBubble {
   private thoughtRaw = "";
   private stepRaw: string | null = null;
   private risky = false;
+  private stalled = false;
   private streaming = false;
   private expanded = false;
   private visible = true;
@@ -847,6 +859,13 @@ export class ReasoningBubble {
     if (on === (this.root.dataset.autonomous === "true")) return;
     this.root.dataset.autonomous = String(on);
     this.changed();
+  }
+
+  /** A wait that heard nothing from the model service (BubbleState.stalled): said once to screen readers (see `announcement`). */
+  setStalled(on: boolean): void {
+    if (on === this.stalled) return;
+    this.stalled = on;
+    this.queueAnnounce();
   }
 
   /** A question about a risky step (BubbleState.risky): its own tag, caution brackets, and an Allow that doesn't stand out. */
@@ -1235,7 +1254,7 @@ export class ReasoningBubble {
     const view: BubbleView = {
       visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thoughtRaw, streaming: this.streaming, where: this.where,
       step: this.step.hidden ? null : this.stepRaw, ...(this.whole ? { whole: this.whole.text, wholeSeen: this.wholeSeenByMain } : {}),
-      ...(this.risky && this.mood === "attention" ? { risky: true } : {}),
+      ...(this.risky && this.mood === "attention" ? { risky: true } : {}), ...(this.stalled ? { stalled: true } : {}),
     };
     const text = announcement(view, this.speaker);
     if (text === this.announced) return;

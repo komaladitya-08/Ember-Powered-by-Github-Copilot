@@ -554,6 +554,16 @@ export function stillWaiting(provider: ServiceKind = false): string {
 /** One of stillWaiting's titles (whichever service it named). */
 const isStillWaiting = (title: string) => title === stillWaiting(false) || title === stillWaiting(true) || title === stillWaiting("user");
 
+/**
+ * Under the conversation's "Still waiting for …" (with Stop, which no keyboard reaches: the overlay never takes it): the
+ * keyboard's ways to stop, each key named only while Ember holds it (accessibility-visual-2). Home's Stop response ends
+ * the turn alone, as that Stop does; the stop chord stops everything.
+ */
+export function stalledStep(settingsKey: string | null, stopKey: string | null): string {
+  const turn = settingsKey ? `Or press ${settingsKey} and use Stop response in Home.` : "Or use Stop response in Ember's settings, on Home.";
+  return stopKey ? `${turn} ${stopKey} stops everything.` : turn;
+}
+
 /** The model service in use, as a sentence starts with it. */
 const serviceName = (provider: ServiceKind) => (provider === "user" ? "Your model provider" : provider ? "The model service" : "Copilot");
 
@@ -645,8 +655,9 @@ export class Presenter {
   private readonly heldSettingsKey: () => string | null;
   /** The stop chord as Ember holds it now ("Ctrl+Alt+X"; PresenterOptions.stopKey), named by an announcement. */
   private readonly heldStopKey: () => string | null;
-  /** The title "Still waiting for …" replaced (see stalled). */
+  /** The title "Still waiting for …" replaced (see stalled), and the step its keyboard route replaced. */
   private stalledTitle = "";
+  private stalledStepWas: string | null = null;
   /** "Thinking…" with nothing from Copilot yet: after THINK_SLOW_MS it says it is still waiting, with Stop (see slowThinking). */
   private thinkTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -740,6 +751,8 @@ export class Presenter {
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}), ...(this.where ? { where: this.where } : {}) } };
+    // "Still waiting" is news for screen readers only while the bubble says it (BubbleState.stalled).
+    if (patch.bubble && !isStillWaiting(this.state.bubble.title)) delete this.state.bubble.stalled;
     // Ember's "Without asking" tag goes with its own announcement only: any other change of the bubble drops it (a task's
     // note, the model's title, a question), even one that copies the bubble it replaces (security review of #127).
     if (patch.bubble && !this.announcing) delete this.state.bubble.autonomous;
@@ -1065,7 +1078,13 @@ export class Presenter {
     const b = this.state.bubble;
     if (this.silent || this.produced || !b.visible || b.mood !== "thinking" || isStillWaiting(b.title)) return;
     this.stalledTitle = b.title;
-    this.apply({ bubble: { ...b, title: this.stillWaiting(), actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), { ...STOP_ANSWER }] } });
+    this.stalledStepWas = b.step;
+    this.apply({ bubble: { ...b, ...this.stallWords(), actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), { ...STOP_ANSWER }] } });
+  }
+
+  /** The conversation's stall as the bubble says it: its title, said once to screen readers with the keyboard's route. */
+  private stallWords(): Pick<BubbleState, "title" | "step" | "stalled"> {
+    return { title: this.stillWaiting(), step: stalledStep(this.settingsKey, this.stopKey), stalled: true };
   }
 
   /**
@@ -1077,7 +1096,13 @@ export class Presenter {
     // (A task's bubble: its turn's watch says when it is heard from again, through stalled(false).)
     const b = this.state.bubble;
     if (this.work !== "reply" || (!isStillWaiting(b.title) && !b.actions.some(a => a.id === STOP_ANSWER.id))) return;
-    this.apply({ bubble: { ...b, title: isStillWaiting(b.title) ? this.stalledTitle : b.title, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
+    this.apply({ bubble: { ...b, ...this.unstalled(b), actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
+  }
+
+  /** What a stall replaced, given back (its title, and the step its keyboard route took the place of). */
+  private unstalled(b: BubbleState): Pick<BubbleState, "title" | "step"> {
+    const step = b.stalled ? this.stalledStepWas : b.step;
+    return { title: isStillWaiting(b.title) ? this.stalledTitle : b.title, step };
   }
 
   /**
@@ -1118,9 +1143,12 @@ export class Presenter {
     const stop = this.work === "reply" ? [{ ...STOP_ANSWER }] : [];
     if (on && this.busy && !this.silent && !isStillWaiting(b.title)) {
       this.stalledTitle = b.title;
-      this.apply({ bubble: { ...b, title: this.stillWaiting(), actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), ...stop] } });
+      this.stalledStepWas = b.step;
+      // (A task's card has its own words and Stop: only the conversation's bubble says it with the keyboard's route.)
+      const words = this.work === "reply" ? this.stallWords() : { title: this.stillWaiting() };
+      this.apply({ bubble: { ...b, ...words, actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), ...stop] } });
     } else if (!on && isStillWaiting(b.title)) {
-      this.apply({ bubble: { ...b, title: this.stalledTitle, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
+      this.apply({ bubble: { ...b, ...this.unstalled(b), actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
     }
   }
 

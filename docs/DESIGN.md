@@ -81,7 +81,9 @@ They share one emotion rig, so switching never changes behaviour.
   "Without asking" tag in the accent tint, set only by Ember (`BubbleState.autonomous`): a task's
   own note never carries it. When
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
-  (or "Still waiting for your model provider…" or "…for the model service…" when that is the one in use) with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. A problem
+  (or "Still waiting for your model provider…" or "…for the model service…" when that is the one in use) with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. Its step names the keyboard's ways to stop,
+  which the bubble's Stop can't offer ("Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops
+  everything.", each key only while Ember holds it), and screen readers hear the wait and that step once. A problem
   offers **Open settings** where settings can fix it, otherwise **Try again** where asking again is
   safe (the conversation's own request, whose turn ran no tool). An answer whose turn started a task
   says "Its card in the corner shows how it's going.", so the bubble and the card tell one story. Under a finished

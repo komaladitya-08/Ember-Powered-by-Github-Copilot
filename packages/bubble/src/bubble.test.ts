@@ -42,6 +42,17 @@ describe("announcement", () => {
     expect(announcement(view({ visible: false, thought: "Hello" }))).toBe("");
   });
 
+  it("says once that Ember is still waiting, and how the keyboard stops it, though the bubble still thinks (accessibility-visual-2)", () => {
+    const stalled = view({ mood: "thinking", title: "Still waiting for Copilot…", thought: "“what time is it in Tokyo”", streaming: true, stalled: true, step: "Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops everything." });
+    expect(announcement(stalled)).toBe("Ember says: Still waiting for Copilot… Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops everything.");
+    expect(announcement({ ...stalled, step: null })).toBe("Ember says: Still waiting for Copilot…");
+    expect(announcement({ ...stalled, where: "on build-01" })).toMatch(/^Ember says, on build-01: Still waiting/);
+    // An ordinary thought stays unsaid, and so does a stall flag on any other mood or a hidden bubble.
+    expect(announcement({ ...stalled, stalled: false })).toBe("");
+    expect(announcement({ ...stalled, mood: "acting" })).toBe("");
+    expect(announcement({ ...stalled, visible: false })).toBe("");
+  });
+
   it("reads a whole question with its title", () => {
     expect(announcement(view({ mood: "attention", title: "May I?", thought: "Type “Hi Ana” into Thunderbird?" }), "Cinder"))
       .toBe("Cinder needs you: May I? Type “Hi Ana” into Thunderbird?");

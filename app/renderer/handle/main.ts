@@ -98,7 +98,7 @@ function announce(b: BubbleState, status: string | null, micNews: string | null)
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}) };
+    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}), ...(b.stalled ? { stalled: true } : {}) };
     const text = announcement(view, name);
     // The same question, its whole text now all shown: only that news, not the question and its text again.
     if (text && text !== announced) { parts.push(wholeReadNews(announcedView, view) ?? text); announced = text; announcedView = view; }

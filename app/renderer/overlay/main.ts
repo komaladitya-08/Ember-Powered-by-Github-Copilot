@@ -191,6 +191,7 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
     bubble.setMood(b.mood);
     bubble.setRisky(b.risky === true);
     bubble.setAutonomous(b.autonomous === true);
+    bubble.setStalled(b.stalled === true);
     showWhere(b.where, b.title);
     bubble.setTitle(b.title);
     // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
