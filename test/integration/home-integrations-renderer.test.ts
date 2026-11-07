@@ -108,6 +108,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
 }
 
 const calls = (p: Page) => p.evaluate(() => window.__ixCalls);
+const focused = (p: Page) => p.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset?.key ?? document.activeElement?.tagName ?? "");
 /** With EMBER_UI_EVIDENCE set, a screenshot for the render check (in light, then dark). */
 async function evidence(p: Page, name: string): Promise<void> {
   const dir = process.env.EMBER_UI_EVIDENCE;
@@ -142,6 +143,24 @@ describe.skipIf(gate)("Home's Extensions, as the person sets them up (2026-11-07
     await expect.poll(() => page.locator("#extensions-msg").innerText()).toBe("Removed the marketplace “octo-tools”.");
     expect(await calls(page)).toContain('removeMarketplace("octo-tools")');
     expect((page as Page & { errors: string[] }).errors).toEqual([]);
+    await page.close();
+  });
+
+  it("keeps keyboard focus on the item after Agree and use tools, and says Ember can use it now, not again (integrations-8)", async () => {
+    const page = await open("extensions");
+    await page.getByRole("button", { name: "Browse awesome-copilot" }).click();
+    await page.getByRole("button", { name: "Add fake" }).focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => focused(page)).toBe("consent-yes");
+    await page.keyboard.press("Enter");
+    // Added: the tools are listed for review, and the card's yes has focus.
+    await expect.poll(() => page.locator(".ext-consent").innerText()).toContain("Review the tools in “fake”");
+    await expect.poll(() => focused(page)).toBe("consent-yes");
+    expect(await page.locator("[data-key='consent-yes']").innerText()).toBe("Agree and use tools");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.locator("#extensions-msg").innerText()).toBe("Ember can use “fake” now.");
+    await expect.poll(() => focused(page)).toBe("item:plugin:fake:switch");
+    expect(await calls(page)).toEqual(["agree", "install(awesome-copilot,fake)", "reagree(plugin:fake)"]);
     await page.close();
   });
 });

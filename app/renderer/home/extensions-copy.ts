@@ -245,6 +245,10 @@ export const added = (name: string) => `Added “${name}”. Turn it off here an
 export const removed = (name: string) => `Removed “${name}”.`;
 export const disconnected = (name: string) => `Disconnected “${name}”.`;
 export const agreedAgain = (name: string) => `Ember uses “${name}” again.`;
+/** The first agreement to an item's tools (it was never used before), not "again" (integrations-8). */
+export const agreedFirst = (name: string) => `Ember can use “${name}” now.`;
+/** What agreeing to an item's tools says: the first time, or again after its tools changed. */
+export const agreedTo = (i: Pick<Installed, "name" | "consented">) => (i.consented ? agreedAgain(i.name) : agreedFirst(i.name));
 
 // ───── The consent card, before anything is added or connected ─────
 

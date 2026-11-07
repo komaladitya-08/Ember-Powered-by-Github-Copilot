@@ -11,7 +11,7 @@ import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/exte
 import { marketplaceSource } from "../../shared/extensions-input";
 import {
   BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, EXTENSIONS_FAILED, EXTENSIONS_LOADING, INSTALLED_EMPTY, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
-  addedMarketplace, added, addingMarketplace, agreedAgain, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
+  addedMarketplace, added, addingMarketplace, agreedTo, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
   consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
   removed, removedMarketplace, toolBadge, type ConsentCard, type ItemAction,
 } from "./extensions-copy";
@@ -120,15 +120,19 @@ async function agree(): Promise<void> {
   const a = api();
   const q = asking;
   if (!a || !q) return;
+  const back = askedFrom();
   asking = null;
   // The first yes also records the current first-use card; existing installs need it after the version changes.
   if (state && state.consented === false) {
     const r = await a.agree();
-    if (!r.ok) { say(r.why); return; }
+    if (!r.ok) { say(r.why); draw(); focusKey(back); return; }
     state = { ...state, consented: true };
   }
   if (q.kind === "reagree") {
-    await run(`item:${q.item.id}`, () => a.reagree(q.item.id, q.item.reviewToken ?? ""), agreedAgain(q.item.name));
+    const id = q.item.id;
+    const done = await run(`item:${id}`, () => a.reagree(id, q.item.reviewToken ?? ""), agreedTo(q.item));
+    // The card's button is gone: focus goes to the item, not the page's top (integrations-8, WCAG 2.4.3).
+    if (done) { await refresh(); focusItem(id); } else focusKey(back);
     return;
   }
   const e = q.entry;
@@ -373,6 +377,16 @@ const empty = (text: string) => el("li", "empty", text);
 function focusKey(key: string): void {
   if (!key) return;
   document.querySelector<HTMLElement>(`#extensions [data-key="${CSS.escape(key)}"]`)?.focus();
+}
+
+/** Focuses an item's switch, else its tools or its first button: the first of them that can take focus. */
+function focusItem(id: string): void {
+  for (const key of [`item:${id}:switch`, `item:${id}:tools`, `item:${id}:reagree`, `item:${id}:uninstall`, `item:${id}:disconnect`]) {
+    const e = document.querySelector<HTMLElement>(`#extensions [data-key="${CSS.escape(key)}"]`);
+    if (!e || (e as HTMLInputElement).disabled) continue;
+    e.focus();
+    if (document.activeElement === e) return;
+  }
 }
 
 let drawn = "";
