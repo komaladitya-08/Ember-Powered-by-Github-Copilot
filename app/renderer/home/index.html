@@ -345,10 +345,11 @@
         <summary>Run a project command</summary>
         <form id="project-command-form">
           <p class="hint" id="project-command-hint">Choose the starting folder and enter a command for this computer. Ember shows the exact command and folder for approval before running it.</p>
+          <p class="row-note" id="project-commands-off" hidden><span id="project-commands-off-text">Commands are off on this computer. Turn them on in Commands to run one here.</span> <button type="button" class="link" id="project-commands-open" hidden>Open Commands</button></p>
           <button type="button" class="btn quiet" id="project-folder-pick" disabled>Choose command folder…</button>
           <p id="project-folder" class="hint">No command folder selected.</p>
           <div class="field-row"><label for="project-command-text">Command</label>
-          <input type="text" id="project-command-text" maxlength="2000" required spellcheck="false" autocomplete="off" aria-describedby="project-command-hint project-folder"></div>
+          <input type="text" id="project-command-text" maxlength="2000" required spellcheck="false" autocomplete="off" aria-describedby="project-commands-off-text project-command-hint project-folder"></div>
           <div class="agent-actions">
             <button type="submit" class="btn" id="project-command-send" disabled>Review command…</button>
             <button type="button" class="btn quiet" id="project-command-stop" hidden>Stop command</button>

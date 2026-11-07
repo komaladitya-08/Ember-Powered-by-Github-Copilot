@@ -28,7 +28,7 @@ const BUILT_IN = { name: "awesome-copilot", source: "GitHub: github/awesome-copi
 const OWN = { name: "octo-tools", source: "GitHub: octo/tools" };
 const ENTRY: MarketplaceEntry = { marketplace: "awesome-copilot", name: "fake", description: "A fake.", source: "plugins/fake", kind: "plugin", installed: false };
 
-interface Seed { extensions?: Partial<ExtensionsState>; entries?: MarketplaceEntry[]; agent?: Record<string, unknown>; settings?: Record<string, unknown> }
+interface Seed { extensions?: Partial<ExtensionsState>; entries?: MarketplaceEntry[]; agent?: Record<string, unknown>; settings?: Record<string, unknown>; targets?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -61,7 +61,9 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, agent, extensions, entries }) => {
+  await page.addInitScript(({ settings, admin, agent, extensions, entries, targets }) => {
+    // The targets runtime (Computers and Commands panes), listing no other computer.
+    if (targets) (window as unknown as { emberTargets: unknown }).emberTargets = { list: async () => [], onChanged: () => () => undefined, act: async () => ({ ok: true }) };
     window.__ixCalls = [];
     window.__ixState = extensions;
     window.__ixEntries = entries;
@@ -99,7 +101,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
         return { ok: true };
       },
     };
-  }, { settings, admin, agent: seed.agent ?? READY, extensions, entries: seed.entries ?? [ENTRY] });
+  }, { settings, admin, agent: seed.agent ?? READY, extensions, entries: seed.entries ?? [ENTRY], targets: !!seed.targets });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -121,6 +123,37 @@ async function evidence(p: Page, name: string): Promise<void> {
     await p.screenshot({ path: path.join(dir, `${name}-${scheme}.png`), fullPage: true });
   }
 }
+
+describe.skipIf(gate)("Home's Projects, as the person sets up a command (2026-11-07 product audit)", () => {
+  it("says commands are off before a folder is chosen or a command typed, links to Commands, and opens once they are on (integrations-12)", async () => {
+    const page = await open("project", { targets: true });
+    await page.locator("#project-commands summary").click();
+    const note = page.locator("#project-commands-off");
+    await expect.poll(() => note.isVisible()).toBe(true);
+    expect(await page.locator("#project-commands-off-text").innerText()).toBe("Commands are off on this computer. Turn them on in Commands to run one here.");
+    // The folder may still be chosen (a saved workspace keeps it); the command can't be typed or reviewed.
+    expect(await page.locator("#project-folder-pick").isDisabled()).toBe(false);
+    expect(await page.locator("#project-command-text").isDisabled()).toBe(true);
+    expect(await page.locator("#project-command-send").isDisabled()).toBe(true);
+    expect(await page.locator("#project-command-text").getAttribute("aria-describedby")).toBe("project-commands-off-text project-command-hint project-folder");
+    await expect.poll(() => page.getByRole("button", { name: "Open Commands" }).isVisible()).toBe(true);
+    await evidence(page, "project-commands-off");
+    // Turned on (in Commands, or by voice): the form is usable at once.
+    const commandsTo = (commands: unknown) => page.evaluate(async c => {
+      const st = await (window as unknown as { ember: { getStatus(): Promise<{ settings: Record<string, unknown> }> } }).ember.getStatus();
+      window.__ixEmit("onSettingsChanged", { ...st.settings, commands: c });
+    }, commands);
+    await commandsTo({ local: { on: true, askEvery: false, consent: { version: 1, at: "2026-11-07T12:00:00Z" } } });
+    await expect.poll(() => note.isVisible()).toBe(false);
+    expect(await page.locator("#project-command-text").isDisabled()).toBe(false);
+    // Off again: Open Commands goes to the pane where they are turned on.
+    await commandsTo({});
+    await expect.poll(() => note.isVisible()).toBe(true);
+    await page.getByRole("button", { name: "Open Commands" }).click();
+    await expect.poll(() => page.locator("#commands-h").isVisible()).toBe(true);
+    await page.close();
+  });
+});
 
 describe.skipIf(gate)("Home's Extensions, as the person sets them up (2026-11-07 product audit)", () => {
   it("shows Copilot's built-in marketplace as built in with no Remove, and says what a built-in plugin's card agrees to (integrations-4)", async () => {

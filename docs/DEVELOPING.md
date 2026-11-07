@@ -1988,8 +1988,9 @@ there when it shows again. Closing the window, the screen locking, the policy ch
 page crashing still end it, and closing the window clears the answer and an unapplied patch (save a workspace to keep
 them).
 
-Open **Run a project command** to choose a local starting folder and enter a command. Ember applies the
-same settings, classifier and stop controls as its command window. Each run waits for approval of the
+Open **Run a project command** to choose a local starting folder and enter a command. While commands are off on
+this computer (the default), the form says so with **Open Commands** before anything is typed, and the command field
+and **Review command…** wait. Ember applies the same settings, classifier and stop controls as its command window. Each run waits for approval of the
 exact command and folder. Output stays in the command window. The connected model does not receive it.
 
 **Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected

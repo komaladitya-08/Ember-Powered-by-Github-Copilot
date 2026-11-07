@@ -1,6 +1,6 @@
 /** Project selection, explicit context sharing and inert, reviewable output in the Projects destination. */
 import { renderProjectAnswer } from "./project-output";
-import { projectBytes, projectSelectionText } from "./project-copy";
+import { PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectBytes, projectCommandsOn, projectSelectionText } from "./project-copy";
 import type { ProjectMode, ProjectWorkspaceAction } from "../../shared/ipc";
 
 export function mountProject() {
@@ -36,6 +36,10 @@ export function mountProject() {
   const review = commands.querySelector<HTMLButtonElement>("#project-command-send")!;
   const stopCommand = commands.querySelector<HTMLButtonElement>("#project-command-stop")!;
   const commandStatus = commands.querySelector<HTMLElement>("#project-command-status")!;
+  const commandsOff = commands.querySelector<HTMLElement>("#project-commands-off")!;
+  const openCommands = commands.querySelector<HTMLButtonElement>("#project-commands-open")!;
+  /** Commands may run on this computer (null: not known yet). Off, the form says so before anything is typed (integrations-12). */
+  let localCommands: boolean | null = null;
   const workspaces = document.querySelector<HTMLDetailsElement>("#project-workspaces")!;
   const saved = workspaces.querySelector<HTMLSelectElement>("#project-workspace-list")!;
   const workspaceName = workspaces.querySelector<HTMLInputElement>("#project-workspace-name")!;
@@ -66,9 +70,14 @@ export function mountProject() {
     for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || !!busy;
     form.setAttribute("aria-busy", String(busy === "running"));
     send.textContent = busy === "running" ? "Working…" : "Send selected files";
+    const off = localCommands === false;
+    commandsOff.hidden = !off;
+    // The Commands pane is there only with the targets runtime: no link to a pane that isn't.
+    openCommands.hidden = !off || !!document.getElementById("jump-commands")?.hidden;
+    // The folder can still be chosen (a saved workspace keeps it); the command waits for commands to be on.
     folderPick.disabled = !ready || !!busy;
-    command.disabled = !ready || !!busy;
-    review.disabled = !ready || !!busy || !commandFolder || !command.value.trim();
+    command.disabled = !ready || !!busy || off;
+    review.disabled = !ready || !!busy || off || !commandFolder || !command.value.trim();
     stopCommand.hidden = busy !== "command";
     workspaceName.disabled = !ready || !!busy;
     saved.disabled = !ready || !!busy || !saved.options.length;
@@ -194,6 +203,16 @@ export function mountProject() {
     status.textContent = "Project work cleared.";
     void window.ember.projectClear().catch(() => { status.textContent = "Couldn't clear the selection. Choose your files again."; });
   });
+  // The commands setting as it is now, and as it changes (in Commands, by voice or in the file).
+  const followCommands = (s: Parameters<typeof projectCommandsOn>[0]) => { localCommands = projectCommandsOn(s); draw(); };
+  void window.ember.getStatus().then(st => followCommands(st.settings), () => { /* not known: the form stays as it was */ });
+  window.ember.onSettingsChanged(followCommands);
+  commandsOff.querySelector("#project-commands-off-text")!.textContent = PROJECT_COMMANDS_OFF;
+  openCommands.textContent = PROJECT_COMMANDS_OPEN;
+  openCommands.addEventListener("click", () => document.getElementById("jump-commands")?.click());
+  // The Commands pane's link shows once the targets runtime has answered: Open Commands follows it.
+  const commandsLink = document.getElementById("jump-commands");
+  if (commandsLink) new MutationObserver(() => draw()).observe(commandsLink, { attributes: true, attributeFilter: ["hidden"] });
   folderPick.addEventListener("click", async () => {
     const at = revision;
     busy = "picking";

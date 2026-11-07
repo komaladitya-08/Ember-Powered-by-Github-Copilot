@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { projectSelection, removeProjectFile } from "../../app/main/agent/project";
 import { exportProjectText } from "../../app/main/agent/project-export";
-import { projectAnswerParts, projectBytes, projectSelectionText } from "../../app/renderer/home/project-copy";
+import { PROJECT_COMMANDS_OFF, projectAnswerParts, projectBytes, projectCommandsOn, projectSelectionText } from "../../app/renderer/home/project-copy";
 
 let dir: string;
 let privateDir: string;
@@ -34,6 +34,15 @@ it("discloses known, missing and over-limit attachment sizes", () => {
   expect(projectSelectionText(["moved.ts"], [null])).toContain("Size checked on Send");
   expect(projectSelectionText(["large.ts"], [25 * 1024])).toContain("exceeds the limit");
   expect(projectSelectionText(["a.ts", "b.ts", "c.ts"], [23 * 1024, 23 * 1024, 23 * 1024])).toContain("exceeds the limit");
+});
+
+it("says commands are off on this computer before a project command is typed, and only then (integrations-12)", () => {
+  expect(PROJECT_COMMANDS_OFF).toBe("Commands are off on this computer. Turn them on in Commands to run one here.");
+  expect(projectCommandsOn({ commands: {} })).toBe(false);
+  expect(projectCommandsOn({ commands: { local: { on: false } } })).toBe(false);
+  expect(projectCommandsOn({ commands: { "wsl:Ubuntu": { on: true } } })).toBe(false);
+  expect(projectCommandsOn({ commands: { local: { on: true } } })).toBe(true);
+  expect(projectCommandsOn(null)).toBe(false);
 });
 
 it("exports exact inert text only after the destination is chosen, privately and without staging residue", () => {

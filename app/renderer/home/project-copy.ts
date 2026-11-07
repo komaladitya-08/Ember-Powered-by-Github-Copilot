@@ -1,4 +1,10 @@
 /** Pure presentation of selected project metadata; file contents are never read by the renderer. */
+
+/** Said over a project command's controls while commands are off on this computer (integrations-12), before any is typed. */
+export const PROJECT_COMMANDS_OFF = "Commands are off on this computer. Turn them on in Commands to run one here.";
+export const PROJECT_COMMANDS_OPEN = "Open Commands";
+/** Whether commands may run on this computer, as the settings say (the organisation's policy already applied). */
+export const projectCommandsOn = (s: { commands?: Partial<Record<string, { on?: boolean }>> } | null | undefined): boolean => s?.commands?.local?.on === true;
 export function projectBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
 }
