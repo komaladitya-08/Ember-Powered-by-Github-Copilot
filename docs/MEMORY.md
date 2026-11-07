@@ -42,8 +42,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - A near-duplicate reinforces the fact already there.
   - A `single` predicate (`works_at`, `lives_in`) closes the open facts it replaces. So does the same statement about
     the same subject said the other way round ("Likes Teams" → "Doesn't like Teams any more": opposite polarity, 0.8
-    alike without the words that turn it round), and a preference whose one word changed ("Prefers dark mode" →
-    "Prefers light mode"; never "Prefers tea" and "Prefers coffee"). A weaker source never closes what the user said,
+    alike without the words that turn it round), and a preference whose one word changed before the same thing in the
+    same place ("Prefers dark mode" → "Prefers light mode"; never "Prefers tea" and "Prefers coffee", "…dark mode"
+    and "…dark chocolate", "…short answers" and "…short emails", or dark mode in Slack and in Outlook: memory-r1). A
+    weaker source never closes what the user said,
     and the closed fact stays as history, so Undo of the newer puts it back.
 - `recall.ts`: BM25 over fact text plus entity names. The matched facts and named entities then seed a Personalized
   PageRank over the bipartite entity–fact graph:

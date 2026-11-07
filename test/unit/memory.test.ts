@@ -182,6 +182,30 @@ describe("the memory graph", () => {
     expect(other.kind === "added" && other.closed).toEqual([]);
   });
 
+  it("closes a preference only when what is preferred changed, never one that differs by the thing or the place it is about (memory-r1)", () => {
+    const U = [{ name: "User", kind: "person" as const }];
+    const after = (before: { text: string; predicate?: string }, text: string) => {
+      const c = clock();
+      const g = new MemoryGraph(undefined, c);
+      g.add({ ...before, about: U, source: "user" });
+      c.advance(1);
+      const r = g.add({ text, about: U, source: "user" });
+      return { closed: r.kind === "added" ? r.closed.map(f => f.text) : [], open: g.allFacts(true).map(f => f.text).sort() };
+    };
+    // Another thing preferred, or the same in another place: both still hold.
+    for (const [before, now] of [
+      ["Prefers dark mode", "Prefers dark chocolate"], ["Prefers short answers", "Prefers short meetings"],
+      ["Prefers detailed answers", "Prefers detailed reports"], ["Prefers morning meetings", "Prefers morning runs"],
+      ["Prefers dark mode in Slack", "Prefers dark mode in Outlook"], ["Prefers short answers at work", "Prefers short answers at home"],
+    ]) expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [], open: [before, now].sort() });
+    // About you's answer length stays in the profile sent with every request.
+    expect(after({ text: "Prefers short answers", predicate: "answer_length" }, "Prefers short emails").closed).toEqual([]);
+    // What is preferred changed: the older is closed, kept as history.
+    for (const [before, now] of [["Prefers dark mode", "Prefers light mode"], ["Prefers short answers", "Prefers long answers"], ["Prefers dark mode in Slack", "Prefers light mode in Slack"]]) {
+      expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [before], open: [now] });
+    }
+  });
+
   it("lets nothing it saw overrule what the user said", () => {
     const g = new MemoryGraph(undefined, clock());
     g.add({ text: "Lives in Leeds", about: [{ name: "User" }], predicate: "lives_in", single: true, source: "user" });
