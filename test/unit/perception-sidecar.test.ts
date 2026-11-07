@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { AtspiSidecar, boundedLines, ID_BLOCK, MAX_LINE_BYTES } from "../../app/main/perception/sidecar";
+import { AtspiSidecar, boundedLines, ID_BLOCK, MAX_LINE_BYTES, reviveDelay } from "../../app/main/perception/sidecar";
 import type { Logger } from "../../app/main/logger";
 
 /**
@@ -55,6 +55,16 @@ const fake = path.join(dir, "fake_sidecar.cjs");
 fs.writeFileSync(fake, FAKE);
 const dead = path.join(dir, "dead_sidecar.cjs");
 fs.writeFileSync(dead, "process.exit(3);\n");
+/** A helper that passes its ping, then crashes on whatever it is asked (a pyatspi crash on a broken app), noting each start. */
+const crashing = path.join(dir, "crashing_sidecar.cjs");
+fs.writeFileSync(crashing, `
+if (process.env.EMBER_FAKE_STARTS) require("node:fs").appendFileSync(process.env.EMBER_FAKE_STARTS, process.pid + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+  const req = JSON.parse(line);
+  if (req.method === "ping") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { version: 3 } }) + "\\n");
+  else process.exit(139);
+});
+`);
 
 function logger() {
   const lines: { level: string; msg: string; fields?: Record<string, unknown> }[] = [];
@@ -107,6 +117,16 @@ describe("boundedLines", () => {
     expect(r.got).toEqual(["ok"]);
     expect(r.tooLong()).toBe(3);
     expect(MAX_LINE_BYTES).toBe(8 * 1024 * 1024);
+  });
+});
+
+describe("reviveDelay", () => {
+  it("revives at once after a helper that worked, then backs off to a minute while each new one answers nothing (rp-3)", () => {
+    expect(reviveDelay(0)).toBe(0);
+    expect(reviveDelay(1)).toBe(0);
+    expect([2, 3, 4, 5, 6].map(reviveDelay)).toEqual([2000, 4000, 8000, 16_000, 32_000]);
+    expect(reviveDelay(7)).toBe(60_000);
+    expect(reviveDelay(50)).toBe(60_000);
   });
 });
 
@@ -183,6 +203,22 @@ describe("AtspiSidecar", () => {
     s.stop();
     await new Promise(r => setTimeout(r, 200));
     expect(asked()).toHaveLength(2);
+  });
+
+  it("doesn't restart a helper that crashes on every request dozens of times a second (rp-3)", async () => {
+    const starts = path.join(dir, `starts-${Date.now()}.log`);
+    const { s, lines } = sidecar(crashing, process.execPath, { ...process.env, EMBER_FAKE_STARTS: starts });
+    const started = () => (fs.existsSync(starts) ? fs.readFileSync(starts, "utf8").trim().split("\n").length : 0);
+    expect(await failure(s.request("status"))).toMatch(/stopped/);
+    await new Promise(r => setTimeout(r, 2500));
+    // Before: about 29 a second. Now the first again at once, then 2 s, 4 s, 8 s … up to a minute apart.
+    expect(started()).toBeGreaterThanOrEqual(2);
+    expect(started()).toBeLessThanOrEqual(4);
+    expect(lines.filter(l => l.msg === "sidecar.revive_backoff")).toHaveLength(1);
+    // A request of the user's still starts one at once.
+    const before = started();
+    expect(await failure(s.request("status"))).toMatch(/stopped/);
+    expect(started()).toBe(before + 1);
   });
 
   it("survives writing to a helper that died at once (EPIPE)", async () => {
