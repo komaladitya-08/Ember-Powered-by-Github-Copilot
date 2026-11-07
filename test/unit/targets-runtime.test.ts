@@ -900,6 +900,31 @@ describe("SSH targets", () => {
     expect(f.conns.connect).not.toHaveBeenCalled();
   });
 
+  it("doesn't keep a new computer whose name can't be found on its first connection, so a typo leaves no dead row (commands-remote-6)", async () => {
+    const r = rig();
+    r.failConnect(new ConnectError("Ember can't find buidl-01. Check the name, or add it to your SSH config.", "dns", undefined, true));
+    const res = await r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "deploy@buidl-01" });
+    expect(res).toEqual({ ok: false, message: "Ember can't find buidl-01. Check the name, or add it to your SSH config. It wasn't added to Computers." });
+    expect(r.settings.get().targets.hosts).toEqual([]);
+    expect(r.settings.get().commands["ssh:buidl-01"]).toBeUndefined();
+    expect(r.t.summaries().some(s => s.id === "ssh:buidl-01")).toBe(false);
+    // No bubble offers Try again for a computer that isn't there.
+    expect(r.showState).not.toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ actions: expect.arrayContaining([expect.objectContaining({ id: "conn:buidl-01:reconnect" })]) }) });
+    // The fixed name adds one row only.
+    r.failConnect(null);
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "deploy@build-01" })).resolves.toEqual({ ok: true });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+    // A computer that can't be reached (the name is found: a VPN, a network) is kept, as is a known one whose name fails.
+    const net = rig();
+    net.failConnect(new ConnectError("Ember can't reach build-02 (no route).", "network", "Check you're on the right network or VPN.", true));
+    await net.invoke(TARGETS_IPC.act, net.home, { kind: "add", dest: "deploy@build-02" });
+    expect(net.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-02"]);
+    const known = rig({ settings: withHosts([hostRecord("build-01")]) });
+    known.failConnect(new ConnectError("Ember can't find build-01. Check the name, or add it to your SSH config.", "dns", undefined, true));
+    await known.invoke(TARGETS_IPC.act, known.home, { kind: "connect", hostId: "build-01" });
+    expect(known.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+  });
+
   it("says what failed in §8.7's words, and offers to try again when it may help", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     r.failConnect(new ConnectError("Ember can't reach build-01 (no route).", "network", "Check you're on the right network or VPN.", true));

@@ -498,6 +498,8 @@ interface Conn {
   wasActive?: boolean;
   /** Why its last connect or reconnect failed, until it connects again (the settings row says it: TargetSummary.problem). */
   problem?: string;
+  /** The kind of that failure (ConnectError's), for an add to tell a name that can't be found (commands-remote-6). */
+  failedKind?: string;
 }
 
 /** An offer on screen: an ssh Ember saw the user run, or offer_connect's button. */
@@ -911,6 +913,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     c.wasActive = false;
     // A new try: the last one's reason is no longer what the settings row says.
     delete c.problem;
+    delete c.failedKind;
     if (c.state === "connecting") { c.activate ||= o.activate; return { ok: true }; }
     if ((c.state === "ready" || c.state === "stalled") && c.target) { if (o.activate) setActive(targetIdOf("ssh", hostId)); return { ok: true }; }
     const label = host.id;
@@ -1001,7 +1004,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         showKeyChanged(label);
         return fail(err.fix ? `${err.message} ${err.fix}` : err.message, false, words.identityChanged(label));
       }
-      if (err instanceof ConnectError) return fail(err.fix ? `${err.message} ${err.fix}` : err.message, err.retry);
+      if (err instanceof ConnectError) { c.failedKind = err.kind; return fail(err.fix ? `${err.message} ${err.fix}` : err.message, err.retry); }
       log.warn("targets.connect_failed", { err });
       return fail(`Ember couldn't connect to ${label}.`);
     }
@@ -1074,7 +1077,16 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       log.warn("targets.host_save_failed", { err });
       return refused("Ember couldn't save that computer.");
     }
-    return connect(id, { interactive: true, activate: true });
+    const r = await connect(id, { interactive: true, activate: true });
+    // A name that can't be found on the new computer's first connection is most likely mistyped: it isn't kept, so the
+    // fixed name adds one row, not a second (commands-remote-6). The field keeps what was typed; one whose name is found
+    // but can't be reached (a VPN that is off) stays.
+    if (!r.ok && conns.get(id)?.failedKind === "dns") {
+      hideBubble(`fail:${id}`);
+      await forget(id);
+      return refused(`${r.message} It wasn't added to Computers.`);
+    }
+    return r;
   }
   async function forget(hostId: string): Promise<void> {
     await disconnect(hostId);
