@@ -40,8 +40,11 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - Facts carry a source (`user`, `conversation`, `task`, `observed`, `connector`), a confidence, validity times and
     use counts.
   - A near-duplicate reinforces the fact already there.
-  - A `single` predicate (`works_at`, `lives_in`) closes the open facts it replaces. A weaker source never closes
-    what the user said.
+  - A `single` predicate (`works_at`, `lives_in`) closes the open facts it replaces. So does the same statement about
+    the same subject said the other way round ("Likes Teams" → "Doesn't like Teams any more": opposite polarity, 0.8
+    alike without the words that turn it round), and a preference whose one word changed ("Prefers dark mode" →
+    "Prefers light mode"; never "Prefers tea" and "Prefers coffee"). A weaker source never closes what the user said,
+    and the closed fact stays as history, so Undo of the newer puts it back.
 - `recall.ts`: BM25 over fact text plus entity names. The matched facts and named entities then seed a Personalized
   PageRank over the bipartite entity–fact graph:
   - edges into an entity are weighted by inverse degree, so a hub such as "User" doesn't spread the walk to

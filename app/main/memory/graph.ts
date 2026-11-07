@@ -12,7 +12,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import { memoryRefusal } from "./guard";
-import { nameKey, negated, similarity } from "./text";
+import { fold, nameKey, negated, similarity, terms } from "./text";
 
 export const ENTITY_KINDS = ["person", "organisation", "project", "app", "place", "topic", "thing"] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
@@ -95,7 +95,8 @@ export interface NewFact {
   predicate?: string;
   /**
    * The predicate holds one value at a time ("lives_in", "works_at", "prefers_editor"): a new fact closes the open
-   * ones with the same subject and predicate that say something else.
+   * ones with the same subject and predicate that say something else. Without it, a fact still closes one that says
+   * the same thing the other way round, or the same preference with another value (memory-4).
    */
   single?: boolean;
   source: Source;
@@ -222,14 +223,19 @@ export class MemoryGraph {
       ...(from ? { derivedFrom: from } : {}),
     };
     const closed: Fact[] = [];
-    if (input.single && predicate) {
-      for (const f of this.allFacts(true)) {
-        // A weaker source never overrules what the user said; it is kept beside it until they say otherwise.
-        if (f.entities[0] === entities[0] && f.predicate === predicate && rank(input.source) <= rank(f.source)) {
-          const c: Fact = { ...f, invalidAt: fact.validAt, supersededBy: fact.id };
-          this.facts.set(c.id, c);
-          closed.push(c);
-        }
+    for (const f of this.allFacts(true)) {
+      // A weaker source never overrules what the user said; it is kept beside it until they say otherwise.
+      if (f.entities[0] !== entities[0] || rank(input.source) > rank(f.source)) continue;
+      // The same single relation with another value; or the same statement now said the other way round ("Likes
+      // Teams" → "Doesn't like Teams any more"), or a preference that changed ("Prefers dark mode" → "…light mode"):
+      // both can't hold, so the older is closed, kept as history (memory-4).
+      const replaces = (input.single && predicate && f.predicate === predicate)
+        || (negated(f.text) !== polarity && similarity(withoutPolarity(f.text), withoutPolarity(text)) >= DUPLICATE)
+        || preferenceChanged(f.text, text);
+      if (replaces) {
+        const c: Fact = { ...f, invalidAt: fact.validAt, supersededBy: fact.id };
+        this.facts.set(c.id, c);
+        closed.push(c);
       }
     }
     this.facts.set(fact.id, fact);
@@ -396,6 +402,22 @@ export class MemoryGraph {
 }
 
 const sameEntities = (a: string[], b: string[]) => a.length === b.length && a.every(id => b.includes(id));
+
+/** The words that only turn a statement round or date it ("doesn't", "any more"), left out to compare what it says. */
+const POLARITY_WORDS = /\b(?:not|no|never|doesn['’]?t|don['’]?t|didn['’]?t|isn['’]?t|aren['’]?t|wasn['’]?t|weren['’]?t|won['’]?t|can['’]?t|cannot|any\s*more|no\s+longer|now|again)\b/giu;
+const withoutPolarity = (s: string) => fold(s).replace(POLARITY_WORDS, " ");
+
+/**
+ * "Prefers dark mode" then "Prefers light mode": two preferences that differ in one word each, with something more
+ * than "prefers" in common, are one preference that changed. "Prefers tea" and "Prefers coffee" may both hold.
+ */
+function preferenceChanged(before: string, after: string): boolean {
+  const a = terms(before), b = terms(after);
+  if (a[0] !== "prefer" || b[0] !== "prefer" || negated(before) || negated(after)) return false;
+  const x = new Set(a), y = new Set(b);
+  const shared = [...x].filter(t => y.has(t)).length;
+  return shared >= 2 && x.size - shared === 1 && y.size - shared === 1;
+}
 /** Two records of what a note was made from, together (MAX_DERIVED at most), or undefined for none. */
 const mergeDerived = (a: string[] | undefined, b: string[] | undefined): string[] | undefined => {
   const all = [...new Set([...(a ?? []), ...(b ?? [])])].slice(0, MAX_DERIVED);

@@ -151,6 +151,37 @@ describe("the memory graph", () => {
     expect(g.fact(r.closed[0].id)).toMatchObject({ invalidAt: "2026-10-11T09:00:00.000Z", supersededBy: r.fact.id });
   });
 
+  it("closes what the user said before when they now say the opposite or change a preference, never on a weaker source's word (memory-4)", () => {
+    const c = clock();
+    const g = new MemoryGraph(undefined, c);
+    const U = [{ name: "User", kind: "person" as const }];
+    const teams = g.add({ text: "Likes using Microsoft Teams for calls", about: U, predicate: "likes_app", source: "user" });
+    c.advance(3);
+    const not = g.add({ text: "Doesn't like using Microsoft Teams for calls any more", about: U, predicate: "app_preference", source: "user" });
+    expect(not.kind).toBe("added");
+    if (teams.kind !== "added" || not.kind !== "added") return;
+    expect(not.closed.map(f => f.text)).toEqual(["Likes using Microsoft Teams for calls"]);
+    expect(g.allFacts(true).map(f => f.text)).toEqual(["Doesn't like using Microsoft Teams for calls any more"]);
+    // Undo of the newer (forgetting it) gives the older back.
+    g.reopenSuperseded(not.fact.id);
+    g.forgetFact(not.fact.id);
+    expect(g.allFacts(true).map(f => f.text)).toEqual(["Likes using Microsoft Teams for calls"]);
+    // A preference that changes value: "Prefers dark mode", then "Prefers light mode".
+    g.add({ text: "Prefers dark mode", about: U, source: "user" });
+    c.advance(1);
+    const light = g.add({ text: "Prefers light mode", about: U, source: "user" });
+    expect(light.kind === "added" && light.closed.map(f => f.text)).toEqual(["Prefers dark mode"]);
+    // What Ember only inferred never closes what the user said, and "Prefers tea" isn't "Prefers coffee".
+    const inferred = g.add({ text: "Doesn't like using Microsoft Teams for calls", about: U, source: "conversation" });
+    expect(inferred.kind === "added" && inferred.closed).toEqual([]);
+    g.add({ text: "Prefers tea", about: U, source: "user" });
+    const coffee = g.add({ text: "Prefers coffee", about: U, source: "user" });
+    expect(coffee.kind === "added" && coffee.closed).toEqual([]);
+    // Something else entirely, said the other way round, closes nothing.
+    const other = g.add({ text: "Doesn't work on weekends", about: U, source: "user" });
+    expect(other.kind === "added" && other.closed).toEqual([]);
+  });
+
   it("lets nothing it saw overrule what the user said", () => {
     const g = new MemoryGraph(undefined, clock());
     g.add({ text: "Lives in Leeds", about: [{ name: "User" }], predicate: "lives_in", single: true, source: "user" });
