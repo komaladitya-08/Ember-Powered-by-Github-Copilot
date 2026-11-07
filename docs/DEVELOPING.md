@@ -758,8 +758,9 @@ app/main/agent/credential-env.ts: `COPILOT_SDK_AUTH_TOKEN`, `GITHUB_TOKEN`, `GH_
 `*_ENTERPRISE_TOKEN`s, `COPILOT_CONNECTION_TOKEN` and the two `COPILOT_PROVIDER_*` credentials) to an empty string in the
 `env` of every stdio MCP server it gives a session (`hardenedSessionConfig`): the runtime merges that `env` over its own
 environment, so the launcher and any other stdio server start with those variables empty, not holding the sign-in. Any
-GitHub-token-shaped text, `Bearer` or `token=` value and URL password is replaced in the finished line of every Ember
-log (logger.ts, `redactSecretText`) and in the sentence a failed start shows; the user's provider key is replaced by
+GitHub-token-shaped text, any token the commands redactor knows by its shape (`TOKEN_SHAPES`: AWS, Slack, Google, npm,
+OpenAI, Anthropic, Stripe, Hugging Face, GitLab), `Bearer` or `token=` value and URL password is replaced in the
+finished line of every Ember log (logger.ts, `redactSecretText`) and in the sentence a failed start shows; the user's provider key is replaced by
 exact match in messages, scopes, keys and fields (`redactingLogger`). Observed on the real runtime with
 `scripts/runtime-env-live.sh` (a network namespace with only loopback, dummy tokens, not in CI): before this blanking
 both the directly started server and the launcher held the dummy token in their environment; now neither does, nor does

@@ -53,8 +53,12 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - Forgets history older than 180 days and unsure, unused guesses older than 90 days, and keeps the graph under
     5,000 facts.
   - What the user said is never dropped for age.
-- `guard.ts`: refuses any fact holding a token, key, password, PIN, code or card number. It uses the commands
-  redactor's patterns plus a Luhn check. Secrets are refused whole, never stored redacted.
+- `guard.ts`: refuses any fact holding a token, key, password, PIN, code, card number, IBAN or social security
+  number, however it is said: "the password for the HR portal is…", "VPN password hunter2", "my debit card pin 4821",
+  "the door code is 4821". It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
+  value would be ("the password for Netflix is saved in 1Password") aren't a value. Secrets are refused whole, never
+  stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten.
 

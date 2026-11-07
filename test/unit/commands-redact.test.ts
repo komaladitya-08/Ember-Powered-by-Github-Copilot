@@ -45,8 +45,22 @@ describe("redactSecrets", () => {
     expect(redactSecrets(text)).toBe(want);
   });
 
+  /** A key-like run of letters and digits, `n` long. */
+  const run = (n: number) => "Ab3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3gH5jK7mN9pQ1sT3vW5yZ7bC9dF1gH3jK5mN7pQ9sT1vW3yZ5bC7dF9gH1jK3mN5pQ7sT9vW1yZ3".repeat(2).slice(0, n);
+  const KEYS = [
+    `sk-proj-${run(48)}_${run(20)}`, `sk-${run(48)}`, `sk-ant-api03-${run(90)}`, `sk_live_${run(24)}`, `rk_test_${run(24)}`,
+    `whsec_${run(32)}`, `hf_${run(34)}`, `glpat-${run(20)}`,
+  ];
+  it.each(KEYS.map(k => [k]))("hides today's common API key %j bare, after echo and inside JSON (safety-privacy-2)", key => {
+    expect(redactSecrets(key)).toBe(SECRET_HIDDEN);
+    expect(redactSecrets(`$ echo ${key}\n${key}`)).toBe(`$ echo ${SECRET_HIDDEN}\n${SECRET_HIDDEN}`);
+    expect(redactSecrets(`{"openai_key": "${key}", "n": 1}`)).toBe(`{"openai_key": "${SECRET_HIDDEN}", "n": 1}`);
+    expect(redactSecrets(`HF token ${key} for the build`)).toBe(`HF token ${SECRET_HIDDEN} for the build`);
+    expect(commandLineSecret(key)).toBe(true);
+  });
+
   it("leaves ordinary text alone", () => {
-    for (const text of ["build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
+    for (const text of ["sk-learn is scikit-learn", "risk-assessment-for-the-quarterly-planning-2026", "task-1234567890abcdefghijklmnopqrstuvwxyz", "hf_short", "sk_live_short", "build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
       expect(redactSecrets(text)).toBe(text);
     }
   });
@@ -119,6 +133,9 @@ describe("redactSecrets on long output (review #26)", () => {
     ["a secret word repeated on 4 KiB lines", repeat(`${"DB_TOKEN".repeat(511)}\n`)],
     ["private key headers without an end", repeat("-----BEGIN RSA PRIVATE KEY-----\n")],
     ["a run of -eyJ", repeat("-eyJ")],
+    ["a run of sk- (safety-privacy-2)", repeat("sk-")],
+    ["sk- keys one short of long enough", repeat(`sk-${"a1".repeat(9)} `)],
+    ["a run of hf_ and glpat-", repeat("hf_glpat-")],
     ["URL-like runs", repeat("://a:")],
   ])("takes linear time on %s (1 MiB)", (_name, text) => {
     const t0 = performance.now();

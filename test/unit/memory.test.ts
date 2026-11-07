@@ -77,6 +77,46 @@ describe("what memory never keeps", () => {
     expect(g.add({ text: "My bank PIN is 1234", about: [{ name: "Bank" }], source: "user" })).toEqual({ kind: "refused", reason: "it holds a password, PIN or code" });
     expect(g.size).toEqual({ entities: 0, facts: 0, open: 0 });
   });
+
+  /** A key-like run of letters and digits, `n` long. */
+  const run = (n: number) => "Ab3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3gH5jK7mN9pQ1sT3vW5yZ7bC9dF1gH3jK5mN7pQ9sT1vW3yZ5bC7dF9gH1jK3mN5pQ7sT9vW1yZ3".repeat(2).slice(0, n);
+  const SAID_NATURALLY = [
+    "The password for the HR portal is Summer2024!", "Wifi password at home is BlueSky99", "Password for the NAS: Tr0ub4dor&3",
+    "The VPN password hunter2", "Netflix password hunter2", "My password for Netflix is hunter2", "My password for the bank is hunter2",
+    "Uses the password 'Summer2024!' for Jira", "My PIN for the bank card is 4921", "My PIN for the card is 4821", "my debit card pin 4821",
+    "The phone unlock PIN 1379", "PIN-4821 for the card", "My 2FA backup codes are 1234-5678 and 8765-4321", "The one-time code was 482913",
+    "The door code is 4821", "Door code: 4821", "Front door code 4821", "Garage code: 7734", "The alarm code is 0000",
+    "the safe combination is 32-18-04", "Locker combination is 12-34-56", "Laptop unlock phrase is blue-horse-battery",
+    "my SSN is 123-45-6789", "Social security number 123 45 6789", "the answer to my security question is Fluffy",
+    "Security question answer: Fluffy", "Remember my login: user priya, pass hunter2", "My IBAN is GB82 WEST 1234 5698 7654 32",
+    "IBAN GB29 NWBK 6016 1331 9268 19", `The staging API key is ${run(32)}`, `API key: sk-proj-${run(48)}`,
+  ];
+  it.each(SAID_NATURALLY.map(s => [s]))("refuses %j, however it is said (memory-1, safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    const g = new MemoryGraph(undefined, clock());
+    expect(g.add({ text, about: [{ name: "User", kind: "person" }], source: "user" }).kind).toBe("refused");
+    expect(g.toJSON().facts).toEqual([]);
+  });
+
+  it.each([
+    [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
+    [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],
+    [`HF token hf_${run(34)}`], [`GitLab token glpat-${run(20)}`],
+  ])("refuses today's common API keys, bare (safety-privacy-2): %j", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, token or key");
+  });
+
+  it.each([
+    ["Uses a password manager"], ["Is responsible for password reset tooling"], ["The passcode is required at sign-in"],
+    ["My password for Netflix is saved in 1Password"], ["The password is required"], ["Priya's PIN pad is broken"],
+    ["The door code changes on Monday"], ["The access code for the conference is on the invite"], ["Error code 404 on the billing page"],
+    ["The password isn't set yet"], ["Keeps the password for the e-mail account in the vault"], ["Needs to pass the AZ-900 exam"],
+    ["Uses scikit-learn for the risk-assessment models"], ["The password policy at work is strict"], ["Order GB12 3456 shipped"],
+    ["Has a PIN reader at the desk"], ["Lives at 123 Main Street"], ["The user's password manager is Bitwarden"],
+    ["The access token is short-lived"], ["The PIN must be 4 digits"], ["Booked gate 12 at Heathrow"],
+  ])("keeps the look-alike %j (memory-1, safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
 });
 
 describe("the memory graph", () => {

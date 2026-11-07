@@ -316,7 +316,7 @@ A command's output goes to Copilot as part of the task, marked as untrusted data
 40 lines and the last 160, with very long lines cut). Before it leaves this computer Ember removes terminal codes, cuts
 out every line you typed, withholds what follows a password-like prompt (until the program's next line after you press
 Enter, or to the end when the command can't take typing), and hides the passwords, keys and tokens it recognises
-(GitHub, AWS, Slack, Google and npm tokens, private keys, JWTs, `password=` values, `Authorization:` headers, passwords
+(GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face and GitLab tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, passwords
 in URLs and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
 secrets on purpose.
 

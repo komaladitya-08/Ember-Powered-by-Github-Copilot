@@ -33,7 +33,23 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
   /AIza[0-9A-Za-z_-]{35}/g,
   // npm.
   /npm_[A-Za-z0-9]{36}/g,
+  // OpenAI (sk-, sk-proj-, sk-svcacct-, sk-admin-) and Anthropic (sk-ant-api03-) keys: 32 or more key characters,
+  // with a digit among the first 40 (a bounded look, so a long run of "sk-" stays linear), so a kebab-case word that
+  // happens to start "sk-" isn't one (safety-privacy-2).
+  /\bsk-(?:proj-|svcacct-|admin-|ant-[a-z]{2,8}\d{2}-)?(?=[A-Za-z0-9_-]{0,40}\d)[A-Za-z0-9_-]{32,}/g,
+  // Stripe secret and restricted keys, and webhook signing secrets.
+  /\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/g,
+  /\bwhsec_[A-Za-z0-9]{24,}/g,
+  // Hugging Face and GitLab tokens.
+  /\bhf_[A-Za-z0-9]{30,}/g,
+  /\bglpat-[A-Za-z0-9_-]{20,}/g,
 ];
+
+/**
+ * The whole-token patterns that stay inside one token: TOKEN_PATTERNS without private key blocks, whose match can run
+ * across lines and quotes. The logger's redactor (../secret-text.ts) uses them on finished JSON lines.
+ */
+export const TOKEN_SHAPES: readonly RegExp[] = TOKEN_PATTERNS.filter(re => re !== PRIVATE_KEY);
 
 /** Patterns whose first group is kept and whose value is hidden. */
 const VALUE_PATTERNS: readonly RegExp[] = [
@@ -62,8 +78,8 @@ const KEY_VALUE =
   /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
 
 /**
- * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google and
- * npm tokens, private key blocks, JWTs, Azure account keys and SAS signatures, Authorization headers, credentials in
+ * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google, npm,
+ * OpenAI, Anthropic, Stripe, Hugging Face and GitLab tokens and keys, private key blocks, JWTs, Azure account keys and SAS signatures, Authorization headers, credentials in
  * URLs, and the values of keys named like passwords, tokens or keys. Best effort: it can miss secrets.
  */
 export function redactSecrets(text: string): string {
