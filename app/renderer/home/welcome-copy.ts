@@ -295,8 +295,9 @@ export function checksHeadline(rows: readonly (SetupRow & { next?: boolean })[])
 
 /** Under the checks: what happens if the user goes on without fixing them, and where to come back. */
 export function checksLater(rows: readonly SetupRow[]): string {
-  if (rows.some(holdsBack)) return "You can go on and fix this later in Settings › Setup check. Until then I can answer questions, but some tasks won't work.";
-  return rows.some(needsUser) ? "You can fix these later in Settings › Setup check." : "";
+  // Named as the sidebar names it (first-run-9): the setup check is in Setup & about.
+  if (rows.some(holdsBack)) return "You can go on and fix this later in Settings › Setup & about. Until then I can answer questions, but some tasks won't work.";
+  return rows.some(needsUser) ? "You can fix these later in Settings › Setup & about." : "";
 }
 
 /**
@@ -315,9 +316,13 @@ export function checksNext(rows: readonly SetupRow[]): string {
   return rows.some(holdsBack) ? "Continue anyway" : "Continue";
 }
 
-/** A setup row's state in the details, in words beside its symbol (never colour alone, never a code like "OK"). */
-export function checkState(status: SetupRow["status"]): string {
-  return status === "ok" ? "Ready" : status === "warn" ? "Worth a look" : "Needs fixing";
+/**
+ * A setup row's state in words beside its symbol (never colour alone, never a code like "OK"), in first run's details
+ * and Home's setup check alike (first-run-9). `held`: the row holds Ember back (holdsBack), so a warning about it needs
+ * fixing, as the counts say (first-run-5).
+ */
+export function checkState(status: SetupRow["status"], held = false): string {
+  return status === "ok" ? "Ready" : status === "warn" && !held ? "Worth a look" : "Needs fixing";
 }
 
 /** The disclosure with every row and its technical detail. */

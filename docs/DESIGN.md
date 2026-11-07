@@ -263,10 +263,14 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
   state in a few words ("Ready", "Working on 2 tasks", "A task needs you" with **Open approval**, "Not connected",
-  "Needs setting up"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
+  "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
   you, then two facts (which of listening, memory and commands are on; today's tasks by outcome and the steps you
   allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
-  takes that place while Copilot isn't connected) beside a quiet **Stop everything** and the stop chord.
+  takes that place while Copilot isn't connected, and nothing does while the organisation's policy locks Ember down)
+  beside a quiet **Stop everything** and the stop chord.
+- **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",
+  "Needs fixing", never a code such as OK), in one column as wide as the widest word (a subgrid, so the labels line
+  up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows.
 - **The conversation** is part of the page, not a box that scrolls inside it: its latest 30 messages, then **Show
   earlier messages**. Home searches all 60 retained session entries, shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. Edit only fills the composer; a fresh Send is required. Home sends

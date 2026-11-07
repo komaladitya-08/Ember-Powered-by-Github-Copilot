@@ -37,7 +37,8 @@ import { onProviderDestination, ownProvider, providerSettings, startProvider } f
 import { modelDestination, recipientWords } from "./copy";
 import { mountProject } from "./project";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
-import { recheckMessage } from "./welcome-copy";
+import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
+import { holdsBack } from "../../shared/setup-attention";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
@@ -318,7 +319,8 @@ function renderChecks(environment: Status["environment"]): void {
     li.dataset.check = c.id;
     const pill = document.createElement("span");
     pill.className = `pill ${c.status}`;
-    pill.textContent = c.status === "ok" ? "OK" : c.status === "warn" ? "Check" : "Fix";
+    // First run's own words for the state (first-run-9), never a code such as "OK".
+    pill.textContent = checkState(c.status, holdsBack(c));
     const label = document.createElement("span");
     label.className = "check-label";
     label.textContent = c.label;
@@ -328,6 +330,14 @@ function renderChecks(environment: Status["environment"]): void {
     li.append(pill, label, detail);
     // The row's fix, and a second one beside it for when that didn't take (macOS: Reset Ember's permissions).
     const actions = Object.assign(document.createElement("span"), { className: "check-actions" });
+    // A fix the user runs themselves: its command, ready to copy, as first run offers it (first-run-9).
+    const command = !c.fix && c.status !== "ok" ? fixCommand(c.detail) : undefined;
+    if (command) {
+      const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet check-copy", textContent: "Copy" });
+      copy.setAttribute("aria-label", `Copy the command: ${command}`);
+      copy.addEventListener("click", () => { window.ember.copyText(command).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
+      actions.append(copy);
+    }
     for (const fix of [c.fix, c.alt]) {
       if (!fix) continue;
       const btn = document.createElement("button");

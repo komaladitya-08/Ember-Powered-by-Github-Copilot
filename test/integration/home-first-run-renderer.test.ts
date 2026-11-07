@@ -84,6 +84,7 @@ async function open(seed: Seed = {}): Promise<Page> {
       if (name === "applyFix") return (fix: string) => { window.__frCalls.push(`fix:${fix}`); return defer("fix"); };
       if (name === "recheckSetup") return () => { window.__frCalls.push("recheck"); return defer("recheck"); };
       if (name === "conversation") return async () => [];
+      if (name === "copyText") return async (text: string) => { window.__frCalls.push(`copy:${text}`); };
       if (name === "openAsk") return async () => { window.__frCalls.push("openAsk"); };
       return () => new Promise(() => undefined);
     } }) as never;
@@ -588,6 +589,25 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await h.locator("#checks-again").isVisible()).toBe(false);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((h as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(u) Home's setup check says each row's state in first run's words and offers the command to copy (first-run-9)", async () => {
+    const missing = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" };
+    const os = { id: "os", label: "Operating system", status: "warn", detail: "Rocky Linux 8.9" };
+    const ok = { id: "session", label: "Desktop session", status: "ok", detail: "X11 on :0" };
+    const p = await open({ home: true, agent: readyAgent(), checks: [missing, os, ok] });
+    await p.locator("a[href='#checks-h']").first().click();
+    await expect.poll(() => p.locator("#checks li").count()).toBe(3);
+    expect(await p.locator("#checks .pill").allInnerTexts()).toEqual(["Needs fixing", "Worth a look", "Ready"]);
+    const copy = p.locator("#checks li[data-check='accessibility'] .check-copy");
+    expect(await copy.getAttribute("aria-label")).toBe("Copy the command: sudo dnf install python3-pyatspi python3-gobject");
+    expect(await p.locator("#checks .check-copy").count()).toBe(1);
+    await copy.click();
+    await expect.poll(() => copy.innerText()).toBe("Copied");
+    // The labels line up whatever the state's word.
+    const left = await p.locator("#checks .check-label").evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().left)));
+    expect(new Set(left).size).toBe(1);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
   it("(m) Back, then Home turns the provider on itself: the late switch-off of the abandoned check leaves it on (PR #191 re-review)", async () => {

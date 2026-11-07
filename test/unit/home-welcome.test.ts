@@ -241,7 +241,8 @@ describe("the checks step", () => {
     expect(rows[0].text).not.toMatch(/X11|glibc|sudo/);
     expect(checksHeadline(LINUX)).toEqual({ text: "One thing to fix so I can read and use your apps.", tone: "warn" });
     expect(checksNext(LINUX)).toBe("Continue anyway");
-    expect(checksLater(LINUX)).toContain("Settings › Setup check");
+    // Named as the sidebar names it (first-run-9).
+    expect(checksLater(LINUX)).toContain("Settings › Setup & about");
   });
 
   it("gives a command to copy when the user runs the fix, and keeps it out of the words", () => {
@@ -287,6 +288,10 @@ describe("the checks step", () => {
 
   it("names each row's state in words in the details", () => {
     expect(["ok", "warn", "fail"].map(s => checkState(s as "ok"))).toEqual(["Ready", "Worth a look", "Needs fixing"]);
+    // A warning that holds Ember back needs fixing, as the counts say; Home's setup check uses the same words (first-run-9).
+    expect(checkState("warn", true)).toBe("Needs fixing");
+    expect(checkState("ok", true)).toBe("Ready");
+    expect(HOME).toContain("pill.textContent = checkState(c.status, holdsBack(c));");
   });
 });
 

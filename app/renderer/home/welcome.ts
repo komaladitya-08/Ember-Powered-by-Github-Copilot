@@ -14,7 +14,7 @@ import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
 import type { ProviderState, Status, VoiceStatus } from "../../shared/ipc";
 import { endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { LEVEL_STEPS } from "../../shared/level";
-import { needsUser } from "../../shared/setup-attention";
+import { holdsBack, needsUser } from "../../shared/setup-attention";
 import { keptWords } from "./admin-copy";
 import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -573,7 +573,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-checks-more").querySelector("summary")!.textContent = CHECKS_DETAIL;
     // Every row, its state as a symbol and words (never a code, never colour alone), and its technical detail.
     $("w-checks-all").replaceChildren(...rows.flatMap(r => {
-      const state = el("span", { className: "w-state", textContent: checkState(r.status) });
+      const state = el("span", { className: "w-state", textContent: checkState(r.status, holdsBack(r)) });
       state.dataset.tone = r.status;
       const dd = el("dd");
       dd.append(state, el("span", { textContent: r.detail }));
