@@ -309,4 +309,29 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
+
+  it("opens \"Read the last answer\" at that answer, focused and in view, also before the conversation has come (home-v1)", async () => {
+    const seed = exchange(30);
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(() => window.__home.emit("onFocusSection", "conversation:latest"));
+      const newest = () => page.evaluate(() => {
+        const rows = [...document.querySelectorAll("#conversation > li.ember")];
+        const r = rows.at(-1)!.getBoundingClientRect();
+        return { focused: document.activeElement === rows.at(-1), top: r.top, height: innerHeight, text: rows.at(-1)!.querySelector("p")?.textContent };
+      });
+      expect((await newest()).focused).toBe(true);
+      expect((await newest()).text).toContain("Answer 29.");
+      // (It glides there unless Calm is on.)
+      await expect.poll(async () => { const n = await newest(); return n.top >= 0 && n.top < n.height / 2; }).toBe(true);
+    } finally { await page.close(); }
+    // Home opened by the request: the messages come after it, and it waits for them.
+    const late = await home([]);
+    try {
+      await late.page.evaluate(() => window.__home.emit("onFocusSection", "conversation:latest"));
+      await late.page.evaluate(e => window.__home.emit("onConversation", e), seed);
+      await expect.poll(() => late.page.evaluate(() => document.activeElement === [...document.querySelectorAll("#conversation > li.ember")].at(-1))).toBe(true);
+      expect(errors.concat(late.errors)).toEqual([]);
+    } finally { await late.page.close(); }
+  }, 60_000);
 });

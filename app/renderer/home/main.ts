@@ -41,7 +41,7 @@ import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
 import { holdsBack } from "../../shared/setup-attention";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
-import { PendingSection, sectionRequest } from "./section-request";
+import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
@@ -1079,6 +1079,7 @@ function renderConversation(raw: Entry[]): void {
   }
   // Requests Ember heard (not typed) offer “That's not what I said”.
   markHeard(list);
+  if (latestWanted && list.querySelector(":scope > li.ember")) queueMicrotask(() => { if (latestWanted) showSection("conversation:latest"); });
   const earlier = $("conversation-earlier") as HTMLButtonElement;
   const label = earlierLabel(entries.length - shown.length);
   earlier.hidden = !label;
@@ -1492,14 +1493,27 @@ function showSection(value: string): void {
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;
-  const field = control ? document.getElementById(control) : null;
+  // "Read the last answer": that answer, from its top (home-v1); before the messages have come, once they do.
+  const latest = control === LATEST_ANSWER ? latestAnswer() : null;
+  latestWanted = control === LATEST_ANSWER && !latest;
+  const field = latest ?? (control ? document.getElementById(control) : null);
   const to = field && !isHidden(field) ? field : target;
-  const block = to === field ? "center" : "start";
+  const block = to === field && to !== latest ? "center" : "start";
   // A pane just opened starts at its top (its heading, or the control, in view); within the pane, it scrolls there.
-  if (opened && block === "start") window.scrollTo({ top: 0 });
+  if (opened && to === target) window.scrollTo({ top: 0 });
   else to.scrollIntoView({ block, behavior: calm || opened ? "auto" : "smooth" });
   to.focus({ preventScroll: true });
   keptInView = { el: to, block, until: performance.now() + 3000 };
+}
+
+/** "Read the last answer" came before any answer had: it is shown once one comes, unless the user moves on first. */
+let latestWanted = false;
+/** The newest answer's row, focusable for "Read the last answer" (a search left typed in is cleared, so it shows). */
+function latestAnswer(): HTMLElement | null {
+  if (conversationSearch.value.trim()) { conversationSearch.value = ""; renderConversation(conversationAll); }
+  const row = [...document.querySelectorAll<HTMLElement>("#conversation > li.ember")].at(-1) ?? null;
+  if (row) row.tabIndex = -1;
+  return row;
 }
 
 // ───── Panes: one at a time, as System Settings shows one pane per sidebar item (UI audit #1) ─────
@@ -1556,7 +1570,7 @@ new MutationObserver(() => {
   const value = pendingSection.take(s => { const h = document.getElementById(`${s}-h`); return !!h && !hiddenHere(h); });
   if (value) showSection(value);
 }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
-for (const type of ["pointerdown", "keydown", "wheel"]) window.addEventListener(type, () => { pendingSection.drop(); keptInView = null; }, { capture: true, passive: true });
+for (const type of ["pointerdown", "keydown", "wheel"]) window.addEventListener(type, () => { pendingSection.drop(); keptInView = null; latestWanted = false; }, { capture: true, passive: true });
 const jumpLinks = [...document.querySelectorAll<HTMLAnchorElement>("#jump a")];
 const sectionOf = (a: HTMLAnchorElement) => (a.getAttribute("href") ?? "").replace(/^#/, "").replace(/-h$/, "");
 $("jump").addEventListener("click", e => {

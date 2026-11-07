@@ -275,7 +275,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   earlier messages**. Home searches all 60 retained session entries, shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. Edit only fills the composer; a fresh Send is required. Home sends
   no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer and its
-  buttons in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. Stop response cancels
+  buttons in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. **Read the last
+  answer** and a long answer's **Open conversation** open it at the newest answer, focused, from its top (once the
+  messages have come, when Home opens for it). Stop response cancels
   the current answer; Stop everything also stops tasks. Drafts
   remain in memory while switching panes and clear on account reset, independently of ordinary empty-list updates.
 - **Task activity**: one group per task, the one that needs you first, then those at work, then the rest, newest first.

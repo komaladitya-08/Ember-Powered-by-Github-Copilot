@@ -139,7 +139,7 @@ runtime. It does not change the app's consent or speaking settings.
   settings for later.
 - Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with
   **Handle position** in settings' **Your Ember**. Click the handle for **Ask Ember…**, **Stop everything**,
-  **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered),
+  **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered: Home opens at that answer),
   **Settings…**, **Stay put / Follow my cursor**, **Hide / Show Ember**, **Move to the other side** (the handle and its
   task cards go to the other bottom corner) and **Quit Ember** (Quit asks first while a task is running).
 - The shortcuts here are Linux's: Windows uses Win+Alt+… and macOS Control+Shift+Command+… with the same letters.

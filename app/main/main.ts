@@ -907,7 +907,7 @@ function start(): void {
     try { settings.update({ handlePosition: otherSide(settings.get().handlePosition) }); } catch (err) { log.warn("handle.move_not_saved", { err }); }
   };
   let presenceChanged = () => { /* set once the IPC is ready */ };
-  /** The whole answer in settings; the bubble goes, so Ember doesn't sit over it holding the old one. */
+  /** The whole answer in Home's conversation; the bubble goes, so Ember doesn't sit over it holding the old one. */
   const readLastAnswer = () => {
     // The answer being read in full goes from the bubble (with or without a "Read all" button), and the hold its
     // "Read all" pinned with it ("Open in settings" on the expanded answer: as Close).
@@ -916,7 +916,8 @@ function start(): void {
       agent?.releasePin(lastState.bubble);
     }
     showHome();
-    sendToHome(IPC.focusSection, "conversation");
+    // At that answer, from its top: not at the conversation's oldest message (home-v1).
+    sendToHome(IPC.focusSection, "conversation:latest");
   };
   /** "Read all": the whole answer in the bubble, where the user was reading it (settings keeps it too). */
   const expandAnswer = () => {

@@ -1,14 +1,22 @@
 /**
  * Which section of the settings window main asked for, and the control in it to focus: "computers" (its heading), or
- * "computers:host" / "computers:wsl" (the field to add a computer, the WSL switch), "access:ask" / "access:stop" (Ask
+ * "computers:host" / "computers:wsl" (the field to add a computer, the WSL switch), "conversation:latest" (the newest
+ * answer), "access:ask" / "access:stop" (Ask
  * Ember… and Stop everything, the keyboard's way to them while another app holds their shortcut). A section can still
  * be hidden when the request comes (Computers shows only once the computers list and the status have both arrived,
  * after the page has loaded): the request then waits until it shows, unless the user has moved on first. Pure and
  * renderer-safe.
  */
 
+/**
+ * Not an element's id: the newest answer's row in the conversation ("Read the last answer", the bubble's "Open
+ * conversation": main asks for "conversation:latest", home-v1), which Home finds when the request comes.
+ */
+export const LATEST_ANSWER = "latest-answer";
+
 /** The controls a request may focus, by the name main uses (main's openSettings). */
 const CONTROLS: Readonly<Record<string, string>> = {
+  "conversation:latest": LATEST_ANSWER,
   "computers:host": "host-add", "computers:wsl": "wsl-on", "access:ask": "p-ask", "access:stop": "p-stop",
   // "Work without asking" by voice (autonomy-intent.ts): its switch, or its card's agree button (the card shown first).
   "privacy:autonomy-on": "autonomy-on", "privacy:autonomy-yes": "autonomy-yes",
