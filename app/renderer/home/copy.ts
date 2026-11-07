@@ -362,9 +362,11 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
  * where the card is shown: Home's switch, or first run's Back, which has no switch (`where`, first-run-10); what is
  * sent, kept and where the key goes are the same words in both.
  */
-export function providerConsentText(host: string, where: "home" | "first-run" = "home"): string {
-  const back = where === "first-run" ? "Back takes you to GitHub Copilot instead." : "Turn this off to go back to Copilot.";
-  return `Ember will send what it would send to GitHub Copilot to ${host} instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to ${host}. ${back}`;
+export function providerConsentText(host: string, where: "home" | "first-run" | "in-use" = "home"): string {
+  // "in-use": first run's step for a provider already in use, whose Back leaves it on; its own button switches it off
+  // (first-run-c1-2), so no last sentence about going back.
+  const back = where === "first-run" ? " Back takes you to GitHub Copilot instead." : where === "in-use" ? "" : " Turn this off to go back to Copilot.";
+  return `Ember will send what it would send to GitHub Copilot to ${host} instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to ${host}.${back}`;
 }
 
 /** Where Ember's model requests go right now (see `modelDestination`). `host` only: never a path, key or credentials. */

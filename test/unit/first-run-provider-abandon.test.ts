@@ -71,6 +71,8 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const fields = { type: "openai", baseUrl: "https://a.example/v1", conductor: "model-a", worker: "", key: "sk-test-only" };
   const ctx: Record<string, unknown> = {
     active: true, step: "provider", checkEpoch: 0, checkRun: 0, providerCheck: { phase: "checking", line: "Checking" }, navigation: 0, heardBefore: -1,
+    // The visit set the provider up (it wasn't in use as the step opened): Back to Copilot puts it away (first-run-c1-2).
+    visitInUse: false, edited: false, ownInForce: () => false,
     get settings() { return settings.get(); },
     latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, PROVIDER_STEP, gated, stepPosition,
     root: { dataset: {} }, consented: () => true, render() {}, $: (id: string) => (nodes[id] ??= { hidden: true, textContent: "", focus() {} }), provField: () => ({ focus() {} }), next: { focus() {} },

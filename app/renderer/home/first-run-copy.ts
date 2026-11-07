@@ -127,6 +127,22 @@ export const PROVIDER_STEP = {
   back: "Use GitHub Copilot instead",
 } as const;
 
+/**
+ * The own-provider step when the provider was already in use as the step opened (first run resumed, Back from the
+ * checks, or its details opened from a failing connection: first-run-c1-2): its title and lead, never a form that waits
+ * for an agreement already given.
+ */
+export function providerInUse(host: string): { title: string; lead: string } {
+  return { title: "Your own model provider's details", lead: `I'm using the model provider you set up (${host}) instead of GitHub Copilot. You can change its details here.` };
+}
+
+/** That step's status line, from the connection's (`phase`, and main's `detail` when it failed). */
+export function providerInUseLine(o: { host: string; phase: string | null; detail?: string }): { line: string; tone: "" | "ok" | "error" } {
+  if (o.phase === "ready") return { line: `Connected to your own provider (${o.host}).`, tone: "ok" };
+  if (o.phase === "error") return { line: o.detail ?? "", tone: "error" };
+  return { line: `Connecting to your own provider (${o.host})…`, tone: "" };
+}
+
 /** What the provider check found, as a status line (the real answer only; `why` is main's sentence). */
 export function providerCheckLine(r: { ok: true; host: string; models: number | null } | { ok: false; why: string }): string {
   if (!r.ok) return r.why;

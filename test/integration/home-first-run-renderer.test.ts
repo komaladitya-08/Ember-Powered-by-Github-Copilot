@@ -199,10 +199,11 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => next(p).getAttribute("aria-disabled")).toBeNull();
     await next(p).click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
-    // Back returns to the provider's step as it was left, not to a Copilot sign-in that isn't in use (first-run-1).
+    // Back returns to the provider's step, not to a Copilot sign-in that isn't in use (first-run-1), and shows the
+    // provider as in use, never as a form still to agree to (first-run-c1-2).
     await p.locator("#w-back").click();
-    expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
-    expect(await p.locator("#w-p-result").innerText()).toBe("Connected to api.example.com. It lists 2 models.");
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Connected to your own provider (api.example.com).");
     expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
     await next(p).click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
@@ -480,9 +481,74 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await next(p).click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
     await p.locator("#w-back").click();
-    expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
     expect(await p.inputValue("#w-p-url")).toBe("https://api.example.com/v1");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(aa) a provider already in use is shown as in use on its step, and only “Use GitHub Copilot instead” switches it off (first-run-c1-2)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const inForce = { inForce: true, host: "api.example.com", agreed: true, keySaved: true };
+    const p = await open({ provider, providerState: inForce, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+    const off = `save:${JSON.stringify({ provider: { on: false } })}`;
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    // In use: connected, nothing to agree to again, Continue goes on without a check.
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    expect(await p.locator("#w-lead").innerText()).toBe("I'm using the model provider you set up (api.example.com) instead of GitHub Copilot. You can change its details here.");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Connected to your own provider (api.example.com).");
+    expect(await p.locator("#w-p-consent").innerText()).not.toMatch(/Back takes you|Turn this off/);
+    expect(await next(p).innerText()).toBe("Continue");
+    expect(await next(p).getAttribute("aria-disabled")).toBeNull();
+    expect(await p.locator("#w-alt").innerText()).toBe("Use GitHub Copilot instead");
+    // Back goes back and leaves it on.
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await p.waitForTimeout(100);
+    expect(await calls(p)).not.toContain(off);
+    expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
+    // Continue from its step checks nothing and agrees to nothing again.
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    expect((await calls(p)).filter(c => c === "test" || c.startsWith("agree:"))).toEqual([]);
+    // An edit is checked before it counts, and leaves the provider in use until then.
+    await p.locator("#w-back").click();
+    await p.fill("#w-p-conductor", "gpt-4.1-mini");
+    expect(await next(p).innerText()).toBe("Agree and check the models");
+    await p.waitForTimeout(100);
+    expect(await calls(p)).not.toContain(off);
+    // Left unchecked, the edit isn't shown as the details in use on the next visit.
+    await p.locator("#w-back").click();
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    expect(await p.inputValue("#w-p-conductor")).toBe("gpt-4.1");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Connected to your own provider (api.example.com).");
+    // The one way back to Copilot from here says so, and switches it off.
+    await p.locator("#w-alt").click();
+    await expect.poll(() => calls(p)).toContain(off);
+    expect(await p.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
+    // Failing: its details, opened from the sign-in step, show the connection's own words; Back leaves it on.
+    const detail = "Ember can't reach the model server on this computer (localhost:11434). Start it, and Ember will connect in a moment.";
+    const local = { ...provider, baseUrl: "http://localhost:11434/v1", consent: { ...provider.consent, host: "localhost:11434" } };
+    const q = await open({ provider: local, providerState: { ...inForce, host: "localhost:11434", keySaved: false }, agent: { ...SIGNED_OUT, phase: "error", reason: "network", detail, service: { kind: "user", host: "localhost:11434" } } });
+    await expect.poll(() => buttons(q)).toContain("Check my provider's details");
+    await q.getByRole("button", { name: "Check my provider's details" }).click();
+    expect(await q.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    expect(await q.locator("#w-p-result").innerText()).toBe(detail);
+    expect(await q.locator("#w-lead").innerText()).not.toContain("Nothing is sent");
+    await q.locator("#w-back").click();
+    expect(await q.locator("#w-title").innerText()).toBe("Your own model provider");
+    await q.waitForTimeout(100);
+    expect(await calls(q)).not.toContain(off);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+    expect((q as Page & { errors: string[] }).errors).toEqual([]);
   });
 
   it("(z) resumed while the user's own provider connects or fails, the sign-in step names it, with no Copilot or sign-in words (first-run-1, first-run-c1-3)", async () => {

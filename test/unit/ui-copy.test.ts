@@ -860,7 +860,10 @@ describe("the Model provider group's words (Copilot section)", () => {
     const firstRun = providerConsentText("models.example.com", "first-run");
     expect(firstRun.endsWith(" Back takes you to GitHub Copilot instead.")).toBe(true);
     expect(firstRun.replace(" Back takes you to GitHub Copilot instead.", "")).toBe(home.replace(" Turn this off to go back to Copilot.", ""));
-    expect(readFileSync("app/renderer/home/welcome.ts", "utf8")).toContain('providerConsentText(host, "first-run")');
+    // A provider already in use as its first-run step opens: Back leaves it on, so the card says nothing of going back;
+    // its own button switches it off (first-run-c1-2).
+    expect(providerConsentText("models.example.com", "in-use")).toBe(firstRun.replace(" Back takes you to GitHub Copilot instead.", ""));
+    expect(readFileSync("app/renderer/home/welcome.ts", "utf8")).toContain('providerConsentText(host, visitInUse ? "in-use" : "first-run")');
     expect(providerConsentText("models.example.com")).toBe("Ember will send what it would send to GitHub Copilot to models.example.com instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to models.example.com. Turn this off to go back to Copilot.");
   });
 

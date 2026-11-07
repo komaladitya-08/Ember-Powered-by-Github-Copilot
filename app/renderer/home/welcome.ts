@@ -21,7 +21,7 @@ import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerInUse, providerInUseLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
@@ -88,6 +88,14 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   /** Setup fixes under way: their buttons stay disabled however often the rows are drawn again. */
   const fixPending = new Set<string>();
   let providerCheck: { phase: "idle" | "checking" | "ok" | "failed" | "invalid"; line: string } = { phase: "idle", line: "" };
+  /**
+   * The provider step's visit began with the user's own provider already in use (first-run-c1-2): it is shown as in use,
+   * Back leaves it on, and only "Use GitHub Copilot instead" switches it off. `edited`: a field changed in this visit.
+   */
+  let visitInUse = false;
+  let edited = false;
+  /** The step's main button goes on (the provider answered, or is in use as it was): set as the step is drawn. */
+  let providerGoesOn = false;
   /** The edit area of "Models I'll use" is open. */
   let modelsOpen = false;
   /** The buttons drawn under the sign-in line (drawn again only when they change). */
@@ -144,10 +152,17 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   function go(to: WelcomeStep): void {
     // The step comes in from the side it lies on (motion only; focus moves at once, as the motion starts).
     root.dataset.dir = stepPosition(to) < stepPosition(step) ? "back" : "next";
-    // Leaving the provider step: an older check is dropped, and going back to Copilot puts the provider away again.
+    // Leaving the provider step: an older check is dropped, and going back to Copilot puts away a provider this visit
+    // set up; one in use as the step opened stays on (first-run-c1-2).
     if (step === "provider" && to !== "provider") {
       checkEpoch++;
-      if (to === "sign-in") { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
+      if (to === "sign-in" && !visitInUse) { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
+    }
+    if (to === "provider" && step !== "provider") {
+      visitInUse = ownInForce();
+      edited = false;
+      // In use: its fields show the details it uses now, not an edit left unchecked on an earlier visit.
+      if (visitInUse) { providerCheck = { phase: "idle", line: "" }; prefilled.done = false; }
     }
     step = gated(to, consented());
     if (step === "consent" && !consented()) shownAt.agree = performance.now();
@@ -165,10 +180,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const at = stepPosition(step);
     [...arc.children].forEach((seg, i) => seg.classList.toggle("on", i <= at));
     $("w-count").textContent = stepCount(step);
+    const using = step === "provider" && visitInUse ? inUseHost() : null;
     const text = step === "sign-in" ? signInText({
       managed: !!status?.admin.provider, locked: locked(), held: !!status?.admin.held,
       own: ownInUse() ? agent?.service?.host : null, ownPhase: agent?.phase === "ready" || agent?.phase === "error" ? agent.phase : "starting", ownOffered: ownOffer().offered,
-    }) : step === "consent" && changes().length ? CONSENT_AGAIN : STEP_TEXT[step];
+    }) : step === "consent" && changes().length ? CONSENT_AGAIN : using ? providerInUse(using) : STEP_TEXT[step];
     $("w-title").textContent = text.title;
     $("w-lead").textContent = text.lead;
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
@@ -189,7 +205,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "hello") { label = NAV.begin; altText = NAV.character; }
     if (step === "consent") ({ label, why, alt: altText } = renderConsent());
     if (step === "sign-in") ({ label, why, alt: altText } = renderSignIn());
-    if (step === "provider") ({ label, why } = renderProvider());
+    if (step === "provider") { ({ label, why } = renderProvider()); if (visitInUse) altText = PROVIDER_STEP.back; }
     if (step === "checks") label = renderChecks();
     if (step === "try") { renderTry(); altText = NAV.about; }
     if (step === "about") label = aboutNext(about);
@@ -236,6 +252,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   const locked = () => !!status && status.admin.error !== null;
   /** Ember's connection is to the user's own provider (first-run-1): no Copilot sign-in is in use. */
   const ownInUse = () => agent?.service?.kind === "user";
+  /** The user's own provider is what Ember uses, as the connection or main's provider state says (first-run-c1-2). */
+  const ownInForce = () => ownInUse() || !!ownState?.inForce;
+  const inUseHost = () => (ownInUse() ? agent?.service?.host ?? null : ownState?.inForce ? ownState.host : null);
 
   function renderSignIn(): { label: string; why: string; alt: string } {
     const v = signInView({
@@ -486,9 +505,19 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       provField("w-p-key").placeholder = ownState?.keySaved ? "A key is saved. Paste a new one to replace it" : "Paste your key";
     }
     const host = endpointHost(provField("w-p-url").value.trim());
-    const consent = host ? providerConsentText(host, "first-run") : "Once you enter the address, I'll say here exactly what is sent to it.";
+    const consent = host ? providerConsentText(host, visitInUse ? "in-use" : "first-run") : "Once you enter the address, I'll say here exactly what is sent to it.";
     if ($("w-p-consent").textContent !== consent) $("w-p-consent").textContent = consent;
     const result = $("w-p-result");
+    // In use as the step opened, and nothing changed since: the connection's own state, and Continue goes on without
+    // agreeing or checking again (first-run-c1-2).
+    const using = visitInUse && !edited && providerCheck.phase === "idle" ? inUseHost() : null;
+    providerGoesOn = !!using || providerCheck.phase === "ok";
+    if (using) {
+      const v = providerInUseLine({ host: using, phase: ownInUse() ? agent?.phase ?? null : "starting", detail: agent?.detail });
+      if (result.textContent !== v.line) result.textContent = v.line;
+      result.className = `w-status ${v.tone}`;
+      return { label: NAV.next, why: "" };
+    }
     if (result.textContent !== providerCheck.line) result.textContent = providerCheck.line;
     result.className = `w-status ${providerCheck.phase === "failed" || providerCheck.phase === "invalid" ? "error" : providerCheck.phase === "ok" ? "ok" : ""}`;
     // No keyring: a key can't be kept, so only a model server on this computer with no key typed can be used (first-run-v2).
@@ -699,7 +728,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     }
     // Sign in is the step's button only while signing in can help (not with the organisation's own service, nor locked).
     if (step === "sign-in" && signInPrimary !== "continue") { perform(signInPrimary); return; }
-    if (step === "provider" && providerCheck.phase !== "ok") { startCheck(); return; }
+    if (step === "provider" && !providerGoesOn) { startCheck(); return; }
     // Start that couldn't be saved says why in the notice at the top (review #84).
     // What was answered is saved, then on (nothing answered, or memory left off: nothing is kept).
     if (step === "about") {
@@ -734,6 +763,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (signingIn) { void window.ember.cancelSignIn(); return; }
       go("checks");
     }
+    // The provider in use as its step opened: the one way back to Copilot from here, said on the button (first-run-c1-2).
+    if (step === "provider" && visitInUse) { void turnOwnOff(); go("sign-in"); }
   });
   $("w-open-page").addEventListener("click", () => { void window.ember.openSignInPage(); });
   $("w-check-again").addEventListener("click", () => checkAgain());
@@ -807,6 +838,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   for (const id of ["w-p-type", "w-p-url", "w-p-key", "w-p-conductor", "w-p-worker"]) {
     $(id).addEventListener("input", () => {
       checkEpoch++;
+      edited = true;
       if (providerCheck.phase !== "idle") { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
       if (active && step === "provider") render();
     });
