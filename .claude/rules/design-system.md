@@ -176,10 +176,10 @@ Name these patterns when you design something new. Vague direction such as "make
   - Ask uses a 560×92 base plus measured 24px rows: the initial composer and voice controls occupy 3 rows (140px at Default, 156px at Large, 173px at Larger), with extra rows for wrapping suggestions, text and notes. Clamp to the work area and allow local scrolling when capped;
   - the desk bar is 30px;
   - the handle pill is 200×56, and the hidden-Ember tab 56×56;
-  - the no-compositor corner card is 360 wide, 120–360 tall to fit its content;
+  - the no-compositor corner card is 360 wide, 120–360 tall to fit its content, and up to 640 (inside the work area, less 12 above and below) while a question or anything else that needs you shows, so its sentence shows whole at every text size (`cardMax()` in handle.ts);
   - the command window is 760×480, and the prompt window `PROMPT_SIZE` (app/main/remote/prompt-window.ts).
 
-  All but the corner card grow with the text size (`scaledSize` and `forText` in main, kept inside the work area).
+  All but the corner card grow with the text size (`scaledSize` and `forText` in main, kept inside the work area); the card grows with what it holds instead.
 
 ## Controls, focus and accessibility
 
@@ -207,7 +207,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - Every decision the floating layer asks for also works from the keyboard (the `allow` and `deny` shortcuts in app/shared/shortcuts.ts, Ctrl+Alt+Y / Ctrl+Alt+N on Linux, while Ember holds them), with the hint from `questionKeyHint()`.
   - "Always in <app>" stays click-only, because a global key could take an app's own shortcut and grant for good.
   - New task-card buttons, and the bubble's Try again and Stop, ignore presses for `TASK_ARM_MS` (app/renderer/handle/arm.ts), because the pointer may already rest where they appear.
-  - Question buttons are armed only by the Confirmer: never add a renderer arm delay to them. Commit pointer activation only on release inside the same connected, unchanged control; pointer cancellation, outside release and changed question identity cancel. Keep click-through routing held through the gesture, then release it. Keyboard/assistive clicks activate once.
+  - Question buttons are armed only by the Confirmer: never add a renderer arm delay to them. The one renderer hold is what can't be read: a whole text not yet all in view, and on the corner card every answer but Not now while the question's sentence can't show beside it (`cardClear()`, `waitsForRoom()` in app/renderer/handle/fit.ts), looked at again whenever the card is fitted. Commit pointer activation only on release inside the same connected, unchanged control; pointer cancellation, outside release and changed question identity cancel. Keep click-through routing held through the gesture, then release it. Keyboard/assistive clicks activate once.
 - **Screen readers.**
   - Put words for screen readers only in `.sr` (`.eb-live` in the bubble), and announce changes through `role="status"` or `aria-live="polite"`.
   - Give ambiguous buttons a contextual `aria-label` (`Stop: <task title>`), and mark decorative dots `aria-hidden="true"`.

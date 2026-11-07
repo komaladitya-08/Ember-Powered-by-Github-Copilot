@@ -4,7 +4,7 @@ import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters"
 import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
 import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
 import { cardAutonomous, cardRisky, cardTask, cardText } from "./card";
-import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
+import { cardClear, cardNeed, linesKept, waitsForRoom, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
 import { STATE_WORD, cardLines } from "../overlay/stack";
@@ -123,13 +123,19 @@ function showWhole(next: WholeText | null): void {
   // Seen here and main doesn't say so yet (just now, or a word that was lost): told (again).
   if (wholeUnreported(whole, next)) api.bubbleAction(wholeSeenAction(whole.n));
 }
-/** The read hint, and Allow taking no press, while the whole text hasn't all been in view. */
+/**
+ * The read hint, and Allow taking no press, while the whole text hasn't all been in view, or while the question's
+ * sentence doesn't show beside it on the card (a layout read; accessibility-visual-1: Allow stayed live under
+ * "Type “Dear team, the" at Larger text).
+ */
 function paintWhole(): void {
   const unread = !!whole && !whole.seen;
   wholeHintEl.hidden = !unread;
   wholeHintEl.textContent = unread ? WHOLE_READ_HINT : "";
+  const cramped = fallback && document.body.classList.contains("asking") && !wordsClear();
   for (const el of $("actions").querySelectorAll<HTMLElement>("button")) {
-    if (unread && el.dataset.whole === "wait") el.setAttribute("aria-disabled", "true"); else el.removeAttribute("aria-disabled");
+    if ((unread && el.dataset.whole === "wait") || (cramped && el.dataset.room === "wait")) el.setAttribute("aria-disabled", "true");
+    else el.removeAttribute("aria-disabled");
   }
 }
 /** A length in a computed style, in CSS px (0 for none or auto). */
@@ -164,7 +170,8 @@ function judgeWhole(): void {
   api.bubbleAction(wholeSeenAction(view.n));
 }
 wholeEl.addEventListener("scroll", judgeWhole, { passive: true });
-window.addEventListener("resize", judgeWhole);
+// Fitted by main (or squeezed by a short work area): the question's sentence may show whole now, or no longer.
+window.addEventListener("resize", () => { paintWhole(); judgeWhole(); });
 document.fonts.addEventListener("loadingdone", judgeWhole);
 
 /** The picker's target beside Ember's name (§8.1): nothing for this computer. The corner card gives its own (cardBadge). */
@@ -255,6 +262,8 @@ api.onState(s => {
   buttons($("actions"), actions, a => a.label);
   // Allow (never Not now) waits for the question's whole text to have all been in view; main refuses it before, too.
   [...$("actions").querySelectorAll<HTMLElement>("button")].forEach((el, i) => { el.dataset.whole = actions[i] && waitsForWhole(actions[i].id, b.whole) ? "wait" : ""; });
+  // So does every answer but Not now while the question's sentence can't show beside it (fit.ts waitsForRoom).
+  [...$("actions").querySelectorAll<HTMLElement>("button")].forEach((el, i) => { el.dataset.room = actions[i] && waitsForRoom(actions[i].id) ? "wait" : ""; });
   paintWhole();
 
   $("task").hidden = !task;

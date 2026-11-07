@@ -58,3 +58,10 @@ export function linesKept(contentHeight: number, lineHeight: number, most: numbe
   const line = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 20;
   return Math.min(most, Math.ceil(contentHeight / line - 0.05));
 }
+
+/**
+ * A button the corner card holds while the question's sentence can't show beside it (cardClear false: a work area too
+ * short for the card to grow, or the moment before main has fitted it): every answer to a question but Not now
+ * (accessibility-visual-1), so nothing is allowed from a sentence cut off mid-line. Ember's own buttons never wait.
+ */
+export const waitsForRoom = (actionId: string): boolean => /^q[1-9]\d{0,8}:/.test(actionId) && !actionId.endsWith(":deny");

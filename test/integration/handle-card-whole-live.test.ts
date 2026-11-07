@@ -25,7 +25,9 @@ const required = process.env.EMBER_ATSPI_TEST === "1" && process.platform === "l
 /** A box on the card (CSS px from the window's top), its visible and full heights, and its line height. */
 interface Box { top: number; bottom: number; ch: number; sh: number; lh: number; shown: boolean }
 interface Layout { vh: number; thought: Box; whole: Box; hint: Box; step: Box; actions: Box; task: Box }
-interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[] }
+/** An ordinary question (no whole text, accessibility-visual-1): fitted, then squeezed, then fitted again; Allow's hold and what a click on it sent. */
+interface Plain { height: number; layout: Layout; held: string | null; squeezedHeld: string | null; squeezedClick: string[]; freedHeld: string | null; freedClick: string[] }
+interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[]; plain: Plain }
 
 /** Ember's own HandleWindow and page prefs, in Electron: the card for one text size, the question, what the page sent. */
 const CHILD = `
@@ -87,7 +89,38 @@ app.whenReady().then(async () => {
   // A short whole text that fits, on a card fitted to it again: in view at once.
   card.sendState(state(3, "Dear team,\\nsee you at lunch.\\nBye"));
   await sleep(1200);
-  process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits: [...sent] }) + "\\n");
+  const fits = [...sent];
+  // An ordinary question (no whole text) with three answers: the card grows until its sentence shows whole; on a card
+  // too small for it, Allow holds (a real click on it sends nothing) until the card has room again.
+  const plainState = state(4, "");
+  delete plainState.bubble!.whole;
+  plainState.bubble = { ...plainState.bubble!, thought: "Type \\u201cDear team, the meeting moved to Thursday\\u201d into the document in Mousepad?\\nYour task: write the note about the meeting", step: "Ctrl+Alt+Y allow \\u00b7 Ctrl+Alt+N not now",
+    actions: [{ id: "q4:allow", label: "Allow", primary: true }, { id: "q4:always", label: "Always in Mousepad" }, { id: "q4:deny", label: "Not now" }] };
+  card.sendState(plainState);
+  await sleep(1200);
+  const plainHeight = card.win.getContentSize()[1];
+  const plainLayout = await measure();
+  const allowHeld = (): Promise<string | null> => wc.executeJavaScript('document.querySelector("#actions button").getAttribute("aria-disabled")');
+  const clickAllow = async (): Promise<string[]> => {
+    const at = await wc.executeJavaScript('(() => { const r = document.querySelector("#actions button").getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()') as { x: number; y: number };
+    const from = sent.length;
+    wc.sendInputEvent({ type: "mouseDown", x: at.x, y: at.y, button: "left", clickCount: 1 });
+    await sleep(60);
+    wc.sendInputEvent({ type: "mouseUp", x: at.x, y: at.y, button: "left", clickCount: 1 });
+    await sleep(300);
+    return sent.slice(from);
+  };
+  const held = await allowHeld();
+  card.win.setContentSize(360, 200);
+  await sleep(500);
+  const squeezedHeld = await allowHeld();
+  const squeezedClick = await clickAllow();
+  card.win.setContentSize(360, plainHeight);
+  await sleep(500);
+  const freedHeld = await allowHeld();
+  const freedClick = await clickAllow();
+  const plain = { height: plainHeight, layout: plainLayout, held, squeezedHeld, squeezedClick, freedHeld, freedClick };
+  process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits, plain }) + "\\n");
   app.exit(0);
 });
 `;
@@ -130,6 +163,13 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
     }));
   }
 
+  /** One run a text size, shared by the checks on it. */
+  const runs = new Map<string, Promise<Report>>();
+  const report = (size: string): Promise<Report> => {
+    if (!runs.has(size)) runs.set(size, run(size));
+    return runs.get(size)!;
+  };
+
   /** Nothing in the words runs into the buttons, the buttons into the task row, or the task row off the card. */
   function clear(l: Layout): void {
     for (const k of ["thought", "whole", "hint", "step"] as const) if (l[k].shown) expect(l[k].bottom, `${k} ends above the buttons`).toBeLessThanOrEqual(l.actions.top + 0.5);
@@ -139,7 +179,7 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
 
   for (const size of ["default", "large", "larger"]) {
     it(`keeps the question's sentence whole beside the text, clear of the buttons and the task row (${size} text)`, async () => {
-      const r = await run(size);
+      const r = await report(size);
       const { thought, whole, hint, step } = r.layout;
       // The sentence: all of it in view (never squeezed to nothing by the block under it).
       expect(thought.ch, "the sentence's lines in view").toBeGreaterThanOrEqual(Math.min(thought.sh, 2 * thought.lh) - 1);
@@ -155,6 +195,21 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
       expect(r.squeezedSent).not.toContain("ui:seen:2");
       // A short text that fits, once the card is fitted to it: in view at once.
       expect(r.fits).toContain("ui:seen:3");
+    }, 90_000);
+
+    it(`grows for an ordinary question until its sentence shows whole, and holds Allow on a card too small for it (accessibility-visual-1, ${size} text)`, async () => {
+      const { plain } = await report(size);
+      const { thought } = plain.layout;
+      // Held to 360 px before, the sentence showed 30 of its 156 px at Larger: now all of it, clear of the buttons.
+      expect(thought.ch, "the sentence in view whole").toBeGreaterThanOrEqual(thought.sh - 1);
+      clear(plain.layout);
+      expect(plain.held).toBeNull();
+      // Squeezed (a work area too short for the card): Allow takes no press, and a real click on it says nothing.
+      expect(plain.squeezedHeld).toBe("true");
+      expect(plain.squeezedClick).toEqual([]);
+      // Room again: Allow works.
+      expect(plain.freedHeld).toBeNull();
+      expect(plain.freedClick).toEqual(["q4:allow"]);
     }, 90_000);
   }
 });

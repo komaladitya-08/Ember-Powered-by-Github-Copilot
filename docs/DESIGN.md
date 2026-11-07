@@ -77,7 +77,9 @@ They share one emotion rig, so switching never changes behaviour.
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
   no-compositor corner card marks it the same way: the tag beside Ember's name and the bordered
-  Allow. A step Ember took **without asking** (Work without asking) shows its announcement with a
+  Allow. The card grows for any question (up to 640 px, inside the work area) so its sentence shows
+  whole at Large and Larger text too, and where even that can't hold it, its answers but Not now
+  take no press until the sentence shows. A step Ember took **without asking** (Work without asking) shows its announcement with a
   "Without asking" tag in the accent tint, set only by Ember (`BubbleState.autonomous`): a task's
   own note never carries it. When
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
