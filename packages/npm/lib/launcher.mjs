@@ -296,6 +296,66 @@ export function launchCommand(platform, installed, args) {
   return { file: installed.exe, args };
 }
 
+/**
+ * How the launcher runs Ember for `args`: the setup check (`doctor` or `--doctor`, passed on as `--doctor`, which the
+ * AppImage's AppRun and Ember.exe both take) attached, so its report and exit code reach the terminal; anything else
+ * detached, since Ember keeps running.
+ * @param {string[]} args
+ * @returns {{ attached: boolean; args: string[] }}
+ */
+export function runMode(args) {
+  const doctor = args[0] === "doctor" || args.includes("--doctor");
+  if (!doctor) return { attached: false, args };
+  return { attached: true, args: ["--doctor", ...args.filter((a, i) => a !== "--doctor" && !(i === 0 && a === "doctor"))] };
+}
+
+/** How long a detached Ember is watched for: one that stops within this has failed to start (no display, a crash). */
+const EARLY_MS = 3000;
+
+/**
+ * Starts `cmd`. Attached, it waits and passes on its output and exit code. Detached, its stderr goes to `log` and it
+ * is watched for `earlyMs`: if it stops in that time with an error, what it said is printed and its exit code
+ * returned; otherwise it is left running and 0 returned. (A pipe would break once the launcher exits, and Ember's
+ * writes to a closed pipe would fail.)
+ * @param {{ file: string; args: string[] }} cmd
+ * @param {{ attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
+ * @returns {Promise<number>}
+ */
+export async function start(cmd, o) {
+  const stdout = o.stdout ?? process.stdout;
+  const stderr = o.stderr ?? process.stderr;
+  if (o.attached) {
+    return await new Promise((resolve, reject) => {
+      const child = spawn(cmd.file, cmd.args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: false });
+      child.stdout.pipe(stdout, { end: false });
+      child.stderr.pipe(stderr, { end: false });
+      child.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
+      child.once("close", (code, signal) => resolve(code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 1)));
+    });
+  }
+  const fd = fs.openSync(o.log, "w", 0o600);
+  let child;
+  try {
+    child = await new Promise((resolve, reject) => {
+      const c = spawn(cmd.file, cmd.args, { detached: true, stdio: ["ignore", "ignore", fd], windowsHide: false });
+      c.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
+      c.once("spawn", () => resolve(c));
+    });
+    fs.writeSync(fd, `pid ${child.pid}\n`);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const ended = await new Promise(resolve => {
+    const timer = setTimeout(() => resolve(null), o.earlyMs ?? EARLY_MS);
+    child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
+  });
+  child.unref();
+  if (!ended || ended.code === 0) return 0;
+  const said = fs.readFileSync(o.log, "utf8").replace(/^pid \d+\n/m, "").trim();
+  stderr.write(`ember-copilot: Ember stopped as it started (${ended.code === null ? `signal ${ended.signal}` : `exit ${ended.code}`})${said ? `:\n${said.slice(-4000)}` : "."}\n`);
+  return ended.code ?? 1;
+}
+
 const HELP = `ember-copilot: starts Ember (https://github.com/${REPO}), downloading it on first run.
 
 usage: ember [Ember's own arguments]
@@ -326,12 +386,28 @@ export async function main(argv) {
   }
   const installed = await ensureInstalled({ version, force: flags.has("--npm-reinstall") });
   if (flags.has("--npm-install-only")) { process.stdout.write(`${installed.exe}\n`); return 0; }
-  const cmd = launchCommand(process.platform, installed, args);
-  await new Promise((resolve, reject) => {
-    const child = spawn(cmd.file, cmd.args, { detached: true, stdio: "ignore", windowsHide: false });
-    child.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
-    child.once("spawn", () => { child.unref(); resolve(undefined); });
-  });
-  say(`started Ember ${version}`);
-  return 0;
+  const mode = runMode(args);
+  const p = process.platform === "win32" ? pathWin32 : pathPosix;
+  const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
+  if (mode.attached && process.platform === "darwin") return await doctorMac(installed, mode.args, log);
+  const code = await start(launchCommand(process.platform, installed, mode.args), { attached: mode.attached, log });
+  if (!mode.attached && code === 0) say(`started Ember ${version}`);
+  return code;
+}
+
+/**
+ * The setup check on a Mac: through open(1), so macOS judges Ember's own permissions (run directly, it would report
+ * the terminal's), with its report sent to a file and printed once it finishes (README.md, Install on macOS).
+ * @param {{ exe: string; app: string }} installed
+ * @param {string[]} args
+ * @param {string} log
+ */
+async function doctorMac(installed, args, log) {
+  const report = `${log}.doctor`;
+  fs.writeFileSync(report, "", { mode: 0o600 });
+  fs.writeFileSync(log, "", { mode: 0o600 });
+  const code = await start({ file: "open", args: ["-n", "-W", "--stdout", report, "--stderr", log, installed.app, "--args", ...args] }, { attached: true, log });
+  process.stdout.write(fs.readFileSync(report, "utf8"));
+  process.stderr.write(fs.readFileSync(log, "utf8"));
+  return code;
 }

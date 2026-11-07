@@ -37,7 +37,7 @@ node "$root/scripts/package/icon.mjs" "$root/assets/ember.svg" "$app/ember.png" 
 ln -s ember.png "$app/.DirIcon"
 cat > "$app/AppRun" <<'RUN'
 #!/bin/sh
-# Ember as an AppImage. "Ember.AppImage doctor" checks this computer.
+# Ember as an AppImage. "Ember.AppImage doctor" (or --doctor) checks this computer.
 here=$(dirname "$(readlink -f "$0")")
 platform=--ozone-platform=x11
 sandbox=
@@ -47,7 +47,7 @@ sandbox=
 # RPM installs the helper instead. The same two files as the doctor's probe.
 if [ "$(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo 0)" = "0" ]; then sandbox=--no-sandbox; fi
 if [ "$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null)" = "0" ]; then sandbox=--no-sandbox; fi
-if [ "$1" = "doctor" ]; then
+if [ "$1" = "doctor" ] || [ "$1" = "--doctor" ]; then
   shift
   [ -z "$DISPLAY" ] && platform=--ozone-platform=headless
   # Chromium won't start as root with its sandbox; the check-up shows no web content (and draws

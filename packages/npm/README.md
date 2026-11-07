@@ -30,7 +30,11 @@ Or run it without installing:
 npx ember-copilot
 ```
 
-Needs Node.js 18.17 or later. Any arguments are passed on to Ember (for example `ember --doctor`).
+Needs Node.js 18.17 or later. Any arguments are passed on to Ember. `ember doctor` (or `ember --doctor`) runs Ember's
+setup check in the terminal: it prints the report and exits with the check's code (on a Mac through `open`, so macOS
+judges Ember's own permissions). A plain `ember` starts Ember and returns after a few seconds; if Ember stops in that
+time (no display, for example), the launcher prints what it said and exits with its code instead of saying it started.
+What Ember prints after that goes to `.<v>-start.log` beside the version folder.
 
 ## What gets downloaded
 

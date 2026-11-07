@@ -270,6 +270,11 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
     const noUserNs = (() => { try { return fs.readFileSync("/proc/sys/user/max_user_namespaces", "utf8").trim() === "0"; } catch { return true; } })();
     expect(run(appRun, ["doctor"], 1000).includes("--no-sandbox")).toBe(noUserNs);
   });
+  it("take --doctor as the check-up too, without a display, as the npm launcher passes it on (install-docs-3)", () => {
+    expect(run(launcher, ["--doctor"], 1000)).toBe("--doctor --ozone-platform=headless --disable-gpu");
+    expect(run(appRun, ["--doctor"], 0)).toBe("--doctor --ozone-platform=headless --disable-gpu --no-sandbox");
+    expect(run(appRun, ["--doctor"], 0, ":0")).toBe("--doctor --ozone-platform=x11 --disable-gpu --no-sandbox");
+  });
   it("start the AppImage without Chromium's sandbox where either switch the doctor reads turns user namespaces off (review #202)", () => {
     // A stand-in /proc/sys: the AppRun reads the same two files as the Linux doctor probe (doctor-probes.ts).
     const withProc = (files: Record<string, string>) => {

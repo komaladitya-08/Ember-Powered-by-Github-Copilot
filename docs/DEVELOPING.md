@@ -2136,5 +2136,9 @@ Answer speech belongs to the request that actually starts, including queued type
 The npm launcher serialises installs of a version with a cache-adjacent directory lock, keeps the previous install
 as a backup until publication succeeds, and restores it after a failed publication rename. If rollback fails too,
 both the backup and checked stage are retained and their paths reported. See `packages/npm/README.md` for manual
-recovery after an interrupted installer; locks are never automatically stolen. Tests in
+recovery after an interrupted installer; locks are never automatically stolen. `ember doctor` and `ember --doctor`
+run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
+--stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
+Ember that stops at once is reported with what it said and its exit code. The AppImage's AppRun and the RPM's `ember`
+take `--doctor` as well as `doctor`. Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.

@@ -9,7 +9,8 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assetFor, cacheDir, downloadUrl, ensureInstalled, launchCommand, notReleased, packageVersion, parseSha256Sums, REPO } from "../../packages/npm/lib/launcher.mjs";
+import { Writable } from "node:stream";
+import { assetFor, cacheDir, downloadUrl, ensureInstalled, launchCommand, notReleased, packageVersion, parseSha256Sums, REPO, runMode, start } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
@@ -107,6 +108,62 @@ describe("a version whose release isn't published", () => {
     }
     expect(notReleased("9.9.9", {})).toBe(`Ember 9.9.9 isn't on GitHub Releases yet, so there is nothing to start. Install a published version from https://github.com/${REPO}/releases instead.`);
     expect(notReleased("9.9.9", { EMBER_NPM_DOWNLOAD_BASE: "http://mirror.example/r" })).toContain("isn't on the mirror at http://mirror.example/r yet");
+  });
+});
+
+/** A stand-in Ember: a Node script run with this Node, so the cases run on every OS. */
+function fakeEmber(body: string) {
+  const file = path.join(tempDir(), "ember.cjs");
+  fs.writeFileSync(file, body);
+  return { file: process.execPath, args: [file] };
+}
+/** A stream that keeps what is written to it. */
+function sink() {
+  let text = "";
+  const stream = new Writable({ write(chunk, _enc, done) { text += String(chunk); done(); } });
+  return { stream, text: () => text };
+}
+
+describe("starting Ember from the launcher", () => {
+  it("runs the setup check attached, so its report and exit code reach the person (install-docs-3)", async () => {
+    // `ember --doctor` and `ember doctor` both mean the check-up, passed on as --doctor (AppRun and Ember.exe take it).
+    expect(runMode(["--doctor"])).toEqual({ attached: true, args: ["--doctor"] });
+    expect(runMode(["doctor"])).toEqual({ attached: true, args: ["--doctor"] });
+    expect(runMode(["doctor", "--verbose"])).toEqual({ attached: true, args: ["--doctor", "--verbose"] });
+    expect(runMode([])).toEqual({ attached: false, args: [] });
+    expect(runMode(["--ask"])).toEqual({ attached: false, args: ["--ask"] });
+    const out = sink(), err = sink();
+    const cmd = fakeEmber('process.stdout.write("Ember 9.9.9 setup check\\n  Display  fails\\n"); process.stderr.write("a warning\\n"); process.exit(3);');
+    const code = await start(cmd, { attached: true, stdout: out.stream, stderr: err.stream, log: path.join(tempDir(), "start.log") });
+    expect(code).toBe(3);
+    expect(out.text()).toBe("Ember 9.9.9 setup check\n  Display  fails\n");
+    expect(err.text()).toBe("a warning\n");
+  });
+
+  it("says why when Ember stops as it starts, with its exit code, instead of saying it started (install-docs-3)", async () => {
+    const out = sink(), err = sink();
+    const cmd = fakeEmber('process.stderr.write("Ember needs your desktop session (no display here).\\n"); process.exit(1);');
+    const code = await start(cmd, { attached: false, stdout: out.stream, stderr: err.stream, log: path.join(tempDir(), "start.log"), earlyMs: 10_000 });
+    expect(code).toBe(1);
+    expect(err.text()).toContain("Ember needs your desktop session (no display here).");
+    expect(err.text()).not.toContain("started Ember");
+  });
+
+  it("leaves a running Ember to itself after a moment and returns 0 (install-docs-3)", async () => {
+    const out = sink(), err = sink();
+    const log = path.join(tempDir(), "start.log");
+    const cmd = fakeEmber('process.stderr.write("still starting\\n"); setTimeout(() => {}, 30_000);');
+    const at = Date.now();
+    const code = await start(cmd, { attached: false, stdout: out.stream, stderr: err.stream, log, earlyMs: 1500 });
+    expect(code).toBe(0);
+    expect(Date.now() - at).toBeGreaterThanOrEqual(1400);
+    // What it said went to the start log, not the terminal; the pid there is the running stand-in, stopped here.
+    expect(err.text()).toBe("");
+    const pid = Number(/^pid (\d+)$/m.exec(fs.readFileSync(log, "utf8"))?.[1]);
+    expect(pid).toBeGreaterThan(0);
+    expect(() => process.kill(pid, 0)).not.toThrow();
+    process.kill(pid);
+    expect(fs.readFileSync(log, "utf8")).toContain("still starting");
   });
 });
 
