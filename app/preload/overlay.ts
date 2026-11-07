@@ -13,6 +13,7 @@ const api: OverlayApi = {
   taskReading: (id, reading) => ipcRenderer.send(OVERLAY.taskReading, { id, reading }),
   pointerHeld: held => ipcRenderer.send(OVERLAY.pointerHeld, held),
   setCards: rect => ipcRenderer.send(OVERLAY.cards, rect),
+  setBubble: rect => ipcRenderer.send(OVERLAY.bubble, rect),
   setReducedMotion: on => ipcRenderer.send(OVERLAY.motion, on),
   onLevel: fn => on(OVERLAY.level, fn),
   onView: fn => on(OVERLAY.view, fn),

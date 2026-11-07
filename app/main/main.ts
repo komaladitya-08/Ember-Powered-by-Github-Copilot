@@ -1095,6 +1095,8 @@ function start(): void {
   const askWindow = new AskWindow({
     os: platform.os,
     keepOff: () => handle?.bounds ?? null,
+    // The answer or question Ember shows: the box opens beside it, not on it (companion-1).
+    bubble: () => overlay?.bubbleRect() ?? null,
     windowId: w => ownId(w),
     floating: platform.overlay.floating("ask"),
     // A click into another app once the box has had the keyboard closes it there, also in the handover (review #84).
@@ -2449,6 +2451,10 @@ function start(): void {
   ipcMain.on(OVERLAY.cards, (event, rect: unknown) => {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
     overlay.setCards(event.sender, rect);
+  });
+  ipcMain.on(OVERLAY.bubble, (event, rect: unknown) => {
+    if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
+    overlay.setBubble(event.sender, rect);
   });
   ipcMain.on(OVERLAY.motion, (event, on: unknown) => {
     if (overlay?.owns(event.sender) && typeof on === "boolean") overlay.reducedMotionChanged(on);

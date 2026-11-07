@@ -142,6 +142,51 @@ export function grownBounds(b: Box, rows: number, wa: Box, up: boolean, keepOff?
   return clearOf({ ...b, height, y: Math.round(Math.max(top, Math.min(y, bottom))) }, wa, keepOff);
 }
 
+/**
+ * `b` moved off Ember's bubble (`bubble`: the answer or question on screen, global DIP) when over it (companion-1: the
+ * box opened on the answer near the top of the screen, and on a question's Allow near the bottom). Given `near` (Ember),
+ * the other side of Ember first, keeping its centre; then beside the bubble at the height it has, the nearer side first;
+ * then beside it on the other side of Ember. Each inside the work area and clear of `keepOff` (the handle), or `b` as it
+ * was when nothing is. The bubble itself never moves (nothing near a pending question does).
+ */
+export function clearOfBubble(b: Box, wa: Box, bubble?: Box | null, keepOff?: Box | null, near?: { x: number; y: number; size?: number } | null): Box {
+  if (!bubble || !overlap(b, bubble)) return b;
+  const gapY = gapIn(wa.height, b.height), gapX = gapIn(wa.width, b.width);
+  const top = wa.y + gapY, bottom = wa.y + wa.height - b.height - gapY;
+  const left = wa.x + gapX, right = wa.x + wa.width - b.width - gapX;
+  const heights = [b.y];
+  if (near) {
+    const size = near.size ?? EMBER_SIZE;
+    // Above Ember the box's foot keeps clear of its head (askBounds); below, its top clears Ember's hands.
+    const other = b.y + b.height <= near.y ? Math.round(near.y + size * 0.6) : Math.round(near.y - b.height - Math.max(18, size * 0.5 - 8));
+    if (other >= top && other <= bottom) heights.push(other);
+  }
+  const sides = [Math.round(bubble.x - b.width - GAP), Math.round(bubble.x + bubble.width + GAP)]
+    .sort((p, q) => Math.abs(p - b.x) - Math.abs(q - b.x));
+  const tries = [
+    ...(heights.length > 1 ? [{ x: b.x, y: heights[1] }] : []),
+    ...heights.flatMap(y => sides.map(x => ({ x, y }))),
+  ];
+  for (const at of tries) {
+    if (at.x < left || at.x > right || at.y < top || at.y > bottom) continue;
+    const c = clearOf({ ...b, ...at }, wa, keepOff);
+    if (!overlap(c, bubble) && !(keepOff && overlap(c, keepOff))) return c;
+  }
+  return b;
+}
+
+/**
+ * Where the box opens (global DIP) as tall as `rows` rows, and whether it grows upward (it sits above Ember): askBounds,
+ * grown to its rows as the page will need them, then clear of Ember's bubble (`bubble`) as of the handle (companion-1).
+ */
+export function openingBounds(near: { x: number; y: number; size?: number } | null, wa: Box, keepOff: Box | null | undefined, scale: number, rows: number, bubble?: Box | null): { bounds: Box; up: boolean } {
+  let bounds = askBounds(near, wa, keepOff, scale);
+  const above = (b: Box) => !near || b.y + b.height <= near.y;
+  if (rows > 1) bounds = grownBounds(bounds, rows, wa, above(bounds), keepOff, scale);
+  bounds = clearOfBubble(bounds, wa, bubble, keepOff, near);
+  return { bounds, up: above(bounds) };
+}
+
 /** What the field's right-click menu may do now (Electron's context-menu editFlags). */
 export interface EditFlags {
   canCut: boolean;
@@ -215,7 +260,7 @@ export class AskWindow {
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
     windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
-    settleMs?: number; onHide?: () => void;
+    settleMs?: number; onHide?: () => void; bubble?: () => Box | null;
   } = {}) {}
 
   /** The box is still being handed the keyboard: a blur now is that handover, not the user (OPENING_MS, settleMs). */
@@ -343,11 +388,10 @@ export class AskWindow {
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
     // As large as its words at the text size now (it is hidden while Settings changes it, so each opening is sized here).
     const scale = this.scale();
-    let bounds = askBounds(near, display.workArea, this.keepOff(), scale);
-    this.up = !near || bounds.y + bounds.height <= near.y;
-    // Reserve the first rows before showing; the page measures any further wrapping at the work area's width.
-    const rows = askOpeningRows(this.context);
-    if (rows > 1) bounds = grownBounds(bounds, rows, display.workArea, this.up, this.keepOff(), scale);
+    // Reserve the first rows before showing (the page measures any further wrapping at the work area's width), clear of
+    // the answer or question Ember shows as well as its handle.
+    const { bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble());
+    this.up = up;
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
@@ -387,7 +431,9 @@ export class AskWindow {
   fit(rows: number): void {
     if (!this.win || this.win.isDestroyed()) return;
     const b = this.win.getBounds();
-    const next = grownBounds(b, rows, screen.getDisplayMatching(b).workArea, this.up, this.keepOff(), this.scale());
+    const wa = screen.getDisplayMatching(b).workArea;
+    // Grown over Ember's bubble (more lines, wrapped suggestions): aside, at the height it grew to.
+    const next = clearOfBubble(grownBounds(b, rows, wa, this.up, this.keepOff(), this.scale()), wa, this.bubble(), this.keepOff());
     if (next.height !== b.height || next.y !== b.y || next.x !== b.x) this.win.setBounds(next);
   }
 
@@ -401,6 +447,11 @@ export class AskWindow {
 
   private keepOff(): Box | null {
     try { return this.o.keepOff?.() ?? null; } catch { return null; }
+  }
+
+  /** Ember's bubble on screen now (global DIP), or null: none, or it can't be told (the box goes where it always has). */
+  private bubble(): Box | null {
+    try { return this.o.bubble?.() ?? null; } catch { return null; }
   }
 
   /** What Ember will read, once the quick look at the screen is done. */

@@ -306,3 +306,29 @@ describe("Ember near the seam between two displays", () => {
     expect(bubbleHere(frame, 2, b.bounds)).toBe(false);
   });
 });
+
+describe("where Ember's bubble is, for the Ask box to open beside it (companion-1)", () => {
+  it("is what the display showing it last said, none once it goes, and none while Ember is hidden", async () => {
+    const a = display(1, 0, 0), b = display(2, 1920, 0);
+    const { m } = await manager([a, b], [null, null], null);
+    const [first, second] = [...(m as unknown as { overlays: Map<number, { win: { webContents: Electron.WebContents } }> }).overlays.values()].map(o => o.win.webContents);
+    expect(m.bubbleRect()).toBeNull();
+    const answer = { x: 2585, y: 155, width: 330, height: 123 };
+    m.setBubble(first, null);
+    m.setBubble(second, answer);
+    expect(m.bubbleRect()).toEqual(answer);
+    m.setHidden(true);
+    expect(m.bubbleRect()).toBeNull();
+    m.setHidden(false);
+    expect(m.bubbleRect()).toEqual(answer);
+    m.setBubble(second, null);
+    expect(m.bubbleRect()).toBeNull();
+  });
+
+  it("is told by the overlay page only, as a box or null (main.ts checks the sender and the shape)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toMatch(/ipcMain\.on\(OVERLAY\.bubble, \(event, rect: unknown\) => \{\n\s+if \(!overlay\?\.owns\(event\.sender\) \|\| !\(rect === null \|\| isRect\(rect\)\)\) return;/);
+    expect(main).toContain("bubble: () => overlay?.bubbleRect() ?? null,");
+  });
+});

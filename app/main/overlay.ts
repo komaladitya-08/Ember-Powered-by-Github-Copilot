@@ -38,6 +38,8 @@ interface Overlay {
   shaped: boolean;
   /** The task cards on this display (global DIP). */
   cards: Rect | null;
+  /** Ember's bubble on this display (global DIP), or null: the Ask box opens clear of it (companion-1). */
+  bubble?: Rect | null;
 }
 
 export class OverlayManager {
@@ -233,6 +235,18 @@ export class OverlayManager {
     const d = screen.getDisplayMatching(f);
     this.beside = besideControl(f, this.settings().size, d.workArea, this.keepOff(d));
     return this.beside;
+  }
+
+  /** Called by IPC when a renderer reports where its bubble is (null: none on its display). */
+  setBubble(sender: Electron.WebContents, r: Rect | null): void {
+    for (const o of this.overlays.values()) if (o.win.webContents === sender) o.bubble = r;
+  }
+
+  /** Ember's bubble on screen now (global DIP; only one display shows it), or null: none, or Ember is hidden. */
+  bubbleRect(): Rect | null {
+    if (this.hidden) return null;
+    for (const o of this.overlays.values()) if (o.bubble && !o.win.isDestroyed()) return o.bubble;
+    return null;
   }
 
   /** Called by IPC when a renderer reports where its task cards are. */

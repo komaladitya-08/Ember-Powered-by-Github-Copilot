@@ -887,6 +887,26 @@ function draw(now: number): void {
   bubble.setVisible(showBubble);
   if (showBubble !== bubbleShown) { bubbleShown = showBubble; interactiveDirty = true; }
   reportInteractive();
+  reportBubble(showBubble ? bubble.rect() : null);
+}
+
+/** What main last heard of the bubble's box, the box to tell it next, and the timer that will. */
+let bubbleSent = "null";
+let bubbleNext: Rect | null = null;
+let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Tells main where the bubble is (global DIP), so the Ask box opens clear of it (companion-1): at once when it shows or
+ * goes, at most every 100 ms while it moves with Ember (a frame's move would be an IPC message a frame).
+ */
+function reportBubble(r: Rect | null): void {
+  bubbleNext = r ? { x: Math.round(r.x + bounds.x), y: Math.round(r.y + bounds.y), width: Math.round(r.width), height: Math.round(r.height) } : null;
+  const send = () => {
+    const key = JSON.stringify(bubbleNext);
+    if (key !== bubbleSent) { bubbleSent = key; api.setBubble?.(bubbleNext); }
+  };
+  if (JSON.stringify(bubbleNext) === bubbleSent) return;
+  if (!bubbleNext || bubbleSent === "null") { send(); return; }
+  bubbleTimer ??= setTimeout(() => { bubbleTimer = null; send(); }, 100);
 }
 requestDraw();
 

@@ -23,6 +23,8 @@ export const OVERLAY = {
   handleFit: "handle:fit",
   /** Where the task cards are (global DIP), so Ember keeps off their buttons. */
   cards: "overlay:cards",
+  /** Where Ember's bubble is (global DIP; null: none on that display), so the Ask box opens clear of it. */
+  bubble: "overlay:bubble",
   /** The desktop's reduce-motion preference changed (the overlay's page follows it live), for Ember's follow spring. */
   motion: "overlay:motion",
   /** The sound's level (app/shared/level.ts SoundLevel) for Ember's presence ring and voice meter, apart from the state. */
@@ -211,6 +213,8 @@ export interface OverlayApi {
   pointerHeld(held: boolean): void;
   /** The task cards' area in global DIP (null: no cards on this display). */
   setCards(rect: Rect | null): void;
+  /** The bubble's box in global DIP (null: not shown on this display). */
+  setBubble?(rect: Rect | null): void;
   /** The desktop's reduce-motion preference changed while Ember runs (true: less motion). */
   setReducedMotion?(on: boolean): void;
   /** The sound's level for the presence ring (the microphone's while Ember hears) and the voice meter (its own voice). */

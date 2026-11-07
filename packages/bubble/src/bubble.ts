@@ -1167,6 +1167,13 @@ export class ReasoningBubble {
     return true;
   }
 
+  /** Where the bubble is and its size, in host coordinates, or null while it isn't shown. */
+  rect(): Rect | null {
+    const pos = this.pos;
+    if (!this.visible || this.crowded || !pos || !this.box.width || !this.box.height) return null;
+    return { x: pos.x, y: pos.y, width: this.box.width, height: this.box.height };
+  }
+
   /** The parts that take the pointer (buttons; a long question's scroll area), in host coordinates. */
   interactiveRects(pad = 4): Rect[] {
     const pos = this.pos;
