@@ -266,6 +266,25 @@ describe("Windows contrast themes (forced colours)", () => {
     expect(forced(BUBBLE_CSS, ".ember-bubble[data-mood]")).toContain("--eb-mood: CanvasText;");
   });
 
+  it("paints every symbol drawn in a label colour in a system colour too, so none vanishes on the window's colour (accessibility-visual-5)", () => {
+    const sheets: [string, string][] = [...PAGES.map((p): [string, string] => [p, css(p)]), ["view", viewCss], ["shared", shared]];
+    const missing: string[] = [];
+    for (const [name, sheet] of sheets) {
+      const mapped = new Set(forcedRules(sheet).flatMap(([s]) => s));
+      for (const m of sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        const d = m[2];
+        if (!/fill: var\(--label/.test(d) && !(/-webkit-mask/.test(d) && /background: var\(--label/.test(d))) continue;
+        for (const sel of selectors(m[1].trim())) if (!mapped.has(sel)) missing.push(`${name}: ${sel}`);
+      }
+    }
+    expect(missing).toEqual([]);
+    expect(forced(css("ask"), ".eye")).toContain("fill: CanvasText");
+    expect(forced(viewCss, "details.vw-section > summary::before")).toMatch(/forced-color-adjust: none;.*background: CanvasText;/);
+    // A sidebar tile is a literal colour, which a contrast theme resets with the others; a token there is a system
+    // colour, which it keeps: one solid square among bare symbols.
+    for (const m of css("home").matchAll(/\.jump a\[href="#([a-z]+-h)"\] \{ --tile: ([^;]+);/g)) expect(m[2], m[1]).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
   it("marks what is chosen by more than colour: the character, the selected tab and the section you are in (review #44, #151, #267)", () => {
     expect(forced(css("home"), '.card[aria-checked="true"]')).toMatch(/border: 3px solid Highlight/);
     expect(forced(css("command"), '.tab[aria-selected="true"]')).toMatch(/background: Highlight;/);

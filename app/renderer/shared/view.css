@@ -252,6 +252,8 @@ html[data-text-size] .vw-mark { width: calc(12px * var(--text-scale)); height: c
   .vw [data-tone] { --vw-tone: CanvasText; --vw-ink: CanvasText; }
   .vw-sym, .vw-mark, .vw-swatch, .vw-plot, .vw-dial, .vw-bar, .vw-spark { forced-color-adjust: none; }
   .vw-sym { background: CanvasText; }
+  /* A section's chevron is a masked label tint: in the text colour, or open and closed look the same. */
+  details.vw-section > summary::before { forced-color-adjust: none; background: CanvasText; }
   .vw-card, .vw-metric, .vw-callout, .vw-badge { border: 1px solid CanvasText; }
   .vw-quote blockquote { border-left: 2px solid CanvasText; box-shadow: none; }
   .vw-timeline li[data-tone] .vw-what { border-left: 2px solid CanvasText; box-shadow: none; }

@@ -1057,7 +1057,7 @@ html.calm .w-card > * { transition-delay: 0s; }
 #project-diff { font-family: var(--ember-mono); font-size: inherit; line-height: 1.6; }
 #project-patch[open] > * + * { margin-top: 12px; }
 #project-patch > summary { min-height: 28px; padding-block: 4px; }
-.jump a[href="#project-h"] { --tile: var(--blue); --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E"); }
+.jump a[href="#project-h"] { --tile: #0a84ff; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E"); }
 @media (forced-colors: active) {
   #project-files li + li { border-color: CanvasText; }
   #project-patch > summary { outline: 1px solid ButtonText; outline-offset: -1px; }

@@ -156,4 +156,6 @@ html[data-text-size] .suggest button, html[data-text-size] .listen-once button {
   .send:disabled { color: GrayText; opacity: 1; }
   .send:focus-visible, .suggest button:focus-visible, .listen-once button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
   .where { color: CanvasText; }
+  /* The eye before what Ember will see is a label tint the system keeps, invisible on its window colour. */
+  .eye { fill: CanvasText; }
 }
