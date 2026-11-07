@@ -37,6 +37,17 @@ import type { TaskControlAction, TaskEntry } from "./activity";
 /** Main pushes Home's Task activity at most this often (a task's steps can come many a second). */
 export const TASKS_PUSH_MS = 500;
 
+/**
+ * What Ember did reads the newest audit entries this many at a time, more only when Show earlier needs them, and never
+ * more than ACTIVITY_MAX_ENTRIES at once (safety-privacy-5: the rest of the 500 it was sent were thrown away).
+ */
+export const ACTIVITY_ENTRIES = 500;
+export const ACTIVITY_MAX_ENTRIES = 10_000;
+/** How many of the newest entries Home asked for (an untrusted IPC argument): whole pages up to the most, else one. */
+export function recentLimit(raw: unknown): number {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= ACTIVITY_ENTRIES && raw <= ACTIVITY_MAX_ENTRIES && raw % ACTIVITY_ENTRIES === 0 ? raw : ACTIVITY_ENTRIES;
+}
+
 export const IPC = {
   getStatus: "ember:get-status",
   updateSettings: "ember:update-settings",
@@ -425,8 +436,8 @@ export interface EmberHomeApi {
   forgetAllRoutines(): Promise<void>;
   /** `phase` "unpacking": the last download is in, and is being checked and unpacked. */
   onVoiceProgress(fn: (p: { done: number; total: number; phase?: "unpacking" }) => void): () => void;
-  /** The newest audit entries, newest first. */
-  activity(): Promise<ActivityEntry[]>;
+  /** The newest audit entries, newest first: `limit` of them (a multiple of ACTIVITY_ENTRIES), else ACTIVITY_ENTRIES. */
+  activity(limit?: number): Promise<ActivityEntry[]>;
   /** Look for a sign-in again (e.g. after gh auth login) and reconnect; says whether one was found and where. */
   retrySignIn(): Promise<{ found: boolean; source: string | null; hint?: string }>;
   /** Ember beside the cursor or hidden, following or staying put (`overlay` false: no compositor, Ember lives in the corner card). */

@@ -27,14 +27,16 @@ import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, memoryDeleteFailedText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
-  conversationContextLine, rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed, withCommandShells,
+  dayLabel, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, memoryDeleteFailedText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
+  conversationContextLine, rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed,
   type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
 import { modelDestination, recipientWords } from "./copy";
+import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText } from "./copy";
+import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
 import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
@@ -593,39 +595,93 @@ function renderAdmin(a: Status["admin"]): void {
 // ───── What Ember did ─────
 const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 let shownActivity = "";
+/** The newest entries read, how many to read (more once Show earlier needs them), and how many lines show. */
+let activityRead: ActivityEntry[] = [];
+let activityWanted = ACTIVITY_ENTRIES;
+let linesShown = ACTIVITY_LINES;
+/** A read that failed (home-10): what was shown stays, with a line that says so. */
+let activityFailed = false;
 async function refreshActivity(): Promise<void> {
-  const entries = await window.ember.activity().catch(() => [] as ActivityEntry[]);
+  let entries: ActivityEntry[];
+  try {
+    entries = await window.ember.activity(activityWanted);
+  } catch {
+    // Never an empty list for a failed read: "Nothing yet" would say Ember did nothing, and Today would reset.
+    if (!activityFailed) { activityFailed = true; drawActivity(); }
+    return;
+  }
+  const recovered = activityFailed;
+  activityFailed = false;
   // Unchanged: leave the list alone (a screen reader keeps its place, the scroll position stays).
   const key = JSON.stringify(entries.slice(0, 1).map(e => e.t)) + entries.length + dayLabel(new Date().toISOString());
-  if (key === shownActivity) return;
+  if (key === shownActivity) { if (recovered) drawActivity(); return; }
   shownActivity = key;
+  activityRead = entries;
   today = todayCounts(entries);
   renderStatus();
+  drawActivity();
+}
+/** The record may hold entries older than those read: the read filled all it asked for. */
+const activityMore = () => activityRead.length >= activityWanted && activityWanted < ACTIVITY_MAX_ENTRIES;
+/**
+ * What Ember did: a page of lines under their days, and Show earlier while there are more, read from the record a page
+ * of ACTIVITY_ENTRIES at a time (safety-privacy-5: it stopped at 79 lines, and counted only those for today). Focus
+ * stays on the line or button it was on when the list is drawn again.
+ */
+function drawActivity(): void {
+  const list = $("activity");
+  const problem = $("activity-problem");
+  const held = document.activeElement instanceof HTMLElement && list.contains(document.activeElement) ? document.activeElement.dataset.key : undefined;
+  const lines = activityLines(activityRead, entryWords(platform));
+  const seen = new Map<string, number>();
   let day = "";
-  let todayRows = 0;
   const items: HTMLLIElement[] = [];
-  const words = entryWords(platform);
-  for (const e of withCommandShells(entries)) {
-    const d = describeEntry(e, words);
-    if (!d) continue;
-    if (items.length >= 80) break;
+  lines.slice(0, linesShown).forEach((l, i) => {
     // A heading for each day ("Today", "Yesterday", then dates): the list covers up to a month.
-    const label = dayLabel(e.t);
-    if (label === "Today") todayRows++;
-    if (label !== day) {
-      day = label;
+    if (l.day !== day) {
+      day = l.day;
       items.push(Object.assign(document.createElement("li"), { className: "day", textContent: day }));
     }
+    const n = seen.get(l.t) ?? 0;
+    seen.set(l.t, n + 1);
     const li = document.createElement("li");
-    const t = Object.assign(document.createElement("time"), { textContent: time(e.t), dateTime: e.t });
-    const tag = Object.assign(document.createElement("span"), { className: `tag ${d.cls}`, textContent: d.tag });
-    const what = Object.assign(document.createElement("span"), { className: "what", textContent: d.what });
-    if (d.why) what.append(Object.assign(document.createElement("span"), { className: "why", textContent: d.why }));
+    li.dataset.key = `${l.t}|${n}`;
+    li.dataset.line = String(i);
+    const t = Object.assign(document.createElement("time"), { textContent: time(l.t), dateTime: l.t });
+    const tag = Object.assign(document.createElement("span"), { className: `tag ${l.view.cls}`, textContent: l.view.tag });
+    const what = Object.assign(document.createElement("span"), { className: "what", textContent: l.view.what });
+    if (l.view.why) what.append(Object.assign(document.createElement("span"), { className: "why", textContent: l.view.why }));
     li.append(t, tag, what);
     items.push(li);
+  });
+  if (lines.length > linesShown || activityMore()) {
+    const li = Object.assign(document.createElement("li"), { className: "more" });
+    const more = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: ACTIVITY_EARLIER });
+    more.dataset.key = "more";
+    more.addEventListener("click", () => void showEarlier());
+    li.append(more);
+    items.push(li);
   }
-  $("activity").replaceChildren(...items);
-  $("activity-note").textContent = todayRows ? `${todayRows} today` : "";
+  list.replaceChildren(...items);
+  // Read before, then not: the lines stay, said to be old; never read: no "Nothing yet".
+  list.hidden = activityFailed && !lines.length;
+  problem.hidden = !activityFailed;
+  problem.textContent = activityFailed ? activityProblemText(lines.length > 0) : "";
+  $("activity-note").textContent = activityNote(lines, activityMore());
+  const back = held ? [...list.querySelectorAll<HTMLElement>("[data-key]")].find(e => e.dataset.key === held) : undefined;
+  if (back) { if (back.tagName === "LI") back.tabIndex = -1; back.focus({ preventScroll: true }); }
+}
+/** Show earlier: the next lines, read from the record when those read run out; focus goes to the first of them. */
+async function showEarlier(): Promise<void> {
+  const first = linesShown;
+  linesShown += ACTIVITY_LINES;
+  if (activityLines(activityRead, entryWords(platform)).length < linesShown && activityMore()) {
+    activityWanted = Math.min(activityWanted + ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES);
+    shownActivity = "";
+    await refreshActivity();
+  } else drawActivity();
+  const row = $("activity").querySelector<HTMLElement>(`li[data-line="${first}"]`);
+  if (row) { row.tabIndex = -1; row.focus(); }
 }
 void refreshActivity();
 /** Main says whether the window can be seen: minimised, X11 still reports the page visible. */

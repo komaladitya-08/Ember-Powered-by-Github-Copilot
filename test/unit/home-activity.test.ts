@@ -5,8 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { describeEntry, userWords, withCommandShells } from "../../app/renderer/home/copy";
-import type { ActivityEntry } from "../../app/shared/ipc";
+import { ACTIVITY_LINES, activityLines, activityNote, activityProblemText, describeEntry, userWords, withCommandShells } from "../../app/renderer/home/copy";
+import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES, recentLimit, type ActivityEntry } from "../../app/shared/ipc";
 
 const t = "2026-10-27T10:00:00.000Z";
 const cmd = (e: Record<string, unknown>): ActivityEntry => ({ t, event: "command", task: "t1", target: "ssh:build-01", ...e });
@@ -91,9 +91,54 @@ describe("What Ember did: other computers", () => {
   it("asks main for every entry it keeps, so lines it can't show don't empty the list", () => {
     const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     const audit = readFileSync(new URL("../../app/main/policy/audit.ts", import.meta.url), "utf8");
-    const asked = Number(/IPC\.activity, guard\(\(\) => audit\?\.recent\((\d+)\)/.exec(main)?.[1]);
+    expect(main).toContain("ipcMain.handle(IPC.activity, guard((limit: unknown) => audit?.recent(recentLimit(limit)) ?? []));");
     const kept = Number(/static readonly KEEP = (\d+);/.exec(audit)?.[1]);
-    expect(asked).toBeGreaterThanOrEqual(kept);
+    expect(recentLimit(undefined)).toBeGreaterThanOrEqual(kept);
+  });
+});
+
+describe("What Ember did: the whole record, a page at a time (safety-privacy-5)", () => {
+  const now = new Date(2026, 10, 7, 15, 0);
+  const at = (minutesAgo: number) => new Date(now.getTime() - minutesAgo * 60_000).toISOString();
+  const click = (minutesAgo: number, app = "gedit"): ActivityEntry => ({ t: at(minutesAgo), event: "action", kind: "click", app, ok: true, element: { role: "push button", name: "Save" } });
+
+  it("counts every line of today, not only those drawn", () => {
+    // 120 actions in the last hour, then a task from yesterday with an allowed Send.
+    const entries = [
+      ...Array.from({ length: 120 }, (_, i) => click(i * 0.5)),
+      { t: at(24 * 60), event: "confirm", kind: "click", app: "thunderbird", answer: "once", element: { role: "push button", name: "Send" } },
+      { t: at(24 * 60 + 1), event: "decision", kind: "click", app: "thunderbird", verdict: "confirm", reason: "it sends", element: { role: "push button", name: "Send" } },
+      { t: at(24 * 60 + 2), event: "task", phase: "asked", goal: "Send the report" },
+    ];
+    const lines = activityLines(entries, undefined, now);
+    expect(lines).toHaveLength(123);
+    expect(activityNote(lines, false)).toBe("120 today");
+    // The second page starts with yesterday's heading and its allowed Send.
+    expect(ACTIVITY_LINES).toBe(80);
+    const second = lines.slice(ACTIVITY_LINES * 1, ACTIVITY_LINES * 2);
+    expect(second.filter(l => l.day === "Today")).toHaveLength(40);
+    expect(second[40]).toMatchObject({ day: "Yesterday", view: { tag: "You allowed", what: "Click “Send” in Thunderbird" } });
+  });
+
+  it("says at least so many today while the record read may hold more of today", () => {
+    const lines = activityLines(Array.from({ length: 500 }, (_, i) => click(i * 0.1)), undefined, now);
+    expect(activityNote(lines, true)).toBe("At least 500 today");
+    expect(activityNote(lines, false)).toBe("500 today");
+    expect(activityNote([], true)).toBe("");
+  });
+
+  it("reads more of the record only in whole pages, and never past the most it may", () => {
+    expect(recentLimit(undefined)).toBe(ACTIVITY_ENTRIES);
+    expect(recentLimit(ACTIVITY_ENTRIES * 3)).toBe(ACTIVITY_ENTRIES * 3);
+    for (const bad of [-1, 0, 1.5, "1000", ACTIVITY_MAX_ENTRIES + 1, Number.NaN, {}]) expect(recentLimit(bad), String(bad)).toBe(ACTIVITY_ENTRIES);
+    expect(recentLimit(ACTIVITY_MAX_ENTRIES)).toBe(ACTIVITY_MAX_ENTRIES);
+  });
+});
+
+describe("What Ember did: when the record can't be read (home-10)", () => {
+  it("says the list may be old, or that nothing can show yet, and where the whole record is", () => {
+    expect(activityProblemText(true)).toBe("Ember couldn't read its record just now, so this list may be out of date. It tries again every few seconds; the whole record is in the folder below.");
+    expect(activityProblemText(false)).toBe("Ember couldn't read its record just now, so nothing can show here yet. It tries again every few seconds; the whole record is in the folder below.");
   });
 });
 

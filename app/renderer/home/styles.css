@@ -450,6 +450,9 @@ progress[hidden] { display: none; }
 .activity .tag.no { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-text); }
 .activity .what { overflow-wrap: anywhere; }
 .activity .why { display: block; color: var(--muted); font: var(--type-footnote); }
+/* Show earlier, after the lines drawn (safety-privacy-5); a line it moved focus to shows the ring inside the list. */
+.activity li.more { display: block; }
+.activity li[tabindex="-1"]:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-xs); }
 
 /* ───── Setup check ───── */
 /* One column for every row's state, as wide as the widest word ("Worth a look"), so the labels line up. */

@@ -25,7 +25,7 @@ declare global {
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; activity?: ActivityEntry[]; viewport?: { width: number; height: number } }
+interface Seed { settings?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number } }
 
 let browser: Browser;
 let server: http.Server;
@@ -74,7 +74,8 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "conversation") return async () => [];
       if (name === "tasks") return async () => tasks;
       if (name === "taskControl") return async (id: string, kind: string) => { h.calls.push(`taskControl:${id}:${kind}`); return true; };
-      if (name === "activity") return async () => { h.reads++; if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity; };
+      // As main answers: the newest `limit` entries (500 unless Home asks for more).
+      if (name === "activity") return async (limit?: number) => { h.reads++; if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
   }, { settings, admin, activity: seed.activity ?? [] });
@@ -193,4 +194,80 @@ describe.skipIf(gate)("Home's Search settings, as the person reads the results (
     expect(await page.locator("#search-none").isHidden()).toBe(true);
     await page.close();
   });
+});
+
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+const clickEntry = (m: number): ActivityEntry => ({ t: minutesAgo(m), event: "action", kind: "click", app: "gedit", ok: true, element: { role: "push button", name: "Save" } });
+/** 120 actions in the last hour (or `today`), then yesterday's task with an allowed Send. */
+const seeded = (today = 120): ActivityEntry[] => [
+  ...Array.from({ length: today }, (_, i) => clickEntry(i * (50 / today))),
+  { t: minutesAgo(24 * 60), event: "confirm", kind: "click", app: "thunderbird", answer: "once", element: { role: "push button", name: "Send" } },
+  { t: minutesAgo(24 * 60 + 1), event: "decision", kind: "click", app: "thunderbird", verdict: "confirm", reason: "it sends", element: { role: "push button", name: "Send" } },
+  { t: minutesAgo(24 * 60 + 2), event: "task", phase: "asked", goal: "Send the report" },
+];
+const lineCount = (p: Page) => p.locator("#activity li:not(.day):not(.more)").count();
+
+describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-07 product audit)", () => {
+  it("counts all of today, and shows earlier lines a page at a time with focus on the first new one (safety-privacy-5)", async () => {
+    // Skip a run that would cross midnight: "today" must stay today for the hour seeded.
+    if (new Date().getHours() === 0) return;
+    const page = await open("home", { activity: seeded() });
+    await page.locator("#activity-fold > summary").click();
+    await expect.poll(() => lineCount(page)).toBe(80);
+    expect(await page.locator("#activity-note").innerText()).toBe("120 today");
+    expect(await page.locator("#activity").innerText()).not.toContain("Yesterday");
+    const earlier = page.getByRole("button", { name: "Show earlier" });
+    await earlier.focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => lineCount(page)).toBe(123);
+    // Focus is on the first line it added, not lost to the page.
+    expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.line)).toBe("80");
+    expect(await page.locator("#activity li.day").allInnerTexts()).toEqual(["Today", "Yesterday"]);
+    expect(await page.locator("#activity").innerText()).toContain("Click “Send” in Thunderbird");
+    // Everything read is showing, and the record held no more: no Show earlier.
+    expect(await earlier.count()).toBe(0);
+    await evidence(page, "activity-earlier");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("reads further back in the record when the lines read run out (safety-privacy-5)", async () => {
+    if (new Date().getHours() === 0) return;
+    // 600 today: the first read (500) can't hold them all.
+    const page = await open("home", { activity: seeded(600) });
+    await page.locator("#activity-fold > summary").click();
+    await expect.poll(() => lineCount(page)).toBe(80);
+    expect(await page.locator("#activity-note").innerText()).toBe("At least 500 today");
+    for (let i = 0; i < 7; i++) await page.getByRole("button", { name: "Show earlier" }).click();
+    await expect.poll(() => lineCount(page)).toBe(603);
+    expect(await page.locator("#activity-note").innerText()).toBe("600 today");
+    await page.close();
+  });
+
+  it("keeps what it showed when a read of the record fails, says so, and clears that on the next good read (home-10)", async () => {
+    if (new Date().getHours() === 0) return;
+    const page = await open("home", { activity: seeded(3) });
+    await page.locator("#activity-fold > summary").click();
+    await expect.poll(() => lineCount(page)).toBe(6);
+    expect(await page.locator("#activity-note").innerText()).toBe("3 today");
+    await page.evaluate(() => { window.__pane.activity = "fail"; });
+    const problem = page.locator("#activity-problem");
+    await expect.poll(() => problem.isVisible(), { timeout: 8000 }).toBe(true);
+    expect(await problem.innerText()).toBe("Ember couldn't read its record just now, so this list may be out of date. It tries again every few seconds; the whole record is in the folder below.");
+    expect(await lineCount(page)).toBe(6);
+    expect(await page.locator("#activity-note").innerText()).toBe("3 today");
+    await page.evaluate(() => { window.__pane.activity = []; });
+    await expect.poll(() => problem.isVisible(), { timeout: 8000 }).toBe(false);
+    await page.close();
+  }, 30_000);
+
+  it("never says Ember did nothing when its first read of the record fails (home-10)", async () => {
+    const page = await open("home", { activity: "fail" });
+    await page.locator("#activity-fold > summary").click();
+    const problem = page.locator("#activity-problem");
+    await expect.poll(() => problem.isVisible(), { timeout: 8000 }).toBe(true);
+    expect(await problem.innerText()).toContain("so nothing can show here yet");
+    expect(await page.locator("#activity").isVisible()).toBe(false);
+    await page.close();
+  }, 30_000);
 });

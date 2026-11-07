@@ -92,6 +92,8 @@ export class AuditLog {
   /** The newest entries, newest first (for the activity timeline, asked for every few seconds). */
   recent(limit = 100): (AuditEntry & { t: string })[] {
     this.latest ??= this.readNewest(AuditLog.KEEP);
+    // Further back than the newest KEEP (What Ember did's Show earlier): read from the files, not kept in memory.
+    if (limit > AuditLog.KEEP && this.latest.length >= AuditLog.KEEP) return this.readNewest(limit);
     return this.latest.slice(0, limit);
   }
 

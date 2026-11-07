@@ -116,6 +116,7 @@ import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
 import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, createProviderService, ownProviderAuth, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
+import { recentLimit } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
@@ -576,7 +577,7 @@ function start(): void {
     platform: platformStatus(),
   })));
   // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
-  ipcMain.handle(IPC.activity, guard(() => audit?.recent(500) ?? []));
+  ipcMain.handle(IPC.activity, guard((limit: unknown) => audit?.recent(recentLimit(limit)) ?? []));
   /** The administrator's never-look entries are applied on top; they never go into the user's own list. */
   const ownNeverLook = (patch: SettingsPatch): SettingsPatch => {
     if (!patch.privacy?.neverLook || !policy.neverLook.length) return patch;

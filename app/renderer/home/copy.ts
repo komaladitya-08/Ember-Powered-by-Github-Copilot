@@ -983,6 +983,37 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
   }
 }
 
+/** What Ember did shows this many lines at first, and this many more for each Show earlier (safety-privacy-5). */
+export const ACTIVITY_LINES = 80;
+export const ACTIVITY_EARLIER = "Show earlier";
+/** One line of What Ember did: its entry's time, the heading of its day, and its words. */
+export interface ActivityLine { t: string; day: string; view: EntryView }
+
+/** Every line the entries make (newest first, as main sends them), each with its day: "Today", "Yesterday", a date. */
+export function activityLines(entries: readonly ActivityEntry[], words: EntryWords = LINUX_ENTRY_WORDS, now = new Date()): ActivityLine[] {
+  const out: ActivityLine[] = [];
+  for (const e of withCommandShells(entries)) {
+    const view = describeEntry(e, words);
+    if (view) out.push({ t: e.t, day: dayLabel(e.t, now), view });
+  }
+  return out;
+}
+
+/**
+ * The note beside What Ember did's heading: every line of today, drawn or not ("120 today"); "At least" while the
+ * oldest line read is still today's and the record may hold more (`more`).
+ */
+export function activityNote(lines: readonly ActivityLine[], more: boolean): string {
+  const today = lines.filter(l => l.day === "Today").length;
+  if (!today) return "";
+  return more && lines[lines.length - 1]?.day === "Today" ? `At least ${today} today` : `${today} today`;
+}
+
+/** What What Ember did says while its record can't be read (home-10): it keeps what it showed, or shows nothing yet. */
+export function activityProblemText(shownBefore: boolean): string {
+  return `Ember couldn't read its record just now, so ${shownBefore ? "this list may be out of date" : "nothing can show here yet"}. It tries again every few seconds; the whole record is in the folder below.`;
+}
+
 /** Rich text in the settings window: plain text, a key cap (`<kbd>`) or a command or path (`<code>`). */
 export type Segment = string | { readonly kbd: string } | { readonly code: string };
 
