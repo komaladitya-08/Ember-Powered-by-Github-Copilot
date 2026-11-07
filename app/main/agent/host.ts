@@ -2665,15 +2665,19 @@ export class AgentHost {
   /**
    * The conversation's own Stop (its bubble's, while Copilot keeps it waiting: presenter STOP_ANSWER): the turn under
    * way ends, and so does a request still waiting to be sent. Tasks and their questions go on (the kill switch stops
-   * those).
+   * those). Returns whether anything was under way (a turn, a request waiting for its turn or for a model service, or
+   * the answer still being spoken: `speaking`, which main knows); only then does the bubble say "Stopped", so a press
+   * with nothing to stop never covers what it shows with a stop that didn't happen (home-3).
    */
-  async stopAnswer(): Promise<void> {
+  async stopAnswer(o: { speaking?: boolean } = {}): Promise<boolean> {
+    const underWay = this.answerOpen || this.presenter.busy || this.held.length > 0 || o.speaking === true;
     this.stops++;
     this.queued = [];
     this.dropHeld();
-    this.presenter.stopped();
-    this.o.log.info("agent.answer_stopped");
+    if (underWay) this.presenter.stopped();
+    this.o.log.info("agent.answer_stopped", { underWay });
     await this.conductor?.abort();
+    return underWay;
   }
 
   /** A wake interrupts the spoken reply while its independently scheduled tasks keep running. */

@@ -287,7 +287,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   buttons in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. **Read the last
   answer** and a long answer's **Open conversation** open it at the newest answer, focused, from its top (once the
   messages have come, when Home opens for it). Stop response cancels
-  the current answer; Stop everything also stops tasks. Drafts
+  the current answer (or says there was nothing to stop, and the bubble keeps what it showed); Stop everything also
+  stops tasks. Drafts
   remain in memory while switching panes and clear on account reset, independently of ordinary empty-list updates.
 - **Task activity**: one group per task, the one that needs you first, then those at work, then the rest, newest first.
   Its head is the state symbol, the title, a line of state, clock, hand and place, and its steps in one sentence; then

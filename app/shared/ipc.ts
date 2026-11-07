@@ -452,7 +452,8 @@ export interface EmberHomeApi {
   /** Explicit typed request from Home, without capturing its foreground window. */
   conversationSend(text: string): Promise<void>;
   /** Ends the current response and queued requests; independently running tasks continue. */
-  conversationStop(): Promise<void>;
+  /** Stop response: whether anything was under way to stop (a reply, a queued message, the answer being spoken). */
+  conversationStop(): Promise<boolean>;
   /** Starts a fresh chat: memory, reminders, running tasks and sign-in stay. */
   conversationNew(): Promise<void>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;

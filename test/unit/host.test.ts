@@ -282,6 +282,25 @@ describe("connecting and signing in", () => {
     await host.stop();
   });
 
+  it("Stop response with nothing under way stops nothing and says nothing; with a turn under way it says it stopped (home-3)", async () => {
+    const { host, patches } = makeHost();
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    conductorSession().emit("assistant.message", { content: "Sunny." });
+    conductorSession().emit("session.idle", {});
+    const shown = patches.length;
+    expect(await host.stopAnswer()).toBe(false);
+    expect(patches.slice(shown).filter(p => p.bubble?.title === "Stopped")).toEqual([]);
+    // Speech still playing (main says so): that is something to stop.
+    expect(await host.stopAnswer({ speaking: true })).toBe(true);
+    expect(patches.at(-1)?.bubble).toMatchObject({ title: "Stopped", thought: "Okay, I've stopped." });
+    // A turn under way: stopped, and the bubble says so.
+    await host.ask("And tomorrow?");
+    expect(await host.stopAnswer()).toBe(true);
+    expect(patches.at(-1)?.bubble).toMatchObject({ title: "Stopped" });
+    await host.stop();
+  });
+
   it("Stop mid-answer commits one stopped entry with the partial text, which is not the last answer (Home streaming)", async () => {
     const { host } = makeHost();
     await host.start(TOKEN, "stored");
@@ -775,7 +794,7 @@ describe("new conversation", () => {
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     const realStop = host.stopAnswer.bind(host);
-    vi.spyOn(host, "stopAnswer").mockImplementation(async () => { await gate; await realStop(); });
+    vi.spyOn(host, "stopAnswer").mockImplementation(async () => { await gate; return realStop(); });
     const reset = host.newConversation();
     await host.forgetConversation();
     expect(await host.start(TOKEN, "stored")).toBe("ready");

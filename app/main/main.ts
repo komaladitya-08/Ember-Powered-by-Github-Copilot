@@ -1896,8 +1896,10 @@ function start(): void {
     void askEmber(text, {}, Promise.resolve(null));
   }));
   ipcMain.handle(IPC.conversationStop, guard(async () => {
+    // Whether anything was stopped: a turn, a request waiting, or the answer still being spoken (home-3).
+    const speaking = voice?.selfSpokeSince(Date.now()) ?? false;
     resetAnswerSpeech();
-    await agent?.stopAnswer();
+    return (await agent?.stopAnswer({ speaking })) ?? speaking;
   }));
   ipcMain.handle(IPC.conversationNew, guard(async () => {
     resetAnswerSpeech();

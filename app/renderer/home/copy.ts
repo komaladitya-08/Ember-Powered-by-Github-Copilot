@@ -59,6 +59,9 @@ export const COMPOSER_WAIT_MS = 10_000;
 export function composerStillWaiting(service?: string): string {
   return `Still waiting for ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}… Stop response ends this reply.`;
 }
+/** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
+export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
+export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";
 /** Said once as a message goes over the limit, and when Send is tried while it is (home-5). */
 export const COMPOSER_OVER = `This message is longer than ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters. Shorten it to send it.`;
 export function conversationMatchesText(text: string, query: string): boolean {

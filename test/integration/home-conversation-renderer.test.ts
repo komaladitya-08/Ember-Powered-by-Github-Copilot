@@ -460,4 +460,18 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
+
+  it("says nothing was stopped when Stop response is pressed with no reply under way, and that it stopped when one was (home-3, accessibility-visual-8)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.evaluate(() => { window.__home.stopResult = false; });
+      await page.locator("#conversation-stop").click();
+      await expect.poll(() => page.evaluate(() => window.__home.stops)).toBe(1);
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Ember isn't answering anything right now, so there was nothing to stop.");
+      await page.evaluate(() => { window.__home.stopResult = true; });
+      await page.locator("#conversation-stop").click();
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
 });
