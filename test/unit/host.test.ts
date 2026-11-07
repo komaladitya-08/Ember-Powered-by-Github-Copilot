@@ -1143,6 +1143,53 @@ describe("a runtime that dies or hangs", () => {
     await host.stop();
   });
 
+  it("says Copilot stopped within 3 s when the runtime dies mid-answer, not 20 s later (rp-2)", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(1000);
+    await host.ask("Explain this");
+    conductorSession().emit("assistant.message_delta", { messageId: "m", deltaContent: "Half an answer so far" });
+    expect(screen().bubble?.streaming).toBe(true);
+    // The runtime exits: the SDK drops the session's handlers, so only the health check can hear it.
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: expect.stringMatching(/Copilot stopped unexpectedly/) });
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
+    await host.stop();
+  });
+
+  it("checks a runtime at rest only every 20 s, as before (rp-2)", async () => {
+    vi.useFakeTimers();
+    let pings = 0;
+    sim.ping = async () => { pings++; return {}; };
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(pings).toBe(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(pings).toBe(1);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(pings).toBe(2);
+    await host.stop();
+  });
+
+  it("a task at work is checked on every few seconds too (rp-2)", async () => {
+    vi.useFakeTimers();
+    const { host, statuses } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
+    const stopped = host.stop();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await stopped;
+  });
+
   it("five crashes in ten minutes: Ember stops trying", async () => {
     vi.useFakeTimers();
     sim.ping = async () => { throw new Error("Connection is disposed."); };

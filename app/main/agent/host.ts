@@ -315,7 +315,7 @@ export interface HostOptions {
    * HTTPS_PROXY, so without one in the environment this is passed on to it.
    */
   resolveProxy?: (url: string) => Promise<string>;
-  /** How often the runtime's health is checked (ms). */
+  /** How often the runtime's health is checked at rest (ms); while an answer or a task is under way, every 2.5 s at most. */
   healthMs?: number;
   /**
    * The OS's keys, words, apps, settings and security vocabulary (main passes its SystemPlatform), for workers, the
@@ -427,6 +427,12 @@ const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
 const SIGNED_OUT_CLI = "Not connected to Copilot. Signing in needs a GitHub account with Copilot and the GitHub CLI: see below.";
 /** A hung runtime is given this long to answer a health check, a stop or a delete. */
 const RUNTIME_WAIT_MS = 5000;
+/**
+ * How often the runtime is checked while an answer or a task is under way (rp-2). The SDK drops a session's handlers
+ * when its runtime exits and says nothing to the turn, so only a ping hears it: at the 20 s rest cadence, an answer
+ * stood frozen for 16-19 s (measured). A local JSON-RPC ping is cheap.
+ */
+const BUSY_HEALTH_MS = 2500;
 /** The conversation's request was taken but its turn never began (TurnWatch). */
 const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
 /** The same while tasks are at work: Copilot is reconnected once they're done. */
@@ -2048,14 +2054,23 @@ export class AgentHost {
     if (this.health) clearInterval(this.health);
     const every = this.o.healthMs ?? 20_000;
     let checking = false;
+    let last = Date.now();
+    // Ticks at the busy cadence; at rest a tick pings only once `every` has passed since the last ping.
     this.health = setInterval(() => {
       if (gen !== this.gen || checking) return;
+      if (!this.underWay() && Date.now() - last < every) return;
+      last = Date.now();
       checking = true;
       void within(client.ping("ember"), Math.min(10_000, Math.max(2000, every)))
         .then(r => { if (r === "timeout") this.lost(gen, "health check timed out"); }, () => this.lost(gen, "health check"))
         .finally(() => { checking = false; });
-    }, every);
+    }, Math.min(every, BUSY_HEALTH_MS));
     this.health.unref?.();
+  }
+
+  /** An answer, a request waiting for its turn, a connection starting or a task is under way: a dead runtime would freeze it. */
+  private underWay(): boolean {
+    return this.starting > 0 || this.queued.length > 0 || this.presenter.busy || (this.conductor?.turnOpen ?? false) || this.tasksAtWork();
   }
 
   /**
