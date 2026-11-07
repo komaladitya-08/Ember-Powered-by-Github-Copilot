@@ -473,6 +473,15 @@ export function memoryPaused(m: { on: boolean; consent: { version: number } }): 
 }
 /** Said in Settings › Memory while memory is paused, above its new note. */
 export const MEMORY_PAUSED_TEXT = "Memory is paused until you review its updated note, which now says everything it sends to Copilot.";
+/** What Settings › Memory says when memory.json couldn't be read, was set aside or couldn't be saved (memory-r2). */
+export function memoryTroubleText(trouble: "unreadable" | "reset" | "unsaved" | null | undefined): string {
+  switch (trouble) {
+    case "unreadable": return "Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again.";
+    case "reset": return "Your saved memory couldn't be read, so Ember set it aside as memory.json.broken in its data folder and started afresh.";
+    case "unsaved": return "Ember couldn't save memory on this computer, so what it keeps now may be gone when Ember closes.";
+    default: return "";
+  }
+}
 /** Memory's line while its saved memory can't be opened, and whether to offer Forget everything (memory-2): shared with main. */
 export { memoryOwnerOffersErase, memoryOwnerText } from "../../shared/memory-owner";
 

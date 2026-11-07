@@ -663,6 +663,11 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
     expect(await correction.inputValue()).toBe("");
     await push({ rows, ownership: "ready", reason: null, epoch: 3 });
     expect(await page.locator("#memory-correction").isHidden()).toBe(true);
+    // memory.json that couldn't be saved is said, never only shown as a list that will be lost (memory-r2).
+    await push({ rows, ownership: "ready", reason: null, epoch: 3, trouble: "unsaved" });
+    expect(await page.locator("#memory-trouble").innerText()).toBe("Ember couldn't save memory on this computer, so what it keeps now may be gone when Ember closes.");
+    await push({ rows, ownership: "ready", reason: null, epoch: 3, trouble: null });
+    expect(await page.locator("#memory-trouble").isHidden()).toBe(true);
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);

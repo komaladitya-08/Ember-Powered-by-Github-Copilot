@@ -38,7 +38,11 @@ function readPatiently(file: string): string {
   }
 }
 
-export function memoryFile(dir: string, onBroken?: (err: unknown) => void): MemoryFile {
+/**
+ * `onBroken`: memory.json couldn't be used as it was: `out-of-reach` (there, but couldn't be read: left as it is) or
+ * `moved-aside` (not memory: moved to memory.json.broken, and memory starts empty).
+ */
+export function memoryFile(dir: string, onBroken?: (err: unknown, how: "out-of-reach" | "moved-aside") => void): MemoryFile {
   const file = path.join(dir, "memory.json");
   /** load couldn't reach the file: what this run holds is not what the file holds. */
   let outOfReach = false;
@@ -51,14 +55,14 @@ export function memoryFile(dir: string, onBroken?: (err: unknown) => void): Memo
         raw = readPatiently(file);
       } catch (err) {
         // None kept yet, or there and out of reach: only absence means there is nothing to keep.
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") { outOfReach = true; onBroken?.(err); }
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") { outOfReach = true; onBroken?.(err, "out-of-reach"); }
         return new MemoryGraph(undefined, clock);
       }
       try {
         return new MemoryGraph(MemoryDataSchema.parse(JSON.parse(raw)), clock);
       } catch (err) {
         try { fs.renameSync(file, `${file}.broken`); } catch { /* left where it is: save() will replace it */ }
-        onBroken?.(err);
+        onBroken?.(err, "moved-aside");
         return new MemoryGraph(undefined, clock);
       }
     },

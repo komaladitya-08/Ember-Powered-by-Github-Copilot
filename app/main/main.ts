@@ -1534,6 +1534,8 @@ function start(): void {
   const memoryView = () => ({
     rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
     ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
+    // After the rows, which read memory.json first: what was wrong with it, only for the account's open memory (memory-r2).
+    trouble: memoryOwner.ready ? memory.trouble : null,
   });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {

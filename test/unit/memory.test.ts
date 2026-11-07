@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { consolidate } from "../../app/main/memory/consolidate";
 import { factLine, memoryBlock } from "../../app/main/memory/format";
 import { SEMANTIC_K } from "../../app/main/memory/embed";
@@ -17,6 +17,8 @@ import { MemoryGraph, type EntityKind, type GraphClock } from "../../app/main/me
 import { memoryRefusal } from "../../app/main/memory/guard";
 import { SEMANTIC_FLOOR, bm25, personalizedPageRank, recall } from "../../app/main/memory/recall";
 import { memoryFile } from "../../app/main/memory/store";
+import { MemoryService } from "../../app/main/memory/service";
+import { memoryTroubleText } from "../../app/renderer/home/copy";
 import { nameKey, similarity, terms } from "../../app/main/memory/text";
 import { MEMORY_MODEL } from "../../app/voice/models";
 
@@ -516,6 +518,47 @@ describe("the memory file", () => {
     expect(broken).toBe(true);
     expect(g.size.facts).toBe(0);
     expect(fs.readFileSync(path.join(dir, "memory.json.broken"), "utf8")).toBe("{ not json");
+  });
+
+  it("says when memory.json was set aside, can't be read or can't be saved, instead of showing an empty memory alone (memory-r2)", () => {
+    vi.useFakeTimers();
+    try {
+      const quietLog = { info: () => undefined, warn: () => undefined };
+      // Not memory: set aside, and said so.
+      const broken = tmp();
+      fs.writeFileSync(path.join(broken, "memory.json"), "{ not json");
+      const reset = new MemoryService({ dir: broken, log: quietLog });
+      expect(reset.list()).toEqual([]);
+      expect(reset.trouble).toBe("reset");
+      expect(memoryTroubleText("reset")).toBe("Your saved memory couldn't be read, so Ember set it aside as memory.json.broken in its data folder and started afresh.");
+      reset.forgetAll();
+      expect(reset.trouble).toBeNull();
+      // Can't be saved: said once the save fails, and no longer once one works.
+      let fails = true;
+      const changes = vi.fn();
+      const file = { path: "/x/memory.json", load: () => new MemoryGraph(), erase: () => undefined, save: () => { if (fails) throw new Error("ENOSPC"); } };
+      const s = new MemoryService({ dir: tmp(), log: quietLog, file, onChange: changes });
+      s.remember("Works on Atlas", [{ name: "User" }], "I work on Atlas");
+      expect(s.trouble).toBeNull();
+      vi.advanceTimersByTime(1500);
+      expect(s.trouble).toBe("unsaved");
+      // The model is told, so it never promises what can't be kept.
+      expect(s.remember("Prefers tea", [{ name: "User" }], "I prefer tea")).toMatch(/^Remembered \[f\w+\]\. Saving memory on this computer is failing, so tell the user it may be gone when Ember closes\.$/);
+      expect(memoryTroubleText("unsaved")).toBe("Ember couldn't save memory on this computer, so what it keeps now may be gone when Ember closes.");
+      fails = false;
+      s.remember("Uses Firefox", [{ name: "User" }], "I use Firefox");
+      vi.advanceTimersByTime(1500);
+      expect(s.trouble).toBeNull();
+      expect(changes.mock.calls.length).toBeGreaterThanOrEqual(4);
+      // There but out of reach: left as it was, and said so.
+      const locked = tmp();
+      fs.mkdirSync(path.join(locked, "memory.json"));
+      const unreadable = new MemoryService({ dir: locked, log: quietLog });
+      expect(unreadable.list()).toEqual([]);
+      expect(unreadable.trouble).toBe("unreadable");
+      expect(memoryTroubleText("unreadable")).toBe("Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again.");
+      expect(memoryTroubleText(null)).toBe("");
+    } finally { vi.useRealTimers(); }
   });
 
   it("forgets everything when erased", () => {

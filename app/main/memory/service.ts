@@ -49,6 +49,9 @@ const memoryItem = (f: Fact): MemoryItem => {
     ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }), ...(kind ? { kind } : {}) };
 };
 
+/** What is wrong with memory.json this run (MemoryService.trouble; memory-r2). */
+export type MemoryTrouble = "unreadable" | "reset" | "unsaved";
+
 export interface MemoryLog { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void }
 
 export interface MemoryServiceOptions {
@@ -113,9 +116,22 @@ export class MemoryService {
   /** What each recent Forget removed, by its Undo token, until `until` (UNDO_FORGET_MS). */
   private undoable = new Map<string, { entities: Entity[]; facts: Fact[]; reopened: { id: string; invalidAt: string; supersededBy: string | null }[]; until: number }>();
 
+  /**
+   * What is wrong with memory.json this run, for Settings › Memory to say (memory-r2): it couldn't be read and is left as
+   * it was (`unreadable`), it wasn't memory and was moved aside (`reset`), or the last save failed (`unsaved`).
+   */
+  private problem: MemoryTrouble | null = null;
+
   constructor(private o: MemoryServiceOptions) {
-    this.file = o.file ?? memoryFile(o.dir, err => o.log.warn("memory.broken_file", { err: err instanceof Error ? err.message : String(err) }));
+    this.file = o.file ?? memoryFile(o.dir, (err, how) => {
+      o.log.warn("memory.broken_file", { err: err instanceof Error ? err.message : String(err), how });
+      // (Said by the view that read it: nothing is broadcast from inside a load.)
+      this.problem = how === "out-of-reach" ? "unreadable" : "reset";
+    });
   }
+
+  /** What is wrong with memory.json this run, or null (memory-r2). */
+  get trouble(): MemoryTrouble | null { return this.problem; }
 
   private get g(): MemoryGraph {
     if (!this.graph) {
@@ -163,8 +179,11 @@ export class MemoryService {
     this.dirty();
     this.o.semantic?.changed(this.g);
     this.o.log.info("memory.remembered", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
-    if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].`;
-    return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.`;
+    // Saving is failing (memory.json couldn't be saved or read this run): kept for now, and the model is told so it
+    // never promises more (memory-r2).
+    const unkept = this.problem === "unsaved" || this.problem === "unreadable" ? " Saving memory on this computer is failing, so tell the user it may be gone when Ember closes." : "";
+    if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].${unkept}`;
+    return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.${unkept}`;
   }
 
   /** The facts that bear on `query` (each counts as used); `semantic`: its matches by meaning (./embed.ts), if any. */
@@ -360,6 +379,8 @@ export class MemoryService {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     this.graph?.clear();
     this.changed = false;
+    // The file and any copy set aside are gone: nothing is left to say about them.
+    this.problem = null;
     this.o.log.info("memory.forgot_all");
     try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
   }
@@ -435,9 +456,17 @@ export class MemoryService {
     if (!this.graph) return;
     try {
       this.file.save(this.graph);
+      // Saved again: what Settings said about the last save no longer holds.
+      if (this.problem === "unsaved") { this.problem = null; this.notify(); }
     } catch (err) {
       this.o.log.warn("memory.save_failed", { err: err instanceof Error ? err.message : String(err) });
+      // Settings › Memory says so (a file left as it was because it couldn't be read says that instead).
+      if (this.problem !== "unreadable" && this.problem !== "unsaved") { this.problem = "unsaved"; this.notify(); }
     }
+  }
+
+  private notify(): void {
+    try { this.o.onChange?.(); } catch { this.o.log.warn("memory.notice_failed"); }
   }
 
   /** Something changed: saved soon; `shown`: Settings' list changed too. */

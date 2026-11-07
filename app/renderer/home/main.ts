@@ -14,7 +14,7 @@ import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOI
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -1562,7 +1562,14 @@ $("memory-undo").addEventListener("click", () => {
     $("memory-error").textContent = memoryRestoreFailedText(err);
   });
 });
-const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0; renderMemory(view.rows); renderStatus(); };
+const showMemory = (view: MemoryView) => {
+  memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0;
+  // memory.json couldn't be read, was set aside or couldn't be saved: said, never an empty list alone (memory-r2).
+  const trouble = memoryTroubleText(view.trouble);
+  setText("memory-trouble", trouble);
+  $("memory-trouble").hidden = !trouble;
+  renderMemory(view.rows); renderStatus();
+};
 /** Memory's settings as they are, so a change to one of its fields keeps the others (the patch replaces it whole). */
 const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, at: null }, questions: true, askedAt: null };
 /** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */
