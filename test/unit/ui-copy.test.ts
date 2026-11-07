@@ -992,6 +992,28 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(curly).toEqual([]);
   });
 
+  it("keeps the composer's statuses as tested words, in the house style (home-11)", () => {
+    expect(conv.COMPOSER_SAYS).toEqual({
+      copied: "Copied message.",
+      copyFailed: "Couldn't copy this message. Select its text and copy it manually.",
+      replyFailed: "Ember couldn't finish this reply. Review the message above; you can edit your request and send again.",
+      replied: "Reply received.",
+      loadFailed: "Couldn't load this conversation. New replies will still appear here.",
+      started: "Started a new conversation. Memory, reminders and running tasks are untouched.",
+      startFailed: "Couldn't start a new conversation. Try again.",
+      sending: "Sending request…",
+      sendFailed: "Couldn't send. Your draft is still here; try again.",
+      editCancelled: "Edit cancelled. Your previous draft is restored.",
+      stopFailed: "Couldn't stop this response. Try again, or use Stop everything.",
+      empty: "Enter a request of up to 2,000 characters.",
+    });
+    expect(conv.CONVERSATION_STOPPED).toBe("Response stopped. Running tasks continue.");
+    expect(conv.CONVERSATION_NOTHING_TO_STOP).toBe("Ember isn't answering anything right now, so there was nothing to stop.");
+    // Home's main.ts writes none of them inline any more.
+    const home = readFileSync("app/renderer/home/main.ts", "utf8");
+    for (const said of Object.values(conv.COMPOSER_SAYS)) expect(home).not.toContain(`"${said}"`);
+  });
+
   it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {
     expect(conv.conversationNewQuestion(1, false)).toBe("Start a new conversation? This clears the message here.");
     expect(conv.conversationNewQuestion(12, false)).toBe("Start a new conversation? This clears the 12 messages here.");

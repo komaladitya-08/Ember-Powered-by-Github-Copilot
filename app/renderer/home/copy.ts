@@ -67,6 +67,21 @@ export function conversationNewQuestion(messages: number, kept: boolean): string
   const what = messages === 1 ? "the message here" : `the ${messages} messages here`;
   return `Start a new conversation? This clears ${what}${kept ? " and deletes the copy saved on this computer" : ""}.`;
 }
+/** The composer's status line (#conversation-compose-status, a live region): what happened to what was sent or copied (home-11). */
+export const COMPOSER_SAYS = {
+  copied: "Copied message.",
+  copyFailed: "Couldn't copy this message. Select its text and copy it manually.",
+  replyFailed: "Ember couldn't finish this reply. Review the message above; you can edit your request and send again.",
+  replied: "Reply received.",
+  loadFailed: "Couldn't load this conversation. New replies will still appear here.",
+  started: "Started a new conversation. Memory, reminders and running tasks are untouched.",
+  startFailed: "Couldn't start a new conversation. Try again.",
+  sending: "Sending request…",
+  sendFailed: "Couldn't send. Your draft is still here; try again.",
+  editCancelled: "Edit cancelled. Your previous draft is restored.",
+  stopFailed: "Couldn't stop this response. Try again, or use Stop everything.",
+  empty: "Enter a request of up to 2,000 characters.",
+} as const;
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
 export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";

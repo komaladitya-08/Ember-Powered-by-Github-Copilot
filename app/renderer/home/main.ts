@@ -48,7 +48,7 @@ import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whats
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, COMPOSER_THINKING, conversationNewQuestion, homeListenOnce, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, homeListenOnce, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountLearnedUndo } from "./learned-undo";
@@ -1005,9 +1005,9 @@ function conversationRow(e: Entry): HTMLLIElement {
       copy.disabled = true;
       // Said on the button, where the eye is, for 2 s (as About's Copy does), and in the status line for screen readers.
       const said = (label: string) => { copy.textContent = label; setTimeout(() => { copy.textContent = "Copy"; }, 2000); };
-      void window.ember.copyText(e.text).then(() => { said("Copied"); conversationComposeStatus.textContent = "Copied message."; }, () => {
+      void window.ember.copyText(e.text).then(() => { said("Copied"); conversationComposeStatus.textContent = COMPOSER_SAYS.copied; }, () => {
         said("Couldn't copy");
-        conversationComposeStatus.textContent = "Couldn't copy this message. Select its text and copy it manually.";
+        conversationComposeStatus.textContent = COMPOSER_SAYS.copyFailed;
       }).finally(() => { copy.disabled = false; });
     });
     actions.append(copy);
@@ -1109,7 +1109,7 @@ function renderConversation(raw: Entry[]): void {
   // (An answer stopped short is not a reply received: the problem that follows it, or the Stop, says what happened.)
   if (conversationAwaitingReply && newReply && (latest.who === "problem" || (latest.who === "ember" && !latest.stopped))) {
     awaitingReply(false);
-    conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? "Ember couldn't finish this reply. Review the message above; you can edit your request and send again." : "Reply received.";
+    conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? COMPOSER_SAYS.replyFailed : COMPOSER_SAYS.replied;
   }
   // Requests Ember heard (not typed) offer “That's not what I said”.
   markHeard(list);
@@ -1150,7 +1150,7 @@ const conversationOpened = conversationGeneration;
 let conversationReceived = false;
 void window.ember.conversation().then(entries => {
   if (!conversationReceived && conversationOpened === conversationGeneration) renderConversation(entries);
-}, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = "Couldn't load this conversation. New replies will still appear here."; });
+}, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = COMPOSER_SAYS.loadFailed; });
 window.ember.onConversation(entries => { conversationReceived = true; keepingComposer(() => renderConversation(entries)); });
 const resetConversationView = () => {
   // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
@@ -1205,9 +1205,9 @@ function startNewConversation(): void {
     // Forgotten or reset another way meanwhile (sign-out, another account): a newer draft isn't this click's to clear.
     if (generation !== conversationGeneration) return;
     resetConversationView();
-    conversationComposeStatus.textContent = "Started a new conversation. Memory, reminders and running tasks are untouched.";
+    conversationComposeStatus.textContent = COMPOSER_SAYS.started;
     conversationMessage.focus();
-  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn't start a new conversation. Try again."; })
+  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = COMPOSER_SAYS.startFailed; })
     .finally(() => { button.disabled = false; });
 }
 conversationSearch.addEventListener("input", () => renderConversation(conversationAll));
@@ -1217,7 +1217,7 @@ $("conversation-compose").addEventListener("submit", event => {
   if (send.disabled) return;
   const text = conversationMessage.value;
   if (!text.trim() || text.length > CONVERSATION_REQUEST_LIMIT) {
-    conversationComposeStatus.textContent = text.trim() ? COMPOSER_OVER : "Enter a request of up to 2,000 characters.";
+    conversationComposeStatus.textContent = text.trim() ? COMPOSER_OVER : COMPOSER_SAYS.empty;
     conversationMessage.focus();
     return;
   }
@@ -1228,7 +1228,7 @@ $("conversation-compose").addEventListener("submit", event => {
   awaitingReply(true);
   conversationLastAtSend = conversationAll.at(-1);
   const generation = conversationGeneration;
-  conversationComposeStatus.textContent = "Sending request…";
+  conversationComposeStatus.textContent = COMPOSER_SAYS.sending;
   void window.ember.conversationSend(text).then(() => {
     if (generation !== conversationGeneration) return;
     // Preserve any edits made while the acknowledgement was pending.
@@ -1240,7 +1240,7 @@ $("conversation-compose").addEventListener("submit", event => {
   }, error => {
     if (generation !== conversationGeneration) return;
     awaitingReply(false);
-    conversationComposeStatus.textContent = ipcErrorText(error) || "Couldn't send. Your draft is still here; try again.";
+    conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed;
   }).finally(() => { if (generation === conversationGeneration) { send.disabled = false; send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
@@ -1248,7 +1248,7 @@ $("conversation-cancel-edit").addEventListener("click", () => {
   syncComposerCount();
   conversationDraftBeforeEdit = null;
   $("conversation-cancel-edit").hidden = true;
-  conversationComposeStatus.textContent = "Edit cancelled. Your previous draft is restored.";
+  conversationComposeStatus.textContent = COMPOSER_SAYS.editCancelled;
   conversationMessage.focus();
 });
 /**
@@ -1284,7 +1284,7 @@ $("conversation-stop").addEventListener("click", () => {
     awaitingReply(false);
     // (An older main answers nothing: as before, taken as stopped.)
     conversationComposeStatus.textContent = stopped === false ? CONVERSATION_NOTHING_TO_STOP : CONVERSATION_STOPPED;
-  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn't stop this response. Try again, or use Stop everything."; })
+  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = COMPOSER_SAYS.stopFailed; })
     .finally(() => { if (generation === conversationGeneration) stop.disabled = false; });
 });
 
