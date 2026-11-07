@@ -203,7 +203,7 @@ jobs:
           key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
       - run: node scripts/voice/prepare.mjs
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/remote-runtime
           key: remote-runtime-${{ hashFiles('scripts/package/remote-runtime.json') }}
@@ -360,10 +360,10 @@ jobs:
             libXtst libXrandr libXcomposite libXdamage \
             xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
           useradd -m ci
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -380,7 +380,7 @@ jobs:
       - run: npm run build
       # Its own cache: it also holds a second test voice (ryan) and the clips made in it.
       - name: Speech models and two test voices (cached; verified by SHA-256)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
           key: voice-e2e-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -560,7 +560,7 @@ jobs:
       # restricted PCs never need github.com for voice).
       - name: Speech models to bundle (cached; verified by SHA-256)
         if: ${{ !cancelled() }}
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
           key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -577,7 +577,7 @@ jobs:
           EMBER_KITTEN_TEST: "1"
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
         if: ${{ !cancelled() }}
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/remote-runtime
           key: remote-runtime-${{ hashFiles('scripts/package/remote-runtime.json') }}
@@ -771,7 +771,7 @@ jobs:
       # restricted PCs never need github.com for voice).
       - name: Speech models to bundle (cached; verified by SHA-256)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
           key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -788,7 +788,7 @@ jobs:
           EMBER_KITTEN_TEST: "1"
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/remote-runtime
           key: remote-runtime-${{ hashFiles('scripts/package/remote-runtime.json') }}
@@ -1000,14 +1000,14 @@ jobs:
       # The speech models go inside the app, so one download carries everything Ember runs on the computer (network-
       # restricted PCs never need github.com for voice).
       - name: Speech models to bundle (cached; verified by SHA-256)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
           key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
       - name: Fetch and verify the speech models
         run: node scripts/voice/prepare.mjs
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/remote-runtime
           key: remote-runtime-${{ hashFiles('scripts/package/remote-runtime.json') }}
