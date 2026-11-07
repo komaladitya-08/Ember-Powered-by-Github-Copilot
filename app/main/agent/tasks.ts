@@ -19,7 +19,7 @@ import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
 import { friendlyError, type ServiceKind } from "./presenter";
 import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
-import type { TaskActivity, TaskEntry } from "../../shared/activity";
+import { STATUS_WORDS, type TaskActivity, type TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -161,8 +161,12 @@ const retryable = (t: Task) => t.mode === "do" && (t.status === "failed" || (t.s
 /** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
 const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
 
-/** How a finished task went, in the user's words: "stopped", never "cancelled". */
-export const statusWord = (s: TaskStatus) => (s === "cancelled" ? "stopped" : s);
+/**
+ * How a finished task went, in the user's words, as its card says it (STATUS_WORDS): "didn't finish", never "failed";
+ * "stopped", never "cancelled" (tasks-approvals-9).
+ */
+export const statusWord = (s: TaskStatus) =>
+  STATUS_WORDS[s === "cancelled" ? "stopped" : s === "failed" ? "failed" : s === "done" ? "done" : s === "running" ? "running" : "queued"].toLowerCase();
 
 /**
  * The notification for a finished task while the user is away from the computer (main's onTaskFinished): one that
@@ -267,7 +271,8 @@ export class TaskManager {
    */
   start(goal: string, opts: StartOptions = {}): Task {
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
-    const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null,
+    // (Said while it waits behind others at work: one that starts at once says "Working…" at once.)
+    const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: opts.mode === "guide" ? "Starts when another guide ends" : "Starts when another task ends", result: null, started: Date.now(), finished: null,
       ...(opts.targetId ? { targetId: opts.targetId } : {}), ...(opts.where ? { where: opts.where } : {}) };
     this.tasks.set(id, task);
     const target = { ...(opts.target ?? this.d.currentWindow() ?? {}) };
@@ -549,7 +554,7 @@ export class TaskManager {
       // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
       // Stop that does nothing, and what queued behind it gets its turn.
       this.d.log.error("task.error", { id: task.id, err });
-      this.finish(task, "failed", { success: false, summary: task.mode === "do" ? "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." : "Ember couldn't start this. Ask again; if it keeps happening, restart Ember." });
+      this.finish(task, "failed", { success: false, summary: task.mode === "do" ? "I couldn't start this task. Try again; if it keeps happening, restart Ember." : "I couldn't start this. Ask again; if it keeps happening, restart Ember." });
       this.pump();
       return;
     }

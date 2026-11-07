@@ -1364,7 +1364,7 @@ describe("review round 3", () => {
     sim.ping = async () => { if (once) { once = false; throw new Error("Connection is disposed."); } return {}; };
     await vi.advanceTimersByTimeAsync(5000);
     expect(host.getStatus().phase).toBe("ready");
-    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: failed. ${CUT_OFF}` })]);
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: didn't finish. ${CUT_OFF}` })]);
     expect(screen().bubble).toMatchObject({ visible: true, mood: "error", title: "turn on night light", thought: CUT_OFF });
     await vi.advanceTimersByTimeAsync(20_000);
     expect(screen().bubble?.visible).toBe(false);
@@ -2133,7 +2133,8 @@ describe("review round 6: a request sent while the conversation is busy waits fo
         ["use the Extensions app to turn off a shell extension", "Turn off Dash to Dock in the Extensions app"],
       ]) {
         await host.ask(words, mail);
-        expect(await tool("start_task")({ goal }), words).toMatch(/started/);
+        // (Not refused: it starts, or from the third, waits its turn: tasks-approvals-7.)
+        expect(await tool("start_task")({ goal }), words).toMatch(/started|is waiting/);
       }
       for (const [words, goal] of [
         ["open up a new terminal and list my files", "List my files in the Files app"],
@@ -2406,6 +2407,20 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.stop();
   });
 
+  it("says a third task waits for one of the two at work, never that it started (tasks-approvals-7)", async () => {
+    const { host, tool } = await withTasks();
+    await host.ask("tidy my desktop", mail);
+    expect(await tool("start_task")({ goal: "tidy my desktop" })).toMatch(/started/);
+    await host.ask("rename the report", mail);
+    expect(await tool("start_task")({ goal: "rename the report" })).toMatch(/started/);
+    await host.ask("empty the trash", mail);
+    const third = await tool("start_task")({ goal: "empty the trash" });
+    expect(third).not.toMatch(/started|on it/i);
+    expect(third).toMatch(/is waiting: two tasks are already at work, and it starts when one of them ends/);
+    expect(host.tasks!.list().map(t => t.status)).toEqual(["running", "running", "queued"]);
+    await host.stop();
+  });
+
   describe("“try again” after a task that didn't finish asks for that task again (tasks-approvals-1)", () => {
     /** The host with tasks whose workers end as `outcomes` say, in turn (then as withTasks's do). */
     async function retrying(outcomes: { success: boolean; summary: string; stopped?: boolean; declined?: boolean }[]) {
@@ -2650,7 +2665,7 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     const session = sim.sessions.find(s => s.sessionId === `ember-task-${stuck.id}`);
     expect(session.aborted).toBeGreaterThan(0);
     expect(session.disconnected).toBe(true);
-    expect(host.getTranscript().at(-1)?.text).toBe(`the stuck one: failed. ${TASK_NOT_ANSWERING}`);
+    expect(host.getTranscript().at(-1)?.text).toBe(`the stuck one: didn't finish. ${TASK_NOT_ANSWERING}`);
     expect(host.tasks!.get(fine.id)?.status).toBe("running");
     expect(sim.clients).toHaveLength(1);
     expect(host.getStatus().phase).toBe("ready");
@@ -2976,7 +2991,7 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     expect(host.tasks!.get(t.id)?.status).toBe("running");
     // The task's model goes quiet as well: its own watch ends it, and then Copilot is reconnected.
     await vi.advanceTimersByTimeAsync(165_000);
-    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `tidy my desktop: failed. ${TASK_NO_ANSWER}` })]);
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `tidy my desktop: didn't finish. ${TASK_NO_ANSWER}` })]);
     sim.stall = () => false;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(sim.clients).toHaveLength(2);

@@ -637,3 +637,15 @@ describe("a task whose question went unanswered while the user was away (tasks-a
     }
   });
 });
+
+describe("how a finished task is worded (tasks-approvals-9)", () => {
+  it("says it the card's way in the conversation, speech and notifications: “didn't finish”, never “failed”", async () => {
+    const { taskOutcome, statusWord } = await import("../../app/main/agent/tasks");
+    const { STATUS_WORDS } = await import("../../app/shared/activity");
+    expect(taskOutcome({ title: "Open LibreOffice Writer", status: "failed", result: { success: false, summary: "I stopped after 150 steps without finishing, to be safe." } }))
+      .toBe("Open LibreOffice Writer: didn't finish. I stopped after 150 steps without finishing, to be safe.");
+    expect(statusWord("failed")).toBe(STATUS_WORDS.failed.toLowerCase());
+    expect(statusWord("done")).toBe(STATUS_WORDS.done.toLowerCase());
+    expect(statusWord("cancelled")).toBe(STATUS_WORDS.stopped.toLowerCase());
+  });
+});

@@ -319,7 +319,7 @@ by accident. A hidden Ember shows itself to ask, and with **Speak replies, quest
 out loud; **Never** keeps it quiet even for a screen reader. Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
 for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
-"Waiting for you" while it asks), how long it has worked and which step of its plan it is on, and shows what it did
+"Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did
 under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
 what went wrong). So does the card of a task whose question ran out of time while you were away: it says so, offers
 **Try again**, and a notification says Ember couldn't finish it; "What did I miss?" says the question wasn't answered

@@ -23,7 +23,7 @@ import type { Logger } from "../logger";
 import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
-import { TaskManager, statusWord, taskOutcome, titleOf, type StopCause, type Task, type WorkerLike } from "./tasks";
+import { TaskManager, taskOutcome, titleOf, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -663,7 +663,8 @@ const OUTCOME = {
 } as const;
 /** A finished task, as the conductor hears about it. */
 /** A finished task as the next turn hears it (in <task_results>): its summary, and what its card showed, as words. */
-const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}${t.view ? `\n${viewText(t.view)}` : ""}`;
+// (The model hears the plain state, "failed" or "stopped"; the user hears the card's words: tasks.ts statusWord.)
+const report = (t: Task) => `Task "${t.title}" ${t.status === "cancelled" ? "stopped" : t.status}: ${t.result?.summary ?? ""}${t.view ? `\n${viewText(t.view)}` : ""}`;
 /**
  * Told to the conversation with what was heard in a spoken conversation (AgentHost.ask `replaces`), and not in its prompt:
  * with conversations off the prompts stay as they were. Host-written, never model or screen text.
@@ -1869,6 +1870,12 @@ export class AgentHost {
           // 2026-11-03; voice-answer.ts TaskVoiceTrust).
           if (r?.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
           this.announced.add(t.id);
+          // Two tasks already at work: this one waits for one of them, and its first words say so (tasks-approvals-7).
+          if (t.status === "queued") {
+            const busy = tasks.list().filter(x => x.status === "running" && x.mode !== "guide").length;
+            const atWork = busy === 1 ? "one task is" : busy === 2 ? "two tasks are" : `${busy} tasks are`;
+            return `Task ${t.id} is waiting${where ? ` ${where}` : ""}: ${atWork} already at work, and it starts when one of them ends. Its card beside Ember says so. Tell the user that, in a few words: it hasn't begun yet.`;
+          }
           return `Task ${t.id} started${where ? ` ${where}` : ""}: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
         showMe: tasks ? async goal => {

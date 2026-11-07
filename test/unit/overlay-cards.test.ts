@@ -40,7 +40,7 @@ describe("a task waiting its turn", () => {
     tm.start("Tidy the desktop");
     const second = tm.start("Rename the photos");
     const card = cards.at(-1)!.find(c => c.id === second.id)!;
-    expect(card).toMatchObject({ status: "queued", detail: "Waiting to start", actions: [{ id: `task:${second.id}:stop`, label: "Stop" }] });
+    expect(card).toMatchObject({ status: "queued", detail: "Starts when another task ends", actions: [{ id: `task:${second.id}:stop`, label: "Stop" }] });
   });
 
   it("is read out as waiting its turn; only a task that asks is read as waiting for the user", () => {
