@@ -150,7 +150,7 @@ download, so English-only MiniLM is the trade-off for now.
 2. **Remember and recall in conversation** (done; `test/unit/memory-conversation.test.ts` and the "memory on the
    real Copilot runtime" integration test). As built:
    - The setting is `memory: { on, consent }`, with `FEATURE_CONSENT_VERSION.memory`. The note is in Settings ›
-     Conversation, and so is the list with **Forget** and **Forget everything**.
+     Memory, and so is the list with **Forget** and **Forget everything**.
    - The admin key is `features.memory`, and LOCKDOWN turns it off.
    - `MemoryService` (service.ts) saves a second after a change and on quit, and tidies every 30 minutes when
      something changed.
@@ -219,8 +219,8 @@ download, so English-only MiniLM is the trade-off for now.
    platform team"); "skip", "forget that", a new request or anything else lets it go to the conversation. **Ask me questions now and then** (`memory.questions`, on by default) turns
    it off.
 
-**Getting to know you** (done; `intro.ts`). "Tell Ember about you" in Settings › Memory and as first run's optional
-step 7 of 8 asks what to call the user, their role and work, the apps they use most, short or detailed and spoken or
+**Getting to know you** (done; `intro.ts`). "Tell Ember about you" in Settings › Memory and as an optional detour from
+first run's **Try me out** step (**Personalise memory…**) asks what to call the user, their role and work, the apps they use most, short or detailed and spoken or
 not, and their timezone or hours. Every answer is optional; while memory is off the form offers its note first (an
 explicit yes). Main checks the answers with `IntroSchema` (strict, bounded) and keeps them as `user` facts with a
 label Ember wrote ("Likes to be called Ram"), each replacing the one before. "Ember, get to know me" asks the same
@@ -229,8 +229,8 @@ where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept.
 Settings at memory's note.
 
 **Consent.** The note now says Ember learns as you go and that your words, its replies and its tasks' results go to
-Copilot in short requests of their own, so `FEATURE_CONSENT_VERSION.memory` is 2: someone who agreed to the first
-note has memory off until they agree again (their `memory.json` is kept, unused). Home says "Memory paused" and
+Copilot in short requests of their own, so `FEATURE_CONSENT_VERSION.memory` went to 2 (and to 3 when saved memory was
+tied to the verified GitHub account): someone who agreed to an earlier note has memory off until they agree again (their `memory.json` is kept, unused). Home says "Memory paused" and
 opens the new note once with a line saying why (`memoryPaused`, `MEMORY_PAUSED_TEXT`).
 
 **Cost.** In model requests on the conversation's model: extraction at most 12 an hour and 60 a day (typically one

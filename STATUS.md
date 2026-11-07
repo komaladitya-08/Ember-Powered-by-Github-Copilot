@@ -17,6 +17,7 @@ Updated 4 November 2026. This is the short pickup list; [the review backlog](doc
 - Native Windows testing also closed two safety gaps: the joined “Stored Usernames and Passwords” title is blocked, and Explorer's “Address Bar” refuses program text. The full native desktop and accessibility group passed 74/74 after those fixes.
 - Newer AT-SPI versions report push buttons as “button”; normalizing the role preserves click actions and password-reveal protection. GTK list checkboxes with an alternate activation action stay on the pointer path.
 - The five Windows voice smoke scenarios passed through the native listener with synthetic microphone recordings. On the Windows test machine Kokoro took 1.01–1.37 seconds to produce a second of speech (the cutoff is 0.50); native Piper, then the default voice, produced its first audio in 121–257 ms (Piper has since been replaced by Kitten Nano and is no longer in the product).
+- Decided: every release attaches the voice's GPL-licensed sources (sherpa-onnx, eSpeak NG and piper-phonemize) as SHA-256-pinned `source-*.zip` files (`scripts/package/gpl-source.mjs`), so the eSpeak NG archives are no longer an open owner decision.
 - Reconciled #99/#114 with the current voice and gated MCP plugin architecture in [PR-RECONCILIATION.md](docs/PR-RECONCILIATION.md). App and npm launcher versions are aligned at 0.1.1 for release preparation; no tag or release has been published.
 
 ## Next correctness work
@@ -30,7 +31,6 @@ The review is complete, not the backlog. Remaining follow-ups include text corre
 - Durable account-owned memory needs a persistent ownership format and migration/failure policy. Current-run deletion protection is not restart isolation; graph and vector files are still two writes, but memory.json is the authority and the vectors are reconciled against it on load (docs/MEMORY.md), so a crash between them cannot surface a forgotten fact.
 - Super agent: recover the missing original D1–D15 design notes and obtain the owner's answers before implementing project sessions. Support non-Git folders explicitly; do not repurpose hardened desktop workers by enabling coding tools.
 - Owner decision: spoken trust on Windows/macOS where the user's voice cannot be distinguished from Ember's speakers; the associated CLAUDE.md “Policy decides” wording still needs approval.
-- Owner decision: whether releases should attach eSpeak NG source archives.
 
 ## Native validation still required
 

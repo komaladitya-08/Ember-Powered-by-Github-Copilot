@@ -1609,8 +1609,8 @@ export class AgentHost {
       // account changed): it isn't resumed under this one. It's deleted, as at sign-out, and what it said and
       // how its tasks ended go with it.
       // Another model service than the conversation's (the user's own provider turned on or off, or changed): the
-      // conversation isn't resumed there, so its history goes nowhere it wasn't sent before. A new one starts, and what
-      // Ember remembers stays (it is the same person).
+      // conversation isn't resumed there, so its history goes nowhere it wasn't sent before. A new one starts; saved
+      // memory stays on disk but pauses while no GitHub account is verified (the user's provider has none: owner.ts).
       const service = serviceOf(provider);
       if (this.conversation && this.conversationService !== null && service !== this.conversationService) {
         this.o.log.info("agent.service_changed", { kind: provider?.kind ?? "copilot" });

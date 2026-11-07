@@ -445,9 +445,9 @@ export function providerTestText(r: { ok: true; host: string; models: number | n
 }
 
 /**
- * Memory's note, shown before it is first turned on (Settings › Conversation, docs/MEMORY.md §3): what Ember keeps,
+ * Memory's note, shown before it is first turned on (Settings › Memory, docs/MEMORY.md §3): what Ember keeps,
  * where, what goes to Copilot, and how to forget it. Changing it means bumping FEATURE_CONSENT_VERSION.memory (2: it
- * learns on its own, docs/MEMORY.md steps 3–5).
+ * learns on its own, docs/MEMORY.md steps 3–5; 3: saved memory is tied to the verified GitHub account).
  */
 export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, and how you like things done. It learns from conversations and finished tasks using short Copilot requests, and keeps what it learns on this computer. A few relevant facts go to Copilot with each request. Saved memory is tied to your verified GitHub account. Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it. Ember never keeps passwords, codes or card numbers. You can review and forget facts here. Signing out erases saved memory that belongs to your verified account.";
 

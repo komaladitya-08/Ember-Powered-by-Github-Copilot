@@ -2,7 +2,7 @@
  * Ember's memory as main uses it (docs/MEMORY.md step 2): one graph, loaded from memory.json on first use, saved soon
  * after each change, tidied while nothing changes, and erased whole on request or at sign-out. The conductor's
  * remember, recall and forget_memory tools and the `<memory>` block before each request go through here, and so do
- * Settings › Conversation's list and Forget buttons.
+ * Settings › Memory's list and Forget buttons.
  *
  * A fact the model saves counts as the user's own (`user`, the only source that may shape what Ember does) only when
  * most of its words are in what the user just said. Otherwise it is `conversation`: the model's inference, or text it

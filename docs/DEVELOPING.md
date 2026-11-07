@@ -226,8 +226,8 @@ runtime. It does not change the app's consent or speaking settings.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
     signing out forgets it all. The list says where each fact came from (you, our conversation, a task).
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
-  - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so, `FEATURE_CONSENT_VERSION.memory` 2, so
-    someone who agreed to the first note is asked again and memory stays off until they do). After conversation
+  - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so since `FEATURE_CONSENT_VERSION.memory` went to
+    2, and each bump asks again: someone who agreed to an earlier note has memory off until they agree to this one). After conversation
     turns and finished tasks, a short session of its own on the conversation's model, hardened and with no tools,
     picks out lasting facts as JSON (zod-checked, dropped whole if invalid): at most one call per three turns or a
     minute, 12 an hour, 60 a day. A fact is yours only when you were heard to say it and every word of it is yours,
@@ -535,7 +535,7 @@ call, tell, invite…), keeps every name as heard, and a person's name from Memo
 something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
 Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
 as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
-you just asked. Both are in “Before Ember starts” (`CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
+you just asked. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
 (**Keep listening after I call Ember**, on by default): what you say next needs no name, also while Ember speaks and works,
 until “That's all” or 30 seconds after everything has gone quiet (`CONVERSATION_IDLE_MS`, app/voice/engine.ts). Speech over
 Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo canceller left almost nothing of the user's
@@ -936,7 +936,8 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   the bubble's; after a Stop the turn is over at once. The switch's connect is waited on for at most 15 s, as a
   request waits for any connect: then they go on, and are told Ember is still connecting. Stop, Stop everything and
   quitting drop the held requests and end the switch's wait. A
-  conversation isn't carried to another service: a new one starts (memory stays). While the user's
+  conversation isn't carried to another service: a new one starts, and saved memory is kept but paused (it belongs to
+  a verified GitHub account, so Ember neither recalls nor saves memory until a GitHub sign-in is in force again). While the user's
   provider is in force, no GitHub sign-in is passed to the runtime, and the setup check's model row says
   "Your own model provider (host)". The runtime gets the address as the URL parser writes it, and the agent's log has
   the key replaced by `[key]` wherever an error quotes it.
@@ -1897,7 +1898,7 @@ downloads it on first use per target and checks it before sending.
 - **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's
   exact texts (`persona-commands.test.ts`), the terminal words are unchanged unless WSL is on, and Linux, Windows and
   macOS behave as before.
-- **Consent**: `CONSENT_VERSION` stays 1. The three cards (WSL, SSH per host, commands per target) carry their own
+- **Consent**: none of this changed `CONSENT_VERSION`. The three cards (WSL, SSH per host, commands per target) carry their own
   versions in `FEATURE_CONSENT_VERSION` (`app/shared/consent.ts`): changing a card's text means bumping its version,
   which asks that card again and nothing else. A card's text is hashed with the OS's stop chord already in it, and a
   yes counts only with that hash.

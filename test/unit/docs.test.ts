@@ -24,6 +24,7 @@ import { cardsCorner } from "../../app/renderer/overlay/layout";
 import * as targetCopy from "../../app/renderer/overlay/target-copy";
 import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
+import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import { ISSUES_URL } from "../../app/shared/support";
@@ -257,6 +258,51 @@ describe("docs/DEVELOPING.md", () => {
     expect(globs.length).toBeGreaterThan(0);
     for (const f of files(packageVersion)) expect(globs.some(g => g.test(f)), f).toBe(true);
     expect(section(read("README.md"), "Download")).toMatch(/^sha256sum -c SHA256SUMS\b/m);
+  });
+});
+
+describe("what the docs say about consent versions and memory, against the code (install-docs-v3, memory-15)", () => {
+  const living = ["CLAUDE.md", "README.md", "STATUS.md", ...fs.readdirSync(".claude/rules").map(f => `.claude/rules/${f}`),
+    ...["DEVELOPING.md", "MEMORY.md", "ASSISTANT.md", "COMMANDS-WSL-SSH.md", "DESIGN.md"].map(f => `docs/${f}`)];
+
+  it("states each consent version as consent.ts has it, or as the version that added something", () => {
+    const current: Record<string, number> = { CONSENT_VERSION, ...Object.fromEntries(Object.entries(FEATURE_CONSENT_VERSION).map(([k, v]) => [`FEATURE_CONSENT_VERSION.${k}`, v])) };
+    let stated = 0;
+    for (const file of living) {
+      const text = flat(read(file));
+      for (const m of text.matchAll(/`?(FEATURE_CONSENT_VERSION\.\w+|CONSENT_VERSION)`?(?: \(now| is| stays)? (\d+)\b/g)) {
+        // "added in `CONSENT_VERSION` 2", "since …": history, not what it is now.
+        if (/\b(added in|since|went to)\s*$/.test(text.slice(Math.max(0, m.index - 12), m.index))) continue;
+        stated++;
+        expect(Number(m[2]), `${file}: "${m[0]}"`).toBe(current[m[1]]);
+      }
+    }
+    expect(stated).toBeGreaterThan(0);
+  });
+
+  it("puts memory's note and list in Settings › Memory, the intro in first run's detour, and pauses memory with a provider", () => {
+    // The memory switch and its list are in the settings window's memory pane (index.html), headed Memory.
+    const pane = /<section[^>]*data-pane="memory"[^]*?<\/section>/.exec(homePage)?.[0] ?? "";
+    expect(pane).toContain('id="memory-on"');
+    expect(pane).toMatch(/<h2 [^>]*>Memory<\/h2>/);
+    const memory = flat(read("docs/MEMORY.md"));
+    expect(memory).not.toMatch(/Settings › Conversation, and so is the list/);
+    expect(memory).toContain("The note is in Settings › Memory, and so is the list");
+    for (const f of ["app/main/memory/service.ts", "app/renderer/home/copy.ts"]) expect(read(f), f).not.toMatch(/Settings › Conversation's list|shown before it is first turned on \(Settings › Conversation/);
+    // "Tell Ember about you" is a detour from the welcome's Try me out step (welcome-copy.ts), not a numbered step.
+    expect(WELCOME_STEPS).not.toContain("about");
+    expect(memory).not.toMatch(/step 7 of 8/);
+    expect(memory).toContain(`first run's **${STEP_TEXT.try.title}** step`);
+    // With the user's own provider no GitHub account is verified (host.ts looks the account up only without one), so
+    // saved memory pauses (owner.ts: no account, no memory in force).
+    expect(read("app/main/agent/host.ts")).toContain("const lookUp = async () => !provider && token && login ?");
+    expect(read("app/main/memory/owner.ts")).toMatch(/if \(!this\.account\) \{\n\s+if \(this\.hasData\(\)\) this\.status = "locked";/);
+    const own = flat(section(read("docs/DEVELOPING.md"), "Your own model provider (\"bring your own key\")"));
+    expect(own).not.toMatch(/\(memory stays\)/);
+    expect(own).toContain("saved memory is kept but paused");
+    // The owner decision STATUS.md listed as open is made: every release attaches the voice's GPL sources.
+    expect(read("scripts/package/gpl-source.mjs")).toMatch(/file: "source-espeak-ng-[0-9a-f]+\.zip"/);
+    expect(read("STATUS.md")).not.toMatch(/Owner decision: whether releases should attach eSpeak NG source archives/);
   });
 });
 

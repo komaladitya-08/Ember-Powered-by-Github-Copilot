@@ -318,7 +318,7 @@ machine before they can become a default.
 
 The owner asked for voice that "keeps improving, recognizing my voice, and … predict[s] what I'm going to say next".
 Three parts, all on this computer, measured with scripts/voice/match-bench.mjs and scripts/voice/words-bench.mjs.
-What Ember keeps for them is in "Before Ember starts" and the microphone's card (`CONSENT_VERSION` 2).
+What Ember keeps for them is in "Before Ember starts" and the microphone's card (added in `CONSENT_VERSION` 2).
 
 ### 7.1 Voice Match that adapts (app/voice/adapt.ts, adapt-sample.ts; main: app/main/personal/service.ts)
 
