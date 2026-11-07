@@ -214,7 +214,8 @@ runtime. It does not change the app's consent or speaking settings.
     summary or guess). After Forget, focus goes to a line saying what went, with **Undo** for a minute, never to the
     next row's Forget, so a second Enter forgets nothing more. **Forget all words** (Settings › Voice) asks first.
   - Ember forgets a memory in conversation only when your own words ask it to and name what to forget; the
-    conversation then says "Ember forgot: …" with Undo.
+    conversation then says "Ember forgot: …" with Undo. With memory off or paused, "Remember that…" and "Forget
+    my…" get a plain answer saying so, never a promise.
   - Memory belongs to the verified GitHub account. While Ember can't open it, the pane says why instead of the list:
     "Checking your GitHub account…" while connecting, that memory works only with GitHub Copilot while your own
     model provider (or your organisation's model service) is in force, or that Ember couldn't check the account.

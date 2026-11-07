@@ -9,7 +9,7 @@ import { SemanticMemory, vectorFile } from "../../app/main/memory/embed";
 import { MemoryLearning } from "../../app/main/memory/learning";
 import type { Fact } from "../../app/main/memory/graph";
 import { applyRefinement, recentFacts } from "../../app/main/memory/refine";
-import { forgotReply } from "../../app/main/memory/questions";
+import { NOTHING_TO_FORGET, forgotReply } from "../../app/main/memory/questions";
 
 const dirs: string[] = [];
 const failure = () => { throw Object.assign(new Error("read-only filesystem"), { code: "EROFS" }); };
@@ -119,7 +119,8 @@ describe("durable memory deletion", () => {
     const id = s.memory.list()[0].id;
     expect(l.forget(id)).toBe(true);
     expect(forgot).toHaveBeenCalledWith(id);
-    expect(l.intent("forget that", { own: true })).toBeNull();
+    // Nothing kept lately: said so in code, never left to the model (memory-v1).
+    expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
     l.introduce({ work: "Artist" }); s.memory.flush();
     const original = s.memory.list(), erase = vi.spyOn(s.file, "erase").mockImplementation(failure);
     expect(() => l.forgetAll()).toThrow(/couldn't finish deleting/);
@@ -129,7 +130,8 @@ describe("durable memory deletion", () => {
     expect(() => l.forgetAll()).not.toThrow();
     expect(forgotAll).toHaveBeenCalledOnce();
     expect(s.memory.list()).toEqual([]);
-    expect(l.intent("forget that", { own: true })).toBeNull();
+    // Nothing kept lately: said so in code, never left to the model (memory-v1).
+    expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
     s.memory.stop();
   });
 

@@ -19,8 +19,8 @@ import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, introFacts, isGetToKn
 import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
-  ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes, forgotReply, gapFact, gapQuestion, isForgetThat,
-  looksLikeRequest,
+  ANSWER_WAIT_MS, FORGET_MANAGED, FORGET_OFF, FORGET_THAT_MS, Gaps, NOTHING_TO_FORGET, QUESTION_EVERY_MS, REMEMBER_OFF, answersQuestion, declinesQuestion, describes,
+  forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
 import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
@@ -301,11 +301,18 @@ export class MemoryLearning {
     }
     // "Forget that" first: never an answer to a question (the interview's or Ember's own).
     if (isForgetThat(text)) {
-      if (!this.d.inForce()) return null;
+      // ("Forget it" with memory off is as likely "never mind": the conversation takes it.)
+      if (!this.d.inForce()) return /\bit\b/i.test(text) ? null : this.notInForce("forget");
       const last = this.recent.at(-1);
-      if (!last || now - last.at > FORGET_THAT_MS) return null;
+      // Nothing kept lately: said in code, since forget_memory needs words that name the fact (memory-v1).
+      if (!last || now - last.at > FORGET_THAT_MS) return NOTHING_TO_FORGET;
       const gone = this.forgetCounted(last.id);
-      return gone ? forgotReply(last.text, gone.derived) : null;
+      return gone ? forgotReply(last.text, gone.derived) : NOTHING_TO_FORGET;
+    }
+    // "Remember that…" or "forget my…" while memory can't: the truth, in code, never a model's promise (memory-v1).
+    if (!this.d.inForce()) {
+      const ask = memoryAsk(text);
+      if (ask) return this.notInForce(ask);
     }
     // A request ("open Thunderbird and send the report to Bob") is never an answer: the question is let go of and the
     // conversation takes the request.
@@ -332,11 +339,11 @@ export class MemoryLearning {
   }
 
   /**
-   * What Ember says when asked for something only memory can do while it isn't in force: managed by the organisation,
-   * on but paused (and why), or off (Settings › Memory opens at its switch).
+   * What Ember says when asked for something only memory can do (get to know the user, remember, forget) while it
+   * isn't in force: managed by the organisation, on but paused (and why), or off (Settings › Memory opens at its switch).
    */
-  private notInForce(): string {
-    if (this.d.managed?.()) return INTRO_MANAGED;
+  private notInForce(asked: "introduce" | "remember" | "forget" = "introduce"): string {
+    if (this.d.managed?.()) return asked === "forget" ? FORGET_MANAGED : INTRO_MANAGED;
     const why = this.d.paused?.() ?? null;
     if (why) {
       const reply = memoryPausedReply(why);
@@ -344,7 +351,7 @@ export class MemoryLearning {
       return reply.text;
     }
     this.d.openMemory?.();
-    return INTRO_OFF;
+    return asked === "remember" ? REMEMBER_OFF : asked === "forget" ? FORGET_OFF : INTRO_OFF;
   }
 
   /** One idle check: the sleep-time pass first, else a question. */

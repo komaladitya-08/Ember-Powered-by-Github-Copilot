@@ -13,7 +13,7 @@ import { MemoryGraph } from "../../app/main/memory/graph";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_OFF, answerFacts, introFacts, isGetToKnowMe, styleOf } from "../../app/main/memory/intro";
 import { CallBudget, EXTRACT_SYSTEM, Learner, MAX_ANSWER_CHARS, extractPrompt, learnedFacts, parseExtraction, soundsLikeInstruction, subjectOf, turnSource, type OneShot } from "../../app/main/memory/learn";
 import { IDLE_MS, MemoryLearning, withLearned } from "../../app/main/memory/learning";
-import { Gaps, answersQuestion, describes, gapQuestion, isForgetThat, looksLikeRequest, namesIn } from "../../app/main/memory/questions";
+import { FORGET_OFF, Gaps, NOTHING_TO_FORGET, REMEMBER_OFF, answersQuestion, describes, gapQuestion, isForgetThat, looksLikeRequest, namesIn } from "../../app/main/memory/questions";
 import { negated, samePolarity } from "../../app/main/memory/text";
 import { REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "../../app/main/memory/refine";
 import { MemoryService } from "../../app/main/memory/service";
@@ -399,7 +399,7 @@ describe("forget_memory's visible line and its Undo (memory-v2)", () => {
 });
 
 describe("“forget that”, the instruction check and the conversation's line", () => {
-  it("forgets what was kept just now, and leaves an older or unknown one to the conversation", () => {
+  it("forgets what was kept just now, and says so when nothing was, rather than leaving it to a model that can't (memory-v1)", () => {
     const { l, s, advance } = learning();
     expect(isForgetThat("Ember, forget that")).toBe(true);
     l.introduce({ name: "Ram" });
@@ -407,7 +407,30 @@ describe("“forget that”, the instruction check and the conversation's line",
     expect(s.list()).toEqual([]);
     l.introduce({ apps: "Mail" });
     advance(11 * 60_000);
-    expect(l.intent("forget that", { own: true })).toBeNull();
+    expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
+    expect(NOTHING_TO_FORGET).toBe("I haven't kept anything from just now. Say what to forget, or use Forget in Settings › Memory.");
+    expect(s.list().map(i => i.text)).toEqual(["Uses these apps most: Mail"]);
+  });
+
+  it("answers “remember…” and “forget…” truthfully in code while memory is off, paused or managed (memory-v1)", () => {
+    const off = learning({ inForce: () => false });
+    expect(off.l.intent("Remember that my manager is Priya", { own: true })).toBe(REMEMBER_OFF);
+    expect(REMEMBER_OFF).toBe("Memory is off, so I won't keep that after Ember closes. I've opened Memory in Settings.");
+    expect(off.opened).toHaveBeenCalledOnce();
+    expect(off.l.intent("Ember, please forget that I work at Globex", { own: true })).toBe(FORGET_OFF);
+    expect(FORGET_OFF).toBe("Memory is off, so I can't change what's saved. I've opened Memory in Settings.");
+    expect(off.l.intent("forget that", { own: true })).toBe(FORGET_OFF);
+    const paused = learning({ inForce: () => false, paused: () => "own-provider" });
+    expect(paused.l.intent("don't forget that I'm vegetarian", { own: true })).toBe(memoryPausedReply("own-provider").text);
+    expect(paused.l.intent("Forget my address", { own: true })).toBe(memoryPausedReply("own-provider").text);
+    const managed = new MemoryLearning({ memory: service().s, inForce: () => false, managed: () => true, questionsOn: () => true, askedAt: () => null, setAskedAt: () => undefined, idle: () => true, locked: () => false, say: () => true, log: quiet });
+    expect(managed.intent("remember that I work late on Fridays", { own: true })).toBe("Your organisation has turned memory off, so I can't keep what you tell me.");
+    expect(managed.intent("forget where I live", { own: true })).toBe("Your organisation has turned memory off, so I can't change what's saved.");
+    // Reminders, a request with more in it, and memory in force are the conversation's.
+    for (const text of ["Remember to buy milk at 5", "Don't forget to call Bob", "Remember that Priya is out, and email her the report", "What do you remember about me?", "I forgot my keys"]) {
+      expect(off.l.intent(text, { own: true })).toBeNull();
+    }
+    expect(learning().l.intent("Remember that my manager is Priya", { own: true })).toBeNull();
   });
 
   it("refuses a remember call that isn't the user's words and reads like an order, and keeps one in their words", () => {
@@ -686,7 +709,7 @@ describe("the re-review of PR #142", () => {
     // Home's Forget (or forget_memory): the line goes, and "forget that" no longer reaches it.
     expect(l.forget(ram)).toBe(true);
     expect(forgot).toHaveBeenCalledWith(ram);
-    expect(l.intent("forget that", { own: true })).toBeNull();
+    expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
     expect(l.conductorMemory().forget("f-none")).toBe(false);
 
     // Ram, then Rum, then Rom: forgetting Rum (already closed by Rom) must not reopen Ram beside Rom.

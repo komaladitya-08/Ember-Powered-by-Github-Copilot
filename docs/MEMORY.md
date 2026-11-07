@@ -213,6 +213,10 @@ download, so English-only MiniLM is the trade-off for now.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
      minutes forgets the newest without a model turn. Forgetting an open fact reopens the one it had replaced
      (`reopenSuperseded`) and takes its "Ember learned" line away; **Forget everything** clears the lines too.
+     With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
+   - While memory isn't in force (off, paused, managed), a request that is only "remember that…" or "forget my…"
+     (`memoryAsk`, never "remember to…", a reminder) is answered in code with the truth: memory is off (and Memory
+     opens), why it is paused, or that the organisation turned it off. A model with no memory tools never answers it.
 4. **Sleep-time refinement** (done; `refine.ts`). After 5 minutes idle (no turn, no task, the screen unlocked; an
    unknown lock counts as locked), `MemoryLearning` runs `consolidate()`, then one model pass (the same one-shot
    session) over up to 40 facts changed or used since the last pass:

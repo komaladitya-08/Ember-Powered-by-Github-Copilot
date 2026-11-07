@@ -127,4 +127,32 @@ export const isForgetThat = (text: string) => FORGET_THAT.test(text.trim());
 /** The reply to "forget that": the fact, and how many of Ember's own notes made from it went too (memory-3). */
 export const forgotReply = (text: string, derived = 0) =>
   `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} I made from it` : ""}.`;
-export const NOTHING_TO_FORGET = "I haven't kept anything from just now.";
+export const NOTHING_TO_FORGET = "I haven't kept anything from just now. Say what to forget, or use Forget in Settings › Memory.";
+
+/** "Ember, please", "can you": what may come before a remember or forget request. */
+const LEAD = String.raw`^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?`;
+/** "Remember that…", "don't forget my…", "keep in mind…" (never "remember to…" or "don't forget to…": reminders). */
+const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|make\s+a\s+note)\s+(?!to\b)\S`, "i");
+/** "Forget that I…", "forget my address", "don't remember where I live" (never "forget about…" or "forget to…"). */
+const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:forget|don'?t\s+remember|do\s+not\s+remember|stop\s+remembering|unlearn)\s+(?!to\b|about\b|it\b)\S`, "i");
+/** More than the one request: another sentence, or ", and…" / "and then…" (the conversation takes those whole). */
+const MORE = /[.!?]\s+\S|,\s*(?:and|then)\b|\band\s+then\b/i;
+
+/**
+ * Whether `text` is only a request for Ember to remember something (`remember`) or forget something it keeps
+ * (`forget`), or neither: what Ember answers in code while memory isn't in force, so it never promises what it
+ * can't do (memory-v1).
+ */
+export function memoryAsk(text: string): "remember" | "forget" | null {
+  const t = text.trim();
+  if (MORE.test(t.replace(/[.!]+$/, ""))) return null;
+  if (REMEMBER_ASK.test(t)) return "remember";
+  if (FORGET_ASK.test(t)) return "forget";
+  return null;
+}
+
+/** What Ember says to "remember…" and "forget…" while memory is off; Settings › Memory opens at its switch. */
+export const REMEMBER_OFF = "Memory is off, so I won't keep that after Ember closes. I've opened Memory in Settings.";
+export const FORGET_OFF = "Memory is off, so I can't change what's saved. I've opened Memory in Settings.";
+/** And to "forget…" while the organisation has turned memory off. */
+export const FORGET_MANAGED = "Your organisation has turned memory off, so I can't change what's saved.";
