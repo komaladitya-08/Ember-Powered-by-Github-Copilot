@@ -259,6 +259,16 @@ describe("the terminal's options (\u00a73.10)", () => {
   });
 });
 
+describe("the question when the window closes while commands run (commands-remote-7)", () => {
+  it("makes the safe Keep it open the one that stands out, and Stop and close quiet, as Stop always is", () => {
+    const main = read("main.ts");
+    expect(main).toContain('const stop = el("button", "btn quiet", STOP_AND_CLOSE_LABEL);');
+    expect(main).toContain('const keep = el("button", "btn", KEEP_OPEN_LABEL);');
+    // The safe answer has the keyboard.
+    expect(main).toMatch(/requestAnimationFrame\(\(\) => keep\.focus\(\)\);/);
+  });
+});
+
 describe("a run's terminal once the run has ended (commands-remote-5)", () => {
   it("hides its cursor, also after output it replays, so it doesn't look as if it waits for typing", () => {
     const made = fakeXterm();

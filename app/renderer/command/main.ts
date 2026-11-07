@@ -292,9 +292,10 @@ function buildClosing(running: number): ClosingEls {
   const d = el("p", "closing-line", closeLine(running));
   d.id = "closing-d";
   const row = el("div", "buttons");
-  const stop = el("button", "btn", STOP_AND_CLOSE_LABEL);
+  // Stopping is the destructive choice, so it is quiet; the safe one stands out (commands-remote-7).
+  const stop = el("button", "btn quiet", STOP_AND_CLOSE_LABEL);
   stop.type = "button";
-  const keep = el("button", "btn quiet", KEEP_OPEN_LABEL);
+  const keep = el("button", "btn", KEEP_OPEN_LABEL);
   keep.type = "button";
   stop.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(true); } });
   keep.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(false); } });
