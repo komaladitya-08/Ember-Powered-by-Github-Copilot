@@ -435,6 +435,8 @@ export interface EnvContext {
    * the Python sidecar still starts on demand only): null when it didn't answer, undefined when not asked yet.
    */
   helper?: HelperStatus | null;
+  /** The user pressed Check again: a probe that waits between tries (Linux's pyatspi, every 30 s) tries now (first-run-6). */
+  fresh?: boolean;
 }
 
 /** One doctor row a platform adds (doctor.ts DoctorCheck's shape). */

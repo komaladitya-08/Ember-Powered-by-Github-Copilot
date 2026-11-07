@@ -41,6 +41,7 @@ export const IPC = {
   getStatus: "ember:get-status",
   updateSettings: "ember:update-settings",
   applyFix: "ember:apply-fix",
+  recheckSetup: "ember:recheck-setup",
   settingsChanged: "ember:settings-changed",
   agentStatus: "agent:status",
   agentStatusChanged: "agent:status-changed",
@@ -343,6 +344,8 @@ export interface EmberHomeApi {
   onSettingsChanged(fn: (s: Settings) => void): () => void;
   /** Applies a fix offered by a setup check; returns the new report. */
   applyFix(fix: NonNullable<EnvReport["checks"][number]["fix"]>): Promise<EnvReport>;
+  /** Reads the setup check again (Check again), a probe that waits between tries included; returns the new report. */
+  recheckSetup(): Promise<EnvReport>;
   agentStatus(): Promise<AgentStatus>;
   projectPick(): Promise<ProjectSelection>;
   projectRemove(name: string): Promise<ProjectSelection>;

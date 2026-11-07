@@ -82,6 +82,7 @@ async function open(seed: Seed = {}): Promise<Page> {
       if (name === "signIn") return () => { window.__frCalls.push("signIn"); return defer("signIn"); };
       if (name === "retrySignIn") return () => { window.__frCalls.push("retry"); return defer("retry"); };
       if (name === "applyFix") return (fix: string) => { window.__frCalls.push(`fix:${fix}`); return defer("fix"); };
+      if (name === "recheckSetup") return () => { window.__frCalls.push("recheck"); return defer("recheck"); };
       if (name === "conversation") return async () => [];
       if (name === "openAsk") return async () => { window.__frCalls.push("openAsk"); };
       return () => new Promise(() => undefined);
@@ -554,6 +555,39 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await next(r).click();
     await expect.poll(() => calls(r)).toContain("agree:127.0.0.1:1234");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(t) Check again reads the setup rows anew after a fix made outside Ember, in first run and Home (first-run-6)", async () => {
+    const missing = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" };
+    const ok = { id: "accessibility", label: "Screen reading", status: "ok", detail: "Accessibility is on" };
+    const p = await open({ agent: readyAgent(), checks: [missing] });
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    const again = p.locator("#w-checks-again");
+    expect(await again.isVisible()).toBe(true);
+    // Nothing changed yet: said, and the row stays.
+    await again.click();
+    await expect.poll(() => calls(p)).toContain("recheck");
+    await settle(p, "recheck", { checks: [missing], versions: {} });
+    await expect.poll(() => p.locator("#w-checks-msg").innerText()).toBe("I checked again. Nothing has changed yet.");
+    expect(await p.locator("#w-checks .w-check").count()).toBe(1);
+    // The command was run: the row goes, and the step says so.
+    await again.click();
+    await settle(p, "recheck", { checks: [ok], versions: {} }, 1);
+    await expect.poll(() => p.locator("#w-checks-msg").innerText()).toBe("I checked again. Screen reading is ready now.");
+    expect(await p.locator("#w-checks-head").innerText()).toBe("Everything I need is ready.");
+    expect(await again.isVisible()).toBe(false);
+    expect(await focusedId(p)).toBe("w-title");
+    // Home's setup check offers the same.
+    const h = await open({ home: true, agent: readyAgent(), checks: [missing] });
+    await h.locator("a[href='#checks-h']").first().click();
+    await expect.poll(() => h.locator("#checks-again").isVisible()).toBe(true);
+    await h.locator("#checks-again").click();
+    await settle(h, "recheck", { checks: [ok], versions: {} });
+    await expect.poll(() => h.locator("#checks-msg").innerText()).toBe("I checked again. Screen reading is ready now.");
+    expect(await h.locator("#checks-again").isVisible()).toBe(false);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+    expect((h as Page & { errors: string[] }).errors).toEqual([]);
   });
 
   it("(m) Back, then Home turns the provider on itself: the late switch-off of the abandoned check leaves it on (PR #191 re-review)", async () => {

@@ -30,20 +30,23 @@ export interface LinuxEnvironmentDeps {
   now?: () => number;
 }
 
-/** Is the GNOME accessibility switch on, and can the sidecar's Python import pyatspi? (One instance remembers pyatspi.) */
-export function accessibilityProbe(d: { env: NodeJS.ProcessEnv; exec?: ExecSync; now?: () => number }): () => { enabled: boolean | null; pyatspi: boolean } {
+/**
+ * Is the GNOME accessibility switch on, and can the sidecar's Python import pyatspi? (One instance remembers pyatspi.)
+ * `fresh`: the user asked to check again, so a missing pyatspi is looked for now, not only every 30 s.
+ */
+export function accessibilityProbe(d: { env: NodeJS.ProcessEnv; exec?: ExecSync; now?: () => number }): (fresh?: boolean) => { enabled: boolean | null; pyatspi: boolean } {
   const exec = d.exec ?? execSync;
   const now = d.now ?? Date.now;
   let pyatspiPresent: boolean | null = null;
   let pyatspiProbed = 0;
-  return () => {
+  return (fresh = false) => {
     let enabled: boolean | null = null;
     try {
       const out = exec("gsettings", ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], { encoding: "utf8", timeout: 2000 });
       enabled = out.trim() === "true";
     } catch { /* no gsettings (not GNOME) */ }
     // Asked again (at most every 30 s) while it is missing: the user may have just installed it.
-    if (pyatspiPresent === null || (!pyatspiPresent && now() - pyatspiProbed > 30_000)) {
+    if (pyatspiPresent === null || (!pyatspiPresent && (fresh || now() - pyatspiProbed > 30_000))) {
       pyatspiProbed = now();
       try {
         exec(pickPython(d.env), ["-c", "import pyatspi"], { stdio: "ignore", timeout: 5000 });
@@ -73,7 +76,7 @@ export function linuxEnvironment(d: LinuxEnvironmentDeps): (ctx: EnvContext) => 
       versions: d.versions ?? { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
       platform,
       arch: d.arch ?? process.arch,
-      accessibility: platform === "linux" ? probeAccessibility() : undefined,
+      accessibility: platform === "linux" ? probeAccessibility(ctx.fresh === true) : undefined,
       // Set once Ember has tried the X display: whether it could open it (unknown without $DISPLAY, as before).
       x11: ctx.windows === undefined ? undefined : d.env.DISPLAY ? !!ctx.windows : undefined,
       shortcutsTaken: ctx.shortcutsTaken,

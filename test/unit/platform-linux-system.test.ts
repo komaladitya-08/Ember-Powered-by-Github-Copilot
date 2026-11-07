@@ -241,6 +241,18 @@ describe("the setup-check inputs", () => {
     t = 30_001;
     probe();
     expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(2);
+    // Check again (first-run-6): looked for at once, however soon after the last try.
+    t = 30_002;
+    probe(true);
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(3);
+    // And the setup check's own read passes Check again's `fresh` through to it.
+    const viaEnv = execFake({});
+    const read = linuxEnvironment({ env: { EMBER_PYTHON: "/opt/py" }, platform: "linux", exec: viaEnv.exec, readFile: () => "", report: () => undefined, now: () => 0 });
+    read({ windows: null });
+    read({ windows: null });
+    expect(viaEnv.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(1);
+    read({ windows: null, fresh: true });
+    expect(viaEnv.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(2);
     const found = execFake({ "python3 -c import pyatspi": "" });
     const once = accessibilityProbe({ env: { EMBER_PYTHON: "python3" }, exec: found.exec, now: () => t });
     expect(once()).toEqual({ enabled: null, pyatspi: true });

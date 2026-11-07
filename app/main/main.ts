@@ -260,8 +260,8 @@ let fixesApplied: readonly FixId[] = [];
 let speechHeard: boolean | null = null;
 
 /** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper, fixes). */
-function readEnvironment(): EnvReport {
-  const report = inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied, speech: speechHeard });
+function readEnvironment(fresh = false): EnvReport {
+  const report = inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper, ...(fresh ? { fresh } : {}) }), applied: fixesApplied, speech: speechHeard });
   onSetupRead?.(report.checks);
   return report;
 }
@@ -559,7 +559,7 @@ function start(): void {
   // The setup check shows the other computers' and WSL's rows too, as ember --doctor does (§8.8): read through the
   // targets runtime, kept a few seconds, and waited for briefly (the rows from before show while a slow one finishes).
   const targetChecks = targetChecksSource(() => targets?.doctorRows() ?? Promise.resolve([]), { keepMs: 15_000, waitMs: 3000, now: () => Date.now() });
-  const environmentNow = async (fresh = false) => withTargetChecks(readEnvironment(), await targetChecks(fresh));
+  const environmentNow = async (fresh = false) => withTargetChecks(readEnvironment(fresh), await targetChecks(fresh));
   ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
     appVersion: app.getVersion(),
     settings: settings.get(),
@@ -595,6 +595,8 @@ function start(): void {
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
+  // Check again (first-run-6): the setup rows read anew, a throttled probe included, after the user ran a fix themselves.
+  ipcMain.handle(IPC.recheckSetup, guard(async () => environmentNow(true)));
   ipcMain.handle(IPC.applyFix, guard(async (fix: string) => {
     const t = targets;
     const done = await applySetupFix(fix, { osFixes: sys.fixes.ids, applyOs: id => sys.fixes.apply(id), applyTarget: t ? id => t.applyFix(id) : null });

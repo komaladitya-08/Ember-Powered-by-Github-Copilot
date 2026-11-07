@@ -37,6 +37,7 @@ import { onProviderDestination, ownProvider, providerSettings, startProvider } f
 import { modelDestination, recipientWords } from "./copy";
 import { mountProject } from "./project";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
+import { recheckMessage } from "./welcome-copy";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
@@ -359,6 +360,8 @@ function renderChecks(environment: Status["environment"]): void {
   }
   failing = environment.checks.filter(c => c.status === "fail").length;
   const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
+  // A fix the user makes outside Ember (a command run, a setting changed by hand): Check again reads the rows anew.
+  $("checks-again-row").hidden = !view.needing;
   toLook = view.needing - failing;
   toFix = view.held;
   renderSetupBadge(view.needing, failing, view.held);
@@ -374,6 +377,24 @@ function renderChecks(environment: Status["environment"]): void {
   $("checks-fold").closest("section")!.classList.toggle("after-setup", !checksBeforeStart);
   renderTagline();
 }
+
+$("checks-again").addEventListener("click", () => {
+  const btn = $("checks-again");
+  // Busy, not disabled: a disabled button drops keyboard focus to the page.
+  if (btn.getAttribute("aria-disabled") === "true") return;
+  btn.setAttribute("aria-disabled", "true");
+  $("checks-msg").textContent = "Checking…";
+  const before = checksNow;
+  window.ember.recheckSetup().then(env => {
+    btn.removeAttribute("aria-disabled");
+    renderChecks(env);
+    $("checks-msg").textContent = recheckMessage(before, env.checks);
+    if ($("checks-again-row").hidden) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
+  }, err => {
+    btn.removeAttribute("aria-disabled");
+    $("checks-msg").textContent = ipcErrorText(err);
+  });
+});
 
 /** The sidebar's Setup link carries how many rows need the user, so a warning is seen from anywhere (review #95). */
 function renderSetupBadge(needing: number, fails: number, held: number): void {

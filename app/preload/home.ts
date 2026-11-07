@@ -19,6 +19,7 @@ const api: EmberHomeApi = {
   updateSettings: patch => ipcRenderer.invoke(IPC.updateSettings, patch),
   onSettingsChanged: fn => listen<Settings>(IPC.settingsChanged, fn),
   applyFix: fix => ipcRenderer.invoke(IPC.applyFix, fix),
+  recheckSetup: () => ipcRenderer.invoke(IPC.recheckSetup),
   agentStatus: () => ipcRenderer.invoke(IPC.agentStatus),
   projectPick: () => ipcRenderer.invoke(IPC.projectPick),
   projectRemove: name => ipcRenderer.invoke(IPC.projectRemove, name),

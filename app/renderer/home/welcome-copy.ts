@@ -299,6 +299,17 @@ export function checksLater(rows: readonly SetupRow[]): string {
   return rows.some(needsUser) ? "You can fix these later in Settings › Setup check." : "";
 }
 
+/**
+ * What Check again found (first-run-6), for the live line: the rows that needed the user and no longer do, by name, or
+ * that nothing has changed yet. First run and Home's setup check say it alike.
+ */
+export function recheckMessage(before: readonly SetupRow[], after: readonly SetupRow[]): string {
+  const fixed = before.filter(needsUser).filter(r => !after.some(a => a.id === r.id && needsUser(a))).map(r => r.label);
+  if (!fixed.length) return "I checked again. Nothing has changed yet.";
+  const names = fixed.length === 1 ? fixed[0] : `${fixed.slice(0, -1).join(", ")} and ${fixed.at(-1)}`;
+  return `I checked again. ${names} ${fixed.length === 1 ? "is" : "are"} ready now.`;
+}
+
 /** The checks step's Continue: "Continue anyway" while something holds Ember back (it never blocks the flow). */
 export function checksNext(rows: readonly SetupRow[]): string {
   return rows.some(holdsBack) ? "Continue anyway" : "Continue";

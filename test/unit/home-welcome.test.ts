@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
 import { CONSENT_CHANGES, CONSENT_VERSION, consentChangesSince } from "../../app/shared/consent";
 import {
-  CONSENT_AGAIN, CONSENT_CHANGE_SOURCES, CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
+  CONSENT_AGAIN, CONSENT_CHANGE_SOURCES, CONSENT_SOURCES, CONSENT_TEXT, recheckMessage, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
   gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
@@ -270,6 +270,19 @@ describe("the checks step", () => {
     expect(checksNext(after)).toBe("Continue");
     // Switched on before Ember started: nothing left to do.
     expect(checksHeadline(after.map(r => ({ ...r, next: undefined })))).toEqual({ text: "Everything I need is ready.", tone: "ok" });
+  });
+
+  it("says what Check again found: the rows that are ready now, or that nothing changed (first-run-6)", () => {
+    const missing = [{ id: "accessibility", label: "Screen reading", status: "warn" as const }, { id: "os", label: "Operating system", status: "warn" as const }];
+    const fixed = [{ id: "accessibility", label: "Screen reading", status: "ok" as const }, missing[1]];
+    expect(recheckMessage(missing, fixed)).toBe("I checked again. Screen reading is ready now.");
+    expect(recheckMessage(missing, missing)).toBe("I checked again. Nothing has changed yet.");
+    const two = [...missing, { id: "session", label: "Desktop session", status: "fail" as const }];
+    expect(recheckMessage(two, two.map(r => ({ ...r, status: "ok" as const })))).toBe("I checked again. Screen reading and Desktop session are ready now.");
+    // Offered on the step while a row needs the user, through main's re-read (a throttled probe included).
+    expect(SCRIPT).toContain("$(\"w-checks-again-row\").hidden = !rows.some(needsUser);");
+    expect(MAIN).toContain("ipcMain.handle(IPC.recheckSetup, guard(async () => environmentNow(true)));");
+    expect(HOME).toContain("$(\"checks-again-row\").hidden = !view.needing;");
   });
 
   it("names each row's state in words in the details", () => {

@@ -14,6 +14,7 @@ import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
 import type { ProviderState, Status, VoiceStatus } from "../../shared/ipc";
 import { endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { LEVEL_STEPS } from "../../shared/level";
+import { needsUser } from "../../shared/setup-attention";
 import { keptWords } from "./admin-copy";
 import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -23,7 +24,7 @@ import {
   ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
-  CHECK_AGAIN, CHECKS_DETAIL, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
+  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
   DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
@@ -564,6 +565,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // A fix button that had focus keeps it when the rows are drawn again; one that went hands it to the heading.
     if (hadFix) ($("w-checks").querySelector<HTMLElement>(`[data-fix="${CSS.escape(hadFix)}"]`) ?? $("w-title")).focus();
     $("w-checks").hidden = !$("w-checks").childElementCount;
+    // A fix the user makes outside Ember (a command run, a setting changed by hand): Check again reads the rows anew.
+    $("w-checks-again-row").hidden = !rows.some(needsUser);
+    $("w-checks-again").textContent = CHECK_AGAIN;
     $("w-checks-later").textContent = checksLater(rows);
     $("w-checks-later").hidden = !checksLater(rows);
     $("w-checks-more").querySelector("summary")!.textContent = CHECKS_DETAIL;
@@ -577,6 +581,27 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     }));
     return checksNext(rows);
   }
+
+  $("w-checks-again").addEventListener("click", () => {
+    const btn = $("w-checks-again");
+    if (btn.getAttribute("aria-disabled") === "true") return;
+    btn.setAttribute("aria-disabled", "true");
+    $("w-checks-msg").textContent = "Checking…";
+    const before = status?.environment.checks ?? [];
+    window.ember.recheckSetup().then(env => {
+      btn.removeAttribute("aria-disabled");
+      if (status) status = { ...status, environment: env };
+      shownChecks = "";
+      deps.checksChanged(env);
+      render();
+      $("w-checks-msg").textContent = recheckMessage(before, env.checks);
+      // The button stays while something still needs the user; otherwise the heading takes the focus.
+      if ($("w-checks-again-row").hidden) $("w-title").focus();
+    }, err => {
+      btn.removeAttribute("aria-disabled");
+      $("w-checks-msg").textContent = ipcErrorText(err);
+    });
+  });
 
   const voiceState = () => voiceTry({
     wakeWord: !!settings?.wakeWord, voiceConsent: !!settings?.voice.consent, state: voice?.state ?? null,
