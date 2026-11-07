@@ -534,6 +534,34 @@ describe("the card's words from the classifier (review #214)", () => {
     // A path with dots in it is said as written.
     expect(says("rm -r ./build")).toContain("Deletes ./build and everything in it.");
     expect(says("rm -r ../build")).toContain("Deletes ../build and everything in it.");
+    // A folder's contents copied in (`/tmp/x/.`) are files of the same names, not the folder itself.
+    expect(says("cp -r /tmp/x/. .")).toEqual(["Replaces files in the current folder if they exist."]);
+  });
+
+  it("says what removing packages, crontab -r, a reset to another commit and rm * really do (commands-remote-r1)", () => {
+    for (const cmd of [
+      "npm uninstall lodash", "npm rm lodash", "npm r lodash", "yarn remove lodash", "pnpm remove lodash", "bun remove lodash",
+      "pip uninstall -y requests", "pip3 uninstall requests", "pipx uninstall black", "poetry remove requests", "pipenv uninstall requests",
+      "conda remove numpy", "uv remove requests", "uv pip uninstall requests", "gem uninstall rails", "cargo uninstall ripgrep",
+      "composer remove monolog/monolog", "dotnet remove package Newtonsoft.Json", "dotnet tool uninstall dotnet-ef",
+    ]) expect(says(cmd), cmd).toEqual(["Removes packages."]);
+    for (const cmd of ["npm install lodash", "pip install requests", "poetry add requests", "uv pip install requests", "npm install remove"]) {
+      expect(says(cmd), cmd).toEqual(["Installs packages (they can run their own setup code)."]);
+    }
+    expect(says("crontab -r")).toEqual(["Deletes your scheduled jobs."]);
+    expect(says("crontab -ir")).toEqual(["Deletes your scheduled jobs."]);
+    expect(says("atrm 3")).toEqual(["Removes a scheduled job."]);
+    expect(says("atrm 3 4")).toEqual(["Removes scheduled jobs."]);
+    expect(says("crontab jobs.txt")).toEqual(["Schedules something to run later or at login."]);
+    expect(says("git reset --hard origin/main")).toEqual(["Moves the branch to origin/main, throwing away changes that aren't committed and any commits not in origin/main."]);
+    expect(says("git reset --hard HEAD~1")).toEqual(["Moves the branch to HEAD~1, throwing away changes that aren't committed and any commits not in HEAD~1."]);
+    for (const cmd of ["git reset --hard", "git reset --hard HEAD", "git reset --hard @"]) expect(says(cmd), cmd).toEqual(["Throws away changes that aren't committed."]);
+    expect(says("rm -rf *")).toEqual(["Deletes everything in the current folder."]);
+    expect(says("rm -rf ./*")).toEqual(["Deletes everything in the current folder."]);
+    expect(says("rm -rf build/*")).toEqual(["Deletes everything in build."]);
+    expect(says("rm *")).toEqual(["Deletes the files in the current folder."]);
+    expect(says("rm *.log")).toEqual(["Deletes *.log."]);
+    for (const cmd of ["rm -rf *", "rm *", "rm -rf build/*"]) for (const l of says(cmd)) expect(l, cmd).not.toContain("*");
   });
 
   it("says what Ember can't tell in plain words", () => {

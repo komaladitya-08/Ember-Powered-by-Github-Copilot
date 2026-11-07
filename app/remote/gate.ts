@@ -17,7 +17,7 @@ import type { ActStamp } from "../main/perception/ports";
 import type { ElementInfo } from "../main/perception/sidecar";
 import type { ActionKind, ActionRequest, Decision, TextMode } from "../main/policy/policy";
 import { normalizeLabel } from "../main/policy/policy";
-import { ALWAYS_ASK } from "../main/commands/types";
+import { ALWAYS_ASK, standingFindings } from "../main/commands/types";
 import type { Classification, ClassifyContext, CommandMode, Finding, PathFact, RunnerFacts, RunSpec } from "../main/commands/types";
 import { judgeScripts, withoutReadFlow, type TaskWrites } from "../main/commands/scripts";
 import type { ClassifyCommand } from "./contracts";
@@ -164,7 +164,7 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   if (i.facts.privileged && !approval) asks.push(GATE_WORDS.root);
 
   // An overwrite counts only when its target exists here (§3.8.2 rule 3).
-  const findings = cls.findings.filter(f => !(f.ifExists && byPath.get(f.ifExists)?.exists === false));
+  const findings = standingFindings(cls.findings, byPath);
   // Secrets, escapes and what can't be classified always ask (D4.4): a stamp naming one without the user's yes (a
   // "run" or "announce" no PC should send) covers nothing of it.
   // A script's finding (read only here: the PC never saw it) is covered only by the user's yes to a question that

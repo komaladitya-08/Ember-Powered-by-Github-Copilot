@@ -42,7 +42,7 @@ import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, type ShellId,
+  type RunSpec, type ShellId, standingFindings,
 } from "./types";
 
 /** What run_command needs from its worker. */
@@ -567,7 +567,7 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   if (r.tainted) { lines.push(CARD_LINES.tainted); policyOnly = false; }
   if (r.carried) { lines.push(CARD_LINES.carried(r.carried.from)); policyOnly = false; }
   // The findings that stand once the target said which overwritten paths don't exist (§3.8.2 rule 3).
-  const left = (r.cls?.findings ?? []).filter(f => !(f.ifExists !== undefined && r.paths?.get(f.ifExists)?.exists === false));
+  const left = standingFindings(r.cls?.findings ?? [], r.paths);
   const missed = (ordinary && left.length > 0)
     || (d.verdict === "announce" && [...d.classes, ...left.map(f => f.cls)].some(c => ALWAYS_ASK.has(c)))
     || (d.verdict !== "run" && d.verdict !== "announce");

@@ -124,7 +124,9 @@ Ember stops and asks before a command that:
 
 - **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
-  `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`),
+  `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
+  or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it
+  exists.", where the computer says which names are folders: this computer and an SSH computer, not yet WSL),
   `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
   that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), and package scripts or
   make targets named clean, wipe, purge, reset and the like;

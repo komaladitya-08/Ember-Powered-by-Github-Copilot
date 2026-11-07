@@ -27,6 +27,8 @@ export interface InspectFs {
   /** The real path with the OS's own semantics; rejects when it can't be resolved. */
   realpath(p: string): Promise<string>;
   readlink(p: string): Promise<string>;
+  /** Follows a last symlink; says whether the path is a folder. Absent: no path is known to be one (PathFact.dir). */
+  stat?(p: string): Promise<{ isDirectory(): boolean }>;
   /** Opens a file for reading its first bytes (readScript); rejects when it can't be opened. Absent: no script read. */
   open?(p: string): Promise<ScriptFile>;
 }
@@ -44,6 +46,7 @@ const NODE_FS: InspectFs = {
   lstat: p => fs.promises.lstat(p),
   realpath: p => fs.promises.realpath(p),
   readlink: p => fs.promises.readlink(p),
+  stat: p => fs.promises.stat(p),
   open: async p => {
     // Never blocks on a FIFO (it would hold one of libuv's few threads until something writes to it) and never takes
     // a terminal as Ember's own: both are refused below as not regular files.
@@ -127,7 +130,9 @@ export async function inspectPaths(paths: readonly string[], cwd: string, o: { o
       exists = MISSING.has(codeOf(err) ?? "") ? false : null;
     }
     if (exists === null) return unknown;
-    return { exists, real: await realOf(abs, 0).catch(() => null) };
+    // A folder (or a link to one) that a copy or a move puts its file inside (commands-remote-r1).
+    const dir = exists && files.stat ? await files.stat(abs).then(st => st.isDirectory(), () => false) : false;
+    return { exists, real: await realOf(abs, 0).catch(() => null), ...(dir ? { dir: true } : {}) };
   };
 
   try {

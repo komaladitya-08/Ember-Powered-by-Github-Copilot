@@ -143,6 +143,10 @@ describe("the other rows", () => {
     ["docker push app:1.0", "push the app image", "Pushing the image app:1.0, as you asked."],
     ["npm install lodash", "install lodash", "Installing lodash, as you asked."],
     ["npm i -g typescript", "install typescript globally", "Installing typescript, as you asked."],
+    // A removal is said as one (commands-remote-r1).
+    ["npm uninstall lodash", "uninstall lodash", "Removing lodash, as you asked."],
+    ["pip uninstall requests", "remove requests", "Removing requests, as you asked."],
+    ["git reset --hard origin/main", "reset hard to origin/main", "Moving the branch to origin/main and throwing away uncommitted changes, as you asked."],
     ["systemctl restart nginx", "restart nginx", "Restarting nginx, as you asked."],
     ["scp report.pdf build-01:/tmp", "copy report.pdf to build-01", "Copying report.pdf to build-01, as you asked."],
     ["kill 1234", "kill 1234", "Stopping 1234, as you asked."],
@@ -156,6 +160,9 @@ describe("the other rows", () => {
     ["git branch -D old-ui other", "delete the branch old-ui"],
     ["git branch -D old-ui", "delete old-ui"],
     ["git reset --hard origin/main", "discard my changes"],
+    // Words that install don't cover a removal, nor the other way round (commands-remote-r1).
+    ["npm uninstall lodash", "install lodash"],
+    ["npm install lodash", "uninstall lodash"],
     ["git checkout -- src/a.ts src/b.ts", "discard the changes to src/a.ts"],
     ["git clean -fdx", "clean untracked files"],
     ["git stash clear", "drop the stash"],

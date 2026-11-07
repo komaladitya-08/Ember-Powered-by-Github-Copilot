@@ -94,6 +94,15 @@ describe("gate 2 for commands (§3.16)", () => {
     expect(await real("zsh -c 'while true { rm -rf ~ }'")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
   });
 
+  it("agrees with the PC that a move into a folder here asks only when the file of its name is in it (commands-remote-r1)", async () => {
+    const real = (dirFile: boolean | null) => gateCommand(input({
+      spec: spec({}, { command: "mv report.pdf /home/deploy/Documents", shell: "bash" }), classify: classifyCommand,
+      inspect: async paths => paths.map(p => (p === "/home/deploy/Documents" ? { exists: true, real: p, dir: true } : { exists: p.endsWith("/Documents/report.pdf") ? dirFile : true, real: p })),
+    }));
+    expect((await real(false)).status).toBe("ok");
+    expect(await real(true)).toMatchObject({ status: "needs_confirm", rules: ["posix.mv"], says: expect.arrayContaining(["Replaces /home/deploy/Documents/report.pdf if it exists."]) });
+  });
+
   it("asks, as the PC does, before a loop or an if runs a command with a library preloaded or PATH changed (commands-remote-c1-1)", async () => {
     const real = (command: string) => gateCommand(input({ spec: spec({}, { command, shell: "bash" }), classify: classifyCommand }));
     for (const command of [
