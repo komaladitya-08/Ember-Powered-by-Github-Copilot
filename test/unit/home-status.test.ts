@@ -9,7 +9,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage } from "../../app/renderer/home/search-copy";
-import { checksNote, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
+import { checksNote, COMPOSER_THINKING, COMPOSER_WAIT_MS, composerStillWaiting, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
+import { THINK_SLOW_MS } from "../../app/main/agent/presenter";
 import { formatDoctor } from "../../app/main/doctor";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
 import { IPC, TASKS_PUSH_MS } from "../../app/shared/ipc";
@@ -32,6 +33,20 @@ describe("Home's status panel", () => {
     expect(statusWord({ ...base, phase: "signed-out", asking: 1 })).toEqual({ word: "Not connected", ring: "error" });
     expect(statusWord({ ...base, phase: "error", waitingForTasks: true }).word).toBe("Waiting for Copilot");
     expect(statusWord({ ...base, failing: 1, asking: 1 })).toEqual({ word: "Needs setting up", ring: "error" });
+  });
+
+  it("says Ember is thinking while it answers a message sent from Home, after a task that needs you or tasks at work (home-7)", () => {
+    const base = { phase: "ready", failing: 0, running: 0, asking: 0 };
+    expect(statusWord({ ...base, answering: true })).toEqual({ word: "Thinking…", ring: "acting" });
+    expect(statusWord({ ...base, answering: true, running: 1 }).word).toBe("Working on 1 task");
+    expect(statusWord({ ...base, answering: true, asking: 1 }).word).toBe("A task needs you");
+    expect(statusWord({ ...base, answering: true, phase: "starting" }).word).toBe("Connecting…");
+    // The composer's own line: thinking, then (after the bubble's own wait) still waiting for the service in use, and how to stop.
+    expect(COMPOSER_WAIT_MS).toBe(THINK_SLOW_MS);
+    expect(COMPOSER_THINKING).toBe("Thinking… Ember's reply will appear above.");
+    expect(composerStillWaiting()).toBe("Still waiting for Copilot… Stop response ends this reply.");
+    expect(composerStillWaiting("user")).toBe("Still waiting for your model provider… Stop response ends this reply.");
+    expect(composerStillWaiting("admin")).toBe("Still waiting for the model service… Stop response ends this reply.");
   });
 
   it("under the organisation's lockdown says Ember is locked, never \"Not connected\" or to connect Copilot (safety-privacy-4)", () => {

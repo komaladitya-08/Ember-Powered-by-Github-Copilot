@@ -30,6 +30,8 @@ export interface StatusFacts {
   /** The organisation's policy locks Ember down (Status.admin.error), `held` until a restart reads a changed one. */
   locked?: boolean;
   held?: boolean;
+  /** Ember is answering a message sent from Home's composer (until the reply, a problem or Stop: home-7). */
+  answering?: boolean;
 }
 
 /** "1 task", "2 tasks". */
@@ -48,6 +50,7 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
   if (f.phase === "starting" || f.phase === null) return { word: "Connecting…", ring: "starting" };
   if (f.asking) return { word: f.asking === 1 ? "A task needs you" : `${f.asking} tasks need you`, ring: "needs" };
   if (f.running) return { word: `Working on ${count(f.running, "task")}`, ring: "acting" };
+  if (f.answering) return { word: "Thinking…", ring: "acting" };
   return { word: "Ready", ring: "ready" };
 }
 

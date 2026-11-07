@@ -431,4 +431,33 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
+
+  it("says in the window that Ember is thinking, then still waiting with how to stop, until the reply comes (home-7)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.clock.install();
+      await page.evaluate(() => window.__home.emit("onAgentStatus", { phase: "ready", detail: "", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } }));
+      await expect.poll(() => page.locator("#state-word").innerText()).toBe("Ready");
+      await page.locator("#conversation-message").fill("What's the weather?");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
+      await page.clock.runFor(9_000);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await page.clock.runFor(1_500);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
+      // Words come, then the reply: the wait is over.
+      await reply(page, [], "What's the weather?", 2);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      expect(await page.locator("#state-word").innerText()).toBe("Ready");
+      // A reply that starts writing in time is never called a wait.
+      await page.locator("#conversation-message").fill("And tomorrow?");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await page.evaluate(() => window.__home.emit("onConversationStream", { id: 3, text: "Rain", state: "streaming" }));
+      await page.clock.runFor(20_000);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
 });

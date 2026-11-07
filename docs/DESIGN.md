@@ -264,7 +264,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   640 px the links are one row of capsules, the search field first.
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
-  state in a few words ("Ready", "Working on 2 tasks", "A task needs you" with **Open approval**, "Not connected",
+  state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task
+  needs you" with **Open approval**, "Not connected",
   "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
   you, then two facts (which of listening, memory and commands are on; today's tasks by outcome and the steps you
   allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
@@ -276,7 +277,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows.
 - **The conversation** is part of the page, not a box that scrolls inside it: its latest 6 messages (so the composer
   and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
-  its reply show), shows explicit per-answer truncation beyond
+  its reply show; the composer's line says "Thinking…" until the reply, and "Still waiting for Copilot… Stop response
+  ends this reply." after the bubble's own 10 s with nothing written), shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. A long paste is kept whole: from 1,800 characters the composer counts
   them, and over 2,000 it says how many too many and Send refuses until it fits. Messages kept from before a restart
   (**Keep my recent conversation**) show their day beside their time, and a quiet line under the last of them says

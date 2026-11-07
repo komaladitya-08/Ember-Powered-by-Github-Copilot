@@ -48,7 +48,7 @@ import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whats
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerCount, COMPOSER_OVER, COMPOSER_THINKING, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountLearnedUndo } from "./learned-undo";
@@ -264,7 +264,7 @@ function renderStatus(): void {
   const { running, asking: askingTasks } = taskCounts(tasksNow);
   const asking = Math.max(askingTasks, presence?.approval ? 1 : 0);
   const locked = !!lastAdmin && lastAdmin.error !== null;
-  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held, service: agent?.service?.kind });
+  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held, service: agent?.service?.kind, answering: conversationAwaitingReply });
   setText("state-word", s.word);
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
@@ -946,6 +946,24 @@ const conversationMessage = $("conversation-message") as HTMLTextAreaElement;
 const conversationSearch = $("conversation-search") as HTMLInputElement;
 const conversationComposeStatus = $("conversation-compose-status");
 let conversationAwaitingReply = false;
+/** Until when the composer's request has heard nothing (home-7): "Still waiting for …" after COMPOSER_WAIT_MS. */
+let conversationWait: ReturnType<typeof setTimeout> | null = null;
+/**
+ * A message sent from the composer is (or is no longer) being answered: the status panel says "Thinking…", and the
+ * composer's line says Ember is still waiting once nothing was written for as long as the bubble waits (home-7).
+ */
+function awaitingReply(on: boolean, watch = false): void {
+  conversationAwaitingReply = on;
+  if (conversationWait) { clearTimeout(conversationWait); conversationWait = null; }
+  if (on && watch) {
+    const generation = conversationGeneration;
+    conversationWait = setTimeout(() => {
+      conversationWait = null;
+      if (conversationAwaitingReply && generation === conversationGeneration && !answerStream.row) conversationComposeStatus.textContent = composerStillWaiting(agent?.service?.kind);
+    }, COMPOSER_WAIT_MS);
+  }
+  renderStatus();
+}
 let conversationLastAtSend: Entry | undefined;
 let conversationDraftBeforeEdit: string | null = null;
 let conversationGeneration = 0;
@@ -1087,7 +1105,7 @@ function renderConversation(raw: Entry[]): void {
   const newReply = latest && (latest.t !== conversationLastAtSend?.t || latest.who !== conversationLastAtSend?.who || latest.text !== conversationLastAtSend?.text);
   // (An answer stopped short is not a reply received: the problem that follows it, or the Stop, says what happened.)
   if (conversationAwaitingReply && newReply && (latest.who === "problem" || (latest.who === "ember" && !latest.stopped))) {
-    conversationAwaitingReply = false;
+    awaitingReply(false);
     conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? "Ember couldn’t finish this reply. Review the message above; you can edit your request and send again." : "Reply received.";
   }
   // Requests Ember heard (not typed) offer “That's not what I said”.
@@ -1137,7 +1155,7 @@ const resetConversationView = () => {
   syncComposerCount();
   conversationSearch.value = "";
   conversationComposeStatus.textContent = "";
-  conversationAwaitingReply = false;
+  awaitingReply(false);
   conversationLastAtSend = undefined;
   conversationDraftBeforeEdit = null;
   conversationGeneration++;
@@ -1154,6 +1172,9 @@ window.ember.onConversationStream(e => {
   if (!ev || !Number.isSafeInteger(ev.id) || typeof ev.text !== "string" || !["streaming", "done", "interrupted"].includes(ev.state ?? "")) return;
   answerStream = streamEvent(answerStream, ev as StreamEvent, conversationAll, new Date().toISOString());
   keepingComposer(() => syncStreamRow($("conversation")));
+  // Written to at last: no longer a wait (the reply, or what stopped it, says the rest).
+  if (answerStream.row && conversationWait) { clearTimeout(conversationWait); conversationWait = null; }
+  if (answerStream.row && conversationComposeStatus.textContent === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
 });
 $("conversation-new").addEventListener("click", () => {
   const button = $("conversation-new") as HTMLButtonElement;
@@ -1183,7 +1204,7 @@ $("conversation-compose").addEventListener("submit", event => {
   if (conversationSearch.value) { conversationSearch.value = ""; renderConversation(conversationAll); }
   send.disabled = true;
   send.textContent = "Sending…";
-  conversationAwaitingReply = true;
+  awaitingReply(true);
   conversationLastAtSend = conversationAll.at(-1);
   const generation = conversationGeneration;
   conversationComposeStatus.textContent = "Sending request…";
@@ -1194,10 +1215,10 @@ $("conversation-compose").addEventListener("submit", event => {
     syncComposerCount();
     conversationDraftBeforeEdit = null;
     $("conversation-cancel-edit").hidden = true;
-    if (conversationAwaitingReply) conversationComposeStatus.textContent = "Request sent. Ember’s reply will appear above.";
+    if (conversationAwaitingReply) { conversationComposeStatus.textContent = COMPOSER_THINKING; awaitingReply(true, true); }
   }, error => {
     if (generation !== conversationGeneration) return;
-    conversationAwaitingReply = false;
+    awaitingReply(false);
     conversationComposeStatus.textContent = ipcErrorText(error) || "Couldn’t send. Your draft is still here; try again.";
   }).finally(() => { if (generation === conversationGeneration) { send.disabled = false; send.textContent = "Send"; } });
 });
@@ -1239,7 +1260,7 @@ $("conversation-stop").addEventListener("click", () => {
   stop.disabled = true;
   void window.ember.conversationStop().then(() => {
     if (generation !== conversationGeneration) return;
-    conversationAwaitingReply = false;
+    awaitingReply(false);
     conversationComposeStatus.textContent = "Response stopped. Running tasks continue.";
   }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t stop this response. Try again, or use Stop everything."; })
     .finally(() => { if (generation === conversationGeneration) stop.disabled = false; });

@@ -50,6 +50,15 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
   const over = n - limit;
   return `${num(n)} of ${num(limit)} characters${over > 0 ? `, ${num(over)} too many` : ""}.`;
 }
+/**
+ * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, after the bubble's
+ * own wait (THINK_SLOW_MS) with nothing written yet, still waiting for the service in use, and how to stop it.
+ */
+export const COMPOSER_THINKING = "Thinking… Ember's reply will appear above.";
+export const COMPOSER_WAIT_MS = 10_000;
+export function composerStillWaiting(service?: string): string {
+  return `Still waiting for ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}… Stop response ends this reply.`;
+}
 /** Said once as a message goes over the limit, and when Send is tried while it is (home-5). */
 export const COMPOSER_OVER = `This message is longer than ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters. Shorten it to send it.`;
 export function conversationMatchesText(text: string, query: string): boolean {
