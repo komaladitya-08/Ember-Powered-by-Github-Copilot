@@ -6,15 +6,21 @@
  * says the same things in fewer words and never more, so agreeing to it is agreeing to that text (CONSENT_VERSION).
  */
 
+import { CONSENT_VERSION } from "../../shared/consent";
 import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attention";
 
 /** The essential first-run route; character and memory personalisation remain optional detours. */
 export const WELCOME_STEPS = ["hello", "consent", "sign-in", "checks", "try", "done"] as const;
 export type WelcomeStep = (typeof WELCOME_STEPS)[number] | "character" | "about" | "provider";
 
-/** Where first run opens: at the start, or at sign-in once consent was already agreed. */
-export function firstStep(consented: boolean): WelcomeStep {
-  return consented ? "sign-in" : "hello";
+/**
+ * Where first run opens, by the consent version agreed to (`agreed`): at the start for someone who never agreed (0), at
+ * sign-in once the current one was agreed in a run that didn't finish, and at the consent itself, with what changed,
+ * for someone who agreed to an earlier version (first-run-4: they have met Ember already).
+ */
+export function firstStep(agreed: number): WelcomeStep {
+  if (agreed >= CONSENT_VERSION) return "sign-in";
+  return agreed > 0 ? "consent" : "hello";
 }
 
 /** Position in the essential route; optional detours keep their originating step's indicator. */
@@ -114,6 +120,13 @@ export function consentPoints(o: { service: string; kept: string; locked: boolea
   ];
 }
 
+/** The consent step for someone who agreed to an earlier version: its title, lead and the heading over what changed (first-run-4). */
+export const CONSENT_AGAIN = {
+  title: "What's changed since you last agreed",
+  lead: "I work a little differently now, so I need you to agree again. Nothing is read, heard or sent until you do.",
+  changes: "What's new",
+} as const;
+
 /** The consent step's buttons and what "Not now" says. */
 export const CONSENT_TEXT = {
   agree: "Agree and continue",
@@ -134,6 +147,16 @@ export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly str
   hand: ["It asks before acting</b> in an app, and always before anything hard to undo.", "It never types passwords."],
   lock: ["On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for", "Ember encrypts its selected paths and last completed request and answer", "It sends no usage statistics."],
   plug: ["The microphone stays off</b> unless you turn on", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
+};
+
+/** Each CONSENT_CHANGES line beside the full text's words it shortens (home-welcome.test.ts checks every pair against the page). */
+export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>> = {
+  2: ["it keeps your voiceprint and keeps refining it from requests it is sure are yours", "it keeps the words you correct"],
+  3: ["or choose Listen once for one request"],
+  4: ["In Project work, Send selected files shares your request and the contents of those files with the connected model."],
+  5: ["If you save a project workspace, Ember encrypts its selected paths and last completed request and answer on this computer"],
+  6: ["Once you call Ember it keeps listening through the conversation, and what it hears there goes to", "as text, without its name"],
+  7: ["unless you turn on “Keep my recent conversation” under Conversation: then its latest messages stay on this computer"],
 };
 
 /**

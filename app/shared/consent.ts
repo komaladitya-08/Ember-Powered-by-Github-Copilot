@@ -13,6 +13,26 @@ import type { TargetId } from "./targets";
 export const CONSENT_VERSION = 7;
 
 /**
+ * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
+ * shows the lines since the version they agreed to above the consent (first-run-4). Each says no more than "Before
+ * Ember starts" says (home-welcome.test.ts pairs every line with the full text's words). A bump adds its line here.
+ */
+export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
+  2: "If you teach me your voice, I keep refining your voiceprint from requests I'm sure are yours, and I keep the words you correct.",
+  3: "Listen once can open the microphone for one request while “Hey Ember” is off.",
+  4: "In Project work, Send selected files shares your request and the contents of those files with the connected model.",
+  5: "If you save a project workspace, I encrypt its selected paths and last completed request and answer on this computer.",
+  6: "Once you call me, I keep listening through the conversation, and what I hear there is sent as text, without my name.",
+  7: "If you turn on “Keep my recent conversation”, its latest messages stay on this computer after I restart.",
+};
+
+/** The changes since the version the user agreed to (`agreed`), oldest first: none for a first agreement (0) or a current one. */
+export function consentChangesSince(agreed: number): string[] {
+  if (agreed <= 0) return [];
+  return Object.entries(CONSENT_CHANGES).filter(([v]) => Number(v) > agreed && Number(v) <= CONSENT_VERSION).sort(([a], [b]) => Number(a) - Number(b)).map(([, line]) => line);
+}
+
+/**
  * The versions of the first-use consent cards for WSL, SSH (per host) and commands (per target), recorded apart from
  * CONSENT_VERSION (L1: the global consent stays true for everything Ember does without them). Bumping one asks that
  * card again, and nothing else. `provider`: the user's own model provider (Home's Copilot section), agreed to per

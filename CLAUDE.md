@@ -120,7 +120,7 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
 - **Kill switch.** The stop shortcut (Ctrl+Alt+X on Linux), "Ember, stop" and "Stop everything" call `KillSwitch.pull()`, which tells every part to stop at once and returns within 300 ms, logging any part still winding down as `late`. Register any new long-running part as a `StopPart`.
 - **Consent.**
   - Nothing is read, heard or sent until `hasConsent` is true.
-  - When you change what Ember reads, sends or keeps, bump `CONSENT_VERSION` (app/shared/consent.ts) and update "Before Ember starts" in app/renderer/home/index.html. WSL, SSH and commands have their own first-use cards, memory its own note (`MEMORY_CONSENT_TEXT`), update notices theirs (`UPDATES_CONSENT_TEXT`) and Work without asking its card (`AUTONOMY_CONSENT_TEXT`): change one's text only with a bump of its entry in `FEATURE_CONSENT_VERSION`.
+  - When you change what Ember reads, sends or keeps, bump `CONSENT_VERSION` (app/shared/consent.ts), update "Before Ember starts" in app/renderer/home/index.html, and add the bump's line to `CONSENT_CHANGES` (what a returning user is told changed) with its full-text words in `CONSENT_CHANGE_SOURCES` (welcome-copy.ts). WSL, SSH and commands have their own first-use cards, memory its own note (`MEMORY_CONSENT_TEXT`), update notices theirs (`UPDATES_CONSENT_TEXT`) and Work without asking its card (`AUTONOMY_CONSENT_TEXT`): change one's text only with a bump of its entry in `FEATURE_CONSENT_VERSION`.
   - Audio stays on the machine and is never written to disk.
 - **Privacy.**
   - There is no telemetry.

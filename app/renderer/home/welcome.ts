@@ -10,7 +10,7 @@
 
 import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
-import { CONSENT_VERSION } from "../../shared/consent";
+import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
 import type { ProviderState, Status, VoiceStatus } from "../../shared/ipc";
 import { endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { LEVEL_STEPS } from "../../shared/level";
@@ -23,7 +23,7 @@ import {
   ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
-  CHECK_AGAIN, CHECKS_DETAIL, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
+  CHECK_AGAIN, CHECKS_DETAIL, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
   DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
@@ -103,6 +103,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   arc.replaceChildren(...WELCOME_STEPS.map(() => el("i")));
 
   const consented = () => (settings?.consent.version ?? 0) >= CONSENT_VERSION;
+  /** What changed since an earlier agreement, while it isn't agreed again (first-run-4); none for a first agreement. */
+  const changes = () => (consented() ? [] : consentChangesSince(settings?.consent.version ?? 0));
   // "Tell me about you" (optional): memory's note inline, its answers saved by this step's main button.
   const about = mountAboutYou($("w-about"), { id: "w-ay", save: deps.save, ownSave: false, changed: () => { if (active && step === "about") render(); } });
   const memoryManaged = () => status?.admin.features.memory === false;
@@ -113,7 +115,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-stage").append(deps.buddy);
     $("w-cards").append(deps.cards);
     deps.cards.setAttribute("aria-labelledby", "w-title");
-    step = firstStep(consented());
+    step = firstStep(settings?.consent.version ?? 0);
     void readOwn();
     root.hidden = false;
     render();
@@ -157,7 +159,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const text = step === "sign-in" ? signInText({
       managed: !!status?.admin.provider, locked: locked(), held: !!status?.admin.held,
       own: agent?.phase === "ready" && ownInUse() ? agent.service?.host : null, ownOffered: ownOffer().offered,
-    }) : STEP_TEXT[step];
+    }) : step === "consent" && changes().length ? CONSENT_AGAIN : STEP_TEXT[step];
     $("w-title").textContent = text.title;
     $("w-lead").textContent = text.lead;
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
@@ -200,6 +202,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const service = a?.provider ? `your organisation's model service (${hostOf(a.provider)})` : "GitHub Copilot";
     const points = consentPoints({ service, kept: a ? keptWords(a) : "kept 30 days", locked: !!a && a.error !== null });
     $("w-points").replaceChildren(...points.map(p => { const li = el("li", { textContent: p.text }); li.dataset.icon = p.icon; return li; }));
+    // Agreed to an earlier version: what changed since, above the usual points (first-run-4).
+    const changed = changes();
+    $("w-changes").hidden = !changed.length;
+    $("w-changes-h").textContent = CONSENT_AGAIN.changes;
+    if (JSON.stringify(changed) !== JSON.stringify([...$("w-changes-list").children].map(li => li.textContent))) {
+      $("w-changes-list").replaceChildren(...changed.map(text => el("li", { textContent: text })));
+    }
     const note = consented() ? CONSENT_TEXT.agreed : declined ? CONSENT_TEXT.declined : "";
     if ($("w-consent-note").textContent !== note) $("w-consent-note").textContent = note;
     if (consented()) return { label: NAV.next, why: "", alt: "" };

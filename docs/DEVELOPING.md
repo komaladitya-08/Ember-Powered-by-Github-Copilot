@@ -130,7 +130,10 @@ runtime. It does not change the app's consent or speaking settings.
   row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
   request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before
   **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
-  step but the first. A run that agreed but didn't finish opens at sign-in next time. Everything chosen here stays in
+  step but the first. A run that agreed but didn't finish opens at sign-in next time. After an update that changed the consent
+  (`CONSENT_VERSION`), someone who agreed to an earlier version opens at the consent step, titled “What's changed since
+  you last agreed”, with what changed since their version listed above the usual lines (`CONSENT_CHANGES` in
+  app/shared/consent.ts, each line checked against the full text); the rest of the steps follow as before. Everything chosen here stays in
   settings for later.
 - Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with
   **Handle position** in settings' **Your Ember**. Click the handle for **Ask Ember…**, **Stop everything**,

@@ -6,8 +6,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
+import { CONSENT_CHANGES, CONSENT_VERSION, consentChangesSince } from "../../app/shared/consent";
 import {
-  CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
+  CONSENT_AGAIN, CONSENT_CHANGE_SOURCES, CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
   gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
@@ -53,8 +54,11 @@ describe("first run's steps", () => {
     for (const s of ["hello", "character", "consent"] as const) expect(gated(s, false), s).toBe(s);
     for (const s of WELCOME_STEPS) expect(gated(s, true), s).toBe(s);
     // Agreed in an earlier run that didn't finish: it opens at sign-in, with Back to what came before.
-    expect(firstStep(false)).toBe("hello");
-    expect(firstStep(true)).toBe("sign-in");
+    expect(firstStep(0)).toBe("hello");
+    expect(firstStep(CONSENT_VERSION)).toBe("sign-in");
+    // Agreed to an earlier version: it opens at the consent itself, never past it (first-run-4).
+    expect(firstStep(CONSENT_VERSION - 1)).toBe("consent");
+    expect(gated(firstStep(1), false)).toBe("consent");
   });
 
   it("goes forward from the consent step only once the agreement is saved", () => {
@@ -116,6 +120,27 @@ describe("the consent in short", () => {
     const locked = consentPoints({ service: "GitHub Copilot", kept: "none deleted until your organisation fixes its policy", locked: true });
     expect(locked[1].text).toBe("While your organisation's policy locks me down, nothing is sent to a model service, so I can't answer or act.");
     expect(locked[3].text).toContain("(none deleted until your organisation fixes its policy)");
+  });
+
+  it("tells someone who agreed to an earlier version what changed since, each line from the full text (first-run-4, safety-privacy-8)", () => {
+    const full = PAGE.slice(PAGE.indexOf("<details class=\"w-more\" id=\"w-full\">"), PAGE.indexOf("</details>", PAGE.indexOf("id=\"w-full\"")));
+    // Every bump has its line, so a bump can't ship without one, and every line is paired with the full text's words.
+    for (let v = 2; v <= CONSENT_VERSION; v++) {
+      expect(CONSENT_CHANGES[v], `version ${v}`).toBeTruthy();
+      expect(CONSENT_CHANGE_SOURCES[v]?.length, `version ${v}`).toBeGreaterThan(0);
+      for (const source of CONSENT_CHANGE_SOURCES[v]) expect(full, `${v}: ${source}`).toContain(source);
+    }
+    expect(Object.keys(CONSENT_CHANGES).map(Number).every(v => v >= 2 && v <= CONSENT_VERSION)).toBe(true);
+    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7]]);
+    expect(consentChangesSince(6)[0]).toContain("“Keep my recent conversation”");
+    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7]]);
+    expect(consentChangesSince(0)).toEqual([]);
+    expect(consentChangesSince(CONSENT_VERSION)).toEqual([]);
+    for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);
+    expect(CONSENT_AGAIN.title).toBe("What's changed since you last agreed");
+    expect(CONSENT_AGAIN.lead).toContain("Nothing is read, heard or sent until you do.");
+    // The same gate: the step's button saves the current version, and nothing past it opens without it.
+    expect(SCRIPT).toContain("step = firstStep(settings?.consent.version ?? 0);");
   });
 
   it("says what Not now means: Ember stays off and asks again", () => {

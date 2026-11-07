@@ -478,6 +478,33 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await calls(c)).not.toContain("quit");
   });
 
+  it("(q) someone who agreed to an earlier version starts at the consent and is told what changed (first-run-4, safety-privacy-8)", async () => {
+    const p = await open({ consent: 6, agent: readyAgent() });
+    expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");
+    expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
+    expect(await p.locator("#w-changes").isVisible()).toBe(true);
+    const changed = await p.locator("#w-changes-list li").allInnerTexts();
+    expect(changed).toHaveLength(1);
+    expect(changed[0]).toContain("“Keep my recent conversation”");
+    // The usual points and the full text are still there; nothing goes on until Agree is saved.
+    expect(await p.locator("#w-points li").count()).toBe(5);
+    expect(await next(p).innerText()).toBe("Agree and continue");
+    await next(p).click();
+    await expect.poll(async () => (await calls(p)).some(c => c.startsWith('save:{"consent":{"version":7'))).toBe(true);
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    // Back: agreed now, so the step is the usual one and lists no changes.
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("What I do, and what I don't");
+    expect(await p.locator("#w-changes").isHidden()).toBe(true);
+    // A first agreement starts at hello, with no changes to tell.
+    const first = await open({ consent: 0 });
+    expect(await first.locator("#w-title").innerText()).toBe("Hi, I'm Ember.");
+    await next(first).click();
+    await expect.poll(() => first.locator("#w-title").innerText()).toBe("What I do, and what I don't");
+    expect(await first.locator("#w-changes").isHidden()).toBe(true);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(m) Back, then Home turns the provider on itself: the late switch-off of the abandoned check leaves it on (PR #191 re-review)", async () => {
     const p = await open({ slowAgree: true });
     await p.getByRole("button", { name: "Use my own provider" }).click();
