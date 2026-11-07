@@ -25,6 +25,7 @@ import * as targetCopy from "../../app/renderer/overlay/target-copy";
 import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
+import { LISTENING_MODELS, VOICE_MODELS, VOICE_MODELS_BYTES } from "../../app/voice/models";
 import { ISSUES_URL } from "../../app/shared/support";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
@@ -98,6 +99,16 @@ describe("docs/DESIGN.md", () => {
 });
 
 describe("docs/DEVELOPING.md", () => {
+  it("gives the speech models' download size as the pinned models add up, as models.ts says it (voice-listening-11)", () => {
+    const mb = (bytes: number) => Math.round(bytes / 1e6);
+    const listening = VOICE_MODELS.filter(m => (LISTENING_MODELS as readonly string[]).includes(m.id)).reduce((n, m) => n + m.bytes, 0);
+    expect(read("docs/DEVELOPING.md")).toContain(`the standard speech models (about ${mb(VOICE_MODELS_BYTES)} MB of downloads, once;`);
+    const header = read("app/voice/models.ts").slice(0, 600).replace(/\n \* /g, " ");
+    expect(header).toContain(`(about ${mb(VOICE_MODELS_BYTES)} MB in all)`);
+    expect(header).toContain(`(LISTENING_MODELS, about ${mb(listening)} MB)`);
+    for (const id of ["tts", "speaker"] as const) expect(header).toContain(`(${mb(VOICE_MODELS.find(m => m.id === id)!.bytes)} MB)`);
+  });
+
   it("§10.5 says what every file Ember stages beside the Windows app is", () => {
     const table = section(read("docs/DEVELOPING.md"), "10.5 Packages");
     const win = layoutFor("win32", "x64");

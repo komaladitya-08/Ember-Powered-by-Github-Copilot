@@ -452,8 +452,9 @@ new claim that the measurements prove Kitten sounds better. Earlier Piper timing
 above remain intact and should not be read as the current runtime policy.
 
 `DEFAULT_VOICE` is the verified Kitten archive with model id `tts`, Apache-2.0 licensing and a complete 63,815,222-byte
-download (about 63.8 MB). The standard model downloads now total 138,478,723 bytes (about 138.5 MB), including the
-unchanged listening and Voice Match models. Preparation and bundled-model staging use this standard manifest.
+download (about 63.8 MB). The standard model downloads then totalled 138,478,723 bytes (about 138.5 MB), including the
+unchanged listening and Voice Match models; since Moonshine v2 base became the recognizer they total 219,886,389 bytes
+(about 220 MB, 130 MB of it for listening). Preparation and bundled-model staging use this standard manifest.
 Kitten runs on one native CPU thread and must meet the measured real-time factor cap of 0.5. Unsupported, missing,
 slow or failed Kitten uses an installed local system voice; there is no production Piper or neural WebAssembly
 fallback. WebAssembly ASR remains available. Kokoro remains an explicit optional native choice, with its own download
