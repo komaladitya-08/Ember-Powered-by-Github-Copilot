@@ -23,7 +23,7 @@ function wiring() {
   const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), warmSpeech: vi.fn(), micState: "waiting", speaking: false };
   /** The speaking choice (always, as by default here) and whether a screen reader runs. */
   const prefs = { speak: true, speakWithScreenReader: true, reader: true };
-  const agent = { answerOpen: false, tasks: null, pauseAnswer: vi.fn(), forgetConversation: vi.fn(async (): Promise<void> => undefined), start: vi.fn(async (): Promise<void> => undefined) };
+  const agent = { answerOpen: false, tasks: null, pauseAnswer: vi.fn(), interruptAnswer: vi.fn(), abortAll: vi.fn(), forgetConversation: vi.fn(async (): Promise<void> => undefined), start: vi.fn(async (): Promise<void> => undefined) };
   const broadcast = vi.fn();
   const voicePreference = { natural: true, naturalModel: "kitten" };
   const confirmer = { waiting: false };
@@ -46,7 +46,7 @@ function wiring() {
     ${signOut}
     return {
       ${callbacks} ${taskCallback} ${transcriptCallback} ${learnedForgot}
-      interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech, signOut: () => signOutHandler(), silenceIfOff,
+      interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech, signOut: () => signOutHandler(), silenceIfOff, stopSpeaking,
       manualListening: on => { manualCall = on ? { source: "ask" } : null; },
     };
   `, { target: ts.ScriptTarget.ES2022 });
@@ -64,6 +64,7 @@ function wiring() {
     interrupt(): void;
     pause(): void;
     silenceIfOff(): boolean;
+    stopSpeaking(source: "menu"): void;
     manualListening(on: boolean): void;
   };
   return { ...callbacksUnderTest, voice, personal, agent, confirmer, broadcast, voicePreference, prefs };
@@ -270,6 +271,27 @@ describe("main's answer speech ownership", () => {
     w.onAnswerDelta(" sentence. The third sentence.");
     expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
     expect(w.voice.speak).toHaveBeenCalledOnce();
+  });
+
+  it("stops Ember talking from the handle's menu without stopping its tasks or the answer's words (voice-speaking-5)", () => {
+    const w = wiring();
+    w.onTurnStart({ text: "Tell me about the reports", spoken: false });
+    w.onAnswerDelta("The first sentence. The second");
+    w.agent.answerOpen = true;
+    const hushes = w.voice.hush.mock.calls.length;
+    w.stopSpeaking("menu");
+    expect(w.agent.interruptAnswer).toHaveBeenCalledOnce();
+    expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
+    expect(w.agent.abortAll).not.toHaveBeenCalled();
+    // The rest of this answer isn't said; the next request's answer is.
+    w.onAnswerDelta(" sentence. The third sentence.");
+    expect(w.voice.speak).toHaveBeenCalledOnce();
+    w.onTurnStart({ text: "And the next one?", spoken: false });
+    w.onAnswer("The next answer.");
+    expect(w.voice.speak).toHaveBeenCalledTimes(2);
+    // Offered only while Ember speaks, beside Stop everything.
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain(`...(voice?.speaking ? [{ label: "Stop speaking", click: () => stopSpeaking("menu") }] : []),`);
   });
 
   it("keeps background results on cards during a foreground request and appends them after playback", () => {

@@ -133,7 +133,8 @@ runtime. It does not change the app's consent or speaking settings.
   step but the first. A run that agreed but didn't finish opens at sign-in next time. Everything chosen here stays in
   settings for later.
 - Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with
-  **Handle position** in settings' **Your Ember**. Click the handle for **Ask Ember…**, **Stop everything**,
+  **Handle position** in settings' **Your Ember**. Click the handle for **Ask Ember…**, **Stop speaking** (while Ember
+  talks: its voice stops, the answer's words and its tasks go on), **Stop everything**,
   **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered),
   **Settings…**, **Stay put / Follow my cursor**, **Hide / Show Ember**, **Move to the other side** (the handle and its
   task cards go to the other bottom corner) and **Quit Ember** (Quit asks first while a task is running).

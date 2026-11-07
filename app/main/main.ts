@@ -838,6 +838,8 @@ function start(): void {
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
       { ...keyed("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
+      // While Ember talks: only its voice stops, not its tasks (voice-speaking-5).
+      ...(voice?.speaking ? [{ label: "Stop speaking", click: () => stopSpeaking("menu") }] : []),
       { ...keyed("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
       // "Work on" (which computer requests go to), when there is more than this one.
       // An item that opens settings ("Bring Ember to a computer…") marks it before its click (targets/menu.ts).
@@ -1098,6 +1100,15 @@ function start(): void {
     turnAnswer = "";
     lastReply = "";
     voice?.hush();
+  };
+  /**
+   * Stop speaking (the handle's menu, while Ember talks): its voice stops and the rest of this answer isn't said, as on
+   * a cut-in, while the answer's words and every task go on (voice-speaking-5). Stop everything stays the kill switch.
+   */
+  const stopSpeaking = (source: "menu") => {
+    log.info("voice.stop_speaking", { source });
+    if (agent?.answerOpen) agent.interruptAnswer();
+    resetAnswerSpeech();
   };
   /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
   const pauseAnswerSpeech = () => {
