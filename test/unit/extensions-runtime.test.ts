@@ -654,6 +654,12 @@ describe("ExtensionsService", () => {
     expect(await new ExtensionsService(deps({ client: () => null })).removeMarketplace("octo")).toEqual({ ok: false, why: "Ember isn't connected to Copilot yet." });
   });
 
+  it("says it isn't connected while the runtime has no client, so Home can say why the list is empty (integrations-v2)", async () => {
+    expect(new ExtensionsService(deps({ client: () => null })).connected()).toBe(false);
+    expect(await new ExtensionsService(deps({ client: () => null })).marketplaces()).toEqual([]);
+    expect(new ExtensionsService(deps()).connected()).toBe(true);
+  });
+
   it("refuses to install or list marketplaces while the organisation turns extensions off", async () => {
     admin = AdminPolicySchema.parse({ features: { extensions: false } });
     const s = new ExtensionsService(deps());

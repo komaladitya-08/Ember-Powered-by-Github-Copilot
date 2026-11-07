@@ -32,6 +32,8 @@ export interface ExtensionsApi {
   allowed(): boolean;                         // admin features.extensions and not LOCKDOWN
   /** The user agreed to extensions' first-use card at FEATURE_CONSENT_VERSION.extensions (settings `extensions`). */
   consented(): boolean;
+  /** Ember's model connection is up, so the runtime can list marketplaces and run what was added (absent: assumed so). */
+  connected?(): boolean;
   /** Records that agreement (and turns extensions on); Home calls it from the card's yes. */
   agree(): Promise<void>;
   list(): Promise<Installed[]>;

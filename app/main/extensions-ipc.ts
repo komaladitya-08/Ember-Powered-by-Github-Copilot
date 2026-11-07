@@ -82,7 +82,10 @@ export function registerExtensionsIpc(
       const [installed, marketplaces] = await Promise.all([api.list(), api.marketplaces()]);
       let consented = false;
       try { consented = api.consented() === true; } catch { /* unknown: the card is shown again */ }
-      return { available: true, allowed, consented, installed: Array.isArray(installed) ? installed : [], marketplaces: Array.isArray(marketplaces) ? marketplaces : [] };
+      // Not connected: an empty list is why, not "no marketplaces" (integrations-v2).
+      let connected = true;
+      try { connected = api.connected?.() !== false; } catch { /* unknown: taken as connected, as before */ }
+      return { available: true, allowed, consented, ...(connected ? {} : { connected: false }), installed: Array.isArray(installed) ? installed : [], marketplaces: Array.isArray(marketplaces) ? marketplaces : [] };
     } catch (err) {
       return { available: true, allowed, installed: [], marketplaces: [], error: raw(EXTENSIONS_IPC.state, err).why };
     }

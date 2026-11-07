@@ -11,7 +11,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
 import { marketplaceSource } from "../../shared/extensions-input";
 import {
-  BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
+  BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, MARKETPLACES_NOT_CONNECTED, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
   addedMarketplace, added, addingMarketplace, agreedTo, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
   consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
   removed, removedMarketplace, toolBadge, type ConsentCard, type ItemAction,
@@ -234,7 +234,7 @@ function statusLine(text: string, tone: keyof typeof PHASE): HTMLElement {
 }
 
 function installedItem(i: Installed): HTMLLIElement {
-  const r = installedRow(i, sectionOn());
+  const r = installedRow(i, sectionOn(), state?.connected !== false);
   const li = el("li", "ext-item");
   const head = el("div", "ext-head");
   const text = el("span", "ext-text");
@@ -421,7 +421,14 @@ function draw(): void {
   // Connectors the catalog lists are shown under Connectors, with their tools; everything else is here.
   const own = state.installed.filter(i => i.kind !== "connector" || !connectors?.some(c => c.name === i.name)).map(installedItem);
   $("ext-installed").replaceChildren(...(state.error ? [empty(state.error)] : own.length ? own : [empty(INSTALLED_EMPTY)]));
-  $("ext-markets").replaceChildren(...(state.marketplaces.length ? state.marketplaces.map(marketItem) : [empty(MARKETPLACES_EMPTY)]));
+  // Not connected: why the list is empty, and Add waits with that reason (integrations-v2).
+  const offline = state.connected === false;
+  const why = empty(offline ? MARKETPLACES_NOT_CONNECTED : MARKETPLACES_EMPTY);
+  why.id = "ext-markets-why";
+  $("ext-markets").replaceChildren(...(state.marketplaces.length ? state.marketplaces.map(marketItem) : [why]));
+  const add = document.querySelector<HTMLButtonElement>("#ext-market-form [data-key='market-add']")!;
+  add.disabled = offline && !busy.has("market-add");
+  if (offline) add.setAttribute("aria-describedby", "ext-markets-why"); else add.removeAttribute("aria-describedby");
 
   $("ext-browse").hidden = !browsing;
   if (browsing) {
@@ -476,6 +483,11 @@ export function startExtensions(): void {
       // Typed over meanwhile: what is there now is the user's.
       if (ok && marketplaceSource(input.value) === source) input.value = "";
     });
+  });
+  // Connected again (or no longer): what the section shows no longer matches, so the runtime's marketplaces and what
+  // runs are read again (integrations-v2).
+  window.ember?.onAgentStatus?.(a => {
+    if (state?.available && (a?.phase === "ready") === (state.connected === false)) void refresh();
   });
   // The first add's card turns extensions on in main: the switch follows the settings.
   window.ember?.onSettingsChanged?.(s => { extSettings = s.extensions; draw(); });

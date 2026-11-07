@@ -188,4 +188,23 @@ describe.skipIf(gate)("Home's Extensions, as the person sets them up (2026-11-07
     await evidence(page, "ext-off");
     await page.close();
   });
+
+  it("says marketplaces come once Ember is connected, holds Add with that reason, and lists them when it connects (integrations-v2)", async () => {
+    const notes: Installed = { id: "plugin:notes", kind: "plugin", name: "Notes", source: "notes@octo-tools", enabled: true, consented: true, status: "ready", tools: [] };
+    const signedOut = { ...READY, phase: "signed-out", detail: "Not signed in.", login: undefined };
+    const page = await open("extensions", { agent: signedOut, settings: { extensions: { on: true, consent: { version: 3, at: "2026-11-07T12:00:00Z" } } }, extensions: { consented: true, connected: false, marketplaces: [], installed: [notes] } });
+    await expect.poll(() => page.locator("#ext-markets").innerText()).toBe("Marketplaces appear once Ember is connected to Copilot or your model provider.");
+    const add = page.locator("#ext-market-form [data-key='market-add']");
+    expect(await add.isDisabled()).toBe(true);
+    expect(await add.getAttribute("aria-describedby")).toBe("ext-markets-why");
+    expect(await page.locator("#ext-installed .ext-status").innerText()).toBe("Ready once Ember connects");
+    await evidence(page, "ext-not-connected");
+    // Connected: the section reads the runtime again, with Copilot's own marketplace.
+    await page.evaluate(() => { window.__ixState = { ...window.__ixState, connected: undefined, marketplaces: [{ name: "awesome-copilot", source: "GitHub: github/awesome-copilot", builtIn: true }] }; });
+    await page.evaluate(agent => window.__ixEmit("onAgentStatus", agent), READY);
+    await expect.poll(() => page.locator("#ext-markets li.ext-market").count()).toBe(1);
+    expect(await add.isDisabled()).toBe(false);
+    expect(await page.locator("#ext-installed .ext-status").innerText()).toBe("Ready");
+    await page.close();
+  });
 });

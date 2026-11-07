@@ -188,6 +188,11 @@ export class ExtensionsService implements ExtensionsApi {
     return this.allowed() && e.on && e.consent.version >= FEATURE_CONSENT_VERSION.extensions;
   }
 
+  /** The runtime is connected (Copilot or a model provider is ready): only then are marketplaces listed (integrations-v2). */
+  connected(): boolean {
+    return this.o.client() !== null;
+  }
+
   /** The user agreed to extensions' first-use card at its current version. */
   consented(): boolean {
     return this.o.settings.get().extensions.consent.version >= FEATURE_CONSENT_VERSION.extensions;

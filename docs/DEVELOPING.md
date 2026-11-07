@@ -265,7 +265,9 @@ runtime. It does not change the app's consent or speaking settings.
     your organisation**, neither with **Remove** (the runtime refuses to remove them, and main says so in a sentence
     rather than nothing); a plugin from Copilot's own says it is listed in a marketplace built into Copilot, never
     one "you added" (`FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
-    from the address the user added.
+    from the address the user added. While Ember isn't connected (signed out, connecting), the runtime can list none:
+    the section says "Marketplaces appear once Ember is connected to Copilot or your model provider.", holds **Add**
+    with that reason, says **Ready once Ember connects** for what was added, and reads them again once it connects.
   - **Connectors** lists GitHub's catalog. **Connect** opens GitHub's consent page in the system browser (main opens
     only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
     again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.

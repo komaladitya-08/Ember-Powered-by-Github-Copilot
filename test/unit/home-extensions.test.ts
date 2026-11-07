@@ -179,6 +179,20 @@ describe("the section's words and switches agree with what can be done (integrat
   });
 });
 
+describe("while Ember isn't connected, the section says so instead of an empty list (integrations-v2)", () => {
+  it("says marketplaces come once connected, and that what was added runs then", () => {
+    expect(xc.MARKETPLACES_NOT_CONNECTED).toBe("Marketplaces appear once Ember is connected to Copilot or your model provider.");
+    expect(xc.installedStatus(item(), true, false)).toEqual({ text: "Ready once Ember connects", tone: "wait" });
+    expect(xc.installedStatus(item({ consented: false }), true, false).text).toBe("Waiting for you to agree");
+  });
+
+  it("tells the page it isn't connected, and only then", async () => {
+    expect(await setUp(fakeApi({ connected: () => false })).call(EXTENSIONS_IPC.state)).toMatchObject({ available: true, connected: false });
+    expect(await setUp(fakeApi({ connected: () => true })).call(EXTENSIONS_IPC.state)).not.toHaveProperty("connected");
+    expect(await setUp(fakeApi()).call(EXTENSIONS_IPC.state)).not.toHaveProperty("connected");
+  });
+});
+
 describe("a marketplace row says whose it is, and offers Remove only where it can work (integrations-4)", () => {
   it("shows Copilot's own and the organisation's as kept, with no Remove, and the user's with Remove", () => {
     expect(xc.marketplaceRow({ name: "awesome-copilot", source: "GitHub: github/awesome-copilot", builtIn: true })).toEqual({ name: "awesome-copilot", meta: "Built into Copilot · GitHub: github/awesome-copilot", removable: false });

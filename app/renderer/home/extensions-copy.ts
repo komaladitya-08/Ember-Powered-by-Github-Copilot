@@ -76,11 +76,13 @@ export function toolCounts(tools: readonly ToolInfo[]): string {
  * An installed item's status, as words beside its symbol (never colour alone). `on`: the section's Use extensions
  * switch; while it is off nothing added runs (integrations-11).
  */
-export function installedStatus(i: Installed, on = true): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
+export function installedStatus(i: Installed, on = true, connected = true): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
   if (i.needsReview || i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
   if (!i.consented) return { text: "Waiting for you to agree", tone: "wait" };
   if (!i.enabled || i.status === "disabled") return { text: "Off", tone: "off" };
   if (!on) return { text: "Off: extensions are off", tone: "off" };
+  // Nothing runs before Ember is connected: "Ready" then said it did (integrations-v2).
+  if (!connected && i.status === "ready") return { text: "Ready once Ember connects", tone: "wait" };
   switch (i.status) {
     case "ready": return { text: i.kind === "connector" ? "Connected" : "Ready", tone: "ok" };
     case "starting": return { text: "Starting…", tone: "wait" };
@@ -114,8 +116,8 @@ const detailLine = (d: string | undefined): string | null => {
   return s === EXTENSIONS_FAILED ? null : s;
 };
 
-export function installedRow(i: Installed, on = true): InstalledRow {
-  const status = installedStatus(i, on);
+export function installedRow(i: Installed, on = true, connected = true): InstalledRow {
+  const status = installedStatus(i, on, connected);
   const changed = i.needsReview || i.tools.some(t => t.changed);
   const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
   const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
@@ -158,6 +160,8 @@ export function extensionsOnHint(on: boolean): string {
 
 export const MARKETPLACES_HEADING = "Marketplaces";
 export const MARKETPLACES_EMPTY = "No marketplaces yet. Add one by its GitHub repository or its address.";
+/** While Ember isn't connected the runtime can't list marketplaces (Copilot's own included), nor add one. */
+export const MARKETPLACES_NOT_CONNECTED = "Marketplaces appear once Ember is connected to Copilot or your model provider.";
 /** Short enough to show whole in a narrow window (the field is labelled for screen readers). */
 export const MARKETPLACE_PLACEHOLDER = "owner/repo or https://…";
 export const MARKETPLACE_FIELD_LABEL = "Marketplace's GitHub repository or address";

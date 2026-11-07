@@ -573,6 +573,8 @@ export interface ExtensionsState {
   marketplaces: Marketplace[];
   /** The user agreed to extensions' first-use card at its current version (absent without the runtime). */
   consented?: boolean;
+  /** false while Ember isn't connected (signed out, connecting): no marketplace can be listed, and nothing added runs. */
+  connected?: boolean;
   /** Set when the list couldn't be read: one plain sentence. */
   error?: string;
 }
