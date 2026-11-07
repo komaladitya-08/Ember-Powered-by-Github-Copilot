@@ -84,6 +84,22 @@ export function ownFact(fact: string, said: string): boolean {
   return ownWords(fact, said) && samePolarity(fact, said);
 }
 
+/** The predicates of what the user said about themselves that bear on every request (the introduction's: ./intro.ts). */
+export const PROFILE_PREDICATES = ["called", "answer_length", "answer_style"] as const;
+
+/**
+ * The user's profile for every request (memory-5): the open facts they gave themselves (`user`) on what to call them
+ * and how they like answers, one for each, newest first. Recall is unchanged: this is added beside it.
+ */
+export function profileFacts(g: MemoryGraph): Fact[] {
+  const out: Fact[] = [];
+  for (const p of PROFILE_PREDICATES) {
+    const f = g.allFacts(true).filter(x => x.source === "user" && x.predicate === p).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))[0];
+    if (f) out.push(f);
+  }
+  return out;
+}
+
 const kindOf = (k: string | undefined): EntityKind | undefined => (ENTITY_KINDS as readonly string[]).includes(k ?? "") ? (k as EntityKind) : undefined;
 
 export class MemoryService {
@@ -164,14 +180,33 @@ export class MemoryService {
    * be true (the recall tool's).
    */
   async context(request: string, history = false, allowed: () => boolean = () => true): Promise<string> {
-    if (!allowed()) return "";
+    const found = await this.matches(request, history, allowed);
+    return found ? memoryBlock(found) : "";
+  }
+
+  /**
+   * The `<memory>` block before the user's own request: the user's profile first (what they asked Ember to call them
+   * and how they like answers, `profileFacts`), whatever the request says, then what recall finds (memory-5).
+   * `matched`: recall found something (what memory keeps missing is counted from that alone).
+   */
+  async requestContext(request: string, allowed: () => boolean = () => true): Promise<{ text: string; matched: boolean }> {
+    const found = await this.matches(request, false, allowed);
+    if (!found) return { text: "", matched: false };
+    const profile = profileFacts(this.g);
+    const rest = found.map(r => r.fact).filter(f => !profile.some(p => p.id === f.id));
+    return { text: memoryBlock([...profile, ...rest]), matched: found.length > 0 };
+  }
+
+  /** Recall's matches for `request`, with Better recall's by meaning when it has them; null when no longer allowed. */
+  private async matches(request: string, history: boolean, allowed: () => boolean): Promise<Recalled[] | null> {
+    if (!allowed()) return null;
     // A restart may leave an older derived index beside a durable correction. Bind its hashes to the current graph
     // before the first query, even when the model became ready before index() could attach a lazy graph.
     let semantic: Map<string, number> | undefined;
     try { this.o.semantic?.changed(this.g, false); semantic = await this.o.semantic?.seeds(request); }
     catch { this.o.log.warn("memory.semantic_unavailable"); }
-    if (!allowed()) return "";
-    return memoryBlock(this.recall(request, CONTEXT_FACTS, history, semantic));
+    if (!allowed()) return null;
+    return this.recall(request, CONTEXT_FACTS, history, semantic);
   }
 
   /** Corrects exactly the shown open fact after a durable write, preserving its subject, provenance and authority. */

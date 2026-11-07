@@ -14,6 +14,7 @@ import { AdminPolicySchema, applyAdminPolicy, managedKeys } from "../../app/main
 import { DEFAULT_SETTINGS, SettingsStore } from "../../app/main/settings";
 import { MemoryGraph } from "../../app/main/memory/graph";
 import { MemoryService, SAVE_DELAY_MS, ownWords } from "../../app/main/memory/service";
+import { introFacts } from "../../app/main/memory/intro";
 import { memoryFile } from "../../app/main/memory/store";
 import { PLATFORM_WORDS } from "../../app/shared/words";
 
@@ -65,6 +66,24 @@ describe("MemoryService", () => {
     s.remember("Works on the Atlas project with Priya", [{ name: "User" }, { name: "Atlas", kind: "project" }, { name: "Priya", kind: "person" }], "I work on the Atlas project with Priya");
     expect(await s.context("Draft a note to Priya about Atlas")).toMatch(/^<memory untrusted="true">\n- \[f1\] \(you told me, 2026-11-01\) Works on the Atlas project with Priya\n<\/memory>$/);
     expect(await s.context("what's the weather")).toBe("");
+  });
+
+  it("sends what to call the user and how they like answers with every request, whatever it shares with them (memory-5)", async () => {
+    const { s } = service();
+    expect(await s.requestContext("Tell me a joke")).toEqual({ text: "", matched: false });
+    for (const f of introFacts({ name: "Ram", length: "detailed", spoken: false, apps: "Mail" })) s.learn(f);
+    s.learn({ text: "Likes to be called Rambo", about: [{ name: "User" }], predicate: "called", single: true, source: "conversation" });
+    const joke = await s.requestContext("Tell me a joke");
+    expect(joke.matched).toBe(false);
+    expect(joke.text).toBe("<memory untrusted=\"true\">\n- [f1] (you told me, 2026-11-01) Likes to be called Ram\n- [f3] (you told me, 2026-11-01) Prefers detailed answers\n</memory>");
+    // A match by words comes after, never twice; the recall tool's context stays recall alone.
+    const mail = await s.requestContext("Open Mail please");
+    expect(mail.matched).toBe(true);
+    const ids = mail.text.match(/\[f\d+\]/g)!;
+    expect(ids.slice(0, 2)).toEqual(["[f1]", "[f3]"]);
+    expect(ids).toContain("[f2]");
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(await s.context("Tell me a joke")).toBe("");
   });
 
   it("saves soon after a change, readable by the user alone, and loads it again next time", () => {

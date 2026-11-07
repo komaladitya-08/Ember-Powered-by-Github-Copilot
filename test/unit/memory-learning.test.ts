@@ -12,14 +12,15 @@ import { copilotOneShot } from "../../app/main/agent/one-shot";
 import { MemoryGraph } from "../../app/main/memory/graph";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_OFF, answerFacts, introFacts, isGetToKnowMe, styleOf } from "../../app/main/memory/intro";
 import { CallBudget, EXTRACT_SYSTEM, Learner, MAX_ANSWER_CHARS, extractPrompt, learnedFacts, parseExtraction, soundsLikeInstruction, subjectOf, turnSource, type OneShot } from "../../app/main/memory/learn";
-import { IDLE_MS, MemoryLearning, withLearned } from "../../app/main/memory/learning";
+import { IDLE_MS, MemoryLearning, REFINE_PER_DAY, withLearned } from "../../app/main/memory/learning";
 import { FORGET_OFF, Gaps, NOTHING_TO_FORGET, REMEMBER_OFF, answersQuestion, describes, gapQuestion, isForgetThat, looksLikeRequest, namesIn } from "../../app/main/memory/questions";
 import { negated, samePolarity } from "../../app/main/memory/text";
-import { REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "../../app/main/memory/refine";
+import { REFINE_FACTS, REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "../../app/main/memory/refine";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { MemoryService } from "../../app/main/memory/service";
 import type { MemoryOwnerReason } from "../../app/main/memory/owner";
 import { memoryPausedReply } from "../../app/shared/memory-owner";
-import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, forgotLine, memoryPaused, introFromForm, learnedLine, memoryProvenanceLabel, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
+import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, aboutYouSpoken, forgotLine, memoryPaused, introFromForm, learnedLine, memoryProvenanceLabel, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
 
 const quiet = { info: () => undefined, warn: () => undefined };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-memlearn-"));
@@ -184,7 +185,7 @@ describe("sleep-time refinement", () => {
   });
 });
 
-function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; model?: OneShot | null; inForce?: () => boolean; paused?: () => MemoryOwnerReason | null; onAskedForget?: (f: { id: string; text: string; derived: number; undo: string }) => void } = {}) {
+function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; model?: OneShot | null; inForce?: () => boolean; paused?: () => MemoryOwnerReason | null; onAskedForget?: (f: { id: string; text: string; derived: number; undo: string }) => void; setSpoken?: (on: boolean) => void } = {}) {
   const { s, advance, at } = service();
   let askedAt: string | null = null;
   const said: string[] = [];
@@ -196,7 +197,7 @@ function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; mo
     memory: s, inForce: o.inForce ?? (() => true), questionsOn: () => o.questions ?? true,
     askedAt: () => askedAt, setAskedAt: iso => { askedAt = iso; },
     idle: () => o.idle ?? true, locked: () => o.locked ?? false,
-    say: text => { said.push(text); return true; }, openMemory: opened, paused: o.paused, onAskedForget: o.onAskedForget,
+    say: text => { said.push(text); return true; }, openMemory: opened, paused: o.paused, onAskedForget: o.onAskedForget, setSpoken: o.setSpoken,
     onLearned: items => learned.push(...items.map(i => `${i.source}: ${i.text}`)), onForgotAll: forgotAll, onForgot: forgot, log: quiet, now: at,
   });
   if (o.model !== undefined) l.setModel(o.model);
@@ -212,6 +213,17 @@ describe("asking about gaps (step 5)", () => {
     expect(g.top()).toBeNull();
     g.missed("Call Priya tomorrow", () => false);
     expect(g.top()).toBe("Priya");
+  });
+
+  it("still counts a name recall missed when the request's block carries only the user's profile (memory-5)", async () => {
+    const { l, said, advance } = learning();
+    l.introduce({ name: "Ram" });
+    const m = l.conductorMemory();
+    expect(await m.forRequest("Email Priya the notes", true)).toContain("Likes to be called Ram");
+    await m.forRequest("Is Priya in today", true);
+    advance(IDLE_MS);
+    await l.tick();
+    expect(said).toEqual([gapQuestion("Priya")]);
   });
 
   it("asks at most once a day, only while idle with the screen unlocked, and keeps the answer as the user's", async () => {
@@ -363,6 +375,20 @@ describe("getting to know you", () => {
     expect(answerFacts("style", "whatever suits")[0].text).toBe("Likes answers: whatever suits");
   });
 
+  it("makes the spoken interview's “spoken or not” answer Ember's real speaking choice, only in the user's own words (memory-5)", () => {
+    const spoken: boolean[] = [];
+    const { l } = learning({ setSpoken: on => spoken.push(on) });
+    l.intent("get to know me", { own: true });
+    for (const a of ["skip", "skip", "skip"]) l.intent(a, { own: true });
+    l.intent("short ones, and not spoken", { own: false });
+    expect(spoken).toEqual([]);
+    const again = learning({ setSpoken: on => spoken.push(on) });
+    again.l.intent("get to know me", { own: true });
+    for (const a of ["skip", "skip", "skip"]) again.l.intent(a, { own: true });
+    again.l.intent("detailed, and read them aloud", { own: true });
+    expect(spoken).toEqual([true]);
+  });
+
   it("opens Settings at memory's note when the interview is asked for while memory is off", () => {
     const { l, opened } = learning({ inForce: () => false });
     expect(l.intent("get to know me", { own: true })).toBe(INTRO_OFF);
@@ -473,6 +499,12 @@ describe("Home's words for memory", () => {
     expect(MEMORY_CONSENT_TEXT).toContain("Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it.");
   });
 
+  it("says everything memory sends to Copilot: with each request, and the idle tidy (memory-5, memory-9)", () => {
+    expect(MEMORY_CONSENT_TEXT).toBe("Ember will remember what you tell it about yourself, your work, and how you like things done. It learns from conversations and finished tasks using short Copilot requests, and keeps what it learns on this computer. With each request, what you asked Ember to call you, how you like answers and a few facts that bear on the request go to Copilot. While you're away, Ember also tidies its memory: up to 6 times a day it sends up to 40 saved facts to Copilot to summarise them. Saved memory is tied to your verified GitHub account. Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it. Ember never keeps passwords, codes or card numbers. You can review and forget facts here. Signing out erases saved memory that belongs to your verified account.");
+    expect(MEMORY_CONSENT_TEXT).toContain(`up to ${REFINE_PER_DAY} times a day it sends up to ${REFINE_FACTS} saved facts`);
+    expect(FEATURE_CONSENT_VERSION.memory).toBe(4);
+  });
+
   it("says where each fact came from, what was learned with its Undo, and what Save kept", () => {
     expect(["user", "conversation", "task"].map(memorySourceLabel)).toEqual(["You told me", "From our conversation", "From a task"]);
     // Ember's own notes say so, whatever they were drawn from (memory-3).
@@ -483,15 +515,19 @@ describe("Home's words for memory", () => {
     expect([null, 0, 1, 3].map(aboutYouSaved)).toEqual(["Not saved: memory is off.", "Nothing to save yet: answer any question you like.", "Saved 1 answer.", "Saved 3 answers."]);
     expect(ABOUT_YOU.title).toBe("Tell Ember about you");
     expect(introFromForm({ name: "  Ram ", work: "...", apps: "Mail", length: "", spoken: "no", hours: " " })).toEqual({ name: "Ram", apps: "Mail", spoken: false });
+    // Spoken replies changes whether Ember speaks, and says so (memory-5).
+    expect(aboutYouSpoken(true)).toBe("Ember speaks its replies aloud now. You can change that in Voice.");
+    expect(aboutYouSpoken(false)).toBe("Ember won't speak its replies now. You can change that in Voice.");
   });
 
   it("says memory is paused for someone who agreed to the first note, until they agree to the new one", () => {
     expect(memoryPaused({ on: true, consent: { version: 1 } })).toBe(true);
     expect(memoryPaused({ on: true, consent: { version: 2 } })).toBe(true);
-    expect(memoryPaused({ on: true, consent: { version: 3 } })).toBe(false);
+    expect(memoryPaused({ on: true, consent: { version: 3 } })).toBe(true);
+    expect(memoryPaused({ on: true, consent: { version: 4 } })).toBe(false);
     expect(memoryPaused({ on: true, consent: { version: 0 } })).toBe(false);
     expect(memoryPaused({ on: false, consent: { version: 1 } })).toBe(false);
-    expect(MEMORY_PAUSED_TEXT).toBe("Memory is paused until you review the new account privacy note.");
+    expect(MEMORY_PAUSED_TEXT).toBe("Memory is paused until you review its updated note, which now says everything it sends to Copilot.");
   });
 });
 

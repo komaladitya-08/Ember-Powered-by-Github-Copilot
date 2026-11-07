@@ -10,7 +10,8 @@
 
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { ABOUT_YOU, MEMORY_CONSENT_TEXT, aboutYouSaved, introFromForm } from "./copy";
+import { speakSettings } from "../../shared/speech";
+import { ABOUT_YOU, MEMORY_CONSENT_TEXT, aboutYouSaved, aboutYouSpoken, introFromForm } from "./copy";
 
 export interface AboutYouOptions {
   /** Prefix for the element ids ("ay" in Settings, "w-ay" in first run). */
@@ -138,8 +139,11 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
     catch { kept = null; }
     finally { saving = false; save?.removeAttribute("aria-disabled"); }
     const count = Object.keys(a).length;
+    // Spoken replies is Ember's real speaking choice, not only a remembered preference (memory-5).
+    const spokenSet = a.spoken !== undefined && kept ? await o.save(speakSettings(a.spoken ? "always" : "never")).catch(() => false) : false;
     status.textContent = !kept ? "Couldn't save your answers. Try again."
-      : kept < count ? `Saved ${kept} of ${count} answers. Your answers are still here to review.` : aboutYouSaved(kept);
+      : (kept < count ? `Saved ${kept} of ${count} answers. Your answers are still here to review.` : aboutYouSaved(kept))
+        + (spokenSet && a.spoken !== undefined ? ` ${aboutYouSpoken(a.spoken)}` : "");
     if (kept === count) controls.forEach((f, i) => { if (f.value === submitted[i]) f.value = ""; });
     o.changed?.();
     return kept;

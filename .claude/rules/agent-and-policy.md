@@ -267,7 +267,10 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     those notes in the same staged write (`notesFrom`), so nothing Ember wrote keeps a forgotten fact's words;
   - every change to the graph tells Better recall (`semantic.changed()`: `remember`, `learn`, `refine`, a reopen), and
     the recall tool goes through `MemoryService.context()` for its matches by meaning; `forRequest` awaits it.
-- **Changing memory's note** (`MEMORY_CONSENT_TEXT`) means bumping `FEATURE_CONSENT_VERSION.memory` (now 2).
+- **Changing memory's note** (`MEMORY_CONSENT_TEXT`) means bumping `FEATURE_CONSENT_VERSION.memory` (now 4). What goes
+  to Copilot with every request is in it: the profile (`profileFacts`: `called`, `answer_length`, `answer_style`
+  `user` facts, before each of the user's requests through `requestContext`) and the few facts recall finds; a new
+  kind of fact sent with every request needs the note changed and bumped.
 - **Sign-out and an account change call `forgetAll()`**, which erases the file too, but only memory verified as this
   account's in this run (`mayEraseOnSignOut`; it returns whether it erased). Sign out's question says unverified
   memory stays (`erasesOnSignOut` in the view, `kept`), and an account change that erased memory says so in the new

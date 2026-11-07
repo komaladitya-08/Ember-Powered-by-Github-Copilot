@@ -258,9 +258,19 @@ where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept.
 Settings at memory's note.
 
 **Consent.** The note now says Ember learns as you go and that your words, its replies and its tasks' results go to
-Copilot in short requests of their own, so `FEATURE_CONSENT_VERSION.memory` is 2: someone who agreed to the first
+Copilot in short requests of their own, so `FEATURE_CONSENT_VERSION.memory` was 2: someone who agreed to the first
 note has memory off until they agree again (their `memory.json` is kept, unused). Home says "Memory paused" and
-opens the new note once with a line saying why (`memoryPaused`, `MEMORY_PAUSED_TEXT`).
+opens the new note once with a line saying why (`memoryPaused`, `MEMORY_PAUSED_TEXT`). Version 3 added the account
+ownership sentences; version 4 (2026-11-07) says that what the user asked Ember to call them and how they like
+answers go with every request (`profileFacts`, memory-5) and that the idle tidy sends up to 40 saved facts up to 6
+times a day (memory-9).
+
+**Profile.** Before each of the user's own requests, `MemoryService.requestContext` puts their profile first in the
+`<memory>` block whatever the request says: the newest open `user` fact for each of `called`, `answer_length` and
+`answer_style` (the introduction's). Recall itself is unchanged, and gaps are still counted only when recall matched
+nothing. With memory on, the conductor's rules say a stated answer length wins over keeping replies short. "Spoken
+replies" in Tell Ember about you, and "spoken aloud or not" in the spoken interview (the user's own words only), set
+Ember's real speaking choice (Settings › Voice), not only a fact.
 
 **Cost.** In model requests on the conversation's model: extraction at most 12 an hour and 60 a day (typically one
 per three turns, plus one per finished task), refinement at most 6 a day, questions none. At the extremes, 12 + 6 = 18

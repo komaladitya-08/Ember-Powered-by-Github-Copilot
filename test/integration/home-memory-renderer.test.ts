@@ -274,9 +274,12 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("says why saved memory is pause
     await page.addInitScript(seed => {
       const listeners: Record<string, (value: unknown) => void> = {};
       (window as unknown as { __push: (view: MemoryView) => void }).__push = view => listeners.onMemory?.(view);
+      const patches: unknown[] = (window as unknown as { __patches: unknown[] }).__patches = [];
       window.ember = new Proxy({}, { get: (_target, name: string) => {
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { listeners[name] = fn; return () => { delete listeners[name]; }; };
         if (name === "getStatus") return async () => seed.status;
+        if (name === "updateSettings") return async (patch: unknown) => { patches.push(patch); };
+        if (name === "introduceMe") return async (answers: Record<string, unknown>) => Object.keys(answers).length;
         if (name === "memory") return async () => ({ rows: [], ownership: "locked", reason: "own-provider" });
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
         return () => new Promise(() => undefined);
@@ -311,6 +314,12 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("says why saved memory is pause
     expect(await page.locator("#ay-name").isVisible()).toBe(true);
     // Ember's own notes say they are Ember's, not the conversation's (memory-3).
     expect(await page.locator("#memory-list .mem-from").allInnerTexts()).toEqual(["Ember's summary", "Ember's guess"]);
+    // Spoken replies is Ember's real speaking choice, and Save says so (memory-5).
+    await page.locator("#ay-name").fill("Ram");
+    await page.locator("#ay-spoken").selectOption("no");
+    await page.locator("#about-you button.btn:not(.quiet)").click();
+    await expect.poll(() => page.locator("#ay-msg").innerText()).toBe("Saved 2 answers. Ember won't speak its replies now. You can change that in Voice.");
+    expect(await page.evaluate(() => (window as unknown as { __patches: unknown[] }).__patches)).toEqual([{ speak: false, speakWithScreenReader: false }]);
     await page.locator('a[href="#home-h"]').click();
     await expect.poll(() => page.locator("#whats-on").textContent()).toContain("Memory on");
     expect(errors).toEqual([]);

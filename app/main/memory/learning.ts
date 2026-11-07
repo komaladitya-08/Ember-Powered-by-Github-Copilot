@@ -15,7 +15,7 @@
 
 import { memoryPausedReply } from "../../shared/memory-owner";
 import type { Fact, NewFact, Source } from "./graph";
-import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, introFacts, isGetToKnowMe, type Intro } from "./intro";
+import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
 import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
@@ -73,6 +73,8 @@ export interface LearningDeps {
    * the fact's stored words, never the model's), with Undo by `undo` (memory-v2).
    */
   onAskedForget?: (forgot: { id: string; text: string; derived: number; undo: string }) => void;
+  /** The user said in the spoken interview whether they like replies spoken: Ember's speaking choice follows (memory-5). */
+  setSpoken?: (on: boolean) => void;
   log: MemoryLog;
   now?: () => number;
   budget?: Partial<LearnBudget>;
@@ -180,11 +182,12 @@ export class MemoryLearning {
       forRequest: async (request, own) => {
         if (!this.d.inForce()) return "";
         const revision = this.recallRevision;
-        const text = await context(request);
+        // With the user's profile (what to call them, how they like answers) whatever they ask (memory-5).
+        const { text, matched } = await m.requestContext(request, () => this.d.inForce() && revision === this.recallRevision);
         if (!this.d.inForce() || revision !== this.recallRevision) return "";
         // Nothing bears on what the user asked themselves: the names in it are gaps (known names aren't, and checking
         // doesn't count as a use). Never from words Ember couldn't tell were the user's.
-        if (!text && own && this.d.inForce()) {
+        if (!matched && own && this.d.inForce()) {
           const known = m.list().map(i => fold(i.text));
           this.gaps.missed(request, name => known.some(t => t.includes(fold(name))));
         }
@@ -322,6 +325,11 @@ export class MemoryLearning {
       const step = this.interview.answer(text, how.own);
       this.interviewAt = now;
       this.keepAll(step.keep);
+      // "Spoken or not" is Ember's real choice, not only a fact (only what the user was heard to say reaches `keep`).
+      const spoken = step.keep.find(f => f.predicate === "spoken_answers");
+      if (spoken && how.own) {
+        try { this.d.setSpoken?.(spoken.text === SPOKEN_FACT); } catch { this.d.log.warn("memory.spoken_not_saved"); }
+      }
       if (step.done) this.interview = null;
       return step.say;
     }

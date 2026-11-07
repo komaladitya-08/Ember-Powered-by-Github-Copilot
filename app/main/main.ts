@@ -82,7 +82,7 @@ import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
 import { PersonalVoice } from "./personal/service";
 import { wordsStore } from "./personal/words-store";
-import { speaksAloud } from "../shared/speech";
+import { speakSettings, speaksAloud } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform, switchArgs } from "./platform";
@@ -1479,6 +1479,8 @@ function start(): void {
   const conversationNow = (entries: TranscriptEntry[] = agent?.getTranscript() ?? []) => withLearned(entries, learnedLines);
   const learning = new MemoryLearning({
     memory, inForce: memoryOn, managed: () => !memoryAllowed(),
+    // "Spoken aloud or not" in the spoken interview is Ember's real speaking choice (memory-5).
+    setSpoken: on => { try { settings.update(speakSettings(on ? "always" : "never")); } catch (err) { log.warn("memory.spoken_not_saved", { err }); } },
     // On and agreed to, but its owner isn't verified: Ember says why rather than asking to turn memory on (memory-2).
     paused: () => (memoryConfigured() && !memoryOwner.ready ? memoryOwner.reason ?? "checking" : null),
     questionsOn: () => settings.get().memory.questions,

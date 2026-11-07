@@ -16,9 +16,11 @@ export const CONSENT_VERSION = 7;
  * The versions of the first-use consent cards for WSL, SSH (per host) and commands (per target), recorded apart from
  * CONSENT_VERSION (L1: the global consent stays true for everything Ember does without them). Bumping one asks that
  * card again, and nothing else. `provider`: the user's own model provider (Home's Copilot section), agreed to per
- * endpoint host (settings `provider.consent.host`).
+ * endpoint host (settings `provider.consent.host`). `memory` 4 (2026-11-07): its note says the profile (what to call
+ * the user, how they like answers) goes with every request, and that the idle tidy sends up to 40 facts up to 6 times
+ * a day (memory-5, memory-9).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 3, routines: 1, extensions: 2, autonomy: 2, provider: 1, updates: 1 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 2, autonomy: 2, provider: 1, updates: 1 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

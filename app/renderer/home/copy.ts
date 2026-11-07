@@ -330,7 +330,7 @@ export function providerTestText(r: { ok: true; host: string; models: number | n
  * where, what goes to Copilot, and how to forget it. Changing it means bumping FEATURE_CONSENT_VERSION.memory (2: it
  * learns on its own, docs/MEMORY.md steps 3–5).
  */
-export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, and how you like things done. It learns from conversations and finished tasks using short Copilot requests, and keeps what it learns on this computer. A few relevant facts go to Copilot with each request. Saved memory is tied to your verified GitHub account. Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it. Ember never keeps passwords, codes or card numbers. You can review and forget facts here. Signing out erases saved memory that belongs to your verified account.";
+export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, and how you like things done. It learns from conversations and finished tasks using short Copilot requests, and keeps what it learns on this computer. With each request, what you asked Ember to call you, how you like answers and a few facts that bear on the request go to Copilot. While you're away, Ember also tidies its memory: up to 6 times a day it sends up to 40 saved facts to Copilot to summarise them. Saved memory is tied to your verified GitHub account. Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it. Ember never keeps passwords, codes or card numbers. You can review and forget facts here. Signing out erases saved memory that belongs to your verified account.";
 
 /**
  * Memory was on under an earlier note (version 1, before Ember learned on its own) and waits for the user to agree to
@@ -340,7 +340,7 @@ export function memoryPaused(m: { on: boolean; consent: { version: number } }): 
   return m.on && m.consent.version > 0 && m.consent.version < FEATURE_CONSENT_VERSION.memory;
 }
 /** Said in Settings › Memory while memory is paused, above its new note. */
-export const MEMORY_PAUSED_TEXT = "Memory is paused until you review the new account privacy note.";
+export const MEMORY_PAUSED_TEXT = "Memory is paused until you review its updated note, which now says everything it sends to Copilot.";
 /** Memory's line while its saved memory can't be opened, and whether to offer Forget everything (memory-2): shared with main. */
 export { memoryOwnerOffersErase, memoryOwnerText } from "../../shared/memory-owner";
 
@@ -434,6 +434,9 @@ export const ABOUT_YOU = {
 } as const;
 
 /** The form's fields as main takes them: trimmed, each one left out when it is empty or "No preference". */
+/** Said after Save when Spoken replies was chosen: it changes whether Ember speaks (memory-5). */
+export const aboutYouSpoken = (on: boolean) => on ? "Ember speaks its replies aloud now. You can change that in Voice." : "Ember won't speak its replies now. You can change that in Voice.";
+
 export function introFromForm(f: { name: string; work: string; apps: string; length: string; spoken: string; hours: string }): {
   name?: string; work?: string; apps?: string; length?: "short" | "detailed"; spoken?: boolean; hours?: string;
 } {

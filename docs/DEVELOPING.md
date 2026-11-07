@@ -222,8 +222,10 @@ runtime. It does not change the app's consent or speaking settings.
     Forget everything is offered then only for another account's memory or memory with no owner, and Home's status
     line says "Memory paused".
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
-  - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so, `FEATURE_CONSENT_VERSION.memory` 2, so
-    someone who agreed to the first note is asked again and memory stays off until they do). After conversation
+  - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so, `FEATURE_CONSENT_VERSION.memory` 4, so
+    someone who agreed to an earlier note is asked again and memory stays off until they do). With each request,
+    what you asked Ember to call you and how you like answers go too, whatever you ask; and the idle tidy sends up to
+    40 saved facts to Copilot, at most 6 times a day. Both are in the note. After conversation
     turns and finished tasks, a short session of its own on the conversation's model, hardened and with no tools,
     picks out lasting facts as JSON (zod-checked, dropped whole if invalid): at most one call per three turns or a
     minute, 12 an hour, 60 a day. A fact is yours only when you were heard to say it and every word of it is yours,
@@ -236,7 +238,7 @@ runtime. It does not change the app's consent or speaking settings.
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
-    from its speakers isn't kept.
+    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
     (all-MiniLM-L6-v2, int8, pinned by SHA-256 in `app/voice/models.ts`) that runs on this computer, so Ember finds a
     fact when you ask in other words ("Who is my manager?" finds "Priya leads the platform team"). It comes from

@@ -26,6 +26,9 @@ export type Intro = z.infer<typeof IntroSchema>;
 const USER = [{ name: "User", kind: "person" as const }];
 const clean = (s: string | undefined) => (s ?? "").replace(/\s+/g, " ").trim().replace(/[.!]+$/, "");
 
+/** The fact for "spoken aloud" (Ember's speaking choice follows it: memory-5). */
+export const SPOKEN_FACT = "Likes answers spoken aloud";
+
 /** The facts an introduction gives (nothing for a skipped answer). */
 export function introFacts(a: Intro): NewFact[] {
   const out: NewFact[] = [];
@@ -37,7 +40,7 @@ export function introFacts(a: Intro): NewFact[] {
   const apps = clean(a.apps);
   if (apps) fact(`Uses these apps most: ${apps}`, "apps_most");
   if (a.length) fact(a.length === "short" ? "Prefers short answers" : "Prefers detailed answers", "answer_length");
-  if (a.spoken !== undefined) fact(a.spoken ? "Likes answers spoken aloud" : "Prefers answers not spoken aloud", "spoken_answers");
+  if (a.spoken !== undefined) fact(a.spoken ? SPOKEN_FACT : "Prefers answers not spoken aloud", "spoken_answers");
   const hours = clean(a.hours);
   if (hours) fact(`Timezone and working hours: ${hours}`, "working_hours");
   return out;
