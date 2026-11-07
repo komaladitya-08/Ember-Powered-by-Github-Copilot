@@ -3,7 +3,8 @@
 A small, expressive companion that lives next to your cursor, listens for "Hey Ember",
 and does the work in your real apps where you can watch, without taking over your mouse.
 The agent loop runs on the GitHub Copilot SDK. Spoken replies use the native Kitten Nano 0.8 voice by default;
-Kokoro is an explicit optional download, and unavailable or failed neural speech uses an installed local system voice.
+the Kokoro and Supertonic voices are explicit optional downloads, as is **Hear me more clearly**, a clearer recogniser
+for what you say to Ember, and unavailable or failed neural speech uses an installed local system voice.
 
 Ember runs on:
 - **RHEL 8.4** and the rest of the RHEL 8 family (Rocky, Alma, Oracle Linux 8) with GNOME on Xorg, its first platform;
@@ -201,12 +202,19 @@ GPL-licensed part is on each release, as `source-*.zip`.
 ## Computers without internet access
 
 Everything Ember hears and says is worked out on the computer itself: the wake word, speech recognition, Ember's
-voice and Voice Match need no network. Ember's packages carry everything it runs: its speech models, and the Node.js
-runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256). The one thing it
-fetches from a third party is optional: Better recall's 23 MB language model (Settings › Memory), downloaded from
-Hugging Face (`huggingface.co`, served from `*.hf.co`) only when you click its Download, and checked against its pinned
-SHA-256. Without it, memory still works, matching your words. Only Copilot itself, and the review of commands, need
-the network: your organisation's model service, your own model provider, or GitHub Copilot's. With your own provider
+voice and Voice Match need no network. Ember's packages carry everything it needs to run: its standard speech models,
+and the Node.js runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256).
+Four optional extras are downloaded only when you turn them on, each showing its size first and checked against its
+pinned SHA-256, so a computer that can't reach their host goes without them:
+
+- **Hear me more clearly** (482 MB, Settings › Voice), the clearer recogniser, and the Kokoro voice (350 MB) and the
+  Supertonic voice (129 MB, on Windows and macOS), from sherpa-onnx's releases on `github.com`, which hands the files
+  over from `release-assets.githubusercontent.com`;
+- Better recall (23 MB, Settings › Memory), a small language model from Hugging Face (`huggingface.co`, served from
+  `*.hf.co`), only when you click its Download.
+
+Without them Ember listens with its standard recogniser, speaks in Kitten Nano, and its memory still works, matching
+your words. Only Copilot itself, and the review of commands, need the network: your organisation's model service, your own model provider, or GitHub Copilot's. With your own provider
 on a model server on this computer (below), nothing needs the network at all.
 
 What to install so nothing is downloaded:
@@ -220,7 +228,8 @@ What to install so nothing is downloaded:
 
 `Ember-voice-models-0.1.1.zip` (check it against `SHA256SUMS`) also serves IT that installs the models once per
 computer for every copy of Ember: unzip it so its `voice-models` folder lands in `%ProgramData%\Ember\voice-models`
-(Windows) or `/Library/Application Support/Ember/voice-models` (macOS).
+(Windows), `/Library/Application Support/Ember/voice-models` (macOS) or `/usr/share/ember/voice-models` (Linux, for an
+AppImage built without them; the RPM puts its own there). It holds the standard models only, not the optional extras.
 
 Ember checks each model against its SHA-256 and uses that folder without downloading anything; it never changes it.
 

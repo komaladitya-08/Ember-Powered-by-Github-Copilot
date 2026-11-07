@@ -637,6 +637,15 @@ download size and waits for confirmation. Kokoro uses the same real-time gate an
 or too slow; if Kitten cannot run either, the system voice speaks. Saved preferences remain inspectable. Policy,
 consent and speaking controls still apply, and a late or obsolete download cannot restart a cancelled choice.
 
+Supertonic 3 (int8, about 129 MB, `SUPERTONIC_VOICE`) is the other optional voice, chosen in the same **Voice**
+list. It runs only on the native addon (Windows and macOS: the C API binding can't pass its generation config), and its
+weights are under the BigScience Open RAIL-M licence, whose use restrictions pass on to users.
+
+**Hear me more clearly** (`voice.clearHearing`, Settings › Voice) fetches `CLEAR_SPEECH` (Parakeet TDT 0.6B v2, 482 MB) on Windows, macOS and Linux's C API, and starts the voice process again with it; the log says `voice.clear_wanted`, `voice.clear_ready`, and `clear: true` on `voice.ready`. An organisation's `features.voice: false` turns it off.
+
+Kokoro, Supertonic and Parakeet come from sherpa-onnx's GitHub releases (served from
+`release-assets.githubusercontent.com`) only when the user turns them on; no package or models zip carries them.
+
 The standard `VOICE_MODELS` manifest and bundled-model staging include Kitten; optional Kokoro is not packaged.
 Pinned Piper Amy/Ryan voices may still generate ASR/evaluation test fixtures, but are not production voices or shipped
 speech models. Keep the bundled sherpa, eSpeak NG and phonemiser licence notices: removing Piper as a model does not
@@ -2121,8 +2130,6 @@ eval/               task suite (eval/tasks), runner, checkers, release gates, re
 ### Action approval freshness
 
 An approval applies to the window, control and contents shown when Ember asked. Before input, Ember checks them again after waiting for a lease or moving the pointer. If the dialog, text being replaced, controls or window change, or the check cannot read them, nothing is entered: use a fresh `perceive_window` and let policy decide again. Window movement and focus changes alone do not invalidate the check. Ember's own focus click may collapse the target text selection before append/replace; it still checks the text itself, and insert-at-caret keeps its original selection binding. If clicking Allow closes a menu, reopening it is a new policy attempt; risky menu actions require another approval. No consent is cached by app and menu label.
-
-**Hear me more clearly** (`voice.clearHearing`, Settings › Voice) fetches `CLEAR_SPEECH` (Parakeet TDT 0.6B v2, 482 MB) on Windows, macOS and Linux's C API, and starts the voice process again with it; the log says `voice.clear_wanted`, `voice.clear_ready`, and `clear: true` on `voice.ready`. An organisation's `features.voice: false` turns it off.
 
 Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. A web page lives on its own (a video playing, a hover preview), so a control of one, in no dialog and with no risky word in its name, is the exception (`livingPage()`, worker.ts; owner's report of 2026-11-05: every click on YouTube was refused): a step that asks nothing needs only its window, no modal over it and the object itself to hold (`checkPageTarget()`), and a link or button may share its name with a twin, since the click goes to the object by id (`PAGE_TWIN`). A question still binds its answer to the whole tree, and pressed keys likewise (`focusShell`). This lets a completed form step update its status and contents without carrying its approval into the next step.
 

@@ -26,6 +26,7 @@ import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import { ISSUES_URL } from "../../app/shared/support";
+import { CLEAR_SPEECH, MEMORY_MODEL, MEMORY_MODEL_BYTES, NATURAL_VOICE, SUPERTONIC_VOICE } from "../../app/voice/models";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
@@ -328,6 +329,33 @@ describe("README.md", () => {
     // (loginItemFollower in autostart.ts), so starting the new one once is enough.
     expect(read("app/main/autostart.ts")).toMatch(/const appImage = runningAppImage\(env, o\.execPath\);\n {2}if \(appImage\) return \[appImage\];/);
     expect(linux).toMatch(/To update the AppImage, quit Ember[^.]*\. Start the new one once: Ember then points \*\*Start Ember when I log in\*\* at it/);
+  });
+
+  it("lists each optional download an offline computer goes without, with its size and host, and Linux's models folder (install-docs-6)", () => {
+    const offline = flat(section(readme, "Computers without internet access"));
+    expect(offline).not.toMatch(/The one thing it fetches from a third party/);
+    // Each optional model, as Settings names it, at the size Settings shows (whole MB) and from its pinned URL's host.
+    const extras = [
+      { name: "**Hear me more clearly**", bytes: CLEAR_SPEECH.bytes, url: CLEAR_SPEECH.url },
+      { name: "the Kokoro voice", bytes: NATURAL_VOICE.bytes, url: NATURAL_VOICE.url },
+      { name: "the Supertonic voice", bytes: SUPERTONIC_VOICE.bytes, url: SUPERTONIC_VOICE.url },
+      { name: "Better recall", bytes: MEMORY_MODEL_BYTES, url: MEMORY_MODEL[0].url },
+    ];
+    for (const x of extras) {
+      expect(offline, x.name).toMatch(new RegExp(`${x.name.replace(/\*/g, "\\*")} \\(${Math.round(x.bytes / 1e6)} MB[^)]*\\)`));
+      expect(offline, x.name).toContain(`\`${new URL(x.url).host}\``);
+    }
+    // GitHub hands its release files over from another host, which an allow-list needs too.
+    expect(offline).toContain("`release-assets.githubusercontent.com`");
+    // Where IT puts the models zip on Linux, as the setup check's advice says (doctor.ts) and Linux looks (system.ts).
+    expect(read("app/main/platform/linux/system.ts")).toContain('bundledModelDirs: resourcesPath => ["/usr/share/ember/voice-models"');
+    expect(offline).toContain("`/usr/share/ember/voice-models` (Linux,");
+    // The intro and the developer guide's voice section name Supertonic and Hear me more clearly too.
+    const intro = flat(readme.slice(0, readme.indexOf("## Download")));
+    for (const w of ["Supertonic", "**Hear me more clearly**"]) expect(intro, w).toContain(w);
+    const speech = flat(section(read("docs/DEVELOPING.md"), "How speech runs (native synthesis, native or WebAssembly listening)"));
+    expect(speech).toContain("Supertonic 3");
+    expect(speech).toContain("**Hear me more clearly** (`voice.clearHearing`, Settings › Voice)");
   });
 
   it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {
