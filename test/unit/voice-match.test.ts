@@ -7,9 +7,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fbank } from "../../app/voice/fbank";
-import { APPROVAL_MIN_SECONDS, Enrolment, VoiceGate, afterWakePhrase, voicedSeconds, type EnrolState, type Printer } from "../../app/voice/match";
+import { APPROVAL_MIN_SECONDS, ENROL_LIMITS, Enrolment, VoiceGate, afterWakePhrase, voicedSeconds, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, averagePrint, consistentPrints, decodePrint, encodePrint, similarity, unit } from "../../app/voice/voiceprint";
 import { voiceprintStore } from "../../app/main/voiceprint-store";
 import type { VoiceEvent } from "../../app/voice/engine";
@@ -251,11 +251,37 @@ describe("Enrolment", () => {
     expect(e.done).toBe(true);
   });
 
-  it("gives up after three phrases' worth of tries each", async () => {
+  it("gives up after three phrases' worth of tries each, and says it gave up rather than that it was cancelled (voice-listening-5)", async () => {
     const states: EnrolState[] = [];
     const e = new Enrolment(fakePrinter(true), s => states.push(s), 2);
     for (let i = 0; i < 8; i++) await e.heard(phrase(1, 0));
-    expect(states.at(-1)?.state).toBe("cancelled");
+    expect(states.at(-1)).toEqual({ state: "cancelled", got: 0, of: 2, why: "gave-up" });
+  });
+
+  it("ends teaching that hears no phrase for 45 s, or that goes on for 3 minutes, as timed out (voice-listening-v1)", async () => {
+    vi.useFakeTimers();
+    try {
+      expect(ENROL_LIMITS).toEqual({ quietMs: 45_000, totalMs: 180_000 });
+      const quiet: EnrolState[] = [];
+      new Enrolment(fakePrinter(), s => quiet.push(s), 4);
+      vi.advanceTimersByTime(44_999);
+      expect(quiet.map(s => s.state)).toEqual(["listening"]);
+      vi.advanceTimersByTime(1);
+      expect(quiet.at(-1)).toEqual({ state: "cancelled", got: 0, of: 4, why: "timeout" });
+      // Someone keeps the room talking (each segment heard resets the quiet wait), but no voiceprint comes of it.
+      const busy: EnrolState[] = [];
+      const e = new Enrolment(fakePrinter(), s => busy.push(s), 4);
+      for (let t = 0; t < 180_000; t += 30_000) { await e.heard(new Float32Array(8000)); vi.advanceTimersByTime(30_000); }
+      expect(busy.at(-1)).toEqual({ state: "cancelled", got: 0, of: 4, why: "timeout" });
+      expect(busy.filter(s => s.state === "cancelled")).toHaveLength(1);
+      // A user's Cancel says no reason, and ends the timers with it.
+      const cancelled: EnrolState[] = [];
+      new Enrolment(fakePrinter(), s => cancelled.push(s), 4).cancel();
+      vi.advanceTimersByTime(200_000);
+      expect(cancelled).toEqual([{ state: "listening", got: 0, of: 4 }, { state: "cancelled", got: 0, of: 4 }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -33,7 +33,8 @@ type FromMain =
   | { type: "learning"; on: boolean }
   /** Enrolment: listen for the owner's phrases (nothing heard meanwhile is a request), or stop doing so. */
   | { type: "enrol"; generation: number }
-  | { type: "enrol-cancel" }
+  /** `why`: the kill switch stopped it (EnrolEnd), not the user's Cancel. */
+  | { type: "enrol-cancel"; why?: "stopped" }
   | { type: "self-speaking"; on: boolean }
   /** Words Ember is about to say, to tell them from the user's over its voice (engine.ts spokenByEmber). */
   | { type: "self-words"; text: string }
@@ -154,15 +155,21 @@ gate.onSample = (print, score, rest) => {
     () => undefined, // the model failed: nothing to learn from this one (the gate reported failures already)
   );
 };
-/** Enrolment under way: the microphone's speech goes to it (through the VAD) instead of the engine. */
+/**
+ * Enrolment under way: the microphone's speech goes to it (through the VAD) instead of the engine's requests. The engine
+ * still hears "Ember, stop" meanwhile (VoiceEngine.stopsOnly), which ends the teaching too (voice-listening-v1).
+ */
 let enrolment: Enrolment | null = null;
-function enrolFrame(frame: Float32Array): void {
+function enrolFrame(frame: Float32Array, capturedAt?: number): void {
   if (!backend || !enrolment) return;
+  engine?.feed(frame, capturedAt);
+  if (!enrolment) return; // "Ember, stop" in this frame ended it
   for (const seg of backend.vad(frame)) void enrolment.heard(seg);
 }
 function endEnrolment(): void {
   enrolment = null;
   backend?.resetVad();
+  engine?.stopsOnly(false);
 }
 let cpuMs = 0, audioMs = 0, peak = 0, reported = false;
 /**
@@ -212,7 +219,11 @@ parent.on("message", e => {
       backend = recognizers;
       speakerModel = m.models.speaker;
       gate.setOwner(decodePrint(m.voiceprint), learntOf(m));
-      const made = new VoiceEngine(backend, e => gate.event(e, e.type === "utterance" ? made.requestAudio : null, e.type === "utterance" && made.requestWithWake), { conversation: !!m.conversation });
+      const made = new VoiceEngine(backend, e => {
+        // Teaching Voice Match: its phrases aren't requests; "Ember, stop" stops everything, the teaching with it.
+        if (enrolment) { if (e.type !== "stop") return; enrolment.cancel("stopped"); }
+        gate.event(e, e.type === "utterance" ? made.requestAudio : null, e.type === "utterance" && made.requestWithWake);
+      }, { conversation: !!m.conversation });
       engine = made;
       if (m.monitor) speakers.start();
       send({ type: "ready", loadMs: Date.now() - t0, backend: recognizers.info });
@@ -240,7 +251,7 @@ parent.on("message", e => {
       dump?.write(Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength));
       silence.frame(frame);
       const t0 = performance.now();
-      if (!broken) try { if (enrolment) enrolFrame(frame); else engine?.feed(frame, packet?.capturedAt); } catch (err) { failed(err); }
+      if (!broken) try { if (enrolment) enrolFrame(frame, packet?.capturedAt); else engine?.feed(frame, packet?.capturedAt); } catch (err) { failed(err); }
       cpuMs += performance.now() - t0;
       audioMs += frame.length / 16;
       for (let i = 0; i < frame.length; i++) peak = Math.max(peak, Math.abs(frame[i]));
@@ -286,6 +297,7 @@ parent.on("message", e => {
     if (enrolment || !backend) return;
     gate.cancel();
     engine?.cancel();
+    engine?.stopsOnly(true);
     backend.resetVad();
     const made: Enrolment = new Enrolment(voiceprinter(), st => {
       if (st.state === "done") send({ type: "enrol", state: "done", got: st.got, of: st.of, print: encodePrint(st.print) });
@@ -294,7 +306,7 @@ parent.on("message", e => {
     });
     enrolment = made;
   } else if (m.type === "enrol-cancel") {
-    enrolment?.cancel();
+    enrolment?.cancel(m.why === "stopped" ? "stopped" : undefined);
     endEnrolment();
   }
 });

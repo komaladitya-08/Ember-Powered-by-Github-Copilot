@@ -254,6 +254,12 @@ export interface VoiceMatchStatus {
   wanted?: boolean;
   /** `got` of `of` phrases kept; `phrase`: the one to say now; `again`: the last wasn't kept, and why. */
   enrolling: { got: number; of: number; phrase: string; again?: "short" | "unlike" | "failed" } | null;
+  /**
+   * How the last teaching ended, since this window opened: `learnt`; `cancelled` (the user's Cancel, or settings closed);
+   * `stopped` ("Ember, stop" or Stop everything); `timeout` (no phrase heard for a while, or too long in all);
+   * `gave-up` (too many phrases unlike the others); `interrupted` (Ember stopped listening: muted, locked, restarted).
+   */
+  ended?: "learnt" | "cancelled" | "stopped" | "timeout" | "gave-up" | "interrupted";
 }
 
 /**

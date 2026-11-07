@@ -26,9 +26,16 @@ const BADGES: Readonly<Record<Exclude<MicState, "off">, MicBadge>> = {
   error: { glyph: "problem", label: "Microphone problem" },
 };
 
-/** The badge for a microphone state, or null while listening is off (or the state is unknown). */
-export function micBadge(state: MicState | undefined): MicBadge | null {
+/** While Voice Match is taught, "Hey Ember" isn't heard (its phrases would be requests): the badge doesn't say it is. */
+const LEARNING: MicBadge = { glyph: "mic", label: "Learning your voice" };
+
+/**
+ * The badge for a microphone state, or null while listening is off (or the state is unknown). `learning`: Voice Match
+ * is being taught (voice-listening-v1).
+ */
+export function micBadge(state: MicState | undefined, learning = false): MicBadge | null {
   if (!state || state === "off") return null;
+  if (learning && (state === "waiting" || state === "active")) return LEARNING;
   return BADGES[state] ?? null;
 }
 

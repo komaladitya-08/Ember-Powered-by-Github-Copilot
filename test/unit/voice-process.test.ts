@@ -180,6 +180,55 @@ describe("the voice process", () => {
     expect(p.sent().filter(m => m.type === "silent")).toEqual([{ type: "silent", on: true }, { type: "silent", on: false }]);
   });
 
+  describe("while Ember learns a voice (Voice Match)", () => {
+    const relevant = (p: { sent: () => { type: string }[] }) => p.sent().filter(m => !["alive", "stats", "ready"].includes(m.type));
+
+    it("still hears “Ember, stop”: it stops everything and the teaching ends, saying why (voice-listening-v1)", async () => {
+      vi.useFakeTimers();
+      let spotted = 0;
+      const p = await voiceProcess(() => quiet({ spot: () => { spotted++; return spotted === 30 ? ["ember_stop"] : []; }, transcribe: () => "Ember, stop." }));
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      for (let i = 0; i < 60; i++) { p.frame(); vi.advanceTimersByTime(32); }
+      expect(spotted).toBeGreaterThan(0);
+      expect(relevant(p)).toEqual([
+        { type: "enrol", state: "listening", got: 0, of: 4 },
+        { type: "enrol", state: "cancelled", got: 0, of: 4, why: "stopped" },
+        { type: "stop", generation: 1 },
+      ]);
+    });
+
+    it("takes no wake or request meanwhile: its phrases (“Hey Ember, open my calendar.”) aren't requests (voice-listening-v1)", async () => {
+      vi.useFakeTimers();
+      const p = await voiceProcess(() => quiet({ spot: () => ["hey_ember"], transcribe: () => "Hey Ember, open my calendar." }));
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      p.message({ type: "follow-up", ms: 8000 });
+      for (let i = 0; i < 60; i++) { p.frame(); vi.advanceTimersByTime(32); }
+      expect(relevant(p)).toEqual([{ type: "enrol", state: "listening", got: 0, of: 4 }]);
+    });
+
+    it("ends the teaching as stopped when the kill switch stops listening (voice-listening-v1)", async () => {
+      const p = await voiceProcess(() => quiet());
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      p.message({ type: "enrol-cancel", why: "stopped" });
+      expect(relevant(p).at(-1)).toEqual({ type: "enrol", state: "cancelled", got: 0, of: 4, why: "stopped" });
+    });
+
+    it("hears wakes again once the teaching is over", async () => {
+      vi.useFakeTimers();
+      let wake = false;
+      const p = await voiceProcess(() => quiet({ spot: () => wake ? ["hey_ember"] : [], transcribe: () => "Hey Ember." }));
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      p.message({ type: "enrol-cancel" });
+      wake = true;
+      for (let i = 0; i < 10; i++) { p.frame(); vi.advanceTimersByTime(32); }
+      expect(relevant(p).map(m => m.type)).toContain("wake");
+    });
+  });
+
   it("passes on other errors at start as they are", async () => {
     const p = await voiceProcess(() => { throw new Error("Cannot find module 'sherpa-onnx'"); });
     p.init();

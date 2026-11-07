@@ -471,7 +471,8 @@ function start(): void {
     }
     home = createHomeWindow(platform.os);
     home.once("ready-to-show", () => log.info("window.home.shown"));
-    const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); };
+    // Teaching Voice Match needs the window that shows the phrase: closed or hidden, it ends (voice-listening-v1).
+    const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); endTeaching(); };
     // A crashed settings page comes back (it may be the consent page on first run).
     revive(home, reason => { cancelHomeListenOnce(); clearProject(); log.warn("window.home.renderer_gone", { reason }); });
     // While the user works in settings, Ember waits beside the window instead of over it.
@@ -484,6 +485,7 @@ function start(): void {
     win.on("minimize", hidden); win.on("hide", hidden); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
       cancelHomeListenOnce();
+      enrolEnded = undefined;
       clearProject();
       home = null;
       homeWantsLevel = false;
@@ -1386,7 +1388,7 @@ function start(): void {
     speechMissing: speechHeard === false,
     listenOnce: listenOnceStatus("home"),
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
-    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips },
+    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips, ...(enrolEnded ? { ended: enrolEnded } : {}) },
     ...(voice ? { natural: voice.naturalStatus } : {}),
     ...(voice ? { clear: voice.clearStatus } : {}),
     naturalModels: availableNaturalModels,
@@ -1649,6 +1651,16 @@ function start(): void {
     if (maySpeak()) voice?.speak(voiceAnswerSaid(why));
   };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
+  /** How the last teaching ended (settings says so; forgotten when it closes or teaching starts again). */
+  let enrolEnded: VoiceMatchStatus["ended"];
+  /** Settings closed or hidden while it taught Ember a voice: the teaching stops, as Cancel would. */
+  const endTeaching = () => {
+    if (!enrolling) return;
+    voice?.cancelEnrol();
+    enrolling = null;
+    enrolEnded = "cancelled";
+    broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+  };
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
   /** The status line while a follow-up window listens. */
@@ -2292,13 +2304,15 @@ function start(): void {
   ipcMain.handle(IPC.voiceMatchEnrol, guard(() => {
     if (policy.features.voice === false || !voice?.enrol()) return false;
     enrolling = { got: 0, of: ENROL_PHRASES.length, phrase: ENROL_PHRASES[0] };
+    enrolEnded = undefined;
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
     return true;
   }));
-  ipcMain.handle(IPC.voiceMatchCancel, guard(() => { voice?.cancelEnrol(); enrolling = null; broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }));
+  ipcMain.handle(IPC.voiceMatchCancel, guard(() => { voice?.cancelEnrol(); if (enrolling) enrolEnded = "cancelled"; enrolling = null; broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }));
   ipcMain.handle(IPC.voiceMatchForget, guard(() => {
     voice?.cancelEnrol();
     enrolling = null;
+    enrolEnded = undefined;
     // The voiceprint, all it learnt, and the words learnt from what the user said (personal/service.ts).
     personal.forgetVoice();
     // A task's voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).
@@ -3320,9 +3334,13 @@ function start(): void {
             settings.update({ voice: { ...settings.get().voice, match: true } });
             voice?.setVoiceprint(p.print);
             log.info("voice.match_enrolled", { phrases: p.got });
+            enrolEnded = "learnt";
           } catch (err) { log.warn("voice.match_not_saved", { err }); }
           enrolling = null;
         } else if (p.state === "cancelled") {
+          // Said in settings: given up, timed out, stopped or cut short, never taken for the voice learnt (voice-listening-5).
+          if (enrolling) enrolEnded = p.why === "timeout" || p.why === "stopped" || p.why === "gave-up" || p.why === "interrupted" ? p.why : "cancelled";
+          if (p.why) log.info("voice.match_not_enrolled", { why: p.why, phrases: p.got });
           enrolling = null;
         } else {
           enrolling = { got: p.got, of: p.of, phrase: ENROL_PHRASES[Math.min(p.got, ENROL_PHRASES.length - 1)], ...(p.state === "again" && p.why ? { again: p.why as "short" | "unlike" | "failed" } : {}) };
@@ -3338,7 +3356,7 @@ function start(): void {
       },
       onState: (state, detail) => {
         voiceDetail = detail;
-        setState({ mic: state });
+        setState({ mic: state, micLearning: !!voice?.isEnrolling });
         // The microphone went off (muted, listening turned off, the voice process died): nothing more will be
         // heard, so "Listening…" goes (the bubble is given back), and so do a follow-up window's status line and
         // listening pose (its "listening off" never comes now).

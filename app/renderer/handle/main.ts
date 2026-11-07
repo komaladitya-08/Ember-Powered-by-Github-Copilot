@@ -193,7 +193,7 @@ api.onState(s => {
   const b = s.bubble;
   // The microphone: a shape and words for its state (never colour alone), whenever listening is on.
   const mic = $("mic");
-  const micState = micBadge(s.mic);
+  const micState = micBadge(s.mic, s.micLearning === true);
   mic.hidden = !micState;
   mic.dataset.state = s.mic ?? "off";
   mic.dataset.glyph = micState?.glyph ?? "";

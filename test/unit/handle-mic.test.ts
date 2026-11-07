@@ -52,6 +52,15 @@ describe("the microphone badge", () => {
     expect(tag).not.toContain("aria-hidden");
   });
 
+  it("says Ember is learning a voice, not listening for “Hey Ember”, while Voice Match is taught (voice-listening-v1)", () => {
+    expect(micBadge("waiting", true)).toEqual({ glyph: "mic", label: "Learning your voice" });
+    expect(micBadge("active", true)).toEqual({ glyph: "mic", label: "Learning your voice" });
+    // A problem or a muted microphone says so, teaching or not.
+    expect(micBadge("muted", true)!.label).toBe("Microphone off");
+    expect(micBadge("off", true)).toBeNull();
+    expect(read("app/renderer/handle/main.ts")).toContain("const micState = micBadge(s.mic, s.micLearning === true);");
+  });
+
   it("says a microphone problem, or voice that isn't set up, on the handle instead of \"Ready\" (review #73)", () => {
     expect(idleLine("Ready", "error")).toBe("Microphone problem");
     expect(idleLine(undefined, "error")).toBe("Microphone problem");

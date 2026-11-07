@@ -498,7 +498,11 @@ Then say “Ember, …” (or “Hey Ember, …”) with your request. You can s
 Ember answers out loud in the default Kitten voice when its native runtime and model are ready, or a local system
 voice otherwise, sentence by sentence as the answer
 arrives. To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
-the four phrases it shows. It decides only what a voice may approve: every voice is heard, and a request it doesn't
+the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
+“Learning your voice”) and hears only “Ember, stop”, which stops the teaching with everything else. Teaching also
+stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),
+after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
+It decides only what a voice may approve: every voice is heard, and a request it doesn't
 match simply can't approve anything (owner decision of 2026-11-05: on a laptop's microphone the owner's own requests
 scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint. With **Keep learning my voice** (on by default once Voice Match knows you), the
 voiceprint follows your voice slowly, from requests it is sure are yours: never from Ember's own voice, a request with

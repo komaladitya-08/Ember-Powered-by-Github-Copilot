@@ -793,6 +793,18 @@ export class VoiceEngine {
     return this.mode.kind === "listening";
   }
 
+  /**
+   * Voice Match is being taught (process.ts): its phrases sound like requests ("Hey Ember, open my calendar."), so no
+   * wake, follow-up or request is taken, but "Ember, stop" still is, checked as ever (voice-listening-v1: it went unheard
+   * for as long as teaching lasted). The VAD is the enrolment's meanwhile: nothing here feeds it.
+   */
+  private onlyStops = false;
+  stopsOnly(on: boolean): void {
+    this.onlyStops = on;
+    this.pendingWake = null;
+    this.ring.clear();
+  }
+
   /** One of Ember's questions is up (main says so): a short "no" in a follow-up window is an answer, not a closer. */
   private questionWaiting = false;
   questionUp(on: boolean): void {
@@ -841,7 +853,7 @@ export class VoiceEngine {
    * `afterQuestion`: Ember's answer asked something, so "Okay." or "Fine." is a reply to send, not a closer.
    */
   followUp(ms = 8000, o: { afterQuestion?: boolean } = {}): void {
-    if (this.mode.kind === "listening" && this.mode.reason === "manual") return;
+    if (this.onlyStops || (this.mode.kind === "listening" && this.mode.reason === "manual")) return;
     // A conversation is listening already: it only learns whether the answer asked something.
     if (this.mode.kind === "listening" && this.mode.reason === "conversation") {
       this.mode.afterQuestion = !!o.afterQuestion;
@@ -969,6 +981,7 @@ export class VoiceEngine {
 
     const checkAt = (at: number) => (this.o.verifyWake === false ? null : at + (this.o.checkAfterMs ?? (paused ? PAUSED_CHECK_MS : 0)));
     for (const keyword of keywords) {
+      if (this.onlyStops && keyword !== "ember_stop") continue;
       if (keyword !== "ember_stop" && this.inConversation) this.spottedAt = now;
       if (keyword === "ember_stop") {
         // The kill phrase works in every state (also while Ember speaks: that's when it's needed). It goes once
@@ -1020,6 +1033,7 @@ export class VoiceEngine {
       this.monitorSpotting = false;
       this.backend.resetMonitor?.();
     }
+    if (this.onlyStops) return;
 
     if (this.mode.kind === "idle") {
       this.ring.push(frame);

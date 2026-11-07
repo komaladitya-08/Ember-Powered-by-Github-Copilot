@@ -60,6 +60,11 @@ const LISTEN_ONCE_MS = 8000;
 const LISTEN_ONCE_CHECK_MS = 3000;
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
+/**
+ * What the voice line says while Voice Match is taught: its phrases aren't requests, so "Hey Ember" isn't heard then,
+ * only "Ember, stop" (voice-listening-v1).
+ */
+export const ENROL_TEXT = "Learning your voice. Until that's done, Ember hears only “Ember, stop”.";
 /** What the voice line says while the microphone sends only digital silence (review #255). */
 const SILENT_TEXT = "The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings.";
 
@@ -244,8 +249,9 @@ export class VoiceService {
   private ttsHushed = 0;
   /** Replies still being synthesised: original text, producer-reported ungenerated suffix, and their page. */
   private ttsPending = new Map<number, { text: string; remaining: string; send: PageSend }>();
-  /** Enrolment (Voice Match) is under way in the voice process. */
+  /** Enrolment (Voice Match) is under way in the voice process, and how far it got (said if it is cut short). */
   private enrolling = false;
+  private enrolGot = { got: 0, of: 0 };
   /** ASR may retry through WebAssembly. Neural synthesis is native-only and falls back to the local system voice. */
   private wasmOnly = { voice: false };
   /** Hear me more clearly: wanted, what became of it, its download, and whether the running voice process has it. */
@@ -592,6 +598,11 @@ export class VoiceService {
     return this.muted;
   }
 
+  /** Voice Match is being taught (the microphone hears its phrases and "Ember, stop" only). */
+  get isEnrolling(): boolean {
+    return this.enrolling;
+  }
+
   /**
    * The screen locked, or this session isn't the one in front (review #81): no listening and no speech until it's back,
    * so nobody in the room talks to Ember (the wake word isn't the user's alone) or hears it read out the user's apps.
@@ -688,16 +699,25 @@ export class VoiceService {
     if (!this.wanted || !this.proc || !this.readyAt || !this.matchReady) return false;
     this.cancelListenOnce();
     this.enrolling = true;
+    this.enrolGot = { got: 0, of: 0 };
     this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
+    if (this.state === "waiting") this.setState("waiting", ENROL_TEXT);
     this.o.onListenOnce?.();
     return true;
   }
 
-  cancelEnrol(): void {
+  /** Teaching stops: the user's Cancel, or (`why`) the kill switch. */
+  cancelEnrol(why?: "stopped"): void {
     if (!this.enrolling) return;
     this.enrolling = false;
-    this.proc?.postMessage({ type: "enrol-cancel" });
+    this.proc?.postMessage({ type: "enrol-cancel", ...(why ? { why } : {}) });
+    this.enrolEnded();
     this.o.onListenOnce?.();
+  }
+
+  /** Teaching is over: the voice line says what it did before (listening for “Ember” again). */
+  private enrolEnded(): void {
+    if (this.state === "waiting") this.setState("waiting");
   }
 
   /**
@@ -746,6 +766,8 @@ export class VoiceService {
     this.manualGeneration++;
     this.listeningGeneration++;
     this.dropFollowUp();
+    // Teaching Voice Match stops with everything else (voice-listening-v1).
+    this.cancelEnrol("stopped");
     this.proc?.postMessage({ type: "cancel", generation: this.listeningGeneration });
     if (!this.manual) return;
     if (this.state === "active") this.setState("waiting");
@@ -1269,7 +1291,13 @@ export class VoiceService {
         this.setState("error", m.message);
         return;
       }
-      if (m.type === "enrol") { this.enrolling = m.state !== "done" && m.state !== "cancelled"; this.o.onEnrol?.(m); this.o.onListenOnce?.(); return; }
+      if (m.type === "enrol") {
+        const was = this.enrolling;
+        this.enrolling = m.state !== "done" && m.state !== "cancelled";
+        this.enrolGot = { got: m.got, of: m.of };
+        if (was && !this.enrolling) this.enrolEnded();
+        this.o.onEnrol?.(m); this.o.onListenOnce?.(); return;
+      }
       if (m.type === "voice-match-error") { this.o.log.warn("voice.match_error", { message: m.message }); return; }
       // A request Voice Match may learn from (app/voice/adapt.ts): main decides (numbers only, never audio).
       if (m.type === "voice-sample") { if (m.generation === this.listeningGeneration) this.o.onSample?.(m); return; }
@@ -1433,7 +1461,12 @@ export class VoiceService {
     if (!acceptedTemporary) this.manualGeneration++;
     this.listeningGeneration++;
     this.capturing = false;
-    this.enrolling = false;
+    if (this.enrolling) {
+      // Teaching goes with the voice process (muted, locked, listening off, a restart): settings is told, or it would go
+      // on showing the phrase to say, and saying it would make it a request (voice-listening-2).
+      this.enrolling = false;
+      this.o.onEnrol?.({ type: "enrol", state: "cancelled", ...this.enrolGot, why: "interrupted" });
+    }
     this.closeMic();
     this.dropFollowUp();
     this.stopWatchingAlive();

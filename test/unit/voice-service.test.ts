@@ -1449,6 +1449,49 @@ describe("speech models", () => {
       v.setVoiceprint(null);
       expect(posted(proc, "voiceprint")).toMatchObject([{ type: "voiceprint", print: null, refresh: false, generation: expect.any(Number) }]);
     });
+
+    /** Listening, ready, and teaching under way with a phrase heard. */
+    async function teaching() {
+      const progress: { type: string; state: string; got: number; of: number; why?: string }[] = [];
+      const made = service(true, { voiceprint: () => null, onEnrol: e => progress.push(e as (typeof progress)[number]) });
+      await made.v.setWanted(true);
+      const proc = electron.procs.at(-1)!;
+      proc.emit("message", { type: "ready", loadMs: 10 });
+      expect(made.v.enrol()).toBe(true);
+      proc.emit("message", { type: "enrol", state: "heard", got: 1, of: 4 });
+      return { ...made, proc, progress };
+    }
+
+    for (const how of ["mute", "lock", "listening off", "exit", "Hear me more clearly"] as const) {
+      it(`tells settings the teaching ended when Ember stops listening (${how}), so it doesn't go on asking for phrases (voice-listening-2)`, async () => {
+        const { v, proc, progress } = await teaching();
+        if (how === "mute") v.setMuted(true);
+        else if (how === "lock") v.setLocked(true);
+        else if (how === "listening off") await v.setWanted(false);
+        else if (how === "exit") proc.emit("exit", 1);
+        else { (v as unknown as { clearLoaded: boolean }).clearLoaded = true; v.setClearHearing(true); v.setClearHearing(false); }
+        expect(progress.at(-1)).toEqual({ type: "enrol", state: "cancelled", got: 1, of: 4, why: "interrupted" });
+        expect(progress.filter(p => p.state === "cancelled")).toHaveLength(1);
+        expect(v.isEnrolling).toBe(false);
+        expect(v.listenOnceStatus.detail).not.toBe("Finish teaching Ember your voice first.");
+      });
+    }
+
+    it("stops the teaching with everything else when the kill switch stops listening (voice-listening-v1)", async () => {
+      const { v, proc } = await teaching();
+      v.cancelListening();
+      expect(posted(proc, "enrol-cancel")).toEqual([{ type: "enrol-cancel", why: "stopped" }]);
+      expect(v.isEnrolling).toBe(false);
+    });
+
+    it("says on the voice line that only “Ember, stop” is heard while it learns a voice, and stops saying so after (voice-listening-v1)", async () => {
+      const { v, proc, states } = await teaching();
+      expect(states.at(-1)).toEqual({ s: "waiting", detail: "Learning your voice. Until that's done, Ember hears only “Ember, stop”." });
+      expect(v.isEnrolling).toBe(true);
+      proc.emit("message", { type: "enrol", state: "cancelled", got: 1, of: 4, why: "timeout" });
+      expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+      expect(v.isEnrolling).toBe(false);
+    });
   });
 
   describe("the native build (Windows and macOS)", () => {
