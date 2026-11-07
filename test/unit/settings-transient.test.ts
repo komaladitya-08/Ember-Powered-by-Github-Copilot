@@ -1,7 +1,8 @@
 /**
  * settings.json that can't be read for a moment at start-up (an antivirus or sync client holding it, an NFS hiccup):
  * the read is tried again, and if it still fails Ember starts on defaults with a notice and never saves over the
- * user's file until it reads again; changes made meanwhile go on top of it then (review #83).
+ * user's file until it reads again; changes made meanwhile are refused, not held in memory (review #83, and the
+ * settings-save fail-closed fix: a consent must never be in force that the disk does not hold).
  */
 
 import fs from "node:fs";
@@ -54,27 +55,27 @@ describe("settings.json that can't be read at start-up (review #83)", () => {
     const r = store.load();
     expect(r.settings.character).toBe("cinder");
     expect(store.lastProblem).toMatch(/can't read .*settings\.json.*default settings/);
-    store.update({ size: 70 });
-    expect(store.get().size).toBe(70);
+    expect(() => store.update({ size: 70 })).toThrow(/can't read .*settings\.json.*wasn't kept/);
+    expect(store.get().size).not.toBe(70); // defaults, the refused change not kept
     store.flush();
     fail.undo();
     expect(fs.readFileSync(f, "utf8")).toBe(before);
     expect(fs.readdirSync(path.dirname(f))).toEqual(["settings.json"]);
   });
 
-  it("once the file reads again, it is used, the changes made meanwhile go on top and are saved, and the notice goes", () => {
+  it("once the file reads again, it is used as it is (the refused change was never kept), and the notice goes", () => {
     const f = settingsFile();
     const fail = failReads(f, "EACCES", Infinity);
     const store = new SettingsStore(f);
     store.load();
-    store.update({ size: 70 });
+    expect(() => store.update({ size: 70 })).toThrow();
     // The watcher looks again (the file's time hasn't changed: it was never edited).
     expect(store.reloadIfChanged()).toBe(false);
     fail.undo();
     expect(store.reloadIfChanged()).toBe(true);
-    expect(store.get()).toMatchObject({ character: "wisp", size: 70, onboarded: true, grants: { gedit: "act" } });
+    expect(store.get()).toMatchObject({ character: "wisp", size: 80, onboarded: true, grants: { gedit: "act" } });
     expect(store.lastProblem).toBeNull();
-    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 70, onboarded: true });
+    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 80, onboarded: true });
   });
 
   it("a change made when the file reads again goes on top of the user's settings, not the defaults", () => {
@@ -87,31 +88,6 @@ describe("settings.json that can't be read at start-up (review #83)", () => {
     expect(store.get()).toMatchObject({ character: "wisp", size: 80, speak: false });
     expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 80, speak: false });
     expect(store.lastProblem).toBeNull();
-  });
-
-  it("changes held meanwhile are kept when the next change, not the watcher, finds the file readable", () => {
-    const f = settingsFile();
-    const fail = failReads(f, "EIO", Infinity);
-    const store = new SettingsStore(f);
-    store.load();
-    store.update({ size: 70 });
-    fail.undo();
-    store.update({ speak: false });
-    expect(store.get()).toMatchObject({ character: "wisp", size: 70, speak: false });
-    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 70, speak: false, grants: { gedit: "act" } });
-  });
-
-  it("the same through the size slider: a change held meanwhile is saved with the slider's", () => {
-    const f = settingsFile();
-    const fail = failReads(f, "EIO", Infinity);
-    const store = new SettingsStore(f);
-    store.load();
-    store.update({ reduceMotion: true });
-    fail.undo();
-    store.update({ size: 75 }, { soon: true });
-    store.flush();
-    expect(store.get()).toMatchObject({ character: "wisp", size: 75, reduceMotion: true });
-    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 75, reduceMotion: true });
   });
 
   it("a missing file is still a first run: defaults, no notice, and the first change is saved", () => {
@@ -133,7 +109,7 @@ describe("the notice while settings.json stays unreadable (review #83)", () => {
     failReads(f, "EIO", Infinity);
     const store = new SettingsStore(f);
     store.load();
-    store.update({ size: 70 });
+    expect(() => store.update({ size: 70 })).toThrow();
     expect(store.lastProblem).toMatch(/won't save over the file until it can read it again/);
   });
 });
@@ -156,13 +132,13 @@ describe("the notice when the unreadable settings.json is gone (review #83)", ()
 });
 
 describe("a file that reads again with a slip in it (reviews #83 and #92)", () => {
-  it("is waited on and repaired with the user's settings, never replaced with defaults plus the changes", () => {
+  it("is waited on and repaired with the user's settings, never replaced with defaults", () => {
     const f = settingsFile();
     let now = 0;
     const fail = failReads(f, "EIO", Infinity);
     const store = new SettingsStore(f, null, { clock: () => now });
     store.load();
-    store.update({ size: 70 });
+    expect(() => store.update({ size: 70 })).toThrow();
     // The file reads again, with a trailing comma the user left in it.
     fail.undo();
     fs.writeFileSync(f, JSON.stringify(good, null, 2).replace(/\n}$/, ",\n}"));
@@ -170,21 +146,21 @@ describe("a file that reads again with a slip in it (reviews #83 and #92)", () =
     expect(JSON.parse(fs.readFileSync(f, "utf8").replace(/,\n}$/, "\n}"))).toMatchObject({ character: "wisp", size: 80 });
     now += 2000;
     expect(store.reloadIfChanged()).toBe(true);
-    expect(store.get()).toMatchObject({ character: "wisp", size: 70, onboarded: true });
-    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 70, onboarded: true, grants: { gedit: "act" } });
+    expect(store.get()).toMatchObject({ character: "wisp", size: 80, onboarded: true });
+    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 80, onboarded: true, grants: { gedit: "act" } });
   });
 
-  it("a change made while it is waited on keeps the changes held while it couldn't be read", () => {
+  it("a change made while it is waited on goes on top of the user's repaired settings", () => {
     const f = settingsFile();
     const fail = failReads(f, "EIO", Infinity);
     const store = new SettingsStore(f, null, { clock: () => 0 });
     store.load();
-    store.update({ size: 70 });
+    expect(() => store.update({ size: 70 })).toThrow();
     fail.undo();
     fs.writeFileSync(f, JSON.stringify(good, null, 2).replace(/\n}$/, ",\n}"));
     expect(store.reloadIfChanged()).toBe(false);
     store.update({ speak: false });
-    expect(store.get()).toMatchObject({ character: "wisp", size: 70, speak: false });
-    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 70, speak: false, grants: { gedit: "act" } });
+    expect(store.get()).toMatchObject({ character: "wisp", size: 80, speak: false });
+    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 80, speak: false, grants: { gedit: "act" } });
   });
 });
