@@ -807,12 +807,19 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     signingIn = true;
     signInMessage = null;
     render();
-    alt.focus();
+    // Focus stays on the step's button, now waiting (a second Enter there does nothing), not on Cancel, which a double
+    // or held Enter would press at once (first-run-r3). A button under the line that started it is gone: focus comes here.
+    next.focus();
     window.ember.signIn().catch(err => {
       signingIn = false;
       signInMessage = { text: ipcErrorText(err), tone: "error" };
       render();
+      leaveAlt();
     });
+  }
+  /** A sign-in ended without success: Cancel became Skip for now, so its focus goes to the title (first-run-r3). */
+  function leaveAlt(): void {
+    if (step === "sign-in" && (document.activeElement === alt || document.activeElement === document.body)) $("w-title").focus({ preventScroll: true });
   }
   window.ember.onSignInProgress(p => {
     if (!active) return;
@@ -825,6 +832,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     render();
     // Signed in: Continue takes focus, so the next step is one key away.
     if (p.state === "done" && step === "sign-in") next.focus();
+    else leaveAlt();
   });
   /** "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]" and the wait under it. */
   function showCode(userCode: string, uri: string): void {

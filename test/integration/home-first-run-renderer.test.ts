@@ -88,6 +88,7 @@ async function open(seed: Seed = {}): Promise<Page> {
       if (name === "copyText") return async (text: string) => { window.__frCalls.push(`copy:${text}`); };
       if (name === "openAsk") return async () => { window.__frCalls.push("openAsk"); };
       if (name === "quit") return async () => { window.__frCalls.push("quit"); };
+      if (name === "cancelSignIn") return async () => { window.__frCalls.push("cancelSignIn"); };
       return () => new Promise(() => undefined);
     } }) as never;
     if (!noBridge) {
@@ -628,7 +629,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
-  it("(p) the step's quiet button keeps keyboard focus through every redraw (first-run-2, WCAG 2.4.3)", async () => {
+  it("(p) the step's quiet button keeps keyboard focus through every redraw, and never turns under it into another (first-run-2, first-run-r3, WCAG 2.4.3)", async () => {
     // Skip for now, focused, while a status arrives.
     const p = await open();
     await p.locator("#w-alt").focus();
@@ -636,14 +637,29 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.evaluate(a => window.__frEmit("onAgentStatus", a), { ...SIGNED_OUT, detail: "Still not signed in." });
     await p.waitForTimeout(50);
     expect(await focusedId(p)).toBe("w-alt");
-    // Sign in puts focus on Cancel, and the device code arriving keeps it there.
-    await next(p).click();
+    // Sign in keeps focus on its own button, now waiting (a second Enter there does nothing: first-run-r3), and the
+    // device code arriving keeps it there.
+    await next(p).focus();
+    await p.keyboard.press("Enter");
     await expect.poll(() => calls(p)).toContain("signIn");
     expect(await p.locator("#w-alt").innerText()).toBe("Cancel");
-    expect(await focusedId(p)).toBe("w-alt");
+    expect(await focusedId(p)).toBe("w-next");
+    await p.keyboard.press("Enter");
+    await p.waitForTimeout(50);
+    expect(await calls(p)).toEqual(["signIn"]);
     await emit(p, "onSignInProgress", { state: "code", userCode: "ABCD-1234", verificationUri: "https://github.com/login/device" });
     await expect.poll(() => p.locator("#w-code").isVisible()).toBe(true);
-    expect(await focusedId(p)).toBe("w-alt");
+    expect(await focusedId(p)).toBe("w-next");
+    // Cancel: the same button becomes Skip for now, so focus goes to the step's title, and a second Enter skips nothing.
+    await p.locator("#w-alt").focus();
+    await p.keyboard.press("Enter");
+    await expect.poll(() => calls(p)).toContain("cancelSignIn");
+    await emit(p, "onSignInProgress", { state: "cancelled" });
+    await expect.poll(() => p.locator("#w-alt").innerText()).toBe("Skip for now");
+    expect(await focusedId(p)).toBe("w-title");
+    await p.keyboard.press("Enter");
+    await p.waitForTimeout(50);
+    expect(await p.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
     // Personalise memory…, focused on the try step, while the voice status arrives.
     const t = await open({ agent: readyAgent() });
     await next(t).click();
