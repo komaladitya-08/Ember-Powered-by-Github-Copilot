@@ -251,6 +251,9 @@ runtime. It does not change the app's consent or speaking settings.
 - **Extensions** (Settings › **Extensions**): plugins and extensions from marketplaces the user adds, and connectors
   (GitHub-hosted services such as Slack or Notion). Only the user adds, turns off, removes, connects or disconnects,
   and only here.
+  - **Use extensions** (shown once extensions are agreed to: the first add's card turns them on) turns them off as a
+    whole (`settings.extensions.on`): every server stops, no session gets their tools, and each item says **Off:
+    extensions are off** while what was added stays listed. An item's own switch shows off until it is agreed to.
   - **Added** lists each item with its status in words beside a dot, a switch to turn it off, its tools (each badged
     **Read-only**, **Can change things** or **Changed**), and **Remove** (a connector: **Disconnect**). A tool whose
     name, description, schema or annotations changed since the user agreed shows **Changed since you agreed** with

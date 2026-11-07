@@ -116,6 +116,8 @@ async function evidence(p: Page, name: string): Promise<void> {
   fs.mkdirSync(dir, { recursive: true });
   for (const scheme of ["light", "dark"] as const) {
     await p.emulateMedia({ colorScheme: scheme });
+    // After a switch's knob has finished moving.
+    await p.waitForTimeout(400);
     await p.screenshot({ path: path.join(dir, `${name}-${scheme}.png`), fullPage: true });
   }
 }
@@ -161,6 +163,29 @@ describe.skipIf(gate)("Home's Extensions, as the person sets them up (2026-11-07
     await expect.poll(() => page.locator("#extensions-msg").innerText()).toBe("Ember can use “fake” now.");
     await expect.poll(() => focused(page)).toBe("item:plugin:fake:switch");
     expect(await calls(page)).toEqual(["agree", "install(awesome-copilot,fake)", "reagree(plugin:fake)"]);
+    await page.close();
+  });
+
+  it("turns extensions off as a whole, shows an unagreed item's switch off, and points an empty list at the marketplaces (integrations-11)", async () => {
+    const empty = await open("extensions");
+    await expect.poll(() => empty.locator("#ext-installed").innerText()).toBe("Nothing added yet. Browse a marketplace below.");
+    // Not agreed to yet: no switch for the section (the first add's card turns extensions on).
+    expect(await empty.locator("#ext-on").isVisible()).toBe(false);
+    await empty.close();
+    const agreed = { version: 3, at: "2026-11-07T12:00:00Z" };
+    const ready: Installed = { id: "plugin:notes", kind: "plugin", name: "Notes", source: "notes@octo-tools", enabled: true, consented: true, status: "ready", tools: [{ name: "list", description: "Lists.", readOnly: true }] };
+    const waiting: Installed = { ...ready, id: "plugin:new", name: "New", consented: false };
+    const page = await open("extensions", { settings: { extensions: { on: true, consent: agreed } }, extensions: { consented: true, installed: [ready, waiting] } });
+    const sw = page.getByRole("switch", { name: "Use extensions" });
+    await expect.poll(() => sw.isChecked()).toBe(true);
+    expect(await page.locator("#ext-on-hint").innerText()).toBe("Ember may use the tools you agreed to. Turn this off to stop them all: what you added stays here.");
+    expect(await page.getByRole("switch", { name: "Use New" }).isChecked()).toBe(false);
+    expect(await page.getByRole("switch", { name: "Use Notes" }).isChecked()).toBe(true);
+    await sw.click();
+    await expect.poll(() => page.locator("#ext-on-hint").innerText()).toBe("Off: Ember uses no extension's tools and runs nothing you added. What you added stays here.");
+    expect(await calls(page)).toEqual([`save:${JSON.stringify({ extensions: { on: false, consent: agreed } })}`]);
+    expect(await page.locator("#ext-installed li").first().locator(".ext-status").innerText()).toBe("Off: extensions are off");
+    await evidence(page, "ext-off");
     await page.close();
   });
 });

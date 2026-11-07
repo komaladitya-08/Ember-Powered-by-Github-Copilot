@@ -72,11 +72,15 @@ export function toolCounts(tools: readonly ToolInfo[]): string {
   return parts.join(", ");
 }
 
-/** An installed item's status, as words beside its symbol (never colour alone). */
-export function installedStatus(i: Installed): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
+/**
+ * An installed item's status, as words beside its symbol (never colour alone). `on`: the section's Use extensions
+ * switch; while it is off nothing added runs (integrations-11).
+ */
+export function installedStatus(i: Installed, on = true): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
   if (i.needsReview || i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
   if (!i.consented) return { text: "Waiting for you to agree", tone: "wait" };
   if (!i.enabled || i.status === "disabled") return { text: "Off", tone: "off" };
+  if (!on) return { text: "Off: extensions are off", tone: "off" };
   switch (i.status) {
     case "ready": return { text: i.kind === "connector" ? "Connected" : "Ready", tone: "ok" };
     case "starting": return { text: "Starting…", tone: "wait" };
@@ -110,8 +114,8 @@ const detailLine = (d: string | undefined): string | null => {
   return s === EXTENSIONS_FAILED ? null : s;
 };
 
-export function installedRow(i: Installed): InstalledRow {
-  const status = installedStatus(i);
+export function installedRow(i: Installed, on = true): InstalledRow {
+  const status = installedStatus(i, on);
   const changed = i.needsReview || i.tools.some(t => t.changed);
   const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
   const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
@@ -129,7 +133,8 @@ export function installedRow(i: Installed): InstalledRow {
     : { act: "uninstall", label: "Remove", ariaLabel: `Remove ${i.name}`, confirm: removeQuestion(i.name), danger: true });
   return {
     id: i.id, name: i.name, meta, status, note,
-    toggle: { checked: i.enabled, disabled: !i.consented, ariaLabel: `Use ${i.name}` },
+    // Not on until agreed: a switch shown on beside "Waiting for you to agree" said it ran (integrations-11).
+    toggle: { checked: i.enabled && i.consented, disabled: !i.consented, ariaLabel: `Use ${i.name}` },
     tools: i.tools.map(t => ({ name: t.name, description: t.description, badge: toolBadge(t) })),
     toolSummary: toolCounts(i.tools),
     actions,
@@ -140,7 +145,14 @@ export const removeQuestion = (name: string) => `Remove “${name}”? Ember sto
 export const disconnectQuestion = (name: string) => `Disconnect “${name}”? Ember stops using its tools at once.`;
 
 export const INSTALLED_HEADING = "Added";
-export const INSTALLED_EMPTY = "Nothing added yet. Browse a marketplace or connect a service below.";
+export const INSTALLED_EMPTY = "Nothing added yet. Browse a marketplace below.";
+
+/** The section's own switch, shown once extensions are agreed to: off stops every server and uses no tool. */
+export const EXTENSIONS_ON_LABEL = "Use extensions";
+export function extensionsOnHint(on: boolean): string {
+  return on ? "Ember may use the tools you agreed to. Turn this off to stop them all: what you added stays here."
+    : "Off: Ember uses no extension's tools and runs nothing you added. What you added stays here.";
+}
 
 // ───── Marketplaces ─────
 

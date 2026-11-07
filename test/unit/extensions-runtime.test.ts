@@ -680,6 +680,21 @@ describe("ExtensionsService", () => {
     expect(s.forSession()).toBeUndefined();
   });
 
+  it("stops everything and gives no session a tool when Use extensions is turned off, agreed or not (integrations-11)", async () => {
+    let fire = () => undefined as void;
+    const s = await installed({ settings: { get: () => settings, onChange: fn => { fire = fn; return () => undefined; } } });
+    expect(s.forSession()).toBeDefined();
+    const before = s.generation;
+    settings = { ...settings, extensions: { ...settings.extensions, on: false } };
+    fire();
+    expect(s.forSession()).toBeUndefined();
+    // The conversation is reconnected without the tools, and a call made meanwhile is refused.
+    expect(s.generation).not.toBe(before);
+    settings = { ...settings, extensions: { ...settings.extensions, on: true } };
+    fire();
+    expect(s.forSession()).toBeDefined();
+  });
+
   it("starts each server through Ember's launcher with an allowlisted environment, never the sign-in", async () => {
     const s = await installed();
     const ext = s.forSession()!;

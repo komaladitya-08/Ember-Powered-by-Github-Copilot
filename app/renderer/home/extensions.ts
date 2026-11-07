@@ -7,10 +7,11 @@
  */
 
 import type { ExtensionsState, Status, EmberExtensionsApi } from "../../shared/ipc";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
 import { marketplaceSource } from "../../shared/extensions-input";
 import {
-  BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, EXTENSIONS_FAILED, EXTENSIONS_LOADING, INSTALLED_EMPTY, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
+  BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
   addedMarketplace, added, addingMarketplace, agreedTo, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
   consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
   removed, removedMarketplace, toolBadge, type ConsentCard, type ItemAction,
@@ -36,6 +37,10 @@ const button = (label: string, cls: string, key: string, onClick: () => void, ar
 
 let state: ExtensionsState | null = null;
 let lockdown = false;
+/** The settings' extensions (the section's own switch), as the status last said them. */
+let extSettings: Status["settings"]["extensions"] | null = null;
+/** The section's switch is on: what was added may run (integrations-11). */
+const sectionOn = () => extSettings?.on !== false;
 /** The marketplace being browsed, and what it lists (null while loading), or why it couldn't be read. */
 let browsing: { name: string; entries: MarketplaceEntry[] | null; error: string | null } | null = null;
 let connectors: MarketplaceEntry[] | null = null;
@@ -229,7 +234,7 @@ function statusLine(text: string, tone: keyof typeof PHASE): HTMLElement {
 }
 
 function installedItem(i: Installed): HTMLLIElement {
-  const r = installedRow(i);
+  const r = installedRow(i, sectionOn());
   const li = el("li", "ext-item");
   const head = el("div", "ext-head");
   const text = el("span", "ext-text");
@@ -402,7 +407,13 @@ function draw(): void {
   $("ext-market-form").hidden = !state.allowed;
   $("ext-markets-hint").hidden = !state.allowed;
   if (!state.allowed) { browsing = null; asking = null; }
-  const key = JSON.stringify([state, browsing, connectors, connectorsError, [...pending], asking, [...busy]]);
+  // Use extensions: once agreed to (the first add's card is how they are turned on), while the organisation allows them.
+  const agreed = !!extSettings && extSettings.consent.version >= FEATURE_CONSENT_VERSION.extensions;
+  $("ext-on-group").hidden = !state.allowed || !agreed;
+  $("ext-on-hint").hidden = !state.allowed || !agreed;
+  ($("ext-on") as HTMLInputElement).checked = sectionOn();
+  $("ext-on-hint").textContent = extensionsOnHint(sectionOn());
+  const key = JSON.stringify([state, browsing, connectors, connectorsError, [...pending], asking, [...busy], sectionOn()]);
   if (key === drawn) return;
   drawn = key;
   const focused = (document.activeElement as HTMLElement | null)?.dataset?.key ?? "";
@@ -431,7 +442,21 @@ function draw(): void {
 /** The status arrived: the organisation's policy, and whether Ember is locked down. */
 export function extensionsStatus(st: Status): void {
   lockdown = st.admin.error !== null;
+  extSettings = st.settings.extensions;
   draw();
+}
+
+/** The section's switch: off stops every server and gives no session a tool (ExtensionsService.active), on again uses them. */
+function setSectionOn(on: boolean): void {
+  const e = extSettings;
+  if (!e) return;
+  extSettings = { ...e, on };
+  draw();
+  window.ember.updateSettings({ extensions: { ...e, on } }).catch((err: unknown) => {
+    extSettings = e;
+    say(extensionsError(err));
+    draw();
+  });
 }
 
 /** Asks main for the extensions once and follows its changes; wires the marketplace form and the browsing panel. */
@@ -452,6 +477,10 @@ export function startExtensions(): void {
       if (ok && marketplaceSource(input.value) === source) input.value = "";
     });
   });
+  // The first add's card turns extensions on in main: the switch follows the settings.
+  window.ember?.onSettingsChanged?.(s => { extSettings = s.extensions; draw(); });
+  $("ext-on-label").textContent = EXTENSIONS_ON_LABEL;
+  $("ext-on").addEventListener("change", e => setSectionOn((e.target as HTMLInputElement).checked));
   $("ext-browse-done").textContent = BROWSE_DONE;
   $("ext-browse-done").addEventListener("click", () => {
     const back = browsing ? `market:${browsing.name}:browse` : "";
