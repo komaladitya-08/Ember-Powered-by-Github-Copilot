@@ -792,7 +792,8 @@ function commandLine(e: ActivityEntry): EntryView | null {
       // An ordinary command runs without asking: its end line says it.
       if (e.verdict === "refuse") return { tag: "Refused", cls: "no", what: run, why: userWords(e.reason) };
       if (e.verdict === "ask") return { tag: "Asked you", cls: "ask", what: run, why: userWords(e.reason) };
-      if (e.verdict === "announce") return { tag: "Announced", cls: "ask", what: run, why: userWords(e.reason) };
+      // The review's own words are only in the 0600 audit file (never the journal): shown here, as the reason was.
+      if (e.verdict === "announce") return { tag: "Announced", cls: "ask", what: run, why: userWords(typeof e.review === "string" && e.review && e.reason ? `${e.reason.replace(/\.$/, "")} (${e.review}).` : e.reason) };
       return null;
     case "answered":
       if (e.q === "consent") return { ...answerTag(e.answer), what: ["Turn on commands", place].filter(Boolean).join(" ") };

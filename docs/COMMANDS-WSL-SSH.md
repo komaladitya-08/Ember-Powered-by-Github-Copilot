@@ -814,8 +814,9 @@ planned.
 The audit log gains command, connection and WSL entries: what was decided for each command (its classes, the rule, and
 that the user requested it when it ran on an announcement), each answer, start and end (exit code, duration, how much
 output, how many lines the user typed, never what), the folder, and connections and their losses. A command's text is
-recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes only in the system journal); a refused
-command's text isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
+recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes only in the system journal), and so are the
+AI review's own words for why it cleared one (they can name the file and what you asked); a refused command's text
+isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
 are never recorded anywhere. Settings › **What Ember did** shows a line for each command question, answer, refusal and
 end (where it ran, the shell and how it ended, never the command's text) and for each connection made, lost, ended or
 failed. A reconnect's tries make one line, when it stops trying; the audit log keeps each try.

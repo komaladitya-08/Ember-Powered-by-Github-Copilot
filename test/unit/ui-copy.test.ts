@@ -985,3 +985,12 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     expect(SEARCH_ALIASES["privacy-h"]).toMatch(/\bscreenshots\b/);
   });
 });
+
+describe("What Ember did for a command the review cleared (safety-privacy-v1)", () => {
+  it("still says the review's words from the user's own audit file, now kept apart from the reason", async () => {
+    const { describeEntry } = await import("../../app/renderer/home/copy");
+    const v = describeEntry({ t: "2026-11-07T10:00:00Z", event: "command", phase: "decided", verdict: "announce", reason: "Reviewed: routine for the request.", review: "asked to clean the build" });
+    expect(v?.why).toBe("Reviewed: routine for the request (asked to clean the build).");
+    expect(describeEntry({ t: "2026-11-07T10:00:00Z", event: "command", phase: "decided", verdict: "announce", reason: "Reviewed: routine for the request." })?.why).toBe("Reviewed: routine for the request.");
+  });
+});

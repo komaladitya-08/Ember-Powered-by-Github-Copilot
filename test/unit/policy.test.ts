@@ -397,6 +397,14 @@ describe("audit journal copy (review round 3)", () => {
     expect(choice).toEqual({ event: "action", kind: "select", element: { role: "combo box", nameChars: 6 }, valueChars: 14, after: { states: [], selectedChars: 14 } });
     expect(JSON.parse(journalLine(JSON.stringify({ event: "decision", kind: "keys", value: "ctrl+s" }))).value).toBe("ctrl+s");
   });
+
+  it("keeps a command review's words as their size only, since the model's paraphrase can name the file (safety-privacy-v1)", async () => {
+    const { journalLine } = await import("../../app/main/policy/audit");
+    const why = "user asked to remove ~/Documents/HR/salaries-2026-layoffs.xlsx";
+    const line = journalLine(JSON.stringify({ event: "command", phase: "decided", command: "rm ~/Documents/HR/salaries-2026-layoffs.xlsx", commandChars: 44, verdict: "announce", reason: "Reviewed: routine for the request.", review: why }));
+    expect(line).not.toMatch(/salaries|HR|layoffs|asked to remove/);
+    expect(JSON.parse(line)).toMatchObject({ reason: "Reviewed: routine for the request.", reviewChars: why.length, commandChars: 44 });
+  });
 });
 
 describe("policy: review round 4", () => {
