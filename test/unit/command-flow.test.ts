@@ -12,6 +12,7 @@ import {
   scriptLanguage,
 } from "../../app/main/commands/flow";
 import { classifyCommand } from "../../app/main/commands/classify";
+import { LINES } from "../../app/main/commands/decide";
 import { revokePendingCommands } from "../../app/main/commands/pending";
 import { comparePaths, rootOwned } from "../../app/main/commands/scripts";
 import type {
@@ -1573,6 +1574,22 @@ describe("words heard where Ember can't tell the user from its speakers (review 
     const card = (other.asked[0].panel as { card: CommandCard }).card;
     expect(card.says).toContain("You didn't ask for this.");
     expect(card.says).not.toContain(SPOKEN_LINE);
+  });
+
+  it("says the user asked by voice when they asked for that kind of step, not that they didn't ask (commands-remote-v2)", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, words: "", spoken: "push my changes", answers: ["deny"] });
+    await call(h, { target: "this computer", command: "git push origin main" });
+    const card = (h.asked[0].panel as { card: CommandCard }).card;
+    expect(card.says).toContain(SPOKEN_LINE);
+    expect(card.says).not.toContain("You didn't ask for this.");
+    // Typed, the same words say the card's own line for them.
+    const typed = harness({ binding: LOCAL, words: "push my changes", answers: ["deny"] });
+    await call(typed, { target: "this computer", command: "git push origin main" });
+    const typedCard = (typed.asked[0].panel as { card: CommandCard }).card;
+    expect(typedCard.says).toContain(LINES.inexact);
+    expect(typedCard.says).not.toContain("You didn't ask for this.");
+    expect(typedCard.unasked).toBe(false);
   });
 });
 

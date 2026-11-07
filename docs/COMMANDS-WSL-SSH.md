@@ -211,7 +211,10 @@ see shown in ⟨ ⟩, letters from another alphabet inside a word underlined (ea
 so `C:\Users\Иван` marks nothing, while letters that only look Latin, as in `https://аррӏе.com` or `deploy@аррӏе`,
 are underlined), and Hebrew or Arabic text shown in the order it runs, as the terminal shows it;
 then why it asks ("Deletes build and everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.",
-"This can reach your Windows files."); then the model's reason, quoted. A command that deletes data has a yellow bar
+"This can reach your Windows files."); then the model's reason, quoted. "You didn't ask for this." means your words
+asked for nothing of the kind; when they asked for that kind of step but not exactly this one ("push my changes" for
+`git push origin main`, "reinstall the dependencies" for `npm ci`) the card says "Your words don't name exactly this,
+so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. A command that deletes data has a yellow bar
 on its card's edge, and its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
 stay at the bottom of the card while a long command scrolls; **Allow** stays off until the whole command has been in
 view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y)

@@ -31,7 +31,7 @@ import { notReviewable, reviewedDecision, type CommandReviewer } from "./review"
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
-import { mentioned } from "./intent";
+import { mentioned, namedKind } from "./intent";
 import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
@@ -787,7 +787,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
   // says so instead of "You didn't ask for this."
   const spoken = ctx.task.spokenWords?.() ?? "";
-  if (d.verdict === "ask" && d.unasked && spoken.trim() && mentioned(cls.findings, spoken)) {
+  if (d.verdict === "ask" && d.unasked && spoken.trim() && (mentioned(cls.findings, spoken) || namedKind(cls.findings, spoken))) {
     const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
     if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
     d = { ...d, unasked: false, says };
@@ -932,7 +932,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
         // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
         const own = [`${binding.label}'s own check also found:`, ...theirs];
-        const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.windows);
+        const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
         let answer: "once" | "no" | "expired" | "stopped" = "stopped";
         try {
