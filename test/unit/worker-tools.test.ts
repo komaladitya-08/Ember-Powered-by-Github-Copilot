@@ -1848,3 +1848,17 @@ describe("a tool that throws (tasks-approvals-8)", () => {
     expect((await call("report_progress", { text: "Trying again" })).resultType).toBe("success");
   });
 });
+
+describe("a task close to its step or time limit (tasks-approvals-3)", () => {
+  it("tells the model once, in the result of the step that crosses 80%, to finish and say what's done and what's left", async () => {
+    const made = makeWorker();
+    (made.w as unknown as { d: WorkerDeps }).d.limits = { maxSteps: 5 };
+    const texts: string[] = [];
+    for (let i = 0; i < 5; i++) texts.push((await made.call("report_progress", { text: `step ${i}` })).textResultForLlm);
+    const NOTE = "You have used most of this task's steps or time: finish the step you're on, then call finish_task saying what's done and what's left.";
+    expect(texts.filter(t => t.includes(NOTE))).toHaveLength(1);
+    expect(texts[3]).toContain(NOTE);
+    expect((await made.call("report_progress", { text: "step 5" })).textResultForLlm).toBe("Stopped. Do nothing more.");
+    expect(made.activity.filter(a => a.type === "near-limit")).toHaveLength(1);
+  });
+});

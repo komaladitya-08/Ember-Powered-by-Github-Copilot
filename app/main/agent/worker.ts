@@ -219,6 +219,8 @@ export interface TaskSpec {
   target: WindowTarget & { app?: string };
   /** "do": Ember acts. "guide": Ember points and the user clicks. */
   mode?: "do" | "guide";
+  /** A retry of a try that stopped part-way, having changed something: the first prompt says so (tasks-approvals-3). */
+  partWay?: boolean;
 }
 
 export interface WorkerResult {
@@ -232,6 +234,8 @@ export interface WorkerResult {
   expired?: boolean;
   /** Stopped because the user took the mouse back from Ember (its summary need not say so: TaskManager's endedBy). */
   tookOver?: boolean;
+  /** Its step or time limit stopped it: TaskManager adds what it had done by then, from its own count (tasks-approvals-3). */
+  limit?: boolean;
   /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
   view?: ViewDoc;
 }
@@ -252,6 +256,16 @@ function toolFailure(err: unknown): ToolResultObject {
   return fail(`That step didn't work: ${q(msg, 200)}. Call perceive_window and try again, or finish the task saying what's left.`);
 }
 
+/**
+ * A task's first prompt: its goal, a note when an earlier try stopped part-way (TaskSpec.partWay: it may have done some
+ * of it already, so it checks before repeating anything), and where the user was (`where`: untrusted context).
+ */
+export function taskPrompt(goal: string, partWay: boolean, where: string): string {
+  return `Task: ${goal}${partWay ? "\n(An earlier try of this task stopped part-way: check what is already done before repeating anything.)" : ""}${where}`;
+}
+
+/** What the step past 80% of a task's steps or time adds to its result, once (tasks-approvals-3). */
+const NEAR_LIMIT = "You have used most of this task's steps or time: finish the step you're on, then call finish_task saying what's done and what's left.";
 /** A step refused while a password or authentication prompt is open on the user's screen (M8.3, safety-privacy-3). */
 const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.";
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -1356,15 +1370,22 @@ export class Worker {
     try { this.d.onActivity?.(e); } catch (err) { this.d.log.warn("worker.activity_failed", { err }); }
   }
 
-  /** Past 80% of its steps or its time, the card says the task is close to its limit (once). */
+  /**
+   * Past 80% of its steps or its time, the card says the task is close to its limit (once), and so does the result of
+   * the step that crossed it, to the model (whether it did now: tasks-approvals-3).
+   */
   private nearLimitSaid = false;
-  private checkLimits(maxSteps: number): void {
-    if (this.nearLimitSaid) return;
+  private checkLimits(maxSteps: number): boolean {
+    if (this.nearLimitSaid) return false;
     if (this.steps >= maxSteps * 0.8 || (this.clock?.used() ?? 0) >= 0.8) {
       this.nearLimitSaid = true;
       this.activity({ type: "near-limit" });
+      return true;
     }
+    return false;
   }
+  /** A limit (not the user, not Copilot) stopped the task: its result says so (WorkerResult.limit). */
+  private limitHit = false;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   tools(): Tool<any>[] {
@@ -1426,10 +1447,11 @@ export class Worker {
     // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
     if (this.wrappingUp && name !== "finish_task" && name !== "report_progress") return denied("The task is over: call finish_task now with what you already did. Do nothing else.");
     if (++this.steps > maxSteps) {
+      this.limitHit = true;
       this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
       return STOPPED();
     }
-    this.checkLimits(maxSteps);
+    const nearLimit = this.checkLimits(maxSteps);
     const parsed = parameters.safeParse(raw ?? {});
     if (!parsed.success) {
       return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
@@ -1447,6 +1469,9 @@ export class Worker {
       this.d.log.warn("worker.tool_failed", { task: this.spec.id, tool: name, err });
       result = toolFailure(err);
     }
+    // The step that took it past 80% of its steps or time says so, once: the model can still wrap up and say what's
+    // left, where a limit would otherwise stop it mid-way with nothing said (tasks-approvals-3).
+    if (nearLimit) result = typeof result === "string" ? `${result}\n${NEAR_LIMIT}` : { ...result, textResultForLlm: `${result.textResultForLlm}\n${NEAR_LIMIT}` };
     // Turned down ("Not now", a refusal, a stop): its card shows the step stopped, not one that didn't work.
     if (typeof result === "object" && result.resultType === "denied") this.activity({ type: "denied" });
     return result;
@@ -1804,7 +1829,7 @@ export class Worker {
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
     // Its questions' waits for the user's answer don't count (TaskClock).
-    const clock = this.clock = new TaskClock(maxMs, () => this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`));
+    const clock = this.clock = new TaskClock(maxMs, () => { this.limitHit = true; this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`); });
     let lastAnswer = "";
     try {
       fs.mkdirSync(d.workDir, { recursive: true });
@@ -1901,7 +1926,7 @@ export class Worker {
         };
         try {
           let wait = idle();
-          await send(`Task: ${this.spec.goal}${where}`);
+          await send(taskPrompt(this.spec.goal, !!this.spec.partWay, where));
           await wait;
           if (!this.result && !this.halted) {
             this.wrappingUp = true;
@@ -1924,7 +1949,7 @@ export class Worker {
       if (this.place) d.onDesk?.(null, this.place);
     }
     if (this.halted && this.haltReason === null) return { success: false, summary: this.stoppedSummary(), stopped: true };
-    if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
+    if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason, ...(this.limitHit ? { limit: true } : {}) };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
     if (this.expired && !this.declined && !this.result?.success) return { success: false, stopped: true, expired: true, summary: this.result?.summary || "My question ran out of time with no answer, so I didn't do it." };
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };

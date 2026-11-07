@@ -649,3 +649,38 @@ describe("how a finished task is worded (tasks-approvals-9)", () => {
     expect(statusWord("cancelled")).toBe(STATUS_WORDS.stopped.toLowerCase());
   });
 });
+
+describe("a task its step or time limit stopped (tasks-approvals-3)", () => {
+  const LIMIT: WorkerResult = { success: false, summary: "I stopped after 150 steps without finishing, to be safe.", limit: true };
+  /** A worker that typed 3 times and read the window once (its activity, as its tools tell it), then ends as `result`. */
+  const working = (result: WorkerResult) => (_spec: unknown, _p: unknown, _u: unknown, activity?: (e: import("../../app/main/agent/activity").ActivityEvent) => void) => fakeWorker(async () => {
+    const steps: [string, string][] = [["1", "type_text"], ["2", "type_text"], ["3", "type_text"], ["4", "perceive_window"]];
+    for (const [id, tool] of steps) { activity?.({ type: "tool-start", id, tool }); activity?.({ type: "tool-end", id, ok: true }); }
+    return result;
+  });
+
+  it("says what it had done by then, from Ember's own count of its steps, never the model's words", async () => {
+    const tm = new TaskManager({ log: quiet, makeWorker: working(LIMIT) as never, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Add the rows", { userWords: "add these rows to the sheet" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(t.result?.summary).toBe("I stopped after 150 steps without finishing, to be safe. Before I stopped: typed text 3 times and read the window.");
+  });
+
+  it("tries again knowing an earlier try did part of it, with the user's words unchanged, so every question is asked again", async () => {
+    const specs: { goal: string; userWords?: string; partWay?: boolean }[] = [];
+    let n = 0;
+    const tm = new TaskManager({ log: quiet, makeWorker: ((spec: { goal: string; userWords?: string; partWay?: boolean }, ...rest: unknown[]) => { specs.push(spec); return n++ === 0 ? (working(LIMIT) as (...a: unknown[]) => unknown)(spec, ...rest) : fakeWorker(() => new Promise(() => undefined)); }) as never,
+      currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Add the rows", { userWords: "add these rows to the sheet" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(tm.retry(t.id)).not.toBeNull();
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    // Its first prompt says so; its goal, its card's title and the user's words stay as they were.
+    expect(specs[1]).toMatchObject({ goal: "Add the rows", userWords: "add these rows to the sheet", partWay: true });
+    expect(tm.list().at(-1)?.title).toBe("Add the rows");
+    const { taskPrompt } = await import("../../app/main/agent/worker");
+    expect(taskPrompt("Add the rows", true, "")).toBe("Task: Add the rows\n(An earlier try of this task stopped part-way: check what is already done before repeating anything.)");
+    expect(taskPrompt("Add the rows", false, "")).toBe("Task: Add the rows");
+    tm.cancelAll();
+  });
+});

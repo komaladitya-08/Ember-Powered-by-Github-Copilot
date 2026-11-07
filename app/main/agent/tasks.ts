@@ -19,7 +19,7 @@ import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
 import { friendlyError, type ServiceKind } from "./presenter";
 import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
-import { STATUS_WORDS, type TaskActivity, type TaskEntry } from "../../shared/activity";
+import { STATUS_WORDS, summarizeActivity, type StepGroup, type TaskActivity, type TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -149,6 +149,8 @@ export interface StartOptions {
   commandWords?: string;
   /** TaskSpec.typedOnly. */
   typedOnly?: boolean;
+  /** TaskSpec.partWay: an earlier try of it stopped part-way (a retry). */
+  partWay?: boolean;
 }
 
 /**
@@ -157,6 +159,9 @@ export interface StartOptions {
  * Never one they said "Not now" to, stopped or took the mouse back from.
  */
 const retryable = (t: Task) => t.mode === "do" && (t.status === "failed" || (t.status === "cancelled" && t.endedBy === "expired"));
+
+/** Kinds of step that change nothing (a look, a switch of window, a pointer): a try that took only these did no part of it. */
+const LOOKS_ONLY: ReadonlySet<StepGroup> = new Set(["read", "windows", "switch", "scroll", "point", "wait"]);
 
 /** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
 const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
@@ -283,7 +288,7 @@ export class TaskManager {
       ...(opts.agreed ? { agreed: [...opts.agreed] } : {}) } });
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
-      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}) } });
+      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}), ...(opts.partWay ? { partWay: true } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
     this.record({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,
@@ -352,8 +357,13 @@ export class TaskManager {
     const t = this.tasks.get(id);
     const spec = this.specs.get(id);
     if (!t || !spec || !this.canRetry(id)) return null;
+    // An earlier try that changed something (typed, clicked, ran a command) may have done part of it: the new worker is
+    // told so (TaskSpec.partWay: its first prompt only), never in the user's words, so every question is still asked,
+    // and its card's title stays the request's (tasks-approvals-3).
+    const did = this.logs.get(id)?.log.get();
+    const changed = !!did && Object.entries(did.counts).some(([g, n]) => !LOOKS_ONLY.has(g as StepGroup) && (n ?? 0) > 0);
     this.dismiss(id);
-    return this.start(spec.goal, spec.opts);
+    return this.start(spec.goal, { ...spec.opts, ...(changed ? { partWay: true } : {}) });
   }
 
   list(): Task[] {
@@ -605,6 +615,11 @@ export class TaskManager {
 
   private finish(task: Task, status: TaskStatus, result: WorkerResult, endedBy?: StopCause): void {
     this.stopping.delete(task.id);
+    // Stopped by its step or time limit: what it had done by then, from Ember's own count of its steps (never the
+    // model's words), so the user and the next turn know before anything is tried again (tasks-approvals-3).
+    const did = result.limit ? this.logs.get(task.id)?.log.get() : undefined;
+    const steps = did ? summarizeActivity(did.counts, did.failedSteps) : null;
+    if (steps) result = { ...result, summary: `${result.summary} Before I stopped: ${steps.charAt(0).toLowerCase()}${steps.slice(1)}.` };
     this.logs.get(task.id)?.log.add({ type: "end", status: status === "done" ? "done" : status === "failed" ? "failed" : "stopped" }, Date.now());
     task.status = status;
     if (status === "cancelled") task.endedBy = endedBy ?? "stop";

@@ -181,8 +181,10 @@ Ember is two places at once, each for one kind of work.
     model's words, never set as Ember's;
   - a **telemetry row** of at most three items in footnote type, weight 500 and tabular figures: the plan's step
     ("Step 3 of 7"), its clock ("Just started", then "42s", "1:42"; written once a second as text by one shared
-    tick, so nothing moves or re-lays out), then "Close to my limit" past 80% of its 150 steps or 20 minutes, else
-    how many steps the user allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
+    tick, so nothing moves or re-lays out), then "Close to my limit" past 80% of its 150 steps or 20 minutes (the
+    worker is told then too, so it can finish and say what's left; a task a limit stops says what it had done by then,
+    from Ember's own count, and its Try again is told an earlier try stopped part-way), else how many steps the user
+    allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
   - the steps so far in one sentence ("Clicked 3 times and read the window 2 times (1 didn't work)"), what changed
     things named before what only looked;
   - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come
