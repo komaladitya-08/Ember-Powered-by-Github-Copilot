@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { announcement, type BubbleView } from "@ember/bubble";
+import { AdminPolicySchema } from "../../app/main/admin";
 import { GH_INSTALL } from "../../app/main/agent/github-app";
 import { readTimeOf } from "../../app/main/agent/presenter";
 import { ANNOUNCE_MS } from "../../app/main/commands/flow";
@@ -31,6 +32,7 @@ import { ISSUES_URL } from "../../app/shared/support";
 import { STEP_TEXT, WELCOME_STEPS } from "../../app/renderer/home/welcome-copy";
 import { CLEAR_SPEECH, LISTENING_MODELS, MEMORY_MODEL, MEMORY_MODEL_BYTES, modelsBytes, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES } from "../../app/voice/models";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
+import { releaseNotes } from "../../scripts/package/release.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
 const packageVersion = (JSON.parse(read("package.json")) as { version: string }).version;
@@ -1053,6 +1055,21 @@ describe("CHANGELOG.md", () => {
     // Voice's restart (voice.ts's RESTART_MS), in those words.
     expect(read("app/main/voice.ts")).toMatch(/const RESTART_MS = \[1000, 5000, 30_000\];/);
     expect(flat(changelog)).toContain("Voice starts again by itself when it stops answering or its speech recognition keeps failing (after 1, 5, then 30 seconds).");
+  });
+
+  it("names in this version's notes every policy features key the published Ember doesn't know, which locks it down (install-docs-v1)", () => {
+    // The `features` keys of the newest published release, frozen from its admin.ts (`git show v0.1.0:app/main/admin.ts`).
+    // The schema is strict, so that Ember reads a policy with any other key as broken and locks down: the notes the
+    // release publishes (release.mjs) must name each one and tell administrators to update Ember first. Once this
+    // version is published, freeze its keys here instead.
+    const published = { version: "0.1.0", features: ["voice", "speak", "actions", "cursor", "desk", "screenImages", "wsl", "ssh"] };
+    const features = Object.keys(AdminPolicySchema.shape.features.unwrap().shape);
+    expect(features).toEqual(expect.arrayContaining(published.features));
+    const newer = features.filter(k => !published.features.includes(k));
+    expect(newer.length).toBeGreaterThan(0);
+    const notes = flat(releaseNotes(changelog, version, { repo: "o/r", ref: `v${version}` }));
+    expect(newer.filter(k => !notes.includes(`\`features.${k}\``)), `named in ${version}'s notes`).toEqual([]);
+    expect(notes).toContain(`Ember ${published.version} doesn't know them: it reads a policy with one as broken and locks down`);
   });
 
   it("names the same best-effort computers as the README", () => {
