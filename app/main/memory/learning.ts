@@ -238,9 +238,13 @@ export class MemoryLearning {
     return gone;
   }
 
-  /** Undo of a recent Forget (Home's list, or the conversation's "Ember forgot" line): true if it was put back. */
-  restore(token: string): boolean {
-    if (!this.d.inForce()) return false;
+  /**
+   * Undo of a recent Forget (Home's list, or the conversation's "Ember forgot" line): true if it was put back. `open`:
+   * the account's memory is open to its owner, as it is for Home's list and its Forget while memory is switched off
+   * (memory-r3); by default, only while memory is in force.
+   */
+  restore(token: string, open = this.d.inForce()): boolean {
+    if (!open) return false;
     ++this.recallRevision;
     return this.d.memory.restore(token);
   }

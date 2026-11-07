@@ -2477,11 +2477,13 @@ function start(): void {
     // Through learning: its "Ember learned" line and "forget that" let go of it too. Home says what went, with Undo.
     return learning.forgetCounted(id);
   }));
-  // Undo of a recent Forget (Home's list, or an "Ember forgot" line): only while the account's memory is open.
+  // Undo of a recent Forget (Home's list, or an "Ember forgot" line): only while the account's memory is open, as its
+  // list and Forget are (also while memory is switched off: memory-r3), never once the organisation turned memory off.
   ipcMain.handle(IPC.memoryRestore, guard((token: unknown) => {
-    if (!memoryOwner.ready || !memoryOn()) throw new Error("Ember couldn't put this memory back. Wait until your saved memory is available, then try Undo again.");
+    const open = memoryOwner.ready && memoryAllowed() && consented();
+    if (!open) throw new Error("Ember couldn't put this memory back. Wait until your saved memory is available, then try Undo again.");
     if (typeof token !== "string" || token.length < 8 || token.length > 64) return false;
-    const restored = learning.restore(token);
+    const restored = learning.restore(token, open);
     // Its "Ember forgot" line says it is remembered again, where it was (memory-c1-3).
     const next = restored ? linesAfterRestore(learnedLines, token) : null;
     if (next) {

@@ -446,6 +446,24 @@ describe("forget_memory's visible line and its Undo (memory-v2)", () => {
   });
 });
 
+describe("Undo while memory is switched off (memory-r3)", () => {
+  it("puts back what Home's list forgot while the account's memory is open, though memory is off, and nothing once it isn't open", () => {
+    let on = true;
+    const { l, s } = learning({ inForce: () => on });
+    l.introduce({ name: "Ram" });
+    const id = s.list()[0].id;
+    on = false;
+    // Home's list still lists and forgets the account's memory with memory off: its Undo works as its Forget does.
+    const gone = l.forgetCounted(id)!;
+    expect(l.restore(gone.undo)).toBe(false);
+    expect(s.list()).toEqual([]);
+    expect(l.restore(gone.undo, true)).toBe(true);
+    expect(s.list().map(i => i.text)).toEqual(["Likes to be called Ram"]);
+    const again = l.forgetCounted(id)!;
+    expect(l.restore(again.undo, false)).toBe(false);
+  });
+});
+
 describe("the conversation's memory lines after Undo (memory-c1-3)", () => {
   it("keeps a learned line where it was once its fact is forgotten, saying so with the Undo that puts it back, then that it is remembered again", () => {
     const learned: MemoryLine[] = [{ t: "2026-11-07T10:00:00Z", who: "learned", text: "Works at Initech", fact: "f2" }, { t: "2026-11-07T10:01:00Z", who: "learned", text: "Uses Firefox", fact: "f3" }];
