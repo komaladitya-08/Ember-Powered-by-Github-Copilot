@@ -385,8 +385,11 @@ export function providerHint(o: { managed: "organisation" | "off" | null; inForc
   return "Use a model service of your own instead of GitHub Copilot: OpenAI, Azure OpenAI, Anthropic, or a model server on this computer such as Ollama or LM Studio.";
 }
 
-/** Shown in place of the key field when the computer can't keep a key safely (no keyring, or basic_text). */
-export const PROVIDER_NO_KEYRING = "This computer has no keyring for passwords, so Ember can't keep a key safely here. A model server on this computer that needs no key still works.";
+/**
+ * Shown in place of the key field when the computer can't keep a key safely (no keyring, or basic_text): with the way
+ * forward main's KEY_NO_KEYRING gives (integrations-13). Only Linux lacks one: Windows and macOS always have theirs.
+ */
+export const PROVIDER_NO_KEYRING = "This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.";
 
 /** The Model provider group's short messages (under the group, in its status line). */
 export const PROVIDER_WORDS = {

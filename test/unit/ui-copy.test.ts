@@ -845,7 +845,8 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerTestText({ ok: true, host: "models.example.com", models: 1 })).toBe("Connected to models.example.com. It lists 1 model.");
     expect(providerTestText({ ok: true, host: "localhost:1234", models: null })).toBe("Connected to localhost:1234.");
     expect(providerTestText({ ok: false, why: "models.example.com needs an API key." })).toBe("models.example.com needs an API key.");
-    expect(PROVIDER_NO_KEYRING).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. A model server on this computer that needs no key still works.");
+    // With the way forward (integrations-13).
+    expect(PROVIDER_NO_KEYRING).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.");
     expect(PROVIDER_WORDS).toEqual({
       keySaved: "Key saved.", keyRemoved: "Key removed.", pasteKey: "Paste the API key first.", testing: "Testing…",
       testFailed: "Ember couldn't test the connection. Try again.",

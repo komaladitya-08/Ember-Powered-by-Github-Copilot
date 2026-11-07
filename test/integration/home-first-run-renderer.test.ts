@@ -401,6 +401,13 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(w) Home's key row on a computer with no keyring says how to get one (integrations-13)", async () => {
+    const p = await open({ home: true, provider: { on: true, baseUrl: "https://api.example.com/v1" }, providerState: { keyring: false } });
+    await expect.poll(() => p.locator("#byok-no-keyring").isVisible()).toBe(true);
+    expect(await p.locator("#byok-no-keyring").innerText()).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.");
+    expect(await p.locator("#byok-key-form").isVisible()).toBe(false);
+  });
+
   it("(j) Copilot's own default is reviewed as Copilot's, not as an inactive provider's models (FE #4)", async () => {
     const p = await open({ agent: readyAgent({ models: [], conductorModel: null, workerModel: null }), provider: { on: false, conductor: "gpt-own-a", worker: "gpt-own-b" } });
     await expect.poll(() => p.locator("#w-models").isVisible()).toBe(true);
