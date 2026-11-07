@@ -374,8 +374,8 @@ export class Confirmer {
   }
 
   /**
-   * A line under the question up now, in place of its key hint (why a spoken answer wasn't taken, and how it can be):
-   * the question stays as it is. False when no question is up.
+   * A line under the question up now, before its key hint (why a spoken answer wasn't taken, and how it can be): the
+   * question stays as it is, and so do the keys that answer it (tasks-approvals-6). False when no question is up.
    */
   note(text: string): boolean {
     const c = this.current;
@@ -520,7 +520,9 @@ export class Confirmer {
       // A panel question is answered in its window, which names the keys while they work there; its step says how to
       // get there from the keyboard (the bubble's own buttons are mouse-only). Until all of a whole text has been shown,
       // the approve key shows its next part: the keys say that, not "allow".
-      step: p.note ?? ((panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.())) || null), streaming: false,
+      // A note (why a spoken answer wasn't taken) goes before the keys, never in their place: they are the keyboard's way
+      // to answer, and the bubble's buttons are mouse-only (tasks-approvals-6).
+      step: [p.note, (panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.())) || null].filter(Boolean).join(" ") || null, streaming: false,
       // A panel question's bubble only brings its window up (or says no): what is allowed must be seen whole first.
       actions: panel
         ? [{ id: `ui:panel:${p.n}`, label: panel.kind === "command" ? "Show the command" : "Read it" }, { id: `q${p.n}:deny`, label: "Not now" }]

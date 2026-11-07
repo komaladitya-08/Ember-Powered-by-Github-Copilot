@@ -1655,7 +1655,8 @@ function start(): void {
    */
   const refuseVoiceAnswer = (why: VoiceAnswerNote) => {
     if (!confirmer?.note(VOICE_ANSWER_REFUSED[why])) return;
-    if (maySpeak()) voice?.speak(voiceAnswerSaid(why));
+    // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
+    if (maySpeak()) voice?.speak(voiceAnswerSaid(why, heldKeys().map(k => k.say)));
   };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** How the last teaching ended (settings says so; forgotten when it closes or teaching starts again). */
