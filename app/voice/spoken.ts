@@ -213,6 +213,52 @@ export function spokenText(markdown: string): string {
   return sayable(said).replace(/\n{2,}/g, "\n").trim();
 }
 
+/** Scripts said in one language each, as the system's voices name it: kana before Han, so Japanese isn't Chinese. */
+const SCRIPTS: readonly [RegExp, string][] = [
+  [/[\p{Script=Hiragana}\p{Script=Katakana}]/u, "ja"], [/\p{Script=Hangul}/u, "ko"], [/\p{Script=Han}/u, "zh"],
+  [/\p{Script=Cyrillic}/u, "ru"], [/\p{Script=Greek}/u, "el"], [/\p{Script=Arabic}/u, "ar"], [/\p{Script=Hebrew}/u, "he"],
+  [/\p{Script=Devanagari}/u, "hi"], [/\p{Script=Thai}/u, "th"],
+];
+/**
+ * The commonest short words of the languages people most often write to Ember in besides English, leaving out those
+ * English writes too ("as", "no", "he", "per", "come", "com" of an address, "d" of "I'd"); and English's own, to weigh.
+ */
+const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  en: new Set("the a an and is are was were to of in on at by or from as do no he she it i you we they my your that this with for not have has what can will if so but all just there here".split(" ")),
+  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu".split(" ")),
+  de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe".split(" ")),
+  es: new Set("el la los las del que y en un una es por para con se está como pero muy yo".split(" ")),
+  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel".split(" ")),
+  pt: new Set("os que e é uma para não da em na por se eu você".split(" ")),
+  nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat".split(" ")),
+};
+
+/**
+ * The language a reply is in when it clearly isn't English, or null (English, or too little to tell): Kitten reads only
+ * English, so a Chinese reply was 7 s of "Chinese letter" and a French one was gibberish (voice-speaking-11). Mostly
+ * one script names its language; Latin text needs at least two of a language's short words, a quarter of its words,
+ * and more than English has. Pure and local: nothing is sent anywhere to tell.
+ */
+export function speechLanguage(text: string): string | null {
+  const letters = text.match(/\p{L}/gu) ?? [];
+  if (!letters.length) return null;
+  for (const [script, lang] of SCRIPTS) {
+    const n = letters.filter(c => script.test(c)).length;
+    // Japanese mixes kana with Han: any kana among them is Japanese.
+    if (lang === "ja" ? n && letters.filter(c => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(c)).length * 2 > letters.length : n * 2 > letters.length) return lang;
+  }
+  const words = text.toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
+  const hits = (lang: string) => words.filter(w => STOPWORDS[lang].has(w)).length;
+  const english = hits("en");
+  let best: string | null = null, most = 0;
+  for (const lang of Object.keys(STOPWORDS)) {
+    if (lang === "en") continue;
+    const n = hits(lang);
+    if (n > most) { best = lang; most = n; }
+  }
+  return best && most >= 2 && most * 4 >= words.length && most > english ? best : null;
+}
+
 /**
  * Does the answer end by asking something ("…Should I close that one too?")? Its follow-up window then takes
  * "Okay." or "Fine." as the reply it is, not as the end of the conversation. What is only shown (code, a table)

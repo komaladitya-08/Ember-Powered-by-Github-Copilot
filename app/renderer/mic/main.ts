@@ -174,9 +174,9 @@ const localSpeech = new LocalSpeech({
 }, navigator.language || "en-US");
 speechSynthesis.addEventListener("voiceschanged", () => localSpeech.drain());
 
-function speakLocal(text: string, voice: SpeechSynthesisVoice): void {
+function speakLocal(text: string, voice: SpeechSynthesisVoice, lang?: string): void {
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = navigator.language || "en-US";
+  u.lang = lang ?? (navigator.language || "en-US");
   u.voice = voice;
   u.rate = 1.05;
   const queued = synthQueued;
@@ -200,9 +200,9 @@ function speakLocal(text: string, voice: SpeechSynthesisVoice): void {
   speechSynthesis.speak(u);
 }
 
-api.onSpeak(({ text, append }) => {
+api.onSpeak(({ text, append, lang }) => {
   if (!append) hush();
-  localSpeech.enqueue(text);
+  localSpeech.enqueue(text, typeof lang === "string" ? lang : undefined);
 });
 function hush(): void {
   localSpeech.cancel();

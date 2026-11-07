@@ -23,7 +23,7 @@ import type { TtsProcessMessage, VoiceInfo } from "../voice/tts-process";
 import { nativePackage } from "../voice/runtime";
 import { speechChunks, type NaturalVoiceModel } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
-import { withoutOwnPhrases } from "../voice/spoken";
+import { speechLanguage, withoutOwnPhrases } from "../voice/spoken";
 import { readLevel, type SoundLevel } from "../shared/level";
 import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio, type SpeechPlayed } from "../shared/voice";
 import type { ClearHearingStatus, ListenOnceStatus, NaturalVoiceStatus } from "../shared/ipc";
@@ -830,12 +830,14 @@ export class VoiceService {
     if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
     // What is heard over Ember's voice is told from Ember's own words by these (engine.ts spokenByEmber).
     this.proc?.postMessage({ type: "self-words", text });
-    const neural = this.neuralVoice;
+    // Kitten reads only English: a reply in another language goes to a local system voice for it, or isn't said.
+    const lang = speechLanguage(text);
+    const neural = this.neuralVoice && !lang;
     if (!o.append) this.hush();
     if (!o.append || !this.saidSpeaking) this.awaitingSpeechStart = true;
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + (neural && !this.tts?.ready ? VOICE_START_MS : SPEECH_START_MS));
     const send = this.pageSend();
-    if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}) } satisfies SpeakRequest); return; }
+    if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}), ...(lang ? { lang } : {}) } satisfies SpeakRequest); return; }
     const id = ++this.ttsId;
     this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.cancelVoiceIdle();

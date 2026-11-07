@@ -23,7 +23,7 @@ describe("local system speech recovery", () => {
     expect(d.speak).not.toHaveBeenCalled();
     d.voices.mockReturnValue([{ ...local, localService: false, default: true }, local]);
     q.drain();
-    expect(d.speak.mock.calls).toEqual([["First.", local], ["Second.", local]]);
+    expect(d.speak.mock.calls).toEqual([["First.", local, undefined], ["Second.", local, undefined]]);
     vi.advanceTimersByTime(3000);
     expect(d.unavailable).not.toHaveBeenCalled();
   });
@@ -39,12 +39,25 @@ describe("local system speech recovery", () => {
     expect(d.speak).not.toHaveBeenCalled();
   });
 
+  it("says a reply in another language with a local voice for it, or not at all, never reporting speech as broken (voice-speaking-11)", () => {
+    const { d, q } = setup();
+    const french = { name: "Amélie", lang: "fr-FR", localService: true, default: false };
+    q.enqueue("J'ai ouvert les paramètres.", "fr");
+    q.enqueue("Opened.");
+    expect(d.speak.mock.calls).toEqual([["Opened.", local, undefined]]);
+    vi.advanceTimersByTime(3000);
+    expect(d.unavailable).not.toHaveBeenCalled();
+    d.voices.mockReturnValue([local, french]);
+    q.enqueue("J'ai ouvert les paramètres.", "fr");
+    expect(d.speak.mock.calls.at(-1)).toEqual(["J'ai ouvert les paramètres.", french, "fr"]);
+  });
+
   it("does not revive cancelled words or their failure timer when voices load", () => {
     const { d, q } = setup(); d.voices.mockReturnValue([]);
     q.enqueue("Old reply."); q.cancel();
     d.voices.mockReturnValue([local]); q.enqueue("New reply."); q.drain();
     vi.advanceTimersByTime(3000);
-    expect(d.speak.mock.calls).toEqual([["New reply.", local]]);
+    expect(d.speak.mock.calls).toEqual([["New reply.", local, undefined]]);
     expect(d.unavailable).not.toHaveBeenCalled();
   });
 
@@ -68,6 +81,6 @@ describe("local system speech recovery", () => {
     sources[0].onended?.();
     expect(d.speak).not.toHaveBeenCalled();
     sources[1].onended?.(); q.drain();
-    expect(d.speak.mock.calls).toEqual([["Unmade suffix.", local], ["Next reply.", local]]);
+    expect(d.speak.mock.calls).toEqual([["Unmade suffix.", local, undefined], ["Next reply.", local, undefined]]);
   });
 });

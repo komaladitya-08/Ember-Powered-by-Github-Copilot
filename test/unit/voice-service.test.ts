@@ -1445,6 +1445,17 @@ describe("speech models", () => {
       expect(electron.windows[0].webContents.send.mock.calls.filter(c => c[0] === VOICE.audio)).toEqual([]);
     });
 
+    it("says a reply in another language with the system's voice for it, never in Kitten, which reads only English (voice-speaking-11)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("我已经打开了设置。");
+      await flush();
+      expect(electron.procs).toHaveLength(0);
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "我已经打开了设置。", lang: "zh" });
+      v.speak("Night Light is on.");
+      expect(posted(electron.procs[0], "say")).toEqual([{ type: "say", id: 1, text: "Night Light is on." }]);
+    });
+
     it("loads the voice and its speak-only page when a request is likely, once, and lets them go when idle (voice-speaking-1)", async () => {
       vi.useFakeTimers();
       const { v } = service(true, { neuralVoice: true });

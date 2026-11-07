@@ -1,7 +1,7 @@
 /** What Ember says out loud for an answer: the words, not the Markdown, code or addresses. */
 
 import { describe, expect, it } from "vitest";
-import { cancelWords, endsWithQuestion, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
+import { cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 import { heardCutInWake } from "../../app/voice/engine";
 
 describe("spokenText says keys, menu paths and symbols as people say them", () => {
@@ -173,4 +173,34 @@ describe("withoutOwnPhrases and the cut-in (Windows, macOS: Ember can't tell its
   it.each(["Hi Emma, the meeting moved.", "They remember the box.", "Hey Amber, dinner.", "Okay, Ember's report is ready.", "A. M. B."])("doesn't take %j as one", t => {
     expect(heardCutInWake(t)).toBe(false);
   });
+});
+
+describe("speechLanguage: which language a reply is in, so Kitten (English only) never reads another (voice-speaking-11)", () => {
+  it.each([
+    ["我已经打开了设置。", "zh"],
+    ["設定を開きました。", "ja"],
+    ["설정을 열었습니다.", "ko"],
+    ["Я открыл настройки.", "ru"],
+    ["Άνοιξα τις ρυθμίσεις.", "el"],
+    ["فتحت الإعدادات.", "ar"],
+    ["J'ai ouvert les paramètres.", "fr"],
+    ["Ich habe die Einstellungen geöffnet und das ist gut.", "de"],
+    ["He abierto la configuración y los ajustes del sistema.", "es"],
+    ["Ho aperto le impostazioni e il pannello della rete.", "it"],
+  ])("%j is %j", (text, lang) => expect(speechLanguage(text)).toBe(lang));
+
+  it.each([
+    "I opened Settings.",
+    "Open the café menu, then the résumé.",
+    "The file 设置.txt is ready in Documents.",
+    "Done.",
+    "",
+    "(code shown in the bubble)",
+    "Bonjour is French for hello, and that is what it means.",
+    // English that shares short words with other languages.
+    "I'd say I'd open it.",
+    "No, he didn't.",
+    "As soon as it's done, see github.com.",
+    "Come in and see the van.",
+  ])("takes %j as English (or can't tell): Kitten says it", text => expect(speechLanguage(text)).toBeNull());
 });
