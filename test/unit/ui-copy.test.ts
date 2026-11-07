@@ -424,6 +424,24 @@ describe("the prompt window's words (§8.6)", () => {
     });
     expect(promptCopy.promptView({ id: "8", kind: "secret", secret: "other", host: "build-01", prompt: "x" }).field?.masked).toBe(true);
   });
+
+  it("on an SSH before 8.5, names no asker, says to read the question first and that the answer is never kept (commands-remote-3)", () => {
+    for (const prompt of ["deploy@build-01.example.com's password: ", "Enter passphrase for key '/home/ana/.ssh/id_ed25519': "]) {
+      const v = text({ id: "9", kind: "secret", secret: "other", host: "build-01", prompt, unmarked: true });
+      expect(v, prompt).toEqual({
+        title: "A question while connecting to build-01",
+        body: [
+          "This computer's SSH can't show whether this question comes from SSH itself or from build-01, so read it before you answer: what you type goes to whoever asked.",
+          prompt,
+          "Ember hands your answer to SSH only: it's never saved, logged or sent to Copilot.",
+        ],
+        field: "Answer", buttons: ["Send", "Cancel"],
+      });
+      expect(v.title).not.toMatch(/ asks$/);
+      // The question itself stays quoted: it is the text ssh printed, not Ember's words.
+      expect(promptCopy.promptView({ id: "9", kind: "secret", secret: "other", host: "build-01", prompt, unmarked: true }).body[1]).toEqual({ kind: "quote", text: prompt });
+    }
+  });
 });
 
 describe("the first-use consent cards (§8.4)", () => {

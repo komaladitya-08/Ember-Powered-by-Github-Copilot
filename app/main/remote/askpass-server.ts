@@ -110,7 +110,7 @@ export function promptCard(req: AskpassRequest, ctx: PromptContext): PromptCard 
   // be "Unlock your SSH key", and another host's "user@host's password:" a sign-in to that host, each answer going to
   // the server. So no secret there is worded as ssh's or a hop's: the host asks, its text quoted. A host key's card
   // stays (its answer is only "yes", nothing a server could use), and so does a touch (it answers nothing).
-  if (!serverPromptsMarked(ctx.client)) return { id: ctx.id, kind: "secret", secret: "other", host: ctx.host, prompt: p };
+  if (!serverPromptsMarked(ctx.client)) return { id: ctx.id, kind: "secret", secret: "other", host: ctx.host, prompt: p, unmarked: true };
   // ssh's own prompt for a key starts the text; a server's keyboard-interactive prompt that only says the same words
   // (ssh 8.5+ puts "(user@host) " before it) is the server asking, never "Unlock your SSH key".
   if (/^Enter passphrase for key '/.test(p)) {

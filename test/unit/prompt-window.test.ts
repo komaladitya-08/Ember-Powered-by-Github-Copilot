@@ -267,6 +267,13 @@ describe("consent cards", () => {
     expect(validPromptCard({ id: "c", kind: "consent-direct", consent: { ...commandsCard(), title: "Changed" } })).toBe(false);
   });
 
+  it("shows an SSH question whose asker ssh can't show only marked as such (commands-remote-3)", () => {
+    const q = { id: "s", kind: "secret", secret: "other", host: "build-01", prompt: "Password: " };
+    expect(validPromptCard(q)).toBe(true);
+    expect(validPromptCard({ ...q, unmarked: true })).toBe(true);
+    for (const bad of [false, "yes", 1]) expect(validPromptCard({ ...q, unmarked: bad }), String(bad)).toBe(false);
+  });
+
   it("are ready only while shown, in a visible window on top or focused, and go when hidden", () => {
     const { ctl, win } = setup();
     ctl.showConsent(3, commandsCard());

@@ -518,8 +518,10 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   too long to show) ends it with "Ember couldn't show build-01's sign-in question." and **Try again**. **With OpenSSH
   older than 8.5** on this computer (RHEL 8 has 8.0, Ubuntu 20.04 8.2, Debian 11 8.4), SSH can't mark which questions
   come from the other computer, so a server could word its own question as SSH's. There every password, passphrase or
-  code is shown as "build-01 asks", with the question quoted as it came, never as "Unlock your SSH key" or as a sign-in
-  to another host: read it before you answer, because the answer goes to whoever asked.
+  code is shown as "A question while connecting to build-01", with the question quoted as it came, never as "Unlock
+  your SSH key" or as a sign-in to another host. The card says so ("This computer's SSH can't show whether this
+  question comes from SSH itself or from build-01, so read it before you answer: what you type goes to whoever
+  asked.") and that Ember hands the answer to SSH only, never saving, logging or sending it to Copilot.
 - **A computer you haven't connected to before** shows "Is this really build-01?" with its key's fingerprint. Check
   it with whoever looks after build-01; **Trust and connect** is never the default. If the key has changed, Ember
   won't connect ("build-01's identity changed"); remove the old key with `ssh-keygen -R build-01` only if you know

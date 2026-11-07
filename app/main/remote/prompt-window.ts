@@ -131,7 +131,7 @@ export function validPromptCard(c: unknown): c is PromptCard {
     case "host-key-changed": case "touch": return host;
     case "secret":
       return host && ["password", "passphrase", "code", "other"].includes(c.secret as string) && str(c.prompt, 2000)
-        && (c.via === undefined || str(c.via, 255, 1)) && (c.login === undefined || str(c.login, 255, 1));
+        && (c.via === undefined || str(c.via, 255, 1)) && (c.login === undefined || str(c.login, 255, 1)) && (c.unmarked === undefined || c.unmarked === true);
     case "consent": return typeof c.n === "number" && Number.isSafeInteger(c.n) && c.n >= 0 && validConsent(c.consent);
     case "consent-direct": return validConsent(c.consent);
     case "approval": return Number.isSafeInteger(c.n) && (c.n as number) >= 0 && str(c.title, 2000, 1) && str(c.prompt, 100_000, 1)
