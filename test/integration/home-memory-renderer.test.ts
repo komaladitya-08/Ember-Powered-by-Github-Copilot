@@ -314,6 +314,10 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("says why saved memory is pause
     expect(await page.locator("#ay-name").isVisible()).toBe(true);
     // Ember's own notes say they are Ember's, not the conversation's (memory-3).
     expect(await page.locator("#memory-list .mem-from").allInnerTexts()).toEqual(["Ember's summary", "Ember's guess"]);
+    // And so does a summary's correction form (memory-r5).
+    await page.locator('[data-memory-correct="s1"]').click();
+    expect(await page.locator("#memory-correction-source").innerText()).toBe("Ember's summary");
+    await page.keyboard.press("Escape");
     // Spoken replies is Ember's real speaking choice, and Save says so (memory-5).
     await page.locator("#ay-name").fill("Ram");
     await page.locator("#ay-spoken").selectOption("no");

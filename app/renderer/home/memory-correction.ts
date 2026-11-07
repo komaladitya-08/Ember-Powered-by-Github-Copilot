@@ -64,7 +64,7 @@ export function mountMemoryCorrection(api: Pick<EmberHomeApi, "correctMemory">, 
       expected = { ...row }; stale = false; generation++;
       input.value = row.text;
       $("memory-correction-original").textContent = row.text;
-      $("memory-correction-source").textContent = memoryProvenanceLabel(row.source, row.correctedAt);
+      $("memory-correction-source").textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind);
       form.hidden = false; say(writable ? "" : words.off); input.focus(); input.select();
     },
     observe(rows, nextEpoch, owned, canWrite) {
