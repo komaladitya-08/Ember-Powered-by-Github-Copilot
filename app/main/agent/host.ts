@@ -503,6 +503,25 @@ const transient = (err: unknown, msg: string) => err instanceof SessionToolsTime
 /** What settings show for one, while the retry waits. */
 const TRANSIENT_DETAIL = "Copilot had a problem on its side while Ember connected. Ember will try again in a moment.";
 
+/**
+ * How long each step of a start may wait for the runtime (reliability-performance-v1): a runtime that stalls in its
+ * handshake, or a model list on a black-holed network, left Home at "Connecting…" for good, with nothing logged or
+ * retried. A normal start takes a second or two.
+ */
+const START_STEP_MS = { start: 30_000, auth: 20_000, models: 20_000, conversation: 30_000 } as const;
+/** A start step the runtime never answered: its message is TRANSIENT, so the start is retried as one. */
+class StartTimeout extends Error {
+  constructor(readonly step: keyof typeof START_STEP_MS) { super(`Copilot didn't answer in time (${step}): timed out`); }
+}
+/** What settings show while a start that timed out waits to try again. */
+export const START_TIMEOUT_DETAIL = "Copilot isn't answering. Ember will try again in a moment.";
+/** `p`, or a StartTimeout for `step` once its time is up. */
+async function startStep<T>(p: Promise<T>, step: keyof typeof START_STEP_MS): Promise<T> {
+  const r = await within(p, START_STEP_MS[step]);
+  if (r === "timeout") throw new StartTimeout(step);
+  return r;
+}
+
 /** A start's error that names no model Ember may use (thrown by doStart itself): shown as it is. */
 const NO_MODEL = /^(None of the models|Copilot lists no models|Enter the model)/;
 
@@ -639,6 +658,7 @@ export function explainStartError(err: unknown, ctx: { source?: string; sourceNa
     }
     return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again.${proxyNote(ctx.proxy)}`;
   }
+  if (err instanceof StartTimeout) return START_TIMEOUT_DETAIL;
   if (transient(err, msg)) return TRANSIENT_DETAIL;
   return msg;
 }
@@ -1537,10 +1557,10 @@ export class AgentHost {
         client = new CopilotClient(runtimeClientOptions({ userData: this.o.userData, runtimePath: this.o.runtimePath, token, provider: !!provider, env }));
         // Known before it starts, so a stop() that comes meanwhile stops it too.
         this.client = client;
-        await client.start();
+        await startStep(client.start(), "start");
         if (gen !== this.gen) return;
         if (provider) break;
-        const auth = await client.getAuthStatus();
+        const auth = await startStep(client.getAuthStatus(), "auth");
         if (gen !== this.gen) return;
         if (auth.isAuthenticated) { login = (auth as { login?: string }).login; break; }
         const refused = new Error(`not authenticated${auth.statusMessage ? `: ${auth.statusMessage}` : ""}`);
@@ -1601,7 +1621,7 @@ export class AgentHost {
       const admin = this.o.admin?.();
       const allowed = admin?.models.allowed;
       if (!provider) {
-        models = (await client.listModels()) as ModelLike[];
+        models = (await startStep(client.listModels(), "models")) as ModelLike[];
       } else if (provider.kind === "user") {
         // The user's own provider serves the models they named (within the administrator's allowed list, below).
         const named = [...new Set([provider.models?.conductor, provider.models?.worker].filter((m): m is string => !!m))];
@@ -1931,7 +1951,7 @@ export class AgentHost {
           },
         } : undefined,
       });
-      await this.conductor.start();
+      await startStep(this.conductor.start(), "conversation");
       this.conversation = this.conductor.sessionId;
       this.convoCaps = caps;
       this.conversationLogin = login;
@@ -1971,10 +1991,12 @@ export class AgentHost {
       if (gen !== this.gen) return;
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
-      this.o.log.error("agent.start_failed", { err, online, unreachable });
+      this.o.log.error("agent.start_failed", { err, online, unreachable, ...(err instanceof StartTimeout ? { why: "timeout", step: err.step } : {}) });
       const ctx = { source: this.source, sourceName: this.sourceName, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall, runtime: this.o.runtimePath };
       const reason = startErrorReason(err, ctx);
       this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason });
+      // A runtime that didn't answer is hung: it is killed rather than asked to stop (which would wait on it too).
+      if (err instanceof StartTimeout && this.client) { const hung = this.client; this.client = null; await hung.forceStop().catch(() => undefined); }
       await this.doStop();
       // Not connected, so no account was checked: memory waits for the next connection, and Home says so.
       if (gen === this.gen) this.o.memory?.pauseAccount?.("unverified");

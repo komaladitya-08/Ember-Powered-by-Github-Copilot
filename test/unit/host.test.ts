@@ -48,6 +48,9 @@ const sim = vi.hoisted(() => ({
   modelsError: null as Error | null,
   /** The runtime never says which tools a session has (verifySessionTools times out). */
   toolsHang: false,
+  /** client.start() and client.listModels() never settle (a runtime that stalls in its handshake, a black-holed network). */
+  startHangs: false,
+  modelsHang: false,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -86,11 +89,11 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     stopped = false;
     forced = false;
     constructor(public opts: any) { sim.clients.push(this); }
-    async start() { if (sim.startError) throw sim.startError; }
+    async start() { if (sim.startHangs) await hang(); if (sim.startError) throw sim.startError; }
     async stop() { if (sim.stopHangs) await hang(); this.stopped = true; return []; }
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
-    async listModels() { if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
+    async listModels() { if (sim.modelsHang) await hang(); if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return sim.taskSessions.map(sessionId => ({ sessionId })); }
     async deleteSession(id: string) { const gate = sim.deleteGate; const fails = sim.deleteFails; sim.deleted.push(id); if (sim.deleteHangs) await hang(); if (gate) await gate; if (fails) throw new Error("delete failed"); }
     ping() { return sim.ping(); }
@@ -100,7 +103,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
@@ -155,6 +158,8 @@ beforeEach(() => {
   sim.startError = null;
   sim.modelsError = null;
   sim.toolsHang = false;
+  sim.startHangs = false;
+  sim.modelsHang = false;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -1188,6 +1193,50 @@ describe("a runtime that dies or hangs", () => {
     const stopped = host.stop();
     await vi.advanceTimersByTimeAsync(10_000);
     await stopped;
+  });
+
+  it("a runtime that never answers its start says so and tries again, never Connecting… for ever (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.startHangs = true;
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(host.getStatus().phase).toBe("starting");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    expect(idleWord(host.getStatus())).toBe("Reconnecting…");
+    expect(sim.clients[0].forced).toBe(true);
+    sim.startHangs = false;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(sim.clients).toHaveLength(2);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a model list that never comes is timed out and retried too (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.modelsHang = true;
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    sim.modelsHang = false;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a conversation the runtime never opens is timed out and retried (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.createGate = new Promise<void>(() => undefined);
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    sim.createGate = null;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
   });
 
   it("five crashes in ten minutes: Ember stops trying", async () => {
