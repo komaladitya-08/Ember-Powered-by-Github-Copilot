@@ -1168,6 +1168,8 @@ const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.versio
 let memoryOwner: MemoryView["ownership"] = "waiting";
 let memoryReason: MemoryView["reason"];
 let memoryEpoch = 0;
+/** Where focus was in the search when memory went to be checked again, and under which epoch (memory-8). */
+let memoryFocusBack: { el: HTMLElement; epoch: number } | null = null;
 const memoryCorrection = mountMemoryCorrection(window.ember, () => $("memory-on"), (expected, corrected) => {
   const current = memoryRows.find(row => row.id === expected.id);
   // A newer push wins; a successful IPC reply can fill in a missed view notification without resurrecting a deletion.
@@ -1223,9 +1225,16 @@ function renderMemory(rows: MemoryRow[]): void {
   memoryList.render(page.rows);
   const filters = $("memory-filters");
   const unavailable = memoryOwner !== "ready";
-  if (unavailable && filters.contains(document.activeElement)) $("memory-on").focus();
+  // Focus in the search while the same account is checked again (a reconnect) waits on the switch, and goes back if it
+  // is still there when the list returns (memory-8); another account's list (a new epoch) never gets it back.
+  if (memoryFocusBack && memoryFocusBack.epoch !== memoryEpoch) memoryFocusBack = null;
+  if (unavailable && filters.contains(document.activeElement)) { memoryFocusBack = { el: document.activeElement as HTMLElement, epoch: memoryEpoch }; $("memory-on").focus(); }
   filters.hidden = unavailable;
   $("memory-list").hidden = unavailable;
+  if (!unavailable && memoryFocusBack) {
+    if (document.activeElement === $("memory-on")) memoryFocusBack.el.focus();
+    memoryFocusBack = null;
+  }
   // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause).
   if (unavailable && !$("memory-forgotten").hidden) hideForgotten();
   // An empty list says so in its own row, never "0 of 0 memories" above it (memory-13).

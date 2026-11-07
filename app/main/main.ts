@@ -106,7 +106,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
-import { githubMemoryAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
+import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
 import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
@@ -1471,12 +1471,14 @@ function start(): void {
   const memoryAllowed = () => policy.features.memory !== false;
   const memoryOwner = new MemoryOwner(userData);
   let memoryEpoch = 0;
+  /** Whose memory the epoch is for: a reconnect that finds the same account keeps it (memory-8). */
+  const memoryAccount = new MemoryEpochAccount();
   // Better recall (memory/better-recall.ts): matching by meaning once the user downloads its model in Settings › Memory,
   // in the "Ember memory" utility process, used only while memory is on.
   const memoryConfigured = () => consented() && memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
   const memoryOn = () => memoryOwner.ready && memoryConfigured();
   const betterRecall = new BetterRecall({
-    dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn,
+    dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn, memoryWanted: memoryConfigured,
     fork: () => {
       const p = utilityProcess.fork(path.join(__dirname, "memory-embed.cjs"), [], { serviceName: "Ember memory", stdio: "pipe" });
       p.stderr?.on("data", (d: Buffer) => log.debug("memory.process_stderr", { line: d.toString().slice(0, 300) }));
@@ -1579,8 +1581,8 @@ function start(): void {
       return true;
     },
     resolveAccountId: (token: string, login: string) => githubMemoryAccount((url, init) => net.fetch(url, init), token, login),
-    verifyAccount: (id: number | null, why?: MemoryWait) => { memoryEpoch++; memoryOwner.verify(id, memoryConfigured(), why); publishMemoryOwner(); },
-    pauseAccount: (why?: MemoryWait) => { memoryEpoch++; memoryOwner.pause(why); publishMemoryOwner(); },
+    verifyAccount: (id: number | null, why?: MemoryWait) => { if (memoryAccount.verified(id, why)) memoryEpoch++; memoryOwner.verify(id, memoryConfigured(), why); publishMemoryOwner(); },
+    pauseAccount: (why?: MemoryWait) => { if (memoryAccount.paused(why)) memoryEpoch++; memoryOwner.pause(why); publishMemoryOwner(); },
     accountReady: memoryOn,
     useModel: (model: OneShot | null) => learning.setModel(model),
     taskDone: (title: string, result: string) => learning.taskDone(title, result),

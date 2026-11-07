@@ -283,11 +283,15 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   `verifyAccount(null, why)`: `checking`, `signed-out`, `own-provider`, `org-provider`, `unverified`), and the owner
   adds `other-account` or `unowned` for data it can't open (`MemoryOwner.reason`, in every `MemoryView`). Home and
   the conversation word it through app/shared/memory-owner.ts; only `other-account`, `unowned` and memory left after
-  signing out are offered Forget everything (`memoryOwnerOffersErase`).
+  signing out are offered Forget everything (`memoryOwnerOffersErase`). Main's `memoryEpoch` (in every view) moves on
+  only when memory is for another account or none (`MemoryEpochAccount`): a reconnect's `checking`, a failed check's
+  `unverified` and the same account verified again hold it, so Home keeps a correction draft and focus out of sight
+  and brings them back; memory itself still opens only once `MemoryOwner.ready` (memory-8).
 - **Better recall's vectors are facts too** (embed.ts): only in `memory-vectors.json` (0600, through `vectorFile()`),
   dropped with a forgotten fact, erased by `forgetAll()` and Remove, never sent anywhere. The model runs only in the
   "Ember memory" process (embed-process.ts, a `StopPart` through `SemanticMemory.stop()`), is fetched only from Settings
-  › Memory's Download while memory is on (better-recall.ts), and is used only while memory is on. With no model,
+  › Memory's Download while memory is on (better-recall.ts; a download under way finishes through a reconnect's
+  account check, `memoryWanted`, and is cancelled when memory is turned off), and is used only while memory is on. With no model,
   recall must stay byte for byte lexical (memory.test.ts pins it).
 
 ## Settings and admin policy

@@ -221,7 +221,8 @@ runtime. It does not change the app's consent or speaking settings.
     "Checking your GitHub account…" while connecting, that memory works only with GitHub Copilot while your own
     model provider (or your organisation's model service) is in force, or that Ember couldn't check the account.
     Forget everything is offered then only for another account's memory or memory with no owner, and Home's status
-    line says "Memory paused".
+    line says "Memory paused". When a reconnect finds the same account again, a correction you were typing, the
+    search and where focus was come back with the list, and a Better recall download carries on.
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
   - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so, `FEATURE_CONSENT_VERSION.memory` 4, so
     someone who agreed to an earlier note is asked again and memory stays off until they do). With each request,

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { githubMemoryAccount, MemoryOwner } from "../../app/main/memory/owner";
+import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner } from "../../app/main/memory/owner";
 
 let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-memory-owner-")); });
@@ -103,5 +103,30 @@ describe("why saved memory isn't open (memory-2, integrations-2)", () => {
     fs.rmSync(saved("memory-owner"));
     other.refresh(true);
     expect([other.state, other.reason]).toEqual(["locked", "unowned"]);
+  });
+});
+
+describe("whose memory Home shows (memory-8)", () => {
+  it("keeps Home's memory epoch through a reconnect that finds the same account, and moves it on for another or none", () => {
+    const account = new MemoryEpochAccount();
+    // Ember starts: it checks, then finds the account (the epoch moves on to it).
+    expect(account.paused()).toBe(false);
+    expect(account.verified(123)).toBe(true);
+    // A reconnect (a network retry, a runtime restart): checked again, the same account. A draft and focus stay.
+    expect(account.paused()).toBe(false);
+    expect(account.paused("checking")).toBe(false);
+    expect(account.verified(123)).toBe(false);
+    // A check that failed holds it too: whoever comes next decides.
+    expect(account.paused("unverified")).toBe(false);
+    expect(account.verified(null, "unverified")).toBe(false);
+    expect(account.verified(123)).toBe(false);
+    // Another account, or none: the epoch moves on, and Home lets go of what it held.
+    expect(account.verified(456)).toBe(true);
+    expect(account.verified(123)).toBe(true);
+    expect(account.paused("signed-out")).toBe(true);
+    expect(account.verified(123)).toBe(true);
+    expect(account.verified(null, "own-provider")).toBe(true);
+    expect(account.verified(123)).toBe(true);
+    expect(account.verified(null, "org-provider")).toBe(true);
   });
 });

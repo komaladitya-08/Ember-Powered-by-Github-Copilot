@@ -33,6 +33,32 @@ export async function githubMemoryAccount(
   } catch { return null; }
 }
 
+/**
+ * Whose memory Home's epoch is for (main's `memoryEpoch`, in every MemoryView): Home lets go of a correction draft,
+ * an acknowledgement and where focus was when it moves on. It moves on when memory is for another account or for none
+ * (signed out, a model provider in force, another account verified), and holds while the same sign-in is checked
+ * again (a reconnect: `checking`; a check that failed: `unverified`) and when the same account comes back (memory-8).
+ * Memory itself stays closed meanwhile: only `MemoryOwner.ready` opens it.
+ */
+export class MemoryEpochAccount {
+  private id: number | null = null;
+
+  /** The host verified account `id`, or none and why: true when the epoch moves on. */
+  verified(id: number | null, why: MemoryWait = "unverified"): boolean {
+    if (id === null) return this.paused(why);
+    const moved = id !== this.id;
+    this.id = id;
+    return moved;
+  }
+
+  /** No account for now, and why: true when the epoch moves on. */
+  paused(why: MemoryWait = "checking"): boolean {
+    if (why === "checking" || why === "unverified") return false;
+    this.id = null;
+    return true;
+  }
+}
+
 /** One local graph, bound to a verified GitHub account before it can be read or changed. */
 export class MemoryOwner {
   private account: string | null = null;

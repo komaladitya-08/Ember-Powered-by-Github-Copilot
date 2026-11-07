@@ -519,3 +519,89 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("paints only Forget red, keeps 
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the search and focus while Ember checks the same account again on a reconnect (memory-8)", async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
+  settings.memory = { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+  const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
+    admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
+  const rows: MemoryView["rows"] = [
+    { id: "a", text: "Likes to be called Ram", source: "user", at: "2026-11-04" },
+    { id: "b", text: "Priya leads the platform team", source: "conversation", at: "2026-11-04" },
+  ];
+  const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
+  const dist = path.resolve("dist");
+  const server = http.createServer((req, res) => {
+    const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
+    if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
+    const mime: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+    res.setHeader("content-type", mime[path.extname(file)] ?? "application/octet-stream");
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(seed => {
+      const listeners: Record<string, (value: unknown) => void> = {};
+      (window as unknown as { __push: (view: MemoryView) => void }).__push = view => listeners.onMemory?.(view);
+      window.ember = new Proxy({}, { get: (_target, name: string) => {
+        if (name.startsWith("on")) return (fn: (value: unknown) => void) => { listeners[name] = fn; return () => { delete listeners[name]; }; };
+        if (name === "getStatus") return async () => seed.status;
+        if (name === "memory") return async () => ({ rows: seed.rows, ownership: "ready", reason: null, epoch: 1 });
+        if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
+        return () => new Promise(() => undefined);
+      } }) as EmberHomeApi;
+    }, { status, rows });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Renderer fixture didn't start.");
+    await page.goto(`http://127.0.0.1:${address.port}/app/renderer/home/index.html`);
+    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    await page.locator('a[href="#memory-h"]').click();
+    await expect.poll(() => page.locator("#memory-list [data-memory-forget]").count()).toBe(2);
+    const push = (view: MemoryView) => page.evaluate(v => (window as unknown as { __push: (view: MemoryView) => void }).__push(v), view);
+    const checking: MemoryView = { rows: [], ownership: "locked", reason: "checking", epoch: 1 };
+    const back: MemoryView = { rows, ownership: "ready", reason: null, epoch: 1 };
+    // A correction being typed when the connection drops and comes back.
+    await page.locator('[data-memory-correct="b"]').click();
+    const correction = page.locator("#memory-correction-text");
+    await correction.fill("Priya leads the platform and billing teams");
+    await push(checking);
+    expect(await page.locator("#memory-owner").innerText()).toBe("Checking your GitHub account…");
+    // Out of sight with the list while it checks, never closed.
+    expect(await page.locator("#memory-correction").isHidden()).toBe(true);
+    expect(await page.locator("#memory-list").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-on");
+    await push(back);
+    expect(await page.locator("#memory-correction").isVisible()).toBe(true);
+    expect(await correction.inputValue()).toBe("Priya leads the platform and billing teams");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-correction-text");
+    await page.locator("#memory-correction-cancel").click();
+    // Searching when it drops: the words, the matches and focus come back with the list.
+    await page.locator("#memory-query").fill("Priya");
+    expect(await page.locator("#memory-list [data-memory-forget]").count()).toBe(1);
+    await push(checking);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-on");
+    await push(back);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-query");
+    expect(await page.locator("#memory-query").inputValue()).toBe("Priya");
+    expect(await page.locator("#memory-list [data-memory-forget]").count()).toBe(1);
+    // Moved on meanwhile: focus stays where the person put it.
+    await push(checking);
+    await page.locator("#memory-questions").focus();
+    await push(back);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-questions");
+    // Another account (the epoch moves on): the draft goes, as before.
+    await page.locator("#memory-query").fill("");
+    await page.locator('[data-memory-correct="a"]').click();
+    await correction.fill("A private unfinished draft");
+    await push({ rows: [], ownership: "locked", reason: "checking", epoch: 1 });
+    await push({ rows: [], ownership: "locked", reason: "other-account", epoch: 2 });
+    expect(await correction.inputValue()).toBe("");
+    await push({ rows, ownership: "ready", reason: null, epoch: 3 });
+    expect(await page.locator("#memory-correction").isHidden()).toBe(true);
+    expect(errors).toEqual([]);
+  } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+}, 60_000);
