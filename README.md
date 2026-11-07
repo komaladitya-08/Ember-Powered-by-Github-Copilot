@@ -14,7 +14,13 @@ Ember's desk, a private display where Ember can work out of your way, is Linux-o
 
 ## Download
 
-This checkout prepares 0.1.1. Until it is published, [0.1.0 remains the downloadable beta](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases/tag/v0.1.0); use that release's version in the example filenames below.
+This README describes 0.1.1, which isn't published yet. Until it is,
+[0.1.0 remains the downloadable beta](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases/tag/v0.1.0):
+install it with [0.1.0's own README](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/blob/v0.1.0/README.md),
+not the steps below, because 0.1.1 packages Ember differently. In 0.1.0 the speech models are a separate
+`ember-voice-models` RPM on RHEL 8 and the AppImage downloads them when voice is turned on; 0.1.1 carries them in the RPM
+and the AppImage, and adds the `Ember-voice-models` zip, the `source-*.zip` archives, **Tell me when a new version is
+out** and the npm launcher, none of which 0.1.0 has.
 
 Each release's files are on this repository's
 [Releases page](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases), with `SHA256SUMS`, the

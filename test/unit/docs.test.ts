@@ -264,6 +264,21 @@ describe("README.md", () => {
     for (const os of ["Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)", "Install on Windows", "Install on macOS"]) expect(flat(section(readme, os)), os).toMatch(/Releases page/);
   });
 
+  it("sends readers to the published release's own README while this version isn't out, naming what it changes (install-docs-1)", () => {
+    const download = flat(section(readme, "Download"));
+    // The release the Download section links to by tag: an earlier one while this version isn't published yet.
+    const published = /\/releases\/tag\/v(\d+\.\d+\.\d+)\)/.exec(download)?.[1] ?? version;
+    if (published === version) return;
+    // Its own README has its own steps and file names; this one's don't fit it.
+    expect(download).toContain(`(https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/blob/v${published}/README.md)`);
+    expect(download).not.toMatch(/use that release's version/);
+    // The RPM that takes over the separate speech models RPM (the spec obsoletes it): an earlier release still has it.
+    expect(read("packaging/rpm/ember.spec")).toMatch(/^Obsoletes:\s+ember-voice-models\b/m);
+    expect(download).toContain("`ember-voice-models`");
+    // DEVELOPING.md §15 says to change that line when the release is published.
+    expect(flat(section(read("docs/DEVELOPING.md"), "15. Publishing a release"))).toContain("the README's **Download** line");
+  });
+
   it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {
     const page = read("app/renderer/home/index.html").replace(/&amp;/g, "&");
     const headings = new Set([...page.matchAll(/<h[23][^>]*>([^<]+)<\/h[23]>/g)].map(m => m[1].trim()));
