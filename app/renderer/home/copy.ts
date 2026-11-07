@@ -16,6 +16,7 @@ import { holdsBack, needsUser, type SetupRow } from "../../shared/setup-attentio
 import { sideOf, type HandlePosition } from "../../shared/handle-place";
 import { CONVERSATION_LIMIT, CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
 import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
+import { searchFold } from "./search-copy";
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
 export const CONVERSATION_KEEP_LABEL = "Keep my recent conversation after Ember closes";
@@ -470,7 +471,22 @@ export function memoryCountText(shown: number, matched: number, all: number): st
 }
 
 /** A selectable settings result carries its section as context, including repeated words such as “Download”. */
-export function settingsResultText(section: string, text: string): string { return `${section}: ${text.trim().replace(/\s+/g, " ")}`; }
+/** The longest a search result's words run before they are cut at a word (home-6). */
+const RESULT_MAX = 140;
+/**
+ * A search result as its button says it: the section, then the setting's words with their spaces tidied. A footnote of
+ * several sentences shows the one that holds every word typed (else its first), so a result is one readable line, not
+ * a paragraph (home-6: "screen reader" gave one of 569 characters).
+ */
+export function settingsResultText(section: string, text: string, query = ""): string {
+  const tidy = text.trim().replace(/\s+/g, " ");
+  const sentences = tidy.split(/(?<=[.!?…])\s+(?=\S)/);
+  const words = searchFold(query).split(/\s+/).filter(Boolean);
+  const one = sentences.length < 2 ? tidy : sentences.find(x => words.length > 0 && words.every(w => searchFold(x).includes(w))) ?? sentences[0];
+  if (one.length <= RESULT_MAX) return `${section}: ${one}`;
+  const space = one.lastIndexOf(" ", RESULT_MAX - 1);
+  return `${section}: ${one.slice(0, space > 0 ? space : RESULT_MAX - 1).replace(/[\s,;:]+$/, "")}…`;
+}
 export const SETTINGS_MORE_RESULTS = "Show more results";
 export const SETTINGS_RESULTS_LABEL = "Settings search results";
 export const MEMORY_CORRECTION = {

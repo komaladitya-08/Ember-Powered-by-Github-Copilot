@@ -264,7 +264,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **The sidebar.** **Search settings** sits at its top: typing narrows the links to the panes that hold the words
   (headings, switch labels, footnotes, buttons, and a few other words people use for a pane, so "mic" finds Voice:
   `SEARCH_ALIASES`, ranked after the settings named by their own words), and says "Nothing found" in the sidebar
-  when none does. Selectable labelled results show in batches of 12. ArrowDown/Tab reaches a chosen result, Enter selects it and marks its row, with its control focused (a group's header
+  when none does. A result says the words as the page shows them (`shownText`: no hidden alternative for a key
+  another app took, no pop-up's options, which still find their setting, no words for screen readers only), one
+  sentence of a longer footnote: the one with the words typed. Selectable labelled results show in batches of 12. ArrowDown/Tab reaches a chosen result, Enter selects it and marks its row, with its control focused (a group's header
   or footnote stands for the group: a one-row group's row, else the whole group). The sidebar grows with the text size,
   so its labels stay on one line, but never past what leaves a pane 460 px (no sideways scroll at 640–720 px). The links, most
   used first: Home, Projects, Models & connections, Voice, Your Ember, Memory, Apps & privacy, Comfort & access, Computers and Commands (once

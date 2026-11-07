@@ -45,7 +45,7 @@ import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request
 import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
-import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
+import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, homeListenOnce, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
@@ -1692,8 +1692,12 @@ function searchItems(): { pane: string; text: string; alias?: string; el: HTMLEl
   const items: { pane: string; text: string; alias?: string; el: HTMLElement }[] = [];
   for (const el of document.querySelectorAll<HTMLElement>(`.home > [data-pane] :is(${SEARCHED})`)) {
     const p = paneOf(el);
-    if (!p || hiddenHere(el) || !el.textContent?.trim()) continue;
-    items.push({ pane: p, text: el.textContent, alias: SEARCH_ALIASES[el.id], el });
+    // Its words as shown (home-6): a pop-up's choices still find it, after the settings named by their own words.
+    const text = shownText(el);
+    if (!p || hiddenHere(el) || !text.trim()) continue;
+    const pick = el instanceof HTMLLabelElement && el.control instanceof HTMLSelectElement ? el.control : el.querySelector("select");
+    const options = pick ? [...pick.options].map(o => o.textContent ?? "").join(" ") : "";
+    items.push({ pane: p, text, alias: [SEARCH_ALIASES[el.id], options].filter(Boolean).join(" ") || undefined, el });
   }
   return items;
 }
@@ -1707,7 +1711,7 @@ function renderSearchResults(): void {
   results.replaceChildren(...found.slice(0, searchShown).map(result => {
     const li = document.createElement("li");
     const section = jumpLinks.find(link => paneOf(document.getElementById(`${sectionOf(link)}-h`) ?? link) === result.pane)?.textContent ?? result.pane;
-    const button = Object.assign(document.createElement("button"), { type: "button", className: "search-result", textContent: settingsResultText(section, result.text) });
+    const button = Object.assign(document.createElement("button"), { type: "button", className: "search-result", textContent: settingsResultText(section, result.text, search.value) });
     button.addEventListener("click", () => openSearchResult(result));
     li.append(button);
     return li;

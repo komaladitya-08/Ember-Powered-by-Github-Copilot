@@ -154,3 +154,43 @@ describe.skipIf(gate)("Home's Task activity, while a task works (2026-11-07 prod
     await page.close();
   });
 });
+
+const results = (p: Page, q: string) => p.evaluate(async query => {
+  const field = document.getElementById("search") as HTMLInputElement;
+  field.value = query;
+  field.dispatchEvent(new Event("input"));
+  await new Promise(r => setTimeout(r, 20));
+  return [...document.querySelectorAll("#search-results .search-result")].map(b => b.textContent ?? "");
+}, q);
+
+describe.skipIf(gate)("Home's Search settings, as the person reads the results (2026-11-07 product audit)", () => {
+  it("shows each result as the words on the page, once, without hidden alternatives or a pop-up's options (home-6)", async () => {
+    const page = await open("home");
+    const reader = await results(page, "screen reader");
+    expect(reader.length).toBeGreaterThan(0);
+    for (const r of reader) {
+      expect(r.length, r).toBeLessThan(200);
+      expect(r.split("May I?").length - 1, r).toBeLessThanOrEqual(1);
+      // The alternatives for a key another app holds never show beside the one in force.
+      expect(r, r).not.toContain("another app has the key");
+    }
+    for (const r of [...await results(page, "source"), ...await results(page, "dark")]) {
+      expect(r).not.toMatch(/SourceAll sources|You told meFrom/);
+      expect(r).not.toContain("Match this computer Light Dark");
+    }
+    // A pop-up's choice still finds its setting, named by its label alone.
+    expect(await results(page, "when a screen reader runs")).toContain("Voice: Speak replies, questions and results out loud");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("finds the conversation's history, deleting, starting at log-in and the shortcuts by everyday words (home-13)", async () => {
+    const page = await open("home");
+    for (const q of ["history", "clear history", "chat"]) expect((await results(page, q))[0], q).toMatch(/^Home: /);
+    for (const q of ["start at login", "login", "autostart"]) expect((await results(page, q))[0], q).toMatch(/^Your Ember: /);
+    for (const q of ["shortcut", "keyboard shortcut", "hotkeys"]) expect((await results(page, q)).length, q).toBeGreaterThan(0);
+    expect((await results(page, "delete")).some(r => r.startsWith("Memory: "))).toBe(true);
+    expect(await page.locator("#search-none").isHidden()).toBe(true);
+    await page.close();
+  });
+});

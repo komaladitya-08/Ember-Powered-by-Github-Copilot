@@ -8,8 +8,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
-import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage } from "../../app/renderer/home/search-copy";
-import { checksNote, COMPOSER_THINKING, COMPOSER_WAIT_MS, composerStillWaiting, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
+import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
+import { checksNote, COMPOSER_THINKING, COMPOSER_WAIT_MS, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { THINK_SLOW_MS } from "../../app/main/agent/presenter";
 import { formatDoctor } from "../../app/main/doctor";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
@@ -149,6 +149,48 @@ describe("Search settings", () => {
     const items = [{ pane: "copilot", text: "Model provider", alias: SEARCH_ALIASES["byok-h"] }, { pane: "voice", text: "Voice", alias: SEARCH_ALIASES["voice-h"] }];
     for (const q of ["byok", "api key", "provider", "openai", "ollama", "LM Studio"]) expect(searchMatches(q, items).map(i => i.text), q).toEqual(["Model provider"]);
     expect(fs.readFileSync("app/renderer/home/index.html", "utf8")).toContain('<h3 class="sub" id="byok-h">Model provider</h3>');
+  });
+
+  /** A small element tree, shaped as the DOM gives it (text nodes 3, elements 1). */
+  const text = (t: string): ShownNode => ({ nodeType: 3, nodeValue: t, childNodes: [] });
+  const elem = (tagName: string, children: ShownNode[], o: { hidden?: boolean; aria?: string; cls?: string } = {}): ShownNode => ({
+    nodeType: 1, nodeValue: null, tagName: tagName.toUpperCase(), hidden: o.hidden ?? false, childNodes: children,
+    getAttribute: (n: string) => (n === "aria-hidden" ? o.aria ?? null : null), classList: { contains: (c: string) => c === o.cls },
+  });
+
+  it("reads a result's words as shown: no hidden alternatives, no pop-up's options, no words for screen readers only (home-6)", () => {
+    const hint = elem("p", [
+      elem("span", [text("When Ember asks “May I?”, press "), elem("kbd", [text("Ctrl")]), text("+"), elem("kbd", [text("Y")]), text(" to allow.")]),
+      elem("span", [text("When Ember asks “May I?”, another app has the key for Allow.")], { hidden: true }),
+      elem("span", [text("Decorative")], { aria: "true" }),
+      elem("span", [text("Working: ")], { cls: "sr" }),
+    ]);
+    expect(shownText(hint)).toBe("When Ember asks “May I?”, press Ctrl+Y to allow.");
+    const label = elem("label", [elem("span", [text("Appearance")]), elem("select", [elem("option", [text("Match this computer")]), elem("option", [text("Light")]), elem("option", [text("Dark")])])]);
+    expect(shownText(label)).toBe("Appearance");
+    expect(shownText(elem("div", [text("Source")]))).toBe("Source");
+  });
+
+  it("shows a long result as its sentence that holds the words typed, else its first (home-6)", () => {
+    const hint = "Every decision and action is also in the audit folder. Ember keeps no usage statistics, and sends none. Nothing else is kept.";
+    expect(settingsResultText("Apps & privacy", hint, "usage statistics")).toBe("Apps & privacy: Ember keeps no usage statistics, and sends none.");
+    expect(settingsResultText("Apps & privacy", hint, "privacy")).toBe("Apps & privacy: Every decision and action is also in the audit folder.");
+    expect(settingsResultText("Apps & privacy", hint)).toBe("Apps & privacy: Every decision and action is also in the audit folder.");
+    // A short one stays whole, with its spaces tidied.
+    expect(settingsResultText("Memory", "  Better\n recall  ", "recall")).toBe("Memory: Better recall");
+    // One long sentence is cut at a word, with an ellipsis.
+    const long = settingsResultText("Voice", `${"word ".repeat(60)}end`, "word");
+    expect(long.length).toBeLessThanOrEqual(160);
+    expect(long.endsWith("…")).toBe(true);
+  });
+
+  it("finds the conversation's history, deleting, starting at log-in and the shortcuts by everyday words (home-13)", () => {
+    const panes = ["conversation-h", "pick-h", "memory-h", "privacy-h", "access-h", "checks-h", "voice-h"].map(id => ({ pane: id, text: id, alias: SEARCH_ALIASES[id] }));
+    const first = (q: string) => searchMatches(q, panes)[0]?.pane;
+    for (const q of ["history", "clear history", "chat history", "transcript", "new chat", "delete messages"]) expect(first(q), q).toBe("conversation-h");
+    for (const q of ["start at login", "login", "log in", "startup", "autostart"]) expect(first(q), q).toBe("pick-h");
+    for (const q of ["shortcut", "keyboard shortcut", "hotkeys", "keys"]) expect(first(q), q).toBe("checks-h");
+    for (const q of ["erase", "delete"]) expect(searchMatches(q, panes).map(p => p.pane), q).toEqual(expect.arrayContaining(["conversation-h", "memory-h"]));
   });
 
   it("says how many it found and where, for a screen reader", () => {
