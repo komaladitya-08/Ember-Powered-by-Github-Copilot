@@ -54,7 +54,10 @@ let busy = false;
  * (voice-speaking-10). A CHUNK_MAX chunk (about 7 s of speech) takes at most 3.5 s to make at NATURAL_MAX_RTF.
  */
 const AHEAD_MS = 8_000;
-/** When the speech made so far will have played (Date.now()): on the page it can only end later, never sooner. */
+/**
+ * When the speech made so far will have played (performance.now(), which a clock set back can't move): on the page it
+ * can only end later, never sooner.
+ */
 let playsUntil = 0;
 let wait: ReturnType<typeof setTimeout> | null = null;
 
@@ -132,14 +135,14 @@ function step(): void {
   if (!item || !tts) { busy = false; return; }
   busy = true;
   // Enough is made: the next chunk is made as playback nears it (a hush starts it at once).
-  const ahead = playsUntil - Date.now();
+  const ahead = playsUntil - performance.now();
   if (item.chunks.length && ahead > AHEAD_MS) { wait = setTimeout(() => { wait = null; step(); }, ahead - AHEAD_MS); return; }
   const chunk = item.chunks.shift();
   if (chunk !== undefined) {
     try {
       const audio = tts.generate({ text: chunk, sid, speed: item.speed });
       if (!audio.samples.length) throw new Error("The voice produced no audio.");
-      playsUntil = Math.max(playsUntil, Date.now()) + (audio.samples.length / audio.sampleRate) * 1000;
+      playsUntil = Math.max(playsUntil, performance.now()) + (audio.samples.length / audio.sampleRate) * 1000;
       if (item.id > hushed) send({ type: "audio", id: item.id, samples: audio.samples, rate: audio.sampleRate, remaining: item.chunks.join(" ") });
     } catch (err) {
       // Main lets the local system voice say only the ungenerated remainder.
