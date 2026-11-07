@@ -337,7 +337,12 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     // The copy keeps no ids: each still names one element.
     expect(await page.locator("#privacy-terms [id]").count()).toBe(0);
     await fold.locator("summary").click();
-    expect((await results(page, "screenshot"))[0]).toBe("Apps & privacy: What Ember reads, sends and keeps");
+    // The switch that sends screenshots is found by its own words, so it comes first (safety-privacy-7); the
+    // disclosure follows it, and is the first result for the words only it has.
+    const shots = await results(page, "screenshot");
+    expect(shots[0]).toBe("Apps & privacy: Send screenshots for tasks");
+    expect(shots).toContain("Apps & privacy: What Ember reads, sends and keeps");
+    expect((await results(page, "usage statistics"))[0]).toBe("Apps & privacy: What Ember reads, sends and keeps");
     expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(false);
     await page.locator("#search").press("Enter");
     await expect.poll(() => fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
