@@ -10,7 +10,7 @@ const fakes = vi.hoisted(() => ({ execFile: vi.fn(), spawn: vi.fn() }));
 vi.mock("node:child_process", async importOriginal => ({ ...(await importOriginal<typeof import("node:child_process")>()), execFile: fakes.execFile, spawn: fakes.spawn }));
 
 import { linuxSystem, type LinuxSystemIO } from "../../app/main/platform/linux/system";
-import { accessibilityProbe, linuxEnvironment, type ExecSync } from "../../app/main/platform/linux/environment";
+import { accessibilityProbe, linuxEnvironment, type ExecAsync, type ExecSync } from "../../app/main/platform/linux/environment";
 import { linuxDoctorProbes } from "../../app/main/platform/linux/doctor-probes";
 import type { PlatformDeps } from "../../app/main/platform/types";
 import { SETTINGS, findApp, hasBuiltInShell, isTerminalApp, listApps, programsOf, type DesktopApp } from "../../app/main/hands/system";
@@ -129,7 +129,8 @@ describe("settings", () => {
       cb(null, args[0] === "get" ? values[args[2]] : "", "");
     });
     expect(await s.change("night_light", "on")).toEqual({ before: "false", after: "true" });
-    expect(fakes.execFile.mock.calls.map(c => [c[0], ...c[1]].join(" "))).toEqual([
+    // (The setup check's background look for pyatspi, started as the platform is made, is its own test's: rp-1.)
+    expect(fakes.execFile.mock.calls.filter(c => c[0] === "gsettings").map(c => [c[0], ...c[1]].join(" "))).toEqual([
       "gsettings writable org.gnome.settings-daemon.plugins.color night-light-enabled",
       "gsettings get org.gnome.settings-daemon.plugins.color night-light-enabled",
       "gsettings set org.gnome.settings-daemon.plugins.color night-light-enabled true",
@@ -247,6 +248,42 @@ describe("the setup-check inputs", () => {
     t += 100_000;
     once();
     expect(found.calls.filter(c => c.cmd === "python3")).toHaveLength(1);
+  });
+
+  it("never makes a status read wait on a pyatspi import that hangs once the first answer is in (rp-1)", async () => {
+    let t = 0;
+    const fake = execFake({ "gsettings get org.gnome.desktop.interface toolkit-accessibility": "true\n" });
+    const asked: string[] = [];
+    const settles: ((found: boolean) => void)[] = [];
+    const run: ExecAsync = (cmd, args) => {
+      asked.push([cmd, ...args].join(" "));
+      return new Promise<void>((resolve, reject) => { settles.push(found => (found ? resolve() : reject(new Error("No module named 'pyatspi'")))); });
+    };
+    const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run, now: () => t });
+    // Asked as Ember starts, in the background: usually answered before the first read.
+    expect(asked).toEqual(["/opt/py -c import pyatspi"]);
+    settles[0](false);
+    await Promise.resolve(); await Promise.resolve();
+    expect(probe()).toEqual({ enabled: true, pyatspi: false });
+    // While it is missing it is asked again every 30 s, never on the main thread: a read returns what is known now.
+    t = 30_001;
+    expect(probe().pyatspi).toBe(false);
+    expect(asked).toHaveLength(2);
+    t = 60_002;
+    // (Still hanging: not asked a third time meanwhile.)
+    expect(probe().pyatspi).toBe(false);
+    expect(asked).toHaveLength(2);
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(0);
+    settles[1](true);
+    await Promise.resolve(); await Promise.resolve();
+    expect(probe().pyatspi).toBe(true);
+  });
+
+  it("answers the first read itself when the background look hasn't yet, as before (rp-1)", () => {
+    const fake = execFake({ "/opt/py -c import pyatspi": "" });
+    const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run: () => new Promise<void>(() => undefined), now: () => 0 });
+    expect(probe()).toEqual({ enabled: null, pyatspi: true });
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(1);
   });
 
   it("leave accessibility out on an OS that isn't Linux (an unknown OS gets the Linux object)", () => {
