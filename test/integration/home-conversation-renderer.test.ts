@@ -2,8 +2,8 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { chromium } from "playwright-core";
-import { expect, it } from "vitest";
+import { chromium, type Browser, type Page } from "playwright-core";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { EmberHomeApi } from "../../app/shared/ipc";
 import type { TranscriptEntry } from "../../app/main/agent/host";
 
@@ -17,6 +17,8 @@ declare global {
       resolveNew(): void;
       resolveInitial(): void;
     };
+    /** The journeys' preload (home() below): what Home asked main for, and main's events. */
+    __home: { sent: string[]; stops: number; news: number; copied: string[]; stopResult: boolean; emit(name: string, value: unknown): void };
   }
 }
 
@@ -202,3 +204,109 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);
+
+const at = (i: number) => new Date(Date.UTC(2026, 10, 7, 9, i)).toISOString();
+/** `n` messages, a question and its answer in turn; each answer a few lines long, as a real one is. */
+const exchange = (n: number, from = 0): TranscriptEntry[] => Array.from({ length: n }, (_, k) => {
+  const i = from + k;
+  return { t: at(i), who: i % 2 ? "ember" : "you", text: i % 2 ? `Answer ${i}. ${"Some words of the answer here. ".repeat(6)}` : `Question number ${i}` };
+});
+
+describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversation, as the person uses it (2026-11-07 product audit)", () => {
+  let browser: Browser;
+  let server: http.Server;
+  let base = "";
+  beforeAll(async () => {
+    browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
+    const dist = path.resolve("dist");
+    server = http.createServer((req, res) => {
+      const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
+      if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
+      const mime: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2", ".svg": "image/svg+xml" };
+      res.setHeader("content-type", mime[path.extname(file)] ?? "application/octet-stream");
+      res.end(fs.readFileSync(file));
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Renderer fixture didn't start.");
+    base = `http://127.0.0.1:${address.port}`;
+  });
+  afterAll(async () => { await browser?.close(); await new Promise<void>(resolve => server ? server.close(() => resolve()) : resolve()); });
+
+  /** Built Home at the default window size (760×640), its preload replaced by a recorder, the conversation `seed`. */
+  async function home(seed: TranscriptEntry[], viewport = { width: 760, height: 640 }): Promise<{ page: Page; errors: string[] }> {
+    const page = await browser.newPage({ viewport });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(entries => {
+      const listeners: Record<string, Set<(value: unknown) => void>> = {};
+      const emit = (name: string, value: unknown) => { for (const listener of listeners[name] ?? []) listener(value); };
+      const h = window.__home = { sent: [] as string[], stops: 0, news: 0, copied: [] as string[], stopResult: true, emit };
+      window.ember = new Proxy({}, { get: (_target, name: string) => {
+        if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= new Set()).add(fn); return () => { listeners[name]?.delete(fn); }; };
+        if (name === "conversation") return async () => entries;
+        if (name === "conversationSend") return async (text: string) => { h.sent.push(text); };
+        if (name === "conversationStop") return async () => { h.stops++; return h.stopResult; };
+        if (name === "conversationNew") return async () => { h.news++; emit("onConversation", []); };
+        if (name === "copyText") return async (text: string) => { h.copied.push(text); };
+        if (name === "reminders") return async () => [];
+        if (name === "historyProblem") return async () => null;
+        return () => new Promise(() => undefined);
+      } }) as EmberHomeApi;
+    }, seed);
+    await page.goto(`${base}/app/renderer/home/index.html`);
+    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    if (seed.length) await expect.poll(() => page.locator("#conversation li").count()).toBeGreaterThan(0);
+    return { page, errors };
+  }
+  /** Where `selector` is in the window (its top and bottom, CSS px), and the window's height. */
+  const rect = (page: Page, selector: string) => page.evaluate(s => {
+    const r = document.querySelector(s)!.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), height: innerHeight };
+  }, selector);
+  /** Main's side of a turn: the request echoed, then the answer written word by word, then settled. */
+  async function reply(page: Page, before: TranscriptEntry[], asked: string, id: number): Promise<TranscriptEntry[]> {
+    const withYou = [...before, { t: at(before.length), who: "you" as const, text: asked }];
+    await page.evaluate(e => window.__home.emit("onConversation", e), withYou);
+    let text = "";
+    for (let i = 0; i < 80; i++) {
+      text += `word${i} `;
+      await page.evaluate(([x, n]) => window.__home.emit("onConversationStream", { id: n, text: x, state: "streaming" }), [text, id] as const);
+    }
+    const settled = [...withYou, { t: at(before.length + 1), who: "ember" as const, text: text.trim(), answerId: id }];
+    await page.evaluate(e => window.__home.emit("onConversation", e), settled);
+    await page.evaluate(n => window.__home.emit("onConversationStream", { id: n, text: "", state: "done" }), id);
+    return settled;
+  }
+
+  it("keeps the composer and its Send in view while a reply grows above it, and leaves alone someone reading elsewhere (home-1)", async () => {
+    const seed = exchange(12);
+    const { page, errors } = await home(seed);
+    try {
+      await page.locator("#conversation-message").focus();
+      await page.keyboard.type("What should I do next?");
+      await page.keyboard.press("Control+Enter");
+      await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual(["What should I do next?"]);
+      const after = await reply(page, seed, "What should I do next?", 7);
+      // Still writing here: the box and its buttons show, not 150 px below the window's foot.
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-message");
+      const box = await rect(page, "#conversation-message");
+      const send = await rect(page, "#conversation-send");
+      expect(box.top).toBeGreaterThanOrEqual(0);
+      expect(send.bottom).toBeLessThanOrEqual(send.height);
+      // Scrolled up to read an earlier message while the box keeps the focus: the next reply doesn't pull the page back.
+      await page.evaluate(() => window.scrollTo({ top: 0 }));
+      const later = await reply(page, after, "And after that?", 8);
+      expect(await page.evaluate(() => scrollY)).toBe(0);
+      // Reading elsewhere (the focus on a message's Copy): nothing scrolls either.
+      const more = [...later, ...exchange(2, later.length)];
+      const copy = (await page.locator("#conversation li.ember").last().getByRole("button", { name: /Copy/ }).elementHandle())!;
+      await copy.focus();
+      const where = (await copy.boundingBox())?.y;
+      await reply(page, more, "One more", 9);
+      expect((await copy.boundingBox())?.y).toBe(where);
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Copy");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+});

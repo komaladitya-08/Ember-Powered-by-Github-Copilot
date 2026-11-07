@@ -274,7 +274,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **The conversation** is part of the page, not a box that scrolls inside it: its latest 30 messages, then **Show
   earlier messages**. Home searches all 60 retained session entries, shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. Edit only fills the composer; a fresh Send is required. Home sends
-  no foreground-window capture. Stop response cancels the current answer; Stop everything also stops tasks. Drafts
+  no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer and its
+  buttons in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. Stop response cancels
+  the current answer; Stop everything also stops tasks. Drafts
   remain in memory while switching panes and clear on account reset, independently of ordinary empty-list updates.
 - **Task activity**: one group per task, the one that needs you first, then those at work, then the rest, newest first.
   Its head is the state symbol, the title, a line of state, clock, hand and place, and its steps in one sentence; then

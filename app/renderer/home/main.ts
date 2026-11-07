@@ -1007,7 +1007,8 @@ function conversationRow(e: Entry): HTMLLIElement {
 /**
  * The conversation is part of the page, not a box that scrolls inside it (UI audit #1): its latest messages, and "Show
  * earlier messages" for the rest (conversation-view.ts). Rows are matched by what they are, so a new message is added in
- * place and the oldest shown goes from the top; nothing scrolls the page on its own.
+ * place and the oldest shown goes from the top; nothing scrolls the page on its own but the composer the person is
+ * writing in, kept in view as a reply grows above it (keepingComposer).
  */
 /** Every message, once "Show earlier messages" was pressed (until the conversation is forgotten). */
 let conversationAllShown = false;
@@ -1083,6 +1084,25 @@ function renderConversation(raw: Entry[]): void {
   earlier.hidden = !label;
   if (label) earlier.textContent = label;
 }
+/** Whether some of `el` shows in the window (`whole`: all of it). */
+const inWindow = (el: Element, whole = false) => {
+  const r = el.getBoundingClientRect();
+  return whole ? r.top >= 0 && r.bottom <= innerHeight : r.bottom > 0 && r.top < innerHeight;
+};
+/**
+ * A reply grows above the composer the person is writing in, and pushed it, still focused, below the window (home-1):
+ * while the focus is in the composer and it showed, its buttons are brought back into view after the change (nearest
+ * edge, no glide: it moves by a line at a time). Nothing scrolls for someone reading elsewhere, or who scrolled away.
+ */
+function keepingComposer(change: () => void): void {
+  const form = $("conversation-compose");
+  const focused = document.activeElement instanceof HTMLElement && form.contains(document.activeElement) ? document.activeElement : null;
+  const showed = !!focused && inWindow(focused);
+  change();
+  if (!focused || !showed) return;
+  const actions = form.querySelector(".conversation-compose-actions");
+  if (actions && (!inWindow(focused, true) || !inWindow(actions, true))) actions.scrollIntoView({ block: "nearest", behavior: "auto" });
+}
 $("conversation-earlier").addEventListener("click", () => {
   // Every message from the first, from now on; focus goes to the heading above them (the button goes).
   conversationAllShown = true;
@@ -1096,7 +1116,7 @@ let conversationReceived = false;
 void window.ember.conversation().then(entries => {
   if (!conversationReceived && conversationOpened === conversationGeneration) renderConversation(entries);
 }, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t load this conversation. New replies will still appear here."; });
-window.ember.onConversation(entries => { conversationReceived = true; renderConversation(entries); });
+window.ember.onConversation(entries => { conversationReceived = true; keepingComposer(() => renderConversation(entries)); });
 const resetConversationView = () => {
   // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
   conversationMessage.value = "";
@@ -1118,7 +1138,7 @@ window.ember.onConversationStream(e => {
   const ev = e as Partial<StreamEvent> | null;
   if (!ev || !Number.isSafeInteger(ev.id) || typeof ev.text !== "string" || !["streaming", "done", "interrupted"].includes(ev.state ?? "")) return;
   answerStream = streamEvent(answerStream, ev as StreamEvent, conversationAll, new Date().toISOString());
-  syncStreamRow($("conversation"));
+  keepingComposer(() => syncStreamRow($("conversation")));
 });
 $("conversation-new").addEventListener("click", () => {
   const button = $("conversation-new") as HTMLButtonElement;
