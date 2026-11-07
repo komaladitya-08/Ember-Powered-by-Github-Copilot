@@ -59,6 +59,14 @@ export const COMPOSER_WAIT_MS = 10_000;
 export function composerStillWaiting(service?: string): string {
   return `Still waiting for ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}… Stop response ends this reply.`;
 }
+/**
+ * Asked before New conversation clears `messages` (home-9): one click erased them, and with "Keep my recent conversation"
+ * on (`kept`) the copy saved on this computer too, with no undo. Not asked when there is nothing to clear.
+ */
+export function conversationNewQuestion(messages: number, kept: boolean): string {
+  const what = messages === 1 ? "the message here" : `the ${messages} messages here`;
+  return `Start a new conversation? This clears ${what}${kept ? " and deletes the copy saved on this computer" : ""}.`;
+}
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
 export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";

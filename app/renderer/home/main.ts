@@ -48,7 +48,7 @@ import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whats
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, COMPOSER_THINKING, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerCount, COMPOSER_OVER, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountLearnedUndo } from "./learned-undo";
@@ -1160,6 +1160,7 @@ const resetConversationView = () => {
   conversationDraftBeforeEdit = null;
   conversationGeneration++;
   $("conversation-cancel-edit").hidden = true;
+  newConfirm.hidden = true;
   const send = $("conversation-send") as HTMLButtonElement;
   send.disabled = false;
   send.textContent = "Send";
@@ -1176,7 +1177,24 @@ window.ember.onConversationStream(e => {
   if (answerStream.row && conversationWait) { clearTimeout(conversationWait); conversationWait = null; }
   if (answerStream.row && conversationComposeStatus.textContent === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
 });
+/** New conversation asks first while there are messages to clear (home-9): Keep, or Escape, leaves them be. */
+const newConfirm = $("conversation-new-confirm");
+const closeNewConfirm = (refocus: boolean) => {
+  if (newConfirm.hidden) return;
+  newConfirm.hidden = true;
+  if (refocus) $("conversation-new").focus();
+};
 $("conversation-new").addEventListener("click", () => {
+  const messages = conversationAll.filter(e => e.who !== "learned").length;
+  if (!messages) { startNewConversation(); return; }
+  $("conversation-new-question").textContent = conversationNewQuestion(messages, settings?.keepConversation === true);
+  newConfirm.hidden = false;
+  $("conversation-new-no").focus();
+});
+$("conversation-new-no").addEventListener("click", () => closeNewConfirm(true));
+$("conversation-new-yes").addEventListener("click", () => { closeNewConfirm(false); startNewConversation(); });
+newConfirm.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeNewConfirm(true); } });
+function startNewConversation(): void {
   const button = $("conversation-new") as HTMLButtonElement;
   const generation = conversationGeneration;
   button.disabled = true;
@@ -1188,7 +1206,7 @@ $("conversation-new").addEventListener("click", () => {
     conversationMessage.focus();
   }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t start a new conversation. Try again."; })
     .finally(() => { button.disabled = false; });
-});
+}
 conversationSearch.addEventListener("input", () => renderConversation(conversationAll));
 $("conversation-compose").addEventListener("submit", event => {
   event.preventDefault();

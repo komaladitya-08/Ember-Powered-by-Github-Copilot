@@ -954,4 +954,10 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.conversationWhen(new Date(2026, 10, 7, 9, 5).toISOString(), "9:05 AM", now)).toBe("9:05 AM");
     expect(conv.conversationWhen(new Date(2026, 10, 6, 9, 5).toISOString(), "9:05 AM", now)).toBe("Yesterday, 9:05 AM");
   });
+
+  it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {
+    expect(conv.conversationNewQuestion(1, false)).toBe("Start a new conversation? This clears the message here.");
+    expect(conv.conversationNewQuestion(12, false)).toBe("Start a new conversation? This clears the 12 messages here.");
+    expect(conv.conversationNewQuestion(12, true)).toBe("Start a new conversation? This clears the 12 messages here and deletes the copy saved on this computer.");
+  });
 });

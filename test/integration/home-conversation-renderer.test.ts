@@ -141,10 +141,14 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("keeps drafts, finds earl
     await keep.focus();
     await page.keyboard.press("Space");
     await expect.poll(() => page.evaluate(() => window.__conversationTest.patches)).toEqual([{ keepConversation: true }]);
-    // New conversation: a plain button, reached and activated from the keyboard; it empties the chat only.
+    // New conversation: a plain button, reached and activated from the keyboard; it asks first (home-9), then empties the chat only.
     await page.locator("#conversation-stop").focus();
     await page.keyboard.press("Tab");
     expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-new");
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(() => window.__conversationTest.news)).toBe(0);
+    await page.keyboard.press("Shift+Tab");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-new-yes");
     await page.keyboard.press("Enter");
     await expect.poll(() => page.evaluate(() => window.__conversationTest.news)).toBe(1);
     await expect.poll(() => page.locator("#conversation li").count()).toBe(0);
@@ -471,6 +475,38 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.evaluate(() => { window.__home.stopResult = true; });
       await page.locator("#conversation-stop").click();
       await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("asks before New conversation clears the messages, keeps them on Keep or Escape, and skips the question when there are none (home-9)", async () => {
+    const { page, errors } = await home(exchange(12));
+    try {
+      const confirm = page.locator("#conversation-new-confirm");
+      await page.locator("#conversation-new").click();
+      expect(await confirm.isVisible()).toBe(true);
+      expect(await page.locator("#conversation-new-question").innerText()).toBe("Start a new conversation? This clears the 12 messages here.");
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-new-no");
+      expect(await page.evaluate(() => window.__home.news)).toBe(0);
+      await page.locator("#conversation-new-no").click();
+      expect(await confirm.isHidden()).toBe(true);
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-new");
+      // From the keyboard: Enter opens it, Escape keeps the conversation.
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-new-no");
+      await page.keyboard.press("Escape");
+      expect(await confirm.isHidden()).toBe(true);
+      expect(await page.evaluate(() => [window.__home.news, document.activeElement?.id])).toEqual([0, "conversation-new"]);
+      // Start a new conversation: once, and the composer has the focus as before.
+      await page.locator("#conversation-new").click();
+      await page.locator("#conversation-new-yes").click();
+      await expect.poll(() => page.evaluate(() => window.__home.news)).toBe(1);
+      await expect.poll(() => page.locator("#conversation > li").count()).toBe(0);
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-message");
+      // Nothing to clear: no question.
+      await page.locator("#conversation-new").click();
+      await expect.poll(() => page.evaluate(() => window.__home.news)).toBe(2);
+      expect(await confirm.isHidden()).toBe(true);
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
