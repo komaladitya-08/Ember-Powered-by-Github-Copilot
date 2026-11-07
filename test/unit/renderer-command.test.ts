@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import type { ITerminalOptions } from "@xterm/xterm";
 import { INERT_LINKS, TERM_FONT_PX, XTERM_OPTIONS, termFontSize, terminalOptions, textScaleOf } from "../../app/renderer/command/terminal-options";
-import { applyTextScale, fitTerminal, inputAtGrid, termChromePx } from "../../app/renderer/command/terminal-size";
+import { applyTextScale, defaultFit, fitTerminal, inputAtGrid, termChromePx } from "../../app/renderer/command/terminal-size";
 import { cellSize, createRunTerminal, type TerminalCtor } from "../../app/renderer/command/terminal";
 import {
   INITIAL_MODEL, MAX_PENDING_LINES, sameAnnouncement, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
@@ -281,6 +281,15 @@ describe("a new run's size at each text size", () => {
     // Never below 20 x 5 or above 500 x 200.
     expect(fitTerminal({ width: 8, height: 18 }, 100, 40)).toEqual({ cols: 20, rows: 5 });
     expect(fitTerminal({ width: 1, height: 1 }, 10_000, 10_000)).toEqual({ cols: 500, rows: 200 });
+  });
+
+  it("starts the first run of a session at what fits the window it opens in, before its page has said (commands-remote-1)", () => {
+    // Main's guess for the window it is about to make, at each text size: what the page then measures and reports.
+    for (const m of MEASURED) expect(defaultFit(m.scale), String(m.scale)).toEqual(m.fit);
+    // A scale it can't use is the default's.
+    for (const bad of [Number.NaN, 0, 3]) expect(defaultFit(bad), String(bad)).toEqual(MEASURED[0].fit);
+    // The window it guesses for is the one main opens (windows.ts's createCommandWindow).
+    expect(readFileSync(new URL("../../app/main/windows.ts", import.meta.url), "utf8")).toContain("forText({ width: 760, height: 480, ...COMMAND_MIN })");
   });
 
   it("is what the page reports to main, from the cell measured at the text size", () => {

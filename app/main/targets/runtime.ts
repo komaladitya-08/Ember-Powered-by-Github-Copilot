@@ -38,6 +38,7 @@ import type { CommandCapability, CommandRunner, CommandService, CommandWindowPor
 import { createCommandWindowPort } from "../commands/window";
 import { isTerminalWindowApp } from "../hands/system";
 import type { Logger } from "../logger";
+import { textScale } from "../page-prefs";
 import type { QuickContext } from "../perception";
 import type { PlatformDoctorRow, SystemPlatform } from "../platform/types";
 import { PolicyEngine } from "../policy/policy";
@@ -532,6 +533,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const screenReader = (): boolean => deps.sys.a11y.screenReaderOn();
   const commandWindow = parts.commandWindow({
     create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint, screenReader,
+    textScale: () => textScale(settings.get().textSize),
     ...(deps.stopKey ? { stopKey: () => deps.stopKey!() } : {}),
   });
   // `notify`: a card that takes typing whose window didn't get the keyboard says so (review #235).

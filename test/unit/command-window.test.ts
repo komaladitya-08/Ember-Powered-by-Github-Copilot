@@ -111,7 +111,7 @@ class FakeRun implements RunningCommand {
   finish(e: Partial<RunExit> = {}) { this.end({ code: 0, signal: null, ended: "exit", ms: 3200, ...e }); }
 }
 
-function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null } = {}) {
+function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null; textScale?: () => number } = {}) {
   const ipc = new FakeIpc();
   const windows: FakeWindow[] = [];
   const ctl = createCommandWindowController({
@@ -119,6 +119,7 @@ function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean;
     ipc, log, os: "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
     ...(o.screenReader ? { screenReader: o.screenReader } : {}),
     ...(o.stopKey ? { stopKey: o.stopKey } : {}),
+    ...(o.textScale ? { textScale: o.textScale } : {}),
   });
   const win = () => windows[windows.length - 1];
   const page = () => win().webContents;
@@ -151,7 +152,7 @@ describe("the command window's sender checks", () => {
     expect(answers).toEqual([]);
     expect(run.inputs).toEqual([]);
     expect(run.stops).toEqual([]);
-    expect(ctl.termSize()).toEqual({ cols: 100, rows: 30 });
+    expect(ctl.termSize()).toEqual({ cols: 90, rows: 12 });
     expect(logs.filter(l => l.msg === "commands.ipc_refused").map(l => (l.fields as { channel: string }).channel).sort())
       .toEqual([COMMANDS_IPC.answer, COMMANDS_IPC.cardSeen, COMMANDS_IPC.input, COMMANDS_EXTRA_IPC.size, COMMANDS_IPC.state, COMMANDS_IPC.stop].sort());
     // From its own page: each one counts.
@@ -595,6 +596,26 @@ describe("a run's tab", () => {
     expect(ids).toContain(runs[0].runId);
     expect(ids).toContain(runs[1].runId);
     expect(ids[0]).toBe(runs[runs.length - 1].runId);
+  });
+
+  it("starts the first run of a session at what fits the window, not 100x30, before the page has said (commands-remote-1)", () => {
+    // Nothing made yet: the first ordinary command reads the size, then attach() makes the window.
+    const { ipc, ctl, page } = setup();
+    expect(ctl.termSize()).toEqual({ cols: 90, rows: 12 });
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card({ mode: "run" }), run);
+    expect(page().last().tabs[0]).toMatchObject({ cols: 90, rows: 12 });
+    // Once the page measures, its fit wins.
+    ipc.send(COMMANDS_EXTRA_IPC.size, page(), { cols: 88, rows: 11 });
+    expect(ctl.termSize()).toEqual({ cols: 88, rows: 11 });
+    // At Larger text the window main opens is larger, and so is its fit.
+    let scale = 1.3;
+    const larger = setup({ textScale: () => scale });
+    expect(larger.ctl.termSize()).toEqual({ cols: 91, rows: 13 });
+    scale = 1.15;
+    expect(larger.ctl.termSize()).toEqual({ cols: 91, rows: 12 });
+    // A scale that can't be read is the default's.
+    expect(setup({ textScale: () => { throw new Error("no settings"); } }).ctl.termSize()).toEqual({ cols: 90, rows: 12 });
   });
 
   it("shows a note while running (a distro starting) and the size the page said fits", () => {

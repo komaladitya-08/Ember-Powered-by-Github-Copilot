@@ -227,6 +227,13 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     fs.writeFileSync(path.join(w.work, "build", "out.o"), "x");
   });
 
+  it("starts the session's first ordinary command at what fits its window, before the page has said (commands-remote-1)", async () => {
+    // No page has reported a size yet (this fake page never does): the run gets the fit of the window main opens.
+    const { result } = await run("stty size", "");
+    expect(result.resultType).toBe("success");
+    expect(result.textResultForLlm).toMatch(/\b12 90\b/);
+  }, 20_000);
+
   it("runs an ordinary command without asking, in Ember's command window, and returns its output as untrusted data", async () => {
     const { result } = await run("ls build && echo zq9-$((40+2))", "");
     expect(w.cards).toEqual([]);
