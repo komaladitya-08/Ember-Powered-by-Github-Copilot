@@ -1,6 +1,7 @@
 /** The Sign out and Forget everything questions say exactly what goes, with live counts. */
 import { describe, expect, it } from "vitest";
 import { forgetEverythingScope, signOutScope } from "../../app/renderer/home/copy";
+import { factsCount } from "../../app/renderer/home/forget-confirm";
 
 describe("Sign out and Forget everything copy", () => {
   it("tells the user Sign out stops tasks and clears conversation, facts, reminders and routines, with counts", () => {
@@ -21,5 +22,19 @@ describe("Sign out and Forget everything copy", () => {
     expect(t).not.toContain("0 saved facts");
     expect(t).toContain("unknown, not zero");
     expect(forgetEverythingScope({ tasks: 0, facts: null, reminders: 0, routines: 0 })).toContain("removes an unknown number of saved facts");
+  });
+  it("says saved memory Ember can't match to this account stays, rather than promising to clear it (memory-11)", () => {
+    const t = signOutScope({ tasks: 0, facts: null, reminders: 1, routines: 0, kept: true });
+    expect(t).toBe("Sign out? This stops 0 tasks that are running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), 1 reminder and 0 routines. Saved memory Ember can't match to this account stays on this computer; Forget everything in Memory removes it.");
+    expect(t).not.toContain("unknown");
+  });
+  it("counts kept memory only from a view that says sign-out leaves it (memory-11)", () => {
+    expect(factsCount({ rows: [], ownership: "locked", erasesOnSignOut: false })).toEqual({ state: "kept" });
+    expect(factsCount({ rows: [], ownership: "waiting", erasesOnSignOut: false })).toEqual({ state: "known", n: 0 });
+    // Verified earlier in this run and reconnecting: sign-out still erases it, so it stays an unknown count.
+    expect(factsCount({ rows: [], ownership: "locked", erasesOnSignOut: true })).toEqual({ state: "unknown" });
+    expect(factsCount({ rows: [{ id: "f1", text: "x", source: "user", at: "2026-11-07" }], ownership: "ready", erasesOnSignOut: true })).toEqual({ state: "known", n: 1 });
+    expect(factsCount({ rows: [], ownership: "locked" })).toEqual({ state: "unknown" });
+    expect(factsCount(null)).toEqual({ state: "unknown" });
   });
 });

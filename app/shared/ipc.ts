@@ -29,8 +29,11 @@ export interface ProjectWorkspaceReply {
 export const MEMORY_UNDO_MS = 60_000;
 /** What one Forget removed: the fact's words, how many of Ember's notes went with it, and Undo's token (memory-7). */
 export interface MemoryForgotten { text: string; derived: number; undo: string }
-/** `reason`: why memory isn't open, so Home says it truthfully (memory-2); absent from an older main. */
-export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null }
+/**
+ * `reason`: why memory isn't open, so Home says it truthfully (memory-2); `erasesOnSignOut`: whether Sign out erases
+ * what is saved (only memory verified as this account's in this run: memory-11). Both absent from an older main.
+ */
+export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null; erasesOnSignOut?: boolean }
 import type { HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";

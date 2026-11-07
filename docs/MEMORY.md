@@ -137,7 +137,10 @@ download, so English-only MiniLM is the trade-off for now.
   conductor or a worker legitimately.
 - **The user's to see and change.** Settings gets a Memory section: what Ember knows, grouped by entity, with
   per-fact forget and "Forget everything". Saying "forget that" in conversation works too. Sign-out erases the
-  verified account's memory along with the conversation.
+  verified account's memory along with the conversation. Memory Ember couldn't verify as this account's in this run
+  stays, and the Sign out question says so ("Saved memory Ember can't match to this account stays on this computer;
+  Forget everything in Memory removes it."). When another account signs in and Ember erases the previous one's
+  memory, the new conversation starts by saying so.
 - **Deletion failures.** Forget and Forget everything acknowledge deletion only after the memory and vector writes
   succeed. A filesystem failure leaves the facts listed with a retryable error; some derived files may already have
   been removed. Sign-out still disconnects credentials and reports the deletion failure. A failed account-boundary

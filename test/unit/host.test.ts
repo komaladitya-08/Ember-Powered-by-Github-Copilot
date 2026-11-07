@@ -100,7 +100,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
@@ -3770,6 +3770,23 @@ describe("memory erasure at account boundaries", () => {
       sim.auth = async () => { throw new Error("getaddrinfo ENOTFOUND api.github.com"); };
       expect(await host.start(TOKEN, "stored")).toBe("error");
       expect(why.at(-1)).toBe("pause:unverified");
+    } finally { await host.stop(); }
+  });
+  it("says in the conversation when another account signing in made Ember forget the previous one's memory (memory-11)", async () => {
+    let erased = true;
+    const memory = { ...failingMemory(), forgetAll: vi.fn((): boolean => erased) };
+    const { host } = makeHost({ memory });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      sim.auth = async () => ({ isAuthenticated: true, login: "other" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(host.getTranscript().map(e => [e.who, e.text])).toEqual([["ember", ACCOUNT_CHANGED_FORGOT]]);
+      expect(ACCOUNT_CHANGED_FORGOT).toBe("You're signed in to another GitHub account now, so I've forgotten the previous account's memory, reminders and routines.");
+      // Memory never verified as the previous account's wasn't erased (Memory says it is another account's): no line.
+      erased = false;
+      sim.auth = async () => ({ isAuthenticated: true, login: "third" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(host.getTranscript()).toEqual([]);
     } finally { await host.stop(); }
   });
   it("keeps memory when a verified account changes its login", async () => {

@@ -1090,8 +1090,11 @@ export const REMINDER_WORDS = {
   deleteFailed: "Couldn't delete the routines and reminders. Try again.", loadFailed: "Couldn't load reminders. Try Refresh list again.",
 } as const;
 
-/** What is in Ember right now, counted while a Sign out or Forget everything question is open; null is "couldn't tell". */
-export interface ForgetCounts { tasks: number | null; facts: number | null; reminders: number | null; routines: number | null }
+/**
+ * What is in Ember right now, counted while a Sign out or Forget everything question is open; null is "couldn't tell".
+ * `kept`: saved memory Ember can't match to this account, which Sign out leaves on the computer (memory-11).
+ */
+export interface ForgetCounts { tasks: number | null; facts: number | null; reminders: number | null; routines: number | null; kept?: boolean }
 
 /** Said while the counts are still being read. */
 export const FORGET_LOADING = "Checking what this affects…";
@@ -1100,10 +1103,18 @@ const plural = (n: number | null, one: string, many: string) => n === null ? `an
 const isAre = (n: number | null) => n === 1 ? "is" : "are";
 /** Added when any count is unknown, so a missing number is never read as none. */
 const UNKNOWN_NOTE = " Ember couldn't count everything right now, so those numbers are unknown, not zero.";
-const hasUnknown = (c: ForgetCounts) => Object.values(c).some(n => n === null);
+const hasUnknown = (c: ForgetCounts) => [c.tasks, c.facts, c.reminders, c.routines].some(n => n === null);
 
-/** The question for Sign out: it clears all four, and the counts are today's. */
+/**
+ * The question for Sign out: it clears all four, and the counts are today's. Saved memory Ember can't match to this
+ * account (`kept`) isn't cleared, and the question says so and how to remove it (memory-11).
+ */
 export function signOutScope(c: ForgetCounts): string {
+  if (c.kept) {
+    return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), `
+      + `${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}. Saved memory Ember can't match to this account stays on this computer; Forget everything in Memory removes it.`
+      + (hasUnknown({ ...c, facts: 0 }) ? UNKNOWN_NOTE : "");
+  }
   return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), `
     + `${plural(c.facts, "saved fact", "saved facts")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");

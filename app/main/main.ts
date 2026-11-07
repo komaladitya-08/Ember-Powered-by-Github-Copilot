@@ -1447,7 +1447,7 @@ function start(): void {
   });
   const memoryView = () => ({
     rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
-    ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason,
+    ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
   });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
@@ -1518,13 +1518,15 @@ function start(): void {
   /** The host's memory: the conductor's tools through `learning`, its model calls, finished tasks and its own requests. */
   const hostMemory = {
     ...learning.conductorMemory(),
+    // True when it erased memory (the host says so after an account change: memory-11); unverified memory stays.
     forgetAll: () => {
-      if (!memoryOwner.mayEraseOnSignOut) return;
+      if (!memoryOwner.mayEraseOnSignOut) return false;
       learning.forgetAll();
       memoryOwner.clear();
       memoryOwner.pause();
       memoryEpoch++;
       publishMemoryOwner();
+      return true;
     },
     resolveAccountId: (token: string, login: string) => githubMemoryAccount((url, init) => net.fetch(url, init), token, login),
     verifyAccount: (id: number | null, why?: MemoryWait) => { memoryEpoch++; memoryOwner.verify(id, memoryConfigured(), why); publishMemoryOwner(); },

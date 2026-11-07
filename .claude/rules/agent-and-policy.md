@@ -268,7 +268,10 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   - every change to the graph tells Better recall (`semantic.changed()`: `remember`, `learn`, `refine`, a reopen), and
     the recall tool goes through `MemoryService.context()` for its matches by meaning; `forRequest` awaits it.
 - **Changing memory's note** (`MEMORY_CONSENT_TEXT`) means bumping `FEATURE_CONSENT_VERSION.memory` (now 2).
-- **Sign-out and an account change call `forgetAll()`**, which erases the file too.
+- **Sign-out and an account change call `forgetAll()`**, which erases the file too, but only memory verified as this
+  account's in this run (`mayEraseOnSignOut`; it returns whether it erased). Sign out's question says unverified
+  memory stays (`erasesOnSignOut` in the view, `kept`), and an account change that erased memory says so in the new
+  conversation (`ACCOUNT_CHANGED_FORGOT`).
 - **Saying why memory is closed.** The host tells `MemoryOwner` why it has no account (`pauseAccount(why)`,
   `verifyAccount(null, why)`: `checking`, `signed-out`, `own-provider`, `org-provider`, `unverified`), and the owner
   adds `other-account` or `unowned` for data it can't open (`MemoryOwner.reason`, in every `MemoryView`). Home and

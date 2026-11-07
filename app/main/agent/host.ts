@@ -190,7 +190,8 @@ export interface HostOptions {
    * know me" and its answers, the answer to Ember's own question, "forget that"): the reply to say, or null.
    */
   memory?: ConductorMemory & {
-    forgetAll(): void;
+    /** Erases what memory keeps; true when it did (memory never verified as this account's stays: memory-11). */
+    forgetAll(): void | boolean;
     resolveAccountId?(token: string, login: string): Promise<number | null>;
     /** `why`: what keeps the account unknown when `id` is null (memory-2: Home says it, rather than "verify its owner"). */
     verifyAccount?(id: number | null, why?: MemoryWait): void;
@@ -573,6 +574,9 @@ export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?
 }
 
 /** The bubble's title when Ember can't take a request, by why (the status' detail says the rest). */
+/** What the conversation says after another GitHub account signed in and Ember erased the previous one's memory (memory-11). */
+export const ACCOUNT_CHANGED_FORGOT = "You're signed in to another GitHub account now, so I've forgotten the previous account's memory, reminders and routines.";
+
 export const NOTICE_TITLE: Record<AgentReason | "signed-out", string> = {
   "signed-out": "I need Copilot first",
   "sign-in": "Copilot didn't accept the sign-in",
@@ -2858,19 +2862,23 @@ export class AgentHost {
     this.terminalRefused.clear();
     this.o.onTranscript?.([]);
     // What Ember remembered was about the account before, its person: none of it carries over.
-    if (eraseKept) this.forgetKept();
+    const erased = eraseKept && this.forgetKept();
     // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one.
     this.finishedLately = [];
     this.o.onAccountChanged?.();
+    // Never without a word: the new account's conversation starts by saying what went (memory-11).
+    if (erased) this.remember("ember", ACCOUNT_CHANGED_FORGOT);
   }
 
   /**
-   * Forgets personal memory before another account may use it. Main still disconnects credentials on failure.
+   * Forgets personal memory before another account may use it. Main still disconnects credentials on failure. True
+   * when memory was erased (memory not verified as the previous account's stays on the computer).
    */
-  private forgetKept(): void {
+  private forgetKept(): boolean {
     let failure: Error | undefined;
+    let erased = false;
     try {
-      this.o.memory?.forgetAll();
+      erased = this.o.memory?.forgetAll() === true;
       this.memoryDeletionPending = false;
     } catch (err) {
       this.memoryDeletionPending = true;
@@ -2880,6 +2888,7 @@ export class AgentHost {
     this.reminders.clear();
     try { this.o.routines?.forgetAll(); } catch (err) { this.o.log.warn("agent.routines_not_forgotten", { err: err instanceof Error ? err.message : String(err) }); }
     if (failure) throw failure;
+    return erased;
   }
 
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
