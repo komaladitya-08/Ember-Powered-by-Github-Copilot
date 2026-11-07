@@ -1195,7 +1195,15 @@ export function forgetEverythingScope(c: ForgetCounts): string {
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 
-/** Bulk deletion always names both visible record types and includes saved reminders in its scope. */
+/**
+ * Bulk deletion names what it deletes, each count with its own plural and none that is zero (integrations-10), and
+ * includes saved reminders in its scope.
+ */
 export function reminderDeleteScope(routines: number, reminders: number): string {
-  return `Delete all ${routines} routines and ${reminders} waiting reminders? This removes saved reminders too.`;
+  const count = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
+  const parts = [...(routines > 0 ? [["routine", routines] as const] : []), ...(reminders > 0 ? [["waiting reminder", reminders] as const] : [])];
+  if (!parts.length) return "Delete your saved reminders?";
+  const what = parts.length === 2 ? `Delete ${count(parts[0][1], parts[0][0])} and ${count(parts[1][1], parts[1][0])}?`
+    : parts[0][1] === 1 ? `Delete your ${parts[0][0]}?` : `Delete all ${count(parts[0][1], parts[0][0])}?`;
+  return `${what} This removes saved reminders too.`;
 }

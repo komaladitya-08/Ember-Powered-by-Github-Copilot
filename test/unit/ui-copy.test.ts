@@ -24,7 +24,7 @@ import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal } from "../../app/main/agent/composer-refusal";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerCardShown, providerConsentText, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerCardShown, providerConsentText, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -1048,5 +1048,15 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.conversationNewQuestion(1, false)).toBe("Start a new conversation? This clears the message here.");
     expect(conv.conversationNewQuestion(12, false)).toBe("Start a new conversation? This clears the 12 messages here.");
     expect(conv.conversationNewQuestion(12, true)).toBe("Start a new conversation? This clears the 12 messages here and deletes the copy saved on this computer.");
+  });
+
+  it("names what deleting all routines and reminders deletes, with each plural right and no count of zero (integrations-10)", () => {
+    expect(reminderDeleteScope(1, 0)).toBe("Delete your routine? This removes saved reminders too.");
+    expect(reminderDeleteScope(3, 0)).toBe("Delete all 3 routines? This removes saved reminders too.");
+    expect(reminderDeleteScope(0, 1)).toBe("Delete your waiting reminder? This removes saved reminders too.");
+    expect(reminderDeleteScope(0, 2)).toBe("Delete all 2 waiting reminders? This removes saved reminders too.");
+    expect(reminderDeleteScope(2, 1)).toBe("Delete 2 routines and 1 waiting reminder? This removes saved reminders too.");
+    expect(reminderDeleteScope(1, 1)).toBe("Delete 1 routine and 1 waiting reminder? This removes saved reminders too.");
+    expect(reminderDeleteScope(0, 0)).toBe("Delete your saved reminders?");
   });
 });
