@@ -661,8 +661,65 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
   return findings.some(f => {
     const row = rowOf(f, findings);
     const objectNamed = f.objects.length === 0 || f.objects.some(o => (o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0)));
+    // A program and its subcommand named in full ("run npm ci", "docker push it"): the user asked for it (commands-remote-v2).
+    if (subcommandNamed(f, w)) return true;
     if (row) return hasVerb(w.list, ROW_VERBS[row] ?? []) && objectNamed;
     const program = f.program.split(" ").pop() ?? "";
     return (program !== "" && (w.list.includes(program.toLowerCase()) || nameNamed(program, w.raw))) || (f.objects.length > 0 && objectNamed);
+  });
+}
+
+/** Whether the words name a finding's program with its subcommand, in full and in order ("npm ci", "git push"). */
+function subcommandNamed(f: Finding, w: Words): boolean {
+  const parts = userWordList(f.program);
+  return parts.length >= 2 && hasWord(w.list, [parts.join(" ")]);
+}
+
+/**
+ * The verbs that say what kind of step a finding is, for its card's line only (never for announcing): each row's own
+ * verbs without the everyday ones ("update", "save", "open", "stop" and the like), and those of a few findings without
+ * a row. A dangerous step named this way but not exactly ("push my changes" for `git push origin main`) says
+ * LINES.inexact, not "You didn't ask for this." (commands-remote-v2).
+ */
+const KIND_VERBS: Readonly<Record<string, readonly string[]>> = {
+  "git.push": ["push"],
+  "git.push.force": ["push", "force push"],
+  "git.branch.delete": ["delete", "remove"],
+  "git.reset.hard": ["reset", "discard", "throw away"],
+  "git.discard": ["discard", "revert", "undo", "throw away", "restore"],
+  "git.clean": ["clean"],
+  "git.stash.drop": ["drop"],
+  "delete.paths": ROW_VERBS["delete.paths"],
+  "overwrite.file": ["overwrite", "replace"],
+  "p4.submit": ["submit"],
+  "p4.shelve": ["shelve"],
+  "p4.revert": ["revert", "discard", "undo"],
+  "gh.pr.merge": ["merge"],
+  "pkg.publish": ["publish", "release"],
+  "docker.push": ["push"],
+  "pkg.install": ["install", "reinstall", "uninstall", "upgrade"],
+  "service.restart": ["restart", "reload"],
+  "upload.host": ["upload", "sync", "transfer"],
+  "kill.process": ["kill"],
+};
+/** Kind verbs by a finding's own rule: a copy or a move that replaces a file, and find's deleting. */
+const RULE_KIND_VERBS: Readonly<Record<string, readonly string[]>> = {
+  "posix.cp": ["copy"],
+  "ps.Copy-Item": ["copy"],
+  "posix.mv": ["move", "rename"],
+  "ps.Move-Item": ["move", "rename"],
+  "posix.find.delete": ROW_VERBS["delete.paths"],
+};
+
+/**
+ * Whether the user's words, though they don't name any of these findings (mentioned), ask for that kind of step: one of
+ * its kind's verbs (KIND_VERBS). Only the card's words follow from it; the decision doesn't.
+ */
+export function namedKind(findings: readonly Finding[], userWords: string): boolean {
+  if (!userWords || userWords.trim() === "") return false;
+  const w = wordsOf(userWords);
+  return findings.some(f => {
+    const row = rowOf(f, findings);
+    return hasVerb(w.list, [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])]);
   });
 }

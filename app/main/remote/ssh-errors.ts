@@ -31,7 +31,7 @@ export function cleanLine(s: string, max = 200): string {
 export function installSsh(os?: OS): string {
   if (os === "win32") return "Install the OpenSSH Client in Settings › Apps › Optional features, then try again.";
   if (os === "darwin") return "macOS comes with SSH at /usr/bin/ssh, but Ember can't run it there. Check that it's there, then try again.";
-  if (os === "linux") return "Install OpenSSH with: sudo dnf install openssh-clients";
+  if (os === "linux") return "Install OpenSSH with sudo dnf install openssh-clients, then try again.";
   return "Install OpenSSH (on Linux: sudo dnf install openssh-clients; on Windows: Settings › Apps › Optional features › OpenSSH Client), then try again.";
 }
 

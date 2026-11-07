@@ -680,7 +680,7 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
     expect(MAIN).toContain('if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");');
     expect(MAIN).toContain('personal.forgetVoice();\n    // A task\'s voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).\n    voiceTrust.endAll("voice-changed");');
     expect(MAIN).toContain("...(voice ? { natural: voice.naturalStatus } : {}),");
-    expect(MAIN).toContain("enrolling, learnt: voiceprints.learnt().clips },");
+    expect(MAIN).toContain("enrolling, learnt: voiceprints.learnt().clips, ...(enrolEnded ? { ended: enrolEnded } : {}) },");
   });
   it("holds learning while a question Voice Match locked is up (review of #145)", () => {
     expect(MAIN).toContain("locked: confirmer?.voiceLocked ?? false");

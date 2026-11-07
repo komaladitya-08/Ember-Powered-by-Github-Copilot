@@ -571,3 +571,116 @@ describe("review round 4: how tasks end", () => {
     vi.useRealTimers();
   });
 });
+
+describe("a task whose question went unanswered while the user was away (tasks-approvals-4)", () => {
+  const EXPIRED: WorkerResult = { success: false, stopped: true, expired: true, summary: "My question ran out of time with no answer, so I didn't do it." };
+  const manager = (makeWorker: ConstructorParameters<typeof TaskManager>[0]["makeWorker"], extra = {}) => {
+    const cards: TaskCard[][] = [];
+    const tm = new TaskManager({ log: quiet, makeWorker, currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0, cardMs: 100, failureCardMs: 1000, ...extra });
+    return { tm, cards };
+  };
+
+  it("keeps its card as long as a failure's and offers Try again, which asks with the user's own words again (tasks-approvals-4)", async () => {
+    vi.useFakeTimers();
+    try {
+      const specs: { goal: string; userWords?: string }[] = [];
+      const { tm, cards } = manager(spec => { specs.push(spec); return fakeWorker(async () => EXPIRED); });
+      const t = tm.start("Send the Q3 report to Priya", { userWords: "send the Q3 report to Priya" });
+      await vi.advanceTimersByTimeAsync(10);
+      // Calm, as a stop is (no failure face), but said for what it was.
+      expect(t.status).toBe("cancelled");
+      expect(t.endedBy).toBe("expired");
+      expect(cards.at(-1)?.[0]).toMatchObject({ status: "stopped", detail: EXPIRED.summary, actions: [{ id: `task:${t.id}:retry`, label: "Try again" }, { id: `task:${t.id}:dismiss`, label: "Close" }] });
+      expect(tm.canRetry(t.id)).toBe(true);
+      // Still there well after a stopped card's time: the user coming back can see what happened.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(tm.get(t.id)).toBeDefined();
+      const again = tm.retry(t.id);
+      expect(again).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(specs.map(s => s.userWords)).toEqual(["send the Q3 report to Priya", "send the Q3 report to Priya"]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("offers no Try again after “Not now”, a Stop or the mouse taken back: those were the user's own choice (tasks-approvals-4)", async () => {
+    vi.useFakeTimers();
+    try {
+      const results: WorkerResult[] = [
+        { success: false, stopped: true, declined: true, summary: "You said not now, so I left it." },
+        { success: false, stopped: true, tookOver: true, summary: "You took the mouse back." },
+      ];
+      let n = 0;
+      const { tm, cards } = manager(() => { const r = results[n++]; return fakeWorker(async () => r); });
+      const declined = tm.start("a"), tookOver = tm.start("b");
+      await vi.advanceTimersByTimeAsync(10);
+      expect([declined.endedBy, tookOver.endedBy]).toEqual(["declined", "took-over"]);
+      expect([declined, tookOver].map(t => tm.canRetry(t.id))).toEqual([false, false]);
+      expect(cards.at(-1)?.map(c => c.actions?.map(a => a.label))).toEqual([["Close"], ["Close"]]);
+      const stopped = manager(() => fakeWorker(signal => new Promise(resolve => signal.addEventListener("abort", () => resolve(EXPIRED)))));
+      const s = stopped.tm.start("c");
+      await vi.advanceTimersByTimeAsync(10);
+      stopped.tm.cancel(s.id);
+      await vi.advanceTimersByTimeAsync(10);
+      // Stopped by the user while it waited: a Stop, whatever the worker said.
+      expect([s.status, s.endedBy, stopped.tm.canRetry(s.id)]).toEqual(["cancelled", "stop", false]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("is notified while the user is away, as a task that couldn't finish is, but a task they stopped isn't (tasks-approvals-4)", async () => {
+    const { taskNotice } = await import("../../app/main/agent/tasks");
+    expect(taskNotice({ title: "Send the report", status: "cancelled", endedBy: "expired", summary: EXPIRED.summary }))
+      .toEqual({ title: "Ember couldn't finish: Send the report", body: EXPIRED.summary });
+    expect(taskNotice({ title: "Send the report", status: "failed", summary: "It broke." })).toEqual({ title: "Ember couldn't finish: Send the report", body: "It broke." });
+    expect(taskNotice({ title: "Send the report", status: "done", summary: "Sent." })).toEqual({ title: "Ember finished: Send the report", body: "Sent." });
+    for (const endedBy of ["declined", "took-over", "stop", undefined] as const) {
+      expect(taskNotice({ title: "Send the report", status: "cancelled", ...(endedBy ? { endedBy } : {}), summary: "Stopped." })).toBeNull();
+    }
+  });
+});
+
+describe("how a finished task is worded (tasks-approvals-9)", () => {
+  it("says it the card's way in the conversation, speech and notifications: “didn't finish”, never “failed”", async () => {
+    const { taskOutcome, statusWord } = await import("../../app/main/agent/tasks");
+    const { STATUS_WORDS } = await import("../../app/shared/activity");
+    expect(taskOutcome({ title: "Open LibreOffice Writer", status: "failed", result: { success: false, summary: "I stopped after 150 steps without finishing, to be safe." } }))
+      .toBe("Open LibreOffice Writer: didn't finish. I stopped after 150 steps without finishing, to be safe.");
+    expect(statusWord("failed")).toBe(STATUS_WORDS.failed.toLowerCase());
+    expect(statusWord("done")).toBe(STATUS_WORDS.done.toLowerCase());
+    expect(statusWord("cancelled")).toBe(STATUS_WORDS.stopped.toLowerCase());
+  });
+});
+
+describe("a task its step or time limit stopped (tasks-approvals-3)", () => {
+  const LIMIT: WorkerResult = { success: false, summary: "I stopped after 150 steps without finishing, to be safe.", limit: true };
+  /** A worker that typed 3 times and read the window once (its activity, as its tools tell it), then ends as `result`. */
+  const working = (result: WorkerResult) => (_spec: unknown, _p: unknown, _u: unknown, activity?: (e: import("../../app/main/agent/activity").ActivityEvent) => void) => fakeWorker(async () => {
+    const steps: [string, string][] = [["1", "type_text"], ["2", "type_text"], ["3", "type_text"], ["4", "perceive_window"]];
+    for (const [id, tool] of steps) { activity?.({ type: "tool-start", id, tool }); activity?.({ type: "tool-end", id, ok: true }); }
+    return result;
+  });
+
+  it("says what it had done by then, from Ember's own count of its steps, never the model's words", async () => {
+    const tm = new TaskManager({ log: quiet, makeWorker: working(LIMIT) as never, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Add the rows", { userWords: "add these rows to the sheet" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(t.result?.summary).toBe("I stopped after 150 steps without finishing, to be safe. Before I stopped: typed text 3 times and read the window.");
+  });
+
+  it("tries again knowing an earlier try did part of it, with the user's words unchanged, so every question is asked again", async () => {
+    const specs: { goal: string; userWords?: string; partWay?: boolean }[] = [];
+    let n = 0;
+    const tm = new TaskManager({ log: quiet, makeWorker: ((spec: { goal: string; userWords?: string; partWay?: boolean }, ...rest: unknown[]) => { specs.push(spec); return n++ === 0 ? (working(LIMIT) as (...a: unknown[]) => unknown)(spec, ...rest) : fakeWorker(() => new Promise(() => undefined)); }) as never,
+      currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Add the rows", { userWords: "add these rows to the sheet" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(tm.retry(t.id)).not.toBeNull();
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    // Its first prompt says so; its goal, its card's title and the user's words stay as they were.
+    expect(specs[1]).toMatchObject({ goal: "Add the rows", userWords: "add these rows to the sheet", partWay: true });
+    expect(tm.list().at(-1)?.title).toBe("Add the rows");
+    const { taskPrompt } = await import("../../app/main/agent/worker");
+    expect(taskPrompt("Add the rows", true, "")).toBe("Task: Add the rows\n(An earlier try of this task stopped part-way: check what is already done before repeating anything.)");
+    expect(taskPrompt("Add the rows", false, "")).toBe("Task: Add the rows");
+    tm.cancelAll();
+  });
+});

@@ -69,3 +69,32 @@ describe("the Confirmer's deadline", () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe("a question that runs out of time (tasks-approvals-4)", () => {
+  it("leaves its note up long enough to be read on coming back, longer with More time to read and answer", async () => {
+    vi.useFakeTimers();
+    try {
+      let read = 1;
+      const settled: unknown[] = [];
+      const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, timeoutMs: 1000, answerMs: () => 1500 * read, expiredMs: () => 10_000 * read, afterAnswer: s => settled.push(s) });
+      const q = c.ask(Q);
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(q).resolves.toBeNull();
+      await vi.advanceTimersByTimeAsync(1600);
+      // A 1.5 s note was gone before anyone coming back to the computer could see it.
+      expect(settled).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(8500);
+      expect(settled).toHaveLength(1);
+      // With More time to read and answer, answers stay ten times as long, as the setting says bubbles do.
+      read = 10;
+      const q2 = c.ask(Q);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(c.answer("q2:once")).toBe(true);
+      await q2;
+      await vi.advanceTimersByTimeAsync(14_000);
+      expect(settled).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(settled).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+});

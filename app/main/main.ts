@@ -17,6 +17,7 @@ import { createLogger, logLevel } from "./logger";
 import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
+import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
@@ -25,7 +26,7 @@ import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refu
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply } from "../shared/ipc";
+import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -44,7 +45,7 @@ import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { VoiceService, electronDownloader, voicePermissions } from "./voice";
+import { VoiceService, electronDownloader, listenOnceInSettings, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { capiChoice, type BackendChoice } from "../voice/runtime";
@@ -54,7 +55,8 @@ import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine, isRiskyLabel } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
-import { Confirmer, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
+import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
+import { taskNotice } from "./agent/tasks";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
@@ -83,7 +85,7 @@ import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
 import { PersonalVoice } from "./personal/service";
 import { wordsStore } from "./personal/words-store";
-import { speaksAloud } from "../shared/speech";
+import { HEAR_SAMPLE, speakSettings, speaksAloud, speechSilenced } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform, switchArgs } from "./platform";
@@ -105,7 +107,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
-import { githubMemoryAccount, MemoryOwner } from "./memory/owner";
+import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
 import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
@@ -424,7 +426,19 @@ function start(): void {
     if (problem) log.warn("settings.hand_edit", { detail: problem });
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(IPC.settingsNotice, problem);
   });
-  app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
+  // The last run's marker still there: it ended unexpectedly (main crashed, was killed, the power went: rp-5). Home says
+  // so for this run, and the log says when it started; this run's own marker goes as it quits or the session ends.
+  const lastRun = previousRun(userData);
+  if (lastRun) log.warn("app.previous_run_ended", { startedAt: lastRun.startedAt, version: lastRun.version });
+  startRun(userData, { pid: process.pid, version: app.getVersion() });
+  let runEnded = false;
+  const endThisRun = (how: "quit" | "session-end") => {
+    if (runEnded) return;
+    runEnded = true;
+    if (how === "quit") log.info("app.quit", { how });
+    endRun(userData);
+  };
+  app.on("will-quit", () => { endThisRun("quit"); unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
   let projectFiles: string[] = [];
@@ -473,7 +487,8 @@ function start(): void {
     }
     home = createHomeWindow(platform.os);
     home.once("ready-to-show", () => log.info("window.home.shown"));
-    const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); };
+    // Teaching Voice Match needs the window that shows the phrase: closed or hidden, it ends (voice-listening-v1).
+    const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); endTeaching(); };
     // A crashed settings page comes back (it may be the consent page on first run).
     revive(home, reason => { cancelHomeListenOnce(); clearProject(); log.warn("window.home.renderer_gone", { reason }); });
     // While the user works in settings, Ember waits beside the window instead of over it.
@@ -488,6 +503,7 @@ function start(): void {
     win.on("minimize", hidden); win.on("hide", hidden); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
       cancelHomeListenOnce();
+      enrolEnded = undefined;
       clearProject();
       home = null;
       homeWantsLevel = false;
@@ -570,6 +586,7 @@ function start(): void {
     environment: await environmentNow(),
     logFile: log.file,
     settingsNotice,
+    unexpectedExit: lastRun ? { startedAt: lastRun.startedAt, version: lastRun.version } : null,
     admin: { source: admin.source, error: admin.error ?? null, ...(admin.held ? { held: true } : {}), managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
       confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: auditRetentionDays(admin),
       neverLook: policy.neverLook, commands: { local: commandMode(admin, "local"), wsl: commandMode(admin, "wsl"), ssh: commandMode(admin, "ssh") },
@@ -830,6 +847,8 @@ function start(): void {
       ...(settings.get().onboarded ? [] : [{ label: `${FINISH_SETUP}…`, click: () => { opens = true; showHome(); } }, { type: "separator" as const }]),
       // What the user was in was read before the handle took focus: looking again would find the handle.
       { ...keyed("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
+      // While Ember talks: only its voice stops, not its tasks (voice-speaking-5).
+      ...(voice?.speaking ? [{ label: "Stop speaking", click: () => stopSpeaking("menu") }] : []),
       { ...keyed("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
       // "Work on" (which computer requests go to), when there is more than this one.
       // An item that opens settings ("Bring Ember to a computer…") marks it before its click (targets/menu.ts).
@@ -1051,8 +1070,18 @@ function start(): void {
   const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
   /** The acknowledgement said for the answer now streaming (its first words don't say it again: afterAck). */
   let ackSaid: string | null = null;
+  /**
+   * Speaking turned off while Ember talks (Never chosen, the screen reader it spoke for gone): what it is saying stops
+   * now, not at the end of the answer (voice-speaking-4, WCAG 1.4.2). On every settings change, and before each
+   * sentence of an answer (a screen reader going says nothing to Ember). Whether Ember may speak now.
+   */
+  const silenceIfOff = (): boolean => {
+    const allowed = maySpeak();
+    if (speechSilenced(!!voice?.speaking, allowed)) { cancelAck(); voice?.hush(); }
+    return allowed;
+  };
   const sayStreamed = (chunks: string[]) => {
-    if (answerInterrupted || confirmer?.waiting || !maySpeak()) return;
+    if (answerInterrupted || confirmer?.waiting || !silenceIfOff()) return;
     for (const chunk of chunks) {
       const c = afterAck(chunk, ackSaid);
       ackSaid = null;
@@ -1095,6 +1124,15 @@ function start(): void {
     lastReply = "";
     voice?.hush();
   };
+  /**
+   * Stop speaking (the handle's menu, while Ember talks): its voice stops and the rest of this answer isn't said, as on
+   * a cut-in, while the answer's words and every task go on (voice-speaking-5). Stop everything stays the kill switch.
+   */
+  const stopSpeaking = (source: "menu") => {
+    log.info("voice.stop_speaking", { source });
+    if (agent?.answerOpen) agent.interruptAnswer();
+    resetAnswerSpeech();
+  };
   /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
   const pauseAnswerSpeech = () => {
     const spoken = lastAskByVoice, interrupted = answerInterrupted;
@@ -1135,6 +1173,8 @@ function start(): void {
     hasFocus: platform.keyboardHold ? (): boolean => !wsRef || (askXid !== 0 && wsRef.focusWindow()?.id === askXid) : undefined,
     onReveal: source => {
       log.info("ask.reveal", { source });
+      // A request is likely: Ember's voice loads meanwhile (voice-speaking-1).
+      if (maySpeak()) voice?.warmSpeech();
       // Counted where the tip shows, until it no longer does: a moment later, and saved a moment after that, so neither
       // the settings' listeners nor the file hold up the keyboard.
       if (platform.keyboardHold) return;
@@ -1227,6 +1267,8 @@ function start(): void {
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
+    // A typed "stop" while a task is at work stops everything at once, before any screen read (tasks-approvals-v2).
+    if (agent?.stopsNow(text)) return;
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); syncHandle(); }
     // A Stop while the screen is read (or the brain connects) drops the request.
@@ -1315,7 +1357,7 @@ function start(): void {
     { name: "memory", stop: () => { learningRef?.stopNow(); betterRecallRef?.semantic.stop(); } },
   ], log.child("killswitch"), () => audit);
   /** Ctrl+Alt+X, "Ember, stop", Stop in the handle's menu or in settings: everything stops at once. */
-  const stopEverything = (source: "hotkey" | "voice" | "menu" | "settings") => {
+  const stopEverything = (source: "hotkey" | "voice" | "typed" | "menu" | "settings") => {
     // An acknowledgement still waiting isn't said after a stop.
     resetAnswerSpeech();
     const pulled = killSwitch.pull(source);
@@ -1396,10 +1438,12 @@ function start(): void {
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
     if (confirmer?.waiting) return blocked("Answer Ember's question first.");
-    if (agent?.answerOpen) return blocked("Wait for Ember's answer to finish.");
-    const heard = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
+    const now = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
+    // An answer on its way: Listen once stops it first, as a wake does (requestListenOnce; voice-listening-7).
+    const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;
     // Without the speech models only Settings' Download helps: Ask offers the way there (companion-3).
-    return heard.phase === "blocked" && voice && !voice.modelsReady && !voice.isDownloading ? { ...heard, fix: "settings" } : heard;
+    const heard: ListenOnceStatus = answer.phase === "blocked" && voice && !voice.modelsReady && !voice.isDownloading ? { ...answer, fix: "settings" } : answer;
+    return source === "home" ? listenOnceInSettings(heard) : heard;
   };
   const clearManualCall = () => {
     const call = manualCall;
@@ -1411,13 +1455,14 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
+    ...(voice?.micLabel ? { micLabel: voice.micLabel } : {}),
     modelsReady: voice?.modelsReady ?? false,
     modelsMissing: (voice?.missingModels ?? VOICE_MODELS).map(m => m.id), modelsBytes: voice ? modelsBytes(voice.missingModels) : VOICE_MODELS_BYTES,
     ...(voice?.isDownloading ? { downloading: true } : {}),
     speechMissing: speechHeard === false,
     listenOnce: listenOnceStatus("home"),
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
-    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips },
+    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling, learnt: voiceprints.learnt().clips, ...(enrolEnded ? { ended: enrolEnded } : {}) },
     ...(voice ? { natural: voice.naturalStatus } : {}),
     ...(voice ? { clear: voice.clearStatus } : {}),
     naturalModels: availableNaturalModels,
@@ -1427,7 +1472,8 @@ function start(): void {
     const phase = voice?.listenOnceStatus.phase;
     if (manualCall && (phase === undefined || phase === "ready" || phase === "blocked")) clearManualCall();
     const ask = listenOnceStatus("ask");
-    const key = JSON.stringify([ask, listenOnceStatus("home")]);
+    // (The microphone's name too: Settings' voice line names it, and a headset plugged in changes it.)
+    const key = JSON.stringify([ask, listenOnceStatus("home"), voice?.micLabel ?? null]);
     if (key === lastListenStatus) return;
     lastListenStatus = key;
     askWindow.setListenOnce(ask);
@@ -1438,6 +1484,8 @@ function start(): void {
     if (!on) {
       if (manualCall?.source === source) voice?.cancelListenOnce();
     } else if (voice && listenOnceStatus(source).phase === "ready") {
+      // Ember answering or talking: the answer stops first, as on a wake (its tasks go on; VoiceService hushes the voice).
+      if (agent?.answerOpen) agent.interruptAnswer();
       // Home is Ember’s own window. Ask uses the desktop view taken before Ask took the keyboard.
       manualCall = { source, context: source === "ask" ? askContextRead : Promise.resolve(null) };
       if (!voice.listenOnce()) clearManualCall();
@@ -1454,12 +1502,14 @@ function start(): void {
   const memoryAllowed = () => policy.features.memory !== false;
   const memoryOwner = new MemoryOwner(userData);
   let memoryEpoch = 0;
+  /** Whose memory the epoch is for: a reconnect that finds the same account keeps it (memory-8). */
+  const memoryAccount = new MemoryEpochAccount();
   // Better recall (memory/better-recall.ts): matching by meaning once the user downloads its model in Settings › Memory,
   // in the "Ember memory" utility process, used only while memory is on.
   const memoryConfigured = () => consented() && memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
   const memoryOn = () => memoryOwner.ready && memoryConfigured();
   const betterRecall = new BetterRecall({
-    dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn,
+    dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn, memoryWanted: memoryConfigured,
     fork: () => {
       const p = utilityProcess.fork(path.join(__dirname, "memory-embed.cjs"), [], { serviceName: "Ember memory", stdio: "pipe" });
       p.stderr?.on("data", (d: Buffer) => log.debug("memory.process_stderr", { line: d.toString().slice(0, 300) }));
@@ -1478,7 +1528,7 @@ function start(): void {
   });
   const memoryView = () => ({
     rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
-    ownership: memoryOwner.state, epoch: memoryEpoch,
+    ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
   });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
@@ -1510,6 +1560,10 @@ function start(): void {
   const conversationNow = (entries: TranscriptEntry[] = agent?.getTranscript() ?? []) => withLearned(entries, learnedLines);
   const learning = new MemoryLearning({
     memory, inForce: memoryOn, managed: () => !memoryAllowed(),
+    // "Spoken aloud or not" in the spoken interview is Ember's real speaking choice (memory-5).
+    setSpoken: on => { try { settings.update(speakSettings(on ? "always" : "never")); } catch (err) { log.warn("memory.spoken_not_saved", { err }); } },
+    // On and agreed to, but its owner isn't verified: Ember says why rather than asking to turn memory on (memory-2).
+    paused: () => (memoryConfigured() && !memoryOwner.ready ? memoryOwner.reason ?? "checking" : null),
     questionsOn: () => settings.get().memory.questions,
     askedAt: () => settings.get().memory.askedAt,
     setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
@@ -1534,6 +1588,12 @@ function start(): void {
       learnedLines = learnedLines.filter(l => l.fact !== id);
       if (learnedLines.length !== before) broadcast(IPC.conversationChanged, conversationNow());
     },
+    // forget_memory forgot what the user asked: the conversation says so, in the fact's own words, with Undo (memory-v2).
+    onAskedForget: f => {
+      const t = new Date().toISOString();
+      learnedLines = [...learnedLines, { t, who: "learned" as const, text: f.text.slice(0, 400), forgot: f.undo }].slice(-30);
+      broadcast(IPC.conversationChanged, conversationNow());
+    },
     log: log.child("memory"),
   });
   learningRef = learning;
@@ -1541,17 +1601,19 @@ function start(): void {
   /** The host's memory: the conductor's tools through `learning`, its model calls, finished tasks and its own requests. */
   const hostMemory = {
     ...learning.conductorMemory(),
+    // True when it erased memory (the host says so after an account change: memory-11); unverified memory stays.
     forgetAll: () => {
-      if (!memoryOwner.mayEraseOnSignOut) return;
+      if (!memoryOwner.mayEraseOnSignOut) return false;
       learning.forgetAll();
       memoryOwner.clear();
       memoryOwner.pause();
       memoryEpoch++;
       publishMemoryOwner();
+      return true;
     },
     resolveAccountId: (token: string, login: string) => githubMemoryAccount((url, init) => net.fetch(url, init), token, login),
-    verifyAccount: (id: number | null) => { memoryEpoch++; memoryOwner.verify(id, memoryConfigured()); publishMemoryOwner(); },
-    pauseAccount: () => { memoryEpoch++; memoryOwner.pause(); publishMemoryOwner(); },
+    verifyAccount: (id: number | null, why?: MemoryWait) => { if (memoryAccount.verified(id, why)) memoryEpoch++; memoryOwner.verify(id, memoryConfigured(), why); publishMemoryOwner(); },
+    pauseAccount: (why?: MemoryWait) => { if (memoryAccount.paused(why)) memoryEpoch++; memoryOwner.pause(why); publishMemoryOwner(); },
     accountReady: memoryOn,
     useModel: (model: OneShot | null) => learning.setModel(model),
     taskDone: (title: string, result: string) => learning.taskDone(title, result),
@@ -1665,20 +1727,38 @@ function start(): void {
    */
   const refuseVoiceAnswer = (why: VoiceAnswerNote) => {
     if (!confirmer?.note(VOICE_ANSWER_REFUSED[why])) return;
-    if (maySpeak()) voice?.speak(voiceAnswerSaid(why));
+    // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
+    if (maySpeak()) voice?.speak(voiceAnswerSaid(why, heldKeys().map(k => k.say)));
   };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
+  /** How the last teaching ended (settings says so; forgotten when it closes or teaching starts again). */
+  let enrolEnded: VoiceMatchStatus["ended"];
+  /** Settings closed or hidden while it taught Ember a voice: the teaching stops, as Cancel would. */
+  const endTeaching = () => {
+    if (!enrolling) return;
+    voice?.cancelEnrol();
+    enrolling = null;
+    enrolEnded = "cancelled";
+    broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+  };
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
   /** The status line while a follow-up window listens. */
   const FOLLOW_UP_STATUS = "Listening for a follow-up…";
   /** The status line through a conversation: the microphone is open for what is said next. */
   const CONVERSATION_STATUS = "Listening…";
+  /**
+   * Said once a conversation, for a few seconds, when what was said over music or a video without the name wasn't heard
+   * (engine.ts `dropped`): it vanished without a sign, and Ember looked deaf (voice-listening-10).
+   */
+  const OVER_SOUND_STATUS = "Music or a video is playing: say “Ember” first.";
+  let overSoundSaid = false;
   /** A conversation is open (engine.ts CONVERSATION_IDLE_MS), and what keeps it told whether anything is at work. */
   let conversing = false;
   let conversingTimer: NodeJS.Timeout | null = null;
   const conversationOpen = (on: boolean) => {
     if (on !== conversing) voice?.watchOutput(on);
+    if (on !== conversing) overSoundSaid = false;
     conversing = on;
     if (conversingTimer) clearInterval(conversingTimer);
     conversingTimer = null;
@@ -1743,6 +1823,12 @@ function start(): void {
           const shown = lastState.bubble;
           if (!(agent?.releaseBubble(shown) ?? false) && shown.visible) hideIfStill(shown, 4000);
         }
+        break;
+      case "dropped":
+        if (!conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
+        overSoundSaid = true;
+        setStatus("listen", OVER_SOUND_STATUS);
+        setTimeout(() => { if (statusBy.listen === OVER_SOUND_STATUS) setStatus("listen", conversing ? CONVERSATION_STATUS : null); }, 5000).unref?.();
         break;
       case "speech":
         // (Counted by scripts/voice/echo-check.mjs: speech heard while Ember's own voice plays is its echo.)
@@ -1986,6 +2072,8 @@ function start(): void {
     if (typeof text !== "string" || !text || text.length > CONVERSATION_TEXT_LIMIT) throw new Error("Nothing to copy.");
     clipboard.writeText(text);
   }));
+  // About this build's Show in Files (rp-8): only Ember's own log file, whatever the page sends.
+  ipcMain.handle(IPC.showLogFile, guard(() => { shell.showItemInFolder(log.file); }));
   /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
   const signInError = (err: unknown): string => explainSignInError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
   /**
@@ -2072,7 +2160,20 @@ function start(): void {
   }));
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
   // Only while the setting, with the organisation's policy applied, wants it (off where voice or speech is: admin.ts).
-  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => { if (naturalVoiceOn(settings.get())) voice?.retryNaturalVoice(); }));
+  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => voice?.retryNaturalVoice()));
+  /**
+   * Hear Ember (Settings › Voice; it takes no arguments): one fixed sentence, as replies are said, only where Ember may
+   * speak now, and which voice said it (voice-speaking-7).
+   */
+  const hearEmber = (): HearResult => {
+    if (policy.features.speak === false) return { spoke: false, why: "managed" };
+    if (screenLock?.locked) return { spoke: false, why: "locked" };
+    if (!voice || !maySpeak()) return { spoke: false, why: "off" };
+    const said = voice.nextVoice;
+    voice.speak(HEAR_SAMPLE);
+    return { spoke: true, voice: said };
+  };
+  ipcMain.handle(IPC.voiceHear, guard(() => hearEmber()));
   const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay, approval: confirmer?.waiting ?? false });
   presenceChanged = () => broadcast(IPC.presenceChanged, presence());
   ipcMain.handle(IPC.presence, guard(presence));
@@ -2322,13 +2423,15 @@ function start(): void {
   ipcMain.handle(IPC.voiceMatchEnrol, guard(() => {
     if (policy.features.voice === false || !voice?.enrol()) return false;
     enrolling = { got: 0, of: ENROL_PHRASES.length, phrase: ENROL_PHRASES[0] };
+    enrolEnded = undefined;
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
     return true;
   }));
-  ipcMain.handle(IPC.voiceMatchCancel, guard(() => { voice?.cancelEnrol(); enrolling = null; broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }));
+  ipcMain.handle(IPC.voiceMatchCancel, guard(() => { voice?.cancelEnrol(); if (enrolling) enrolEnded = "cancelled"; enrolling = null; broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }));
   ipcMain.handle(IPC.voiceMatchForget, guard(() => {
     voice?.cancelEnrol();
     enrolling = null;
+    enrolEnded = undefined;
     // The voiceprint, all it learnt, and the words learnt from what the user said (personal/service.ts).
     personal.forgetVoice();
     // A task's voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).
@@ -2358,8 +2461,20 @@ function start(): void {
   ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
     if (!memoryOwner.ready) throw new Error("Ember couldn't finish deleting this memory. Wait until your saved memory is available, then try Undo or Forget again.");
     if (typeof id !== "string" || !id || id.length > 40) throw new Error("Ember couldn't finish deleting this memory. Try Forget again.");
-    // Through learning: its "Ember learned" line and "forget that" let go of it too.
-    learning.forget(id);
+    // Through learning: its "Ember learned" line and "forget that" let go of it too. Home says what went, with Undo.
+    return learning.forgetCounted(id);
+  }));
+  // Undo of a recent Forget (Home's list, or an "Ember forgot" line): only while the account's memory is open.
+  ipcMain.handle(IPC.memoryRestore, guard((token: unknown) => {
+    if (!memoryOwner.ready || !memoryOn()) throw new Error("Ember couldn't put this memory back. Wait until your saved memory is available, then try Undo again.");
+    if (typeof token !== "string" || token.length < 8 || token.length > 64) return false;
+    const restored = learning.restore(token);
+    // Its "Ember forgot" line goes: what it said is no longer true.
+    if (restored && learnedLines.some(l => l.forgot === token)) {
+      learnedLines = learnedLines.filter(l => l.forgot !== token);
+      broadcast(IPC.conversationChanged, conversationNow());
+    }
+    return restored;
   }));
   // A correction stays bound to the exact fact and current account view, without changing its source authority.
   ipcMain.handle(IPC.memoryCorrect, guard((change: unknown) => correctMemoryRequest(change, {
@@ -2452,6 +2567,7 @@ function start(): void {
     }
     broadcast(IPC.voiceStatus, voiceStatus());
   }));
+  ipcMain.handle(IPC.voiceDownloadCancel, guard(() => { voice?.cancelDownload(); }));
   ipcMain.on(IPC.ask, (event, text: unknown) => {
     if (!askWindow.owns(event.sender) || typeof text !== "string") return;
     askWindow.hide();
@@ -2623,6 +2739,7 @@ function start(): void {
     if (sessionEnding) return;
     sessionEnding = true;
     log.info("app.session_end", { source });
+    endThisRun("session-end");
     try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); }
     borrowRef?.stop();
     inputRef?.releaseAll();
@@ -2893,8 +3010,11 @@ function start(): void {
     // in force each day, so nothing is pruned once a changed policy holds Ember locked down (review #106).
     audit.pruneDaily(() => auditRetentionDays(admin), err => log.warn("audit.prune_failed", { err }));
     confirmer = new Confirmer(showState, {
-      // A question waits 2 minutes for an answer, 20 with more time to read and answer.
+      // A question waits 2 minutes for an answer, 20 with more time to read and answer; its answer, and the note that it
+      // ran out of time, stay ten times as long too (tasks-approvals-4).
       timeoutMs: () => 120_000 * readTime(),
+      answerMs: () => ANSWER_MS * readTime(),
+      expiredMs: () => EXPIRED_MS * readTime(),
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.
       blocked: () => (borrowRef?.driving ?? false) || (inputRef?.pointerLags === true && Date.now() - (borrowRef?.lastSyntheticKeyAt ?? 0) < 500),
@@ -3132,6 +3252,8 @@ function start(): void {
       onTurnStart: turn => {
         voice?.cancelListenOnce();
         resetAnswerSpeech();
+        // A typed request isn't warmed by a wake: its voice loads now, while Copilot starts (voice-speaking-1).
+        if (maySpeak()) voice?.warmSpeech();
         askedAt = Date.now();
         answerInterrupted = false;
         lastAskByVoice = turn.spoken && !turn.manual;
@@ -3210,10 +3332,14 @@ function start(): void {
         },
         open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
       },
+      // A typed "stop" while a task is at work: the kill switch, as "Ember, stop" is (tasks-approvals-v2).
+      stopEverything: () => stopEverything("typed"),
       onTaskFinished: t => {
         // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
         if (maySpeak() && settings.get().speakResults && !agent?.answerOpen && !manualCall && voice?.micState !== "active") voice?.speak(spokenText(t.text), { append: true });
-        if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
+        // (And one whose question went unanswered while they were away: it needed them, tasks-approvals-4.)
+        const notice = taskNotice(t);
+        if (userAway() && notice) notify(notice.title, notice.body);
       },
       isOnline: () => net.isOnline(),
       // "Not authenticated" while GitHub can't be reached is a network problem, not a bad sign-in.
@@ -3324,6 +3450,7 @@ function start(): void {
       naturalVoice: naturalVoiceOn(settings.get()),
       naturalModel: settings.get().voice.naturalModel,
       naturalSupported: availableNaturalModels.includes("kokoro"),
+      rate: settings.get().voice.rate,
       // Whatever became of turning it on shows under its switch (never only in the log).
       onNatural: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       voiceprint: ownerPrint,
@@ -3351,9 +3478,13 @@ function start(): void {
             settings.update({ voice: { ...settings.get().voice, match: true } });
             voice?.setVoiceprint(p.print);
             log.info("voice.match_enrolled", { phrases: p.got });
+            enrolEnded = "learnt";
           } catch (err) { log.warn("voice.match_not_saved", { err }); }
           enrolling = null;
         } else if (p.state === "cancelled") {
+          // Said in settings: given up, timed out, stopped or cut short, never taken for the voice learnt (voice-listening-5).
+          if (enrolling) enrolEnded = p.why === "timeout" || p.why === "stopped" || p.why === "gave-up" || p.why === "interrupted" ? p.why : "cancelled";
+          if (p.why) log.info("voice.match_not_enrolled", { why: p.why, phrases: p.got });
           enrolling = null;
         } else {
           enrolling = { got: p.got, of: p.of, phrase: ENROL_PHRASES[Math.min(p.got, ENROL_PHRASES.length - 1)], ...(p.state === "again" && p.why ? { again: p.why as "short" | "unlike" | "failed" } : {}) };
@@ -3369,7 +3500,7 @@ function start(): void {
       },
       onState: (state, detail) => {
         voiceDetail = detail;
-        setState({ mic: state });
+        setState({ mic: state, micLearning: !!voice?.isEnrolling });
         // The microphone went off (muted, listening turned off, the voice process died): nothing more will be
         // heard, so "Listening…" goes (the bubble is given back), and so do a follow-up window's status line and
         // listening pose (its "listening off" never comes now).
@@ -3410,6 +3541,8 @@ function start(): void {
       voice?.setLearning(on);
     });
     settings.onChange(next => applyNaturalVoicePreference(voice, next.voice));
+    settings.onChange(() => silenceIfOff());
+    settings.onChange(next => voice?.setRate(next.voice.rate));
     settings.onChange(next => voice?.setClearHearing(next.voice.clearHearing));
     let conversations = settings.get().voice.conversation;
     settings.onChange(next => {

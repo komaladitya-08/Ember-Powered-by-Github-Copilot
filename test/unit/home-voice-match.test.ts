@@ -106,9 +106,37 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
     expect(matchAnnouncement(enrolling(3), onNow)).toBe(`Ember knows your voice now. ${MATCH_TEXT.on}`);
     expect(matchAnnouncement(enrolling(1), none, true)).toBe(`Stopped teaching Ember your voice. ${MATCH_TEXT.none}`);
     expect(matchAnnouncement(enrolling(1), none)).toBe(MATCH_TEXT.none);
-    expect(matchAnnouncement(onNow, none)).toBe(`Ember forgot your voice. ${MATCH_TEXT.none}`);
+    expect(matchAnnouncement(onNow, none)).toBe(`Ember forgot your voice and the words it learnt. ${MATCH_TEXT.none}`);
     expect(matchAnnouncement(onNow, offNow)).toBeNull();
     expect(matchAnnouncement(undefined, undefined)).toBeNull();
+  });
+
+  it("says why teaching stopped when it gave up, timed out or Ember stopped listening, never that it knows the voice (voice-listening-2, voice-listening-5, voice-listening-v1)", () => {
+    const gaveUp = "Ember couldn't learn your voice: too many phrases didn't sound alike. Try again somewhere quiet, with only you speaking.";
+    expect(matchAnnouncement(enrolling(2), { ...none, ended: "gave-up" })).toBe(`${gaveUp} ${MATCH_TEXT.none}`);
+    // Taught again, and it gave up: the earlier voiceprint is still in use, and nothing says Ember learnt the voice.
+    expect(matchAnnouncement({ ...onNow, enrolling: enrolling(2).enrolling }, { ...onNow, ended: "gave-up" })).toBe(`${gaveUp} ${MATCH_TEXT.on}`);
+    expect(matchAnnouncement(enrolling(0), { ...none, ended: "timeout" })).toBe(`Teaching stopped because Ember didn't hear a phrase for a while. Try again when you're ready. ${MATCH_TEXT.none}`);
+    expect(matchAnnouncement(enrolling(1), { ...none, ended: "interrupted" })).toBe(`Teaching stopped because Ember stopped listening. Try again once it's listening for “Ember”. ${MATCH_TEXT.none}`);
+    // "Ember, stop", Stop everything or settings closing: stopped, as Cancel says.
+    expect(matchAnnouncement({ ...onNow, enrolling: enrolling(1).enrolling }, { ...onNow, ended: "stopped" })).toBe(`Stopped teaching Ember your voice. ${MATCH_TEXT.on}`);
+    expect(matchAnnouncement({ ...onNow, enrolling: enrolling(1).enrolling }, { ...onNow, ended: "cancelled" })).toBe(`Stopped teaching Ember your voice. ${MATCH_TEXT.on}`);
+    expect(matchAnnouncement({ ...onNow, enrolling: enrolling(3).enrolling }, { ...onNow, ended: "learnt" })).toBe(`Ember knows your voice now. ${MATCH_TEXT.on}`);
+    // The note stays under the switch until Ember is taught again, and Teach takes focus from Cancel.
+    const v = matchView({ ...none, ended: "interrupted" }, shown);
+    expect(v.text).toMatch(/^Teaching stopped because Ember stopped listening\./);
+    expect(v.focus[0]).toBe("match-teach");
+    expect(matchView({ ...onNow, ended: "learnt" }, shown).text).toBe(MATCH_TEXT.on);
+  });
+
+  it("ends the teaching when settings closes or hides (it shows the phrase to say), and maps each ending (voice-listening-v1)", () => {
+    const m = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(m).toContain('const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); endTeaching(); };');
+    expect(m).toMatch(/const hidden = \(\) => \{ shown\(false\)\(\); cancelHomeListenOnce\(\);/);
+    expect(m).toMatch(/home\.on\("closed", \(\) => \{\s*cancelHomeListenOnce\(\);/);
+    expect(m).toMatch(/const endTeaching = \(\) => \{\s*if \(!enrolling\) return;\s*voice\?\.cancelEnrol\(\);\s*enrolling = null;\s*enrolEnded = "cancelled";/);
+    expect(m).toContain('if (enrolling) enrolEnded = p.why === "timeout" || p.why === "stopped" || p.why === "gave-up" || p.why === "interrupted" ? p.why : "cancelled";');
+    expect(m).toContain("setState({ mic: state, micLearning: !!voice?.isEnrolling });");
   });
 
   it("goes through the Voice section's one live region, not a live region that appears with its text", () => {
@@ -127,7 +155,8 @@ describe("Voice Match's markup", () => {
     expect(page).toContain(`<progress id="match-progress" max="4" value="0" aria-label="${MATCH_TEXT.progressLabel}" hidden></progress>`);
     expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">${MATCH_TEXT.teach}</button>`);
     expect(page).toContain(`<button type="button" id="match-cancel" class="btn quiet" hidden>${MATCH_TEXT.cancel}</button>`);
-    expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" hidden>${MATCH_TEXT.forget}</button>`);
+    // Forget my voice deletes the words learnt too: the button says so before it is pressed (voice-listening-9).
+    expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="${MATCH_TEXT.forgetHint}" hidden>${MATCH_TEXT.forget}</button><span id="match-forget-hint" hidden>${MATCH_TEXT.forgetHint}</span>`);
     // The bar is read as "1 of 4 heard", not a percentage.
     expect(main).toMatch(/bar\.setAttribute\("aria-valuetext", view\.progress\.text\)/);
   });

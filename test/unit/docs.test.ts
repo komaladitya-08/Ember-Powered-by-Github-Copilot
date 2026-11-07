@@ -29,7 +29,7 @@ import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import { ISSUES_URL } from "../../app/shared/support";
 import { STEP_TEXT, WELCOME_STEPS } from "../../app/renderer/home/welcome-copy";
-import { CLEAR_SPEECH, LISTENING_MODELS, MEMORY_MODEL, MEMORY_MODEL_BYTES, modelsBytes, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS } from "../../app/voice/models";
+import { CLEAR_SPEECH, LISTENING_MODELS, MEMORY_MODEL, MEMORY_MODEL_BYTES, modelsBytes, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES } from "../../app/voice/models";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
@@ -102,6 +102,16 @@ describe("docs/DESIGN.md", () => {
 });
 
 describe("docs/DEVELOPING.md", () => {
+  it("gives the speech models' download size as the pinned models add up, as models.ts says it (voice-listening-11)", () => {
+    const mb = (bytes: number) => Math.round(bytes / 1e6);
+    const listening = VOICE_MODELS.filter(m => (LISTENING_MODELS as readonly string[]).includes(m.id)).reduce((n, m) => n + m.bytes, 0);
+    expect(read("docs/DEVELOPING.md")).toContain(`the standard speech models (about ${mb(VOICE_MODELS_BYTES)} MB of downloads, once;`);
+    const header = read("app/voice/models.ts").slice(0, 600).replace(/\n \* /g, " ");
+    expect(header).toContain(`(about ${mb(VOICE_MODELS_BYTES)} MB in all)`);
+    expect(header).toContain(`(LISTENING_MODELS, about ${mb(listening)} MB)`);
+    for (const id of ["tts", "speaker"] as const) expect(header).toContain(`(${mb(VOICE_MODELS.find(m => m.id === id)!.bytes)} MB)`);
+  });
+
   it("§10.5 says what every file Ember stages beside the Windows app is", () => {
     const table = section(read("docs/DEVELOPING.md"), "10.5 Packages");
     const win = layoutFor("win32", "x64");
@@ -215,7 +225,7 @@ describe("docs/DEVELOPING.md", () => {
   });
 
   it("says a failed task card goes on its own after about a minute, as the task list times it (review #147)", () => {
-    const ms = Number(/status === "failed" \|\| task\.view \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(read("app/main/agent/tasks.ts"))?.[1].replace(/_/g, ""));
+    const ms = Number(/status === "failed" \|\| task\.endedBy === "expired" \|\| task\.view \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(read("app/main/agent/tasks.ts"))?.[1].replace(/_/g, ""));
     expect(ms).toBe(60_000);
     const asking = flat(section(read("docs/DEVELOPING.md"), "Asking Ember to do things"));
     expect(asking).not.toMatch(/a failed card stays until you close it/);

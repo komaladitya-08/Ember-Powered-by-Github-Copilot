@@ -48,6 +48,9 @@ const sim = vi.hoisted(() => ({
   modelsError: null as Error | null,
   /** The runtime never says which tools a session has (verifySessionTools times out). */
   toolsHang: false,
+  /** client.start() and client.listModels() never settle (a runtime that stalls in its handshake, a black-holed network). */
+  startHangs: false,
+  modelsHang: false,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -86,11 +89,11 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     stopped = false;
     forced = false;
     constructor(public opts: any) { sim.clients.push(this); }
-    async start() { if (sim.startError) throw sim.startError; }
+    async start() { if (sim.startHangs) await hang(); if (sim.startError) throw sim.startError; }
     async stop() { if (sim.stopHangs) await hang(); this.stopped = true; return []; }
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
-    async listModels() { if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
+    async listModels() { if (sim.modelsHang) await hang(); if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return sim.taskSessions.map(sessionId => ({ sessionId })); }
     async deleteSession(id: string) { const gate = sim.deleteGate; const fails = sim.deleteFails; sim.deleted.push(id); if (sim.deleteHangs) await hang(); if (gate) await gate; if (fails) throw new Error("delete failed"); }
     ping() { return sim.ping(); }
@@ -100,7 +103,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
@@ -155,6 +158,8 @@ beforeEach(() => {
   sim.startError = null;
   sim.modelsError = null;
   sim.toolsHang = false;
+  sim.startHangs = false;
+  sim.modelsHang = false;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -1192,6 +1197,100 @@ describe("a runtime that dies or hangs", () => {
     await host.stop();
   });
 
+  it("says Copilot stopped within 3 s when the runtime dies mid-answer, not 20 s later (rp-2)", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses, patches } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(1000);
+    await host.ask("Explain this");
+    conductorSession().emit("assistant.message_delta", { messageId: "m", deltaContent: "Half an answer so far" });
+    expect(screen().bubble?.streaming).toBe(true);
+    const before = patches.length;
+    // The runtime exits: the SDK drops the session's handlers, so only the health check can hear it.
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(3000);
+    // Said within 3 s; the pretend runtime then reconnects at once, so the problem may already offer Try again (rp-6).
+    const bubbles = patches.slice(before).map(p => p.bubble).filter(Boolean);
+    expect(bubbles).toContainEqual(expect.objectContaining({ mood: "error", thought: expect.stringMatching(/Copilot stopped unexpectedly/) }));
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
+    await host.stop();
+  });
+
+  it("checks a runtime at rest only every 20 s, as before (rp-2)", async () => {
+    vi.useFakeTimers();
+    let pings = 0;
+    sim.ping = async () => { pings++; return {}; };
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(pings).toBe(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(pings).toBe(1);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(pings).toBe(2);
+    await host.stop();
+  });
+
+  it("a task at work is checked on every few seconds too (rp-2)", async () => {
+    vi.useFakeTimers();
+    const { host, statuses } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
+    const stopped = host.stop();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await stopped;
+  });
+
+  it("a runtime that never answers its start says so and tries again, never Connecting… for ever (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.startHangs = true;
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(host.getStatus().phase).toBe("starting");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    expect(idleWord(host.getStatus())).toBe("Reconnecting…");
+    expect(sim.clients[0].forced).toBe(true);
+    sim.startHangs = false;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(sim.clients).toHaveLength(2);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a model list that never comes is timed out and retried too (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.modelsHang = true;
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    sim.modelsHang = false;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a conversation the runtime never opens is timed out and retried (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.createGate = new Promise<void>(() => undefined);
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    sim.createGate = null;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
   it("five crashes in ten minutes: Ember stops trying", async () => {
     vi.useFakeTimers();
     sim.ping = async () => { throw new Error("Connection is disposed."); };
@@ -1413,7 +1512,7 @@ describe("review round 3", () => {
     sim.ping = async () => { if (once) { once = false; throw new Error("Connection is disposed."); } return {}; };
     await vi.advanceTimersByTimeAsync(5000);
     expect(host.getStatus().phase).toBe("ready");
-    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: failed. ${CUT_OFF}` })]);
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: didn't finish. ${CUT_OFF}` })]);
     expect(screen().bubble).toMatchObject({ visible: true, mood: "error", title: "turn on night light", thought: CUT_OFF });
     await vi.advanceTimersByTimeAsync(20_000);
     expect(screen().bubble?.visible).toBe(false);
@@ -2182,7 +2281,8 @@ describe("review round 6: a request sent while the conversation is busy waits fo
         ["use the Extensions app to turn off a shell extension", "Turn off Dash to Dock in the Extensions app"],
       ]) {
         await host.ask(words, mail);
-        expect(await tool("start_task")({ goal }), words).toMatch(/started/);
+        // (Not refused: it starts, or from the third, waits its turn: tasks-approvals-7.)
+        expect(await tool("start_task")({ goal }), words).toMatch(/started|is waiting/);
       }
       for (const [words, goal] of [
         ["open up a new terminal and list my files", "List my files in the Files app"],
@@ -2454,6 +2554,107 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     expect(ends).toEqual([[first, "steered"]]);
     await host.stop();
   });
+
+  it("stops everything at once on a typed “stop” while a task is at work, with no Copilot turn (tasks-approvals-v2)", async () => {
+    let stops = 0;
+    const { host, session, tool } = await withTasks({ stopEverything: () => { stops++; } });
+    await host.ask("tidy my desktop", mail);
+    await tool("start_task")({ goal: "tidy my desktop" });
+    const sent = session.sent.length;
+    expect(await host.ask("stop everything", mail)).toBe(true);
+    expect(stops).toBe(1);
+    expect(session.sent).toHaveLength(sent);
+    // Stopping something else is the conversation's.
+    await host.ask("stop the music", mail);
+    expect(stops).toBe(1);
+    expect(session.sent.length).toBe(sent + 1);
+    await host.stop();
+  });
+
+  it("leaves a typed “stop” with nothing at work to the conversation (tasks-approvals-v2)", async () => {
+    let stops = 0;
+    const { host, session } = await withTasks({ stopEverything: () => { stops++; } });
+    await host.ask("stop", mail);
+    expect(stops).toBe(0);
+    expect(session.sent.at(-1)).toContain("stop");
+    await host.stop();
+  });
+
+  it("says a third task waits for one of the two at work, never that it started (tasks-approvals-7)", async () => {
+    const { host, tool } = await withTasks();
+    await host.ask("tidy my desktop", mail);
+    expect(await tool("start_task")({ goal: "tidy my desktop" })).toMatch(/started/);
+    await host.ask("rename the report", mail);
+    expect(await tool("start_task")({ goal: "rename the report" })).toMatch(/started/);
+    await host.ask("empty the trash", mail);
+    const third = await tool("start_task")({ goal: "empty the trash" });
+    expect(third).not.toMatch(/started|on it/i);
+    expect(third).toMatch(/is waiting: two tasks are already at work, and it starts when one of them ends/);
+    expect(host.tasks!.list().map(t => t.status)).toEqual(["running", "running", "queued"]);
+    await host.stop();
+  });
+
+  describe("“try again” after a task that didn't finish asks for that task again (tasks-approvals-1)", () => {
+    /** The host with tasks whose workers end as `outcomes` say, in turn (then as withTasks's do). */
+    async function retrying(outcomes: { success: boolean; summary: string; stopped?: boolean; declined?: boolean }[]) {
+      const made = await withTasks();
+      const d = (made.host.tasks as any).d;
+      const make = d.makeWorker;
+      d.makeWorker = (spec: { goal: string }) => { const w = make(spec); const r = outcomes.shift(); return r ? { ...w, run: async () => r } : w; };
+      const say = (text: string) => { made.session.emit("assistant.message_delta", { deltaContent: text }); made.session.emit("assistant.message", { content: text }); made.session.emit("session.idle", {}); };
+      const ended = async (n: number) => vi.waitFor(() => expect(made.host.getTranscript().filter(e => e.who === "task")).toHaveLength(n));
+      return { ...made, say, ended };
+    }
+    const engine = new PolicyEngine({ neverLook: () => [], grants: () => ({ thunderbird: "act" }) });
+    const send = (words?: string) => engine.decide({ taskId: "x", kind: "click", app: "thunderbird", window: "W", element: { role: "push button", name: "Send" }, goal: words });
+
+    it("carries the failed task's own words, so the Send the user asked for isn't called unasked, but not after their “Not now”", async () => {
+      const { host, specs, tool, say, ended } = await retrying([
+        { success: false, summary: "I couldn't find the Send button." },
+        { success: false, stopped: true, declined: true, summary: "You said not now, so I left it." },
+      ]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("Ember, try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      // The user's words, never the goal the model wrote.
+      expect(specs[1].userWords).toBe("send the report to Ana\nEmber, try again");
+      expect(send(specs[1].userWords).aligned).toBeUndefined();
+      expect(send(specs[1].userWords).prompt).not.toMatch(/didn't ask/);
+      // That one ended on the user's "Not now": asking again doesn't make the step theirs (it asks, saying so).
+      await ended(2);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toBe("try again");
+      expect(send(specs[2].userWords).aligned).toBe(false);
+      await host.stop();
+    });
+
+    it("never for words heard where Ember can't tell the user from its speakers, or anything more than a retry", async () => {
+      const { host, specs, tool, say, ended } = await retrying([
+        { success: false, summary: "I couldn't find the Send button." },
+        { success: false, summary: "I couldn't find the Send button." },
+      ]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("try again", mail, undefined, { voiceUnchecked: true });
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("try again");
+      await ended(2);
+      await host.ask("try again and delete the draft", mail);
+      await tool("start_task")({ goal: "Send the report to Ana and delete the draft" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toBe("try again and delete the draft");
+      await host.stop();
+    });
+  });
 });
 
 describe("review round 6: a task's bubbles say whose they are", () => {
@@ -2637,7 +2838,7 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     const session = sim.sessions.find(s => s.sessionId === `ember-task-${stuck.id}`);
     expect(session.aborted).toBeGreaterThan(0);
     expect(session.disconnected).toBe(true);
-    expect(host.getTranscript().at(-1)?.text).toBe(`the stuck one: failed. ${TASK_NOT_ANSWERING}`);
+    expect(host.getTranscript().at(-1)?.text).toBe(`the stuck one: didn't finish. ${TASK_NOT_ANSWERING}`);
     expect(host.tasks!.get(fine.id)?.status).toBe("running");
     expect(sim.clients).toHaveLength(1);
     expect(host.getStatus().phase).toBe("ready");
@@ -2963,7 +3164,7 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     expect(host.tasks!.get(t.id)?.status).toBe("running");
     // The task's model goes quiet as well: its own watch ends it, and then Copilot is reconnected.
     await vi.advanceTimersByTimeAsync(165_000);
-    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `tidy my desktop: failed. ${TASK_NO_ANSWER}` })]);
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `tidy my desktop: didn't finish. ${TASK_NO_ANSWER}` })]);
     sim.stall = () => false;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(sim.clients).toHaveLength(2);
@@ -3793,6 +3994,50 @@ describe("memory erasure at account boundaries", () => {
       await host.stop();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+  it("tells memory why it can't check the owner: signed out, a model provider in force, or GitHub not answering (memory-2, integrations-2)", async () => {
+    const why: string[] = [];
+    const memory = {
+      ...failingMemory(), resolveAccountId: async () => null,
+      verifyAccount: (id: number | null, reason?: string) => { why.push(id === null ? `verify:${reason}` : "verify:id"); },
+      pauseAccount: (reason?: string) => { why.push(`pause:${reason ?? "checking"}`); },
+    };
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    let provider: ActiveProvider | null = null;
+    const { host } = makeHost({ memory, accountRetryMs: [], provider: () => provider });
+    try {
+      expect(await host.start(null)).toBe("signed-out");
+      expect(why.at(-1)).toBe("pause:signed-out");
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(why.at(-1)).toBe("verify:unverified");
+      provider = own;
+      expect(await host.start(null)).toBe("ready");
+      expect(why.slice(-2)).toEqual(["pause:checking", "verify:own-provider"]);
+      provider = { ...own, kind: "admin" };
+      expect(await host.start(null)).toBe("ready");
+      expect(why.at(-1)).toBe("verify:org-provider");
+      provider = null;
+      sim.auth = async () => { throw new Error("getaddrinfo ENOTFOUND api.github.com"); };
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      expect(why.at(-1)).toBe("pause:unverified");
+    } finally { await host.stop(); }
+  });
+  it("says in the conversation when another account signing in made Ember forget the previous one's memory (memory-11)", async () => {
+    let erased = true;
+    const memory = { ...failingMemory(), forgetAll: vi.fn((): boolean => erased) };
+    const { host } = makeHost({ memory });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      sim.auth = async () => ({ isAuthenticated: true, login: "other" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(host.getTranscript().map(e => [e.who, e.text])).toEqual([["ember", ACCOUNT_CHANGED_FORGOT]]);
+      expect(ACCOUNT_CHANGED_FORGOT).toBe("You're signed in to another GitHub account now, so I've forgotten the previous account's memory, reminders and routines.");
+      // Memory never verified as the previous account's wasn't erased (Memory says it is another account's): no line.
+      erased = false;
+      sim.auth = async () => ({ isAuthenticated: true, login: "third" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(host.getTranscript()).toEqual([]);
+    } finally { await host.stop(); }
   });
   it("keeps memory when a verified account changes its login", async () => {
     const memory = { ...failingMemory(), resolveAccountId: async () => 100 };

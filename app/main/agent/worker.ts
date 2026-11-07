@@ -219,6 +219,8 @@ export interface TaskSpec {
   target: WindowTarget & { app?: string };
   /** "do": Ember acts. "guide": Ember points and the user clicks. */
   mode?: "do" | "guide";
+  /** A retry of a try that stopped part-way, having changed something: the first prompt says so (tasks-approvals-3). */
+  partWay?: boolean;
 }
 
 export interface WorkerResult {
@@ -230,6 +232,10 @@ export interface WorkerResult {
   declined?: boolean;
   /** Stopped because a question ran out of time unanswered and nothing was done after that: not a "Not now". */
   expired?: boolean;
+  /** Stopped because the user took the mouse back from Ember (its summary need not say so: TaskManager's endedBy). */
+  tookOver?: boolean;
+  /** Its step or time limit stopped it: TaskManager adds what it had done by then, from its own count (tasks-approvals-3). */
+  limit?: boolean;
   /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
   view?: ViewDoc;
 }
@@ -238,6 +244,30 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/**
+ * A tool's result when its handler threw: the accessibility helper's failures as what the user can do about them (the
+ * setup check says what's wrong), anything else quoted as untrusted words (an error may carry screen text).
+ */
+function toolFailure(err: unknown): ToolResultObject {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/accessibility (helper|bridge)/i.test(msg)) {
+    return fail("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
+  }
+  return fail(`That step didn't work: ${q(msg, 200)}. Call perceive_window and try again, or finish the task saying what's left.`);
+}
+
+/**
+ * A task's first prompt: its goal, a note when an earlier try stopped part-way (TaskSpec.partWay: it may have done some
+ * of it already, so it checks before repeating anything), and where the user was (`where`: untrusted context).
+ */
+export function taskPrompt(goal: string, partWay: boolean, where: string): string {
+  return `Task: ${goal}${partWay ? "\n(An earlier try of this task stopped part-way: check what is already done before repeating anything.)" : ""}${where}`;
+}
+
+/** What the step past 80% of a task's steps or time adds to its result, once (tasks-approvals-3). */
+const NEAR_LIMIT = "You have used most of this task's steps or time: finish the step you're on, then call finish_task saying what's done and what's left.";
+/** A step refused while a password or authentication prompt is open on the user's screen (M8.3, safety-privacy-3). */
+const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.";
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
 const POSES_AS_ANNOUNCEMENT = new RegExp([
   String.raw`without\s+(asking|checking|permission|approval|confirm\w*|a\s+question)`, String.raw`as\s+you\s+(let|allow\w*|permit\w*)`,
@@ -1340,15 +1370,22 @@ export class Worker {
     try { this.d.onActivity?.(e); } catch (err) { this.d.log.warn("worker.activity_failed", { err }); }
   }
 
-  /** Past 80% of its steps or its time, the card says the task is close to its limit (once). */
+  /**
+   * Past 80% of its steps or its time, the card says the task is close to its limit (once), and so does the result of
+   * the step that crossed it, to the model (whether it did now: tasks-approvals-3).
+   */
   private nearLimitSaid = false;
-  private checkLimits(maxSteps: number): void {
-    if (this.nearLimitSaid) return;
+  private checkLimits(maxSteps: number): boolean {
+    if (this.nearLimitSaid) return false;
     if (this.steps >= maxSteps * 0.8 || (this.clock?.used() ?? 0) >= 0.8) {
       this.nearLimitSaid = true;
       this.activity({ type: "near-limit" });
+      return true;
     }
+    return false;
   }
+  /** A limit (not the user, not Copilot) stopped the task: its result says so (WorkerResult.limit). */
+  private limitHit = false;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   tools(): Tool<any>[] {
@@ -1410,17 +1447,31 @@ export class Worker {
     // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
     if (this.wrappingUp && name !== "finish_task" && name !== "report_progress") return denied("The task is over: call finish_task now with what you already did. Do nothing else.");
     if (++this.steps > maxSteps) {
+      this.limitHit = true;
       this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
       return STOPPED();
     }
-    this.checkLimits(maxSteps);
+    const nearLimit = this.checkLimits(maxSteps);
     const parsed = parameters.safeParse(raw ?? {});
     if (!parsed.success) {
       return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
     }
     // Only a read right after a step learns that the step closed its window: any other call starts afresh.
     if (name !== "perceive_window" && name !== "report_progress") this.stepClosedIt = false;
-    const result = await handler(parsed.data);
+    let result: ToolResultObject | string;
+    try {
+      result = await handler(parsed.data);
+    } catch (err) {
+      // A handler that throws (the accessibility helper can't start, a reader that broke) reached the model only as the
+      // runtime's "Tool execution failed", and Ember logged nothing of it: now the tool and the error are logged, and the
+      // model hears what happened in plain words (tasks-approvals-8). Stopped meanwhile: stopped.
+      if (this.isOver || err instanceof BorrowStopped) return STOPPED();
+      this.d.log.warn("worker.tool_failed", { task: this.spec.id, tool: name, err });
+      result = toolFailure(err);
+    }
+    // The step that took it past 80% of its steps or time says so, once: the model can still wrap up and say what's
+    // left, where a limit would otherwise stop it mid-way with nothing said (tasks-approvals-3).
+    if (nearLimit) result = typeof result === "string" ? `${result}\n${NEAR_LIMIT}` : { ...result, textResultForLlm: `${result.textResultForLlm}\n${NEAR_LIMIT}` };
     // Turned down ("Not now", a refusal, a stop): its card shows the step stopped, not one that didn't work.
     if (typeof result === "object" && result.resultType === "denied") this.activity({ type: "denied" });
     return result;
@@ -1442,6 +1493,9 @@ export class Worker {
           z.object({ image: z.boolean().optional().describe("Also return a marked screenshot") }),
           async ({ image }) => this.perceive(image === true && this.d.vision)),
       this.tool("list_windows", "List the open windows (app and title).", z.object({}), async () => {
+        // No window's title goes anywhere while the shell's own password prompt is open (safety-privacy-3).
+        const prompt = await this.promptRefusal("read");
+        if (prompt) return prompt;
         // Ember's own windows aren't for tasks.
         const wins = (await this.perception.windows()).filter(w => !isEmberWindow(w));
         // Their titles reach the model (an email's subject, a file's name): text typed elsewhere may carry them.
@@ -1775,7 +1829,7 @@ export class Worker {
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
     // Its questions' waits for the user's answer don't count (TaskClock).
-    const clock = this.clock = new TaskClock(maxMs, () => this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`));
+    const clock = this.clock = new TaskClock(maxMs, () => { this.limitHit = true; this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`); });
     let lastAnswer = "";
     try {
       fs.mkdirSync(d.workDir, { recursive: true });
@@ -1873,7 +1927,7 @@ export class Worker {
         };
         try {
           let wait = idle();
-          await send(`Task: ${this.spec.goal}${where}`);
+          await send(taskPrompt(this.spec.goal, !!this.spec.partWay, where));
           await wait;
           if (!this.result && !this.halted) {
             this.wrappingUp = true;
@@ -1896,12 +1950,12 @@ export class Worker {
       if (this.place) d.onDesk?.(null, this.place);
     }
     if (this.halted && this.haltReason === null) return { success: false, summary: this.stoppedSummary(), stopped: true };
-    if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
+    if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason, ...(this.limitHit ? { limit: true } : {}) };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
     if (this.expired && !this.declined && !this.result?.success) return { success: false, stopped: true, expired: true, summary: this.result?.summary || "My question ran out of time with no answer, so I didn't do it." };
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
     const result = this.result ?? { success: false, summary: lastWordsSummary(lastAnswer) };
-    return this.userTookOver && !result.success ? { ...result, stopped: true } : result;
+    return this.userTookOver && !result.success ? { ...result, stopped: true, tookOver: true } : result;
   }
 
   /**
@@ -2228,6 +2282,11 @@ export class Worker {
     const target = expectTitle ? { title: expectTitle } : this.target;
     const p = await this.perception.perceive({ image, scope: "window", target });
     if (this.isOver) return STOPPED();
+    // The shell's own password prompt is open: nothing was read (safety-privacy-3). The task may wait and look again.
+    if (p.authPrompt) {
+      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: "an authentication prompt is open" });
+      return denied(AUTH_PROMPT_OPEN);
+    }
     if (p.blocked) {
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
       return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
@@ -2696,6 +2755,9 @@ export class Worker {
       if (this.isOver) return STOPPED();
       if (now && isOn(now.states) === (value === "on")) return done(`Already ${value}: ${describeAfter(now)}`);
     }
+    // Never while the shell's own password prompt is open, also by accessibility (safety-privacy-3).
+    const prompt = await this.promptRefusal(kind, element);
+    if (prompt) return prompt;
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     try {
       if (this.isOver) return STOPPED();
@@ -3316,6 +3378,8 @@ export class Worker {
     this.moving = null;
     const base = { taskId: this.spec.id, kind: "cursor_text" as const, app: this.window.app, window: this.window.name, mode: "replace" as const,
       onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], windowId: this.windowId };
+    // The batch counts as one action: it waits its turn under the limit on actions a minute as one step would.
+    if (!await this.pace()) return STOPPED();
     // Judged after what was typed into the window's other fields before, as each cell would be one after the other.
     let typed = this.typedWindows.get(this.windowKey);
     const judged = jobs.map((job, i) => {
@@ -3375,10 +3439,11 @@ export class Worker {
     const app = this.window.app ? ` in ${friendlyApp(this.window.app)}` : "";
     const prompt = `${this.place ? "Fill" : "Borrow your keyboard to fill"} ${jobs.length} cell${jobs.length > 1 ? "s" : ""}${app}${this.place ? " on my desk" : ""}: ${list}?${added ? ` ${added}` : ""}`;
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
+    const taskLine = this.tainted ? this.ownWordsLine() : undefined;
     this.asked = true;
     // On another computer the question says where (§2.4), as every other question of a task does.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
-    const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: "cursor_text", cells: jobs.length, ...(this.window.app ? { app: friendlyApp(this.window.app) } : {}), onDesk: !!this.place }));
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4005,7 +4070,7 @@ export class Worker {
     const authPrompt = () => { const w = c.activeWindow?.(); return !!w && this.sys.privacy.isSecurityWindow(w); };
     if (authPrompt()) {
       this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
-      return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+      return denied(AUTH_PROMPT_OPEN);
     }
     // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too.
     if (await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => false)) {
@@ -4133,6 +4198,9 @@ export class Worker {
     const verdict = await this.authorize(request);
     if (verdict) return verdict;
     if (this.isOver) return STOPPED();
+    // Never while the shell's own password prompt is open: a new app's window would open over it (safety-privacy-3).
+    const prompt = await this.promptRefusal(kind);
+    if (prompt) return prompt;
     try {
       this.authorized(request);
       const text = await run();
@@ -4254,6 +4322,12 @@ export class Worker {
     const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
     const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
+    // The limit on actions a minute paces the task (tasks-approvals-2): the step waits for the minute to free a slot,
+    // then is decided afresh (another task may take that slot first: it waits again). A Stop ends the wait at once.
+    while (decision.paced) {
+      if (!await this.pace()) return STOPPED();
+      decision = this.d.policy.decide(req);
+    }
     if (decision.aligned === false) this.tainted = true;
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
@@ -4304,13 +4378,15 @@ export class Worker {
       ? [{ id: "once", label: "Allow", primary: true }, { id: "always", label: `Always in ${friendlyApp(req.app)}` }, { id: "deny", label: "Not now" }]
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
+    // A step that came up unasked, or a task text on screen tried to steer: its task line quotes the user, not the goal.
+    const taskLine = decision.aligned === false || this.tainted ? this.ownWordsLine() : undefined;
     this.asked = true;
     // On another computer the question says where (§2.4): a badge in the bubble, and in the spoken question.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     // Once text on screen tried to steer Ember, every step it asks about looks risky too (it is asked every time).
     const risky = !!decision.risky || this.steered;
-    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4328,6 +4404,49 @@ export class Worker {
       return null;
     }
     return this.refused(answer);
+  }
+
+  /**
+   * A password prompt the desktop's shell draws itself is open (Perception.promptOpen: GNOME Shell's polkit and keyring
+   * dialogs, which no X11 window shows): no step is taken until it's done, by accessibility as with the borrowed mouse
+   * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that fails refuses (fail closed); a screen
+   * whose perception has no such check (another computer's) goes on as before.
+   */
+  private async promptRefusal(kind: ActionKind, element?: Focus): Promise<ToolResultObject | null> {
+    if (!this.perception.promptOpen) return null;
+    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => true);
+    if (this.isOver) return STOPPED();
+    if (!open) return null;
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt is open" });
+    return denied(AUTH_PROMPT_OPEN);
+  }
+
+  /**
+   * A question's task line in the user's own words (Question.taskLine; tasks-approvals-5): what they said for this task,
+   * each line a sentence, on one line in curly quotes, at most 200 characters. "" (no line) for a task given none of
+   * their words, whose only words are the model's goal.
+   */
+  private ownWordsLine(): string {
+    if (this.spec.userWords === undefined) return "";
+    const said = this.userWords.split("\n").map(l => l.trim()).filter(Boolean).map((l, i, all) => (i < all.length - 1 && !/[.!?…]$/.test(l) ? `${l}.` : l)).join(" ");
+    if (!said) return "";
+    return `“${said.length > 200 ? `${said.slice(0, 199).trimEnd()}…` : said}”`;
+  }
+
+  /**
+   * Waits while the limit on actions a minute is reached (PolicyEngine.paceMs), the card saying so (tasks-approvals-2);
+   * at least a quarter of a second at a time, so a clock that says otherwise can't spin it. Whether the task goes on.
+   */
+  private async pace(): Promise<boolean> {
+    for (let ms = this.d.policy.paceMs(); ms > 0 && !this.isOver; ms = this.d.policy.paceMs()) {
+      this.activity({ type: "paced", perMinute: this.d.policy.perMinute });
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); this.overSignal.removeEventListener("abort", done); resolve(); };
+        const timer = setTimeout(done, Math.max(250, ms));
+        this.overSignal.addEventListener("abort", done, { once: true });
+      });
+    }
+    return !this.isOver;
   }
 
   /** A question without a yes: "Not now" is the user's no; no answer (null) is a timeout, which approved nothing either. */

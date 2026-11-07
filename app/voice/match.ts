@@ -19,12 +19,25 @@ export interface Printer {
   print(samples: Float32Array): Promise<Float32Array>;
 }
 
+/**
+ * Why teaching ended without a voiceprint, when it wasn't the user's Cancel: `timeout` (ENROL_LIMITS), `stopped` ("Ember,
+ * stop"), `gave-up` (too many phrases unlike the others).
+ */
+export type EnrolEnd = "timeout" | "stopped" | "gave-up";
+
 /** What enrolment tells main: `got` of `of` phrases kept; `again`: the last one wasn't kept (`why`). */
 export type EnrolState =
   | { state: "listening" | "heard"; got: number; of: number }
   | { state: "again"; got: number; of: number; why: "short" | "unlike" | "failed" }
   | { state: "done"; got: number; of: number; print: Float32Array }
-  | { state: "cancelled"; got: number; of: number };
+  | { state: "cancelled"; got: number; of: number; why?: EnrolEnd };
+
+/**
+ * How long teaching waits (ms): `quietMs` with no phrase heard, `totalMs` in all. It had no limit: someone who walked
+ * away from Settings left Ember deaf to its name for good, and whatever was said next became the voiceprint
+ * (voice-listening-v1). Four phrases and a few said again take well under a minute.
+ */
+export const ENROL_LIMITS = { quietMs: 45_000, totalMs: 180_000 } as const;
 
 /**
  * The least voice what follows the wake phrase needs for Voice Match to vouch for it (`verified`, what a spoken yes and
@@ -162,7 +175,7 @@ export class VoiceGate {
     const generation = this.revision;
     const owner = this.owner;
     // Over a song with no name said: only a voice that can be told apart from it is heard.
-    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) return;
+    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send({ type: "dropped", reason: "over-sound" }); return; }
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.
     const anchor = this.anchor;
@@ -185,7 +198,7 @@ export class VoiceGate {
         if (!e.overSound) this.send(e);
         return;
       }
-      if (e.overSound && score < OVER_SOUND_MATCH) return;
+      if (e.overSound && score < OVER_SOUND_MATCH) { if (generation === this.revision) this.send({ type: "dropped", reason: "over-sound" }); return; }
       // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
@@ -245,15 +258,21 @@ export class Enrolment {
   private finished = false;
   /** Gives up after this many phrases heard (some kept, some said again). */
   private readonly maxTries: number;
+  private quiet: ReturnType<typeof setTimeout> | null = null;
+  private readonly total: ReturnType<typeof setTimeout>;
 
-  constructor(private printer: Printer, private tell: (s: EnrolState) => void, readonly of = ENROL_PHRASES.length) {
+  constructor(private printer: Printer, private tell: (s: EnrolState) => void, readonly of = ENROL_PHRASES.length, private limits: { quietMs: number; totalMs: number } = ENROL_LIMITS) {
     this.maxTries = of * 3;
+    this.total = setTimeout(() => this.cancel("timeout"), limits.totalMs);
+    this.total.unref?.();
+    this.waitQuietly();
     tell({ state: "listening", got: 0, of });
   }
 
   /** A phrase the VAD heard. */
   async heard(samples: Float32Array): Promise<void> {
     if (this.finished) return;
+    this.waitQuietly();
     if (samples.length < ENROL_MIN_SECONDS * 16_000) { this.again("short"); return; }
     this.tries++;
     let print: Float32Array;
@@ -269,25 +288,40 @@ export class Enrolment {
     this.prints = keep.map(i => this.prints[i]);
     if (dropped !== null) { this.again("unlike"); return; }
     if (this.prints.length >= this.of) {
-      this.finished = true;
+      this.finish();
       this.tell({ state: "done", got: this.prints.length, of: this.of, print: averagePrint(this.prints) });
       return;
     }
     this.tell({ state: "heard", got: this.prints.length, of: this.of });
   }
 
-  cancel(): void {
+  /** Teaching stops: the user's Cancel (no `why`), or why it gave up (EnrolEnd). */
+  cancel(why?: EnrolEnd): void {
     if (this.finished) return;
-    this.finished = true;
-    this.tell({ state: "cancelled", got: this.prints.length, of: this.of });
+    this.finish();
+    this.tell({ state: "cancelled", got: this.prints.length, of: this.of, ...(why ? { why } : {}) });
   }
 
   get done(): boolean {
     return this.finished;
   }
 
+  private finish(): void {
+    this.finished = true;
+    clearTimeout(this.total);
+    if (this.quiet) clearTimeout(this.quiet);
+    this.quiet = null;
+  }
+
+  /** Nothing heard for `quietMs` from now ends teaching. */
+  private waitQuietly(): void {
+    if (this.quiet) clearTimeout(this.quiet);
+    this.quiet = setTimeout(() => this.cancel("timeout"), this.limits.quietMs);
+    this.quiet.unref?.();
+  }
+
   private again(why: "short" | "unlike" | "failed"): void {
-    if (this.tries >= this.maxTries) { this.cancel(); return; }
+    if (this.tries >= this.maxTries) { this.cancel("gave-up"); return; }
     this.tell({ state: "again", got: this.prints.length, of: this.of, why });
   }
 }

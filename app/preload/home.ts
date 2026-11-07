@@ -39,7 +39,9 @@ const api: EmberHomeApi = {
   onVoiceStatus: fn => listen<VoiceStatus>(IPC.voiceStatus, fn),
   listenOnce: on => ipcRenderer.invoke(IPC.listenOnce, on),
   downloadVoice: () => ipcRenderer.invoke(IPC.voiceDownload),
+  cancelVoiceDownload: () => ipcRenderer.invoke(IPC.voiceDownloadCancel),
   retryNaturalVoice: () => ipcRenderer.invoke(IPC.voiceNaturalRetry),
+  hearEmber: () => ipcRenderer.invoke(IPC.voiceHear),
   enrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchEnrol),
   cancelEnrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchCancel),
   forgetVoice: () => ipcRenderer.invoke(IPC.voiceMatchForget),
@@ -53,6 +55,7 @@ const api: EmberHomeApi = {
   memory: () => ipcRenderer.invoke(IPC.memoryList),
   onMemory: fn => listen(IPC.memoryChanged, fn),
   forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
+  restoreMemory: token => ipcRenderer.invoke(IPC.memoryRestore, token),
   forgetAllMemory: () => ipcRenderer.invoke(IPC.memoryForgetAll),
   correctMemory: change => ipcRenderer.invoke(IPC.memoryCorrect, change),
   introduceMe: answers => ipcRenderer.invoke(IPC.memoryIntroduce, answers),
@@ -103,6 +106,7 @@ const api: EmberHomeApi = {
   watchLevel: on => ipcRenderer.invoke(IPC.watchLevel, on),
   onLevel: fn => listen<number | null>(IPC.homeLevel, fn),
   copyText: text => ipcRenderer.invoke(IPC.copyText, text),
+  showLogFile: () => ipcRenderer.invoke(IPC.showLogFile),
 };
 
 contextBridge.exposeInMainWorld("ember", api);

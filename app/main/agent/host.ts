@@ -24,7 +24,7 @@ import type { Logger } from "../logger";
 import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
-import { TaskManager, statusWord, taskOutcome, titleOf, type Task, type WorkerLike } from "./tasks";
+import { TaskManager, taskOutcome, titleOf, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -50,6 +50,7 @@ import { afterTheStep } from "../policy/audit";
 import type { CommandService } from "../commands/types";
 import { createHash, randomUUID } from "node:crypto";
 import type { OneShot } from "../memory/learn";
+import type { MemoryWait } from "../memory/owner";
 import { runtimeClientOptions } from "./runtime-env";
 import { redactGitHubTokens } from "./auth";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
@@ -59,7 +60,7 @@ import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, statusQuestion, statusReply } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 
@@ -167,8 +168,9 @@ export interface AgentStatus {
  * the transcript then holds its words as an `ember` entry marked `stopped`.
  */
 export interface AnswerStream { id: number; text: string; state: "streaming" | "done" | "interrupted" }
+/** `forgot`: a "learned" line that says what Ember forgot when asked (memory-v2), with the token its Undo takes. */
 export interface TranscriptEntry {
-  t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number; stopped?: true; answerId?: number;
+  t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number; stopped?: true; answerId?: number; forgot?: string;
   /** Brought back from before Ember restarted (keepConversation): for reading only, which Home marks (home-8). Never saved. */
   restored?: true;
 }
@@ -193,10 +195,12 @@ export interface HostOptions {
    * know me" and its answers, the answer to Ember's own question, "forget that"): the reply to say, or null.
    */
   memory?: ConductorMemory & {
-    forgetAll(): void;
+    /** Erases what memory keeps; true when it did (memory never verified as this account's stays: memory-11). */
+    forgetAll(): void | boolean;
     resolveAccountId?(token: string, login: string): Promise<number | null>;
-    verifyAccount?(id: number | null): void;
-    pauseAccount?(): void;
+    /** `why`: what keeps the account unknown when `id` is null (memory-2: Home says it, rather than "verify its owner"). */
+    verifyAccount?(id: number | null, why?: MemoryWait): void;
+    pauseAccount?(why?: MemoryWait): void;
     accountReady?(): boolean;
     useModel?(model: OneShot | null): void;
     taskDone?(title: string, result: string): void;
@@ -269,7 +273,9 @@ export interface HostOptions {
   /** The answer being written, for Home's conversation (see AnswerStream). */
   onAnswerStream?: (e: AnswerStream) => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
-  onTaskFinished?: (task: { title: string; status: string; summary: string; text: string }) => void;
+  onTaskFinished?: (task: { title: string; status: string; endedBy?: StopCause; summary: string; text: string }) => void;
+  /** Main's kill switch (KillSwitch.pull with source "typed"): a typed "stop" while a task is at work (stopsNow). */
+  stopEverything?: () => void;
   /** The conversation changed (the settings window shows it). */
   /** `why`: "new-conversation" when only the chat was started over (not an account's conversation forgotten). */
   onTranscript?: (entries: TranscriptEntry[], why?: "new-conversation") => void;
@@ -320,7 +326,7 @@ export interface HostOptions {
    * HTTPS_PROXY, so without one in the environment this is passed on to it.
    */
   resolveProxy?: (url: string) => Promise<string>;
-  /** How often the runtime's health is checked (ms). */
+  /** How often the runtime's health is checked at rest (ms); while an answer or a task is under way, every 2.5 s at most. */
   healthMs?: number;
   /**
    * The OS's keys, words, apps, settings and security vocabulary (main passes its SystemPlatform), for workers, the
@@ -432,6 +438,12 @@ const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
 const SIGNED_OUT_CLI = "Not connected to Copilot. Signing in needs a GitHub account with Copilot and the GitHub CLI: see below.";
 /** A hung runtime is given this long to answer a health check, a stop or a delete. */
 const RUNTIME_WAIT_MS = 5000;
+/**
+ * How often the runtime is checked while an answer or a task is under way (rp-2). The SDK drops a session's handlers
+ * when its runtime exits and says nothing to the turn, so only a ping hears it: at the 20 s rest cadence, an answer
+ * stood frozen for 16-19 s (measured). A local JSON-RPC ping is cheap.
+ */
+const BUSY_HEALTH_MS = 2500;
 /** The conversation's request was taken but its turn never began (TurnWatch). */
 const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
 /** The same while tasks are at work: Copilot is reconnected once they're done. */
@@ -501,6 +513,25 @@ const TRANSIENT = /\b50[0234]\b|bad gateway|service unavailable|gateway time-?ou
 const transient = (err: unknown, msg: string) => err instanceof SessionToolsTimeoutError || TRANSIENT.test(msg);
 /** What settings show for one, while the retry waits. */
 const TRANSIENT_DETAIL = "Copilot had a problem on its side while Ember connected. Ember will try again in a moment.";
+
+/**
+ * How long each step of a start may wait for the runtime (reliability-performance-v1): a runtime that stalls in its
+ * handshake, or a model list on a black-holed network, left Home at "Connecting…" for good, with nothing logged or
+ * retried. A normal start takes a second or two.
+ */
+const START_STEP_MS = { start: 30_000, auth: 20_000, models: 20_000, conversation: 30_000 } as const;
+/** A start step the runtime never answered: its message is TRANSIENT, so the start is retried as one. */
+class StartTimeout extends Error {
+  constructor(readonly step: keyof typeof START_STEP_MS) { super(`Copilot didn't answer in time (${step}): timed out`); }
+}
+/** What settings show while a start that timed out waits to try again. */
+export const START_TIMEOUT_DETAIL = "Copilot isn't answering. Ember will try again in a moment.";
+/** `p`, or a StartTimeout for `step` once its time is up. */
+async function startStep<T>(p: Promise<T>, step: keyof typeof START_STEP_MS): Promise<T> {
+  const r = await within(p, START_STEP_MS[step]);
+  if (r === "timeout") throw new StartTimeout(step);
+  return r;
+}
 
 /** A start's error that names no model Ember may use (thrown by doStart itself): shown as it is. */
 const NO_MODEL = /^(None of the models|Copilot lists no models|Enter the model)/;
@@ -584,6 +615,9 @@ export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?
 }
 
 /** The bubble's title when Ember can't take a request, by why (the status' detail says the rest). */
+/** What the conversation says after another GitHub account signed in and Ember erased the previous one's memory (memory-11). */
+export const ACCOUNT_CHANGED_FORGOT = "You're signed in to another GitHub account now, so I've forgotten the previous account's memory, reminders and routines.";
+
 export const NOTICE_TITLE: Record<AgentReason | "signed-out", string> = {
   "signed-out": "I need Copilot first",
   "sign-in": "Copilot didn't accept the sign-in",
@@ -673,6 +707,7 @@ export function explainStartError(err: unknown, ctx: { source?: string; sourceNa
     }
     return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again.${proxyNote(ctx.proxy)}`;
   }
+  if (err instanceof StartTimeout) return START_TIMEOUT_DETAIL;
   if (transient(err, msg)) return TRANSIENT_DETAIL;
   return msg;
 }
@@ -705,7 +740,8 @@ const OUTCOME = {
 } as const;
 /** A finished task, as the conductor hears about it. */
 /** A finished task as the next turn hears it (in <task_results>): its summary, and what its card showed, as words. */
-const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}${t.view ? `\n${viewText(t.view)}` : ""}`;
+// (The model hears the plain state, "failed" or "stopped"; the user hears the card's words: tasks.ts statusWord.)
+const report = (t: Task) => `Task "${t.title}" ${t.status === "cancelled" ? "stopped" : t.status}: ${t.result?.summary ?? ""}${t.view ? `\n${viewText(t.view)}` : ""}`;
 /**
  * Told to the conversation with what was heard in a spoken conversation (AgentHost.ask `replaces`), and not in its prompt:
  * with conversations off the prompts stay as they were. Host-written, never model or screen text.
@@ -910,6 +946,11 @@ export class AgentHost {
   private reconnectingShown = false;
   /** A finished task's line in the transcript: its result as it said it (without the title the conversation wrote). */
   private readonly results = new WeakMap<TranscriptEntry, string>();
+  /**
+   * A line of a task that may be tried again (it failed, or its question went unanswered): the user's own words it was
+   * asked with (TaskManager.askedWith), which a "try again" right after it carries (tasks-approvals-1).
+   */
+  private readonly retryWords = new WeakMap<TranscriptEntry, { userWords: string; commandWords?: string; typedOnly?: boolean }>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
   private readonly presenter: Presenter;
   /** Bubbles of Ember's own that are no turn's or task's (the targets runtime's), written through the shared bubble. */
@@ -1379,6 +1420,13 @@ export class AgentHost {
     const apart = (a: TranscriptEntry, b: TranscriptEntry) => Date.parse(a.t) - Date.parse(b.t);
     const requestText = retainedConversationText(r.words).text;
     let at = log.map(e => e.who === "you" && !this.restored.has(e) && e.text === requestText).lastIndexOf(true);
+    // "Try again" right after a task that didn't finish: that task's own words go with it (tasks-approvals-1).
+    const again = this.retriedWords(r, at);
+    if (again) {
+      said.unshift(again.userWords);
+      if (typed.length) typed.unshift(again.commandWords ?? again.userWords);
+      at = 0;
+    }
     for (let n = 0; at > 0 && n < 3; n++) {
       const reply = log[at].text;
       const last = log[at - 1];
@@ -1397,8 +1445,8 @@ export class AgentHost {
       else if (this.voiceUnchecked.has(before)) heardLeft = true;
       at = k;
     }
-    const left = typed.length < said.length;
-    const voiced = left && heardLeft;
+    const left = typed.length < said.length || again?.commandWords !== undefined;
+    const voiced = left && (heardLeft || (again?.commandWords !== undefined && !again.typedOnly));
     // The steps of a routine this turn ran (run_routine): the user's own words when they saved it, so its tasks' risky
     // steps get the usual question rather than "you didn't ask for this". Never words for commands: a step saved as
     // "delete the build folder" must not make `rm -rf build` the user's own request now (it asks, as any dangerous
@@ -1411,6 +1459,23 @@ export class AgentHost {
       ...(left || steps ? { commandWords: typed.join("\n") } : {}),
       ...((steps || left) && !voiced ? { typedOnly: true } : {}),
     };
+  }
+
+  /**
+   * The words of the task a bare "try again" (retryRequest) asks for again, or null (tasks-approvals-1): the line before
+   * request `r` (at `at` in the transcript; Ember's lines aside) is of a task that may be tried again (it failed, or its
+   * question went unanswered: never one the user said "Not now" to or stopped), at most ten minutes before, and the
+   * request is the user's own (not heard where Ember can't tell them from its speakers, not a suggestion). Those are
+   * the words that task was asked with, as its card's Try again carries them: never its goal, which the model wrote.
+   */
+  private retriedWords(r: UserRequest, at: number): { userWords: string; commandWords?: string; typedOnly?: boolean } | null {
+    const log = this.transcript;
+    if (at <= 0 || r.voiceUnchecked || r.suggested || !retryRequest(r.words)) return null;
+    let k = at - 1;
+    while (k >= 0 && log[k].who === "ember") k--;
+    const line = log[k];
+    if (!line || line.who !== "task" || this.restored.has(line) || Date.parse(log[at].t) - Date.parse(line.t) > 10 * 60_000) return null;
+    return this.retryWords.get(line) ?? null;
   }
 
   /** A word of the answer (of the chat `chat`: a retired chat's late words are dropped). */
@@ -1555,10 +1620,12 @@ export class AgentHost {
     const refused = this.o.refuseConnect?.() ?? null;
     if (refused) {
       this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined, service: undefined });
+      this.o.memory?.pauseAccount?.("unverified");
       return;
     }
     if (!token && !provider) {
       this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined, service: undefined });
+      this.o.memory?.pauseAccount?.("signed-out");
       return;
     }
     // The service is named from the start, so a failure to reach it is never explained as Copilot's (integrations-3).
@@ -1585,10 +1652,10 @@ export class AgentHost {
         client = new CopilotClient(runtimeClientOptions({ userData: this.o.userData, runtimePath: this.o.runtimePath, token, provider: !!provider, env }));
         // Known before it starts, so a stop() that comes meanwhile stops it too.
         this.client = client;
-        await client.start();
+        await startStep(client.start(), "start");
         if (gen !== this.gen) return;
         if (provider) break;
-        const auth = await client.getAuthStatus();
+        const auth = await startStep(client.getAuthStatus(), "auth");
         if (gen !== this.gen) return;
         if (auth.isAuthenticated) { login = (auth as { login?: string }).login; break; }
         const refused = new Error(`not authenticated${auth.statusMessage ? `: ${auth.statusMessage}` : ""}`);
@@ -1642,13 +1709,14 @@ export class AgentHost {
       this.restoreHistory();
       // This connection's generation: what it says after the saved copy is invalidated again is never saved (underGen).
       const hg = this.conductorGen = this.connGen;
-      this.o.memory?.verifyAccount?.(accountId);
+      // Memory works only with GitHub Copilot: under a model provider it waits, and Home says which (integrations-2).
+      this.o.memory?.verifyAccount?.(accountId, !provider ? "unverified" : provider.kind === "user" ? "own-provider" : "org-provider");
 
       let models: ModelLike[] = [];
       const admin = this.o.admin?.();
       const allowed = admin?.models.allowed;
       if (!provider) {
-        models = (await client.listModels()) as ModelLike[];
+        models = (await startStep(client.listModels(), "models")) as ModelLike[];
       } else if (provider.kind === "user") {
         // The user's own provider serves the models they named (within the administrator's allowed list, below).
         const named = [...new Set([provider.models?.conductor, provider.models?.worker].filter((m): m is string => !!m))];
@@ -1690,8 +1758,9 @@ export class AgentHost {
       // show_me say there is no desktop), as the prompt is. Once one can, the next request reconnects first (ask).
       const targets = this.o.targets;
       this.status = { ...this.status, conductorModel: choice.conductor, workerModel: choice.worker };
+      // (And the user's own switch, Send screenshots for tasks, read as each task's worker is made: safety-privacy-7.)
       const workerVision = () => this.models.find(m => m.id === this.status.workerModel)?.capabilities?.supports?.vision === true
-        && this.o.admin?.().features.screenImages !== false;
+        && this.o.admin?.().features.screenImages !== false && this.o.settings.get().screenImages !== false;
       this.tasks = hands || (targets && this.targetsTakeTasks()) ? new TaskManager({
         log: this.o.log.child("tasks"),
         ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
@@ -1728,13 +1797,15 @@ export class AgentHost {
           const view = task.view ? viewText(task.view) : "";
           const said = this.underGen(hg, () => this.remember("task", view ? `${text}\n${view}` : text));
           if (summary) this.results.set(said, summary);
+          const asked = tasks?.askedWith(task.id);
+          if (asked && !why) this.retryWords.set(said, asked);
           // Memory learns from what a finished task found (source `task`: context, never the user's word).
           if (this.memoryOn && task.status === "done" && summary && !why) this.o.memory?.taskDone?.(task.title, view ? `${summary}\n${view}` : summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
           // Quitting: nothing more is shown or said.
           if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
           // A task on another computer says where when it is spoken or notified ("On build-01: done. …", §6).
-          this.o.onTaskFinished?.({ title: task.title, status: task.status, summary, text: binding?.kind === "ssh" ? `On ${binding.label}: ${text}` : text });
+          this.o.onTaskFinished?.({ title: task.title, status: task.status, ...(task.endedBy ? { endedBy: task.endedBy } : {}), summary, text: binding?.kind === "ssh" ? `On ${binding.label}: ${text}` : text });
           this.dropAnnouncement(task.id);
           // Shown when nothing else holds the bubble (an answer, a question, "Listening…"), then it goes on its own.
           const o = OUTCOME[task.status === "done" || task.status === "cancelled" ? task.status : "failed"];
@@ -1922,6 +1993,12 @@ export class AgentHost {
           // 2026-11-03; voice-answer.ts TaskVoiceTrust).
           if (r?.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
           this.announced.add(t.id);
+          // Two tasks already at work: this one waits for one of them, and its first words say so (tasks-approvals-7).
+          if (t.status === "queued") {
+            const busy = tasks.list().filter(x => x.status === "running" && x.mode !== "guide").length;
+            const atWork = busy === 1 ? "one task is" : busy === 2 ? "two tasks are" : `${busy} tasks are`;
+            return `Task ${t.id} is waiting${where ? ` ${where}` : ""}: ${atWork} already at work, and it starts when one of them ends. Its card beside Ember says so. Tell the user that, in a few words: it hasn't begun yet.`;
+          }
           return `Task ${t.id} started${where ? ` ${where}` : ""}: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
         showMe: tasks ? async goal => {
@@ -1969,7 +2046,7 @@ export class AgentHost {
           },
         } : undefined,
       });
-      await this.conductor.start();
+      await startStep(this.conductor.start(), "conversation");
       this.conversation = this.conductor.sessionId;
       this.convoCaps = caps;
       this.conversationLogin = login;
@@ -2018,11 +2095,15 @@ export class AgentHost {
       }
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
-      this.o.log.error("agent.start_failed", { err, online, unreachable });
+      this.o.log.error("agent.start_failed", { err, online, unreachable, ...(err instanceof StartTimeout ? { why: "timeout", step: err.step } : {}) });
       const ctx = { source: this.source, sourceName: this.sourceName, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall, runtime: this.o.runtimePath };
       const reason = startErrorReason(err, ctx);
       this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason });
+      // A runtime that didn't answer is hung: it is killed rather than asked to stop (which would wait on it too).
+      if (err instanceof StartTimeout && this.client) { const hung = this.client; this.client = null; await hung.forceStop().catch(() => undefined); }
       await this.doStop();
+      // Not connected, so no account was checked: memory waits for the next connection, and Home says so.
+      if (gen === this.gen) this.o.memory?.pauseAccount?.("unverified");
       // Offline (e.g. started at login before the network or the VPN), or a problem on Copilot's side that passes (a
       // 5xx, a rate limit, a timeout): try again later rather than blaming the sign-in. Not if a newer start or stop
       // came meanwhile: a stale retry would restart a working connection.
@@ -2099,14 +2180,23 @@ export class AgentHost {
     if (this.health) clearInterval(this.health);
     const every = this.o.healthMs ?? 20_000;
     let checking = false;
+    let last = Date.now();
+    // Ticks at the busy cadence; at rest a tick pings only once `every` has passed since the last ping.
     this.health = setInterval(() => {
       if (gen !== this.gen || checking) return;
+      if (!this.underWay() && Date.now() - last < every) return;
+      last = Date.now();
       checking = true;
       void within(client.ping("ember"), Math.min(10_000, Math.max(2000, every)))
         .then(r => { if (r === "timeout") this.lost(gen, "health check timed out"); }, () => this.lost(gen, "health check"))
         .finally(() => { checking = false; });
-    }, every);
+    }, Math.min(every, BUSY_HEALTH_MS));
     this.health.unref?.();
+  }
+
+  /** An answer, a request waiting for its turn, a connection starting or a task is under way: a dead runtime would freeze it. */
+  private underWay(): boolean {
+    return this.starting > 0 || this.queued.length > 0 || this.presenter.busy || (this.conductor?.turnOpen ?? false) || this.tasksAtWork();
   }
 
   /**
@@ -2514,6 +2604,7 @@ export class AgentHost {
    */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
+    if (this.stopsNow(text)) return true;
     // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
     const cutIn = how.replaces === true && (this.conductor?.turnOpen ?? false);
     if (cutIn) {
@@ -2743,6 +2834,19 @@ export class AgentHost {
   }
 
   /**
+   * A typed "stop" or "stop everything" (stopRequest) while a task is running or waiting: the kill switch at once, as
+   * "Ember, stop" is, never a Copilot turn that may take seconds to call cancel_task, or a notice while it connects
+   * (tasks-approvals-v2). Stopping is safe, so it needs no Voice Match. True when it stopped; false leaves the request
+   * to the conversation (nothing at work, or a stop of something else).
+   */
+  stopsNow(text: string): boolean {
+    if (!this.o.stopEverything || !stopRequest(text) || !this.tasksAtWork()) return false;
+    this.o.log.info("agent.stop_local");
+    this.o.stopEverything();
+    return true;
+  }
+
+  /**
    * The conversation's own Stop (its bubble's, while Copilot keeps it waiting: presenter STOP_ANSWER): the turn under
    * way ends, and so does a request still waiting to be sent. Tasks and their questions go on (the kill switch stops
    * those). Returns whether anything was under way (a turn, a request waiting for its turn or for a model service, or
@@ -2967,19 +3071,23 @@ export class AgentHost {
     this.terminalRefused.clear();
     this.o.onTranscript?.([]);
     // What Ember remembered was about the account before, its person: none of it carries over.
-    if (eraseKept) this.forgetKept();
+    const erased = eraseKept && this.forgetKept();
     // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one.
     this.finishedLately = [];
     this.o.onAccountChanged?.();
+    // Never without a word: the new account's conversation starts by saying what went (memory-11).
+    if (erased) this.remember("ember", ACCOUNT_CHANGED_FORGOT);
   }
 
   /**
-   * Forgets personal memory before another account may use it. Main still disconnects credentials on failure.
+   * Forgets personal memory before another account may use it. Main still disconnects credentials on failure. True
+   * when memory was erased (memory not verified as the previous account's stays on the computer).
    */
-  private forgetKept(): void {
+  private forgetKept(): boolean {
     let failure: Error | undefined;
+    let erased = false;
     try {
-      this.o.memory?.forgetAll();
+      erased = this.o.memory?.forgetAll() === true;
       this.memoryDeletionPending = false;
     } catch (err) {
       this.memoryDeletionPending = true;
@@ -2989,6 +3097,7 @@ export class AgentHost {
     this.reminders.clear();
     try { this.o.routines?.forgetAll(); } catch (err) { this.o.log.warn("agent.routines_not_forgotten", { err: err instanceof Error ? err.message : String(err) }); }
     if (failure) throw failure;
+    return erased;
   }
 
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */

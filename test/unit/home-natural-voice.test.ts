@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { effectiveVoiceModel, NATURAL_CHOICES, naturalModelHint, naturalUseLabel } from "../../app/renderer/home/natural-copy";
-import { NATURAL_HINT, naturalVoiceView } from "../../app/renderer/home/copy";
+import { NATURAL_HINT, SPEAK_RATES, hearEmberLine, naturalVoiceView } from "../../app/renderer/home/copy";
 
 describe("the default voice choice", () => {
   it("uses Kitten for new and former baseline preferences and preserves only explicitly enabled Kokoro", () => {
@@ -59,6 +59,24 @@ describe("effective voice status", () => {
     expect(naturalVoiceView({ state: "on", model: "kokoro", voice: "kitten" }, "kokoro").text).toContain("Ember uses Kitten Nano.");
   });
 
+  it("offers Try again when Kitten stopped working or was too slow just now, and says what happened (voice-speaking-6)", () => {
+    expect(naturalVoiceView({ state: "wont-load", model: "kitten", voice: "system", stopped: true })).toEqual({
+      text: "Kitten Nano stopped working, so Ember uses this computer's system voice when available. Try again, or restart Ember.", retry: true, busy: false,
+    });
+    expect(naturalVoiceView({ state: "wont-load", model: "kitten", voice: "system" })).toEqual({
+      text: "Kitten Nano couldn't load, so Ember uses this computer's system voice when available. Try again, or restart Ember.", retry: true, busy: false,
+    });
+    expect(naturalVoiceView({ state: "too-slow", model: "kitten", voice: "system" })).toEqual({
+      text: "Kitten Nano was too slow just now, perhaps because this computer was busy, so Ember uses this computer's system voice when available. Try again when it's less busy.", retry: true, busy: false,
+    });
+    // Kitten that can't run here at all, and an optional voice timed too slow (kept for a week), offer none.
+    expect(naturalVoiceView({ state: "needs-native", model: "kitten", voice: "system" }).retry).toBe(false);
+    expect(naturalVoiceView({ state: "too-slow", model: "kokoro", voice: "kitten" }, "kokoro").retry).toBe(false);
+    const ui = fs.readFileSync(path.resolve("app/renderer/home/natural-voice.ts"), "utf8");
+    expect(ui).toContain("retry.hidden = !view.retry || !allowed(current);");
+    expect(fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")).toContain("ipcMain.handle(IPC.voiceNaturalRetry, guard(() => voice?.retryNaturalVoice()));");
+  });
+
   it("offers download retry for the optional voices, not Kitten, and never displays more than 99% while downloading", () => {
     expect(naturalVoiceView({ state: "failed", model: "supertonic", detail: "Check the network." }, "supertonic").retry).toBe(true);
     const failed = naturalVoiceView({ state: "failed", model: "kokoro", voice: "kitten", detail: "Check the network." }, "kokoro");
@@ -69,5 +87,27 @@ describe("effective voice status", () => {
 
   it("never relabels a stale previous model's status as the new selection", () => {
     expect(naturalVoiceView({ state: "on", model: "kitten", voice: "kitten" }, "kokoro")).toEqual({ text: "Kokoro is selected. Checking voice availability…", retry: false, busy: true });
+  });
+});
+
+describe("Hear Ember and the speaking speed (voice-speaking-7)", () => {
+  it("says which voice spoke, or why none did, in plain words", () => {
+    expect(hearEmberLine({ spoke: true, voice: "kitten" })).toBe("Ember spoke in Kitten Nano.");
+    expect(hearEmberLine({ spoke: true, voice: "kokoro" })).toBe("Ember spoke in Kokoro.");
+    expect(hearEmberLine({ spoke: true, voice: "system" })).toBe("Ember spoke in this computer's system voice.");
+    expect(hearEmberLine({ spoke: false, why: "off" })).toBe("Ember isn't speaking out loud now. Choose Always above to hear it.");
+    expect(hearEmberLine({ spoke: false, why: "managed" })).toBe("Your organisation has turned speaking off.");
+    expect(hearEmberLine({ spoke: false, why: "locked" })).toBe("Ember doesn't speak while the screen is locked.");
+  });
+
+  it("offers five speeds, as made in the middle, within what settings keep", () => {
+    expect(SPEAK_RATES.map(r => r.label)).toEqual(["Slower", "A little slower", "Normal", "A little faster", "Faster"]);
+    expect(SPEAK_RATES.find(r => r.label === "Normal")?.rate).toBe(1);
+    for (const r of SPEAK_RATES) { expect(r.rate).toBeGreaterThanOrEqual(0.8); expect(r.rate).toBeLessThanOrEqual(1.4); }
+    const html = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
+    expect(html).toContain('<select id="speak-rate">');
+    expect(html).toContain('<button type="button" id="voice-hear" class="btn quiet" aria-describedby="voice-hear-status">Hear Ember</button>');
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
+    expect(main).toContain("ipcMain.handle(IPC.voiceHear, guard(() => hearEmber()));");
   });
 });

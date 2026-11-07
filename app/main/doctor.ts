@@ -237,10 +237,16 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   if (p.speechBackend) out.push(p.speechBackend.backend === "native"
     ? { id: "speech-engine", status: "ok", label: "Speech", detail: "On this computer (native)." }
     : { id: "speech-engine", status: "ok", label: "Speech", detail: `Recognition uses WebAssembly (${p.speechBackend.why}). Replies use the system's voice.` });
+  // Kitten Nano speaks where its native speech and model are in: speech-dispatcher (a Recommends of the RPM) is then
+  // only its fallback, never a reason to warn that Ember can't speak (voice-speaking-9).
+  const ownVoice = linux && p.speechBackend?.backend === "native" && p.voiceModels !== "missing" && !missing.some(m => m.id === "tts");
   out.push(off
     ? p.speechDispatcher
       ? { id: "speech", status: "ok", label: "Speaking", detail: off.voices }
       : { id: "speech", status: "warn", label: "Speaking", detail: `${off.name} has no voice Ember can use, so Ember can't read replies aloud.` }
+    : ownVoice
+      ? { id: "speech", status: "ok", label: "Speaking", detail: p.speechDispatcher ? "In Ember's own voice (Kitten Nano); speech-dispatcher is the fallback if it can't run."
+        : "In Ember's own voice (Kitten Nano). If that can't run, replies need speech-dispatcher (sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng)." }
     : p.speechDispatcher
       ? { id: "speech", status: "ok", label: "Speaking", detail: "speech-dispatcher is installed." }
       : { id: "speech", status: "warn", label: "Speaking", detail: "speech-dispatcher is missing, so Ember can't read replies aloud.", fix: "sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng" });

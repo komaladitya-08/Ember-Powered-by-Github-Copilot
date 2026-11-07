@@ -13,12 +13,14 @@
  * Node: no Electron, no model client (main gives it a OneShot once Copilot is connected).
  */
 
+import { memoryPausedReply } from "../../shared/memory-owner";
 import type { Fact, NewFact, Source } from "./graph";
-import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, introFacts, isGetToKnowMe, type Intro } from "./intro";
+import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
 import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
+import type { MemoryOwnerReason } from "./owner";
 import {
-  ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes, forgotReply, gapFact, gapQuestion, isForgetThat,
-  looksLikeRequest,
+  ANSWER_WAIT_MS, FORGET_MANAGED, FORGET_OFF, FORGET_THAT_MS, Gaps, NOTHING_TO_FORGET, QUESTION_EVERY_MS, REMEMBER_OFF, answersQuestion, declinesQuestion, describes,
+  forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
 import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
@@ -55,12 +57,24 @@ export interface LearningDeps {
   say: (text: string) => boolean;
   /** Opens Settings › Memory (the interview asked for while memory is off). */
   openMemory?: () => void;
+  /**
+   * Memory is on and agreed to, but its saved memory can't be opened now: why (memory-2). Ember says so rather than
+   * asking for memory to be turned on. Null or absent otherwise.
+   */
+  paused?: () => MemoryOwnerReason | null;
   /** New facts were kept (the "Ember learned" line). */
   onLearned?: (items: LearnedItem[]) => void;
   /** Everything was forgotten: what showed as learned goes. */
   onForgotAll?: () => void;
   /** One fact was forgotten: its "Ember learned" line goes. */
   onForgot?: (id: string) => void;
+  /**
+   * The conductor forgot a fact the user asked it to (forget_memory): the conversation says so ("Ember forgot: …", in
+   * the fact's stored words, never the model's), with Undo by `undo` (memory-v2).
+   */
+  onAskedForget?: (forgot: { id: string; text: string; derived: number; undo: string; back?: string[] }) => void;
+  /** The user said in the spoken interview whether they like replies spoken: Ember's speaking choice follows (memory-5). */
+  setSpoken?: (on: boolean) => void;
   log: MemoryLog;
   now?: () => number;
   budget?: Partial<LearnBudget>;
@@ -72,6 +86,7 @@ export interface LearningConductorMemory {
   context(query: string, history?: boolean): Promise<string>;
   forRequest(request: string, own: boolean): Promise<string>;
   forget(id: string): boolean;
+  factText(id: string): string | null;
   forgetAll(): void;
   heard(said: string, reply: string, own: boolean): void;
 }
@@ -167,17 +182,26 @@ export class MemoryLearning {
       forRequest: async (request, own) => {
         if (!this.d.inForce()) return "";
         const revision = this.recallRevision;
-        const text = await context(request);
+        // With the user's profile (what to call them, how they like answers) whatever they ask (memory-5).
+        const { text, matched } = await m.requestContext(request, () => this.d.inForce() && revision === this.recallRevision);
         if (!this.d.inForce() || revision !== this.recallRevision) return "";
         // Nothing bears on what the user asked themselves: the names in it are gaps (known names aren't, and checking
         // doesn't count as a use). Never from words Ember couldn't tell were the user's.
-        if (!text && own && this.d.inForce()) {
+        if (!matched && own && this.d.inForce()) {
           const known = m.list().map(i => fold(i.text));
           this.gaps.missed(request, name => known.some(t => t.includes(fold(name))));
         }
         return text;
       },
-      forget: id => this.d.inForce() && this.forget(id),
+      forget: id => {
+        if (!this.d.inForce()) return false;
+        const gone = this.forgetCounted(id);
+        if (gone) {
+          try { this.d.onAskedForget?.({ id, ...gone }); } catch { this.d.log.warn("memory.delete_notice_failed"); }
+        }
+        return !!gone;
+      },
+      factText: id => (this.d.inForce() ? m.factText(id) : null),
       forgetAll: () => this.forgetAll(),
       heard: (said, reply, own) => { this.active(); this.learner.heard(said, reply, own); },
     };
@@ -188,15 +212,33 @@ export class MemoryLearning {
    * and its "Ember learned" line goes (`onForgot`). True if it was there.
    */
   forget(id: string): boolean {
+    return this.forgetCounted(id) !== null;
+  }
+
+  /**
+   * `forget`, saying what went: the fact's words, how many of Ember's notes made from it went too (memory-3), the
+   * token `restore` takes to undo it, and what is current again (`back`). Forgetting what Ember kept just now (within
+   * FORGET_THAT_MS: its "Ember learned" line's Undo, "forget that", a Forget soon after) undoes it, so what it replaced
+   * holds again; anything older is forgotten alone, and what it replaced stays history (memory-12).
+   */
+  forgetCounted(id: string): { text: string; derived: number; undo: string; back?: string[] } | null {
     // A refinement still reading this fact must never reintroduce it in a summary after Forget.
     this.refining?.abort();
     ++this.recallRevision;
-    const had = this.d.memory.forget(id);
+    const kept = this.recent.find(r => r.id === id);
+    const gone = this.d.memory.forgetCounted(id, !!kept && this.now() - kept.at <= FORGET_THAT_MS);
     this.recent = this.recent.filter(r => r.id !== id);
-    if (had) {
+    if (gone) {
       try { this.d.onForgot?.(id); } catch { this.d.log.warn("memory.delete_notice_failed"); }
     }
-    return had;
+    return gone;
+  }
+
+  /** Undo of a recent Forget (Home's list, or the conversation's "Ember forgot" line): true if it was put back. */
+  restore(token: string): boolean {
+    if (!this.d.inForce()) return false;
+    ++this.recallRevision;
+    return this.d.memory.restore(token);
   }
 
   /** An explicit local correction retires readers and learned lines that still describe the old wording. */
@@ -257,11 +299,7 @@ export class MemoryLearning {
     if (this.interview && now - this.interviewAt > INTERVIEW_WAIT_MS) this.interview = null;
     if (this.question && now - this.question.at > ANSWER_WAIT_MS) this.question = null;
     if (isGetToKnowMe(text)) {
-      if (!this.d.inForce()) {
-        if (this.d.managed?.()) return INTRO_MANAGED;
-        this.d.openMemory?.();
-        return INTRO_OFF;
-      }
+      if (!this.d.inForce()) return this.notInForce();
       this.question = null;
       this.interview = new Interview(now);
       this.interviewAt = now;
@@ -269,19 +307,32 @@ export class MemoryLearning {
     }
     // "Forget that" first: never an answer to a question (the interview's or Ember's own).
     if (isForgetThat(text)) {
+      // A bare "forget that" while memory isn't in force is as likely "never mind": the conversation takes it.
       if (!this.d.inForce()) return null;
       const last = this.recent.at(-1);
-      if (!last || now - last.at > FORGET_THAT_MS) return null;
-      return this.forget(last.id) ? forgotReply(last.text) : null;
+      // Nothing kept lately: said in code, since forget_memory needs words that name the fact (memory-v1).
+      if (!last || now - last.at > FORGET_THAT_MS) return NOTHING_TO_FORGET;
+      const gone = this.forgetCounted(last.id);
+      return gone ? forgotReply(last.text, gone.derived, gone.back) : NOTHING_TO_FORGET;
+    }
+    // "Remember that…" or "forget my…" while memory can't: the truth, in code, never a model's promise (memory-v1).
+    if (!this.d.inForce()) {
+      const ask = memoryAsk(text);
+      if (ask) return this.notInForce(ask);
     }
     // A request ("open Thunderbird and send the report to Bob") is never an answer: the question is let go of and the
-    // conversation takes the request.
+    // conversation takes the request. "Call me Ram" to the interview's name question is its answer (memory-6).
     const request = looksLikeRequest(text);
     if (this.interview) {
-      if (!this.d.inForce() || request) { this.interview = null; return null; }
+      if (!this.d.inForce() || (request && !this.interview.answers(text))) { this.interview = null; return null; }
       const step = this.interview.answer(text, how.own);
       this.interviewAt = now;
       this.keepAll(step.keep);
+      // "Spoken or not" is Ember's real choice, not only a fact (only what the user was heard to say reaches `keep`).
+      const spoken = step.keep.find(f => f.predicate === "spoken_answers");
+      if (spoken && how.own) {
+        try { this.d.setSpoken?.(spoken.text === SPOKEN_FACT); } catch { this.d.log.warn("memory.spoken_not_saved"); }
+      }
       if (step.done) this.interview = null;
       return step.say;
     }
@@ -296,6 +347,22 @@ export class MemoryLearning {
       return this.keepAll([gapFact(q.name, text)]) ? `Thanks. I'll remember that about “${q.name}”.` : "I couldn't keep that.";
     }
     return null;
+  }
+
+  /**
+   * What Ember says when asked for something only memory can do (get to know the user, remember, forget) while it
+   * isn't in force: managed by the organisation, on but paused (and why), or off (Settings › Memory opens at its switch).
+   */
+  private notInForce(asked: "introduce" | "remember" | "forget" = "introduce"): string {
+    if (this.d.managed?.()) return asked === "forget" ? FORGET_MANAGED : INTRO_MANAGED;
+    const why = this.d.paused?.() ?? null;
+    if (why) {
+      const reply = memoryPausedReply(why);
+      if (reply.open) this.d.openMemory?.();
+      return reply.text;
+    }
+    this.d.openMemory?.();
+    return asked === "remember" ? REMEMBER_OFF : asked === "forget" ? FORGET_OFF : INTRO_OFF;
   }
 
   /** One idle check: the sleep-time pass first, else a question. */

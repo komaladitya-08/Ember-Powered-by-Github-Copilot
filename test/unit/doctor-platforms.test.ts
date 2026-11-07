@@ -64,6 +64,18 @@ describe("ember doctor's Speech row (which build runs speech on Linux)", () => {
       .toEqual({ id: "speech-engine", status: "ok", label: "Speech", detail: "Recognition uses WebAssembly (this processor lacks avx2). Replies use the system's voice." });
   });
 
+  it("says Ember speaks in its own voice when Kitten runs natively, with speech-dispatcher only its fallback (voice-speaking-9)", () => {
+    const own = base({ speechBackend: { backend: "native", why: "sherpa-onnx's C API" }, voiceModels: "bundled", speechDispatcher: false });
+    expect(byId(doctorChecks(own), "speech")).toEqual({ id: "speech", status: "ok", label: "Speaking",
+      detail: "In Ember's own voice (Kitten Nano). If that can't run, replies need speech-dispatcher (sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng)." });
+    expect(formatDoctor(doctorChecks(own))).not.toMatch(/can't read replies aloud/);
+    expect(byId(doctorChecks({ ...own, speechDispatcher: true }), "speech")?.detail).toBe("In Ember's own voice (Kitten Nano); speech-dispatcher is the fallback if it can't run.");
+    // Without Ember's voice (WebAssembly only, or its model not downloaded), speech-dispatcher is what speaks.
+    for (const without of [{ speechBackend: { backend: "wasm" as const, why: "this processor lacks avx2" } }, { voiceModels: "downloaded" as const, voiceModelsMissing: ["tts" as const] }]) {
+      expect(byId(doctorChecks({ ...own, ...without }), "speech")).toMatchObject({ status: "warn", detail: "speech-dispatcher is missing, so Ember can't read replies aloud." });
+    }
+  });
+
   it("is left out where the Node addon runs speech (Windows, macOS), so their report is unchanged", () => {
     expect(byId(doctorChecks(windows({ speechBackend: null })), "speech-engine")).toBeUndefined();
     expect(byId(doctorChecks(macos()), "speech-engine")).toBeUndefined();

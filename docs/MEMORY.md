@@ -40,21 +40,33 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - Facts carry a source (`user`, `conversation`, `task`, `observed`, `connector`), a confidence, validity times and
     use counts.
   - A near-duplicate reinforces the fact already there.
-  - A `single` predicate (`works_at`, `lives_in`) closes the open facts it replaces. A weaker source never closes
-    what the user said.
+  - A `single` predicate (`works_at`, `lives_in`) closes the open facts it replaces. So does the same statement about
+    the same subject said the other way round ("Likes Teams" → "Doesn't like Teams any more": opposite polarity, 0.8
+    alike without the words that turn it round), and a preference whose one word changed ("Prefers dark mode" →
+    "Prefers light mode"; never "Prefers tea" and "Prefers coffee"). A weaker source never closes what the user said,
+    and the closed fact stays as history, so Undo of the newer puts it back.
 - `recall.ts`: BM25 over fact text plus entity names. The matched facts and named entities then seed a Personalized
   PageRank over the bipartite entity–fact graph:
   - edges into an entity are weighted by inverse degree, so a hub such as "User" doesn't spread the walk to
     everything;
   - the final score mixes walk, lexical match, recency (30-day half-life) and confidence;
-  - a question that matches nothing finds nothing.
+  - a question that matches nothing finds nothing;
+  - each fact's words, and the walk's graph in flat arrays, are kept between requests while the facts and their
+    entities are the same objects (the graph replaces, never edits, them), and only the question's words are counted.
+    Every score is exactly what it was, but recall over 5,000 facts that each match the question went from 97–135 ms
+    a request to 15–23 ms on a busy 4-vCPU machine, and a question that matches nothing from 25–32 ms to 3 ms
+    (memory-14; memory.test.ts pins both).
 - `consolidate.ts`: the model-free sleep-time pass.
   - Merges entities that answer to one name and folds near-duplicate facts together.
   - Forgets history older than 180 days and unsure, unused guesses older than 90 days, and keeps the graph under
     5,000 facts.
   - What the user said is never dropped for age.
-- `guard.ts`: refuses any fact holding a token, key, password, PIN, code or card number. It uses the commands
-  redactor's patterns plus a Luhn check. Secrets are refused whole, never stored redacted.
+- `guard.ts`: refuses any fact holding a token, key, password, PIN, code, card number, IBAN or social security
+  number, however it is said: "the password for the HR portal is…", "VPN password hunter2", "my debit card pin 4821",
+  "the door code is 4821". It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
+  value would be ("the password for Netflix is saved in 1Password") aren't a value. Secrets are refused whole, never
+  stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten.
 
@@ -133,7 +145,10 @@ download, so English-only MiniLM is the trade-off for now.
   conductor or a worker legitimately.
 - **The user's to see and change.** Settings gets a Memory section: what Ember knows, grouped by entity, with
   per-fact forget and "Forget everything". Saying "forget that" in conversation works too. Sign-out erases the
-  verified account's memory along with the conversation.
+  verified account's memory along with the conversation. Memory Ember couldn't verify as this account's in this run
+  stays, and the Sign out question says so ("Saved memory Ember can't match to this account stays on this computer;
+  Forget everything in Memory removes it."). When another account signs in and Ember erases the previous one's
+  memory, the new conversation starts by saying so.
 - **Deletion failures.** Forget and Forget everything acknowledge deletion only after the memory and vector writes
   succeed. A filesystem failure leaves the facts listed with a retryable error; some derived files may already have
   been removed. Sign-out still disconnects credentials and reports the deletion failure. A failed account-boundary
@@ -141,7 +156,16 @@ download, so English-only MiniLM is the trade-off for now.
 - **Account ownership.** Ember checks the authenticated account ID with GitHub and records its digest before saving a new graph. On restart,
   the graph and its vectors stay hidden until the same account is verified. Older data without an owner and data
   left after a failed deletion stay on disk. Use Forget everything to clear them before binding a fresh graph.
-  Memory pauses while the model connection lacks a verified GitHub account.
+  Memory pauses while the model connection lacks a verified GitHub account, and Settings › Memory says why
+  (`MemoryOwner.reason`, app/shared/memory-owner.ts): Ember is still checking the account, nobody is signed in, the
+  user's own model provider or the organisation's model service is in force (memory works only with GitHub Copilot),
+  or GitHub didn't answer. Only another account's memory, memory with no owner Ember can read, or memory left after
+  signing out is offered Forget everything; Home's status line says "Memory paused", Tell Ember about you says why
+  instead of its questions, and "get to know me" answers with the same reason. A reconnect (a network retry, the
+  runtime restarting) checks the account again: the list is hidden meanwhile, but if the same account comes back
+  Home keeps its correction draft, the search and where focus was, and a Better recall download goes on (only the
+  model's use waits). Main's epoch moves on, and Home lets go of them, only for another account or none
+  (`MemoryEpochAccount`, memory-8).
 - **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off.
 
 ## 4. Plan
@@ -164,6 +188,13 @@ download, so English-only MiniLM is the trade-off for now.
    What the step was planned as:
    - Setting `memory.on` (off), the first-use card and the admin key.
    - Conductor tools `remember` (facts the user states: source `user`), `recall` and `forget_memory`.
+     `forget_memory` forgets a fact only when the user's own words this turn ask to forget it, with a word of the
+     fact after the request (`asksToForget`: "forget that I work at Globex", "remove Priya from your memory"; never
+     "don't forget", a routine's steps or unchecked speech), as `delete_routine` does. What it forgot shows in the
+     conversation as "Ember forgot: …" in the fact's stored words, with Undo.
+   - Undo after any Forget (Home's list, "Ember forgot", "forget that") puts the fact back exactly: its notes, what
+     it had replaced closed again, its vector rebuilt (`MemoryService.restore`, once per Forget, within 60 seconds,
+     held in main's memory only and dropped at Forget everything).
    - Before each turn, the host recalls against the request and adds a `<memory>` block.
    - The persona rule appears only while memory is on, so today's prompts stay byte-identical (persona tests).
    - A `MemoryService` in main owns the graph, saves it after changes, and registers as a `StopPart`.
@@ -195,8 +226,16 @@ download, so English-only MiniLM is the trade-off for now.
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
      goes through `MemoryGraph.add()` and the guard.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
-     minutes forgets the newest without a model turn. Forgetting an open fact reopens the one it had replaced
-     (`reopenSuperseded`) and takes its "Ember learned" line away; **Forget everything** clears the lines too.
+     minutes forgets the newest without a model turn. Forgetting an open fact Ember kept in those ten minutes (the
+     line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again
+     (`reopenSuperseded`), and Home's line and the reply say so ("Ember remembers “Works at Globex” again").
+     Forgetting an older fact forgets it alone, so forgetting "Works at Initech" after leaving never makes "Works at
+     Globex" current again; it stays what used to be true (memory-12). Either way the "Ember learned" line goes;
+     **Forget everything** clears the lines too.
+     With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
+   - While memory isn't in force (off, paused, managed), a request that is only "remember that…" or "forget my…"
+     (`memoryAsk`, never "remember to…", a reminder) is answered in code with the truth: memory is off (and Memory
+     opens), why it is paused, or that the organisation turned it off. A model with no memory tools never answers it.
 4. **Sleep-time refinement** (done; `refine.ts`). After 5 minutes idle (no turn, no task, the screen unlocked; an
    unknown lock counts as locked), `MemoryLearning` runs `consolidate()`, then one model pass (the same one-shot
    session) over up to 40 facts changed or used since the last pass:
@@ -205,7 +244,13 @@ download, so English-only MiniLM is the trade-off for now.
    - contradictions closed (`MemoryGraph.closeFact`, never deleted), only by an equal or stronger source, and never
      a `user` fact: only the user changes what they said (review of PR #142); and only for a fact about the same thing
      (the same predicate, or `similarity` of at least `SAME_THING`, 0.5);
-   - reflections from two or more facts, at confidence 0.4, never `user`.
+   - reflections from two or more facts, at confidence 0.4, never `user`, kept with the predicate `reflection`.
+
+   Summaries and reflections record the facts they were made from (`derivedFrom`, at most 40). Forgetting or
+   correcting a fact forgets every note made from it, open or closed, in the same write (`MemoryGraph.notesFrom`;
+   an older summary with no such record goes when it is about the same subject and newer), and "forget that" says
+   "and 2 notes I made from it". Home lists them as "Ember's summary" and "Ember's guess", and the model sees "Ember's
+   own summary" and "Ember's own guess", never "from our conversation".
 
    The model only proposes: ids must be among the facts it was shown, and every new fact goes through `add()`. At
    most one pass an idle stretch and 6 a day; the kill switch (`memory` StopPart) abandons it.
@@ -225,13 +270,26 @@ not, and their timezone or hours. Every answer is optional; while memory is off 
 explicit yes). Main checks the answers with `IntroSchema` (strict, bounded) and keeps them as `user` facts with a
 label Ember wrote ("Likes to be called Ram"), each replacing the one before. "Ember, get to know me" asks the same
 aloud, answered by the host before the conversation (`intent`): "skip" skips, "that's all" stops, and an answer heard
-where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Asked while memory is off, it opens
+where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Spoken answers are kept as said,
+except that the name question keeps only the name: "Call me Ram", "My name is Ram", "It's Ram" and "Ram, please"
+all keep "Likes to be called Ram" (`nameFrom`), and "call me <a short name>" answers it rather than ending the
+interview as a request would (memory-6). Asked while memory is off, it opens
 Settings at memory's note.
 
 **Consent.** The note now says Ember learns as you go and that your words, its replies and its tasks' results go to
-Copilot in short requests of their own, so `FEATURE_CONSENT_VERSION.memory` went to 2 (and to 3 when saved memory was
-tied to the verified GitHub account): someone who agreed to an earlier note has memory off until they agree again (their `memory.json` is kept, unused). Home says "Memory paused" and
-opens the new note once with a line saying why (`memoryPaused`, `MEMORY_PAUSED_TEXT`).
+Copilot in short requests of their own, so `FEATURE_CONSENT_VERSION.memory` went to 2: someone who agreed to the
+first note has memory off until they agree again (their `memory.json` is kept, unused). Home says "Memory paused" and
+opens the new note once with a line saying why (`memoryPaused`, `MEMORY_PAUSED_TEXT`). Version 3 added the account
+ownership sentences (saved memory tied to the verified GitHub account); version 4 (2026-11-07) says that what the
+user asked Ember to call them and how they like answers go with every request (`profileFacts`, memory-5) and that the
+idle tidy sends up to 40 saved facts up to 6 times a day (memory-9).
+
+**Profile.** Before each of the user's own requests, `MemoryService.requestContext` puts their profile first in the
+`<memory>` block whatever the request says: the newest open `user` fact for each of `called`, `answer_length` and
+`answer_style` (the introduction's). Recall itself is unchanged, and gaps are still counted only when recall matched
+nothing. With memory on, the conductor's rules say a stated answer length wins over keeping replies short. "Spoken
+replies" in Tell Ember about you, and "spoken aloud or not" in the spoken interview (the user's own words only), set
+Ember's real speaking choice (Settings › Voice), not only a fact.
 
 **Cost.** In model requests on the conversation's model: extraction at most 12 an hour and 60 a day (typically one
 per three turns, plus one per finished task), refinement at most 6 a day, questions none. At the extremes, 12 + 6 = 18

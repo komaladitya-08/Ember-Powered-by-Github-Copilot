@@ -7,7 +7,7 @@
  * user's words, shown as they already are on the task's card. Pure, so it is unit-tested without Electron.
  */
 
-import type { Task } from "./tasks";
+import type { StopCause, Task } from "./tasks";
 import { plainText } from "./presenter";
 
 /** Recent enough to be "the last thing I did" (a finished task's card has usually gone by then). */
@@ -90,10 +90,15 @@ function lastFinished(tasks: readonly Task[], now: number): Task | null {
 
 /** How a finished task went, in a few words. */
 const OUTCOME: Record<"done" | "failed" | "cancelled", string> = { done: "done", failed: "it didn't finish", cancelled: "you stopped it" };
+/** How a stopped one ended (Task.endedBy, Ember's own flags): "you stopped it" only for a Stop (tasks-approvals-v1). */
+const STOPPED_BY: Record<StopCause, string> = {
+  expired: "my question to you wasn't answered in time", declined: "you said not now", "took-over": "you took the mouse back", stop: "you stopped it",
+};
 
-/** How `t` went: "you stopped it" only when the user did (else why it stopped: its computer went). */
+/** How `t` went: "you stopped it" only when the user did (else why it stopped: its computer went, its question went unanswered). */
 function outcomeOf(t: Task): string {
   if (t.status === "cancelled" && t.stopReason) return brief(t.stopReason).replace(/[.!?…]+$/u, "");
+  if (t.status === "cancelled" && t.endedBy) return STOPPED_BY[t.endedBy];
   return OUTCOME[t.status as keyof typeof OUTCOME] ?? "done";
 }
 
@@ -186,6 +191,30 @@ export function catchUpReply(tasks: readonly Task[], now: number): string {
   const more = finished.length - lines.length;
   const head = finished.length === 1 ? "One task finished." : `${finished.length} tasks finished.`;
   return `${head} ${lines.join(" ")}${more ? ` And ${more} more.` : ""}${still}`;
+}
+
+/** "Try again", "one more time", "have another go", with "please" or the name about them: nothing more. */
+const RETRY_RE = new RegExp(String.raw`^${LEAD}(?:please[,\s]+)?(?:(?:try|do) (?:it |that )?again|retry(?: it| that)?|again|one more time|(?:have|give it) another (?:go|try))(?:[,\s]+please)?${TAIL}$`, "i");
+
+/**
+ * Whether `text` only asks Ember to try again (tasks-approvals-1): after a task that didn't finish, the user means that
+ * request, so the host carries its words (never more: "try again and delete the draft" is a request of its own).
+ */
+export function retryRequest(text: string): boolean {
+  const t = norm(text);
+  return !!t && t.length <= 40 && RETRY_RE.test(t);
+}
+
+/** "Stop", "stop everything", "cancel that", with "please" or the name about them: a stop of everything, nothing more. */
+const STOP_RE = new RegExp(String.raw`^${LEAD}(?:please[,\s]+)?(?:stop|cancel)(?: (?:it|that|this|everything|all(?: (?:the )?tasks)?|(?:the |my )?tasks?))?(?:[,\s]+please)?${TAIL}$`, "i");
+
+/**
+ * Whether typed `text` asks Ember to stop everything (tasks-approvals-v2): while a task is at work the host stops it at
+ * once, as "Ember, stop" does, rather than wait for Copilot. Never a stop of something else ("stop the music").
+ */
+export function stopRequest(text: string): boolean {
+  const t = norm(text).replace(/!+$/, "");
+  return !!t && t.length <= 40 && STOP_RE.test(t);
 }
 
 /** "Systems check", "are you working?", "is everything OK?": Ember reports on itself. */

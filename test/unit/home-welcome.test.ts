@@ -249,7 +249,7 @@ describe("the checks step", () => {
     const missing = [{ id: "accessibility", label: "Screen reading", status: "warn" as const, detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" }];
     expect(plainChecks(missing)[0]).toMatchObject({ command: "sudo dnf install python3-pyatspi python3-gobject" });
     expect(plainChecks(missing)[0].text).toContain("Run the command below");
-    expect(fixCommand("No SSH client found. Install OpenSSH with: sudo dnf install openssh-clients")).toBe("sudo dnf install openssh-clients");
+    expect(fixCommand("No SSH client found. Install OpenSSH with sudo dnf install openssh-clients, then try again.")).toBe("sudo dnf install openssh-clients");
     expect(fixCommand("Accessibility is on")).toBeUndefined();
     expect(fixCommand("Install it with sudo dnf install speech-dispatcher, then restart Ember.")).toBe("sudo dnf install speech-dispatcher");
   });

@@ -282,3 +282,24 @@ describe("the eval's simulated user", () => {
     expect(questions).toEqual([`${typing().prompt}\nYour task: Write to the team`]);
   });
 });
+
+describe("a question's task line (tasks-approvals-5)", () => {
+  it("shows the user's own words in place of the goal when the question gives them, or no line for none, and keeps the goal as the answer's title", async () => {
+    const { taskLineOf } = await import("../../app/main/agent/confirm");
+    const { c, bubble } = confirmer();
+    const asked = typing({ detail: undefined, prompt: "Click the “Delete” button in Mail? You didn't ask for this, so say no if it looks wrong.", context: "Email Priya and delete the old mails", taskLine: "“email Priya the report”" });
+    const q = c.ask(asked);
+    expect(bubble().thought).toBe(`${asked.prompt}\nYour task: “email Priya the report”`);
+    expect(taskLineOf(asked)).toBe("“email Priya the report”");
+    c.answerKey("deny");
+    await q;
+    expect(bubble().title).toBe("Email Priya and delete the old mails");
+    const none = typing({ detail: undefined, prompt: "Click “Bold”?", taskLine: "" });
+    const q2 = c.ask(none);
+    await vi.waitFor(() => expect(bubble().thought).toBe("Click “Bold”?"));
+    expect(taskLineOf(none)).toBe("");
+    expect(taskLineOf(typing({ detail: undefined }))).toBe("Write to the team");
+    c.cancelAll();
+    await q2;
+  });
+});

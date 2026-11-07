@@ -254,6 +254,8 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   // too (review of #143). Every way it starts (the switch, Try again, Ember's start) follows this setting.
   if (admin.features.voice === false || admin.features.speak === false) s.voice = { ...s.voice, natural: false };
   if (admin.features.voice === false) s.voice = { ...s.voice, clearHearing: false };
+  // No screenshots for tasks: Home's "Send screenshots for tasks" shows off (and managed).
+  if (admin.features.screenImages === false) s.screenImages = false;
   if (admin.neverLook.length) {
     const have = new Set(s.privacy.neverLook.map(x => x.toLowerCase()));
     s.privacy = { ...s.privacy, neverLook: [...s.privacy.neverLook, ...admin.neverLook.filter(x => !have.has(x.toLowerCase()))] };
@@ -284,6 +286,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.voice === false) keys.push("wakeWord");
   if (admin.features.speak === false) keys.push("speak");
   if (admin.features.voice === false || admin.features.speak === false) keys.push("naturalVoice");
+  if (admin.features.screenImages === false) keys.push("screenImages");
   if (modelsManaged(admin.models)) keys.push("models");
   if (!admin.allowGrants) keys.push("grants", "askedApps");
   if (admin.features.aiReview === false) keys.push("reviewCommands");

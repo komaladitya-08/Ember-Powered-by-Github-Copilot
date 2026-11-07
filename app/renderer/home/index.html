@@ -46,6 +46,7 @@
 
     <p id="managed" class="managed" hidden></p>
     <p id="settings-notice" class="managed error" role="status" hidden></p>
+    <p id="run-notice" class="managed" role="status" hidden></p>
     <p id="provider-off" class="managed error" role="alert" hidden><span id="provider-off-text"></span> <button type="button" class="btn quiet small" id="provider-off-retry"></button></p>
 
     <section id="welcome" class="welcome" aria-labelledby="w-title" data-step="hello" hidden>
@@ -404,6 +405,7 @@
       </div>
       <p class="hint" id="memory-count" role="status"></p>
       <ul class="plain-list memory-list" id="memory-list" aria-labelledby="memory-h"></ul>
+      <div class="agent-actions memory-forgotten" id="memory-forgotten" hidden><p class="hint" id="memory-forgotten-text" role="status" tabindex="-1"></p><button type="button" id="memory-undo" class="btn quiet small">Undo</button></div>
       <div class="agent-actions"><button type="button" id="memory-more" class="btn quiet" hidden></button></div>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
       <p class="hint" id="memory-owner" role="status" hidden></p>
@@ -449,7 +451,7 @@
       <div class="group voice">
         <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for “Hey Ember”</span></label>
         <div id="consent" class="consent" role="group" aria-label="Before Ember listens" hidden>
-          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for its name (“Ember”, or “Hey Ember”) and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Ember”, what you say next is turned into text on this computer, and only that text is sent to <span class="model-recipient">Copilot</span>. After that the microphone stays open for the conversation: what you say next, without its name and also while Ember talks or works, is turned into text and sent too, until you say “That's all” or 30 seconds after everything has gone quiet. Voice settings can turn this off. If you teach Ember your voice, it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct when it mishears you, on this computer until you forget them. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="output-note" hidden>During a conversation Ember also checks how loud your computer's sound is (nothing else, and only on this computer), so a song or a video isn't taken for you.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span data-key-held="mute"><span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</span><span data-key-taken="mute" hidden>Mute microphone, in Ember's handle menu, turns the microphone off and on.</span></p>
+          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for its name (“Ember”, or “Hey Ember”) and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Ember”, what you say next is turned into text on this computer, and only that text is sent to <span class="model-recipient">Copilot</span>. After that the microphone stays open for the conversation: what you say next, without its name and also while Ember talks or works, is turned into text and sent too, until you say “That's all” or 30 seconds after everything has gone quiet. Voice settings can turn this off. <span id="consent-models" hidden>Agreeing also downloads the speech models (<span id="consent-models-size"></span>), once.</span> If you teach Ember your voice, it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct when it mishears you, on this computer until you forget them. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="output-note" hidden>During a conversation Ember also checks how loud your computer's sound is (nothing else, and only on this computer), so a song or a video isn't taken for you.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span data-key-held="mute"><span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</span><span data-key-taken="mute" hidden>Mute microphone, in Ember's handle menu, turns the microphone off and on.</span></p>
           <p id="consent-error" class="error" role="alert" hidden></p>
           <div class="agent-actions"><button type="button" id="consent-yes" class="btn" aria-describedby="consent-text">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
         </div>
@@ -459,12 +461,13 @@
         <p class="hint" id="voice-listen-once-detail" role="status" aria-atomic="true"></p>
         <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button><button type="button" id="voice-fix" class="btn quiet" hidden>Open Settings</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
+        <div class="agent-actions"><button type="button" id="voice-download-cancel" class="btn quiet" hidden>Cancel download</button></div>
         <div id="match" class="match" role="group" aria-labelledby="match-label" hidden>
           <label class="switch-row"><input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">Answer questions with my voice (Voice Match)</span></label>
           <p class="hint" id="match-text"></p>
           <p class="match-prompt" id="match-prompt" hidden></p>
           <progress id="match-progress" max="4" value="0" aria-label="Phrases Ember has heard" hidden></progress>
-          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" hidden>Forget my voice</button><button type="button" id="match-reset" class="btn quiet" aria-describedby="match-learnt" hidden>Reset to my enrolment</button></div>
+          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="Also forgets the words Ember learnt from what you said." hidden>Forget my voice</button><span id="match-forget-hint" hidden>Also forgets the words Ember learnt from what you said.</span><button type="button" id="match-reset" class="btn quiet" aria-describedby="match-learnt" hidden>Reset to my enrolment</button></div>
           <div class="noted-row" id="match-learn-row" hidden>
             <label class="switch-row"><input type="checkbox" id="match-learn" role="switch" aria-describedby="match-learn-hint match-learnt"><span id="match-learn-label">Keep learning my voice</span></label>
             <p class="row-note" id="match-learn-hint"></p>
@@ -501,6 +504,14 @@
           <label for="speak">Speak replies, questions and results out loud</label>
           <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
         </div>
+        <div class="choice">
+          <label for="speak-rate">Speaking speed</label>
+          <select id="speak-rate"><option value="0.8">Slower</option><option value="0.9">A little slower</option><option value="1">Normal</option><option value="1.15">A little faster</option><option value="1.3">Faster</option></select>
+        </div>
+        <div>
+          <div class="agent-actions"><button type="button" id="voice-hear" class="btn quiet" aria-describedby="voice-hear-status">Hear Ember</button></div>
+          <p class="hint" id="voice-hear-status" role="status" hidden></p>
+        </div>
         <label class="switch-row"><input type="checkbox" id="speak-results" role="switch"><span>Read finished tasks out loud, not only on screen</span></label>
       </div>
       <p class="hint" id="speak-note" role="status" hidden></p>
@@ -508,6 +519,10 @@
       <ul class="plain-list" id="words-list" aria-labelledby="words-h"></ul>
       <p class="hint" id="words-note" role="status"></p>
       <div class="agent-actions"><button type="button" id="words-forget-all" class="btn quiet" hidden>Forget all words</button></div>
+      <div id="words-forget-confirm" class="consent" role="group" aria-labelledby="words-forget-title" hidden>
+        <p id="words-forget-title"></p>
+        <div class="agent-actions"><button type="button" id="words-forget-yes" class="btn quiet danger">Forget all words</button><button type="button" id="words-forget-no" class="btn quiet">Keep them</button></div>
+      </div>
       <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything. “Ember?” on its own tells you what Ember is doing, “What did I miss?” what finished while you were away, and “Ember, just show me” keeps results on screen.</p>
     </section>
 
@@ -552,6 +567,13 @@
         </form>
         <p class="hint never-look-msg" id="never-look-msg" role="status"></p>
         <p class="hint">Ember never reads, captures or acts in an app or window whose name contains one of these. <button type="button" id="never-look-defaults" class="link">Restore defaults</button></p>
+        <h3 class="sub">What tasks may send</h3>
+        <div class="group">
+          <div class="noted-row">
+            <label class="switch-row"><input type="checkbox" id="screen-images" role="switch" aria-describedby="screen-images-hint"><span>Send screenshots for tasks</span></label>
+            <p class="row-note" id="screen-images-hint">A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.</p>
+          </div>
+        </div>
       </div>
     </section>
 

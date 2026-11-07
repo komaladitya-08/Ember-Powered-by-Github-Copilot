@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { announcement, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
+import { announcement, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, stepParts, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -435,6 +435,18 @@ describe("the bubble's hierarchy (UI audit #9)", () => {
     expect(keyHintParts("Or press Ctrl+Alt+E and go to Conversation.")).toBeNull();
     expect(keyHintParts("Clicking “Rename”")).toBeNull();
     expect(keyHintParts(null)).toBeNull();
+  });
+
+  it("keeps a question's keys as keycaps under a note before them, on a line of its own (tasks-approvals-6)", () => {
+    const note = "To answer yes by voice, set up Voice Match in Settings › Voice, so I know it's you. For now, click Allow.";
+    expect(stepParts(`${note}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`)).toEqual({ lead: note, keys: [{ keys: ["Ctrl", "Alt", "Y"], word: "allow" }, { keys: ["Ctrl", "Alt", "N"], word: "not now" }] });
+    expect(stepParts("Ctrl+Alt+Y allow")).toEqual({ lead: null, keys: [{ keys: ["Ctrl", "Alt", "Y"], word: "allow" }] });
+    // A note alone, or a line that isn't keys after it, is words as before.
+    expect(stepParts(note)).toEqual({ lead: null, keys: null });
+    expect(stepParts(`${note}\nOr press Ctrl+Alt+E.`)).toEqual({ lead: null, keys: null });
+    // Heard as one: the note, then the keys.
+    expect(announcement({ visible: true, mood: "attention", title: "May I?", thought: "Click “Send”?", streaming: false, step: `${note}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now` }))
+      .toBe(`Ember needs you: May I? Click “Send”? ${note} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
   });
 
   it("says a risky question is one before anything else, as its tag shows it", () => {

@@ -167,6 +167,11 @@ export interface CommandDecision {
   unasked: boolean;
   /** How long the card's Allow stays disarmed (ms). */
   armMs: number;
+  /**
+   * The AI reviewer's own words for why it cleared the command (review.ts): model text that can name files and the
+   * request, so it is audited in a field of its own, which the system journal keeps as a size only (safety-privacy-v1).
+   */
+  review?: string;
 }
 
 /** Everything decideCommand reads. */
@@ -319,6 +324,11 @@ export interface CommandCard {
   classes?: DangerClass[];
   /** An announcement the AI review cleared (commands/review.ts), not one the user's own words asked for exactly. */
   reviewed?: boolean;
+  /**
+   * The target's home folder, for a POSIX shell: the header says it as ~ ("in ~/src/app", commands-remote-8). Shown
+   * only; the approval binds the whole `cwd`.
+   */
+  home?: string;
 }
 
 /** What a target offers for commands right now. */

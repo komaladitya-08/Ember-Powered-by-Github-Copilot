@@ -517,6 +517,25 @@ describe("the card's words from the classifier (review #214)", () => {
     }
   });
 
+  it("names the current folder and the one above it in words, never as . or .., and find's {} as each file it finds (commands-remote-v1)", () => {
+    expect(says("find . -name '*.pyc' -delete")).toContain("Deletes what it finds under the current folder.");
+    expect(says("find -name '*.pyc' -delete")).toContain("Deletes what it finds under the current folder.");
+    expect(says("find .. -name '*.log' -delete")).toContain("Deletes what it finds under the folder above the current one.");
+    expect(says("find ./ -name '*.log' -delete")).toContain("Deletes what it finds under the current folder.");
+    expect(says("git checkout .")).toContain("Throws away changes to the current folder.");
+    expect(says("git restore .")).toContain("Throws away changes to the current folder.");
+    expect(says("cp -r src/* .")).toContain("Replaces files in the current folder if they exist.");
+    expect(says("mv build/* .")).toContain("Replaces files in the current folder if they exist.");
+    expect(says("cp ../config.json .")).toContain("Replaces /home/ana/proj/config.json if it exists.");
+    expect(says("find . -name \"*.log\" -exec rm {} \\;")).toEqual(["Deletes each file it finds.", "Deletes what it finds under the current folder."]);
+    for (const cmd of ["find . -name '*.pyc' -delete", "git checkout .", "cp -r src/* .", "find . -name \"*.log\" -exec rm {} \\;", "find .. -delete", "git restore .."]) {
+      for (const l of says(cmd)) expect(l, cmd).not.toMatch(/(^|\s)\.\.?(\s|\.?$)|\{\}/);
+    }
+    // A path with dots in it is said as written.
+    expect(says("rm -r ./build")).toContain("Deletes ./build and everything in it.");
+    expect(says("rm -r ../build")).toContain("Deletes ../build and everything in it.");
+  });
+
   it("says what Ember can't tell in plain words", () => {
     expect(says("ls $(cat names.txt)")).toContain("Ember can't tell which arguments ls gets.");
     expect(says("echo $\"hi\"")).toContain("It uses locale-translated text ($\"…\"), which Ember can't check.");
@@ -524,5 +543,35 @@ describe("the card's words from the classifier (review #214)", () => {
     expect(says("^d^e^l x.txt", "cmd", "win32")).toContain("It hides the program's name with ^ characters, so Ember can't tell what runs.");
     const all = [...says("ls $(cat names.txt)"), ...says("echo $\"hi\""), ...says("^d^e^l x.txt", "cmd", "win32")];
     for (const l of all) expect(l).not.toMatch(/is given\.|a translated string|\^ escapes/);
+  });
+});
+
+describe("loops and ifs (commands-remote-2)", () => {
+  const rules = (cmd: string, shell: ShellId = "bash") => classifyCommand(cmd, shell, contextOf("linux")).findings.map(f => f.rule);
+
+  it("doesn't call a read interactive when its loop or if is given a file or text to read", () => {
+    for (const fed of [
+      "while read -r l; do echo \"$l\"; done < list.txt",
+      "while read -r l; do echo \"$l\"; done <<< \"a b\"",
+      "while read -r l; do echo \"$l\"; done <<EOF\na\nEOF",
+      "while true; do read -r l || break; echo \"$l\"; done < list.txt",
+      "if read -r first; then echo \"$first\"; fi < list.txt",
+      "while read -r a; do while read -r b; do echo; done < inner.txt; done < outer.txt",
+      "while read -r a; do if true; then echo; fi; done < list.txt",
+    ]) expect(rules(fed), fed).not.toContain("unclear.interactive");
+    // Nothing to read but the user's typing, a closer it can't pair up, or a nested shell's loop: it still says so.
+    for (const bare of [
+      "while read -r l; do echo \"$l\"; done",
+      "while read -r a; do while read -r b; do echo; done; done < x.txt; read -r c",
+      "done < list.txt; read -r l",
+      "bash -c 'while read -r l; do echo; done' < list.txt",
+    ]) expect(rules(bare), bare).toContain("unclear.interactive");
+  });
+
+  it("reads a for loop's variable as an assignment: one that changes how commands are found or run is unclear", () => {
+    expect(rules("for i in 1 2; do echo $i; done")).not.toContain("unclear.assignment");
+    for (const risky of ["for PATH in /tmp/x; do ls; done", "for LD_PRELOAD in /tmp/x.so; do ls; done", "for GIT_SSH_COMMAND in x; do git fetch; done", "for $v in a; do ls; done"]) {
+      expect(rules(risky), risky).toContain("unclear.assignment");
+    }
   });
 });

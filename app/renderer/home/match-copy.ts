@@ -20,8 +20,16 @@ export const MATCH_TEXT = {
   forget: "Forget my voice",
   learnt: "Ember knows your voice now.",
   stopped: "Stopped teaching Ember your voice.",
-  forgot: "Ember forgot your voice.",
+  /** Forget my voice deletes the words learnt from what the user said too (personal/service.ts forgetVoice): said so. */
+  forgot: "Ember forgot your voice and the words it learnt.",
+  forgetHint: "Also forgets the words Ember learnt from what you said.",
   progressLabel: "Phrases Ember has heard",
+  /** Teaching ended before Ember learnt the voice, and not by the user's Cancel (VoiceMatchStatus.ended). */
+  ended: {
+    "gave-up": "Ember couldn't learn your voice: too many phrases didn't sound alike. Try again somewhere quiet, with only you speaking.",
+    timeout: "Teaching stopped because Ember didn't hear a phrase for a while. Try again when you're ready.",
+    interrupted: "Teaching stopped because Ember stopped listening. Try again once it's listening for “Ember”.",
+  },
 } as const;
 
 export interface MatchView {
@@ -58,7 +66,10 @@ const noModel = (m: VoiceMatchStatus) => m.model === false && !m.enrolling;
 export function matchText(m: VoiceMatchStatus, speakerBytes: number | null = null): string {
   if (m.enrolling) return `Say each phrase as you would ask Ember (${m.enrolling.got} of ${m.enrolling.of} heard).`;
   if (noModel(m)) return matchNoModelText(!!m.wanted, speakerBytes);
-  return !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
+  const state = !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
+  // Why the last teaching didn't learn the voice, until it is taught again (an earlier voiceprint is still in use).
+  const ended = m.ended === "gave-up" || m.ended === "timeout" || m.ended === "interrupted" ? MATCH_TEXT.ended[m.ended] : null;
+  return ended ? `${ended} ${state}` : state;
 }
 
 export function matchPrompt(e: NonNullable<VoiceMatchStatus["enrolling"]>): string {
@@ -90,7 +101,8 @@ export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boole
 
 /**
  * What `#voice-live` says when Voice Match's status changes (null: nothing new). Each phrase is said as it is asked for,
- * with how many were heard, and the end says how it ended. `cancelled`: the user pressed Cancel.
+ * with how many were heard, and the end says how it ended (`m.ended`: never "knows your voice" for teaching that gave
+ * up while an earlier voiceprint is kept, voice-listening-5). `cancelled`: the user pressed Cancel.
  */
 export function matchAnnouncement(prev: VoiceMatchStatus | undefined, m: VoiceMatchStatus | undefined, cancelled = false): string | null {
   if (!m) return null;
@@ -100,7 +112,11 @@ export function matchAnnouncement(prev: VoiceMatchStatus | undefined, m: VoiceMa
     if (p && p.got === e.got && p.phrase === e.phrase && p.again === e.again) return null;
     return e.again || e.got === 0 ? matchPrompt(e) : `Heard ${e.got} of ${e.of}. ${matchPrompt(e)}`;
   }
-  if (prev?.enrolling) return `${cancelled ? MATCH_TEXT.stopped : m.enrolled ? MATCH_TEXT.learnt : ""} ${matchText(m)}`.trim();
+  if (prev?.enrolling) {
+    const how = cancelled || m.ended === "cancelled" || m.ended === "stopped" ? MATCH_TEXT.stopped
+      : m.ended === "learnt" || (!m.ended && m.enrolled) ? MATCH_TEXT.learnt : "";
+    return `${how} ${matchText(m)}`.trim();
+  }
   if (prev?.enrolled && !m.enrolled) return `${MATCH_TEXT.forgot} ${matchText(m)}`;
   return null;
 }

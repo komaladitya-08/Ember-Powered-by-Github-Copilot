@@ -14,6 +14,9 @@ describe("ssh's failures in Ember's words (§5.1.8, §8.7)", () => {
     // This OS's way to install SSH only, when it is known.
     expect(MESSAGES.noClient("win32")).toBe("Ember can't find SSH on this computer. Install the OpenSSH Client in Settings › Apps › Optional features, then try again.");
     expect(MESSAGES.noClient("linux")).not.toMatch(/Windows/);
+    // Every line ends as a sentence, with what to do after (commands-remote-8).
+    expect(MESSAGES.noClient("linux")).toBe("Ember can't find SSH on this computer. Install OpenSSH with sudo dnf install openssh-clients, then try again.");
+    for (const os of ["linux", "win32", "darwin", undefined] as const) expect(installSsh(os), String(os)).toMatch(/then try again\.$/);
   });
 
   it("tells an unknown host key from a changed one", () => {

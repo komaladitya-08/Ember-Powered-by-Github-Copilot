@@ -2,8 +2,21 @@
 
 interface Row<T> { value: T; el: HTMLElement }
 
+/** How long a control that focus was moved to (its row's neighbour went) ignores activation (ms): key repeat, a second Enter. */
+const JUST_FOCUSED_MS = 600;
+const focusedAt = new WeakMap<Element, number>();
+
 /** A settings list whose keys name the same saved item, even when neighbouring items change. */
 export class KeyedRows<T> {
+  /**
+   * Whether focus was moved to `el` just now because the row it was in went: a destructive button there ignores the
+   * Enter that was meant for the row before (memory-7).
+   */
+  static justFocused(el: Element): boolean {
+    const at = focusedAt.get(el);
+    return at !== undefined && performance.now() - at < JUST_FOCUSED_MS;
+  }
+
   private rows = new Map<string, Row<T>>();
   constructor(private list: HTMLElement, private options: {
     key: (value: T) => string;
@@ -41,7 +54,11 @@ export class KeyedRows<T> {
     this.rows = next;
     if (focused) {
       if (active && this.list.contains(active)) { if (document.activeElement !== active) active.focus(); }
-      else (nodes[Math.min(index, nodes.length - 1)]?.querySelector<HTMLElement>("button") ?? this.options.fallback()).focus();
+      else {
+        const target = nodes[Math.min(index, nodes.length - 1)]?.querySelector<HTMLElement>("button") ?? this.options.fallback();
+        focusedAt.set(target, performance.now());
+        target.focus();
+      }
     }
   }
 }

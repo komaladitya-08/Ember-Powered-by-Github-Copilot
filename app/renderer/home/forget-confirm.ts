@@ -6,16 +6,25 @@
 import type { EmberHomeApi, MemoryView } from "../../shared/ipc";
 import { FORGET_LOADING, forgetEverythingScope, signOutScope, type ForgetCounts } from "./copy";
 
-type Field = keyof ForgetCounts;
+type Field = Exclude<keyof ForgetCounts, "kept">;
 const FIELDS: Field[] = ["tasks", "facts", "reminders", "routines"];
 /** A read that hasn't answered by now is unknown, so a hung read never keeps the question empty. */
 const READ_TIMEOUT_MS = 4000;
 
-type Slot = { state: "loading" } | { state: "known"; n: number } | { state: "unknown" };
+type Slot = { state: "loading" } | { state: "known"; n: number } | { state: "unknown" } | { state: "kept" };
 
-const factsSlot = (view: MemoryView | null): Slot =>
-  // Locked or waiting memory returns no rows even when some are stored, so only a ready owner's list is a count.
-  view && view.ownership === "ready" ? { state: "known", n: view.rows.length } : { state: "unknown" };
+/**
+ * The saved facts as the questions count them. Locked or waiting memory returns no rows even when some are stored, so
+ * only a ready owner's list is a count; memory main says Sign out leaves (never verified as this account's in this
+ * run) is `kept` when some is saved and none when the owner waits with nothing saved (memory-11).
+ */
+export function factsCount(view: MemoryView | null): Slot {
+  if (!view) return { state: "unknown" };
+  if (view.ownership === "ready") return { state: "known", n: view.rows.length };
+  if (view.erasesOnSignOut === false) return view.ownership === "locked" ? { state: "kept" } : { state: "known", n: 0 };
+  return { state: "unknown" };
+}
+const factsSlot = factsCount;
 
 /** Which counts the open question has: each field's newest answer wins, whether it was fetched or pushed. */
 class Counts {
@@ -59,7 +68,8 @@ class Counts {
   get loading(): boolean { return FIELDS.some(f => this.slots[f].state === "loading"); }
   get view(): ForgetCounts {
     const n = (f: Field) => { const s = this.slots[f]; return s.state === "known" ? s.n : null; };
-    return { tasks: n("tasks"), facts: n("facts"), reminders: n("reminders"), routines: n("routines") };
+    const kept = this.slots.facts.state === "kept";
+    return { tasks: n("tasks"), facts: n("facts"), reminders: n("reminders"), routines: n("routines"), ...(kept ? { kept } : {}) };
   }
 }
 

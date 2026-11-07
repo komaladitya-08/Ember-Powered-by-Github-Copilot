@@ -256,6 +256,16 @@ describe("the telemetry row (HUD direction: three items at most, readable in a g
     expect(l.add({ type: "near-limit" }, T0 + 1)).toBe(false);
     expect(l.card().nearLimit).toBe(true);
   });
+
+  it("says a step waits for the minute's limit in its live line, a pause and never a refusal (tasks-approvals-2)", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "c1", tool: "click", step: "Clicking", app: "Text Editor" }, T0);
+    expect(l.add({ type: "paced", perMinute: 40 }, T0 + 1)).toBe(true);
+    expect(l.card().live).toBe("Pausing to keep to 40 steps a minute…");
+    expect(l.card().rows.map(r => r.words)).toEqual(["Clicking in Text Editor…"]);
+    l.add({ type: "tool-end", id: "c1", ok: true }, T0 + 2);
+    expect(l.card().live).toBe("Thinking…");
+  });
 });
 
 describe("step words", () => {

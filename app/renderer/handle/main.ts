@@ -1,6 +1,6 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
-import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
+import { Rig, FACTORIES, frameSeconds, restingGap, type Character, type Emotion } from "@ember/characters";
 import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
 import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
 import { cardAutonomous, cardRisky, cardTask, cardText } from "./card";
@@ -200,7 +200,7 @@ api.onState(s => {
   const b = s.bubble;
   // The microphone: a shape and words for its state (never colour alone), whenever listening is on.
   const mic = $("mic");
-  const micState = micBadge(s.mic);
+  const micState = micBadge(s.mic, s.micLearning === true);
   mic.hidden = !micState;
   mic.dataset.state = s.mic ?? "off";
   mic.dataset.glyph = micState?.glyph ?? "";
@@ -351,6 +351,8 @@ let last = performance.now();
 /** Talking or streaming, or a lively face: full frame rate; a calm face ~30 fps; a still one ~15 (the page sleeps in between). */
 let busy = false;
 let resting = false;
+/** The resting gap the last frame waited for (restingGap's, else 0): its time passes in full (frameSeconds). */
+let planned = 0;
 /** Something may have changed: draws again if the loop had stopped. */
 function resume(): void {
   if (!resting) return;
@@ -363,11 +365,13 @@ const next = () => {
   // loop cost 3.4-6.3 % of a core at idle (docs/ASSISTANT.md), drawing a picture that didn't change.
   if (mayRest(rig.asleep, rig.settled, busy)) { resting = true; return; }
   const motion = rig.motion;
-  const gap = busy || motion === "brisk" ? 0 : motion === "gentle" ? 33 : 66;
+  // An awake Ready face with nothing passing: about 6 frames a second, waking for its next blink (rp-4).
+  const gap = busy || motion === "brisk" ? 0 : motion === "gentle" ? 33 : restingGap(rig, 66);
+  planned = gap > 66 ? gap : 0;
   if (gap) setTimeout(() => requestAnimationFrame(frame), gap); else requestAnimationFrame(frame);
 };
 function frame(now: number): void {
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.1));
+  const dt = frameSeconds(now - last, planned);
   last = now;
   const dpr = window.devicePixelRatio || 1;
   const size = canvas.clientWidth;

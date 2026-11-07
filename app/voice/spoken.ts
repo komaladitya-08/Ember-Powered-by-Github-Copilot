@@ -75,13 +75,122 @@ const KEY_SAID: Readonly<Record<string, string>> = {
   pgup: "Page Up", pgdn: "Page Down",
 };
 
+/**
+ * A pictograph (an emoji, a flag) with its skin tone, variation and the ones joined to it ("👨‍👩‍👧"): read aloud, Kitten says
+ * its name ("white heavy check mark", "party popper"). ©, ® and ™ are said as words, so they stay.
+ */
+const PICTOGRAPH = "(?:(?![©®™])\\p{Extended_Pictographic}|[\\u{1F1E6}-\\u{1F1FF}])(?:\\u{FE0E}|\\u{FE0F}|\\u{20E3}|[\\u{1F3FB}-\\u{1F3FF}]|[\\u{E0020}-\\u{E007F}])*";
+const EMOJI = `${PICTOGRAPH}(?:\\u200D${PICTOGRAPH})*`;
+/** An emoji between a word and a capitalised one ends a sentence there ("Done ✅ I closed…" is "Done. I closed…"). */
+const EMOJI_BETWEEN = new RegExp(`([\\p{L}\\p{N}])[ \\t]*(?:${EMOJI}[ \\t]*)+[ \\t](?=\\p{Lu})`, "gu");
+const EMOJI_ANY = new RegExp(`[ \\t]*(?:${EMOJI})+|\\u{FE0F}|\\u{20E3}`, "gu");
+/** A smiley typed as text, standing on its own (":)", ";-)", ":D", "<3"): Kitten said ":)" as "colon". */
+const EMOTICON = /(?:^|[ \t]+)(?:[:;]-?[()DPp]|<3)(?=[\s.,!?]|$)/gm;
+
+/** How each currency's amounts are said: its unit, and its hundredth (none for the yen). */
+const MONEY: Readonly<Record<string, { one: string; many: string; part?: [string, string] }>> = {
+  $: { one: "dollar", many: "dollars", part: ["cent", "cents"] },
+  "£": { one: "pound", many: "pounds", part: ["penny", "pence"] },
+  "€": { one: "euro", many: "euros", part: ["cent", "cents"] },
+  "¥": { one: "yen", many: "yen" },
+};
+const AMOUNT = /(?<![\w$£€¥])([$£€¥])[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2})(?!\d))?(?:[ \t]?(k|K|m|M|bn|B|thousand|million|billion|trillion)\b)?/g;
+const SCALE: Readonly<Record<string, string>> = { k: "thousand", K: "thousand", m: "million", M: "million", bn: "billion", B: "billion" };
+
+/** "$12.50" as "12 dollars 50", "$1.05" as "1 dollar and 5 cents", "$0.99" as "99 cents", "$2.5M" as "2.5 million dollars". */
+function money(_m: string, sign: string, whole: string, part: string | undefined, scale: string | undefined): string {
+  const c = MONEY[sign];
+  if (scale) return `${whole}${part ? `.${part}` : ""} ${SCALE[scale] ?? scale} ${c.many}`;
+  const unit = `${whole} ${whole === "1" ? c.one : c.many}`;
+  const cents = part ? Number(part.padEnd(2, "0")) : 0;
+  if (!cents) return unit;
+  if (!c.part) return `${whole}.${part} ${c.many}`;
+  if (whole === "0") return `${cents} ${cents === 1 ? c.part[0] : c.part[1]}`;
+  return cents < 10 ? `${unit} and ${cents} ${cents === 1 ? c.part[0] : c.part[1]}` : `${unit} ${cents}`;
+}
+
+/**
+ * A clock time ("14:00", "9:05", "3:30"): Kitten said "14:00" as "14 Zhao Zhou" and "9:05" as "nine's in five". It is
+ * said "14 hundred", "10 o'clock", "9 oh 5", "3 30", and "3 pm" before am or pm. Never a ratio ("16:9"), seconds
+ * ("10:00:05") or part of a longer number.
+ */
+const CLOCK = /(?<![\w:.,$£€¥])([01]?\d|2[0-3]):([0-5]\d)(?![\d:])(?=([ \t]?[ap]\.?m\b)?)/gi;
+function clock(_m: string, h: string, mm: string, meridiem: string | undefined): string {
+  const hour = Number(h), minutes = Number(mm);
+  if (minutes >= 10) return `${hour} ${mm}`;
+  if (minutes) return `${hour} oh ${minutes}`;
+  if (meridiem) return `${hour}`;
+  return hour === 0 ? "midnight" : hour > 12 ? `${hour} hundred` : `${hour} o'clock`;
+}
+
+/**
+ * A file's or a folder's path ("~/Documents/report.pdf", "C:\\Users\\alex\\notes.txt", "/mnt/backup"): read out, it was
+ * "tilde slash ember slash report.pdf" (and 7.9 s for a Windows one). A file is said with its folder ("report.pdf in
+ * Documents"), anything else by its last part ("backup"); the bubble shows the whole path. An address, "and/or" and
+ * "1/2" aren't paths.
+ */
+const PATH = /(?<![\w.~/\\:-])(?:~(?:\/[\w@+-]+(?:\.[\w@+-]+)*)+|\/(?:[\w@+-]+(?:\.[\w@+-]+)*\/)+[\w@+-]+(?:\.[\w@+-]+)*|[A-Za-z]:\\(?:[\w@+$-]+(?:\.[\w@+$-]+)*\\)*[\w@+$-]+(?:\.[\w@+$-]+)*)\/?/g;
+function pathSaid(p: string): string {
+  const parts = p.split(/[/\\]/).filter(Boolean);
+  const name = parts[parts.length - 1], folder = parts[parts.length - 2];
+  if (!/\.[A-Za-z0-9]{1,6}$/.test(name) || !folder || /^[A-Za-z]:$/.test(folder)) return name;
+  return `${name} in ${folder === "~" ? "your home folder" : folder}`;
+}
+
+/** A day's or a month's short name, said whole: Kitten said "on Tue." as "on two". */
+const SHORT_NAME: Readonly<Record<string, string>> = {
+  Mon: "Monday", Tue: "Tuesday", Tues: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Thur: "Thursday", Thurs: "Thursday",
+  Fri: "Friday", Sat: "Saturday", Sun: "Sunday", Jan: "January", Feb: "February", Mar: "March", Apr: "April", Jun: "June",
+  Jul: "July", Aug: "August", Sep: "September", Sept: "September", Oct: "October", Nov: "November", Dec: "December",
+};
+const SHORT_NAMES = new RegExp(`\\b(${Object.keys(SHORT_NAME).join("|")})\\.(?=\\s+[\\p{Ll}\\d])`, "gu");
+
+/** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%" and "#45". */
+function sayable(text: string): string {
+  return text
+    .replace(PATH, pathSaid)
+    .replace(AMOUNT, money)
+    .replace(CLOCK, clock)
+    .replace(SHORT_NAMES, (_m, name: string) => SHORT_NAME[name])
+    .replace(/(?<![\w~])[~≈][ \t]?(?=\d)/g, "about ")
+    .replace(/(?<![\w&#])#(\d+)\b/g, "number $1");
+}
+
+/** A list's item or a heading, as Markdown writes them; and a line that is a rule between parts. */
+const ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S/;
+const HEADING = /^[ \t]{0,3}#{1,6}[ \t]+\S/;
+const RULE = /^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
+/** A line that ends as a sentence does already, or with a pause (a colon, a comma). */
+const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
+
+/**
+ * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
+ * own, so the voice pauses between them: "Firefox Files Terminal Mail" in one breath was heard as one name
+ * (voice-speaking-3). A line wrapped inside a paragraph is left as it is, and so is what is only shown in the bubble.
+ */
+function endLines(text: string): string {
+  const lines = text.split("\n");
+  return lines.map((line, i) => {
+    const body = line.trimEnd(), next = lines[i + 1];
+    if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
+    const alone = ITEM.test(body) || HEADING.test(body) || (next !== undefined && (!next.trim() || ITEM.test(next)));
+    return alone ? `${body}.` : line;
+  }).join("\n");
+}
+
 export function spokenText(markdown: string): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
     // Tables: a header row and its |---| line, and the rows after it.
     .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
-  return linkLabels(prose)
+  const plain = linkLabels(prose)
+    .replace(EMOJI_BETWEEN, "$1. ")
+    // Before a word, a space stays where there was one, or goes between two words the emoji joined ("Saved✅Next").
+    .replace(EMOJI_ANY, (m: string, at: number, all: string) => (at > 0 && /[\p{L}\p{N}]/u.test(all[at + m.length] ?? "") && (/^[ \t]/.test(m) || /[\p{L}\p{N}]/u.test(all[at - 1])) ? " " : ""))
+    .replace(EMOTICON, "")
+    // An item that was only emoji is no item.
+    .replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]*$/gm, "")
     .replace(/<?\b(?:https?:\/\/|www\.)([^\s/<>()]+?)(?:[/?#][^\s<>()]*?)?>?(?=[.,;:!?)]*(?:\s|$))/gi, (_m, host: string) => host.replace(/^www\./i, ""))
     .replace(/(?<![\\`])(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)/g, "$2")
     // Emphasis as CommonMark sees it: no space just inside a marker ("6 * 7 * 1" and "*.tmp and *.log" are said with their
@@ -89,7 +198,8 @@ export function spokenText(markdown: string): string {
     .replace(/\*\*(?=[^\s*])([^*\n]*[^\s*])\*\*/g, "$1")
     .replace(/(^|[\s(])__(?=[^\s_])([^_\n]*[^\s_])__(?=[.,!?;:)]*(?:\s|$))/g, "$1$2")
     .replace(/(^|[\s(])([*_])(?=[^\s*_])([^*_\n]*[^\s*_])\2(?=[\s.,!?;:)]|$)/g, "$1$3")
-    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1");
+  const said = endLines(plain)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+][ \t]+/gm, "")
@@ -100,9 +210,54 @@ export function spokenText(markdown: string): string {
     .replace(/\s*›\s*(?=\S)/g, ", then ")
     .replace(/\s+(?:→|->)\s+/g, " to ")
     // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
-    .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
+    .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ");
+  return sayable(said).replace(/\n{2,}/g, "\n").trim();
+}
+
+/** Scripts said in one language each, as the system's voices name it: kana before Han, so Japanese isn't Chinese. */
+const SCRIPTS: readonly [RegExp, string][] = [
+  [/[\p{Script=Hiragana}\p{Script=Katakana}]/u, "ja"], [/\p{Script=Hangul}/u, "ko"], [/\p{Script=Han}/u, "zh"],
+  [/\p{Script=Cyrillic}/u, "ru"], [/\p{Script=Greek}/u, "el"], [/\p{Script=Arabic}/u, "ar"], [/\p{Script=Hebrew}/u, "he"],
+  [/\p{Script=Devanagari}/u, "hi"], [/\p{Script=Thai}/u, "th"],
+];
+/**
+ * The commonest short words of the languages people most often write to Ember in besides English, leaving out those
+ * English writes too ("as", "no", "he", "per", "come", "com" of an address, "d" of "I'd"); and English's own, to weigh.
+ */
+const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  en: new Set("the a an and is are was were to of in on at by or from as do no he she it i you we they my your that this with for not have has what can will if so but all just there here".split(" ")),
+  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu".split(" ")),
+  de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe".split(" ")),
+  es: new Set("el la los las del que y en un una es por para con se está como pero muy yo".split(" ")),
+  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel".split(" ")),
+  pt: new Set("os que e é uma para não da em na por se eu você".split(" ")),
+  nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat".split(" ")),
+};
+
+/**
+ * The language a reply is in when it clearly isn't English, or null (English, or too little to tell): Kitten reads only
+ * English, so a Chinese reply was 7 s of "Chinese letter" and a French one was gibberish (voice-speaking-11). Mostly
+ * one script names its language; Latin text needs at least two of a language's short words, a quarter of its words,
+ * and more than English has. Pure and local: nothing is sent anywhere to tell.
+ */
+export function speechLanguage(text: string): string | null {
+  const letters = text.match(/\p{L}/gu) ?? [];
+  if (!letters.length) return null;
+  for (const [script, lang] of SCRIPTS) {
+    const n = letters.filter(c => script.test(c)).length;
+    // Japanese mixes kana with Han: any kana among them is Japanese.
+    if (lang === "ja" ? n && letters.filter(c => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(c)).length * 2 > letters.length : n * 2 > letters.length) return lang;
+  }
+  const words = text.toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
+  const hits = (lang: string) => words.filter(w => STOPWORDS[lang].has(w)).length;
+  const english = hits("en");
+  let best: string | null = null, most = 0;
+  for (const lang of Object.keys(STOPWORDS)) {
+    if (lang === "en") continue;
+    const n = hits(lang);
+    if (n > most) { best = lang; most = n; }
+  }
+  return best && most >= 2 && most * 4 >= words.length && most > english ? best : null;
 }
 
 /**

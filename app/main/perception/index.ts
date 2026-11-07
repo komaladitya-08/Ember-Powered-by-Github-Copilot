@@ -107,6 +107,8 @@ export interface Seen {
   axScale: number;
   /** The user is in one of Ember's own windows (the ask box, settings): Ember never reads those, so nothing was read. */
   ember?: boolean;
+  /** A password prompt the desktop's shell draws is open (promptOpen): nothing was read, anywhere (safety-privacy-3). */
+  authPrompt?: true;
 }
 
 export interface Perceived extends Seen {
@@ -344,11 +346,19 @@ export class Perception {
    */
   async quickContext(active?: ReturnType<PerceptionWindows["activeWindow"]>, before?: FocusBefore): Promise<QuickContext | null> {
     let seen: Seen;
+    // The window is read first, at once (the ask box is about to take the keyboard: its request goes to the reader
+    // first), then the shell asked: while a password prompt of its own is open, what was read goes no further
+    // (safety-privacy-3).
+    const reading = this.focused(undefined, active, before);
+    const prompt = this.promptWhy();
     try {
-      seen = await this.focused(undefined, active, before);
+      seen = await reading;
     } catch {
-      return null;
+      const why = await prompt;
+      return why ? promptContext(why) : null;
     }
+    const why = await prompt;
+    if (why) return promptContext(why);
     // Every window, not just the focused one: "what apps are open" is answered from this context, without a read.
     // X11's list is used here because it is immediate: the sidecar answers one request at a time, and the focused
     // read already took its turn. (Listed only when the context will say it: not for a private or untitled window.)
@@ -404,6 +414,9 @@ export class Perception {
 
   /** Text for the conductor: where the user is and what the window contains. */
   async describe(): Promise<string> {
+    // Nothing is read while a password prompt of the shell's is open (safety-privacy-3).
+    const why = await this.promptWhy();
+    if (why) return `Ember read nothing: ${why}. Don't describe the screen; tell the user Ember looks away until it's done.`;
     let seen: Seen;
     try {
       seen = await this.focused();
@@ -440,6 +453,12 @@ export class Perception {
    * out, and so are secret fields (they get no mark either).
    */
   async perceive(opts: { image: boolean; scope: "window" | "screen"; target?: WindowTarget }): Promise<Perceived> {
+    // Nothing is read while a password prompt of the shell's is open (safety-privacy-3); the picture asks again below.
+    const why = await this.promptWhy();
+    if (why) {
+      return { window: null, x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1, authPrompt: true,
+        text: `Ember read nothing: ${why}. That's for the user only: wait, or finish the task saying what's left.`, capture: null };
+    }
     // One fresh look at the window stack serves the scale, what covers the window, and the private windows.
     const stack = opts.image ? this.stackNow() : undefined;
     const seen = opts.target ? await this.read(opts.target, null, stack) : await this.focused(stack);
@@ -715,6 +734,23 @@ export class Perception {
   }
 
   /**
+   * Is a password prompt the desktop's shell draws itself on screen, or may one be (GNOME Shell's polkit and keyring
+   * dialogs, which no X11 window shows; Windows' and macOS's credential and consent prompts, as the accessibility host
+   * lists them)? A shell too busy to be looked through counts (fail closed); a notification doesn't. While one is,
+   * Ember reads and sends nothing and takes no step (CLAUDE.md "Never"; safety-privacy-3). Best effort without GNOME
+   * Shell, as the screenshot check is.
+   */
+  async promptOpen(): Promise<boolean> {
+    return (await this.promptWhy()) !== null;
+  }
+
+  /** Why nothing is read now (promptOpen), in the screenshot check's words, or null when nothing stops it. */
+  private async promptWhy(): Promise<string | null> {
+    const shell = await this.shellOverlays();
+    return shell.unchecked ? this.words.shellUnchecked : shell.dialog ? SYSTEM_DIALOG : null;
+  }
+
+  /**
    * Is a system dialog (a password prompt, most likely) on screen, or may one be? GNOME Shell's (polkit, keyring), or
    * the one the window system reports on Windows and macOS.
    */
@@ -850,6 +886,8 @@ export class Perception {
 }
 
 const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's done";
+/** The request's context while a shell's password prompt is (or may be) open (promptOpen): why, and nothing read. */
+const promptContext = (why: string): QuickContext => ({ target: {}, text: `<context untrusted="true">Ember read nothing: ${why}.</context>` });
 /** Why there is no screenshot when the OS refuses the screen and its words don't say more (macOS's do). */
 const NO_SCREEN_ACCESS = "Ember isn't allowed to capture the screen";
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";

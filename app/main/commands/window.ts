@@ -20,6 +20,7 @@ import type { CommandCard, CommandWindowPort, DangerClass, RunExit, RunningComma
 import { RUNNING_STATUS, WAITING_STATUS, announceKeyText, headerLine, outsideText, reaskEndText, reaskText, statusLine, typingHint, typingRouteText, waitingTimeoutText } from "../../renderer/command/copy";
 import { SECRET_PROMPT } from "./prompts";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type SeenMsg, type Snapshot, type TabView, type WindowView } from "../../renderer/command/model";
+import { defaultFit } from "../../renderer/command/terminal-size";
 
 /** Runs whose tabs are kept (the newest first; running ones are never dropped). */
 export const MAX_TABS = 20;
@@ -31,7 +32,7 @@ const FLUSH_BYTES = 64 * 1024;
 /** One typing message (a paste) at most, in characters; it goes to the run in pieces of at most 4 KiB (cmd.input's limit). */
 const INPUT_MAX_CHARS = 64 * 1024;
 const INPUT_PIECE = 4096;
-/** A run's terminal size until the page has said what fits. */
+/** A run's terminal size where no command window says what fits (a flow without one: its context's size). */
 export const DEFAULT_TERM_SIZE = Object.freeze({ cols: 100, rows: 30 });
 /** How long an announcement counts down when the flow gives no usable time. */
 const DEFAULT_ANNOUNCE_MS = 4000;
@@ -48,7 +49,10 @@ export interface CommandWindowExtras {
    * `fn` returns false when the answer wasn't taken (the Confirmer refused it): the card's buttons come back.
    */
   onAnswer(fn: (a: AnswerMsg) => boolean | void): () => void;
-  /** The terminal size new runs should start at (what the window's page says fits, else 100×30). */
+  /**
+   * The terminal size new runs should start at: what the window's page says fits, else what fits the window main opens
+   * at the text size (90×12 at Default: the first command of a session starts before the window exists).
+   */
   termSize(): { cols: number; rows: number };
   /** A note in a running tab's status line ("Starting Ubuntu…", the stalled-link countdown), or null to clear it. */
   note(runId: string, text: string | null): void;
@@ -211,7 +215,7 @@ export function validCard(c: unknown): c is CommandCard {
     && ["ask", "announce", "run"].includes(c.mode as string) && Array.isArray(c.says) && c.says.length <= 64
     && c.says.every(l => str(l, 4000)) && typeof c.unasked === "boolean" && typeof c.armMs === "number" && Number.isFinite(c.armMs) && c.armMs >= 0
     && (c.classes === undefined || (Array.isArray(c.classes) && c.classes.length <= DANGER_CLASSES.length && c.classes.every(x => DANGER_CLASSES.includes(x as DangerClass))))
-    && (c.reviewed === undefined || typeof c.reviewed === "boolean")
+    && (c.reviewed === undefined || typeof c.reviewed === "boolean") && (c.home === undefined || str(c.home, 4096, 1))
     && cardSha256(c as unknown as CommandCard) === c.sha256;
 }
 
@@ -248,6 +252,8 @@ export interface CommandWindowOptions {
   keyHint: () => string | null;
   screenReader?: () => boolean;
   stopKey?: () => string | null;
+  /** The text's scale now (page-prefs.ts's textScale: 1, 1.15 or 1.3), for the size a run starts at before the page says. */
+  textScale?: () => number;
 }
 
 /** createCommandWindowPort with its extras typed: the same object (the targets runtime may call this name instead). */
@@ -279,6 +285,13 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   /** The window's page crashed and hasn't pulled the state again yet: the window shows nothing (cross-review S2). */
   let pageDown = false;
   let size: { cols: number; rows: number } | null = null;
+  /** What the page said fits, else what fits the window main opens at the text size now (commands-remote-1). */
+  const termSize = (): { cols: number; rows: number } => {
+    if (size) return { ...size };
+    let scale = 1;
+    try { scale = o.textScale?.() ?? 1; } catch { /* a text size that can't be read: the default's */ }
+    return defaultFit(scale);
+  };
 
   const live = (): BrowserWindowLike | null => (win && !win.isDestroyed() ? win : null);
   const owns = (sender: WebContentsLike | undefined): boolean => {
@@ -754,7 +767,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       for (const old of tabs.filter(replaced)) dropTab(old);
       tabs = tabs.filter(t => !replaced(t));
       const t: Tab = {
-        seq: seqNext++, card: c, run, ended: false, outcome: "running", status: RUNNING_STATUS, note: null, size: size ?? { ...DEFAULT_TERM_SIZE },
+        seq: seqNext++, card: c, run, ended: false, outcome: "running", status: RUNNING_STATUS, note: null, size: termSize(),
         kept: [], keptBytes: 0, start: 0, total: 0, pending: [], pendingAt: 0, pendingBytes: 0, flush: null, unsubscribe: () => undefined,
         tail: "", decoder: new TextDecoder(), waitTimer: null, waiting: false,
       };
@@ -820,7 +833,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       return () => { answerFns.delete(fn); };
     },
 
-    termSize: () => ({ ...(size ?? DEFAULT_TERM_SIZE) }),
+    termSize,
 
     announceMs: base => (screenReader() ? Math.max(base, ANNOUNCE_SCREEN_READER_MS) : base),
 

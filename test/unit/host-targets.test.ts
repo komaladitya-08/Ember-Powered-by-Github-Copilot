@@ -339,6 +339,15 @@ describe("each worker gets its target's hands (§2.6)", () => {
     await host.stop();
   });
 
+  it("gives a task no screenshots once the user turns Send screenshots for tasks off, from its next task (safety-privacy-7)", async () => {
+    const { t } = fakeTargets();
+    const { host, real, settings } = await started({ hands: hands(), targets: t });
+    expect((real({ id: "9-a", goal: "x", target: {} }, () => undefined) as any).d.vision).toBe(true);
+    settings.update({ screenImages: false });
+    expect((real({ id: "9-b", goal: "x", target: {} }, () => undefined) as any).d.vision).toBe(false);
+    await host.stop();
+  });
+
   it("a local task whose words also name another computer says it acts on this computer (D4.4's wrong-target guard)", async () => {
     const { t } = fakeTargets();
     t.othersNamed = (id, words) => (id === "local" && /build-01/.test(words) ? ["build-01"] : []);

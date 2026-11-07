@@ -17,13 +17,13 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { CLEAR_SPEECH, SUPERTONIC_VOICE, ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
 import type { ModelPaths } from "../voice/sherpa";
-import type { VoiceEvent } from "../voice/engine";
+import { MANUAL_MAX_MS, type VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import type { TtsProcessMessage, VoiceInfo } from "../voice/tts-process";
 import { nativePackage } from "../voice/runtime";
 import { speechChunks, type NaturalVoiceModel } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
-import { withoutOwnPhrases } from "../voice/spoken";
+import { speechLanguage, withoutOwnPhrases } from "../voice/spoken";
 import { readLevel, type SoundLevel } from "../shared/level";
 import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio, type SpeechPlayed } from "../shared/voice";
 import type { ClearHearingStatus, ListenOnceStatus, NaturalVoiceStatus } from "../shared/ipc";
@@ -56,10 +56,16 @@ const RESTART_MS = [1000, 5000, 30_000];
  * longest piece of work, 21 s of speech to transcribe, took 1.4 s as measured; ms).
  */
 const ALIVE_MS = 15_000;
+/** Listen once: how long speech may take to start (ms); a request under way then is heard to its end (MANUAL_MAX_MS). */
 const LISTEN_ONCE_MS = 8000;
 const LISTEN_ONCE_CHECK_MS = 3000;
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
+/**
+ * What the voice line says while Voice Match is taught: its phrases aren't requests, so "Hey Ember" isn't heard then,
+ * only "Ember, stop" (voice-listening-v1).
+ */
+export const ENROL_TEXT = "Learning your voice. Until that's done, Ember hears only “Ember, stop”.";
 /** What the voice line says while the microphone sends only digital silence (review #255). */
 const SILENT_TEXT = "The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings.";
 
@@ -101,6 +107,8 @@ export interface VoiceOptions {
   naturalVoice?: boolean;
   /** Legacy preference compatibility: only true + Kokoro requests the optional voice; Kitten uses the baseline. */
   naturalModel?: NaturalVoiceModel;
+  /** The speaking speed setting (settings' `voice.rate`): 1 as made. */
+  rate?: number;
   /** The optional Kokoro capability on this platform; false preserves its saved choice without loading/fetching it. */
   naturalSupported?: boolean;
   /** What became of the natural voice changed (naturalStatus): Home shows it under its switch. */
@@ -200,6 +208,8 @@ export class VoiceService {
   /** The natural voice was turned on while the screen was locked: it is decided once it is unlocked. */
   private naturalOnUnlock = false;
   private downloading: Promise<void> | null = null;
+  /** Cancels the speech models' download (Cancel beside its progress, or listening turned off: voice-listening-6). */
+  private downloadAbort: AbortController | null = null;
   /** Until when Ember is speaking, or about to: a follow-up window waits until it's done. */
   private speakingUntil = 0;
   private speechGeneration = 0;
@@ -216,10 +226,14 @@ export class VoiceService {
   private manual: { phase: "starting" | "listening" | "checking"; timer: NodeJS.Timeout; temporary: boolean; armed: boolean } | null = null;
   private manualGeneration = 0;
   private manualDetail = "";
+  /** The Listen once window under way heard only digital silence (the voice process said so before it timed out). */
+  private manualSilent = false;
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
   private micLost = false;
   /** The microphone sends only digital silence (the voice line says so until sound comes back). */
   private micSilent = false;
+  /** The capturing microphone's name as the system gives it (Settings shows it; voice-listening-v2), or "". */
+  private micDevice = "";
   /** The voice process hears the speakers' own stream (speaker rejection runs: Linux with parec). */
   private monitorOn = false;
   /** Starting again after listening broke: the timer, how many times in a row, and when the current process got ready. */
@@ -239,13 +253,18 @@ export class VoiceService {
   private tts: { proc: UtilityProcess; ready: boolean } | null = null;
   private voiceIdle: NodeJS.Timeout | null = null;
   private ttsFailures = 0;
+  /** Ember's own voice failed after it had loaded (a reply it couldn't make, or its process ended): Home says it stopped. */
+  private ttsStopped = false;
+  /** How fast replies are said (voice-speaking-7): sent with each reply only when it isn't 1. */
+  private rate = 1;
   /** Replies are numbered; those up to `ttsHushed` were hushed (their late audio is dropped). */
   private ttsId = 0;
   private ttsHushed = 0;
   /** Replies still being synthesised: original text, producer-reported ungenerated suffix, and their page. */
   private ttsPending = new Map<number, { text: string; remaining: string; send: PageSend }>();
-  /** Enrolment (Voice Match) is under way in the voice process. */
+  /** Enrolment (Voice Match) is under way in the voice process, and how far it got (said if it is cut short). */
   private enrolling = false;
+  private enrolGot = { got: 0, of: 0 };
   /** ASR may retry through WebAssembly. Neural synthesis is native-only and falls back to the local system voice. */
   private wasmOnly = { voice: false };
   /** Hear me more clearly: wanted, what became of it, its download, and whether the running voice process has it. */
@@ -287,6 +306,7 @@ export class VoiceService {
     this.naturalOff = this.naturalWanted && o.naturalSupported === false;
     this.bundledRoot = o.bundled ? o.modelsRoot : null;
     this.userRoot = o.bundled?.userRoot ?? o.modelsRoot;
+    this.setRate(o.rate ?? 1);
     // On at start: decided the next time Ember speaks (Ember's voice loads only then), unless it can't be at all.
     this.natural = this.naturalBlocked() ?? { state: "later" };
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
@@ -303,6 +323,7 @@ export class VoiceService {
       else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
       else if (s.state === "capturing") {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
+        this.micDevice = typeof s.device === "string" ? s.device.trim().slice(0, 80) : "";
         if (this.micLost) { this.micLost = false; this.setState("waiting"); }
         this.armListenOnce();
       }
@@ -353,12 +374,19 @@ export class VoiceService {
         else this.idleSpeaker();
       }
       this.openFollowUp();
+      // Listen once pressed while Ember talked: it listens now that Ember has stopped.
+      if (!on) this.armListenOnce();
       this.o.onListenOnce?.();
     });
   }
 
   get micState(): MicState {
     return this.state;
+  }
+
+  /** Which microphone Ember hears through, while it captures (null: none, or the system gave no name). */
+  get micLabel(): string | null {
+    return this.capturing && this.micDevice ? this.micDevice : null;
   }
 
   get listenOnceStatus(): ListenOnceStatus {
@@ -370,22 +398,38 @@ export class VoiceService {
     if (this.locked) return blocked("The screen is locked.");
     if (this.muted) return blocked("Unmute the microphone first.");
     if (this.enrolling) return blocked("Finish teaching Ember your voice first.");
-    if (!this.modelsReady) return blocked(this.downloading ? "Speech models are downloading." : "Download speech models in Settings first.");
-    if (this.saidSpeaking || this.ttsPending.size || this.speakingUntil > Date.now()) return blocked("Wait until Ember finishes speaking.");
-    if (!this.wanted) return { phase: "ready", detail: this.manualDetail || "Opens the microphone for one request." };
-    if (this.state === "error") return blocked("Check the microphone and voice status in Settings.");
+    if (!this.modelsReady) return this.downloading ? blocked("Speech models are downloading.") : { ...blocked("Download speech models in Settings first."), reason: "needs-models" };
+    // Ember talking: Listen once hushes it first, as "Hey Ember" does (it was blocked, and the keyboard had no other way
+    // to cut in but Stop response or Stop everything: voice-listening-7).
+    const hushFirst = this.talking ? "Stops Ember talking, then listens for one request." : "";
+    if (!this.wanted) return { phase: "ready", detail: hushFirst || this.manualDetail || "Opens the microphone for one request." };
+    if (this.state === "error") return { ...blocked("Check the microphone and voice status in Settings."), reason: "voice-error" };
     if (!this.capturing || !this.readyAt || !this.proc) return blocked("The microphone or speech recogniser is getting ready.");
     if (this.state === "active") return blocked("Ember is already listening.");
-    return { phase: "ready", detail: this.manualDetail };
+    return { phase: "ready", detail: hushFirst || this.manualDetail };
+  }
+
+  /** Ember is speaking, or about to (a reply on its way to the page, or speech asked for that hasn't started yet). */
+  private get talking(): boolean {
+    return this.saidSpeaking || this.ttsPending.size > 0 || this.speakingUntil > Date.now();
+  }
+
+  /** Ember is speaking, or about to: main stops it when speaking is turned off, and offers Stop speaking meanwhile. */
+  get speaking(): boolean {
+    return this.talking;
   }
 
   listenOnce(): boolean {
     if (this.listenOnceStatus.phase !== "ready") return false;
     this.dropFollowUp();
     this.manualGeneration++;
+    this.manualSilent = false;
     const temporary = !this.wanted;
+    // Ember stops talking first; the window opens once the page says it has (armListenOnce, and VOICE.speaking).
+    const hush = this.talking;
     this.manual = { phase: "starting", temporary, armed: false, timer: setTimeout(() => this.cancelListenOnce("The microphone did not get ready. Try again."), 30_000) };
     this.manual.timer.unref();
+    if (hush) this.hush();
     if (temporary) {
       const manual = this.manual;
       void this.start().catch(() => { if (this.manual === manual) this.cancelListenOnce("Couldn't start the microphone. Try again."); });
@@ -397,10 +441,11 @@ export class VoiceService {
 
   private armListenOnce(): void {
     const manual = this.manual;
-    if (!manual || manual.armed || !this.readyAt || !this.capturing || !this.proc) return;
+    if (!manual || manual.armed || !this.readyAt || !this.capturing || !this.proc || this.talking) return;
     manual.armed = true;
     clearTimeout(manual.timer);
-    manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), LISTEN_ONCE_MS + LISTEN_ONCE_CHECK_MS);
+    // The voice process ends the window itself, by MANUAL_MAX_MS at the latest: this catches one that never says so.
+    manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), MANUAL_MAX_MS + LISTEN_ONCE_CHECK_MS);
     manual.timer.unref();
     this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS });
   }
@@ -577,7 +622,8 @@ export class VoiceService {
   async setWanted(on: boolean): Promise<void> {
     if (this.manual?.temporary) this.cancelListenOnce();
     this.wanted = on;
-    if (!on) { this.cancelRetry(); this.teardown(); this.setState("off"); return; }
+    // Listening turned off: its download stops too, rather than run on unseen (voice-listening-6).
+    if (!on) { this.cancelDownload(); this.cancelRetry(); this.teardown(); this.setState("off"); return; }
     await this.start();
   }
 
@@ -590,6 +636,11 @@ export class VoiceService {
 
   get isMuted(): boolean {
     return this.muted;
+  }
+
+  /** Voice Match is being taught (the microphone hears its phrases and "Ember, stop" only). */
+  get isEnrolling(): boolean {
+    return this.enrolling;
   }
 
   /**
@@ -625,7 +676,9 @@ export class VoiceService {
       // muting, or being off) carries on as it was, and settings shows the download's own progress (isDownloading).
       if (!this.modelsReady) this.setState("downloading");
       const ids = missing.map(m => m.id);
-      this.downloading = ensureModels(this.userRoot, electronDownloader, progress, ids)
+      const abort = new AbortController();
+      this.downloadAbort = abort;
+      this.downloading = ensureModels(this.userRoot, electronDownloader, progress, ids, abort.signal)
         .then(() => {
           this.o.log.info("voice.models_ready", { models: ids, bytes: modelsBytes(missing) });
           for (const id of ids) this.notBundled.delete(id); // (the user's own copy is used: it verified)
@@ -637,12 +690,15 @@ export class VoiceService {
         .catch((err: unknown) => {
           // Never left on "Downloading…": back to what it was, saying why (the download button offers a retry).
           const message = err instanceof Error ? err.message : String(err);
-          this.o.log.warn("voice.download_failed", { message });
-          const detail = `Couldn't download the speech models. ${downloadHelp(message, modelsBytes(missing))}`;
-          this.setState(this.state !== "downloading" ? this.state : !this.wanted ? "off" : this.muted ? "muted" : "needs-models", detail);
-          throw err;
+          const cancelled = abort.signal.aborted;
+          if (cancelled) this.o.log.info("voice.download_cancelled", { models: ids });
+          else this.o.log.warn("voice.download_failed", { message });
+          const detail = cancelled ? "Download cancelled." : `Couldn't download the speech models. ${downloadHelp(message, modelsBytes(missing))}`;
+          // (Cancelled while listening ran on, fetching only Ember's voice or Voice Match: the voice line stays as it is.)
+          if (!cancelled || this.state === "downloading" || this.state === "off") this.setState(this.state !== "downloading" ? this.state : !this.wanted ? "off" : this.muted ? "muted" : "needs-models", detail);
+          throw cancelled ? new Error("cancelled", { cause: err }) : err;
         })
-        .finally(() => { this.downloading = null; this.o.onModels?.(); });
+        .finally(() => { this.downloading = null; if (this.downloadAbort === abort) this.downloadAbort = null; this.o.onModels?.(); });
       this.o.onModels?.(); // (settings hides the button and shows the download's progress)
     }
     await this.downloading;
@@ -650,6 +706,11 @@ export class VoiceService {
     if (this.proc) this.setVoiceprint(this.o.voiceprint?.() ?? null);
     if (this.wanted) await this.start();
     else if (this.state === "downloading") this.setState("off");
+  }
+
+  /** Stops the speech models' download under way, if any: downloadModels then rejects, and the state says "Download cancelled.". */
+  cancelDownload(): void {
+    this.downloadAbort?.abort();
   }
 
   /**
@@ -688,16 +749,25 @@ export class VoiceService {
     if (!this.wanted || !this.proc || !this.readyAt || !this.matchReady) return false;
     this.cancelListenOnce();
     this.enrolling = true;
+    this.enrolGot = { got: 0, of: 0 };
     this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
+    if (this.state === "waiting") this.setState("waiting", ENROL_TEXT);
     this.o.onListenOnce?.();
     return true;
   }
 
-  cancelEnrol(): void {
+  /** Teaching stops: the user's Cancel, or (`why`) the kill switch. */
+  cancelEnrol(why?: "stopped"): void {
     if (!this.enrolling) return;
     this.enrolling = false;
-    this.proc?.postMessage({ type: "enrol-cancel" });
+    this.proc?.postMessage({ type: "enrol-cancel", ...(why ? { why } : {}) });
+    this.enrolEnded();
     this.o.onListenOnce?.();
+  }
+
+  /** Teaching is over: the voice line says what it did before (listening for “Ember” again). */
+  private enrolEnded(): void {
+    if (this.state === "waiting") this.setState("waiting");
   }
 
   /**
@@ -746,6 +816,8 @@ export class VoiceService {
     this.manualGeneration++;
     this.listeningGeneration++;
     this.dropFollowUp();
+    // Teaching Voice Match stops with everything else (voice-listening-v1).
+    this.cancelEnrol("stopped");
     this.proc?.postMessage({ type: "cancel", generation: this.listeningGeneration });
     if (!this.manual) return;
     if (this.state === "active") this.setState("waiting");
@@ -763,16 +835,37 @@ export class VoiceService {
     if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
     // What is heard over Ember's voice is told from Ember's own words by these (engine.ts spokenByEmber).
     this.proc?.postMessage({ type: "self-words", text });
-    const neural = this.neuralVoice;
+    // Kitten reads only English: a reply in another language goes to a local system voice for it, or isn't said.
+    const lang = speechLanguage(text);
+    const neural = this.neuralVoice && !lang;
     if (!o.append) this.hush();
     if (!o.append || !this.saidSpeaking) this.awaitingSpeechStart = true;
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + (neural && !this.tts?.ready ? VOICE_START_MS : SPEECH_START_MS));
     const send = this.pageSend();
-    if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}) } satisfies SpeakRequest); return; }
+    if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}), ...(lang ? { lang } : {}), ...this.rateField } satisfies SpeakRequest); return; }
     const id = ++this.ttsId;
     this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.cancelVoiceIdle();
-    this.voiceProcess().postMessage({ type: "say", id, text });
+    this.voiceProcess().postMessage({ type: "say", id, text, ...this.speedField });
+  }
+
+  /** The speaking speed setting changed: replies from now on are said at it. */
+  setRate(rate: number): void {
+    this.rate = Number.isFinite(rate) && rate >= 0.8 && rate <= 1.4 ? rate : 1;
+  }
+
+  private get rateField(): { rate?: number } {
+    return this.rate === 1 ? {} : { rate: this.rate };
+  }
+
+  private get speedField(): { speed?: number } {
+    return this.rate === 1 ? {} : { speed: this.rate };
+  }
+
+  /** The voice the next reply is said in (Hear Ember says which): Ember's own, loaded or to be, or this computer's. */
+  get nextVoice(): NaturalVoiceModel | "system" {
+    if (!this.neuralVoice) return "system";
+    return this.ttsInfo?.voice ?? (this.optionalVoiceReady ? this.optional : "kitten");
   }
 
   /**
@@ -827,14 +920,18 @@ export class VoiceService {
 
   /** Effective requested model and actual local engine, including baseline Kitten when the legacy toggle is false. */
   get naturalStatus(): NaturalVoiceStatus {
-    return { ...this.natural, model: this.selectedVoice, voice: this.currentVoice };
+    return { ...this.natural, model: this.selectedVoice, voice: this.currentVoice, ...(this.natural.state === "wont-load" && this.ttsStopped && this.selectedVoice === "kitten" ? { stopped: true as const } : {}) };
   }
 
-  /** Try again after the natural voice's download failed (Home's button): the check and the download start again now. */
+  /**
+   * Try again (Home's button) after the natural voice's download failed, or Kitten stopped working or was too slow just
+   * now (voice-speaking-6): the check, and the download or the timing, start again now.
+   */
   retryNaturalVoice(): void {
     if (this.naturalFetch) return;
     this.naturalOff = this.naturalWanted && this.o.naturalSupported === false;
     this.ttsFailures = 0;
+    this.ttsStopped = false;
     this.checkNatural();
   }
 
@@ -932,6 +1029,17 @@ export class VoiceService {
     }
   }
 
+  /**
+   * A request is likely (the ask box opened, a typed request was sent): Ember's voice loads meanwhile, and with
+   * listening off its speak-only page too, so the answer isn't heard 2 s after it is shown (voice-speaking-1: 2.7 s to
+   * the first sound cold, 0.8 s warm). Both are let go again when idle (VOICE_IDLE_MS, SPEAKER_IDLE_MS).
+   */
+  warmSpeech(): void {
+    if (this.locked) return;
+    this.warmVoice();
+    if (!this.mic || this.mic.isDestroyed()) this.speakerWindow();
+  }
+
   private cancelVoiceIdle(): void {
     if (this.voiceIdle) clearTimeout(this.voiceIdle);
     this.voiceIdle = null;
@@ -1012,7 +1120,7 @@ export class VoiceService {
       }
       this.o.log.warn("voice.tts_exit", { code });
       this.ttsFailures++;
-      this.voiceFailed();
+      this.voiceFailed("load", tts.ready);
     });
     proc.on("message", (m: TtsProcessMessage) => {
       if (this.tts !== tts) return;
@@ -1021,7 +1129,7 @@ export class VoiceService {
       const pending = this.ttsPending.get(m.id);
       if (m.id <= this.ttsHushed || !pending) return;
       if (m.type === "audio") { pending.remaining = m.remaining; pending.send(VOICE.audio, { id: m.id, samples: m.samples, rate: m.rate } satisfies SpeechAudio); return; }
-      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro" || this.ttsInfo?.voice === "supertonic") this.kokoroFailed(); else this.voiceFailed(); return; }
+      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro" || this.ttsInfo?.voice === "supertonic") this.kokoroFailed(); else this.voiceFailed("load", true); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
       if (!this.saidSpeaking) { this.awaitingSpeechStart = true; this.speakingUntil = Date.now() + SPEECH_START_MS; }
@@ -1128,8 +1236,9 @@ export class VoiceService {
    * Retire a failed synthesiser for this session. The page drains already generated audio before the local system
    * voice says only the remaining chunks. Later streamed sentences use that same engine, never overlap it.
    */
-  private voiceFailed(reason: "slow" | "load" | "native" = "load"): void {
+  private voiceFailed(reason: "slow" | "load" | "native" = "load", stopped = false): void {
     this.ttsFailures = VOICE_FAILURES;
+    this.ttsStopped = stopped;
     this.switchVoice = false;
     this.currentVoice = "system";
     this.setNatural({ state: reason === "native" ? "needs-native" : reason === "slow" ? "too-slow" : "wont-load" });
@@ -1143,7 +1252,7 @@ export class VoiceService {
     for (const [id, p] of pending) {
       p.send(VOICE.audioDone, id);
       const text = p.remaining;
-      if (text) p.send(VOICE.speak, { text, append: true } satisfies SpeakRequest);
+      if (text) p.send(VOICE.speak, { text, append: true, ...this.rateField } satisfies SpeakRequest);
     }
     this.openFollowUp();
   }
@@ -1163,7 +1272,7 @@ export class VoiceService {
       if (!p.remaining.trim()) continue;
       const next = ++this.ttsId, text = p.remaining;
       this.ttsPending.set(next, { text, remaining: text, send: p.send });
-      this.voiceProcess().postMessage({ type: "say", id: next, text });
+      this.voiceProcess().postMessage({ type: "say", id: next, text, ...this.speedField });
     }
   }
 
@@ -1269,7 +1378,13 @@ export class VoiceService {
         this.setState("error", m.message);
         return;
       }
-      if (m.type === "enrol") { this.enrolling = m.state !== "done" && m.state !== "cancelled"; this.o.onEnrol?.(m); this.o.onListenOnce?.(); return; }
+      if (m.type === "enrol") {
+        const was = this.enrolling;
+        this.enrolling = m.state !== "done" && m.state !== "cancelled";
+        this.enrolGot = { got: m.got, of: m.of };
+        if (was && !this.enrolling) this.enrolEnded();
+        this.o.onEnrol?.(m); this.o.onListenOnce?.(); return;
+      }
       if (m.type === "voice-match-error") { this.o.log.warn("voice.match_error", { message: m.message }); return; }
       // A request Voice Match may learn from (app/voice/adapt.ts): main decides (numbers only, never audio).
       if (m.type === "voice-sample") { if (m.generation === this.listeningGeneration) this.o.onSample?.(m); return; }
@@ -1279,6 +1394,12 @@ export class VoiceService {
       // They keep failing (unusable until loaded again): started again, with the backoff.
       if (m.type === "engine-broken") { this.o.log.error("voice.engine_broken", { message: m.message }); this.restartLater("The speech recognizer kept failing."); return; }
       if (m.type === "monitor") { this.monitorOn = m.on; this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
+      if (m.type === "silent" && m.manual) {
+        // Listen once heard only zeros: its window says so when it times out, next (voice-listening-4).
+        this.o.log.warn("voice.silent", { on: true, manual: true });
+        this.manualSilent = !!this.manual;
+        return;
+      }
       if (m.type === "silent") {
         // Frames still arrive (the watchdog is content), but nothing can be heard in them: said, not restarted.
         this.o.log.warn("voice.silent", { on: m.on });
@@ -1312,11 +1433,15 @@ export class VoiceService {
         if (m.on) manual.phase = "listening";
         else if (m.reason === "done") {
           manual.phase = "checking";
+          // Heard: only Voice Match's check is left, which gets LISTEN_ONCE_CHECK_MS.
+          clearTimeout(manual.timer);
+          manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), LISTEN_ONCE_CHECK_MS);
+          manual.timer.unref();
           if (temporary) { this.capturing = false; this.closeMic(); }
         }
         this.setState(m.on ? "active" : "waiting");
         this.o.onEvent(event);
-        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? "No request heard. Try again." : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
+        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? (this.manualSilent ? SILENT_TEXT : "No request heard. Try again.") : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
         else this.o.onListenOnce?.();
         return;
       }
@@ -1365,7 +1490,7 @@ export class VoiceService {
 
   /** Listening broke (the voice process or the mic page died, or no sound arrives): start again after 1 s, 5 s, then every 30 s, saying so meanwhile. */
   private restartLater(why: string): void {
-    if (this.manual?.temporary) { this.cancelListenOnce(why); return; }
+    if (this.manual?.temporary) { this.cancelListenOnce(`${why} Try again.`); return; }
     this.teardown();
     if (!this.wanted || this.muted) return;
     if (this.readyAt && Date.now() - this.readyAt > 60_000) this.failures = 0; // it had been working: start the backoff over
@@ -1408,6 +1533,7 @@ export class VoiceService {
   private closeMic(): void {
     const mic = this.mic;
     this.mic = null;
+    this.micDevice = "";
     if (this.hushMeasure?.page === "mic") this.hushMeasure = null;
     if (mic && !mic.isDestroyed()) mic.destroy();
     // Its meter goes with it (the page that sends the levels is gone, so no null would ever come), and its speech.
@@ -1433,7 +1559,12 @@ export class VoiceService {
     if (!acceptedTemporary) this.manualGeneration++;
     this.listeningGeneration++;
     this.capturing = false;
-    this.enrolling = false;
+    if (this.enrolling) {
+      // Teaching goes with the voice process (muted, locked, listening off, a restart): settings is told, or it would go
+      // on showing the phrase to say, and saying it would make it a request (voice-listening-2).
+      this.enrolling = false;
+      this.o.onEnrol?.({ type: "enrol", state: "cancelled", ...this.enrolGot, why: "interrupted" });
+    }
     this.closeMic();
     this.dropFollowUp();
     this.stopWatchingAlive();
@@ -1493,6 +1624,16 @@ function hiddenWindow(title: string): BrowserWindow {
       autoplayPolicy: "no-user-gesture-required",
     },
   });
+}
+
+/**
+ * Listen once as Settings (Home) shows it: there, "in Settings" sent people where they already were, right above the
+ * Download button (accessibility-visual-9, voice-listening-8). Ask keeps the words as they are.
+ */
+export function listenOnceInSettings(s: ListenOnceStatus): ListenOnceStatus {
+  if (s.reason === "needs-models") return { ...s, detail: "Download the speech models below first." };
+  if (s.reason === "voice-error") return { ...s, detail: "Check the microphone and the voice status above." };
+  return s;
 }
 
 /** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */

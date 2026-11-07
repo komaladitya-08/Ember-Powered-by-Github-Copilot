@@ -9,7 +9,7 @@
 
 import type { ClassificationExtra } from "./classify";
 import type { CommandDecision, DangerClass, DecideInput, Finding } from "./types";
-import { matchIntent, mentioned } from "./intent";
+import { matchIntent, mentioned, namedKind } from "./intent";
 import { joinList } from "./words";
 
 /** The classes in the card's order (§3.8.4), which is also "most serious first". */
@@ -25,6 +25,7 @@ export const LINES = {
   unclear: "Ember can't tell exactly what this does.",
   tainted: "Ember is checking each step: a step came up that you didn't ask for.",
   unasked: "You didn't ask for this.",
+  inexact: "Your words don't name exactly this, so Ember checks first.",
   windows: "This can reach your Windows files.",
 } as const;
 
@@ -129,8 +130,12 @@ export function decideCommand(i: DecideInput): CommandDecision {
     rules.push("carried");
   }
   if (i.tainted) { lines.push(LINES.tainted); reasons.push("an earlier step in the task wasn't the user's"); rules.push("tainted"); }
-  const unasked = F.length > 0 && !mentioned(F, i.userWords);
+  // Words that ask for this kind of step, but not exactly this one, aren't "You didn't ask for this." (commands-remote-v2).
+  const unnamed = F.length > 0 && !mentioned(F, i.userWords);
+  const inexact = unnamed && namedKind(F, i.userWords);
+  const unasked = unnamed && !inexact;
   if (unasked) lines.push(LINES.unasked);
+  if (inexact) lines.push(LINES.inexact);
   lines.push(...windowsLine);
   const allClasses: DangerClass[] = privileged && !classes.includes("system")
     ? CLASS_ORDER.filter(c => c === "system" || classes.includes(c))

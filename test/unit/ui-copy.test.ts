@@ -5,6 +5,7 @@ import {
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { memoryOwnerOffersErase, memoryOwnerText, memoryPausedReply } from "../../app/shared/memory-owner";
 import { HOST_OS } from "../../app/main/platform/os";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
 import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/overlay";
@@ -268,14 +269,16 @@ describe("the command window's words (§8.5)", () => {
 
   it("names the window, its empty state, the card and its buttons exactly", () => {
     expect(keep(commandCopy.WINDOW_TITLE)).toBe("Ember commands");
-    expect(keep(commandCopy.EMPTY_TEXT)).toBe("No commands yet.");
+    expect(keep(commandCopy.EMPTY_TEXT)).toBe("Commands Ember runs show here. You can watch them, type into them and stop them.");
     expect(keep(commandCopy.ASK_HEADING)).toBe("Ember wants to run this command");
     expect(keep(commandCopy.askHeading({ target: "local", targetLabel: "This computer" }))).toBe("Ember wants to run this command");
     expect(keep(commandCopy.askHeading({ target: "ssh:build-01", targetLabel: "build-01" }))).toBe("Ember wants to run this command on build-01");
     expect(keep(commandCopy.askHeading({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }))).toBe("Ember wants to run this command in Ubuntu (WSL)");
     expect(commandCopy.isRiskyCard({ classes: ["destroy"] })).toBe(true);
     expect(commandCopy.isRiskyCard({ classes: ["remote-delete", "publish"] })).toBe(true);
-    expect(commandCopy.isRiskyCard({ classes: ["publish"] })).toBe(false);
+    // Every danger class, as the bubble tags it "Risky step" (commands-remote-v3); a card asked only by policy has none.
+    for (const c of ["publish", "secret", "system", "escape", "unclear"] as const) expect(commandCopy.isRiskyCard({ classes: [c] }), c).toBe(true);
+    expect(commandCopy.isRiskyCard({ classes: [] })).toBe(false);
     expect(commandCopy.isRiskyCard({})).toBe(false);
     expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("About to run this, as you asked");
     // A command the review cleared (the user didn't ask for exactly it) says so in the announcement's heading.
@@ -309,6 +312,19 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.headerLine({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)", shell: "bash", cwd: "~/project" }))).toBe("In Ubuntu (WSL) · bash · in ~/project");
   });
 
+  it("says the home folder as ~ in a POSIX shell's header, and every other folder whole (commands-remote-8)", () => {
+    const h = (cwd: string, home: string | undefined, shell: "bash" | "zsh" | "sh" | "powershell" = "bash") =>
+      keep(commandCopy.headerLine({ target: "local", targetLabel: "This computer", shell, cwd, ...(home !== undefined ? { home } : {}) }));
+    expect(h("/home/ana/src/app", "/home/ana")).toBe("On this computer · bash · in ~/src/app");
+    expect(h("/home/ana", "/home/ana")).toBe("On this computer · bash · in ~");
+    expect(h("/home/ana/x", "/home/ana/")).toBe("On this computer · bash · in ~/x");
+    expect(h("/home/anabel/x", "/home/ana")).toBe("On this computer · bash · in /home/anabel/x");
+    expect(h("/srv/app", "/home/ana", "zsh")).toBe("On this computer · zsh · in /srv/app");
+    expect(h("/home/ana/x", undefined)).toBe("On this computer · bash · in /home/ana/x");
+    expect(h("/x", "/")).toBe("On this computer · bash · in /x");
+    expect(h("C:\\Users\\ana\\p", "C:\\Users\\ana", "powershell")).toBe("On this computer · PowerShell · in C:\\Users\\ana\\p");
+  });
+
   it("says how a run ended in its status line", () => {
     expect(keep(commandCopy.RUNNING_STATUS)).toBe("Running…");
     expect(keep(commandCopy.WAITING_STATUS)).toBe("Waiting for you to type in this window.");
@@ -336,6 +352,13 @@ describe("the command window's words (§8.5)", () => {
     expect(commandCopy.durationText(9_960)).toBe("10\u00a0s");
     expect(commandCopy.durationText(59_600)).toBe("1\u00a0min");
     expect(commandCopy.durationText(2_000)).toBe("2\u00a0s");
+  });
+
+  it("says a run that took under 0.05 s took less than 0.1 s, never 0 s (commands-remote-5)", () => {
+    for (const ms of [0, 20, 49]) expect(commandCopy.durationText(ms), String(ms)).toBe("less than 0.1\u00a0s");
+    expect(commandCopy.durationText(50)).toBe("0.1\u00a0s");
+    expect(say({ ms: 20 })).toBe("Finished in less than 0.1\u00a0s.");
+    expect(say({ code: 2, ms: 20 })).toBe("Ended with exit code 2 after less than 0.1\u00a0s.");
   });
 
   it("says whether typing reaches the command, and what it waits for", () => {
@@ -422,6 +445,24 @@ describe("the prompt window's words (§8.6)", () => {
       title: "build-01 asks", body: ["PIN for token:"], field: "Answer", buttons: ["Send", "Cancel"],
     });
     expect(promptCopy.promptView({ id: "8", kind: "secret", secret: "other", host: "build-01", prompt: "x" }).field?.masked).toBe(true);
+  });
+
+  it("on an SSH before 8.5, names no asker, says to read the question first and that the answer is never kept (commands-remote-3)", () => {
+    for (const prompt of ["deploy@build-01.example.com's password: ", "Enter passphrase for key '/home/ana/.ssh/id_ed25519': "]) {
+      const v = text({ id: "9", kind: "secret", secret: "other", host: "build-01", prompt, unmarked: true });
+      expect(v, prompt).toEqual({
+        title: "A question while connecting to build-01",
+        body: [
+          "This computer's SSH can't show whether this question comes from SSH itself or from build-01, so read it before you answer: what you type goes to whoever asked.",
+          prompt,
+          "Ember hands your answer to SSH only: it's never saved, logged or sent to Copilot.",
+        ],
+        field: "Answer", buttons: ["Send", "Cancel"],
+      });
+      expect(v.title).not.toMatch(/ asks$/);
+      // The question itself stays quoted: it is the text ssh printed, not Ember's words.
+      expect(promptCopy.promptView({ id: "9", kind: "secret", secret: "other", host: "build-01", prompt, unmarked: true }).body[1]).toEqual({ kind: "quote", text: prompt });
+    }
   });
 });
 
@@ -1067,5 +1108,106 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(reminderDeleteScope(2, 1)).toBe("Delete 2 routines and 1 waiting reminder? This removes saved reminders too.");
     expect(reminderDeleteScope(1, 1)).toBe("Delete 1 routine and 1 waiting reminder? This removes saved reminders too.");
     expect(reminderDeleteScope(0, 0)).toBe("Delete your saved reminders?");
+  });
+});
+
+describe("what Memory says while saved memory can't be opened (memory-2, integrations-2)", () => {
+  it("names the reason, and never tells someone to erase memory that is only waiting", () => {
+    expect(memoryOwnerText("checking", true)).toBe("Checking your GitHub account…");
+    expect(memoryOwnerText("own-provider", true)).toBe("Memory works only with GitHub Copilot, so it's paused while Ember uses your own model provider. What Ember remembers stays on this computer. Turn off “Use my own model provider” in Models & connections to use it again.");
+    expect(memoryOwnerText("org-provider", false)).toBe("Memory works only with GitHub Copilot, so it's paused while Ember uses your organisation's model service. What Ember remembers stays on this computer.");
+    expect(memoryOwnerText("unverified", true)).toBe("Ember couldn't check your GitHub account, so memory is paused. It comes back when Ember reconnects.");
+    expect(memoryOwnerText("signed-out", false)).toBe("Sign in with GitHub to use saved memory.");
+    expect(memoryOwnerText("signed-out", true)).toBe("Sign in with GitHub to use saved memory. Until then it stays hidden on this computer, and Forget everything clears it.");
+    expect(memoryOwnerText("other-account", true)).toBe("This saved memory belongs to another GitHub account, so Ember keeps it hidden. Use Forget everything to clear it.");
+    expect(memoryOwnerText("unowned", true)).toBe("Ember can't tell which GitHub account this saved memory belongs to, so it stays hidden. Use Forget everything to clear it.");
+    // An older main that sends no reason: what it said before.
+    expect(memoryOwnerText(undefined, true)).toBe(memoryOwnerText("unowned", true));
+    expect(memoryOwnerText(undefined, false)).toBe("Sign in with GitHub to use saved memory.");
+    for (const r of ["checking", "own-provider", "org-provider", "unverified"] as const) {
+      expect(memoryOwnerOffersErase(r, true)).toBe(false);
+      expect(memoryOwnerText(r, true)).not.toContain("Forget everything");
+    }
+    for (const r of ["signed-out", "other-account", "unowned", undefined] as const) expect(memoryOwnerOffersErase(r, true)).toBe(true);
+    expect(memoryOwnerOffersErase("signed-out", false)).toBe(false);
+  });
+
+  it("answers in Ember's own words when memory is on but paused, opening Memory only where the answer is there", () => {
+    expect(memoryPausedReply("checking")).toEqual({ text: "I'm still checking your GitHub account, so memory isn't ready yet. Ask me again in a moment.", open: false });
+    expect(memoryPausedReply("own-provider")).toEqual({ text: "Memory works only with GitHub Copilot, so it's paused while I use your own model provider, and I can't keep what you tell me.", open: false });
+    expect(memoryPausedReply("org-provider")).toEqual({ text: "Memory works only with GitHub Copilot, so it's paused while I use your organisation's model service, and I can't keep what you tell me.", open: false });
+    expect(memoryPausedReply("unverified")).toEqual({ text: "I couldn't check your GitHub account, so memory is paused. It comes back when I reconnect.", open: false });
+    expect(memoryPausedReply("signed-out")).toEqual({ text: "Memory needs you signed in with GitHub, so I can't keep what you tell me yet.", open: false });
+    expect(memoryPausedReply("other-account")).toEqual({ text: "The memory saved on this computer isn't matched to your GitHub account, so memory is paused. I've opened Memory in Settings.", open: true });
+    expect(memoryPausedReply("unowned")).toEqual(memoryPausedReply("other-account"));
+  });
+});
+
+describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
+  const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+  const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+
+  it("lets the person stop tasks sending screenshots, saying what that costs, in their own row", async () => {
+    const { SCREEN_IMAGES_TEXT } = await import("../../app/renderer/home/copy");
+    expect(SCREEN_IMAGES_TEXT).toEqual({
+      heading: "What tasks may send",
+      label: "Send screenshots for tasks",
+      hint: "A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.",
+    });
+    expect(page).toContain(`<h3 class="sub">${SCREEN_IMAGES_TEXT.heading}</h3>`);
+    expect(page).toContain(`<label class="switch-row"><input type="checkbox" id="screen-images" role="switch" aria-describedby="screen-images-hint"><span>${SCREEN_IMAGES_TEXT.label}</span></label>`);
+    expect(page).toContain(`<p class="row-note" id="screen-images-hint">${SCREEN_IMAGES_TEXT.hint}</p>`);
+    // Saved as the user's own switch, shown as applied (the organisation's off wins), and dimmed when it manages it.
+    expect(main).toContain(`void save({ screenImages: (e.target as HTMLInputElement).checked });`);
+    expect(main).toContain(`($("screen-images") as HTMLInputElement).checked = s.screenImages;`);
+    expect(main).toContain(`["screen-images", "screenImages"]`);
+  });
+
+  it("is found by searching for screenshots, by its own words, and by \"pictures\"", async () => {
+    const { SCREEN_IMAGES_TEXT } = await import("../../app/renderer/home/copy");
+    const { SEARCH_ALIASES } = await import("../../app/renderer/home/search-copy");
+    // Its own label carries "screenshots" (a setting's own words rank first); the pane's alias, the other words.
+    expect(SCREEN_IMAGES_TEXT.label).toMatch(/\bscreenshots\b/);
+    expect(SEARCH_ALIASES["privacy-h"]).toMatch(/\bpictures\b/);
+  });
+});
+
+describe("What Ember did for a command the review cleared (safety-privacy-v1)", () => {
+  it("still says the review's words from the user's own audit file, now kept apart from the reason", async () => {
+    const { describeEntry } = await import("../../app/renderer/home/copy");
+    const v = describeEntry({ t: "2026-11-07T10:00:00Z", event: "command", phase: "decided", verdict: "announce", reason: "Reviewed: routine for the request.", review: "asked to clean the build" });
+    expect(v?.why).toBe("Reviewed: routine for the request (asked to clean the build).");
+    expect(describeEntry({ t: "2026-11-07T10:00:00Z", event: "command", phase: "decided", verdict: "announce", reason: "Reviewed: routine for the request." })?.why).toBe("Reviewed: routine for the request.");
+  });
+});
+
+describe("Home after the last run ended unexpectedly (rp-5)", () => {
+  it("says Ember closed unexpectedly and where its log is, in a status note shown only then", async () => {
+    const { closedUnexpectedlyText } = await import("../../app/renderer/home/copy");
+    expect(closedUnexpectedlyText("/home/ada/.config/ember/logs/ember.log")).toBe("Ember closed unexpectedly last time. Its log shows what it was doing until then: /home/ada/.config/ember/logs/ember.log");
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toContain(`<p id="run-notice" class="managed" role="status" hidden></p>`);
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`runNotice.hidden = !status.unexpectedExit;`);
+  });
+});
+
+describe("the log file in About this build (rp-8)", () => {
+  it("can be copied and shown in the file manager, as the address beside it can be copied", async () => {
+    const { showLogLabel } = await import("../../app/renderer/home/copy");
+    expect(showLogLabel("linux")).toBe("Show in Files");
+    expect(showLogLabel("win32")).toBe("Show in File Explorer");
+    expect(showLogLabel("darwin")).toBe("Show in Finder");
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`["Log file", status.logFile, "log"],`);
+    expect(main).toContain(`copy.setAttribute("aria-label", kind === "log" ? "Copy the log file's path" : \`Copy the address \${val}\`);`);
+    expect(main).toContain(`window.ember.showLogFile().catch(() => { show.textContent = "Couldn't open it"; });`);
+  });
+
+  it("is shown by a channel that opens only Ember's own log file, whatever the page sends", () => {
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`ipcMain.handle(IPC.showLogFile, guard(() => { shell.showItemInFolder(log.file); }));`);
+    const preload = readFileSync(new URL("../../app/preload/home.ts", import.meta.url), "utf8");
+    expect(preload).toContain(`showLogFile: () => ipcRenderer.invoke(IPC.showLogFile),`);
   });
 });

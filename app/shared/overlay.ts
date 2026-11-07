@@ -162,6 +162,8 @@ export interface EmberState {
   gesture?: Gesture | null;
   /** Microphone: off, waiting for "Hey Ember", or hearing a request. */
   mic?: MicState;
+  /** Voice Match is being taught: the microphone hears its phrases and "Ember, stop", not requests (shared/mic.ts). */
+  micLearning?: boolean;
   /** Places the bubble keeps off (global DIP), e.g. the settings window while the user works in it. */
   avoid?: Rect[];
   /** What the handle says when nothing else is going on: "Ready", or why Ember can't answer yet. */

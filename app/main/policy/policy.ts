@@ -209,6 +209,11 @@ export interface Decision {
   autonomy?: true;
   /** What Ember says as it goes ahead without asking (bubble and card), built from the request, never model text. */
   announce?: string;
+  /**
+   * Refused only because the limit on actions a minute is reached (verdict "deny", so nothing acts): the worker waits
+   * for the minute to free a slot (paceMs) and asks again, rather than ending the task (tasks-approvals-2).
+   */
+  paced?: true;
 }
 
 export type Grant = "observe" | "act";
@@ -2620,7 +2625,7 @@ export class PolicyEngine {
     if (r.kind === "read") return { tier: "read", verdict: "allow", reason: "reading is allowed", prompt: plain };
     if (this.o.actionsAllowed && !this.o.actionsAllowed()) return never("your organisation has turned off Ember acting in apps");
 
-    if (count && !this.withinRate()) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt: plain };
+    if (count && !this.withinRate()) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt: plain, paced: true };
 
     // An item whose type the file manager may hide (it shows "invoice.pdf" for invoice.pdf.exe): asked about, saying so.
     const own = this.riskOf(r);
@@ -2667,10 +2672,30 @@ export class PolicyEngine {
     };
   }
 
+  /** The most actions a minute let through, across every task this engine decides for (an admin's value only lowers it). */
+  get perMinute(): number {
+    return this.o.rateLimit ?? 40;
+  }
+
+  /**
+   * How long until one more action fits within the minute's limit (0: one fits now). A paced step waits this long and
+   * is then decided afresh (tasks-approvals-2).
+   */
+  paceMs(): number {
+    const now = (this.o.now ?? Date.now)();
+    this.recent = this.recent.filter(t => now - t < 60_000);
+    const limit = this.perMinute;
+    if (this.recent.length < limit) return 0;
+    return Math.max(1, this.recent[this.recent.length - limit] + 60_000 - now);
+  }
+
   private withinRate(): boolean {
     const now = (this.o.now ?? Date.now)();
     this.recent = this.recent.filter(t => now - t < 60_000);
+    // A step turned away here isn't an action, so it isn't counted: a paced step waits for the minute to free a slot,
+    // and no longer (refused ones used to stretch the lock-out). Never more than the limit go through in any 60 s.
+    if (this.recent.length >= this.perMinute) return false;
     this.recent.push(now);
-    return this.recent.length <= (this.o.rateLimit ?? 40);
+    return true;
   }
 }

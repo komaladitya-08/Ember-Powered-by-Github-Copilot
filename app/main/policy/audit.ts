@@ -332,7 +332,8 @@ const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "tog
  * window titles, element names (an email's subject), chosen values (a form's answers) and error messages
  * (they can quote the app's own text) go there as sizes only (the full text stays in ~/.config/ember/audit).
  * A key that types a character goes there as a count like typed text (letters typed one by one would spell it out);
- * shortcuts and keys that edit or move stay. Reasons stay: they are Ember's own words and app names.
+ * shortcuts and keys that edit or move stay. Reasons stay: they are Ember's own words and app names. A command
+ * review's words (`review`) are the model's, and can name the file and the request: a size only (safety-privacy-v1).
  */
 export function journalLine(line: string): string {
   try {
@@ -340,7 +341,7 @@ export function journalLine(line: string): string {
     const size = (o: Record<string, unknown>, k: string) => {
       if (typeof o[k] === "string") { o[`${k}Chars`] = (o[k] as string).length; delete o[k]; }
     };
-    for (const k of ["goal", "summary", "window", "error", "cwd"]) size(e, k);
+    for (const k of ["goal", "summary", "window", "error", "cwd", "review"]) size(e, k);
     // A command's text goes as its size only, as typed text does; the size its entry already gives (before redaction
     // and the 2000-character cut, §3.12) stays.
     if (typeof e.command === "string") { if (typeof e.commandChars !== "number") e.commandChars = e.command.length; delete e.command; }

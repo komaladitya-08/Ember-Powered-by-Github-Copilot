@@ -1,7 +1,7 @@
 /** What Ember says out loud for an answer: the words, not the Markdown, code or addresses. */
 
 import { describe, expect, it } from "vitest";
-import { cancelWords, endsWithQuestion, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
+import { cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 import { heardCutInWake } from "../../app/voice/engine";
 
 describe("spokenText says keys, menu paths and symbols as people say them", () => {
@@ -26,6 +26,48 @@ describe("spokenText says keys, menu paths and symbols as people say them", () =
   });
 });
 
+describe("spokenText says money, times, paths and numbers as people say them, and no emoji (voice-speaking-2)", () => {
+  it.each([
+    ["That's $5.", "That's 5 dollars."],
+    ["It costs $12.50 a month.", "It costs 12 dollars 50 a month."],
+    ["It costs $1.05, or $1.", "It costs 1 dollar and 5 cents, or 1 dollar."],
+    ["Only $0.99 now.", "Only 99 cents now."],
+    ["It's £3.20, about €11.", "It's 3 pounds 20, about 11 euros."],
+    ["That's 50p, I mean £0.50.", "That's 50p, I mean 50 pence."],
+    ["They raised $2.5M and then $3 billion.", "They raised 2.5 million dollars and then 3 billion dollars."],
+    ["It came to $1,234.56.", "It came to 1,234 dollars 56."],
+    ["The meeting is at 14:00.", "The meeting is at 14 hundred."],
+    ["Reminder at 10:00.", "Reminder at 10 o'clock."],
+    ["It starts at 9:05 AM and ends at 3:30 p.m.", "It starts at 9 oh 5 AM and ends at 3 30 p.m."],
+    ["At 3:00 pm, or 00:00.", "At 3 pm, or midnight."],
+    ["Meeting on Tue. with Dr. Smith, from Jan. 5.", "Meeting on Tuesday with Dr. Smith, from January 5."],
+    ["The answer is 42%. That's ~75% of it.", "The answer is 42%. That's about 75% of it."],
+    ["See issue #45.", "See issue number 45."],
+    ["The file is at `~/Documents/report.pdf`, 2.4 MB.", "The file is at report.pdf in Documents, 2.4 MB."],
+    ["I saved C:\\Users\\alex\\Documents\\notes.txt for you.", "I saved notes.txt in Documents for you."],
+    ["Copied 1,234 files to /mnt/backup.", "Copied 1,234 files to backup."],
+    ["It's in ~/Ember/report.pdf and ~/notes.txt.", "It's in report.pdf in Ember and notes.txt in your home folder."],
+    ["Done ✅ I closed 3 windows 🎉", "Done. I closed 3 windows"],
+    ["Hey there! :) How are you?", "Hey there! How are you?"],
+    ["Great job 👍🏽, and 👨‍👩‍👧 too.", "Great job, and too."],
+    ["Saved✅next time, ✅Done.", "Saved next time, Done."],
+  ])("%j is said %j", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it("says nothing for an answer that is only emoji", () => {
+    expect(spokenText("🎉🎉")).toBe("");
+    expect(spokenText("- 🎉\n- ✅")).toBe("");
+  });
+
+  it.each([
+    // Not money, times or paths: said as before.
+    "Use $HOME and A$5 as they are.",
+    "The ratio is 16:9, and John 3:16 is a verse.",
+    "It ran for 10:00:05 in all.",
+    "Read and/or write 1/2 of it, at github.com/foo/bar.",
+    "Install C++ and © 2026 Ember™.",
+  ])("leaves %j as it is", text => expect(spokenText(text)).toBe(text.replace("John 3:16", "John 3 16")));
+});
+
 describe("spokenText", () => {
   it.each([
     ["Run this:\n\n```bash\nsudo dnf install foo\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],
@@ -37,13 +79,26 @@ describe("spokenText", () => {
     ["Type ``a`b``.", "Type a`b."],
     ["Open www.redhat.com, then click **Login**.", "Open redhat.com, then click Login."],
     ["Use `ls -la` to list *all* files.", "Use ls -la to list all files."],
-    ["## Steps\n- First\n- Second\n\n1. One\n2. Two", "Steps\nFirst\nSecond\n1. One\n2. Two"],
+    ["## Steps\n- First\n- Second\n\n1. One\n2. Two", "Steps.\nFirst.\nSecond.\n1. One.\n2. Two."],
     ["| App | Size |\n|---|---|\n| Files | 2 MB |\nThat's all.", "(table shown in the bubble)\nThat's all."],
-    ["> Quoted\n\n---\n\nEnd ~~old~~ new", "Quoted\nEnd old new"],
+    ["> Quoted\n\n---\n\nEnd ~~old~~ new", "Quoted.\nEnd old new"],
     ["snake_case_name and 2*3*4 stay", "snake_case_name and 2*3*4 stay"],
     ["Say it *softly*, **firmly** or _slowly_ (*really*).", "Say it softly, firmly or slowly (really)."],
     ["**Ember**'s answer, in ***bold italics***.", "Ember's answer, in bold italics."],
   ])("%j", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  // A list's items, a heading, the line that leads into a list and a paragraph each end with a stop, so the voice
+  // pauses between them instead of saying "Firefox Files Terminal Mail" in one breath (voice-speaking-3).
+  it.each([
+    ["Your apps:\n- Text Editor\n- Calendar\n- Contacts", "Your apps:\nText Editor.\nCalendar.\nContacts."],
+    ["Open now\n* Firefox\n* Files", "Open now.\nFirefox.\nFiles."],
+    ["# Done\n\nI closed it\n\nAnything else?", "Done.\nI closed it.\nAnything else?"],
+    ["- **Done!**\n- Is it on?\n- Maybe, later;\n- See [the guide](https://example.com)", "Done!\nIs it on?\nMaybe, later;\nSee the guide."],
+    ["1) Keep it\n2) Delete it", "1) Keep it.\n2) Delete it."],
+    // A line wrapped inside a paragraph is one sentence still, and what is shown in the bubble keeps its words.
+    ["I opened the file and\nfound three errors.", "I opened the file and\nfound three errors."],
+    ["Run this:\n\n```sh\nls\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],
+  ])("ends the lines of %j so they are said apart (voice-speaking-3)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
 
   // Stars and underscores that aren't emphasis are said as they are shown: a marker with a space on its inner side is
   // none (CommonMark's flanking rule), and neither is "__" inside a file name (review #258).
@@ -119,4 +174,34 @@ describe("withoutOwnPhrases and the cut-in (Windows, macOS: Ember can't tell its
   it.each(["Hi Emma, the meeting moved.", "They remember the box.", "Hey Amber, dinner.", "Okay, Ember's report is ready.", "A. M. B."])("doesn't take %j as one", t => {
     expect(heardCutInWake(t)).toBe(false);
   });
+});
+
+describe("speechLanguage: which language a reply is in, so Kitten (English only) never reads another (voice-speaking-11)", () => {
+  it.each([
+    ["我已经打开了设置。", "zh"],
+    ["設定を開きました。", "ja"],
+    ["설정을 열었습니다.", "ko"],
+    ["Я открыл настройки.", "ru"],
+    ["Άνοιξα τις ρυθμίσεις.", "el"],
+    ["فتحت الإعدادات.", "ar"],
+    ["J'ai ouvert les paramètres.", "fr"],
+    ["Ich habe die Einstellungen geöffnet und das ist gut.", "de"],
+    ["He abierto la configuración y los ajustes del sistema.", "es"],
+    ["Ho aperto le impostazioni e il pannello della rete.", "it"],
+  ])("%j is %j", (text, lang) => expect(speechLanguage(text)).toBe(lang));
+
+  it.each([
+    "I opened Settings.",
+    "Open the café menu, then the résumé.",
+    "The file 设置.txt is ready in Documents.",
+    "Done.",
+    "",
+    "(code shown in the bubble)",
+    "Bonjour is French for hello, and that is what it means.",
+    // English that shares short words with other languages.
+    "I'd say I'd open it.",
+    "No, he didn't.",
+    "As soon as it's done, see github.com.",
+    "Come in and see the van.",
+  ])("takes %j as English (or can't tell): Kitten says it", text => expect(speechLanguage(text)).toBeNull());
 });

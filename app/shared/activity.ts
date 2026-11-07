@@ -251,6 +251,14 @@ export function doingWords(step: string | undefined, app?: string): string {
   return `${plain}${app ? ` in ${app}` : ""}…`;
 }
 
+/**
+ * The live line while a step waits for the limit on actions a minute to free a slot: "Pausing to keep to 40 steps a
+ * minute…" (tasks-approvals-2: a pause, never a refusal).
+ */
+export function pacedWords(perMinute: number): string {
+  return `Pausing to keep to ${perMinute} steps a minute…`;
+}
+
 /** The live line while Copilot is tried again after a failed call: "Retrying…", then "Retrying (try 3)…". */
 export function retryWords(failures: number): string {
   return failures <= 1 ? `${STATUS_WORDS.retrying}…` : `${STATUS_WORDS.retrying} (try ${failures + 1})…`;

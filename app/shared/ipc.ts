@@ -6,7 +6,7 @@ import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/h
 import type { MemoryItem } from "../main/memory/service";
 import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
-import type { MemoryOwnership } from "../main/memory/owner";
+import type { MemoryOwnerReason, MemoryOwnership } from "../main/memory/owner";
 import type { MemoryCorrection } from "./memory-correction";
 
 /** A routine as Home lists it. */
@@ -25,7 +25,18 @@ export interface ProjectWorkspaceReply {
   message?: string;
   opened?: { files: string[]; sizes?: (number | null)[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
 }
-export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number }
+/** How long Undo can put a forgotten memory back (ms): main keeps what it removed that long, and Home offers Undo. */
+export const MEMORY_UNDO_MS = 60_000;
+/**
+ * What one Forget removed: the fact's words, how many of Ember's notes went with it, and Undo's token (memory-7); and
+ * what it had replaced, current again, when it undid what Ember kept just now (`back`: memory-12).
+ */
+export interface MemoryForgotten { text: string; derived: number; undo: string; back?: string[] }
+/**
+ * `reason`: why memory isn't open, so Home says it truthfully (memory-2); `erasesOnSignOut`: whether Sign out erases
+ * what is saved (only memory verified as this account's in this run: memory-11). Both absent from an older main.
+ */
+export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null; erasesOnSignOut?: boolean }
 import type { HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
@@ -62,6 +73,7 @@ export const IPC = {
   ask: "agent:ask",
   voiceStatus: "voice:status",
   voiceDownload: "voice:download",
+  voiceDownloadCancel: "voice:download-cancel",
   voiceProgress: "voice:progress",
   /** Voice Match: teach Ember the owner's voice, stop doing so, or forget the voiceprint. */
   voiceMatchEnrol: "voice:match-enrol",
@@ -76,6 +88,8 @@ export const IPC = {
   voiceForgetWords: "voice:forget-words",
   /** The natural voice's download failed: try again (Home's "Try again" under its switch). */
   voiceNaturalRetry: "voice:natural-retry",
+  /** Hear Ember: says one fixed sentence as replies are said, and which voice said it. */
+  voiceHear: "voice:hear",
   askClose: "agent:ask-close",
   /** One of Ember's suggestions chosen in the Ask box (sent as Ember's words the user chose, not typed). */
   askSuggestion: "agent:ask-suggestion",
@@ -106,6 +120,8 @@ export const IPC = {
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
   memoryForget: "memory:forget",
+  /** Undo of a recent Forget, by the token Forget gave (memory-7, memory-v2). */
+  memoryRestore: "memory:restore",
   memoryForgetAll: "memory:forget-all",
   memoryCorrect: "memory:correct",
   /** "Tell Ember about you": the answers, checked whole in main (IntroSchema) and kept as the user's own facts. */
@@ -178,6 +194,8 @@ export const IPC = {
   homeLevel: "ember:home-level",
   /** Copies a sign-in code or a setup command for the settings window (pages get no clipboard permission). */
   copyText: "ember:copy-text",
+  /** Shows Ember's own log file in the file manager (About this build: rp-8); it takes no path. */
+  showLogFile: "ember:show-log-file",
 } as const;
 
 export interface SignInProgress {
@@ -199,6 +217,11 @@ export interface ListenOnceStatus {
    * (Ask leaves Listen once out).
    */
   fix?: "settings" | "admin";
+  /**
+   * Why it is blocked, where the fix is elsewhere in Settings: `needs-models` (the speech models' download) or
+   * `voice-error` (the voice line says what's wrong). Settings words those for itself (VoiceService listenOnceInSettings).
+   */
+  reason?: "needs-models" | "voice-error";
 }
 
 /** Whether the Ask box shows its Listen once row: always, but where the organisation turned voice off (companion-3). */
@@ -207,6 +230,8 @@ export const listenOnceShown = (s: ListenOnceStatus | undefined): boolean => !(s
 export interface VoiceStatus {
   state: MicState;
   detail: string | null;
+  /** The microphone Ember hears through while it captures, as the system names it (kept on this computer). */
+  micLabel?: string;
   /** Listening can start: the wake word, voice activity and speech recognition models are in. */
   modelsReady: boolean;
   /** The models not in yet (or damaged), which the download fetches, and their size together. */
@@ -239,6 +264,9 @@ export type ClearHearingStatus =
   | { state: "downloading"; percent: number }
   | { state: "failed"; detail: string };
 
+/** What Hear Ember did: which voice spoke, or why none did (speaking off, the organisation's policy, the screen lock). */
+export type HearResult = { spoke: true; voice: "kitten" | "kokoro" | "supertonic" | "system" } | { spoke: false; why: "off" | "managed" | "locked" };
+
 export type NaturalVoiceStatus = (
   | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
   | { state: "downloading"; percent: number }
@@ -247,6 +275,8 @@ export type NaturalVoiceStatus = (
     model?: "kitten" | "kokoro" | "supertonic";
     /** Current/last usable local engine, including an explicit system-voice fallback. */
     voice?: "kitten" | "kokoro" | "supertonic" | "system";
+    /** `wont-load` after it had loaded: a reply it couldn't make, or its process ended (Home: "stopped working"). */
+    stopped?: true;
   };
 
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */
@@ -269,6 +299,12 @@ export interface VoiceMatchStatus {
   wanted?: boolean;
   /** `got` of `of` phrases kept; `phrase`: the one to say now; `again`: the last wasn't kept, and why. */
   enrolling: { got: number; of: number; phrase: string; again?: "short" | "unlike" | "failed" } | null;
+  /**
+   * How the last teaching ended, since this window opened: `learnt`; `cancelled` (the user's Cancel, or settings closed);
+   * `stopped` ("Ember, stop" or Stop everything); `timeout` (no phrase heard for a while, or too long in all);
+   * `gave-up` (too many phrases unlike the others); `interrupted` (Ember stopped listening: muted, locked, restarted).
+   */
+  ended?: "learnt" | "cancelled" | "stopped" | "timeout" | "gave-up" | "interrupted";
 }
 
 /**
@@ -310,6 +346,8 @@ export interface Status {
   logFile: string;
   /** Set when settings.json couldn't be used as it was (see IPC.settingsNotice). */
   settingsNotice: string | null;
+  /** The last run ended unexpectedly (its marker was left: app/main/run-marker.ts), or null. */
+  unexpectedExit?: { startedAt: string; version: string } | null;
   /** The administrator's policy in force, if any. */
   admin: {
     source: string | null;
@@ -388,8 +426,12 @@ export interface EmberHomeApi {
   voiceStatus(): Promise<VoiceStatus>;
   onVoiceStatus(fn: (s: VoiceStatus) => void): () => void;
   downloadVoice(): Promise<void>;
+  /** Stops the speech models' download under way (Cancel beside its progress). */
+  cancelVoiceDownload(): Promise<void>;
   /** Fetches the natural voice again after its download failed. */
   retryNaturalVoice(): Promise<void>;
+  /** Hear Ember (Settings › Voice): one fixed sentence, said as replies are. */
+  hearEmber(): Promise<HearResult>;
   /** Voice Match: starts teaching Ember the owner's voice (false: Ember isn't listening, so it can't), or stops; forgets the voiceprint. */
   enrolVoice(): Promise<boolean>;
   cancelEnrolVoice(): Promise<void>;
@@ -408,7 +450,10 @@ export interface EmberHomeApi {
   /** What Ember remembers (newest first), and changes to it. */
   memory(): Promise<MemoryView>;
   onMemory(fn: (view: MemoryView) => void): () => void;
-  forgetMemory(id: string): Promise<void>;
+  /** Forgets one fact: what went (its words, Ember's notes made from it) and Undo's token, or null if it wasn't there. */
+  forgetMemory(id: string): Promise<MemoryForgotten | null>;
+  /** Undo of a recent Forget: true if it was put back, false once it is too late. */
+  restoreMemory(token: string): Promise<boolean>;
   forgetAllMemory(): Promise<void>;
   /** Saves one explicit local correction without changing the fact's original source authority. */
   correctMemory(change: MemoryCorrection): Promise<MemoryItem>;
@@ -460,6 +505,8 @@ export interface EmberHomeApi {
   onLevel(fn: (level: number | null) => void): () => void;
   /** Copies plain text, bounded by the session conversation's per-message limit. */
   copyText(text: string): Promise<void>;
+  /** Shows Ember's log file in the system's file manager (only that file: the page names none). */
+  showLogFile(): Promise<void>;
   cancelSignIn(): Promise<void>;
   /** Opens GitHub's page where the sign-in code is entered (again). */
   openSignInPage(): Promise<void>;

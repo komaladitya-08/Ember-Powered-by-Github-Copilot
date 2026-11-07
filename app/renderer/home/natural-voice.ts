@@ -37,7 +37,7 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
     downloadRow.hidden = !settings || status?.model !== undefined && status.model !== current || !(status?.state === "needs-voice" || current === "kitten" && status?.state === "failed");
     download.disabled = busy || deps.managed();
     const hadRetry = document.activeElement === retry;
-    retry.hidden = !view.retry || current === "kitten" || !allowed(current);
+    retry.hidden = !view.retry || !allowed(current);
     retry.disabled = busy || deps.managed() || !allowed(current);
     if (hadRetry && retry.hidden) select.focus();
     const state = `${current}:${status?.model ?? ""}:${status?.state ?? ""}:${status?.voice ?? ""}`;

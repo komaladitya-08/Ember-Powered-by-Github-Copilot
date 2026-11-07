@@ -6,14 +6,15 @@
  * Commands, Extensions, Comfort & access, and Setup & about.
  */
 
-import { Rig, FACTORIES, type Character } from "@ember/characters";
-import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
+import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
+import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
+import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  MEMORY_OWNER_LOCKED, MEMORY_OWNER_WAITING, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -46,14 +47,14 @@ import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./a
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
-import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
+import { memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, homeListenOnce, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
-import { mountLearnedUndo } from "./learned-undo";
+import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
 import { mountMemoryCorrection } from "./memory-correction";
 import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
 import type { TaskEntry } from "../../shared/activity";
@@ -274,7 +275,7 @@ function renderStatus(): void {
   const listening = !!settings?.wakeWord && !!settings?.voice.consent;
   setText("whats-on", whatsOnText({
     voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
-    memory: settings && memoryPaused(settings.memory) ? "paused" : !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION,
+    memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner),
     commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
     computers: settings?.targets.hosts.length ?? 0,
     wsl: !!settings?.targets.wsl.on,
@@ -433,29 +434,39 @@ function render(status: Status): void {
   welcome.status(status);
   const v = status.environment.versions;
   // Paths are set in the mono face (they are values to copy); versions and the address read as words (UI audit #15).
-  const facts: [string, string, "path" | "text" | "copy"][] = [
+  const facts: [string, string, "path" | "text" | "copy" | "log"][] = [
     ["Ember", status.appVersion, "text"],
     ["Electron", `${v.electron ?? "?"} (Chromium ${v.chrome ?? "?"}, Node ${v.node})`, "text"],
     ["Settings", platform?.settingsFile ?? "~/.config/ember/settings.json", "path"],
-    ["Log file", status.logFile, "path"],
+    ["Log file", status.logFile, "log"],
     // Somewhere to say what went wrong (review #105): the window never opens links, so the address is there to copy.
     ["Report a problem", ISSUES_URL, "copy"],
   ];
   $("facts").replaceChildren(...facts.flatMap(([k, val, kind]) => {
     const dt = document.createElement("dt"); dt.textContent = k;
-    const dd = document.createElement("dd"); dd.className = kind === "path" ? "path" : "plain";
+    const dd = document.createElement("dd"); dd.className = kind === "path" || kind === "log" ? "path" : "plain";
     dd.append(Object.assign(document.createElement("span"), { textContent: val }));
-    if (kind === "copy") {
+    if (kind === "copy" || kind === "log") {
       const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
-      copy.setAttribute("aria-label", `Copy the address ${val}`);
+      copy.setAttribute("aria-label", kind === "log" ? "Copy the log file's path" : `Copy the address ${val}`);
       // Through main (pages get no clipboard permission), as the sign-in code is copied.
       copy.addEventListener("click", () => { window.ember.copyText(val).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
       dd.append(copy);
+    }
+    if (kind === "log") {
+      // The log to attach to a report, found where it is (rp-8): main shows only Ember's own log file.
+      const show = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: showLogLabel(platform?.os ?? "linux") });
+      show.addEventListener("click", () => { window.ember.showLogFile().catch(() => { show.textContent = "Couldn't open it"; }); });
+      dd.append(show);
     }
     return [dt, dd];
   }));
   $("about-note").textContent = `Ember ${status.appVersion}`;
   renderSettingsNotice(status.settingsNotice);
+  // The last run ended unexpectedly (rp-5): said for this run, with where its log is.
+  const runNotice = $("run-notice");
+  runNotice.hidden = !status.unexpectedExit;
+  runNotice.textContent = status.unexpectedExit ? closedUnexpectedlyText(status.logFile) : "";
   applySettings(status.settings);
   targetsStatus(status);
   extensionsStatus(status);
@@ -577,12 +588,13 @@ function renderAdmin(a: Status["admin"]): void {
   if (agent) renderAgent(agent);
   renderRecipient();
   renderTagline();
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
     if (managed.has(key)) input.title = "Managed by your organisation";
   }
+  renderHear();
   privacyKey = "";
   renderTaskReasoning();
   if (settings) renderPrivacy(settings);
@@ -745,10 +757,13 @@ function paint(canvas: HTMLCanvasElement, rig: Rig, character: Character, dt: nu
 }
 
 let last = performance.now();
+/** The resting gap the last frame waited for (restingGap's, else 0): its time passes in full (frameSeconds). */
+let planned = 0;
 function frame(now: number): void {
   drawPending = false;
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  const dt = frameSeconds(now - last, planned, 50);
   last = now;
+  planned = 0;
   // Hidden, minimised or scrolled away: nothing is drawn until it shows again (drawSoon is called then).
   if (!canBeSeen() || !onScreen.size) return;
   const drawn: Rig[] = [];
@@ -757,7 +772,11 @@ function frame(now: number): void {
   const motion = looking || drawn.some(r => r.motion === "brisk") ? 0 : drawn.some(r => r.motion === "gentle") ? 1 : 2;
   looking = false;
   // In a window the user isn't working in (behind another, or minimised: X11 doesn't always say hidden), less often.
-  drawSoon((document.hasFocus() ? [0, 33, 66] : [33, 66, 110])[motion]);
+  const gap = (document.hasFocus() ? [0, 33, 66] : [33, 66, 110])[motion];
+  // Every face shown awake at rest, Ready: about 6 frames a second, waking for the next blink (rp-4).
+  const rest = motion === 2 && drawn.length ? Math.min(...drawn.map(r => restingGap(r, gap))) : gap;
+  if (rest > gap) planned = rest;
+  drawSoon(rest);
 }
 drawSoon();
 
@@ -1039,10 +1058,11 @@ function conversationRow(e: Entry): HTMLLIElement {
   li.className = e.who;
   // "Ember learned: …" with Undo (forgets that fact): a small line of its own, not a message.
   if (e.who === "learned") {
-    const text = Object.assign(document.createElement("p"), { textContent: learnedLine(e.text) });
+    const text = Object.assign(document.createElement("p"), { textContent: e.forgot ? forgotLine(e.text) : learnedLine(e.text) });
     li.append(text);
     const id = e.fact;
-    if (id) mountLearnedUndo(li, e.text, id, window.ember.forgetMemory);
+    if (e.forgot) mountForgotUndo(li, e.text, e.forgot, window.ember.restoreMemory);
+    else if (id) mountLearnedUndo(li, e.text, id, async fact => { await window.ember.forgetMemory(fact); });
     return li;
   }
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
@@ -1348,7 +1368,10 @@ $("conversation-stop").addEventListener("click", () => {
 $("memory-consent-text").textContent = MEMORY_CONSENT_TEXT;
 const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION;
 let memoryOwner: MemoryView["ownership"] = "waiting";
+let memoryReason: MemoryView["reason"];
 let memoryEpoch = 0;
+/** Where focus was in the search when memory went to be checked again, and under which epoch (memory-8). */
+let memoryFocusBack: { el: HTMLElement; epoch: number } | null = null;
 const memoryCorrection = mountMemoryCorrection(window.ember, () => $("memory-on"), (expected, corrected) => {
   const current = memoryRows.find(row => row.id === expected.id);
   // A newer push wins; a successful IPC reply can fill in a missed view notification without resurrecting a deletion.
@@ -1370,11 +1393,19 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     const row = read();
     const li = document.createElement("li");
     const fact = Object.assign(document.createElement("span"), { className: "mem-fact" });
-    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memorySourceLabel(row.source) }));
+    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memoryProvenanceLabel(row.source, row.correctedAt, row.kind) }));
     const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
     button.setAttribute("aria-label", forgetMemoryLabel(row.text));
     button.dataset.memoryForget = "";
-    button.addEventListener("click", () => { void deleteMemory(button, () => window.ember.forgetMemory(read().id)); });
+    button.addEventListener("click", () => {
+      // One Forget at a time, and never one that focus just landed on as its row's neighbour went: a second Enter or a
+      // repeating key forgets nothing more (memory-7).
+      if (memoryForgetting || KeyedRows.justFocused(button)) return;
+      const row = read();
+      memoryForgetting = true;
+      void deleteMemory(button, async () => { showForgotten(row.text, await window.ember.forgetMemory(row.id)); })
+        .finally(() => { memoryForgetting = false; });
+    });
     const correct = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: MEMORY_CORRECTION.correct });
     correct.dataset.memoryCorrect = row.id;
     correct.addEventListener("click", () => memoryCorrection.open(read()));
@@ -1384,7 +1415,7 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
   },
   update: (li, row) => {
     li.querySelector<HTMLElement>(".mem-fact > span")!.textContent = row.text;
-    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt);
+    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind);
     li.querySelector<HTMLElement>("[data-memory-forget]")!.setAttribute("aria-label", forgetMemoryLabel(row.text));
     li.querySelector<HTMLElement>("[data-memory-correct]")!.setAttribute("aria-label", correctMemoryLabel(row.text));
   },
@@ -1396,10 +1427,20 @@ function renderMemory(rows: MemoryRow[]): void {
   memoryList.render(page.rows);
   const filters = $("memory-filters");
   const unavailable = memoryOwner !== "ready";
-  if (unavailable && filters.contains(document.activeElement)) $("memory-on").focus();
+  // Focus in the search while the same account is checked again (a reconnect) waits on the switch, and goes back if it
+  // is still there when the list returns (memory-8); another account's list (a new epoch) never gets it back.
+  if (memoryFocusBack && memoryFocusBack.epoch !== memoryEpoch) memoryFocusBack = null;
+  if (unavailable && filters.contains(document.activeElement)) { memoryFocusBack = { el: document.activeElement as HTMLElement, epoch: memoryEpoch }; $("memory-on").focus(); }
   filters.hidden = unavailable;
   $("memory-list").hidden = unavailable;
-  $("memory-count").hidden = unavailable;
+  if (!unavailable && memoryFocusBack) {
+    if (document.activeElement === $("memory-on")) memoryFocusBack.el.focus();
+    memoryFocusBack = null;
+  }
+  // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause).
+  if (unavailable && !$("memory-forgotten").hidden) hideForgotten();
+  // An empty list says so in its own row, never "0 of 0 memories" above it (memory-13).
+  $("memory-count").hidden = unavailable || !rows.length;
   $("memory-count").textContent = memoryCountText(page.rows.length, page.total, rows.length);
   const more = $("memory-more");
   const moreWasFocused = document.activeElement === more;
@@ -1407,10 +1448,13 @@ function renderMemory(rows: MemoryRow[]): void {
   if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? $("memory-on") : memoryQuery)).focus();
   const owner = $("memory-owner");
   owner.hidden = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn());
-  owner.textContent = memoryOwner === "locked" ? MEMORY_OWNER_LOCKED : MEMORY_OWNER_WAITING;
+  // Why memory isn't open, never advice to erase memory that only waits (a model provider, a reconnect: memory-2).
+  owner.textContent = memoryOwnerText(memoryReason, memoryOwner === "locked");
+  // Tell Ember about you can't keep answers then: it says why instead of its questions.
+  aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : owner.textContent);
   const all = $("memory-forget-all");
   const wasFocused = document.activeElement === all;
-  all.hidden = !rows.length && memoryOwner !== "locked";
+  all.hidden = !rows.length && !memoryOwnerOffersErase(memoryReason, memoryOwner === "locked");
   if (wasFocused && all.hidden) $("memory-on").focus();
 }
 for (const control of [memoryQuery, memorySource]) control.addEventListener("input", () => {
@@ -1424,7 +1468,52 @@ $("memory-more").addEventListener("click", () => {
   // Move into the newly revealed page, including when Show more has reached the end and disappeared.
   $("memory-list").children[before]?.querySelector<HTMLElement>("button")?.focus();
 });
-const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; memoryEpoch = view.epoch ?? 0; renderMemory(view.rows); };
+/** A Forget in the list is under way (memory-7). */
+let memoryForgetting = false;
+/** Undo for the last Forget: its token and the fact's words, until MEMORY_UNDO_MS. */
+let memoryUndo: { token: string; text: string } | null = null;
+let memoryUndoTimer: ReturnType<typeof setTimeout> | undefined;
+/** After Forget: what went, with Undo, where focus goes (the status line, never the next row's Forget: memory-7). */
+function showForgotten(text: string, gone: MemoryForgotten | null): void {
+  clearTimeout(memoryUndoTimer);
+  const said = $("memory-forgotten-text"), undo = $("memory-undo") as HTMLButtonElement;
+  said.textContent = memoryForgottenText(gone?.text ?? text, gone?.derived ?? 0, gone?.back);
+  memoryUndo = gone ? { token: gone.undo, text: gone.text } : null;
+  undo.hidden = !memoryUndo;
+  undo.removeAttribute("aria-disabled");
+  undo.setAttribute("aria-label", undoForgotLabel(gone?.text ?? text));
+  $("memory-forgotten").hidden = false;
+  said.focus();
+  // Main lets go of what Undo needs after MEMORY_UNDO_MS: the line goes a little before, and focus with it to the switch.
+  memoryUndoTimer = setTimeout(() => hideForgotten(), MEMORY_UNDO_MS - 2000);
+}
+function hideForgotten(): void {
+  clearTimeout(memoryUndoTimer);
+  memoryUndo = null;
+  const box = $("memory-forgotten");
+  const had = box.contains(document.activeElement);
+  box.hidden = true;
+  if (had) $("memory-on").focus();
+}
+$("memory-undo").addEventListener("click", () => {
+  const undo = $("memory-undo") as HTMLButtonElement, said = $("memory-forgotten-text");
+  const u = memoryUndo;
+  if (!u || undo.getAttribute("aria-disabled") === "true") return;
+  undo.setAttribute("aria-disabled", "true");
+  $("memory-error").textContent = "";
+  void window.ember.restoreMemory(u.token).then(put => {
+    clearTimeout(memoryUndoTimer);
+    memoryUndo = null;
+    undo.hidden = true;
+    said.textContent = put ? memoryPutBackText(u.text) : MEMORY_UNDO_EXPIRED;
+    said.focus();
+    memoryUndoTimer = setTimeout(() => hideForgotten(), 10_000);
+  }, err => {
+    undo.removeAttribute("aria-disabled");
+    $("memory-error").textContent = memoryRestoreFailedText(err);
+  });
+});
+const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0; renderMemory(view.rows); renderStatus(); };
 /** Memory's settings as they are, so a change to one of its fields keeps the others (the patch replaces it whole). */
 const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, at: null }, questions: true, askedAt: null };
 /** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */
@@ -1883,8 +1972,11 @@ function renderTrust(s: Settings): void {
   }
 }
 
+// Send screenshots for tasks: the user's own switch, shown as applied (the organisation's off wins: safety-privacy-7).
+$("screen-images").addEventListener("change", e => { void save({ screenImages: (e.target as HTMLInputElement).checked }); });
 function renderPrivacy(s: Settings): void {
   renderTrust(s);
+  ($("screen-images") as HTMLInputElement).checked = s.screenImages;
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
   const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);
   if (key === privacyKey) return;
@@ -2033,7 +2125,7 @@ function renderVoice(v: VoiceStatus): void {
   if (v !== voice) showListenOnce(homeListenOnce(v.listenOnce));
   voice = v;
   renderVoiceFix();
-  const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;
+  const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
   $("voice-text").textContent = text;
   // Off, the switch above says so: no lone "Off" row under it (UI audit #15). Screen readers still hear the change.
   $("voice-text").parentElement!.hidden = v.state === "off";
@@ -2054,6 +2146,14 @@ function renderVoice(v: VoiceStatus): void {
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
   ($("voice-progress") as HTMLProgressElement).hidden = !downloading;
+  // Its Cancel, while it runs (voice-listening-6); when it goes with focus on it, focus goes back to Download.
+  const cancel = $("voice-download-cancel") as HTMLButtonElement;
+  const hadCancel = document.activeElement === cancel;
+  cancel.hidden = !downloading;
+  if (hadCancel && cancel.hidden) focusFirst(["voice-download", "wake"]);
+  // The consent card says that agreeing downloads the models, and how much (modelsDownloadLabel's size).
+  $("consent-models").hidden = !v.modelsMissing.length;
+  $("consent-models-size").textContent = modelsSize(v.modelsMissing, v.modelsBytes);
   const missing = v.speechMissing === true;
   if (missing !== speechMissing) {
     speechMissing = missing;
@@ -2111,7 +2211,7 @@ $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
   if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
-  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false }), match: on } });
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1 }), match: on } });
 });
 $("match-teach").addEventListener("click", startEnrol);
 // Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
@@ -2122,6 +2222,8 @@ function applyVoiceSettings(s: Status["settings"]): void {
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
   ($("speak") as HTMLSelectElement).value = speakChoice(s);
   ($("speak-results") as HTMLInputElement).checked = s.speakResults;
+  ($("speak-rate") as HTMLSelectElement).value = String(nearestRate(s.voice.rate));
+  renderHear(s);
   naturalUI.settings(s);
   personalSettings(s);
   if (voice) renderVoice(voice);
@@ -2149,7 +2251,7 @@ $("consent-yes").addEventListener("click", () => {
   const run = ++consentRun;
   consentError("");
   $("consent-yes").setAttribute("aria-busy", "true");
-  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } }).then(ok => {
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } }).then(ok => {
     if (run !== consentRun) return; // closed meanwhile: nothing more to do here
     consentSaving = false;
     $("consent-yes").removeAttribute("aria-busy");
@@ -2172,12 +2274,27 @@ function renderNatural(): void {
   $("clear-text").hidden = !clearLine;
 }
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
+$("speak-rate").addEventListener("change", e => {
+  const rate = Number((e.target as HTMLSelectElement).value);
+  if (settings && SPEAK_RATES.some(r => r.rate === rate)) void save({ voice: { ...settings.voice, rate } });
+});
+/** Hear Ember can't speak with speaking set to Never, or managed by the organisation (voice-speaking-7). */
+function renderHear(s: Settings | null = settings): void {
+  ($("voice-hear") as HTMLButtonElement).disabled = managed.has("speak") || !s || speakChoice(s) === "never";
+}
+$("voice-hear").addEventListener("click", () => {
+  const line = $("voice-hear-status");
+  const show = (text: string) => { line.textContent = text; line.hidden = false; };
+  window.ember.hearEmber().then(r => show(hearEmberLine(r)), () => show("Couldn't play the sample. Try again."));
+});
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();
-  // The button goes while it downloads: focus stays in the section.
-  focusFirst(["wake"]);
+  // The button goes while it downloads: focus moves to its Cancel, shown now.
+  $("voice-download-cancel").hidden = false;
+  focusFirst(["voice-download-cancel", "wake"]);
 });
+$("voice-download-cancel").addEventListener("click", () => { void window.ember.cancelVoiceDownload(); });
 window.ember.onVoiceProgress(p => {
   const bar = $("voice-progress") as HTMLProgressElement;
   bar.hidden = false;

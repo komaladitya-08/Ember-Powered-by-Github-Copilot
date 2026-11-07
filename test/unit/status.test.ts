@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "../../app/main/agent/status";
 import type { Task } from "../../app/main/agent/tasks";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -271,5 +271,41 @@ describe("AgentHost's status answer", () => {
     settings.update = () => { throw new Error("disk full"); };
     await host.ask("just show me");
     expect(answers).toEqual([RESULTS_REPLY.loudSilent, RESULTS_REPLY.failed]);
+  });
+});
+
+describe("how a stopped task ended, in the catch-up and the status answer (tasks-approvals-v1)", () => {
+  it("never says “you stopped it” about a task whose question ran out of time, or one the user said Not now to", () => {
+    const tasks = [
+      task({ id: "a", title: "Send the Q3 report to Priya", status: "cancelled", endedBy: "expired", finished: NOW - 1000 }),
+      task({ id: "b", title: "Empty the trash", status: "cancelled", endedBy: "declined", finished: NOW - 2000 }),
+      task({ id: "c", title: "Fill in the form", status: "cancelled", endedBy: "took-over", finished: NOW - 3000 }),
+    ];
+    const caught = catchUpReply(tasks, NOW);
+    expect(caught).not.toContain("you stopped it");
+    expect(caught).toBe("3 tasks finished. “Send the Q3 report to Priya”: my question to you wasn't answered in time. “Empty the trash”: you said not now. “Fill in the form”: you took the mouse back.");
+    expect(statusReply("status", [tasks[0]], NOW)).toBe("Nothing's running right now. The last thing was “Send the Q3 report to Priya”: my question to you wasn't answered in time.");
+    // A real Stop still says so.
+    expect(catchUpReply([task({ status: "cancelled", endedBy: "stop", finished: NOW - 1000 })], NOW)).toBe("One task finished. “Tidy the desktop”: you stopped it.");
+  });
+});
+
+describe("retryRequest", () => {
+  it("hears a bare “try again” and its kin, which carry the failed task's words (tasks-approvals-1)", () => {
+    for (const t of ["try again", "Ember, try again.", "Try that again please", "please try it again", "again", "one more time", "Have another go", "give it another try", "retry", "Hey Ember, do it again"]) expect(retryRequest(t), t).toBe(true);
+  });
+
+  it("leaves anything more to the conversation, whose words are its own", () => {
+    for (const t of ["try again and delete the draft", "try again tomorrow at 9", "send it again", "try again with Firefox", "don't try again", ""]) expect(retryRequest(t), t).toBe(false);
+  });
+});
+
+describe("stopRequest", () => {
+  it("hears a typed stop of everything, as “Ember, stop” is heard (tasks-approvals-v2)", () => {
+    for (const t of ["stop", "Stop!", "stop it", "stop that", "Ember, stop", "stop everything", "Stop all tasks", "stop the task", "please stop", "cancel", "cancel that", "cancel everything", "stop now", "hey Ember, stop everything please"]) expect(stopRequest(t), t).toBe(true);
+  });
+
+  it("leaves a stop of something else to the conversation", () => {
+    for (const t of ["stop the music", "stop the timer at 5", "cancel my 3pm meeting", "don't stop", "stop sharing my screen", "how do I stop a task?", ""]) expect(stopRequest(t), t).toBe(false);
   });
 });

@@ -38,8 +38,12 @@ const FIRST_MAX = 90;
 const FIRST_MIN = 18;
 /** A streamed answer's first clause is said on its own only with at least this many words ("Sure, …" waits). */
 const FIRST_WORDS = 4;
-/** Longer chunks are cut at a comma: the voice's pace and pitch hold better over a clause than over a paragraph. */
-const CHUNK_MAX = 240;
+/**
+ * Longer chunks are cut at a comma (or before a joining word): the voice's pace and pitch hold better over a clause than
+ * over a paragraph, and a chunk being made can't be stopped, so a new answer that cuts in waits for it (about 7 s of
+ * speech here; 240 characters waited about a second more on a 2.1 GHz computer: voice-speaking-10).
+ */
+const CHUNK_MAX = 120;
 /** A chunk this short ("Done.", "OK.") goes with the next, unless it's the first (it then plays at once). */
 const CHUNK_MIN = 12;
 
@@ -52,17 +56,23 @@ export const SPOKEN_MAX = 700;
 export const REST_IN_BUBBLE = "The rest is in the bubble.";
 
 /** Abbreviations whose full stop doesn't end a sentence. */
-const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig)\.$/i;
+const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig|a\.m|p\.m)\.$/i;
+/** A day's or a month's short name ("on Tue.", "Jan. 5"), with its capital: "We sat." still ends a sentence. */
+const SHORT_NAMES = /(?:^|\s)(?:Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.$/;
 
-/** Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending, in order. */
+/**
+ * Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending, in order. A list's item
+ * and a heading end at their line too, and a numbered step starts its own piece ("2. Choose Privacy"): its number is
+ * never said at the end of the step before it (voice-speaking-v1).
+ */
 function sentenceEnds(text: string): number[] {
   const ends: number[] = [];
-  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n/g;
+  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|(?<=^[ \t]{0,3}#{1,6}[ \t]+\S[^\n]*)\n/gm;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const end = m.index + m[0].length;
     const before = text.slice(0, end);
     // "e.g." and "Dr." don't end a sentence, nor does a numbered list's "1." at the start of a line.
-    if (m[0].startsWith(".") && (ABBREVIATIONS.test(before) || /(?:^|\n)[ \t]*\d+\.$/.test(before))) continue;
+    if (m[0].startsWith(".") && (ABBREVIATIONS.test(before) || SHORT_NAMES.test(before) || /(?:^|\n)[ \t]*\d+\.$/.test(before))) continue;
     ends.push(end);
   }
   return ends;
@@ -81,23 +91,52 @@ function cutAtClause(chunk: string, min: number, max: number): [string, string] 
 }
 
 /**
+ * Words a long sentence with no comma can be cut before: the voice pauses there as a speaker would ("I looked through
+ * the folder you mentioned | and found…").
+ */
+const JOINS = /\s+(?=(?:and|but|or|so|because|which|that|while|when|where|until|after|before|with|from|for|to|together)\s)/gi;
+
+/**
+ * Where to cut `chunk`: before its first joining word between `min` and `max` characters that leaves FIRST_WORDS words
+ * or more before it, else at its last space before `max` (voice-speaking-8); -1 when neither fits.
+ */
+function joinAt(chunk: string, min: number, max: number): number {
+  for (const m of chunk.matchAll(JOINS)) {
+    if (m.index < min) continue;
+    if (m.index > max) break;
+    if ((chunk.slice(0, m.index).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS) return m.index;
+  }
+  const at = chunk.lastIndexOf(" ", max);
+  return at > min ? at : -1;
+}
+
+/** `chunk` cut where joinAt says, or null. */
+function cutAtJoin(chunk: string, min: number, max: number): [string, string] | null {
+  const at = joinAt(chunk, min, max);
+  return at < 0 ? null : [chunk.slice(0, at).trim(), chunk.slice(at).trim()];
+}
+
+/**
  * Plain text (already spokenText) as the pieces the voice says one after another: sentences, the first one short so
  * the sound starts soon ("I opened the terminal, ran the tests and…" starts with "I opened the terminal,"), long ones
  * cut at a comma, and very short ones joined to the next.
  */
 export function speechChunks(text: string): string[] {
-  const t = text.replace(/\s+/g, " ").trim();
+  // The ends are found before line breaks become spaces: a numbered step's "2." at the start of its line is no end.
+  const t = text.trim();
   if (!t) return [];
   const sentences: string[] = [];
   let from = 0;
-  for (const end of sentenceEnds(t)) { sentences.push(t.slice(from, end).trim()); from = end; }
-  if (from < t.length) sentences.push(t.slice(from).trim());
+  for (const end of sentenceEnds(t)) { sentences.push(t.slice(from, end)); from = end; }
+  if (from < t.length) sentences.push(t.slice(from));
   const out: string[] = [];
-  for (const s of sentences.filter(Boolean)) {
+  for (const s of sentences.map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean)) {
     let rest = s;
     for (;;) {
       const first = out.length === 0, max = first ? FIRST_MAX : CHUNK_MAX;
-      const cut = rest.length > (first ? FIRST_SOON : max) ? cutAtClause(rest, first ? FIRST_MIN : CHUNK_MAX / 2, max) : null;
+      const min = first ? FIRST_MIN : CHUNK_MAX / 2;
+      // A comma from FIRST_SOON (the first piece) or CHUNK_MAX; with none, a joining word or a space once past `max`.
+      const cut = (rest.length > (first ? FIRST_SOON : max) ? cutAtClause(rest, min, max) : null) ?? (rest.length > max ? cutAtJoin(rest, min, max) : null);
       if (!cut) break;
       out.push(cut[0]);
       rest = cut[1];
@@ -204,7 +243,19 @@ export class SpeechStream {
    */
   private safeCut(): number {
     const best = this.sentenceCut();
-    return best || this.said ? best : this.clauseCut();
+    return best || this.said ? best : this.clauseCut() || this.joinCut();
+  }
+
+  /**
+   * A first sentence past FIRST_MAX characters with no comma yet: before its first joining word, else its last space,
+   * as speechChunks cuts it (voice-speaking-8). 0 while it is shorter, or inside Markdown that isn't whole yet.
+   */
+  private joinCut(): number {
+    if (this.raw.length <= FIRST_MAX) return 0;
+    const head = this.raw.slice(0, FIRST_MAX + 1);
+    // Only on the answer's first line, as a sentence: not in a list, a heading, a quote or a table.
+    if (head.includes("\n") || speechMarkupOpen(head) || /^[ \t]*(?:[|#>*+-]|\d+[.)])/.test(head)) return 0;
+    return Math.max(0, joinAt(this.raw, FIRST_MIN, FIRST_MAX));
   }
 
   /** The first clause break of the answer, when it can be said on its own (0: none yet). */

@@ -362,6 +362,33 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(sent(followUp.events)).toMatchObject([{ text: expect.stringMatching(/night ?light/i), window: "wake" }, { text: expect.stringMatching(/bigger/i), window: "wake" }]);
   });
 
+  it("waits out a 0.7–0.9 s pause after “And make the text a”, and hears the request whole (voice-listening-3)", () => {
+    // "And make the text a" … a pause to think … "bit bigger.": at 0.7 s or more the VAD ended the request and Ember sent
+    // "And make the text a." (the rest lost, or a second turn in a conversation). Split at the quietest 100 ms between
+    // 40 % and 65 % of the speech, as measured (frame 58).
+    const b = read("bigger");
+    const rms = (a: Float32Array) => Math.sqrt(a.reduce((n, x) => n + x * x, 0) / a.length);
+    const loud: number[] = [];
+    for (let i = 0; i + 512 <= b.length; i += 512) loud.push(rms(b.subarray(i, i + 512)));
+    const voiced = loud.flatMap((e, i) => (e > 0.01 ? [i] : []));
+    const first = voiced[0], last = voiced.at(-1)!;
+    let cut = first, low = Infinity;
+    for (let i = Math.round(first + (last - first) * 0.4); i < first + (last - first) * 0.65; i++) { const e = loud[i] + loud[i + 1] + loud[i + 2]; if (e < low) { low = e; cut = i + 1; } }
+    const head = b.subarray(0, cut * 512), rest = b.subarray(cut * 512);
+    for (const pause of [0.7, 0.9]) {
+      const followUp = session();
+      followUp.engine.followUp(8000);
+      followUp.hear(inRoom(cat(silence(0.5), head, silence(pause), rest, silence(3))));
+      followUp.end();
+      expect(sent(followUp.events).map(u => u.text), `follow-up, ${pause} s`).toEqual([expect.stringMatching(/make the text a bit bigger/i)]);
+      const woken = session();
+      woken.engine.conversation(true);
+      woken.hear(inRoom(cat(silence(1), read("wake_pause").subarray(0, at(1.52)), silence(1), head, silence(pause), rest, silence(3))));
+      woken.end();
+      expect(sent(woken.events).map(u => u.text), `after "Hey Ember", ${pause} s`).toEqual([expect.stringMatching(/make the text a bit bigger/i)]);
+    }
+  });
+
   it("hears a one-word reply in a follow-up (the VAD hears speech only 0.2 s into it)", () => {
     // "Bigger." alone, and "Stop!" 3 dB softer than the request: both were dropped before the recognizer.
     for (const [word, then] of [[trimmed("bigger").subarray(at(1.45)), "utterance"], [trimmed("stop").subarray(at(0.45)).map(x => x * 0.7), "stop"]] as const) {

@@ -132,8 +132,8 @@ function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
   hint.setAttribute("aria-live", "polite");
   hint.hidden = true;
   const row = el("div", "buttons");
-  // A command that deletes data gets a quiet marker on its card, and its Allow doesn't stand out (as the host-key card's
-  // "Trust and connect" doesn't): habit shouldn't carry the user through it (review #275).
+  // A dangerous command gets a quiet marker on its card, and its Allow doesn't stand out (as the host-key card's "Trust
+  // and connect" doesn't), as the bubble's risky question: habit shouldn't carry the user through it (review #275).
   const risky = isRiskyCard(card);
   root.classList.toggle("risky", risky);
   const allow = el("button", risky ? "btn quiet" : "btn", ALLOW_LABEL);
@@ -292,9 +292,10 @@ function buildClosing(running: number): ClosingEls {
   const d = el("p", "closing-line", closeLine(running));
   d.id = "closing-d";
   const row = el("div", "buttons");
-  const stop = el("button", "btn", STOP_AND_CLOSE_LABEL);
+  // Stopping is the destructive choice, so it is quiet; the safe one stands out (commands-remote-7).
+  const stop = el("button", "btn quiet", STOP_AND_CLOSE_LABEL);
   stop.type = "button";
-  const keep = el("button", "btn quiet", KEEP_OPEN_LABEL);
+  const keep = el("button", "btn", KEEP_OPEN_LABEL);
   keep.type = "button";
   stop.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(true); } });
   keep.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(false); } });
@@ -488,6 +489,7 @@ function render(): void {
     if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;
     e.typing.hidden = !t.typing;
     e.term.setInteractive(t.interactive);
+    if (t.ended) e.term.end();
     e.term.setScreenReader(v?.screenReader === true);
     if (e.ended !== t.ended) {
       e.ended = t.ended;

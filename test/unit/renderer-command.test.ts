@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import type { ITerminalOptions } from "@xterm/xterm";
 import { INERT_LINKS, TERM_FONT_PX, XTERM_OPTIONS, termFontSize, terminalOptions, textScaleOf } from "../../app/renderer/command/terminal-options";
-import { applyTextScale, fitTerminal, inputAtGrid, termChromePx } from "../../app/renderer/command/terminal-size";
+import { applyTextScale, defaultFit, fitTerminal, inputAtGrid, termChromePx } from "../../app/renderer/command/terminal-size";
 import { cellSize, createRunTerminal, type TerminalCtor } from "../../app/renderer/command/terminal";
 import {
   INITIAL_MODEL, MAX_PENDING_LINES, sameAnnouncement, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
@@ -68,7 +68,8 @@ function fakeXterm() {
     onData() { return { dispose: () => {} }; }
     attachCustomKeyEventHandler() {}
     hasSelection() { return false; }
-    write() {}
+    readonly written: (string | Uint8Array)[] = [];
+    write(data: string | Uint8Array) { this.written.push(data); }
     refresh() {}
     focus() {}
     dispose() {}
@@ -258,6 +259,36 @@ describe("the terminal's options (\u00a73.10)", () => {
   });
 });
 
+describe("the question when the window closes while commands run (commands-remote-7)", () => {
+  it("makes the safe Keep it open the one that stands out, and Stop and close quiet, as Stop always is", () => {
+    const main = read("main.ts");
+    expect(main).toContain('const stop = el("button", "btn quiet", STOP_AND_CLOSE_LABEL);');
+    expect(main).toContain('const keep = el("button", "btn", KEEP_OPEN_LABEL);');
+    // The safe answer has the keyboard.
+    expect(main).toMatch(/requestAnimationFrame\(\(\) => keep\.focus\(\)\);/);
+  });
+});
+
+describe("a run's terminal once the run has ended (commands-remote-5)", () => {
+  it("hides its cursor, also after output it replays, so it doesn't look as if it waits for typing", () => {
+    const made = fakeXterm();
+    const run = createRunTerminal({ cols: 90, rows: 12, interactive: true, mac: false, screenReader: false, scale: 1, onInput: () => {} }, made.Term);
+    const xt = made.terms[0] as unknown as { written: (string | Uint8Array)[] };
+    run.write(new TextEncoder().encode("done\r\n"));
+    expect(xt.written).toHaveLength(1);
+    run.end();
+    expect(xt.written.at(-1)).toBe("\x1b[?25l");
+    // Once only, however often it is told.
+    run.end();
+    expect(xt.written.filter(w => w === "\x1b[?25l")).toHaveLength(1);
+    // Output written after the end (a page that loads again replays it, with a program's own "show the cursor") keeps it hidden.
+    run.write(new TextEncoder().encode("\x1b[?25h"));
+    expect(xt.written.at(-1)).toBe("\x1b[?25l");
+    // The page tells every ended run's terminal so, a new tab of an ended run too.
+    expect(read("main.ts")).toMatch(/e\.term\.setInteractive\(t\.interactive\);\s*if \(t\.ended\) e\.term\.end\(\);/);
+  });
+});
+
 describe("a new run's size at each text size", () => {
   it("leaves room for the parts round the terminal, which grow with the words and buttons, but not much more", () => {
     for (const m of MEASURED) {
@@ -281,6 +312,15 @@ describe("a new run's size at each text size", () => {
     // Never below 20 x 5 or above 500 x 200.
     expect(fitTerminal({ width: 8, height: 18 }, 100, 40)).toEqual({ cols: 20, rows: 5 });
     expect(fitTerminal({ width: 1, height: 1 }, 10_000, 10_000)).toEqual({ cols: 500, rows: 200 });
+  });
+
+  it("starts the first run of a session at what fits the window it opens in, before its page has said (commands-remote-1)", () => {
+    // Main's guess for the window it is about to make, at each text size: what the page then measures and reports.
+    for (const m of MEASURED) expect(defaultFit(m.scale), String(m.scale)).toEqual(m.fit);
+    // A scale it can't use is the default's.
+    for (const bad of [Number.NaN, 0, 3]) expect(defaultFit(bad), String(bad)).toEqual(MEASURED[0].fit);
+    // The window it guesses for is the one main opens (windows.ts's createCommandWindow).
+    expect(readFileSync(new URL("../../app/main/windows.ts", import.meta.url), "utf8")).toContain("forText({ width: 760, height: 480, ...COMMAND_MIN })");
   });
 
   it("is what the page reports to main, from the cell measured at the text size", () => {

@@ -207,7 +207,11 @@ reported in every PR that touches it.
    Moonshine's 0.13 s off the wait without changing when a request ends.) Lower `MIN_SILENCE` to 450 ms only when the
    transcript so far ends like a finished request ("?", a verb's object, a known command shape). Keep 600–900 ms when
    it trails off ("and…", "the…"). This is a rule-based first step, and it needs streaming partials (phase 2).
-   Measured against the false cut-off rate on the clip set.
+   Measured against the false cut-off rate on the clip set. (2026-11-07: the trailing half is built. A request the VAD
+   ends on a word no request ends on, "a", "the", "to", "and", "my", "um" and the like, with no "?" or "!"
+   (engine.ts `trailsOff`), is held for 0.9 s (`TRAIL_HOLD_MS`) and joined to what follows: "And make the text a" …
+   0.7 or 0.9 s … "bit bigger." is now one request where it was "And make the text a." (voice-listening-3). Nothing
+   else waits longer, a stop after the pause still stops, and a cancel drops what was held.)
 
 ### Phase 2: listen like a person
 
@@ -253,13 +257,19 @@ reported in every PR that touches it.
    Adopt one only with a reviewed licence, a SHA-256 pin and a clear win.
 3. **Speech-shaped answers.** For voice turns the persona already asks for 1–3 short sentences. Add spoken-style
    rules: contractions, numbers said as words, no lists. Pick the voice's speed and pauses per sentence type
-   (questions rise, lists get pauses).
+   (questions rise, lists get pauses). (Partly built 2026-11-07: money, clock times, paths, "~" and "#N" are said as
+   words, emoji aren't said, and a list's items end with a pause: `spokenText`, app/voice/spoken.ts.)
 
 ### Phase 5: cost almost nothing at idle
 
 1. **Draw less.**
-   - The handle already drops to about 15 fps when still. It will stop drawing entirely after about 10 s still, and
-     wake on any state change. Same for each overlay.
+   - The overlay, the handle and Home's hero draw an awake Ready face at rest about 6 times a second (`restingGap`;
+     measured on Xvfb with xcompmgr, Home closed: the overlay's canvas 14–17 drawings a second against 23–24, the
+     handle's 15 against 21, the whole tree 8.7–10.1 % of a core against 11.4–15.2 %; Home's hero 11.5 against 18.4).
+     Fidgets and the handle's idle saccades are most of what is left. They will stop drawing entirely after about 10 s
+     still, and wake on any state change.
+   - The main process moves Ember 60 times a second only while it or the pointer moves, and about 10 once both have
+     been still for 2 s (`tickGap`): main at rest 1.0–1.15 % of a core against 1.8–2.2 %.
    - Software compositing (no GPU) gets a cheaper still frame.
    - Target: renderers plus GPU process under 2 % at idle.
 2. **Fewer live windows.** Follow PR #100's pattern on every OS:
@@ -448,8 +458,9 @@ new claim that the measurements prove Kitten sounds better. Earlier Piper timing
 above remain intact and should not be read as the current runtime policy.
 
 `DEFAULT_VOICE` is the verified Kitten archive with model id `tts`, Apache-2.0 licensing and a complete 63,815,222-byte
-download (about 63.8 MB). The standard model downloads now total 138,478,723 bytes (about 138.5 MB), including the
-unchanged listening and Voice Match models. Preparation and bundled-model staging use this standard manifest.
+download (about 63.8 MB). The standard model downloads then totalled 138,478,723 bytes (about 138.5 MB), including the
+unchanged listening and Voice Match models; since Moonshine v2 base became the recognizer they total 219,886,389 bytes
+(about 220 MB, 130 MB of it for listening). Preparation and bundled-model staging use this standard manifest.
 Kitten runs on one native CPU thread and must meet the measured real-time factor cap of 0.5. Unsupported, missing,
 slow or failed Kitten uses an installed local system voice; there is no production Piper or neural WebAssembly
 fallback. WebAssembly ASR remains available. Kokoro remains an explicit optional native choice, with its own download

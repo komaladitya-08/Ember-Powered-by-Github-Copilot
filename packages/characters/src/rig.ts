@@ -141,11 +141,40 @@ export const VOICE_STALE_S = 1.5;
 /** Emotions entered without the anticipation pop: listening must start at once, and a pop reads as alarm on a question. */
 const NO_POP: ReadonlySet<Emotion> = new Set(["listening", "worried"]);
 
-/** Longest frame the rig accepts, and the step it integrates in (so 15 fps moves like 60 fps). */
-const MAX_DT = 0.1;
+/**
+ * Longest frame the rig accepts, and the step it integrates in (so 15 fps moves like 60 fps). A face at rest is drawn
+ * every RESTING_FRAME_MS, so its frames reach 0.21 s (frameSeconds); a page's own cap keeps a stall from jumping ahead.
+ */
+const MAX_DT = 0.25;
 const STEP = 1 / 30;
 /** Longest step handed to renderers' own physics (Glassling's jiggle, Wisp's sparks). */
 const MAX_DRAW_DT = 1 / 20;
+
+/**
+ * The longest a renderer waits between drawings of an awake face at rest (restingGap): about 6 a second (rp-4). Only the
+ * breath and the idle float move then, under a third of a pixel a step at Ember's size; drawn every 55 ms (33 in Home),
+ * the overlay and the handle redrew 18-24 times a second for that, 11-15 % of a core with no GPU.
+ */
+export const RESTING_FRAME_MS = 160;
+
+/**
+ * How long a page may wait before drawing `rig` again, where it would otherwise wait `otherwise` ms (its own resting
+ * rate): for an awake Ready face with nothing passing (`Rig.resting`), up to RESTING_FRAME_MS, but never past the
+ * rig's next blink, fidget or doze (`nextChange`), so none starts late; for anything else, `otherwise`. Never less.
+ */
+export function restingGap(rig: Rig, otherwise: number): number {
+  if (!rig.resting) return otherwise;
+  return Math.max(otherwise, Math.min(RESTING_FRAME_MS, Math.floor(rig.nextChange() * 1000)));
+}
+
+/**
+ * The seconds a frame covers, for `Rig.update`: what passed since the last one, but no more than `floorMs` (the page's
+ * own cap: a page waking from rest, or a stall, doesn't jump the face ahead), or than the resting gap it waited
+ * (`plannedMs`, restingGap's, else 0) and 50 ms more, so a face drawn at rest keeps real time.
+ */
+export function frameSeconds(elapsedMs: number, plannedMs: number, floorMs = 100): number {
+  return Math.max(0, Math.min(elapsedMs, Math.max(floorMs, plannedMs > 0 ? plannedMs + 50 : 0))) / 1000;
+}
 
 export class Rig {
   emotion: Emotion = "neutral";
@@ -277,6 +306,30 @@ export class Rig {
   /** No passing motion at all (see `motion`). */
   get settled(): boolean {
     return this.motion === "still";
+  }
+
+  /**
+   * Awake and Ready (neutral, no emote, at rest), not talking, nothing passing: only the breath and the idle float move,
+   * a fraction of a pixel a frame (restingGap). Emotes and gestures move with time, so they keep a page's own rate.
+   */
+  get resting(): boolean {
+    return !this.dozing && this.emotion === "neutral" && this.emote === "none" && this.gesture === "rest"
+      && !this.talking && this.voiceLevel === null && this.talk < 0.01 && this.motion === "still";
+  }
+
+  /**
+   * Seconds (of the rig's time) until something it has planned starts to move: the next blink, idle fidget, saccade
+   * while the pointer rests, or falling asleep. A page that draws less often at rest wakes for it (restingGap).
+   */
+  nextChange(): number {
+    const soon: number[] = [];
+    if (this.emotion !== "sleepy" && this.blinkT < 0) soon.push(this.blinkIn);
+    if (this.alive && this.emotion === "neutral") {
+      if (!this.fidget && !this.reducedMotion && !this.question) soon.push(this.fidgetIn);
+      if (this.sleepAfter) soon.push(this.sleepAfter - this.idleFor);
+    }
+    if (this.emotion !== "sleepy" && !this.gazeOverride && !this.question) soon.push(Math.max(2.5 - this.lookTargetAge, this.saccadeIn));
+    return Math.max(0, Math.min(...soon));
   }
 
   setGesture(g: Gesture): void {

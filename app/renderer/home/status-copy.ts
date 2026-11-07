@@ -87,6 +87,17 @@ export interface WhatsOn {
 }
 
 /**
+ * Memory as Home's status line says it: on only while its owner is verified too, so memory that is on but can't be
+ * opened (connecting, a model provider in force, another account's) reads "paused", never "on" (memory-2).
+ * `notePaused`: on under an earlier note (memoryPaused).
+ */
+export function memoryWhatsOn(on: boolean, notePaused: boolean, ownership: "waiting" | "ready" | "locked"): WhatsOn["memory"] {
+  if (notePaused) return "paused";
+  if (!on) return false;
+  return ownership === "ready" ? true : "paused";
+}
+
+/**
  * The main capabilities and whether each is on, in a few words ("Listening on · Memory on · Commands off"), then the
  * other computers Ember can work on, when there are any ("2 computers over SSH", "WSL").
  */

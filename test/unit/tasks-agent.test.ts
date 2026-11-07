@@ -51,7 +51,8 @@ describe("a worker that can't be made (review #145)", () => {
       const a = tm.start("tidy the desktop");
       const b = tm.start("rename the photos");
       await vi.waitFor(() => expect(tm.get(a.id)!.status).toBe("failed"));
-      expect(tm.get(a.id)!.result?.summary).toBe("Ember couldn't start this task. Try again; if it keeps happening, restart Ember.");
+      // In Ember's first person, as the rest of its card speaks (tasks-approvals-9).
+      expect(tm.get(a.id)!.result?.summary).toBe("I couldn't start this task. Try again; if it keeps happening, restart Ember.");
       // What it says it offers: Try again (UI audit: it said "Try again" with only Close).
       expect(cards.at(-1)?.find(c => c.id === a.id)?.actions).toEqual([{ id: `task:${a.id}:retry`, label: "Try again" }, { id: `task:${a.id}:dismiss`, label: "Close" }]);
       await vi.waitFor(() => expect(tm.get(b.id)!.status).toBe("running"));
@@ -79,7 +80,7 @@ describe("a failed task's Try again", () => {
     const { tm, cards } = manager({ makeWorker: () => { throw new Error("boom"); } });
     const g = tm.start("show me the clock settings", { mode: "guide" });
     await vi.waitFor(() => expect(tm.get(g.id)!.status).toBe("failed"));
-    expect(tm.get(g.id)!.result?.summary).toBe("Ember couldn't start this. Ask again; if it keeps happening, restart Ember.");
+    expect(tm.get(g.id)!.result?.summary).toBe("I couldn't start this. Ask again; if it keeps happening, restart Ember.");
     expect(cards.at(-1)?.find(c => c.id === g.id)?.actions).toEqual([{ id: `task:${g.id}:dismiss`, label: "Close" }]);
   });
 });

@@ -10,7 +10,7 @@ import type { SettingsPatch } from "../../app/main/settings";
 
 declare global {
   interface Window {
-    __fullNaturalTest: { patches: SettingsPatch[]; retries: number; downloads: number; status(value: VoiceStatus): void };
+    __fullNaturalTest: { patches: SettingsPatch[]; retries: number; downloads: number; hears: number; status(value: VoiceStatus): void };
     __naturalTest: {
       patches: SettingsPatch[]; fail: boolean; retries: number; managed: boolean;
       status(value: NaturalVoiceStatus): void;
@@ -98,6 +98,16 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("uses the baseline voice and 
     expect(await use.innerText()).toBe("Use Kitten Nano");
     await use.click();
     expect(await page.evaluate(() => window.__naturalTest.patches.at(-1)?.voice)).toMatchObject({ natural: false, naturalModel: "kitten" });
+    // Kitten stopped working, or was too slow just now: Try again times it afresh (voice-speaking-6).
+    await page.evaluate(() => window.__naturalTest.status({ state: "wont-load", model: "kitten", voice: "system", stopped: true }));
+    expect(await page.locator("#natural-text").innerText()).toBe("Kitten Nano stopped working, so Ember uses this computer's system voice when available. Try again, or restart Ember.");
+    await page.locator("#natural-retry").click();
+    expect(await page.evaluate(() => window.__naturalTest.retries)).toBe(2);
+    await page.evaluate(() => window.__naturalTest.status({ state: "too-slow", model: "kitten", voice: "system" }));
+    expect(await page.locator("#natural-retry").isVisible()).toBe(true);
+    if (process.env.EMBER_UI_EVIDENCE) await page.locator("#natural-row").screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "kitten-too-slow-retry.png") });
+    await page.evaluate(() => window.__naturalTest.status({ state: "on", model: "kitten", voice: "kitten" }));
+    expect(await page.locator("#natural-retry").isHidden()).toBe(true);
     await page.evaluate(() => window.__naturalTest.models([]));
     expect(await model.isEnabled()).toBe(true);
     expect(await model.evaluate(select => [...(select as HTMLSelectElement).options].map(option => [option.value, option.disabled]))).toEqual([["kitten", false], ["kokoro", true], ["supertonic", true]]);
@@ -149,7 +159,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
       const listeners: Record<string, Set<(value: unknown) => void>> = {};
       let current = seed.status;
       const emit = (name: string, value: unknown) => { for (const listener of listeners[name] ?? []) listener(value); };
-      const test = window.__fullNaturalTest = { patches: [] as SettingsPatch[], retries: 0, downloads: 0, status: (voice: VoiceStatus) => emit("onVoiceStatus", voice) };
+      const test = window.__fullNaturalTest = { patches: [] as SettingsPatch[], retries: 0, downloads: 0, hears: 0, status: (voice: VoiceStatus) => emit("onVoiceStatus", voice) };
       window.ember = new Proxy({}, { get: (_target, name: string) => {
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= new Set()).add(fn); return () => { listeners[name]?.delete(fn); }; };
         if (name === "getStatus") return async () => current;
@@ -159,6 +169,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
         };
         if (name === "downloadVoice") return async () => { test.downloads++; };
         if (name === "retryNaturalVoice") return async () => { test.retries++; };
+        if (name === "hearEmber") return async () => { test.hears++; return { spoke: true, voice: "kitten" }; };
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status, voice: seedVoice });
@@ -185,6 +196,25 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
     expect(await page.locator("#natural-text").innerText()).toContain("system voice");
     await page.evaluate(voice => window.__fullNaturalTest.status({ ...voice, naturalModels: ["kitten", "kokoro"], natural: { state: "on", model: "kitten", voice: "kitten" } }), seedVoice);
     expect(await page.locator("#natural-text").innerText()).toBe("Ember speaks in Kitten Nano.");
+    // Hear Ember says which voice spoke; the speaking speed is saved as chosen; Never turns Hear Ember off (voice-speaking-7).
+    const hear = page.locator("#voice-hear");
+    expect(await hear.isEnabled()).toBe(true);
+    await hear.click();
+    await expect.poll(() => page.locator("#voice-hear-status").innerText()).toBe("Ember spoke in Kitten Nano.");
+    expect(await page.evaluate(() => window.__fullNaturalTest.hears)).toBe(1);
+    expect(await page.locator("#speak-rate").inputValue()).toBe("1");
+    await page.locator("#speak-rate").selectOption("1.15");
+    await expect.poll(() => page.evaluate(() => window.__fullNaturalTest.patches.at(-1)?.voice?.rate)).toBe(1.15);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      await page.locator(".group.voice").screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "voice-hear-rate.png") });
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.locator(".group.voice").screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "voice-hear-rate-dark.png") });
+      await page.emulateMedia({ colorScheme: "light" });
+    }
+    await page.locator("#speak").selectOption("never");
+    await expect.poll(() => hear.isDisabled()).toBe(true);
+    await page.locator("#speak").selectOption("always");
+    await expect.poll(() => hear.isEnabled()).toBe(true);
     await select.selectOption("kokoro");
     const before = await page.evaluate(() => window.__fullNaturalTest.patches.length);
     expect(await use.innerText()).toBe("Use Kokoro (350 MB download)");

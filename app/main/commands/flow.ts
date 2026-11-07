@@ -31,12 +31,12 @@ import { notReviewable, reviewedDecision, type CommandReviewer } from "./review"
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
-import { mentioned } from "./intent";
+import { mentioned, namedKind } from "./intent";
 import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
-import { judgeScripts, newTaskWrites, noteWrites, type ScriptIo, type TaskWrites } from "./scripts";
+import { judgeScripts, newTaskWrites, noteWrites, withoutReadFlow, type ScriptIo, type TaskWrites } from "./scripts";
 import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
@@ -741,6 +741,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const real = new Map<string, string>();
   probe.forEach((p, i) => { const r = found[i].real; if (r !== null && r !== p) real.set(p, r); });
   if (real.size) cls = j.classifyCommand(a.command, shell, { ...cctx, real });
+  // An sh or bash loop or `if` asks only for what its commands do, as in a script (commands-remote-2).
+  cls = withoutReadFlow(cls, shell);
 
   // Step 6: the branch facts a push's announcement needs.
   const git: GitFacts | null = cls.needsGit ? await within(svc.runner.gitFacts(cwd), PROBE_MS, null) : null;
@@ -785,7 +787,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
   // says so instead of "You didn't ask for this."
   const spoken = ctx.task.spokenWords?.() ?? "";
-  if (d.verdict === "ask" && d.unasked && spoken.trim() && mentioned(cls.findings, spoken)) {
+  if (d.verdict === "ask" && d.unasked && spoken.trim() && (mentioned(cls.findings, spoken) || namedKind(cls.findings, spoken))) {
     const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
     if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
     d = { ...d, unasked: false, says };
@@ -821,6 +823,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
     verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: "user", intent: d.requested.intent } : {}), reason: d.reason,
+    ...(d.review ? { review: d.review } : {}),
   });
   ctx.log.info("commands.decided", { task, target, verdict: d.verdict, classes: d.classes, chars: a.command.length });
 
@@ -835,6 +838,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
     ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
+    // The header says the home folder as ~ in a POSIX shell (commands-remote-8).
+    ...(shell !== "powershell" && home ? { home } : {}),
   });
   /** Asks with the command card; "once", "no" (Not now), "expired" (no answer in time: a timeout, not a refusal) or "stopped". */
   const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "expired" | "stopped"> => {
@@ -929,7 +934,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
         // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
         const own = [`${binding.label}'s own check also found:`, ...theirs];
-        const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.windows);
+        const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
         let answer: "once" | "no" | "expired" | "stopped" = "stopped";
         try {

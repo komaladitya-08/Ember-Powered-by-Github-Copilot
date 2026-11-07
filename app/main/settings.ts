@@ -144,7 +144,9 @@ export const SettingsSchema = z.object({
     conversation: z.boolean().default(true),
     /** Hear me more clearly: the clearer recognizer writes requests (a 482 MB download, once this is on). */
     clearHearing: z.boolean().default(false),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false })),
+    /** How fast Ember speaks, its own voice and the system's alike: 0.8 slower to 1.4 faster, 1 as made (voice-speaking-7). */
+    rate: z.number().min(0.8).max(1.4).default(1),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1 })),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),
@@ -160,6 +162,12 @@ export const SettingsSchema = z.object({
   privacy: z.object({
     neverLook: z.array(z.string().max(100)).max(100).default(neverLookDefault()),
   }).default({ neverLook: neverLookDefault() }),
+  /**
+   * Tasks may send screenshots of the window they work in (masked: CLAUDE.md "Screenshots"), on by default; off, they
+   * work from what apps tell them through accessibility only, from the next task (Home › Apps & privacy;
+   * safety-privacy-7). The administrator's `features.screenImages: false` keeps it off, managed.
+   */
+  screenImages: z.boolean().default(true),
   /** Apps Ember may act in without asking first (lower-case app name → grant). */
   grants: z.record(z.string(), z.enum(["observe", "act"])).default({}),
   /** Preferred Copilot models; null lets Ember choose. */

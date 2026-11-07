@@ -6,6 +6,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { NATURAL_RECHECK_MS, REST_IN_BUBBLE, SPOKEN_MAX, SpeechStream, rememberedSlow, slowVerdict, speechChunks } from "../../app/voice/tts";
+import { spokenText } from "../../app/voice/spoken";
 import { Player, type PlayerAudio, type PlayerSource, playerAudio } from "../../app/renderer/mic/player";
 
 describe("the natural voice's too-slow verdict", () => {
@@ -88,6 +89,50 @@ describe("speechChunks", () => {
     expect(speechChunks("Use a short name, e.g. notes. Version 3.5 is out.")).toEqual(["Use a short name, e.g. notes.", "Version 3.5 is out."]);
   });
 
+  it("says each numbered step on its own, with its number at its start, not glued to the step before (voice-speaking-v1)", () => {
+    const said = (md: string) => speechChunks(spokenText(md));
+    expect(said("To change it:\n1. Open Settings\n2. Choose Privacy\n3. Turn off Location")).toEqual(["To change it:", "1. Open Settings.", "2. Choose Privacy.", "3. Turn off Location."]);
+    expect(said("To change it\n1. Open Settings\n2. Choose Privacy")).toEqual(["To change it.", "1. Open Settings.", "2. Choose Privacy."]);
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    expect(said(options)).toEqual(["You have three options:", "1. Move the files…", "2. Delete the duplicates.", "3. Leave everything as it is.", "Which would you like?"]);
+    expect(said("1) Keep it\n2) Delete it")).toEqual(["1) Keep it.", "2) Delete it."]);
+    for (const chunk of said(options)) expect(chunk).not.toMatch(/\d[.)]$/);
+    // As before: a number that starts a reply, "e.g." and "Dr." don't end a sentence.
+    expect(speechChunks("1. One thing to know is this.")).toEqual(["1. One thing to know is this."]);
+    expect(speechChunks("Ask Dr. Smith, e.g. by mail.")).toEqual(["Ask Dr. Smith, e.g. by mail."]);
+  });
+
+  it("keeps a list's items apart, as sentences (voice-speaking-3)", () => {
+    expect(speechChunks(spokenText("Your apps:\n- Text Editor\n- Calendar\n- Contacts\n- Firefox"))).toEqual(["Your apps: Text Editor.", "Calendar. Contacts.", "Firefox."]);
+  });
+
+  it("doesn't end a sentence at a.m., p.m. or a day's short name (voice-speaking-3)", () => {
+    expect(speechChunks("Meeting at 3:30 p.m. on Tue. with Dr. Smith. Bring the notes.")).toEqual(["Meeting at 3:30 p.m. on Tue. with Dr. Smith.", "Bring the notes."]);
+    expect(speechChunks("We sat. Then we left the room together.")).toEqual(["We sat.", "Then we left the room together."]);
+  });
+
+  const LONG = "I looked through the folder you mentioned and found the quarterly reports from last year together with the drafts that were never sent to the finance team for review.";
+
+  it("starts a long first sentence with no comma before a joining word, not after its full stop (voice-speaking-8)", () => {
+    const [first, ...rest] = speechChunks(LONG);
+    expect(first).toBe("I looked through the folder you mentioned");
+    expect(first.length).toBeLessThanOrEqual(90);
+    expect([first, ...rest].join(" ")).toBe(LONG);
+    // No joining word: at the last space that fits.
+    const plain = "Supercalifragilistic expialidocious antidisestablishmentarianism floccinaucinihilipilification pneumonoultramicroscopic.";
+    expect(speechChunks(plain)[0].length).toBeLessThanOrEqual(90);
+    // A comma still comes first, and a sentence of up to 90 characters is said whole.
+    expect(speechChunks("I can't do that one, because it would delete files from your home folder without a way back.")[0]).toBe("I can't do that one,");
+    expect(speechChunks("I looked through the folder you mentioned and found nothing there at all.")).toEqual(["I looked through the folder you mentioned and found nothing there at all."]);
+  });
+
+  it("keeps every piece to 120 characters, so a new answer never waits long behind one being made (voice-speaking-10)", () => {
+    const text = `${LONG} The largest one is the October summary, which has the revenue tables and the notes from the planning meeting that you asked me about earlier this week. I can open any of them for you.`;
+    const chunks = speechChunks(text);
+    for (const c of chunks) expect(c.length, c).toBeLessThanOrEqual(120);
+    expect(chunks.join(" ")).toBe(text);
+  });
+
   it("joins a very short piece to the one before it", () => {
     expect(speechChunks("The build finished in twelve seconds. OK. Next?")).toEqual(["The build finished in twelve seconds.", "OK. Next?"]);
   });
@@ -148,6 +193,18 @@ describe("SpeechStream", () => {
     expect(new SpeechStream().push("Here's what I found: the project")).toEqual(["Here's what I found:"]);
   });
 
+  it("starts a long first sentence with no comma before a joining word, before Copilot has written its full stop (voice-speaking-8)", () => {
+    const long = "I looked through the folder you mentioned and found the quarterly reports from last year together with the drafts that were never sent to the finance team for review. Shall I open them?";
+    const s = new SpeechStream();
+    const said: { at: number; piece: string }[] = [];
+    for (let i = 0; i < long.length; i += 3) for (const piece of s.push(long.slice(i, i + 3))) said.push({ at: i + 3, piece });
+    expect(said[0].piece).toBe("I looked through the folder you mentioned");
+    expect(said[0].at).toBeLessThan(long.indexOf("review."));
+    expect([...said.map(x => x.piece), ...s.finish(long)].join(" ")).toBe(long);
+    // A comma-less first sentence of up to 90 characters still waits for its end.
+    expect(new SpeechStream().push("I looked through the folder you mentioned and found nothing there at")).toEqual([]);
+  });
+
   it("waits for the sentence when the first clause is too short to say alone", () => {
     expect(new SpeechStream().push("Sure, I can open that for you")).toEqual([]);
   });
@@ -162,6 +219,23 @@ describe("SpeechStream", () => {
     const s = new SpeechStream();
     s.push("I opened the quarterly report, checked it");
     expect(s.push(" and more, then again")).toEqual([]);
+  });
+
+  it("says a list's items as they arrive, not all at the end (voice-speaking-3, voice-speaking-v1)", () => {
+    const markdown = "Your apps:\n- Firefox\n- Files\n- Terminal\n- Mail\n\nWhich one?";
+    const s = new SpeechStream();
+    const pieces: string[] = [];
+    for (let i = 0; i < markdown.length; i += 3) pieces.push(...s.push(markdown.slice(i, i + 3)));
+    expect(pieces).toEqual(["Your apps:", "Firefox.", "Files.", "Terminal.", "Mail."]);
+    expect(s.finish(markdown)).toEqual(["Which one?"]);
+    // Numbered steps too, each with its number, and the pieces chunk as the whole text does.
+    const steps = "To change it:\n1. Open Settings\n2. Choose Privacy\n3. Turn off Location";
+    const t = new SpeechStream();
+    const said: string[] = [];
+    for (let i = 0; i < steps.length; i += 3) said.push(...t.push(steps.slice(i, i + 3)));
+    said.push(...t.finish(steps));
+    expect(said).toEqual(["To change it:", "1. Open Settings.", "2. Choose Privacy.", "3. Turn off Location."]);
+    expect(said.flatMap(speechChunks)).toEqual(speechChunks(spokenText(steps)));
   });
 
   it("says a whole answer that wasn't streamed", () => {

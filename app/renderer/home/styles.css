@@ -210,6 +210,8 @@ section > p.hint:empty:is([role], [aria-live]) { position: absolute; }
 .sign-in-msg[hidden] { display: none; }
 .sign-in-msg .wait { flex-basis: 100%; color: var(--muted); }
 .sign-in-msg .nowrap { white-space: nowrap; }
+/* A command or a host's name in Computers' and Commands' status lines never breaks at its hyphen (computers.ts). */
+.hint .whole { white-space: nowrap; }
 .models { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
 .models[hidden] { display: none; }
 .models label { color: var(--fg); }
@@ -380,12 +382,24 @@ progress[hidden] { display: none; }
 .mem-fact { display: grid; gap: 2px; min-width: 0; }
 .mem-fact > span { min-width: 0; overflow-wrap: anywhere; }
 .mem-from { color: var(--muted); font: var(--type-footnote); }
+/* Its two buttons stay side by side at the row's end, however long the fact: Forget in red, Correct… (which changes
+   nothing until saved) in the words' colour. Their words sit 16px apart; only the last one's padding hangs past the
+   edge (memory-13). */
+.memory-list li > .agent-actions { flex: none; flex-wrap: nowrap; gap: 0; }
+.memory-list .agent-actions .btn.quiet:not(:last-child) { margin-right: 0; }
+.memory-list .agent-actions [data-memory-correct] { color: var(--fg); }
 /* "Tell Ember about you": memory off, the line and its button sit on one row. */
 .about-off:not(.consent) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .about-off .row-note { margin: 0; min-width: 0; padding-right: 0; }
 .about-off[hidden] { display: none; }
 .about-off .btn { flex: none; white-space: nowrap; }
 .about-msg:empty { display: none; }
+/* After Forget, focus waits on what went (never the next Forget: memory-7), ringed as a control is, with Undo beside it. */
+.memory-forgotten { align-items: center; flex-wrap: wrap; }
+.memory-forgotten > .hint { margin: 0; border-radius: var(--r-xs); }
+.memory-forgotten > .hint:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Memory on but paused: its line stands alone in the group, so no rule above it. */
+.group > .about-paused { border-top: 0; }
 /* Its group and the hints under it are spaced as a section's own children are. */
 #about-you, #w-about { display: grid; gap: 8px; }
 
@@ -495,6 +509,8 @@ progress[hidden] { display: none; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 .facts dd.path { font: 13px/20px var(--ember-mono); }
+/* The log file's Copy and Show in Files (rp-8), on the line under its path. */
+.facts dd.path .btn { margin: 4px 8px 0 0; }
 .facts dd.plain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
 /* ── First run: only its steps (welcome.ts; styled at the end of this sheet) ── */
@@ -1047,6 +1063,9 @@ html.calm .w-card > * { transition-delay: 0s; }
 @media (forced-colors: active) {
   .search-result { border: 1px solid ButtonText; }
   .memory-filters input, .memory-filters select, .memory-correction textarea, .search-results { border: 1px solid ButtonText; }
+  /* Drawn with an edge, a memory's buttons stand apart and stay inside the group (memory-13). */
+  .memory-list li > .agent-actions { gap: 6px; }
+  .memory-list .agent-actions .btn.quiet { margin-right: 0; }
 }
 
 /* Project context stays inspectable and removable without clearing the authored request. */

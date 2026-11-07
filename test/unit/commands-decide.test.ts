@@ -109,6 +109,44 @@ describe("decideCommand: the rules in order", () => {
     expect(named).toMatchObject({ verdict: "ask", unasked: false });
     expect(named.says).not.toContain(LINES.unasked);
   });
+
+  it("never says \"You didn't ask for this.\" to someone who asked for that kind of step; it still asks (commands-remote-v2)", () => {
+    // The program and subcommand named in full: they asked for it.
+    for (const [cmd, words] of [["npm ci", "run npm ci"], ["npm ci", "npm ci"], ["docker push app:1", "docker push it"]]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+      expect(d.unasked).toBe(false);
+    }
+    // Their words ask for that kind of step, not exactly this one: the card says so instead.
+    for (const [cmd, words] of [
+      ["git push origin main", "push my changes"],
+      ["git push origin main", "push my changes to github"],
+      ["npm ci", "reinstall the dependencies"],
+      ["find . -name '*.pyc' -delete", "delete all the .pyc files in this folder"],
+      ["git checkout .", "discard all my uncommitted changes in this repo"],
+      ["git restore .", "restore every file"],
+      ["cp config.example.json config.json", "copy config.example.json to config.json"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.inexact);
+      expect(d.unasked).toBe(false);
+    }
+    // Words that ask for nothing of the kind still say it, also when they name the file (an injected step's usual shape).
+    for (const [cmd, words] of [["git push origin main", "fix the readme"], ["rm notes.txt", "summarise notes.txt"], ["git push --force origin main", "tidy the git config"], ["npm ci", "update the docs"]]) {
+      const d = decide(cmd, { words });
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+    }
+    for (const [cmd, words] of [["git push origin main", "fix the readme"], ["rm notes.txt", "summarise notes.txt"], ["git push --force origin main", "tidy the git config"]]) {
+      expect(decide(cmd, { words }).says, `${cmd} / ${words}`).toContain(LINES.unasked);
+    }
+    // The line sits where "You didn't ask for this." would, before the Windows line.
+    const wsl = decide("rm /mnt/c/Users/ana/x.txt", { where: "wsl", words: "delete the old export" });
+    expect(wsl.says.slice(-2)).toEqual([LINES.inexact, LINES.windows]);
+  });
 });
 
 describe("decideCommand: the card", () => {

@@ -4,11 +4,12 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ClearHearingStatus, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
+import { PLATFORM_WORDS } from "../../shared/words";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { onboardingRest } from "./computers-copy";
@@ -125,6 +126,16 @@ export const NEVER_LOOK_DEFAULTS: readonly string[] = NEVER_LOOK_BY_OS.linux;
  */
 export const MANAGED_ROW = "label, .choice";
 
+/**
+ * Apps & privacy's switch for screenshots (settings.screenImages; safety-privacy-7): what a task sends, and what turning
+ * it off costs. The page says these words (ui-copy.test.ts).
+ */
+export const SCREEN_IMAGES_TEXT = {
+  heading: "What tasks may send",
+  label: "Send screenshots for tasks",
+  hint: "A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.",
+} as const;
+
 /** How a never-look entry reads on screen (the defaults are stored lower-case, as matched). */
 export function neverLookLabel(item: string): string {
   return NEVER_LOOK_NAMES[item.trim().toLowerCase()] ?? item;
@@ -177,6 +188,12 @@ export function saveFailedText(err: unknown): string {
 export function memoryDeleteFailedText(err: unknown): string {
   const said = ipcErrorText(err);
   return /^Ember couldn't finish deleting /.test(said) ? said : "Ember couldn't finish deleting memory. Try Forget again.";
+}
+
+/** A failed Undo of a Forget, in main's plain sentence when it is one, never an IPC or filesystem error. */
+export function memoryRestoreFailedText(err: unknown): string {
+  const said = ipcErrorText(err);
+  return /^Ember couldn't put this memory back/.test(said) ? said : "Ember couldn't put this memory back. Try Undo again.";
 }
 
 /** The same safe deletion failure, naming the action beside the learned line. */
@@ -449,7 +466,7 @@ export function providerTestText(r: { ok: true; host: string; models: number | n
  * where, what goes to Copilot, and how to forget it. Changing it means bumping FEATURE_CONSENT_VERSION.memory (2: it
  * learns on its own, docs/MEMORY.md steps 3–5; 3: saved memory is tied to the verified GitHub account).
  */
-export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, and how you like things done. It learns from conversations and finished tasks using short Copilot requests, and keeps what it learns on this computer. A few relevant facts go to Copilot with each request. Saved memory is tied to your verified GitHub account. Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it. Ember never keeps passwords, codes or card numbers. You can review and forget facts here. Signing out erases saved memory that belongs to your verified account.";
+export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, and how you like things done. It learns from conversations and finished tasks using short Copilot requests, and keeps what it learns on this computer. With each request, what you asked Ember to call you, how you like answers and a few facts that bear on the request go to Copilot. While you're away, Ember also tidies its memory: up to 6 times a day it sends up to 40 saved facts to Copilot to summarise them. Saved memory is tied to your verified GitHub account. Ember keeps older or unmatched memory hidden until it can verify the owner or you clear it. Ember never keeps passwords, codes or card numbers. You can review and forget facts here. Signing out erases saved memory that belongs to your verified account.";
 
 /**
  * Memory was on under an earlier note (version 1, before Ember learned on its own) and waits for the user to agree to
@@ -459,9 +476,9 @@ export function memoryPaused(m: { on: boolean; consent: { version: number } }): 
   return m.on && m.consent.version > 0 && m.consent.version < FEATURE_CONSENT_VERSION.memory;
 }
 /** Said in Settings › Memory while memory is paused, above its new note. */
-export const MEMORY_PAUSED_TEXT = "Memory is paused until you review the new account privacy note.";
-export const MEMORY_OWNER_WAITING = "Sign in with GitHub to use saved memory.";
-export const MEMORY_OWNER_LOCKED = "Saved memory is hidden until Ember verifies its owner. Use Forget everything to clear it.";
+export const MEMORY_PAUSED_TEXT = "Memory is paused until you review its updated note, which now says everything it sends to Copilot.";
+/** Memory's line while its saved memory can't be opened, and whether to offer Forget everything (memory-2): shared with main. */
+export { memoryOwnerOffersErase, memoryOwnerText } from "../../shared/memory-owner";
 
 /** Where a remembered fact came from, as Settings › Memory lists it beside the fact. */
 export function memorySourceLabel(source: string): string {
@@ -470,6 +487,24 @@ export function memorySourceLabel(source: string): string {
 
 /** The conversation's line when Ember keeps something new on its own, and its Undo button's name for screen readers. */
 export const learnedLine = (text: string) => `Ember learned: ${text}`;
+/** The conversation's line when Ember forgot a fact you asked it to forget (memory-v2), and its Undo's name. */
+export const forgotLine = (text: string) => `Ember forgot: ${text}`;
+export const undoForgotLabel = (text: string) => `Undo: remember “${text}” again`;
+/**
+ * What Memory's list says after Forget, where focus goes (never the next row's Forget, so a second Enter forgets
+ * nothing more: memory-7), with Undo after it; and after Undo.
+ */
+export const memoryForgottenText = (text: string, derived = 0, back: readonly string[] = []) =>
+  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.${back.length ? ` Ember remembers ${quotedAnd(back)} again.` : ""}`;
+/** “A”, “A” and “B”, “A”, “B” and “C”: what is current again after a Forget undid what Ember kept just now (memory-12). */
+const quotedAnd = (texts: readonly string[]) => {
+  const q = texts.map(t => `“${t.replace(/[“”]/g, "")}”`);
+  return q.length > 1 ? `${q.slice(0, -1).join(", ")} and ${q.at(-1)}` : q.join("");
+};
+export const memoryPutBackText = (text: string) => `Put back: “${text.replace(/[“”]/g, "")}”.`;
+/** Undo of a Forget, once it has put the memory back; and when it can't any more. */
+export const MEMORY_PUT_BACK = "Put back";
+export const MEMORY_UNDO_EXPIRED = "It's too late to undo this. Tell Ember again if you want it remembered.";
 export const undoLearnedLabel = (text: string) => `Undo: forget “${text}”`;
 /** The line's button once main confirms the deletion. */
 export const LEARNED_UNDONE = "Forgotten";
@@ -482,9 +517,13 @@ export const MEMORY_SHOW_MORE = "Show more memories";
 export const MEMORY_NO_MATCHES = "No memories match. Try another word or source.";
 export const WORD_DELETE_FAILED = "Couldn't forget that correction. Try again.";
 export const WORDS_DELETE_FAILED = "Couldn't forget the corrections. Try again.";
+/** Forget all words' question (memory-7), with how many go. */
+export const forgetAllWordsAsk = (n: number) =>
+  `Forget ${n === 1 ? "the word" : `the ${n} words`} Ember learnt from your corrections? It will hear ${n === 1 ? "it" : "them"} as it did before.`;
 
-/** The visible page and all matching memories, without suggesting that hidden pages have been removed. */
+/** The visible page and all matching memories, without suggesting that hidden pages have been removed; nothing for none (memory-13). */
 export function memoryCountText(shown: number, matched: number, all: number): string {
+  if (!all) return "";
   return matched === all ? `${shown} of ${all} ${all === 1 ? "memory" : "memories"}` : `${shown} of ${matched} matching ${matched === 1 ? "memory" : "memories"} (${all} total)`;
 }
 
@@ -518,7 +557,11 @@ export const MEMORY_CORRECTION = {
   failed: "Ember couldn't save this correction. Your words are still here; try again.",
 } as const;
 /** A corrected sentence still names its original source, including its original authority. */
-export function memoryProvenanceLabel(source: string, correctedAt?: string): string { return `${memorySourceLabel(source)}${correctedAt ? " · Corrected by you" : ""}`; }
+/** Where a listed fact came from; one of Ember's own notes says so whatever it was drawn from (memory-3). */
+export function memoryProvenanceLabel(source: string, correctedAt?: string, kind?: "summary" | "guess"): string {
+  const from = kind === "summary" ? "Ember's summary" : kind === "guess" ? "Ember's guess" : memorySourceLabel(source);
+  return `${from}${correctedAt ? " · Corrected by you" : ""}`;
+}
 export const correctMemoryLabel = (text: string) => `Correct memory: ${text}`;
 /** Correction failures use main's plain bounded sentences; arbitrary IPC/filesystem details remain private. */
 export function memoryCorrectionFailedText(error: unknown): string {
@@ -548,6 +591,9 @@ export const ABOUT_YOU = {
 } as const;
 
 /** The form's fields as main takes them: trimmed, each one left out when it is empty or "No preference". */
+/** Said after Save when Spoken replies was chosen: it changes whether Ember speaks (memory-5). */
+export const aboutYouSpoken = (on: boolean) => on ? "Ember speaks its replies aloud now. You can change that in Voice." : "Ember won't speak its replies now. You can change that in Voice.";
+
 export function introFromForm(f: { name: string; work: string; apps: string; length: string; spoken: string; hours: string }): {
   name?: string; work?: string; apps?: string; length?: "short" | "detailed"; spoken?: boolean; hours?: string;
 } {
@@ -674,12 +720,26 @@ export function forgetMemoryLabel(text: string): string {
  * The speech models' download button: what it fetches and its size. Listening's own models missing: "speech models"
  * (everything missing comes with them); otherwise the voice models that are missing (Kitten Nano, Voice Match).
  */
-export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: number): string {
+/** The download's size as the Download button and the consent card say it ("220 MB"; Kitten alone to a tenth). */
+export function modelsSize(missing: readonly SpeechModelId[], bytes: number): string {
   const onlyVoice = missing.length === 1 && missing[0] === "tts";
-  const mb = `${Math.max(1, onlyVoice ? Math.round(bytes / 1e5) / 10 : Math.round(bytes / 1e6))} MB`;
+  return `${Math.max(1, onlyVoice ? Math.round(bytes / 1e5) / 10 : Math.round(bytes / 1e6))} MB`;
+}
+
+export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: number): string {
+  const mb = modelsSize(missing, bytes);
   const listening = missing.some(id => id === "kws" || id === "vad" || id === "asr");
   const parts = listening ? ["speech models"] : [...(missing.includes("tts") ? ["Kitten Nano"] : []), ...(missing.includes("speaker") ? ["Voice Match"] : [])];
   return `Download ${parts.length ? parts.join(" and ") : "speech models"} (${mb})`;
+}
+
+/**
+ * Settings' voice line names the microphone Ember hears through while it listens for its name ("Listening for “Ember”
+ * through Built-in Audio Analog Stereo"): on a computer with several, the system's default may be the wrong one, and
+ * nothing said which (voice-listening-v2). Never over a detail (an error, Learning your voice).
+ */
+export function heardThrough(text: string, state: string, detail: string | null, micLabel: string | undefined): string {
+  return state === "waiting" && !detail && micLabel ? `${text} through ${micLabel}` : text;
 }
 
 export const SPEAK_NO_VOICE = "Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.";
@@ -883,7 +943,8 @@ function commandLine(e: ActivityEntry): EntryView | null {
       // An ordinary command runs without asking: its end line says it.
       if (e.verdict === "refuse") return { tag: "Refused", cls: "no", what: run, why: userWords(e.reason) };
       if (e.verdict === "ask") return { tag: "Asked you", cls: "ask", what: run, why: userWords(e.reason) };
-      if (e.verdict === "announce") return { tag: "Announced", cls: "ask", what: run, why: userWords(e.reason) };
+      // The review's own words are only in the 0600 audit file (never the journal): shown here, as the reason was.
+      if (e.verdict === "announce") return { tag: "Announced", cls: "ask", what: run, why: userWords(typeof e.review === "string" && e.review && e.reason ? `${e.reason.replace(/\.$/, "")} (${e.review}).` : e.reason) };
       return null;
     case "answered":
       if (e.q === "consent") return { ...answerTag(e.answer), what: ["Turn on commands", place].filter(Boolean).join(" ") };
@@ -1144,8 +1205,10 @@ export const PERSONAL_TEXT = {
   wordsHeading: "Words Ember learnt",
   wordsEmpty: "No words learnt yet.",
   forgetAllWords: "Forget all words",
+  /** Forget all words asks first, as Forget everything does (memory-7); "Keep them" is the safe choice. */
+  forgetAllWordsKeep: "Keep them",
   conversation: "Keep listening after I call Ember",
-  conversationHint: "Talk to Ember as you would to a person: no name needed after the first time, and you can cut in while it speaks or works. Ember stops talking, takes in what you said and carries on. Say “That's all” to finish, or it stops listening 30 seconds after everything goes quiet. Off, you have a few seconds after each answer.",
+  conversationHint: "Talk to Ember as you would to a person: no name needed after the first time (while music or a video plays, start with “Ember”), and you can cut in while it speaks or works. Ember stops talking, takes in what you said and carries on. Say “That's all” to finish, or it stops listening 30 seconds after everything goes quiet. Off, you have a few seconds after each answer.",
   suggest: "Suggest what I might say next",
   suggestHint: "A few likely next requests under Ember's answers and in Ask Ember, worked out on this computer. Nothing runs until you choose one, and Ember never suggests sending, deleting or paying unless you just asked about it.",
   notSaid: "That's not what I said",
@@ -1224,12 +1287,37 @@ export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: Natur
     case "downloading": return { text: `Downloading ${name}… ${Math.max(0, Math.min(99, Math.round(s.percent)))}%`, retry: false, busy: true };
     case "ready": return { text: `${name} is ready for Ember's next reply.`, retry: false, busy: false };
     case "on": return { text: s.voice && s.voice !== model ? `${name} is selected. ${fallback}` : `Ember speaks in ${name}.`, retry: false, busy: false };
-    case "too-slow": return { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
-    case "wont-load": return { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
+    // Kitten is timed again at every start, so a busy moment or one failure needn't cost it the session (voice-speaking-6):
+    // Try again loads and times it now. An optional voice's slow verdict is kept for a week.
+    case "too-slow": return model === "kitten"
+      ? { text: `${name} was too slow just now, perhaps because this computer was busy, so Ember uses this computer's system voice when available. Try again when it's less busy.`, retry: true, busy: false }
+      : { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
+    case "wont-load": return model === "kitten"
+      ? { text: `${name} ${s.stopped ? "stopped working" : "couldn't load"}, so Ember uses this computer's system voice when available. Try again, or restart Ember.`, retry: true, busy: false }
+      : { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
     case "needs-native": return { text: `${name} isn't available on this computer. ${fallback}`, retry: false, busy: false };
     case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model !== "kitten", busy: false };
     default: return { text: `${name} is selected. ${fallback}`, retry: false, busy: false };
   }
+}
+
+/** The speaking speeds Settings › Voice offers (settings keep 0.8 to 1.4: voice-speaking-7). */
+export const SPEAK_RATES: readonly { rate: number; label: string }[] = [
+  { rate: 0.8, label: "Slower" }, { rate: 0.9, label: "A little slower" }, { rate: 1, label: "Normal" },
+  { rate: 1.15, label: "A little faster" }, { rate: 1.3, label: "Faster" },
+];
+
+/** The offered speed nearest to `rate` (a hand-edited settings file can hold any speed in range). */
+export function nearestRate(rate: number): number {
+  return SPEAK_RATES.reduce((best, r) => (Math.abs(r.rate - rate) < Math.abs(best - rate) ? r.rate : best), 1);
+}
+
+/** What Hear Ember's status line says: which voice spoke, or why none did (voice-speaking-7). */
+export function hearEmberLine(r: HearResult): string {
+  if (r.spoke) return `Ember spoke in ${r.voice === "system" ? "this computer's system voice" : NATURAL_CHOICES[r.voice].name}.`;
+  if (r.why === "managed") return "Your organisation has turned speaking off.";
+  if (r.why === "locked") return "Ember doesn't speak while the screen is locked.";
+  return "Ember isn't speaking out loud now. Choose Always above to hear it.";
 }
 
 /** Plain, local-only feedback and labels for the upcoming reminder inventory. */
@@ -1243,8 +1331,11 @@ export const REMINDER_WORDS = {
   deleteFailed: "Couldn't delete the routines and reminders. Try again.", loadFailed: "Couldn't load reminders. Try Refresh list again.",
 } as const;
 
-/** What is in Ember right now, counted while a Sign out or Forget everything question is open; null is "couldn't tell". */
-export interface ForgetCounts { tasks: number | null; facts: number | null; reminders: number | null; routines: number | null }
+/**
+ * What is in Ember right now, counted while a Sign out or Forget everything question is open; null is "couldn't tell".
+ * `kept`: saved memory Ember can't match to this account, which Sign out leaves on the computer (memory-11).
+ */
+export interface ForgetCounts { tasks: number | null; facts: number | null; reminders: number | null; routines: number | null; kept?: boolean }
 
 /** Said while the counts are still being read. */
 export const FORGET_LOADING = "Checking what this affects…";
@@ -1253,10 +1344,18 @@ const plural = (n: number | null, one: string, many: string) => n === null ? `an
 const isAre = (n: number | null) => n === 1 ? "is" : "are";
 /** Added when any count is unknown, so a missing number is never read as none. */
 const UNKNOWN_NOTE = " Ember couldn't count everything right now, so those numbers are unknown, not zero.";
-const hasUnknown = (c: ForgetCounts) => Object.values(c).some(n => n === null);
+const hasUnknown = (c: ForgetCounts) => [c.tasks, c.facts, c.reminders, c.routines].some(n => n === null);
 
-/** The question for Sign out: it clears all four, and the counts are today's. */
+/**
+ * The question for Sign out: it clears all four, and the counts are today's. Saved memory Ember can't match to this
+ * account (`kept`) isn't cleared, and the question says so and how to remove it (memory-11).
+ */
 export function signOutScope(c: ForgetCounts): string {
+  if (c.kept) {
+    return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), `
+      + `${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}. Saved memory Ember can't match to this account stays on this computer; Forget everything in Memory removes it.`
+      + (hasUnknown({ ...c, facts: 0 }) ? UNKNOWN_NOTE : "");
+  }
   return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), `
     + `${plural(c.facts, "saved fact", "saved facts")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
@@ -1280,4 +1379,14 @@ export function reminderDeleteScope(routines: number, reminders: number): string
   const what = parts.length === 2 ? `Delete ${count(parts[0][1], parts[0][0])} and ${count(parts[1][1], parts[1][0])}?`
     : parts[0][1] === 1 ? `Delete your ${parts[0][0]}?` : `Delete all ${count(parts[0][1], parts[0][0])}?`;
   return `${what} This removes saved reminders too.`;
+}
+
+/** Home's note after the last run ended unexpectedly (main crashed or was killed: rp-5), with where its log is. */
+export function closedUnexpectedlyText(logFile: string): string {
+  return `Ember closed unexpectedly last time. Its log shows what it was doing until then: ${logFile}`;
+}
+
+/** About this build's button that shows the log file in this OS's file manager ("Show in Files", "Show in Finder"). */
+export function showLogLabel(os: OS): string {
+  return `Show in ${PLATFORM_WORDS[os].fileManager}`;
 }

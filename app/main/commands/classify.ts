@@ -16,7 +16,7 @@ import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Uncle
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
-  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, values,
+  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, shownPath, values,
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
@@ -78,6 +78,8 @@ export interface ClassificationExtra extends Classification {
    * follow, or code Ember can't see or follow (an unclear or escape finding: it runs only once the user said yes).
    */
   writesAnywhere: boolean;
+  /** Of those, the writes Ember can't place that no finding stands for (a checkout's work tree, an archive unpacked). */
+  writesUnplaced?: boolean;
 }
 
 /** A shell script to read and classify (ClassificationExtra.scripts). */
@@ -242,14 +244,17 @@ class Classifier {
   private globalOpts = new Set<number>();
   /** The text sets an environment or shell variable somewhere: it may point a later command elsewhere (GH_REPO=…). */
   envChanged = false;
+  /** The commands (by index) given a file or text to read (`< list.txt`, a here-document or here-string). */
+  stdinGiven = new Set<number>();
 
   constructor(readonly ctx: ClassifyContext, readonly topShell: ShellId) {}
 
   // ----------------------------------------------------------------------------------------------------------------
   // Findings.
 
-  add(cls: DangerClass, rule: string, says: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string } = {}): void {
+  add(cls: DangerClass, rule: string, said: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string } = {}): void {
     const program = o.program ?? this.program;
+    const says = cardWords(said, o.objects ?? [], this.commands[this.at]?.wrappers ?? []);
     // "If it exists" is asked of the file the kernel opens: `> sub/../x` overwrites the x beside sub's target.
     const ifExists = o.ifExists === undefined ? undefined : (o.objects ?? []).find(ob => ob.abs === o.ifExists && ob.phys !== undefined)?.phys ?? o.ifExists;
     if (this.findings.some(f => f.rule === rule && f.says === says && f.at === this.at && f.ifExists === ifExists)) return;
@@ -915,6 +920,37 @@ function setsRiskyName(key: string, args: readonly Arg[]): boolean {
   return ["read", "mapfile", "readarray", "getopts", "wait", "unset"].includes(key) && args.some(a => risky(a.v));
 }
 
+/** The keywords that open an `if` or a loop, and the word that closes each. */
+const COMPOUND_CLOSER: Readonly<Record<string, string>> = { if: "fi", while: "done", until: "done", for: "done" };
+/** The keywords the classifier unwraps a command from (`then rm x`): they stay in the text's own shell. */
+export const FLOW_WRAPPER: ReadonlySet<string> = new Set(["if", "then", "elif", "else", "while", "until", "do", "!"]);
+
+/**
+ * The `read` commands (by index) whose `if` or loop takes its input from a file or text (`while read -r l; do …; done
+ * < list.txt`, `done <<< "$x"`; `given` says which commands were given one): they read that, not the user's typing
+ * (commands-remote-2). Only the command line's own POSIX text is followed (a command a nested shell or a wrapper runs
+ * counts as not fed), and anything it can't pair up (case, a group, a function, a closer without its opener) leaves
+ * every read as it was.
+ */
+export function readsFedByCompound(commands: readonly ParsedCommand[], given: (i: number) => boolean): Set<number> {
+  const none = new Set<number>();
+  const fed = new Set<number>();
+  const open: { closer: string; reads: number[] }[] = [];
+  for (let i = 0; i < commands.length; i++) {
+    const c = commands[i];
+    if (c.family !== "posix" || !c.wrappers.every(w => FLOW_WRAPPER.has(w))) continue;
+    if (["case", "esac", "select", "{", "}", "function", "coproc"].includes(c.program)) return none;
+    for (const w of [...c.wrappers, c.program]) if (Object.hasOwn(COMPOUND_CLOSER, w)) open.push({ closer: COMPOUND_CLOSER[w], reads: [] });
+    if (c.program === "read" && c.pipedFrom === undefined && open.length) open[open.length - 1].reads.push(i);
+    if (c.program !== "fi" && c.program !== "done") continue;
+    const top = open.pop();
+    if (!top || top.closer !== c.program) return none;
+    if (given(i)) for (const r of top.reads) fed.add(r);
+    else if (open.length) open[open.length - 1].reads.push(...top.reads);
+  }
+  return fed;
+}
+
 /**
  * Whether a name-taking built-in gets a variable's name Ember can't see (D4.3 g). bash evaluates the subscript of a
  * name it is given (`printf -v`, `read`, `declare` with a value, `test -v`, `unset` of an array element), so
@@ -1019,6 +1055,9 @@ class Engine extends Classifier {
     if (this.scriptWritten()) {
       this.unclear("unclear.script-written", "It runs a script that this command writes first, so Ember can't read it beforehand.");
     }
+    // A `read` that its loop or `if` gives a file or text to (`while read -r l; …; done < list.txt`) waits for no typing.
+    const fed = readsFedByCompound(this.commands, i => this.stdinGiven.has(i));
+    if (fed.size) this.findings = this.findings.filter(f => !(f.rule === "unclear.interactive" && f.program === "read" && fed.has(f.at)));
     const out: ClassificationExtra = {
       shell: this.topShell,
       family: SHELL_FAMILY[this.topShell] ?? "posix",
@@ -1036,6 +1075,7 @@ class Engine extends Classifier {
       // Code Ember can't see (unclear), or that it can't follow (a download run, a program that keeps running after the
       // command), writes where it likes once the user says yes.
       writesAnywhere: this.unnamedAnywhere || this.findings.some(f => f.cls === "unclear" || f.cls === "escape"),
+      writesUnplaced: this.unnamedAnywhere,
     };
     // A variable set anywhere in the text may redirect a command (GH_REPO, NPM_CONFIG_REGISTRY, P4PORT): no intent
     // row covers a finding of such a text.
@@ -1552,6 +1592,7 @@ class Engine extends Classifier {
       else if (/^[a-z]+-[a-z0-9]+$/i.test(nameArg.v)) { prog = nameArg.v; key = nameArg.v.toLowerCase(); }
     }
     this.newCommand(prog, args, sc, s.redirs, s.background, s.pipedFrom);
+    if (s.stdin === "file" || s.stdin === "heredoc") this.stdinGiven.add(this.at);
     this.noteProgram(prog);
     before?.();
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
@@ -1786,6 +1827,25 @@ class Engine extends Classifier {
 const opts = (h: H, spec: OptSpec = {}): Parsed => parseOpts(h.args, spec);
 const objsOf = (h: H, list: Arg[], use: PathUse): Obj[] => list.map(a => h.e.usePath(a, use, h.sc));
 /** Objects for the card: as written; an unresolved one by its text. */
+/**
+ * A finding's words with each of its objects that is a dot folder said as shownPath says it, wherever it stands as a
+ * word of its own ("under .." is "under" and "." and the full stop), and find's `{}` as each file it finds. Only the
+ * words change: the objects, their paths and the matching stay as written.
+ */
+function cardWords(says: string, objects: readonly Obj[], wrappers: readonly string[]): string {
+  let out = says;
+  for (const text of new Set(objects.map(o => o.text))) {
+    const shown = shownPath(text);
+    if (shown === text) continue;
+    const esc = text.replace(/[.\\/]/g, c => `\\${c}`);
+    out = out.replace(new RegExp(`(^|[\\s(])${esc}(?=[\\s,;:)]|\\.?$)`, "g"), (_m, pre: string) => `${pre}${shown}`);
+  }
+  if (objects.some(o => o.text === "{}") && wrappers.some(w => /^find -(exec|execdir|ok|okdir)$/.test(w))) {
+    out = out.replace(/(^|[\s(])\{\}(?=[\s,;:)]|\.?$)/g, (_m, pre: string) => `${pre}each file it finds`);
+  }
+  return out;
+}
+
 const listOf = (objs: Obj[], fallback = "files Ember can't name"): string => (objs.length ? joinList(objs.map(o => o.text || fallback)) : fallback);
 const lower = (a: Arg | undefined): string | null => (a && a.v !== null ? a.v.toLowerCase() : null);
 
@@ -2601,7 +2661,8 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   if (noClobber) return;
   const rule = `posix.${kind}`;
   if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
-  const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "");
+  // `.` and `..` are always folders: `cp x .` puts x in the current folder (commands-remote-v1).
+  const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "") || /^\.\.?$/.test(dest.v ?? "");
   if (intoFolder) {
     for (const s of sources) {
       if (s.v === null || s.glob) {
@@ -3111,6 +3172,12 @@ reg(NATIVE, ["eval"], h => {
 reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bind", "coproc", "select", "function", "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac", "[[", "]]", "{", "}", "in", "complete"], h => {
   const words: Record<string, string> = { alias: "It defines an alias Ember can't follow.", unalias: "It changes aliases Ember can't see.", shopt: "It changes how the shell reads commands.", fc: SAYS.interactive };
   h.e.unclear(`unclear.${h.key.replace(/[^a-z]/g, "") || "keyword"}`, words[h.key] ?? SAYS.unclear);
+  // A loop's variable is set as an assignment is (`for PATH in /tmp/x; do ls; done` changes where ls is found).
+  if (h.key === "for" || h.key === "select") {
+    h.e.envChanged = true;
+    const name = h.args[0]?.v ?? null;
+    if (name === null || RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+  }
   // A keyword in front of a command (`then rm x`, `do rm x`): the command after it is classified too.
   if (["then", "elif", "else", "do", "if", "while", "until", "!"].includes(h.key) && h.args.length) h.e.unwrap(h, h.args, h.key);
 });

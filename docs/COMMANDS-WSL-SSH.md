@@ -166,6 +166,13 @@ Ember stops and asks before a command that:
   aliases it can't see, unusual syntax, and interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window.").
 
+**Loops and `if` on a command line** are read as they are in a script (below): in bash or sh, `if`, `for`, `while`
+and `until` and a plain `[[ … ]]` test don't ask by themselves, because Ember judges every command inside them. So
+`for i in 1 2 3; do echo $i; done` and `if [ -f package.json ]; then npm test; fi` run, `if [ -f x ]; then rm x; fi`
+asks only to delete x, and `while read -r l; do …; done < list.txt` isn't taken for a command waiting for your typing.
+zsh's, PowerShell's and cmd's `if` and `for` still ask, and so do a loop in a shell the command starts (`bash -c '…'`),
+a loop whose variable is `PATH` or another that changes how commands are found, `case`, functions and `{ … }` groups.
+
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the
 like), Ember reads the script first, on the computer that runs it, and judges its text as it judges a command: a
@@ -173,8 +180,9 @@ script that deletes, publishes or reads secrets asks ("In t.sh: Deletes build an
 asked for that kind of operation, and one that would touch Ember's own safety files is refused. A script also asks
 when Ember can't read all of it: an sh or bash script's `if`, `for` and `while` and a plain `[[ … ]]` test are read
 (the commands inside them are judged), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
-uses `-v`, a variable in a file name, more than 64 commands or more than 8,000 characters ask, and so do zsh's `if`,
-`for` and `while` and PowerShell's and cmd's `if` and `for`; the card then says why ("Ember can't read all of
+uses `-v`, a variable in a file name, a loop whose variable is `PATH` or the like, more than 64 commands or more than
+8,000 characters ask, and so do zsh's `if`, `for` and `while` (also from a bash script's `zsh -c '…'`) and
+PowerShell's and cmd's `if` and `for`; the card then says why ("Ember can't read all of
 build.sh (it has more commands than Ember can check one by one).", "In build.sh: Ember can't tell what cat is
 given."). When you named the script ("run the build script", "run build.sh") and that is all the card says, it doesn't
 add "You didn't ask for this."; a script that deletes, publishes or reads secrets still says it unless your words ask
@@ -203,8 +211,13 @@ see shown in ⟨ ⟩, letters from another alphabet inside a word underlined (ea
 so `C:\Users\Иван` marks nothing, while letters that only look Latin, as in `https://аррӏе.com` or `deploy@аррӏе`,
 are underlined), and Hebrew or Arabic text shown in the order it runs, as the terminal shows it;
 then why it asks ("Deletes build and everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.",
-"This can reach your Windows files."); then the model's reason, quoted. A command that deletes data has a yellow bar
-on its card's edge, and its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
+"This can reach your Windows files."); then the model's reason, quoted. "You didn't ask for this." means your words
+asked for nothing of the kind; when they asked for that kind of step but not exactly this one ("push my changes" for
+`git push origin main`, "reinstall the dependencies" for `npm ci`) the card says "Your words don't name exactly this,
+so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. A
+command that asks for what it does (deleting, publishing, secrets, system changes, downloading and running code, or
+what Ember can't read with certainty), which the bubble tags "Risky step", has a yellow bar on its card's edge, and
+its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
 stay at the bottom of the card while a long command scrolls; **Allow** stays off until the whole command has been in
 view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y)
 works only while that card shows the whole command (not while the window is blank after its page crashed, until the
@@ -316,7 +329,7 @@ A command's output goes to Copilot as part of the task, marked as untrusted data
 40 lines and the last 160, with very long lines cut). Before it leaves this computer Ember removes terminal codes, cuts
 out every line you typed, withholds what follows a password-like prompt (until the program's next line after you press
 Enter, or to the end when the command can't take typing), and hides the passwords, keys and tokens it recognises
-(GitHub, AWS, Slack, Google and npm tokens, private keys, JWTs, `password=` values, `Authorization:` headers, passwords
+(GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face and GitLab tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, passwords
 in URLs and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
 secrets on purpose.
 
@@ -505,8 +518,10 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   too long to show) ends it with "Ember couldn't show build-01's sign-in question." and **Try again**. **With OpenSSH
   older than 8.5** on this computer (RHEL 8 has 8.0, Ubuntu 20.04 8.2, Debian 11 8.4), SSH can't mark which questions
   come from the other computer, so a server could word its own question as SSH's. There every password, passphrase or
-  code is shown as "build-01 asks", with the question quoted as it came, never as "Unlock your SSH key" or as a sign-in
-  to another host: read it before you answer, because the answer goes to whoever asked.
+  code is shown as "A question while connecting to build-01", with the question quoted as it came, never as "Unlock
+  your SSH key" or as a sign-in to another host. The card says so ("This computer's SSH can't show whether this
+  question comes from SSH itself or from build-01, so read it before you answer: what you type goes to whoever
+  asked.") and that Ember hands the answer to SSH only, never saving, logging or sending it to Copilot.
 - **A computer you haven't connected to before** shows "Is this really build-01?" with its key's fingerprint. Check
   it with whoever looks after build-01; **Trust and connect** is never the default. If the key has changed, Ember
   won't connect ("build-01's identity changed"); remove the old key with `ssh-keygen -R build-01` only if you know
@@ -661,8 +676,8 @@ build-01's row in Settings › **Computers** keeps the reason until it connects.
 
 | Ember says | What to do |
 |---|---|
-| "Ember can't find SSH on this computer.", then how to install it on yours alone: on Linux "Install OpenSSH with: sudo dnf install openssh-clients", on Windows "Install the OpenSSH Client in Settings › Apps › Optional features, then try again." (through a WSL distro, the Linux line) | As it says; on a Mac, SSH comes with macOS at /usr/bin/ssh |
-| "Ember can't find build-01. Check the name, or add it to your SSH config." | Check the name |
+| "Ember can't find SSH on this computer.", then how to install it on yours alone: on Linux "Install OpenSSH with sudo dnf install openssh-clients, then try again.", on Windows "Install the OpenSSH Client in Settings › Apps › Optional features, then try again." (through a WSL distro, the Linux line) | As it says; on a Mac, SSH comes with macOS at /usr/bin/ssh |
+| "Ember can't find build-01. Check the name, or add it to your SSH config." (for a computer you were adding, "It wasn't added to Computers." too: a name Ember can't find on its first connection isn't kept, so fixing a typo adds one row) | Check the name, then connect again (the field keeps what you typed) |
 | "Ember can't reach build-01 (&lt;reason in a few words&gt;). Check you're on the right network or VPN." | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
 | "Your SSH settings for build-01 have a line this SSH can't use: &lt;the line&gt;. Fix or remove it, then connect again." | As it says |
 | "build-01 took too long to answer (a jump host or sign-in helper may be waiting)." | Check the jump host or sign-in helper |
@@ -814,8 +829,9 @@ planned.
 The audit log gains command, connection and WSL entries: what was decided for each command (its classes, the rule, and
 that the user requested it when it ran on an announcement), each answer, start and end (exit code, duration, how much
 output, how many lines the user typed, never what), the folder, and connections and their losses. A command's text is
-recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes only in the system journal); a refused
-command's text isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
+recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes only in the system journal), and so are the
+AI review's own words for why it cleared one (they can name the file and what you asked); a refused command's text
+isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
 are never recorded anywhere. Settings › **What Ember did** shows a line for each command question, answer, refusal and
 end (where it ran, the shell and how it ended, never the command's text) and for each connection made, lost, ended or
 failed. A reconnect's tries make one line, when it stops trying; the audit log keeps each try.

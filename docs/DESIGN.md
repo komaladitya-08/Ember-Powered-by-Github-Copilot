@@ -41,6 +41,9 @@ They share one emotion rig, so switching never changes behaviour.
     sends its level at least every half second, and the rig lets go of one older than 1.5 s, so a voice
     that stops without saying so never leaves the mouth moving; the system's voice gives no level, so
     the mouth keeps its syllable flap;
+  - awake and Ready with nothing passing, only the breath and the idle float move, under a third of a pixel a
+    step: the overlay, the handle and Home's hero draw it about 6 times a second (`restingGap`, `RESTING_FRAME_MS`),
+    waking in time for the next blink or fidget, where they drew 15–24 times a second;
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
     something happens (it drew every 110 ms);
   - while a question is up, the idle float stops and the body's springs settle without wobbling;
@@ -71,9 +74,11 @@ They share one emotion rig, so switching never changes behaviour.
   current step with its reason, and buttons when Ember needs a decision. A finished answer has no
   head at all: it is Ember's bubble, so "Ember" doesn't title it. A question sets its decision (up
   to its "?") in weight 600, what the step does after it, and "Your task: …" under it in the
-  secondary label; its title ("May I?") is the quieter lead-in, its keys show as keycaps under the
-  buttons, four corner brackets lock onto the bubble once (180 ms) and then hold still, and nothing
-  about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
+  secondary label (the task's goal; under a step the user didn't ask for, or once text on screen
+  tried to steer the task, their own words in curly quotes, never the goal passed off as theirs);
+  its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
+  note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`), four corner
+  brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
   no-compositor corner card marks it the same way: the tag beside Ember's name and the bordered
@@ -191,8 +196,10 @@ Ember is two places at once, each for one kind of work.
     model's words, never set as Ember's;
   - a **telemetry row** of at most three items in footnote type, weight 500 and tabular figures: the plan's step
     ("Step 3 of 7"), its clock ("Just started", then "42s", "1:42"; written once a second as text by one shared
-    tick, so nothing moves or re-lays out), then "Close to my limit" past 80% of its 150 steps or 20 minutes, else
-    how many steps the user allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
+    tick, so nothing moves or re-lays out), then "Close to my limit" past 80% of its 150 steps or 20 minutes (the
+    worker is told then too, so it can finish and say what's left; a task a limit stops says what it had done by then,
+    from Ember's own count, and its Try again is told an earlier try stopped part-way), else how many steps the user
+    allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
   - the steps so far in one sentence ("Clicked 3 times and read the window 2 times (1 didn't work)"), what changed
     things named before what only looked;
   - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come
@@ -201,8 +208,9 @@ Ember is two places at once, each for one kind of work.
     Settings"; a refusal with policy's reason; a question and how it was answered; the worker's notes, marked as
     its words), each with a static state symbol and when it happened. Closed until the user opens it, kept open by
     task id across updates;
-  - when it ends, what it found or made, as a **view**, and on a failure **Try again** (the same request starts again
-    as a new task, asking every question again) beside **Close**.
+  - when it ends, what it found or made, as a **view**, and on a failure, or a question that ran out of time while the
+    user was away, **Try again** (the same request starts again as a new task, asking every question again) beside
+    **Close**. Never after "Not now", a Stop or the mouse taken back: those were the user's own choice.
 
   The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
   Retrying, Done, Didn't finish, Stopped) and `app/main/agent/activity.ts`, which builds a task's activity from its
@@ -475,8 +483,10 @@ Answers and fenced code are inert text with Copy controls; native export writes 
 answer/diff to a chosen destination, with overwrite/freshness checks. It cannot overwrite a selected source file
 or Ember's private data, and never substitutes for Apply patch approval.
 
-Memory has query/source filters, counts and pages of 50. Surviving memory and learned-word controls keep their
-DOM identity and keyboard focus through background updates. Undo acknowledges only successful deletion and stays
+Memory has query/source filters, counts and pages of 50 (no count over an empty list). Each row ends with Forget,
+a `--red-text` text button, and Correct… in the words' colour, side by side on one line however long the fact,
+and apart, inside the group, when forced colours give them an edge. Surviving memory and learned-word controls
+keep their DOM identity and keyboard focus through background updates. Undo acknowledges only successful deletion and stays
 retryable on failure. An unavailable account hides facts and returns focus to the memory switch. Correct… opens
 one local draft (up to 400 characters); Save correction is explicit, checks the exact account/revision and saves
 durably before publication. Correction preserves original source/authority and adds Corrected by you. It invalidates

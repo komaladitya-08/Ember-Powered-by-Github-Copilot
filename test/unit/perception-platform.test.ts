@@ -345,14 +345,15 @@ describe("Perception's words for each OS", () => {
     (await desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), shell, words }).perception.perceive({ image: true, scope: "screen" })).text;
 
   it("keeps today's GNOME words by default", async () => {
-    expect(await shot(unchecked)).toContain("(No screenshot: GNOME Shell didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment.)");
+    // (A shell that can't be looked through stops the read itself now, not only the picture: safety-privacy-3.)
+    expect(await shot(unchecked)).toContain("Ember read nothing: GNOME Shell didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment.");
     expect(await shot(overview)).toContain("(No screenshot: the Activities overview or the window switcher is open (it shows every window), so Ember looks away until it's closed.)");
   });
 
   it("names Windows' and macOS's own surfaces there", async () => {
     for (const os of ["win32", "darwin"] as const) {
       const text = await shot(unchecked, PLATFORM_WORDS[os]);
-      expect(text).toContain(`(No screenshot: ${PLATFORM_WORDS[os].shellUnchecked}.)`);
+      expect(text).toContain(`Ember read nothing: ${PLATFORM_WORDS[os].shellUnchecked}.`);
       expect(text).not.toContain("GNOME");
       expect(await shot(overview, PLATFORM_WORDS[os])).toContain(`(No screenshot: ${PLATFORM_WORDS[os].overviewOpen}.)`);
     }
@@ -427,7 +428,8 @@ describe("Perception's window screenshots when the window can't be found", () =>
     const p = await perception.perceive({ image: true, scope: "window", target: { pid: 42, title: "gone" } });
     expect(p.capture).toBeNull();
     expect(captures).toEqual([]);
-    expect(shellAsked()).toBe(0);
+    // Asked once, before anything is read (safety-privacy-3), and never again for a picture there is none of.
+    expect(shellAsked()).toBe(1);
     // One plain sentence: nothing says "use the screenshot" or "the focused window" (a window was named).
     expect(p.text).toBe("That window can't be found (it may have closed, or its app isn't answering).");
   });

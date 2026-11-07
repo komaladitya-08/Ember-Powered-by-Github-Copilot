@@ -8,7 +8,7 @@
 import path from "node:path";
 import type { PlatformDeps, SystemPlatform } from "../types";
 import { which } from "../which";
-import { linuxEnvironment, execSync, type ExecSync } from "./environment";
+import { linuxEnvironment, execAsync, execSync, type ExecAsync, type ExecSync } from "./environment";
 import { linuxDoctorProbes } from "./doctor-probes";
 import { SETTINGS, changeSetting, findApp, hasBuiltInShell, isTerminalApp, launchApp, listApps, programsOf } from "../../hands/system";
 import { ADMIN_POLICY_FILE, loadAdminPolicy, providerApiKey } from "../../admin";
@@ -23,6 +23,8 @@ import { PLATFORM_WORDS } from "../../../shared/words";
 /** The machine's state as the adapters read it; tests pass fakes, Ember the real thing. */
 export interface LinuxSystemIO {
   exec?: ExecSync;
+  /** The setup check's background look for pyatspi; default the real one, but only with the real `exec`. */
+  run?: ExecAsync;
   exists?: (file: string) => boolean;
   /** For the screen-reader cache (60 s, as before). */
   setTimeout?: (fn: () => void, ms: number) => { unref?(): unknown };
@@ -94,7 +96,7 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
     spawnDefaults: {},
     // Chromium on Linux speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
     chromiumSwitches: ["enable-speech-dispatcher"],
-    environment: linuxEnvironment({ env: deps.env, exec }),
+    environment: linuxEnvironment({ env: deps.env, exec, run: io.run ?? (io.exec ? undefined : execAsync) }),
     fixes: {
       ids: ["enable-accessibility"],
       apply: async fix => {
