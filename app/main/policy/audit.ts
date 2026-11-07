@@ -14,8 +14,11 @@ import { writeAllSync } from "../write-all";
 
 export interface AuditEntry {
   task?: string;
-  /** `autonomy`: "Work without asking" turned on or off (`on`), and how (`via`: home, voice or typed; `verified`). */
-  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy";
+  /**
+   * `autonomy`: "Work without asking" turned on or off (`on`), and how (`via`: home, voice or typed; `verified`).
+   * `read`: a picture of a window went to the model (`kind: "screenshot"`, its app and size, never its title).
+   */
+  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read";
   [key: string]: unknown;
 }
 

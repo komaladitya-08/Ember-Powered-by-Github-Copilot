@@ -344,7 +344,9 @@ still asks first, the question says you didn't ask for it, and from then on that
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
 are listed in **Apps & privacy** in the settings window (with **Remove**), next to the never-look list, which you can
 edit there too. **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
-more for each **Show earlier**, back through all the audit keeps (its note counts all of today's). If the record can't
+more for each **Show earlier**, back through all the audit keeps (its note counts all of today's), including each
+screenshot of a window a task sent to the model, by its app ("Sent a picture of the window in Firefox to the model").
+If the record can't
 be read, it keeps what it showed and says so, instead of an empty list. Text the keyboard can't
 type (accents, other layouts) is pasted, and your clipboard is put back afterwards. With commands turned on (settings'
 **Commands** section), a task can also run commands, in Ember's own **Ember commands** window rather than a terminal of

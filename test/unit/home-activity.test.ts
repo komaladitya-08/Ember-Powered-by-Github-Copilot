@@ -142,6 +142,13 @@ describe("What Ember did: tags and names (safety-privacy-10, safety-privacy-v2)"
     expect(describeEntry({ ...send, answer: "always" })).toEqual({ tag: "Always allowed", cls: "ok", what: "Click “Save” in gedit", why: "From now on Ember may act in gedit without asking first, but it still asks before anything hard to undo." });
   });
 
+  it("says when a picture of a window went to the model, and of which app (safety-privacy-6)", () => {
+    expect(describeEntry({ t, event: "read", kind: "screenshot", app: "firefox", ok: true, bytes: 80_000 }))
+      .toEqual({ tag: "Screenshot", cls: "", what: "Sent a picture of the window in Firefox to the model" });
+    expect(describeEntry({ t, event: "read", kind: "screenshot", app: "gedit", ok: true, onDesk: true })?.what).toBe("Sent a picture of the window in gedit to the model (on Ember's desk)");
+    expect(describeEntry({ t, event: "read", kind: "something else" })).toBeNull();
+  });
+
   it("names a password manager it refused to read as people say it", () => {
     expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "keepassxc", reason: "this app is on the user's never-look list" }))
       .toEqual({ tag: "Refused", cls: "no", what: "Read in KeePassXC", why: "This app is on your never-look list." });

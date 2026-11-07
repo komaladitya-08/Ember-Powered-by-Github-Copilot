@@ -2275,7 +2275,13 @@ export class Worker {
     // control on its own: a phrase never runs from one control's name into the next ("Ignore", "All", "Rules").
     const flagged = this.flagInjection(readText, "window", p.window.app);
     const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
-    if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
+    if (p.capture) {
+      // Every picture of a window sent to the model is recorded first, by its app and size (never its title), so What
+      // Ember did can say it went (safety-privacy-6); one that can't be recorded isn't sent (audit() throws).
+      this.audit({ event: "read", task: this.spec.id, kind: "screenshot", app: p.window.app, ok: true, bytes: p.capture.data.length, ...(this.place ? { onDesk: true } : {}) });
+      if (this.isOver) return STOPPED();
+      result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
+    }
     return result;
   }
 

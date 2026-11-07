@@ -974,6 +974,9 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       const how = e.source === "hotkey" ? "stop shortcut" : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : e.source === "menu" ? "menu" : null;
       return { tag: "Stopped", cls: "no", what: how ? `Everything stopped (${how})` : "Everything stopped" };
     }
+    case "read":
+      // A picture of a window sent to the model (worker.ts perceive, safety-privacy-6): its app, never its title.
+      return e.kind === "screenshot" ? { tag: "Screenshot", cls: "", what: `Sent a picture of the window${where ? ` ${where}` : ""} to the model${e.tier === 2 || e.onDesk === true ? " (on Ember's desk)" : ""}` } : null;
     case "autonomy": {
       const by = e.via === "voice" ? (e.verified === true ? " (by your voice, Voice Match)" : " (by voice)") : e.via === "typed" ? " (asked in words)" : "";
       return { tag: "Setting", cls: "", what: `${e.on === true ? "Work without asking turned on" : "Work without asking turned off"}${by}` };

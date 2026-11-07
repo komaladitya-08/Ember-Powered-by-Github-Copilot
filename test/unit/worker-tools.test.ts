@@ -68,6 +68,8 @@ function makeWorker(o: {
   launches?: { name: string; role?: string; app: string; pid?: number; path?: string };
   /** The window listing fails when this says so (called once a listing). */
   listFails?: () => boolean;
+  /** The model can see pictures, and a read with image=true comes with this screenshot. */
+  capture?: { mimeType: string; data: Buffer };
 } = {}) {
   let closed = false;
   const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
@@ -108,14 +110,14 @@ function makeWorker(o: {
     },
   } : undefined;
   const w = new Worker({
-    client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp", ...(system ? { system } : {}),
+    client: {} as never, log: quiet, model: "m", vision: !!o.capture, workDir: "/tmp", ...(system ? { system } : {}),
     perception: {
-      perceive: async (r: { target?: { title?: string; path?: string } }) => {
+      perceive: async (r: { image?: boolean; target?: { title?: string; path?: string } }) => {
         if (o.wins) {
           current = pick(r.target);
           return current ? { ...seen, window: current, text: o.screenText ?? "[1] push button \"Bold\"", capture: null } : { ...seen, window: null, nodes: [], text: "", capture: null };
         }
-        return closed ? { ...seen, window: null, nodes: [], text: "", capture: null } : { ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: null };
+        return closed ? { ...seen, window: null, nodes: [], text: "", capture: null } : { ...seen, text: o.screenText ?? "[1] push button \"Bold\"", capture: r.image ? o.capture ?? null : null };
       },
       read: async (t?: { title?: string; path?: string }) => {
         if (o.readFails?.()) throw new Error("read unavailable");
@@ -186,6 +188,30 @@ function makeWorker(o: {
   const openWindow = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) => { open.push(asWin(x)); };
   return { w, audit, events, asked, questions, call, flown, guided, activity, openWindow, closeWindow };
 }
+
+describe("a screenshot a task sends (safety-privacy-6)", () => {
+  const jpeg = { mimeType: "image/jpeg", data: Buffer.alloc(2048, 1) };
+
+  it("records each picture of a window sent to the model, by app and size, never its title", async () => {
+    const h = makeWorker({ capture: jpeg, windowName: "Secret plans.txt" });
+    const r = await h.call("perceive_window", { image: true }) as { binaryResultsForLlm?: unknown[] };
+    expect(r.binaryResultsForLlm).toHaveLength(1);
+    const sent = h.audit.filter(e => e.event === "read");
+    expect(sent).toEqual([{ event: "read", task: "t1", kind: "screenshot", app: "gedit", ok: true, bytes: 2048 }]);
+    expect(JSON.stringify(sent)).not.toContain("Secret plans");
+    // A read of the text alone sends no picture, and records none.
+    await h.call("perceive_window", {});
+    expect(h.audit.filter(e => e.event === "read")).toHaveLength(1);
+  });
+
+  it("sends no picture it couldn't record", async () => {
+    const h = makeWorker({ capture: jpeg });
+    const write = h.audit.push.bind(h.audit);
+    h.audit.push = (...e: Record<string, unknown>[]) => { if (e[0]?.event === "read") throw new Error("disk full"); return write(...e); };
+    const r = await h.call("perceive_window", { image: true }).catch((err: Error) => ({ textResultForLlm: err.message, resultType: "failure" })) as { binaryResultsForLlm?: unknown[]; resultType: string };
+    expect(r.binaryResultsForLlm).toBeUndefined();
+  });
+});
 
 describe("a task whose own step closes its window (the owner's report of 2026-11-03)", () => {
   it("recognises closing shortcuts with the platform's primary modifier, not ordinary typing or arbitrary keys", () => {
