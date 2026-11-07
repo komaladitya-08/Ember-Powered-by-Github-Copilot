@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { effectiveVoiceModel, NATURAL_CHOICES, naturalModelHint, naturalUseLabel } from "../../app/renderer/home/natural-copy";
-import { NATURAL_HINT, naturalVoiceView } from "../../app/renderer/home/copy";
+import { NATURAL_HINT, SPEAK_RATES, hearEmberLine, naturalVoiceView } from "../../app/renderer/home/copy";
 
 describe("the default voice choice", () => {
   it("uses Kitten for new and former baseline preferences and preserves only explicitly enabled Kokoro", () => {
@@ -87,5 +87,27 @@ describe("effective voice status", () => {
 
   it("never relabels a stale previous model's status as the new selection", () => {
     expect(naturalVoiceView({ state: "on", model: "kitten", voice: "kitten" }, "kokoro")).toEqual({ text: "Kokoro is selected. Checking voice availability…", retry: false, busy: true });
+  });
+});
+
+describe("Hear Ember and the speaking speed (voice-speaking-7)", () => {
+  it("says which voice spoke, or why none did, in plain words", () => {
+    expect(hearEmberLine({ spoke: true, voice: "kitten" })).toBe("Ember spoke in Kitten Nano.");
+    expect(hearEmberLine({ spoke: true, voice: "kokoro" })).toBe("Ember spoke in Kokoro.");
+    expect(hearEmberLine({ spoke: true, voice: "system" })).toBe("Ember spoke in this computer's system voice.");
+    expect(hearEmberLine({ spoke: false, why: "off" })).toBe("Ember isn't speaking out loud now. Choose Always above to hear it.");
+    expect(hearEmberLine({ spoke: false, why: "managed" })).toBe("Your organisation has turned speaking off.");
+    expect(hearEmberLine({ spoke: false, why: "locked" })).toBe("Ember doesn't speak while the screen is locked.");
+  });
+
+  it("offers five speeds, as made in the middle, within what settings keep", () => {
+    expect(SPEAK_RATES.map(r => r.label)).toEqual(["Slower", "A little slower", "Normal", "A little faster", "Faster"]);
+    expect(SPEAK_RATES.find(r => r.label === "Normal")?.rate).toBe(1);
+    for (const r of SPEAK_RATES) { expect(r.rate).toBeGreaterThanOrEqual(0.8); expect(r.rate).toBeLessThanOrEqual(1.4); }
+    const html = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
+    expect(html).toContain('<select id="speak-rate">');
+    expect(html).toContain('<button type="button" id="voice-hear" class="btn quiet" aria-describedby="voice-hear-status">Hear Ember</button>');
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
+    expect(main).toContain("ipcMain.handle(IPC.voiceHear, guard(() => hearEmber()));");
   });
 });

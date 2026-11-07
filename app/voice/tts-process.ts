@@ -11,7 +11,8 @@ import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, thr
 type FromMain =
   /** `model`: Kitten's folder; optional `natural`: Kokoro's folder. WASM can listen, but cannot make neural speech. */
   | { type: "init"; model: string; natural?: string | null; naturalVoice?: "kokoro" | "supertonic"; wasm?: boolean; capiDir?: string }
-  | { type: "say"; id: number; text: string }
+  /** `speed`: how fast it is said (the speaking speed setting), 1 as made. */
+  | { type: "say"; id: number; text: string; speed?: number }
   | { type: "hush"; id: number };
 
 /** Which voice speaks, its runtime/provider/threads, and measured generation seconds per playback second. */
@@ -45,7 +46,7 @@ let tts: Tts | null = null;
 let sid = 0;
 let rate = 24_000;
 let hushed = 0;
-const queue: { id: number; chunks: string[] }[] = [];
+const queue: { id: number; chunks: string[]; speed: number }[] = [];
 let busy = false;
 /**
  * At most this much speech is made ahead of what the page has played. A chunk being made can't be stopped, so a reply
@@ -136,7 +137,7 @@ function step(): void {
   const chunk = item.chunks.shift();
   if (chunk !== undefined) {
     try {
-      const audio = tts.generate({ text: chunk, sid, speed: 1.0 });
+      const audio = tts.generate({ text: chunk, sid, speed: item.speed });
       if (!audio.samples.length) throw new Error("The voice produced no audio.");
       playsUntil = Math.max(playsUntil, Date.now()) + (audio.samples.length / audio.sampleRate) * 1000;
       if (item.id > hushed) send({ type: "audio", id: item.id, samples: audio.samples, rate: audio.sampleRate, remaining: item.chunks.join(" ") });
@@ -172,7 +173,9 @@ parent.on("message", e => {
   } else if (m.type === "say") {
     const chunks = speechChunks(m.text);
     if (!chunks.length) { send({ type: "done", id: m.id }); return; }
-    queue.push({ id: m.id, chunks });
+    // The speaking speed as settings keep it (0.8 to 1.4); anything else is said as made.
+    const speed = typeof m.speed === "number" && m.speed >= 0.8 && m.speed <= 1.4 ? m.speed : 1;
+    queue.push({ id: m.id, chunks, speed });
     // On the next turn: a hush sent right after (a new answer cutting this one off) is heard first.
     if (!busy) { busy = true; setImmediate(step); }
   } else if (m.type === "hush") {

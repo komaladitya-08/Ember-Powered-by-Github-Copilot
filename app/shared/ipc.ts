@@ -73,6 +73,8 @@ export const IPC = {
   voiceForgetWords: "voice:forget-words",
   /** The natural voice's download failed: try again (Home's "Try again" under its switch). */
   voiceNaturalRetry: "voice:natural-retry",
+  /** Hear Ember: says one fixed sentence as replies are said, and which voice said it. */
+  voiceHear: "voice:hear",
   askClose: "agent:ask-close",
   /** One of Ember's suggestions chosen in the Ask box (sent as Ember's words the user chose, not typed). */
   askSuggestion: "agent:ask-suggestion",
@@ -233,6 +235,9 @@ export type ClearHearingStatus =
   | { state: "off" | "starting" | "on" | "wont-load" | "needs-native" }
   | { state: "downloading"; percent: number }
   | { state: "failed"; detail: string };
+
+/** What Hear Ember did: which voice spoke, or why none did (speaking off, the organisation's policy, the screen lock). */
+export type HearResult = { spoke: true; voice: "kitten" | "kokoro" | "supertonic" | "system" } | { spoke: false; why: "off" | "managed" | "locked" };
 
 export type NaturalVoiceStatus = (
   | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
@@ -395,6 +400,8 @@ export interface EmberHomeApi {
   cancelVoiceDownload(): Promise<void>;
   /** Fetches the natural voice again after its download failed. */
   retryNaturalVoice(): Promise<void>;
+  /** Hear Ember (Settings › Voice): one fixed sentence, said as replies are. */
+  hearEmber(): Promise<HearResult>;
   /** Voice Match: starts teaching Ember the owner's voice (false: Ember isn't listening, so it can't), or stops; forgets the voiceprint. */
   enrolVoice(): Promise<boolean>;
   cancelEnrolVoice(): Promise<void>;

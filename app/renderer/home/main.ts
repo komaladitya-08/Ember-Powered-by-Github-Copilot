@@ -10,7 +10,7 @@ import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import type { HistoryProblemKind } from "../../shared/conversation";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
@@ -545,12 +545,13 @@ function renderAdmin(a: Status["admin"]): void {
   lastAdmin = a;
   if (agent) renderAgent(agent);
   renderRecipient();
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
     if (managed.has(key)) input.title = "Managed by your organisation";
   }
+  renderHear();
   privacyKey = "";
   renderTaskReasoning();
   if (settings) renderPrivacy(settings);
@@ -1960,7 +1961,7 @@ $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
   if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
-  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false }), match: on } });
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1 }), match: on } });
 });
 $("match-teach").addEventListener("click", startEnrol);
 // Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
@@ -1971,6 +1972,8 @@ function applyVoiceSettings(s: Status["settings"]): void {
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
   ($("speak") as HTMLSelectElement).value = speakChoice(s);
   ($("speak-results") as HTMLInputElement).checked = s.speakResults;
+  ($("speak-rate") as HTMLSelectElement).value = String(nearestRate(s.voice.rate));
+  renderHear(s);
   naturalUI.settings(s);
   personalSettings(s);
   if (voice) renderVoice(voice);
@@ -1998,7 +2001,7 @@ $("consent-yes").addEventListener("click", () => {
   const run = ++consentRun;
   consentError("");
   $("consent-yes").setAttribute("aria-busy", "true");
-  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } }).then(ok => {
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } }).then(ok => {
     if (run !== consentRun) return; // closed meanwhile: nothing more to do here
     consentSaving = false;
     $("consent-yes").removeAttribute("aria-busy");
@@ -2021,6 +2024,19 @@ function renderNatural(): void {
   $("clear-text").hidden = !clearLine;
 }
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
+$("speak-rate").addEventListener("change", e => {
+  const rate = Number((e.target as HTMLSelectElement).value);
+  if (settings && SPEAK_RATES.some(r => r.rate === rate)) void save({ voice: { ...settings.voice, rate } });
+});
+/** Hear Ember can't speak with speaking set to Never, or managed by the organisation (voice-speaking-7). */
+function renderHear(s: Settings | null = settings): void {
+  ($("voice-hear") as HTMLButtonElement).disabled = managed.has("speak") || !s || speakChoice(s) === "never";
+}
+$("voice-hear").addEventListener("click", () => {
+  const line = $("voice-hear-status");
+  const show = (text: string) => { line.textContent = text; line.hidden = false; };
+  window.ember.hearEmber().then(r => show(hearEmberLine(r)), () => show("Couldn't play the sample. Try again."));
+});
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();

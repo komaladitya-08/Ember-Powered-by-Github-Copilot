@@ -84,7 +84,21 @@ describe("settings keep what the user set (review fixes)", () => {
     expect(r.recoveredFrom).toBeTruthy();
     expect(s.get().privacy.neverLook).toEqual(["thunderbird", "remmina"]);
     expect(s.get().grants).toEqual({ gedit: "act" });
-    expect(s.get().voice).toEqual({ consent: true, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false });
+    expect(s.get().voice).toEqual({ consent: true, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1 });
+  });
+
+  it("speaks at the speed chosen, as made by default, and puts a speed out of range back to that (voice-speaking-7)", () => {
+    expect(DEFAULT_SETTINGS.voice.rate).toBe(1);
+    expect(SettingsSchema.parse({ voice: { rate: 1.15 } }).voice.rate).toBe(1.15);
+    for (const rate of [9, 0.2, "fast", null]) {
+      const dir = tmp();
+      const file = path.join(dir, "settings.json");
+      fs.writeFileSync(file, JSON.stringify({ voice: { consent: true, rate } }));
+      const s = new SettingsStore(file);
+      s.load();
+      expect(s.get().voice.rate, String(rate)).toBe(1);
+      expect(s.get().voice.consent).toBe(true);
+    }
   });
 
   it("a change made by hand while Ember runs is kept when Ember saves something else", () => {

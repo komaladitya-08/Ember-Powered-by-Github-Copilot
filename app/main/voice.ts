@@ -107,6 +107,8 @@ export interface VoiceOptions {
   naturalVoice?: boolean;
   /** Legacy preference compatibility: only true + Kokoro requests the optional voice; Kitten uses the baseline. */
   naturalModel?: NaturalVoiceModel;
+  /** The speaking speed setting (settings' `voice.rate`): 1 as made. */
+  rate?: number;
   /** The optional Kokoro capability on this platform; false preserves its saved choice without loading/fetching it. */
   naturalSupported?: boolean;
   /** What became of the natural voice changed (naturalStatus): Home shows it under its switch. */
@@ -253,6 +255,8 @@ export class VoiceService {
   private ttsFailures = 0;
   /** Ember's own voice failed after it had loaded (a reply it couldn't make, or its process ended): Home says it stopped. */
   private ttsStopped = false;
+  /** How fast replies are said (voice-speaking-7): sent with each reply only when it isn't 1. */
+  private rate = 1;
   /** Replies are numbered; those up to `ttsHushed` were hushed (their late audio is dropped). */
   private ttsId = 0;
   private ttsHushed = 0;
@@ -302,6 +306,7 @@ export class VoiceService {
     this.naturalOff = this.naturalWanted && o.naturalSupported === false;
     this.bundledRoot = o.bundled ? o.modelsRoot : null;
     this.userRoot = o.bundled?.userRoot ?? o.modelsRoot;
+    this.setRate(o.rate ?? 1);
     // On at start: decided the next time Ember speaks (Ember's voice loads only then), unless it can't be at all.
     this.natural = this.naturalBlocked() ?? { state: "later" };
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
@@ -837,11 +842,30 @@ export class VoiceService {
     if (!o.append || !this.saidSpeaking) this.awaitingSpeechStart = true;
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + (neural && !this.tts?.ready ? VOICE_START_MS : SPEECH_START_MS));
     const send = this.pageSend();
-    if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}), ...(lang ? { lang } : {}) } satisfies SpeakRequest); return; }
+    if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}), ...(lang ? { lang } : {}), ...this.rateField } satisfies SpeakRequest); return; }
     const id = ++this.ttsId;
     this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.cancelVoiceIdle();
-    this.voiceProcess().postMessage({ type: "say", id, text });
+    this.voiceProcess().postMessage({ type: "say", id, text, ...this.speedField });
+  }
+
+  /** The speaking speed setting changed: replies from now on are said at it. */
+  setRate(rate: number): void {
+    this.rate = Number.isFinite(rate) && rate >= 0.8 && rate <= 1.4 ? rate : 1;
+  }
+
+  private get rateField(): { rate?: number } {
+    return this.rate === 1 ? {} : { rate: this.rate };
+  }
+
+  private get speedField(): { speed?: number } {
+    return this.rate === 1 ? {} : { speed: this.rate };
+  }
+
+  /** The voice the next reply is said in (Hear Ember says which): Ember's own, loaded or to be, or this computer's. */
+  get nextVoice(): NaturalVoiceModel | "system" {
+    if (!this.neuralVoice) return "system";
+    return this.ttsInfo?.voice ?? (this.optionalVoiceReady ? this.optional : "kitten");
   }
 
   /**
@@ -1228,7 +1252,7 @@ export class VoiceService {
     for (const [id, p] of pending) {
       p.send(VOICE.audioDone, id);
       const text = p.remaining;
-      if (text) p.send(VOICE.speak, { text, append: true } satisfies SpeakRequest);
+      if (text) p.send(VOICE.speak, { text, append: true, ...this.rateField } satisfies SpeakRequest);
     }
     this.openFollowUp();
   }
@@ -1248,7 +1272,7 @@ export class VoiceService {
       if (!p.remaining.trim()) continue;
       const next = ++this.ttsId, text = p.remaining;
       this.ttsPending.set(next, { text, remaining: text, send: p.send });
-      this.voiceProcess().postMessage({ type: "say", id: next, text });
+      this.voiceProcess().postMessage({ type: "say", id: next, text, ...this.speedField });
     }
   }
 

@@ -488,6 +488,14 @@
           <label for="speak">Speak replies, questions and results out loud</label>
           <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
         </div>
+        <div class="choice">
+          <label for="speak-rate">Speaking speed</label>
+          <select id="speak-rate"><option value="0.8">Slower</option><option value="0.9">A little slower</option><option value="1">Normal</option><option value="1.15">A little faster</option><option value="1.3">Faster</option></select>
+        </div>
+        <div>
+          <div class="agent-actions"><button type="button" id="voice-hear" class="btn quiet" aria-describedby="voice-hear-status">Hear Ember</button></div>
+          <p class="hint" id="voice-hear-status" role="status" hidden></p>
+        </div>
         <label class="switch-row"><input type="checkbox" id="speak-results" role="switch"><span>Read finished tasks out loud, not only on screen</span></label>
       </div>
       <p class="hint" id="speak-note" role="status" hidden></p>

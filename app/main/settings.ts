@@ -144,7 +144,9 @@ export const SettingsSchema = z.object({
     conversation: z.boolean().default(true),
     /** Hear me more clearly: the clearer recognizer writes requests (a 482 MB download, once this is on). */
     clearHearing: z.boolean().default(false),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false })),
+    /** How fast Ember speaks, its own voice and the system's alike: 0.8 slower to 1.4 faster, 1 as made (voice-speaking-7). */
+    rate: z.number().min(0.8).max(1.4).default(1),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1 })),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),

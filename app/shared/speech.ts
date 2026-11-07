@@ -28,6 +28,9 @@ export function speaksAloud(s: SpeakSettings, screenReaderOn: () => boolean): bo
   return s.speak || (s.speakWithScreenReader && screenReaderOn());
 }
 
+/** What Hear Ember says (Settings › Voice): never Ember's name, which its own microphone might take for a call. */
+export const HEAR_SAMPLE = "This is how I sound when I answer you.";
+
 /**
  * Speaking was turned off while Ember talks (Never chosen, the screen reader it spoke for gone, review voice-speaking-4):
  * what it is saying stops at once, as an audio control must (WCAG 1.4.2), not at the end of the answer.

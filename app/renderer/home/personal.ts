@@ -21,7 +21,7 @@ let wordCount = 0;
 
 /** The voice settings as Home last had them, with this change. */
 const voiceWith = (change: Partial<Settings["voice"]>): Settings["voice"] => ({
-  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false,
+  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1,
   ...(current?.voice ?? {}), ...change,
 });
 

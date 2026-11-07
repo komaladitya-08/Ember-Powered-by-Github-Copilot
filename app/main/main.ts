@@ -26,7 +26,7 @@ import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refu
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply } from "../shared/ipc";
+import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -84,7 +84,7 @@ import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
 import { PersonalVoice } from "./personal/service";
 import { wordsStore } from "./personal/words-store";
-import { speakSettings, speaksAloud, speechSilenced } from "../shared/speech";
+import { HEAR_SAMPLE, speakSettings, speaksAloud, speechSilenced } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform, switchArgs } from "./platform";
@@ -2121,6 +2121,19 @@ function start(): void {
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
   // Only while the setting, with the organisation's policy applied, wants it (off where voice or speech is: admin.ts).
   ipcMain.handle(IPC.voiceNaturalRetry, guard(() => voice?.retryNaturalVoice()));
+  /**
+   * Hear Ember (Settings › Voice; it takes no arguments): one fixed sentence, as replies are said, only where Ember may
+   * speak now, and which voice said it (voice-speaking-7).
+   */
+  const hearEmber = (): HearResult => {
+    if (policy.features.speak === false) return { spoke: false, why: "managed" };
+    if (screenLock?.locked) return { spoke: false, why: "locked" };
+    if (!voice || !maySpeak()) return { spoke: false, why: "off" };
+    const said = voice.nextVoice;
+    voice.speak(HEAR_SAMPLE);
+    return { spoke: true, voice: said };
+  };
+  ipcMain.handle(IPC.voiceHear, guard(() => hearEmber()));
   const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay, approval: confirmer?.waiting ?? false });
   presenceChanged = () => broadcast(IPC.presenceChanged, presence());
   ipcMain.handle(IPC.presence, guard(presence));
@@ -3380,6 +3393,7 @@ function start(): void {
       naturalVoice: naturalVoiceOn(settings.get()),
       naturalModel: settings.get().voice.naturalModel,
       naturalSupported: availableNaturalModels.includes("kokoro"),
+      rate: settings.get().voice.rate,
       // Whatever became of turning it on shows under its switch (never only in the log).
       onNatural: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       voiceprint: ownerPrint,
@@ -3471,6 +3485,7 @@ function start(): void {
     });
     settings.onChange(next => applyNaturalVoicePreference(voice, next.voice));
     settings.onChange(() => silenceIfOff());
+    settings.onChange(next => voice?.setRate(next.voice.rate));
     settings.onChange(next => voice?.setClearHearing(next.voice.clearHearing));
     let conversations = settings.get().voice.conversation;
     settings.onChange(next => {

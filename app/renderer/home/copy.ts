@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ClearHearingStatus, ConversationContext, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -1112,6 +1112,25 @@ export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: Natur
     case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model !== "kitten", busy: false };
     default: return { text: `${name} is selected. ${fallback}`, retry: false, busy: false };
   }
+}
+
+/** The speaking speeds Settings › Voice offers (settings keep 0.8 to 1.4: voice-speaking-7). */
+export const SPEAK_RATES: readonly { rate: number; label: string }[] = [
+  { rate: 0.8, label: "Slower" }, { rate: 0.9, label: "A little slower" }, { rate: 1, label: "Normal" },
+  { rate: 1.15, label: "A little faster" }, { rate: 1.3, label: "Faster" },
+];
+
+/** The offered speed nearest to `rate` (a hand-edited settings file can hold any speed in range). */
+export function nearestRate(rate: number): number {
+  return SPEAK_RATES.reduce((best, r) => (Math.abs(r.rate - rate) < Math.abs(best - rate) ? r.rate : best), 1);
+}
+
+/** What Hear Ember's status line says: which voice spoke, or why none did (voice-speaking-7). */
+export function hearEmberLine(r: HearResult): string {
+  if (r.spoke) return `Ember spoke in ${r.voice === "system" ? "this computer's system voice" : NATURAL_CHOICES[r.voice].name}.`;
+  if (r.why === "managed") return "Your organisation has turned speaking off.";
+  if (r.why === "locked") return "Ember doesn't speak while the screen is locked.";
+  return "Ember isn't speaking out loud now. Choose Always above to hear it.";
 }
 
 /** Plain, local-only feedback and labels for the upcoming reminder inventory. */

@@ -40,6 +40,7 @@ const api: EmberHomeApi = {
   downloadVoice: () => ipcRenderer.invoke(IPC.voiceDownload),
   cancelVoiceDownload: () => ipcRenderer.invoke(IPC.voiceDownloadCancel),
   retryNaturalVoice: () => ipcRenderer.invoke(IPC.voiceNaturalRetry),
+  hearEmber: () => ipcRenderer.invoke(IPC.voiceHear),
   enrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchEnrol),
   cancelEnrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchCancel),
   forgetVoice: () => ipcRenderer.invoke(IPC.voiceMatchForget),

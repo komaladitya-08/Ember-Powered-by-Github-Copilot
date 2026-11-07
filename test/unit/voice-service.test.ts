@@ -1445,6 +1445,21 @@ describe("speech models", () => {
       expect(electron.windows[0].webContents.send.mock.calls.filter(c => c[0] === VOICE.audio)).toEqual([]);
     });
 
+    it("says replies at the speaking speed chosen, in Ember's voice and the system's, and names the voice next to speak (voice-speaking-7)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      expect(v.nextVoice).toBe("kitten");
+      v.speak("As made.");
+      v.setRate(1.15);
+      v.speak("A little faster.");
+      expect(posted(electron.procs[0], "say")).toEqual([{ type: "say", id: 1, text: "As made." }, { type: "say", id: 2, text: "A little faster.", speed: 1.15 }]);
+      v.speak("Это быстрее.");
+      await flush();
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Это быстрее.", lang: "ru", rate: 1.15 });
+      const system = service(true, { neuralVoice: false });
+      expect(system.v.nextVoice).toBe("system");
+    });
+
     it("says a reply in another language with the system's voice for it, never in Kitten, which reads only English (voice-speaking-11)", async () => {
       const { v } = service(true, { neuralVoice: true });
       v.speak("我已经打开了设置。");

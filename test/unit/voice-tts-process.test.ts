@@ -23,6 +23,7 @@ const fake = vi.hoisted(() => ({
   providers: ["cpu"] as string[],
   speedup: { cpu: 1, coreml: 1 } as Record<string, number>,
   made: [] as { kind: string; provider: string; numThreads: number }[],
+  speeds: [] as number[],
   clock: 0,
 }));
 
@@ -41,7 +42,8 @@ vi.mock("../../app/voice/runtime", async importOriginal => {
           fake.made.push({ kind: spec.kind, provider: run.provider, numThreads: run.numThreads });
           return {
             sampleRate: 24_000, numSpeakers: 8, free() { fake.freed.push(spec.kind); },
-            generate: ({ text }) => {
+            generate: ({ text, speed }) => {
+              fake.speeds.push(speed);
               if (text === fake.failText) throw new Error("Synthesis failed");
               if (text === fake.emptyText) return { samples: new Float32Array(), sampleRate: 24_000 };
               const seconds = text.length / 15, rate = 24_000;
@@ -76,7 +78,7 @@ async function speechProcess() {
 }
 
 beforeEach(() => {
-  fake.backend = "native"; fake.cost = { kokoro: 0.3, kitten: 0.25 }; fake.failKokoro = false; fake.failKitten = false; fake.freed = []; fake.made = []; fake.clock = 0;
+  fake.backend = "native"; fake.cost = { kokoro: 0.3, kitten: 0.25 }; fake.failKokoro = false; fake.failKitten = false; fake.freed = []; fake.made = []; fake.speeds = []; fake.clock = 0;
   fake.emptyText = ""; fake.failText = "";
   fake.providers = ["cpu"]; fake.speedup = { cpu: 1, coreml: 1 };
   vi.spyOn(performance, "now").mockImplementation(() => fake.clock);
@@ -111,6 +113,18 @@ describe("Ember's voice process", () => {
       expect.objectContaining({ id: 1, remaining: "The second sentence." }), expect.objectContaining({ id: 2 }),
     ]);
     expect(p.sent()).not.toContainEqual({ type: "done", id: 1 });
+  });
+
+  it("makes a reply at the speaking speed chosen, and times the voice at its own (voice-speaking-7)", async () => {
+    const p = await speechProcess();
+    p.init();
+    const port = (process as unknown as { parentPort: EventEmitter }).parentPort;
+    fake.speeds = [];
+    port.emit("message", { data: { type: "say", id: 1, text: "Slower, please.", speed: 0.8 } });
+    port.emit("message", { data: { type: "say", id: 2, text: "As made." } });
+    port.emit("message", { data: { type: "say", id: 3, text: "Too fast.", speed: 9 } });
+    await vi.waitFor(() => expect(p.sent()).toContainEqual({ type: "done", id: 3 }));
+    expect(fake.speeds).toEqual([0.8, 1, 1]);
   });
 
   it("makes only a few seconds ahead of playback, so a new reply is made at once when it cuts in (voice-speaking-10)", async () => {
