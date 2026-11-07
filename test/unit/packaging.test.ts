@@ -174,6 +174,26 @@ describe("the RPM", () => {
       expect(fs.readFileSync(path.resolve("scripts/package/rpm.sh"), "utf8")).toMatch(new RegExp(`"\\$root/packaging/${f.replace(".", "\\.")}"`));
     }
   });
+  it("names every features switch in the notes the RPM installs and in the guide, and which ones lock down 0.1.0 (install-docs-9)", () => {
+    const readme = fs.readFileSync(path.resolve("packaging/policy.README"), "utf8").replace(/\s+/g, " ");
+    const dev = fs.readFileSync(path.resolve("docs/DEVELOPING.md"), "utf8");
+    const admins = dev.slice(dev.indexOf("### For administrators: `/etc/ember/policy.json`"), dev.indexOf("## 6. Native modules and RHEL 8"));
+    // The features keys the published 0.1.0 knows (its admin.ts); any other locks a 0.1.0 Ember down.
+    const v010 = ["voice", "speak", "actions", "cursor", "desk", "screenImages", "wsl", "ssh"];
+    const features = Object.keys(AdminPolicySchema.shape.features.unwrap().shape);
+    expect(features).toEqual(expect.arrayContaining(v010));
+    const entry = readme.split('"features"')[1]?.split('"neverLook"')[0] ?? "";
+    for (const key of features) {
+      expect(entry, key).toContain(`"${key}"`);
+      expect(admins, key).toMatch(new RegExp(`\`features\\.${key}\`|/ \`${key}\``));
+    }
+    const older = /Ember 0\.1\.0 doesn't know [^:]*\(([^)]+)\): it reads them as mistakes and locks down/.exec(readme)?.[1] ?? "";
+    const newer = features.filter(k => !v010.includes(k));
+    expect(newer.length).toBeGreaterThan(0);
+    for (const key of newer) expect(older, key).toContain(`"features.${key}"`);
+    for (const key of v010) expect(older, key).not.toContain(`"features.${key}"`);
+    expect(admins.replace(/\s+/g, " ")).toContain(`Ember 0.1.0 knows only ${v010.slice(0, -1).map(k => `\`features.${k}\``).join(", ")} and \`features.${v010.at(-1)}\``);
+  });
   it("puts speech models where Ember looks for them", () => {
     expect(spec).toContain("%{_datadir}/ember/voice-models");
     expect(fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")).toContain('"/usr/share/ember/voice-models"');

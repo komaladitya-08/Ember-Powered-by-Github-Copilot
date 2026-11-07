@@ -393,9 +393,9 @@ you turn it on in settings (**Commands**, **Computers**) and accept the card tha
   voice and your GitHub sign-in always stay on this computer.
 
 The same switches turn them off, and the stop shortcut stops every command at once. Administrators can turn each off,
-or make every command ask, in the organisation policy (`features.wsl`, `features.ssh`, `commands`, `ssh`); an Ember
-older than this release locks down when its policy uses those keys. [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)
-has the details, including what Ember can't do yet.
+or make every command ask, in the organisation policy (`features.wsl`, `features.ssh`, `commands`, `ssh`, which 0.1.0
+knows too; the `features` keys 0.1.1 adds lock a 0.1.0 Ember down, as the RPM's `policy.README` says).
+[docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md) has the details, including what Ember can't do yet.
 
 **Before you remove Ember from this computer**, press **Remove helper** beside each computer you added in Settings ›
 **Computers**: it removes the helper there and keeps that computer's record of what Ember did. Once Ember is

@@ -987,7 +987,10 @@ settings window says so), and the restart reads the new policy whole. Every key 
 
 The last three are explained in [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §6. A policy that exists but doesn't
 mention `commands` turns commands off. An Ember older than the release that added these keys reads them as a mistake
-and locks down, so update Ember before deploying a policy that uses them.
+and locks down, so update Ember before deploying a policy that uses them. Ember 0.1.0 knows only `features.voice`,
+`features.speak`, `features.actions`, `features.cursor`, `features.desk`, `features.screenImages`, `features.wsl` and
+`features.ssh`: every other `features` key above is new in 0.1.1 and locks a 0.1.0 Ember down (the RPM's
+`/usr/share/doc/ember/policy.README` lists them).
 
 Audit lines also go to the system journal: `journalctl -t ember-audit`. `/etc/ember/policy.json` must belong to root
 and be writable only by root, or Ember locks down. In a development checkout, `EMBER_ADMIN_POLICY=/path/to/policy.json`
