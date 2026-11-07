@@ -652,7 +652,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
  */
 export function mentioned(findings: readonly Finding[], userWords: string): boolean {
   if (!userWords || userWords.trim() === "") return false;
-  const w = wordsOf(userWords);
+  const w = wordsOf(affirmed(userWords));
   // What Ember can't follow in a script, when the user's words name the script ("run the build script", "run build.sh"):
   // they asked for it (review #27). Only when that is all the card says: what a script does that is dangerous is asked
   // for only when the words name that, as for the command's own findings.
@@ -667,6 +667,18 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
     const program = f.program.split(" ").pop() ?? "";
     return (program !== "" && (w.list.includes(program.toLowerCase()) || nameNamed(program, w.raw))) || (f.objects.length > 0 && objectNamed);
   });
+}
+
+/** Where a request's clauses part: sentence and list punctuation, and "but". */
+const CLAUSE_BREAK = /[.;:!?,\n]+|\s+but\s+/iu;
+
+/**
+ * The user's words without the clauses that say not to do something ("don't git push yet", "never force push",
+ * "whatever you do, do not push"): a step they ruled out is never one they asked for, so its card keeps "You didn't ask
+ * for this." and never says they asked by voice (commands-remote-c1-2). Only the card's words follow from it.
+ */
+function affirmed(userWords: string): string {
+  return userWords.normalize("NFKC").split(CLAUSE_BREAK).filter(c => !NEGATION.test(c)).join(". ");
 }
 
 /** Whether the words name a finding's program with its subcommand, in full and in order ("npm ci", "git push"). */
@@ -717,7 +729,7 @@ const RULE_KIND_VERBS: Readonly<Record<string, readonly string[]>> = {
  */
 export function namedKind(findings: readonly Finding[], userWords: string): boolean {
   if (!userWords || userWords.trim() === "") return false;
-  const w = wordsOf(userWords);
+  const w = wordsOf(affirmed(userWords));
   return findings.some(f => {
     const row = rowOf(f, findings);
     return hasVerb(w.list, [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])]);

@@ -147,6 +147,28 @@ describe("decideCommand: the rules in order", () => {
     const wsl = decide("rm /mnt/c/Users/ana/x.txt", { where: "wsl", words: "delete the old export" });
     expect(wsl.says.slice(-2)).toEqual([LINES.inexact, LINES.windows]);
   });
+
+  it("still says \"You didn't ask for this.\" when the user's words said not to do it (commands-remote-c1-2)", () => {
+    for (const [cmd, words] of [
+      ["git push origin main", "don't git push yet"],
+      ["git push origin main", "whatever you do, do not push"],
+      ["rm build/out.o", "don't delete anything"],
+      ["rm -r build", "never delete build/"],
+      ["npm publish", "don't publish it"],
+      ["docker push app:1", "don't docker push"],
+      ["git push --force origin main", "never force push"],
+      ["npm ci", "fix the tests without reinstalling the dependencies"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(true);
+    }
+    // A clause that says not to do something else leaves the rest of what they asked for as it was.
+    expect(decide("git push origin main", { words: "push my changes, but don't force it" }).says).toContain(LINES.inexact);
+    expect(decide("npm ci", { words: "don't touch the docs. run npm ci" }).says).not.toContain(LINES.unasked);
+  });
 });
 
 describe("decideCommand: the card", () => {

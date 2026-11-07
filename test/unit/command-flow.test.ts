@@ -1639,6 +1639,18 @@ describe("words heard where Ember can't tell the user from its speakers (review 
     expect(typedCard.says).not.toContain("You didn't ask for this.");
     expect(typedCard.unasked).toBe(false);
   });
+
+  it("never says the user asked by voice when what they said was not to do it (commands-remote-c1-2)", async () => {
+    setCommandJudge(null);
+    for (const [spoken, command] of [["never force push", "git push --force origin main"], ["don't git push yet", "git push origin main"], ["don't delete anything", "rm build/out.o"]]) {
+      const h = harness({ binding: LOCAL, words: "", spoken, answers: ["deny"] });
+      await call(h, { target: "this computer", command });
+      const card = (h.asked[0].panel as { card: CommandCard }).card;
+      expect(card.says, spoken).toContain("You didn't ask for this.");
+      expect(card.says, spoken).not.toContain(SPOKEN_LINE);
+      expect(card.unasked, spoken).toBe(true);
+    }
+  });
 });
 
 describe("the user's own words only (critique security-1)", () => {
