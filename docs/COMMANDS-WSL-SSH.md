@@ -676,7 +676,7 @@ build-01's row in Settings › **Computers** keeps the reason until it connects.
 
 | Ember says | What to do |
 |---|---|
-| "Ember can't find SSH on this computer.", then how to install it on yours alone: on Linux "Install OpenSSH with: sudo dnf install openssh-clients", on Windows "Install the OpenSSH Client in Settings › Apps › Optional features, then try again." (through a WSL distro, the Linux line) | As it says; on a Mac, SSH comes with macOS at /usr/bin/ssh |
+| "Ember can't find SSH on this computer.", then how to install it on yours alone: on Linux "Install OpenSSH with sudo dnf install openssh-clients, then try again.", on Windows "Install the OpenSSH Client in Settings › Apps › Optional features, then try again." (through a WSL distro, the Linux line) | As it says; on a Mac, SSH comes with macOS at /usr/bin/ssh |
 | "Ember can't find build-01. Check the name, or add it to your SSH config." | Check the name |
 | "Ember can't reach build-01 (&lt;reason in a few words&gt;). Check you're on the right network or VPN." | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
 | "Your SSH settings for build-01 have a line this SSH can't use: &lt;the line&gt;. Fix or remove it, then connect again." | As it says |

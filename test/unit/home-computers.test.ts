@@ -102,6 +102,21 @@ describe("each “Ask me before every command” switch names its computer (revi
   });
 });
 
+describe("the status lines keep a command or a host name in one piece (commands-remote-8)", () => {
+  it("never breaks a line inside a hyphenated word such as openssh-clients or build-01", () => {
+    expect(cc.unbrokenRuns("Install OpenSSH with sudo dnf install openssh-clients, then try again.")).toEqual([
+      { text: "Install OpenSSH with sudo dnf install ", whole: false }, { text: "openssh-clients,", whole: true }, { text: " then try again.", whole: false },
+    ]);
+    expect(cc.unbrokenRuns("Ember didn't connect to build-01.")).toEqual([{ text: "Ember didn't connect to ", whole: false }, { text: "build-01.", whole: true }]);
+    expect(cc.unbrokenRuns("Commands stay off on this computer.")).toEqual([{ text: "Commands stay off on this computer.", whole: false }]);
+    expect(cc.unbrokenRuns("")).toEqual([]);
+    const page = readFileSync(new URL("../../app/renderer/home/computers.ts", import.meta.url), "utf8");
+    expect(page).toMatch(/for \(const r of unbrokenRuns\(text\)\)/);
+    const css = readFileSync(new URL("../../app/renderer/home/styles.css", import.meta.url), "utf8");
+    expect(css).toContain(".hint .whole { white-space: nowrap; }");
+  });
+});
+
 describe("a switch whose first-use card is open says where to answer it (commands-remote-4)", () => {
   it("says to answer in the window that opens only when turning on needs the card", () => {
     const agreed = { version: 99, at: "2026-11-01T00:00:00.000Z" };

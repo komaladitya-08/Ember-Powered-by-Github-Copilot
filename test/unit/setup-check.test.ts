@@ -62,7 +62,7 @@ describe("the target rows' words in the window (review #157, #218)", () => {
   });
 
   it("says once that there is no SSH client, with only this OS's way to install it", () => {
-    expect(words(sshClientRow("linux", null))).toBe("No SSH client found. Install OpenSSH with: sudo dnf install openssh-clients");
+    expect(words(sshClientRow("linux", null))).toBe("No SSH client found. Install OpenSSH with sudo dnf install openssh-clients, then try again.");
     expect(words(sshClientRow("win32", null))).toBe("No SSH client found. Install the OpenSSH Client in Settings › Apps › Optional features, then try again.");
     expect(words(sshClientRow("darwin", null))).not.toMatch(/dnf|Optional features/);
   });

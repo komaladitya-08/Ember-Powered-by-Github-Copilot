@@ -285,6 +285,22 @@ export function actResult(r: unknown, done: string): string {
   return ok ? done : actMessage(r) ?? ACT_FAILED;
 }
 
+/**
+ * A status line in runs to draw, each hyphenated word (with the punctuation after it) whole, so a line never breaks
+ * inside a command or a host's name ("openssh-" then "clients", commands-remote-8). The text is unchanged.
+ */
+export function unbrokenRuns(text: string): { text: string; whole: boolean }[] {
+  const out: { text: string; whole: boolean }[] = [];
+  let at = 0;
+  for (const m of text.matchAll(/[^\s-]+(?:-[^\s-]+)+/g)) {
+    if (m.index > at) out.push({ text: text.slice(at, m.index), whole: false });
+    out.push({ text: m[0], whole: true });
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push({ text: text.slice(at), whole: false });
+  return out;
+}
+
 /** Under a switch while its first-use card is open in the prompt window (commands-remote-4). */
 export const CARD_PENDING = "Ember asks first: answer in the window that opens.";
 

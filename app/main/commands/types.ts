@@ -324,6 +324,11 @@ export interface CommandCard {
   classes?: DangerClass[];
   /** An announcement the AI review cleared (commands/review.ts), not one the user's own words asked for exactly. */
   reviewed?: boolean;
+  /**
+   * The target's home folder, for a POSIX shell: the header says it as ~ ("in ~/src/app", commands-remote-8). Shown
+   * only; the approval binds the whole `cwd`.
+   */
+  home?: string;
 }
 
 /** What a target offers for commands right now. */

@@ -338,6 +338,10 @@ describe("one card at a time", () => {
     expect(validCard(card({ target: "ssh:Build-01" as CommandCard["target"] }))).toBe(false);
     expect(validCard(card({ targetLabel: "" }))).toBe(false);
     expect(validCard(card({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }))).toBe(true);
+    // The home folder its header shortens to ~ (commands-remote-8): a folder's text, or none.
+    expect(validCard(card({ home: "/home/deploy" }))).toBe(true);
+    expect(validCard({ ...card(), home: 7 })).toBe(false);
+    expect(validCard({ ...card(), home: "" })).toBe(false);
   });
 
   it("never shows a card whose hash isn't of the very target, shell, folder and command it shows (R-cmd-1)", async () => {

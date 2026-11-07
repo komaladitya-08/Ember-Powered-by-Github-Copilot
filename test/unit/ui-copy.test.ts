@@ -267,7 +267,7 @@ describe("the command window's words (§8.5)", () => {
 
   it("names the window, its empty state, the card and its buttons exactly", () => {
     expect(keep(commandCopy.WINDOW_TITLE)).toBe("Ember commands");
-    expect(keep(commandCopy.EMPTY_TEXT)).toBe("No commands yet.");
+    expect(keep(commandCopy.EMPTY_TEXT)).toBe("Commands Ember runs show here. You can watch them, type into them and stop them.");
     expect(keep(commandCopy.ASK_HEADING)).toBe("Ember wants to run this command");
     expect(keep(commandCopy.askHeading({ target: "local", targetLabel: "This computer" }))).toBe("Ember wants to run this command");
     expect(keep(commandCopy.askHeading({ target: "ssh:build-01", targetLabel: "build-01" }))).toBe("Ember wants to run this command on build-01");
@@ -308,6 +308,19 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.headerLine({ ...base, target: "ssh:build-01", targetLabel: "build-01", login: "deploy" }))).toBe("On build-01 as deploy · bash · in ~/src/app");
     expect(keep(commandCopy.headerLine({ target: "local", targetLabel: "This computer", shell: "powershell", cwd: "C:\\Users\\ana\\project" }))).toBe("On this computer · PowerShell · in C:\\Users\\ana\\project");
     expect(keep(commandCopy.headerLine({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)", shell: "bash", cwd: "~/project" }))).toBe("In Ubuntu (WSL) · bash · in ~/project");
+  });
+
+  it("says the home folder as ~ in a POSIX shell's header, and every other folder whole (commands-remote-8)", () => {
+    const h = (cwd: string, home: string | undefined, shell: "bash" | "zsh" | "sh" | "powershell" = "bash") =>
+      keep(commandCopy.headerLine({ target: "local", targetLabel: "This computer", shell, cwd, ...(home !== undefined ? { home } : {}) }));
+    expect(h("/home/ana/src/app", "/home/ana")).toBe("On this computer · bash · in ~/src/app");
+    expect(h("/home/ana", "/home/ana")).toBe("On this computer · bash · in ~");
+    expect(h("/home/ana/x", "/home/ana/")).toBe("On this computer · bash · in ~/x");
+    expect(h("/home/anabel/x", "/home/ana")).toBe("On this computer · bash · in /home/anabel/x");
+    expect(h("/srv/app", "/home/ana", "zsh")).toBe("On this computer · zsh · in /srv/app");
+    expect(h("/home/ana/x", undefined)).toBe("On this computer · bash · in /home/ana/x");
+    expect(h("/x", "/")).toBe("On this computer · bash · in /x");
+    expect(h("C:\\Users\\ana\\p", "C:\\Users\\ana", "powershell")).toBe("On this computer · PowerShell · in C:\\Users\\ana\\p");
   });
 
   it("says how a run ended in its status line", () => {

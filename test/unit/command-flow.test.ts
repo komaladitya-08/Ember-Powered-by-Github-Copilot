@@ -1133,7 +1133,7 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(q.panel.kind).toBe("command");
     expect(q.panel.card).toMatchObject({
       target: "ssh:build-01", targetLabel: "build-01", login: "deploy", shell: "bash", cwd: "/home/ana", command: "rm -r build", taskId: "t1", mode: "ask",
-      unasked: true, armMs: 1500, says: ["Deletes build and everything in it.", "Why: “to clean”"],
+      unasked: true, armMs: 1500, says: ["Deletes build and everything in it.", "Why: “to clean”"], home: "/home/ana",
       sha256: commandSha256("ssh:build-01", "bash", "/home/ana", "rm -r build"),
     });
     expect(r.resultType).toBe("success");

@@ -526,7 +526,7 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
 
   it("says how to install SSH on this computer's OS alone when no SSH client answers (review #196)", async () => {
     const want = {
-      linux: "Ember can't find SSH on this computer. Install OpenSSH with: sudo dnf install openssh-clients",
+      linux: "Ember can't find SSH on this computer. Install OpenSSH with sudo dnf install openssh-clients, then try again.",
       win32: "Ember can't find SSH on this computer. Install the OpenSSH Client in Settings › Apps › Optional features, then try again.",
       darwin: "Ember can't find SSH on this computer. macOS comes with SSH at /usr/bin/ssh, but Ember can't run it there. Check that it's there, then try again.",
     } as const;

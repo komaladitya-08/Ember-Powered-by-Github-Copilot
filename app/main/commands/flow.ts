@@ -838,6 +838,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
     ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
+    // The header says the home folder as ~ in a POSIX shell (commands-remote-8).
+    ...(shell !== "powershell" && home ? { home } : {}),
   });
   /** Asks with the command card; "once", "no" (Not now), "expired" (no answer in time: a timeout, not a refusal) or "stopped". */
   const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "expired" | "stopped"> => {
