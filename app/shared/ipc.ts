@@ -187,6 +187,11 @@ export interface SignInProgress {
 export interface ListenOnceStatus {
   phase: "ready" | "blocked" | "starting" | "listening" | "checking";
   detail: string;
+  /**
+   * Why it is blocked, where the fix is elsewhere in Settings: `needs-models` (the speech models' download) or
+   * `voice-error` (the voice line says what's wrong). Settings words those for itself (VoiceService listenOnceInSettings).
+   */
+  reason?: "needs-models" | "voice-error";
 }
 
 export interface VoiceStatus {

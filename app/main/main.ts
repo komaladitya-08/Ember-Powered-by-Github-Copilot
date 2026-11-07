@@ -44,7 +44,7 @@ import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { VoiceService, electronDownloader, voicePermissions } from "./voice";
+import { VoiceService, electronDownloader, listenOnceInSettings, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { capiChoice, type BackendChoice } from "../voice/runtime";
@@ -1370,7 +1370,8 @@ function start(): void {
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
     if (confirmer?.waiting) return blocked("Answer Ember’s question first.");
     if (agent?.answerOpen) return blocked("Wait for Ember’s answer to finish.");
-    return voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
+    const now = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
+    return source === "home" ? listenOnceInSettings(now) : now;
   };
   const clearManualCall = () => {
     const call = manualCall;

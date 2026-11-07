@@ -39,7 +39,9 @@ describe("the microphone badge", () => {
   });
 
   it("says its state in words, to the tooltip and to screen readers", () => {
-    expect(micBadge("waiting")!.label).toBe("Listening for “Hey Ember”");
+    // The name alone, as settings' voice line says it ("Ember" and "Hey Ember" both work; voice-listening-8).
+    expect(micBadge("waiting")!.label).toBe("Listening for “Ember”");
+    expect(readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8")).toContain('waiting: "Listening for “Ember”"');
     expect(micBadge("active")!.label).toBe("Hearing you");
     expect(micBadge("muted")!.label).toBe("Microphone off");
     expect(micBadge("error")!.label).toBe("Microphone problem");

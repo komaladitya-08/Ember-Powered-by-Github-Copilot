@@ -3,7 +3,7 @@
  * speaking, the kill switch's cancel, the download's states, muting, and speaking with listening off.
  */
 
-import fs from "node:fs";
+import fs, { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,7 +43,7 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { VoiceService, type VoiceOptions } from "../../app/main/voice";
+import { VoiceService, listenOnceInSettings, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
@@ -281,6 +281,32 @@ describe("VoiceService", () => {
       expect(posted(proc, "listen-once")).toHaveLength(0);
     },
   );
+
+  it("says what to do next when a temporary Listen once's voice process stops (voice-listening-8)", async () => {
+    const { v } = service();
+    expect(v.listenOnce()).toBe(true);
+    await Promise.resolve();
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    proc.emit("exit", 1);
+    expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "The voice process stopped. Try again." });
+  });
+
+  it("points Listen once in Settings to the download and the voice line there, not to Settings itself (accessibility-visual-9, voice-listening-8)", async () => {
+    const none = service(false);
+    expect(none.v.listenOnceStatus).toEqual({ phase: "blocked", detail: "Download speech models in Settings first.", reason: "needs-models" });
+    expect(listenOnceInSettings(none.v.listenOnceStatus)).toEqual({ phase: "blocked", detail: "Download the speech models below first.", reason: "needs-models" });
+    const broken = service();
+    await broken.v.setWanted(true);
+    const [proc] = electron.procs.slice(-1);
+    proc.emit("message", { type: "error", message: "Something broke." });
+    expect(broken.v.listenOnceStatus.reason).toBe("voice-error");
+    expect(listenOnceInSettings(broken.v.listenOnceStatus).detail).toBe("Check the microphone and the voice status above.");
+    // Anything else reads the same in Ask and in Settings.
+    const ready = { phase: "ready", detail: "Request heard." } as const;
+    expect(listenOnceInSettings(ready)).toBe(ready);
+    expect(readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain('return source === "home" ? listenOnceInSettings(now) : now;');
+  });
 
   it("keeps a manual request until Voice Match finishes, then accepts it only once", async () => {
     const { v, events } = service();

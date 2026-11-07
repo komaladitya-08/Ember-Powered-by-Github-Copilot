@@ -379,10 +379,10 @@ export class VoiceService {
     if (this.locked) return blocked("The screen is locked.");
     if (this.muted) return blocked("Unmute the microphone first.");
     if (this.enrolling) return blocked("Finish teaching Ember your voice first.");
-    if (!this.modelsReady) return blocked(this.downloading ? "Speech models are downloading." : "Download speech models in Settings first.");
+    if (!this.modelsReady) return this.downloading ? blocked("Speech models are downloading.") : { ...blocked("Download speech models in Settings first."), reason: "needs-models" };
     if (this.saidSpeaking || this.ttsPending.size || this.speakingUntil > Date.now()) return blocked("Wait until Ember finishes speaking.");
     if (!this.wanted) return { phase: "ready", detail: this.manualDetail || "Opens the microphone for one request." };
-    if (this.state === "error") return blocked("Check the microphone and voice status in Settings.");
+    if (this.state === "error") return { ...blocked("Check the microphone and voice status in Settings."), reason: "voice-error" };
     if (!this.capturing || !this.readyAt || !this.proc) return blocked("The microphone or speech recogniser is getting ready.");
     if (this.state === "active") return blocked("Ember is already listening.");
     return { phase: "ready", detail: this.manualDetail };
@@ -1408,7 +1408,7 @@ export class VoiceService {
 
   /** Listening broke (the voice process or the mic page died, or no sound arrives): start again after 1 s, 5 s, then every 30 s, saying so meanwhile. */
   private restartLater(why: string): void {
-    if (this.manual?.temporary) { this.cancelListenOnce(why); return; }
+    if (this.manual?.temporary) { this.cancelListenOnce(`${why} Try again.`); return; }
     this.teardown();
     if (!this.wanted || this.muted) return;
     if (this.readyAt && Date.now() - this.readyAt > 60_000) this.failures = 0; // it had been working: start the backoff over
@@ -1541,6 +1541,16 @@ function hiddenWindow(title: string): BrowserWindow {
       autoplayPolicy: "no-user-gesture-required",
     },
   });
+}
+
+/**
+ * Listen once as Settings (Home) shows it: there, "in Settings" sent people where they already were, right above the
+ * Download button (accessibility-visual-9, voice-listening-8). Ask keeps the words as they are.
+ */
+export function listenOnceInSettings(s: ListenOnceStatus): ListenOnceStatus {
+  if (s.reason === "needs-models") return { ...s, detail: "Download the speech models below first." };
+  if (s.reason === "voice-error") return { ...s, detail: "Check the microphone and the voice status above." };
+  return s;
 }
 
 /** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */
