@@ -685,7 +685,7 @@ build-01's row in Settings › **Computers** keeps the reason until it connects.
 |---|---|
 | "Ember can't find SSH on this computer.", then how to install it on yours alone: on Linux "Install OpenSSH with sudo dnf install openssh-clients, then try again.", on Windows "Install the OpenSSH Client in Settings › Apps › Optional features, then try again." (through a WSL distro, the Linux line) | As it says; on a Mac, SSH comes with macOS at /usr/bin/ssh |
 | "Ember can't find build-01. Check the name, or add it to your SSH config." (for a computer you were adding, "It wasn't added to Computers." too: a name Ember can't find on its first connection isn't kept, so fixing a typo adds one row) | Check the name, then connect again (the field keeps what you typed) |
-| "Ember can't reach build-01 (&lt;reason in a few words&gt;). Check you're on the right network or VPN." | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
+| "Ember can't reach build-01 (&lt;reason in a few words&gt;). Check you're on the right network or VPN." (also "its name couldn't be looked up just now" when this computer is offline: a computer you were adding is kept) | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
 | "Your SSH settings for build-01 have a line this SSH can't use: &lt;the line&gt;. Fix or remove it, then connect again." | As it says |
 | "build-01 took too long to answer (a jump host or sign-in helper may be waiting)." | Check the jump host or sign-in helper |
 | "build-01 refused after too many keys. In your SSH config, add IdentitiesOnly yes and an IdentityFile line with the right key for build-01." | As it says |

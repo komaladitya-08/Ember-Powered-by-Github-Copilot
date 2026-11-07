@@ -107,6 +107,9 @@ const NETWORK: readonly [RegExp, string][] = [
   [/Connection reset by|Connection reset/i, "the connection was reset"],
 ];
 
+/** A name lookup that failed for now, not because the name is wrong. */
+const TRY_AGAIN = /Temporary failure in name resolution|temporary error during hostname resolution/i;
+
 /** stderr lines that mean the user's SSH configuration has something this client can't use (critique remote-18c). */
 const CONFIG = /Bad configuration option|Unsupported option|getsockname failed: Not a socket|command-line line 0:|Bad key types|Unsupported Match attribute|keyword .* extra arguments/i;
 
@@ -135,6 +138,9 @@ export function classifySshFailure(stderr: string, exitCode: number | null, o: {
   if (/Permission denied \(/.test(text)) {
     return { kind: "auth", message: MESSAGES.authNoAskpass(h), retry: true };
   }
+  // A lookup that couldn't be made just now (glibc's EAI_AGAIN, Windows' WSATRY_AGAIN: no network, Wi-Fi gone) says
+  // nothing about the name: the network failed, and a computer just added is kept (commands-remote-6).
+  if (TRY_AGAIN.test(text)) return { kind: "network", message: MESSAGES.network(h, "its name couldn't be looked up just now"), retry: true };
   if (/Could not resolve hostname|Name or service not known|nodename nor servname provided|No such host is known/i.test(text)) {
     return { kind: "dns", message: MESSAGES.dns(h), retry: true };
   }
