@@ -1005,3 +1005,23 @@ describe("Home after the last run ended unexpectedly (rp-5)", () => {
     expect(main).toContain(`runNotice.hidden = !status.unexpectedExit;`);
   });
 });
+
+describe("the log file in About this build (rp-8)", () => {
+  it("can be copied and shown in the file manager, as the address beside it can be copied", async () => {
+    const { showLogLabel } = await import("../../app/renderer/home/copy");
+    expect(showLogLabel("linux")).toBe("Show in Files");
+    expect(showLogLabel("win32")).toBe("Show in File Explorer");
+    expect(showLogLabel("darwin")).toBe("Show in Finder");
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`["Log file", status.logFile, "log"],`);
+    expect(main).toContain(`copy.setAttribute("aria-label", kind === "log" ? "Copy the log file's path" : \`Copy the address \${val}\`);`);
+    expect(main).toContain(`window.ember.showLogFile().catch(() => { show.textContent = "Couldn't open it"; });`);
+  });
+
+  it("is shown by a channel that opens only Ember's own log file, whatever the page sends", () => {
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`ipcMain.handle(IPC.showLogFile, guard(() => { shell.showItemInFolder(log.file); }));`);
+    const preload = readFileSync(new URL("../../app/preload/home.ts", import.meta.url), "utf8");
+    expect(preload).toContain(`showLogFile: () => ipcRenderer.invoke(IPC.showLogFile),`);
+  });
+});

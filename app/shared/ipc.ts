@@ -173,6 +173,8 @@ export const IPC = {
   homeLevel: "ember:home-level",
   /** Copies a sign-in code or a setup command for the settings window (pages get no clipboard permission). */
   copyText: "ember:copy-text",
+  /** Shows Ember's own log file in the file manager (About this build: rp-8); it takes no path. */
+  showLogFile: "ember:show-log-file",
 } as const;
 
 export interface SignInProgress {
@@ -464,6 +466,8 @@ export interface EmberHomeApi {
   onLevel(fn: (level: number | null) => void): () => void;
   /** Copies plain text, bounded by the session conversation's per-message limit. */
   copyText(text: string): Promise<void>;
+  /** Shows Ember's log file in the system's file manager (only that file: the page names none). */
+  showLogFile(): Promise<void>;
   cancelSignIn(): Promise<void>;
   /** Opens GitHub's page where the sign-in code is entered (again). */
   openSignInPage(): Promise<void>;

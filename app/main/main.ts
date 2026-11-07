@@ -2009,6 +2009,8 @@ function start(): void {
     if (typeof text !== "string" || !text || text.length > CONVERSATION_TEXT_LIMIT) throw new Error("Nothing to copy.");
     clipboard.writeText(text);
   }));
+  // About this build's Show in Files (rp-8): only Ember's own log file, whatever the page sends.
+  ipcMain.handle(IPC.showLogFile, guard(() => { shell.showItemInFolder(log.file); }));
   /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
   const signInError = (err: unknown): string => explainSignInError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
   /**

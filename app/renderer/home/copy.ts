@@ -9,6 +9,7 @@ import type { ActivityEntry, ClearHearingStatus, ConversationContext, NaturalVoi
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
+import { PLATFORM_WORDS } from "../../shared/words";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { onboardingRest } from "./computers-copy";
@@ -1163,4 +1164,9 @@ export function reminderDeleteScope(routines: number, reminders: number): string
 /** Home's note after the last run ended unexpectedly (main crashed or was killed: rp-5), with where its log is. */
 export function closedUnexpectedlyText(logFile: string): string {
   return `Ember closed unexpectedly last time. Its log shows what it was doing until then: ${logFile}`;
+}
+
+/** About this build's button that shows the log file in this OS's file manager ("Show in Files", "Show in Finder"). */
+export function showLogLabel(os: OS): string {
+  return `Show in ${PLATFORM_WORDS[os].fileManager}`;
 }

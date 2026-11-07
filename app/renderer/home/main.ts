@@ -10,7 +10,7 @@ import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import type { HistoryProblemKind } from "../../shared/conversation";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, closedUnexpectedlyText, heardThrough, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
@@ -392,24 +392,30 @@ function render(status: Status): void {
   welcome.status(status);
   const v = status.environment.versions;
   // Paths are set in the mono face (they are values to copy); versions and the address read as words (UI audit #15).
-  const facts: [string, string, "path" | "text" | "copy"][] = [
+  const facts: [string, string, "path" | "text" | "copy" | "log"][] = [
     ["Ember", status.appVersion, "text"],
     ["Electron", `${v.electron ?? "?"} (Chromium ${v.chrome ?? "?"}, Node ${v.node})`, "text"],
     ["Settings", platform?.settingsFile ?? "~/.config/ember/settings.json", "path"],
-    ["Log file", status.logFile, "path"],
+    ["Log file", status.logFile, "log"],
     // Somewhere to say what went wrong (review #105): the window never opens links, so the address is there to copy.
     ["Report a problem", ISSUES_URL, "copy"],
   ];
   $("facts").replaceChildren(...facts.flatMap(([k, val, kind]) => {
     const dt = document.createElement("dt"); dt.textContent = k;
-    const dd = document.createElement("dd"); dd.className = kind === "path" ? "path" : "plain";
+    const dd = document.createElement("dd"); dd.className = kind === "path" || kind === "log" ? "path" : "plain";
     dd.append(Object.assign(document.createElement("span"), { textContent: val }));
-    if (kind === "copy") {
+    if (kind === "copy" || kind === "log") {
       const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
-      copy.setAttribute("aria-label", `Copy the address ${val}`);
+      copy.setAttribute("aria-label", kind === "log" ? "Copy the log file's path" : `Copy the address ${val}`);
       // Through main (pages get no clipboard permission), as the sign-in code is copied.
       copy.addEventListener("click", () => { window.ember.copyText(val).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
       dd.append(copy);
+    }
+    if (kind === "log") {
+      // The log to attach to a report, found where it is (rp-8): main shows only Ember's own log file.
+      const show = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: showLogLabel(platform?.os ?? "linux") });
+      show.addEventListener("click", () => { window.ember.showLogFile().catch(() => { show.textContent = "Couldn't open it"; }); });
+      dd.append(show);
     }
     return [dt, dd];
   }));

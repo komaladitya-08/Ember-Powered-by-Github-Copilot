@@ -104,6 +104,7 @@ const api: EmberHomeApi = {
   watchLevel: on => ipcRenderer.invoke(IPC.watchLevel, on),
   onLevel: fn => listen<number | null>(IPC.homeLevel, fn),
   copyText: text => ipcRenderer.invoke(IPC.copyText, text),
+  showLogFile: () => ipcRenderer.invoke(IPC.showLogFile),
 };
 
 contextBridge.exposeInMainWorld("ember", api);

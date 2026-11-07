@@ -469,6 +469,8 @@ progress[hidden] { display: none; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 .facts dd.path { font: 13px/20px var(--ember-mono); }
+/* The log file's Copy and Show in Files (rp-8), on the line under its path. */
+.facts dd.path .btn { margin: 4px 8px 0 0; }
 .facts dd.plain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
 /* ── First run: only its steps (welcome.ts; styled at the end of this sheet) ── */
