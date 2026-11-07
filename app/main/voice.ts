@@ -222,6 +222,8 @@ export class VoiceService {
   private manual: { phase: "starting" | "listening" | "checking"; timer: NodeJS.Timeout; temporary: boolean; armed: boolean } | null = null;
   private manualGeneration = 0;
   private manualDetail = "";
+  /** The Listen once window under way heard only digital silence (the voice process said so before it timed out). */
+  private manualSilent = false;
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
   private micLost = false;
   /** The microphone sends only digital silence (the voice line says so until sound comes back). */
@@ -390,6 +392,7 @@ export class VoiceService {
     if (this.listenOnceStatus.phase !== "ready") return false;
     this.dropFollowUp();
     this.manualGeneration++;
+    this.manualSilent = false;
     const temporary = !this.wanted;
     this.manual = { phase: "starting", temporary, armed: false, timer: setTimeout(() => this.cancelListenOnce("The microphone did not get ready. Try again."), 30_000) };
     this.manual.timer.unref();
@@ -1309,6 +1312,12 @@ export class VoiceService {
       // They keep failing (unusable until loaded again): started again, with the backoff.
       if (m.type === "engine-broken") { this.o.log.error("voice.engine_broken", { message: m.message }); this.restartLater("The speech recognizer kept failing."); return; }
       if (m.type === "monitor") { this.monitorOn = m.on; this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
+      if (m.type === "silent" && m.manual) {
+        // Listen once heard only zeros: its window says so when it times out, next (voice-listening-4).
+        this.o.log.warn("voice.silent", { on: true, manual: true });
+        this.manualSilent = !!this.manual;
+        return;
+      }
       if (m.type === "silent") {
         // Frames still arrive (the watchdog is content), but nothing can be heard in them: said, not restarted.
         this.o.log.warn("voice.silent", { on: m.on });
@@ -1350,7 +1359,7 @@ export class VoiceService {
         }
         this.setState(m.on ? "active" : "waiting");
         this.o.onEvent(event);
-        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? "No request heard. Try again." : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
+        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? (this.manualSilent ? SILENT_TEXT : "No request heard. Try again.") : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
         else this.o.onListenOnce?.();
         return;
       }

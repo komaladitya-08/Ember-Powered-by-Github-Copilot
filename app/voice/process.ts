@@ -71,7 +71,8 @@ export type VoiceProcessMessage =
   | { type: "monitor"; on: boolean; reason?: string }
   | { type: "stalled"; ms: number }
   | { type: "alive" }
-  | { type: "silent"; on: boolean }
+  /** `manual`: a Listen once window heard only digital silence (exact zeros) until it timed out (sent just before that). */
+  | { type: "silent"; on: boolean; manual?: boolean }
   /** Enrolment's progress; at "done", `print` is the owner's voiceprint (base64) for main to keep. */
   | { type: "enrol"; state: Exclude<EnrolState["state"], "done">; got: number; of: number; why?: string }
   | { type: "enrol"; state: "done"; got: number; of: number; print: string }
@@ -171,6 +172,13 @@ function endEnrolment(): void {
   backend?.resetVad();
   engine?.stopsOnly(false);
 }
+/**
+ * A Listen once window under way: how many frames it was given, and whether each was exact zeros (a muted microphone, or
+ * the wrong input). The minute-long SilenceWatch can't say so in an 8 s window (voice-listening-4).
+ */
+let manualWindow: { frames: number; zeros: boolean } | null = null;
+/** At least this many frames (2 s) of zeros before a window says the microphone sent only silence. */
+const MANUAL_SILENT_FRAMES = 62;
 let cpuMs = 0, audioMs = 0, peak = 0, reported = false;
 /**
  * The recognizers failed on some audio (WebAssembly throws bare numbers): main is told, at most once a minute with how
@@ -222,6 +230,10 @@ parent.on("message", e => {
       const made = new VoiceEngine(backend, e => {
         // Teaching Voice Match: its phrases aren't requests; "Ember, stop" stops everything, the teaching with it.
         if (enrolment) { if (e.type !== "stop") return; enrolment.cancel("stopped"); }
+        if (e.type === "listening" && !e.on && e.window === "manual") {
+          if (e.reason === "timeout" && manualWindow?.zeros && manualWindow.frames >= MANUAL_SILENT_FRAMES) send({ type: "silent", on: true, manual: true });
+          manualWindow = null;
+        }
         gate.event(e, e.type === "utterance" ? made.requestAudio : null, e.type === "utterance" && made.requestWithWake);
       }, { conversation: !!m.conversation });
       engine = made;
@@ -250,6 +262,10 @@ parent.on("message", e => {
       const frame = ArrayBuffer.isView(d) ? new Float32Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength)) : new Float32Array(d);
       dump?.write(Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength));
       silence.frame(frame);
+      if (manualWindow) {
+        manualWindow.frames++;
+        if (manualWindow.zeros) for (let i = 0; i < frame.length; i++) if (frame[i] !== 0) { manualWindow.zeros = false; break; }
+      }
       const t0 = performance.now();
       if (!broken) try { if (enrolment) enrolFrame(frame, packet?.capturedAt); else engine?.feed(frame, packet?.capturedAt); } catch (err) { failed(err); }
       cpuMs += performance.now() - t0;
@@ -281,6 +297,7 @@ parent.on("message", e => {
     gate.cancel();
     engine.cancel();
     generation = m.generation;
+    manualWindow = { frames: 0, zeros: true };
     engine.listenOnce(m.from, m.ms);
   } else if (m.type === "cancel") {
     generation = m.generation;

@@ -37,6 +37,7 @@ async function voiceProcess(backend: (o: { onError?: (err: unknown) => void; run
   await import("../../app/voice/process");
   const port = Object.assign(new EventEmitter(), { start: vi.fn() });
   return {
+    port,
     init: (o: { wasm?: boolean; voiceprint?: string } = {}) => parent.emit("message", { data: { type: "init", generation: 0, models: { kws: "k", vad: "v", asr: "a" }, monitor: false, dev: false, ...o }, ports: [port] }),
     message: (data: unknown) => parent.emit("message", { data }),
     frame: (f = new Float32Array(512).fill(0.01)) => port.emit("message", { data: f }),
@@ -45,6 +46,8 @@ async function voiceProcess(backend: (o: { onError?: (err: unknown) => void; run
 }
 
 afterEach(() => { vi.useRealTimers(); });
+/** The microphone's port of a voice process. */
+const port = (p: { port: EventEmitter }) => p.port;
 
 describe("the voice process", () => {
   for (const change of ["cancel", "voiceprint", "enrol"] as const) {
@@ -227,6 +230,24 @@ describe("the voice process", () => {
       for (let i = 0; i < 10; i++) { p.frame(); vi.advanceTimersByTime(32); }
       expect(relevant(p).map(m => m.type)).toContain("wake");
     });
+  });
+
+  it("says a Listen once window heard only digital silence (a muted microphone), just before it times out (voice-listening-4)", async () => {
+    const zeros = new Float32Array(512);
+    for (const [frame, silent] of [[zeros, true], [new Float32Array(512).fill(0.0001), false]] as const) {
+      const p = await voiceProcess(() => quiet());
+      let now = Date.now();
+      const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        p.init();
+        p.message({ type: "listen-once", generation: 1, from: now, ms: 8000 });
+        for (let i = 0; i < 260; i++) { now += 32; port(p).emit("message", { data: { samples: frame, capturedAt: now } }); }
+        const said = p.sent().filter(m => m.type === "silent" || m.type === "listening");
+        expect(said.at(-1)).toMatchObject({ type: "listening", on: false, reason: "timeout", window: "manual" });
+        expect(said.some(m => m.type === "silent")).toBe(silent);
+        if (silent) expect(said.at(-2)).toEqual({ type: "silent", on: true, manual: true });
+      } finally { spy.mockRestore(); }
+    }
   });
 
   it("passes on other errors at start as they are", async () => {

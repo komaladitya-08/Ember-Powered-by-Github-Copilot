@@ -329,6 +329,24 @@ describe("VoiceService", () => {
     expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "Listening timed out. Try again." });
   });
 
+  it("says the microphone sends only silence, not “No request heard”, when Listen once heard only zeros (voice-listening-4)", async () => {
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    for (const silent of [true, false]) {
+      v.listenOnce();
+      const generation = (posted(proc, "listen-once").at(-1) as { generation?: number }).generation;
+      proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+      if (silent) proc.emit("message", { type: "silent", on: true, manual: true });
+      proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window: "manual" });
+      expect(v.listenOnceStatus.detail).toBe(silent ? "The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings." : "No request heard. Try again.");
+      // Only that window says so: listening for “Ember” carries on as it was.
+      expect(v.micState).toBe("waiting");
+    }
+  });
+
   it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     const { v, events } = service();
