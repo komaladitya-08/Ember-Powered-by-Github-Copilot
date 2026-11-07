@@ -15,7 +15,7 @@ import {
   userProviderInForce, type FetchLike,
 } from "../../app/main/provider";
 import { PROVIDER_BAD_REQUEST, PROVIDER_FAILED, registerProviderIpc, type ProviderApi, type ProviderIpcEvent } from "../../app/main/provider-ipc";
-import { endpointHost, endpointProblem } from "../../app/shared/provider";
+import { endpointHost, endpointProblem, keyNeeded } from "../../app/shared/provider";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { PROVIDER_IPC } from "../../app/shared/ipc";
 import type { SecretBox } from "../../app/main/agent/auth";
@@ -64,6 +64,11 @@ describe("the own provider's endpoint", () => {
     expect(endpointProblem("https://models.example.com/v1 ")).not.toBeNull();
     expect(endpointProblem("https://models.example.com/\u0000v1")).not.toBeNull();
     expect(endpointProblem("https://x.com/" + "a".repeat(3000))).not.toBeNull();
+  });
+
+  it("needs no API key from a model server on this computer, and one from any other service (first-run-v2)", () => {
+    for (const local of ["http://localhost:11434/v1", "http://127.0.0.1:1234/v1", "http://[::1]:8080/v1", "https://LOCALHOST:8443/v1"]) expect(keyNeeded(local), local).toBe(false);
+    for (const remote of ["https://api.openai.com/v1", "https://localhost.example.com/v1", "https://127.0.0.1.example.com/v1", "", "not an address"]) expect(keyNeeded(remote), remote).toBe(true);
   });
 
   it("names the host with its port, lower-cased, and nothing for an address it refuses", () => {

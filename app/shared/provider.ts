@@ -47,6 +47,16 @@ export function endpointProblem(url: string): string | null {
   return "Enter the service's full address, starting with https://.";
 }
 
+/**
+ * Whether the endpoint is a service that needs an API key: anything but a model server on this computer (localhost,
+ * 127.0.0.1, ::1), which often needs none (Ollama, LM Studio; main sends no key then, and its check says when one is
+ * needed). An address that isn't one counts as needing a key (first-run-v2).
+ */
+export function keyNeeded(url: string): boolean {
+  const u = parse(url);
+  return !u || !LOCAL_HOSTS.has(u.hostname.toLowerCase());
+}
+
 /** How long "I agree" ignores activation after the card is drawn for a new host: confirm.ts's own arm delay. */
 export const AGREE_ARM_MS = 500;
 

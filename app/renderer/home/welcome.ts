@@ -12,7 +12,7 @@ import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
 import type { ProviderState, Status, VoiceStatus } from "../../shared/ipc";
-import { endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
+import { endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { LEVEL_STEPS } from "../../shared/level";
 import { keptWords } from "./admin-copy";
 import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel } from "./copy";
@@ -366,7 +366,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (!f.baseUrl) return { text: PROVIDER_STEP.needAddress, field: "w-p-url" };
     const bad = endpointProblem(f.baseUrl);
     if (bad) return { text: bad, field: "w-p-url" };
-    if (!f.key.trim() && !ownState?.keySaved) return { text: PROVIDER_STEP.needKey, field: "w-p-key" };
+    // A model server on this computer often needs no key (first-run-v2): main sends none, and its check says if one is needed.
+    if (!f.key.trim() && !ownState?.keySaved && keyNeeded(f.baseUrl)) return { text: PROVIDER_STEP.needKey, field: "w-p-key" };
     if (!f.conductor) return { text: PROVIDER_STEP.needModel, field: "w-p-conductor" };
     if (!MODEL_ID.test(f.conductor) || (f.worker && !MODEL_ID.test(f.worker))) return { text: "A model name has no spaces in it, such as gpt-4.1 or llama3.2:3b.", field: MODEL_ID.test(f.conductor) ? "w-p-worker" : "w-p-conductor" };
     return null;
@@ -478,7 +479,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const result = $("w-p-result");
     if (result.textContent !== providerCheck.line) result.textContent = providerCheck.line;
     result.className = `w-status ${providerCheck.phase === "failed" || providerCheck.phase === "invalid" ? "error" : providerCheck.phase === "ok" ? "ok" : ""}`;
-    if (ownState && ownState.keyring === false && !ownState.keySaved) {
+    // No keyring: a key can't be kept, so only a model server on this computer with no key typed can be used (first-run-v2).
+    const typed = readProviderFields();
+    if (ownState && ownState.keyring === false && !ownState.keySaved && (!!typed.key.trim() || (!!typed.baseUrl && keyNeeded(typed.baseUrl)))) {
       result.textContent = PROVIDER_STEP.noKeyring;
       result.className = "w-status error";
       return { label: PROVIDER_STEP.check, why: PROVIDER_STEP.noKeyring };

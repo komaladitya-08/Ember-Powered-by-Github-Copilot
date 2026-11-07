@@ -868,7 +868,8 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   context). A key replaced or removed stays redacted from the log for the rest of the run, as a task may still run on it. The keyring is asked only once the provider is on with a key saved for its host (never at a
   start otherwise), and on macOS only asynchronously: a synchronous Keychain check on the main thread can block on a
   headless Mac, and a second Ember handing over to a blocked first one hangs. Where the keyring is `basic_text` (no GNOME Keyring or KWallet), Ember refuses to keep a key and
-  says why; a local server that needs no key still works. The key is never logged, audited, shown again (Home says
+  says why; a local server that needs no key still works, in Home and in first run's provider step alike (which asks
+  for a key only from a service that isn't on this computer, `keyNeeded`). The key is never logged, audited, shown again (Home says
   "Key saved", with **Replace** and **Remove**) or put in any process's environment: it reaches only the Copilot
   runtime's provider config. **Remove** and **Sign out** delete it. Another GitHub account signing in leaves it in
   place: the key belongs to the user's model service, not to a GitHub account, so an account change has nothing to do

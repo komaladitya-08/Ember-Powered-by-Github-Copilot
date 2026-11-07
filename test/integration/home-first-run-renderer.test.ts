@@ -505,6 +505,45 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(r) a model server on this computer is checked without an API key, also on a computer with no keyring (first-run-v2)", async () => {
+    const p = await open();
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    await p.fill("#w-p-url", "http://localhost:11434/v1");
+    await p.fill("#w-p-conductor", "llama3.2:3b");
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("test");
+    const order = await calls(p);
+    expect(order).toContain("agree:localhost:11434");
+    expect(order).not.toContain("saveKey");
+    expect(await p.locator("#w-p-result").innerText()).not.toBe("Paste the API key first.");
+    // Another service still needs its key.
+    const q = await open();
+    await q.getByRole("button", { name: "Use my own provider" }).click();
+    await q.fill("#w-p-url", "https://api.example.com/v1");
+    await q.fill("#w-p-conductor", "gpt-4.1");
+    await next(q).click();
+    expect(await q.locator("#w-p-result").innerText()).toBe("Paste the API key first.");
+    expect(await calls(q)).toEqual([]);
+    // No keyring: a local server with no key can still be checked; another service, or a typed key, can't, and says why.
+    const r = await open({ providerState: { keyring: false } });
+    await r.getByRole("button", { name: "Use my own provider" }).click();
+    await r.fill("#w-p-url", "http://127.0.0.1:1234/v1");
+    await r.fill("#w-p-conductor", "local-model");
+    expect(await next(r).getAttribute("aria-disabled")).toBeNull();
+    expect(await r.locator("#w-why").innerText()).not.toContain("keyring");
+    await r.fill("#w-p-key", "sk-x");
+    await expect.poll(() => next(r).getAttribute("aria-disabled")).toBe("true");
+    expect(await r.locator("#w-why").innerText()).toContain("A model server on this computer that needs no key still works");
+    await r.fill("#w-p-key", "");
+    await r.fill("#w-p-url", "https://api.example.com/v1");
+    await expect.poll(() => next(r).getAttribute("aria-disabled")).toBe("true");
+    await r.fill("#w-p-url", "http://127.0.0.1:1234/v1");
+    await expect.poll(() => next(r).getAttribute("aria-disabled")).toBeNull();
+    await next(r).click();
+    await expect.poll(() => calls(r)).toContain("agree:127.0.0.1:1234");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(m) Back, then Home turns the provider on itself: the late switch-off of the abandoned check leaves it on (PR #191 re-review)", async () => {
     const p = await open({ slowAgree: true });
     await p.getByRole("button", { name: "Use my own provider" }).click();

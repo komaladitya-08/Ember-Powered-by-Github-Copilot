@@ -93,8 +93,8 @@ export const PROVIDER_STEP = {
   title: "Use your own model provider",
   lead: "Use any service that speaks the OpenAI, Azure OpenAI or Anthropic API instead of GitHub Copilot.",
   needs: [
-    "The service's full address, starting with https://.",
-    "An API key from the service. I keep it encrypted on this computer and send it only to that address.",
+    "The service's full address, starting with https://, or http://localhost for a model server on this computer.",
+    "An API key from the service, unless it's a model server on this computer that needs none. I keep it encrypted on this computer and send it only to that address.",
     "The name of a model it offers, such as gpt-4.1. A second model for tasks is optional.",
   ],
   check: "Agree and check the models",
@@ -107,7 +107,7 @@ export const PROVIDER_STEP = {
   needKey: "Paste the API key first.",
   needModel: "Enter the name of a model first.",
   waiting: "Check the provider first.",
-  noKeyring: "This computer can't keep an API key safely (no keyring), so I can't use your own provider here. Go back to use GitHub Copilot.",
+  noKeyring: "This computer has no keyring for passwords, so I can't keep an API key safely here. A model server on this computer that needs no key still works; for any other service, go back to use GitHub Copilot.",
   back: "Use GitHub Copilot instead",
 } as const;
 
