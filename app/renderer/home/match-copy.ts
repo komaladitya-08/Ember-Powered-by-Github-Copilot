@@ -20,7 +20,9 @@ export const MATCH_TEXT = {
   forget: "Forget my voice",
   learnt: "Ember knows your voice now.",
   stopped: "Stopped teaching Ember your voice.",
-  forgot: "Ember forgot your voice.",
+  /** Forget my voice deletes the words learnt from what the user said too (personal/service.ts forgetVoice): said so. */
+  forgot: "Ember forgot your voice and the words it learnt.",
+  forgetHint: "Also forgets the words Ember learnt from what you said.",
   progressLabel: "Phrases Ember has heard",
   /** Teaching ended before Ember learnt the voice, and not by the user's Cancel (VoiceMatchStatus.ended). */
   ended: {

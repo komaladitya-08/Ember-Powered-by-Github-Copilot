@@ -106,7 +106,7 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
     expect(matchAnnouncement(enrolling(3), onNow)).toBe(`Ember knows your voice now. ${MATCH_TEXT.on}`);
     expect(matchAnnouncement(enrolling(1), none, true)).toBe(`Stopped teaching Ember your voice. ${MATCH_TEXT.none}`);
     expect(matchAnnouncement(enrolling(1), none)).toBe(MATCH_TEXT.none);
-    expect(matchAnnouncement(onNow, none)).toBe(`Ember forgot your voice. ${MATCH_TEXT.none}`);
+    expect(matchAnnouncement(onNow, none)).toBe(`Ember forgot your voice and the words it learnt. ${MATCH_TEXT.none}`);
     expect(matchAnnouncement(onNow, offNow)).toBeNull();
     expect(matchAnnouncement(undefined, undefined)).toBeNull();
   });
@@ -155,7 +155,8 @@ describe("Voice Match's markup", () => {
     expect(page).toContain(`<progress id="match-progress" max="4" value="0" aria-label="${MATCH_TEXT.progressLabel}" hidden></progress>`);
     expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">${MATCH_TEXT.teach}</button>`);
     expect(page).toContain(`<button type="button" id="match-cancel" class="btn quiet" hidden>${MATCH_TEXT.cancel}</button>`);
-    expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" hidden>${MATCH_TEXT.forget}</button>`);
+    // Forget my voice deletes the words learnt too: the button says so before it is pressed (voice-listening-9).
+    expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="${MATCH_TEXT.forgetHint}" hidden>${MATCH_TEXT.forget}</button><span id="match-forget-hint" hidden>${MATCH_TEXT.forgetHint}</span>`);
     // The bar is read as "1 of 4 heard", not a percentage.
     expect(main).toMatch(/bar\.setAttribute\("aria-valuetext", view\.progress\.text\)/);
   });

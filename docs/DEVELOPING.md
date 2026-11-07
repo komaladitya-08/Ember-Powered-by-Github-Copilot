@@ -505,7 +505,7 @@ stops on Stop everything, when settings closes or is minimised, when Ember stops
 after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
 It decides only what a voice may approve: every voice is heard, and a request it doesn't
 match simply can't approve anything (owner decision of 2026-11-05: on a laptop's microphone the owner's own requests
-scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint. With **Keep learning my voice** (on by default once Voice Match knows you), the
+scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint and the words Ember learnt (the button says so). With **Keep learning my voice** (on by default once Voice Match knows you), the
 voiceprint follows your voice slowly, from requests it is sure are yours: never from Ember's own voice, a request with
 two voices in it, an answer to a question, or for two minutes after it turned another voice away or you stopped
 Ember; at most one request a minute (with 2 s of voice or more), a small step at a time, and never far from what you
