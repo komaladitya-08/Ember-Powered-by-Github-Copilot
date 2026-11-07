@@ -15,7 +15,7 @@ import { factLine, memoryBlock } from "../../app/main/memory/format";
 import { SEMANTIC_K } from "../../app/main/memory/embed";
 import { MemoryGraph, type EntityKind, type GraphClock } from "../../app/main/memory/graph";
 import { memoryRefusal } from "../../app/main/memory/guard";
-import { SEMANTIC_FLOOR, personalizedPageRank, recall } from "../../app/main/memory/recall";
+import { SEMANTIC_FLOOR, bm25, personalizedPageRank, recall } from "../../app/main/memory/recall";
 import { memoryFile } from "../../app/main/memory/store";
 import { nameKey, similarity, terms } from "../../app/main/memory/text";
 import { MEMORY_MODEL } from "../../app/voice/models";
@@ -254,6 +254,100 @@ describe("recall", () => {
     const total = [...rank.values()].reduce((a, b) => a + b, 0);
     expect(total).toBeCloseTo(1, 5);
     expect(rank.get(priya)!).toBeGreaterThan(rank.get(g.find("dog")!.id) ?? 0);
+  });
+
+  /**
+   * Many facts in a few words, about the user and one of 300 people: every question matches thousands of them. Made
+   * as a saved file is read (5,000 add()s, each checking the facts before it, would take most of a minute).
+   */
+  function crowd(n: number) {
+    const words = "atlas orion billing platform release deploy review meeting tuesday design docs slack firefox code editor team manager priya bob alice carol report invoice budget travel london leeds paris".split(" ");
+    let seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const at = "2026-10-01T09:00:00.000Z";
+    const entities = [{ id: "e0", name: "User", kind: "person" as const, aliases: [], createdAt: at, updatedAt: at }, ...Array.from({ length: 300 }, (_, i) => ({ id: `e${i + 1}`, name: `Person${i}`, kind: "person" as const, aliases: [], createdAt: at, updatedAt: at }))];
+    const facts = Array.from({ length: n }, (_, i) => ({
+      id: `f${i}`, text: `Fact ${i} about ${Array.from({ length: 7 }, () => words[Math.floor(rnd() * words.length)]).join(" ")}`, entities: ["e0", `e${1 + Math.floor(rnd() * 300)}`],
+      predicate: "", source: i % 3 ? "conversation" as const : "user" as const, confidence: i % 3 ? 0.7 : 1, validAt: at, invalidAt: null, supersededBy: null, createdAt: at, lastUsedAt: null, uses: 0,
+    }));
+    return new MemoryGraph({ version: 1, entities, facts }, clock());
+  }
+
+  it("walks and scores exactly as before it kept its words and its graph between requests, after a use or a new name too (memory-14)", () => {
+    // The walk and BM25 as they were, with maps keyed by id and every word of every fact counted on each request.
+    const mapWalk = (facts: ReturnType<MemoryGraph["allFacts"]>, seeds: Map<string, number>) => {
+      const degree = new Map<string, number>();
+      for (const f of facts) for (const e of f.entities) degree.set(e, (degree.get(e) ?? 0) + 1);
+      const edges = new Map<string, { to: string; w: number }[]>();
+      const add = (from: string, to: string, w: number) => { (edges.get(from) ?? edges.set(from, []).get(from)!).push({ to, w }); };
+      for (const f of facts) {
+        const inv = f.entities.map(e => 1 / degree.get(e)!);
+        const sum = inv.reduce((a, b) => a + b, 0);
+        f.entities.forEach((e, i) => { add(f.id, e, inv[i] / sum); add(e, f.id, 1 / degree.get(e)!); });
+      }
+      const known = [...seeds].filter(([id, w]) => edges.has(id) && w > 0);
+      const total = known.reduce((a, [, w]) => a + w, 0);
+      if (!total) return new Map<string, number>();
+      const reset = new Map(known.map(([id, w]) => [id, w / total]));
+      let rank = new Map(reset);
+      for (let i = 0; i < 30; i++) {
+        const next = new Map<string, number>();
+        for (const [id, r] of reset) next.set(id, 0.5 * r);
+        for (const [id, r] of rank) for (const { to, w } of edges.get(id) ?? []) next.set(to, (next.get(to) ?? 0) + 0.5 * r * w);
+        rank = next;
+      }
+      return rank;
+    };
+    const mapBm25 = (g: MemoryGraph, facts: ReturnType<MemoryGraph["allFacts"]>, query: string[]) => {
+      const docs = facts.map(f => ({ id: f.id, words: terms(`${f.text} ${f.entities.flatMap(id => { const e = g.entity(id); return e ? [e.name, ...e.aliases] : []; }).join(" ")}`) }));
+      const avg = docs.reduce((n, d) => n + d.words.length, 0) / (docs.length || 1);
+      const df = new Map<string, number>();
+      for (const d of docs) for (const t of new Set(d.words)) df.set(t, (df.get(t) ?? 0) + 1);
+      const out = new Map<string, number>();
+      for (const d of docs) {
+        const tf = new Map<string, number>();
+        for (const t of d.words) tf.set(t, (tf.get(t) ?? 0) + 1);
+        let s = 0;
+        for (const t of new Set(query)) {
+          const n = tf.get(t);
+          if (n) s += Math.log(1 + (docs.length - df.get(t)! + 0.5) / (df.get(t)! + 0.5)) * (n * 2.2) / (n + 1.2 * (0.25 + 0.75 * d.words.length / (avg || 1)));
+        }
+        if (s > 0) out.set(d.id, s);
+      }
+      return out;
+    };
+    const g = crowd(600);
+    const check = (query: string) => {
+      const facts = g.allFacts(true), q = terms(query);
+      const lexical = bm25(g, facts, q);
+      expect([...lexical]).toEqual([...mapBm25(g, facts, q)]);
+      const seeds = new Map([...lexical].slice(0, 40));
+      for (const e of g.allEntities().slice(0, 3)) seeds.set(e.id, 1.5);
+      expect([...personalizedPageRank(facts, seeds)]).toEqual([...mapWalk(facts, seeds)]);
+    };
+    for (const q of ["What did Priya say about the Atlas release?", "Person12 budget", "Person7 Bobby Tables"]) check(q);
+    // A use stamps facts (new objects, the same words); a new name changes what a fact is matched on; a new fact
+    // changes the walk's graph.
+    g.touch(g.allFacts().slice(0, 50).map(f => f.id));
+    expect(g.addAlias(g.find("Person7")!.id, "Bobby Tables")).toBe(true);
+    g.add({ text: "Bobby Tables runs the release train", about: [{ name: "Person7" }, { name: "release train" }], source: "user" });
+    for (const q of ["What did Priya say about the Atlas release?", "Person12 budget", "Person7 Bobby Tables"]) check(q);
+    expect(recall(g, "Bobby Tables")[0].fact.text).toBe("Bobby Tables runs the release train");
+  });
+
+  it("recalls from 5,000 facts in milliseconds, not a tenth of a second, before each request (memory-14)", () => {
+    const g = crowd(5000);
+    const questions = ["What did Priya say about the Atlas release?", "Book travel to London", "Summarise the budget report for Person12"];
+    // The first request after a start reads every fact's words once.
+    for (const q of questions) recall(g, q, { k: 6 });
+    const times: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      const t = performance.now();
+      for (const q of questions) expect(recall(g, q, { k: 6 })).toHaveLength(6);
+      times.push((performance.now() - t) / questions.length);
+    }
+    // Measured on 4 vCPUs: 97–135 ms a request before (memory-14), 15–23 ms now. The bound leaves room for a busy CI runner.
+    expect(times.sort((a, b) => a - b)[3]).toBeLessThan(50);
   });
 });
 

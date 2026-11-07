@@ -50,7 +50,12 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - edges into an entity are weighted by inverse degree, so a hub such as "User" doesn't spread the walk to
     everything;
   - the final score mixes walk, lexical match, recency (30-day half-life) and confidence;
-  - a question that matches nothing finds nothing.
+  - a question that matches nothing finds nothing;
+  - each fact's words, and the walk's graph in flat arrays, are kept between requests while the facts and their
+    entities are the same objects (the graph replaces, never edits, them), and only the question's words are counted.
+    Every score is exactly what it was, but recall over 5,000 facts that each match the question went from 97–135 ms
+    a request to 15–23 ms on a busy 4-vCPU machine, and a question that matches nothing from 25–32 ms to 3 ms
+    (memory-14; memory.test.ts pins both).
 - `consolidate.ts`: the model-free sleep-time pass.
   - Merges entities that answer to one name and folds near-duplicate facts together.
   - Forgets history older than 180 days and unsure, unused guesses older than 90 days, and keeps the graph under
