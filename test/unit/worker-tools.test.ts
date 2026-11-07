@@ -1819,3 +1819,32 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     expect(audit.some(e => e.event === "action")).toBe(false);
   });
 });
+
+describe("a tool that throws (tasks-approvals-8)", () => {
+  /** A worker whose log lines are kept, and whose perception's read throws `err`. */
+  function throwing(err: Error) {
+    const made = makeWorker();
+    const logs: [string, Record<string, unknown>][] = [];
+    const d = (made.w as unknown as { d: { log: Logger; perception: { perceive: () => Promise<never> } } }).d;
+    d.log = { ...quiet, warn: (e: string, f: Record<string, unknown>) => { logs.push([e, f]); }, error: (e: string, f: Record<string, unknown>) => { logs.push([e, f]); } } as unknown as Logger;
+    d.perception.perceive = async () => { throw err; };
+    return { ...made, logs };
+  }
+
+  it("tells the model plainly that the accessibility helper isn't working, and what the user can do, and logs which tool", async () => {
+    const { call, logs } = throwing(new Error("accessibility helper could not run (No module named gi)"));
+    const r = await call("perceive_window", {});
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toBe("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
+    expect(logs).toContainEqual(["worker.tool_failed", expect.objectContaining({ task: "t1", tool: "perceive_window" })]);
+  });
+
+  it("quotes any other error as untrusted words, and goes on", async () => {
+    const { call } = throwing(new Error("the window <went> away"));
+    const r = await call("perceive_window", {});
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toBe(String.raw`That step didn't work: "the window \u003cwent> away". Call perceive_window and try again, or finish the task saying what's left.`);
+    // The next call still runs.
+    expect((await call("report_progress", { text: "Trying again" })).resultType).toBe("success");
+  });
+});

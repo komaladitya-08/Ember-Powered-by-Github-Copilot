@@ -240,6 +240,18 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/**
+ * A tool's result when its handler threw: the accessibility helper's failures as what the user can do about them (the
+ * setup check says what's wrong), anything else quoted as untrusted words (an error may carry screen text).
+ */
+function toolFailure(err: unknown): ToolResultObject {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/accessibility (helper|bridge)/i.test(msg)) {
+    return fail("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
+  }
+  return fail(`That step didn't work: ${q(msg, 200)}. Call perceive_window and try again, or finish the task saying what's left.`);
+}
+
 /** A step refused while a password or authentication prompt is open on the user's screen (M8.3, safety-privacy-3). */
 const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.";
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -1424,7 +1436,17 @@ export class Worker {
     }
     // Only a read right after a step learns that the step closed its window: any other call starts afresh.
     if (name !== "perceive_window" && name !== "report_progress") this.stepClosedIt = false;
-    const result = await handler(parsed.data);
+    let result: ToolResultObject | string;
+    try {
+      result = await handler(parsed.data);
+    } catch (err) {
+      // A handler that throws (the accessibility helper can't start, a reader that broke) reached the model only as the
+      // runtime's "Tool execution failed", and Ember logged nothing of it: now the tool and the error are logged, and the
+      // model hears what happened in plain words (tasks-approvals-8). Stopped meanwhile: stopped.
+      if (this.isOver || err instanceof BorrowStopped) return STOPPED();
+      this.d.log.warn("worker.tool_failed", { task: this.spec.id, tool: name, err });
+      result = toolFailure(err);
+    }
     // Turned down ("Not now", a refusal, a stop): its card shows the step stopped, not one that didn't work.
     if (typeof result === "object" && result.resultType === "denied") this.activity({ type: "denied" });
     return result;
