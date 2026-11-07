@@ -205,9 +205,16 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps Undo truthful, preserves
       window.__memoryTest.corrections([...window.__memoryTest.words, { heard: "meal", meant: "Miele", at: "2026-11-04" }]);
     });
     expect(await page.evaluate(() => document.activeElement === window.__memoryTest.focused)).toBe(true);
-    await page.locator("#words-list button").first().click();
+    await page.locator("#words-list button").first().focus();
+    await page.keyboard.press("Enter");
     await expect.poll(() => page.locator("#words-list button").count()).toBe(2);
-    expect(await page.evaluate(() => document.activeElement === document.querySelector("#words-list button"))).toBe(true);
+    // Focus goes to what went, never to the next word's Forget, so a second Enter forgets nothing more (memory-7).
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("words-note");
+    expect(await page.locator("#words-note").innerText()).toBe("Forgotten: “umber” → “Ember”.");
+    await page.waitForTimeout(700);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(100);
+    expect(await page.locator("#words-list button").count()).toBe(2);
     await page.locator("#words-forget-all").click();
     await page.locator("#words-forget-yes").click();
     await expect.poll(() => page.locator("#words-note").innerText()).toContain("Couldn't forget");

@@ -227,7 +227,8 @@ runtime. It does not change the app's consent or speaking settings.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
     signing out forgets it all. The list says where each fact came from (you, our conversation, a task, Ember's
     summary or guess). After Forget, focus goes to a line saying what went, with **Undo** for a minute, never to the
-    next row's Forget, so a second Enter forgets nothing more. **Forget all words** (Settings › Voice) asks first.
+    next row's Forget, so a second Enter forgets nothing more; so does forgetting one learnt word in Settings › Voice,
+    whose **Forget all words** asks first.
   - Ember forgets a memory in conversation only when your own words ask it to and name what to forget; the
     conversation then says "Ember forgot: …" with Undo. With memory off or paused, "Forget that I…" or "Forget
     my…" gets a plain answer saying so, never a promise; "Remember that…" goes to the conversation as usual, which

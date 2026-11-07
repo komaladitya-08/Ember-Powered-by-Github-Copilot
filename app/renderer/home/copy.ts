@@ -1244,6 +1244,10 @@ export function wordRowText(w: { heard: string; meant: string }): string {
 export function forgetWordLabel(w: { meant: string }): string {
   return `Forget “${w.meant}”`;
 }
+/** What Settings › Voice says, where focus goes, once a word is forgotten (memory-7). */
+export function wordForgottenText(w: { heard: string; meant: string }): string {
+  return `Forgotten: ${wordRowText(w)}.`;
+}
 
 /** What the conversation says after the user retyped what they said (PersonalVoice.teach's outcome). */
 export function teachOutcomeText(outcome: "learnt" | "off" | "unknown" | "unlike" | "same", meant: string): string {
