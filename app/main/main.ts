@@ -108,7 +108,7 @@ import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
-import { MemoryLearning, withLearned } from "./memory/learning";
+import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
@@ -1561,7 +1561,7 @@ function start(): void {
   // Memory that learns on its own (app/main/memory/learning.ts): only while memory is in force (memoryOn: on, its own
   // consent, the organisation's features.memory; LOCKDOWN turns that off). Its "Ember learned" lines join the
   // conversation Home shows.
-  let learnedLines: TranscriptEntry[] = [];
+  let learnedLines: MemoryLine[] = [];
   const conversationNow = (entries: TranscriptEntry[] = agent?.getTranscript() ?? []) => withLearned(entries, learnedLines);
   const learning = new MemoryLearning({
     memory, inForce: memoryOn, managed: () => !memoryAllowed(),
@@ -1589,16 +1589,21 @@ function start(): void {
       learnedLines = [];
       broadcast(IPC.conversationChanged, conversationNow());
     },
-    // One fact forgotten (Forget, Undo, forget_memory, "forget that"): its line and its Undo go.
-    onForgot: id => {
-      const before = learnedLines.length;
-      learnedLines = learnedLines.filter(l => l.fact !== id);
-      if (learnedLines.length !== before) broadcast(IPC.conversationChanged, conversationNow());
+    // One fact forgotten (Forget, Undo, forget_memory, "forget that"): its "Ember learned" line stays where it was and
+    // says Ember forgot it, with the Undo that puts it back, so focus and a screen reader keep their place (memory-c1-3).
+    // A correction changed its words: the line goes.
+    onForgot: (id, gone) => {
+      const next = linesAfterForget(learnedLines, id, gone);
+      if (!next) return;
+      learnedLines = next;
+      broadcast(IPC.conversationChanged, conversationNow());
     },
-    // forget_memory forgot what the user asked: the conversation says so, in the fact's own words, with Undo (memory-v2).
+    // forget_memory forgot what the user asked: the conversation says so, in the fact's own words, with Undo (memory-v2),
+    // unless the line of when Ember learned it says so already.
     onAskedForget: f => {
-      const t = new Date().toISOString();
-      learnedLines = [...learnedLines, { t, who: "learned" as const, text: f.text.slice(0, 400), forgot: f.undo }].slice(-30);
+      const next = linesAfterAskedForget(learnedLines, f, new Date().toISOString());
+      if (!next) return;
+      learnedLines = next;
       broadcast(IPC.conversationChanged, conversationNow());
     },
     log: log.child("memory"),
@@ -2477,9 +2482,10 @@ function start(): void {
     if (!memoryOwner.ready || !memoryOn()) throw new Error("Ember couldn't put this memory back. Wait until your saved memory is available, then try Undo again.");
     if (typeof token !== "string" || token.length < 8 || token.length > 64) return false;
     const restored = learning.restore(token);
-    // Its "Ember forgot" line goes: what it said is no longer true.
-    if (restored && learnedLines.some(l => l.forgot === token)) {
-      learnedLines = learnedLines.filter(l => l.forgot !== token);
+    // Its "Ember forgot" line says it is remembered again, where it was (memory-c1-3).
+    const next = restored ? linesAfterRestore(learnedLines, token) : null;
+    if (next) {
+      learnedLines = next;
       broadcast(IPC.conversationChanged, conversationNow());
     }
     return restored;

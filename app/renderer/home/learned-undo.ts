@@ -36,8 +36,10 @@ export function mountForgotUndo(row: HTMLElement, text: string, token: string, r
     note.textContent = "";
     void restore(token).then(put => {
       if (put) { undo.textContent = MEMORY_PUT_BACK; return; }
-      undo.hidden = true;
       note.textContent = MEMORY_UNDO_EXPIRED;
+      // Focus stays in the line (never dropped to the page with the hidden button), on the words that say it's too late.
+      if (row.contains(document.activeElement)) { note.tabIndex = -1; note.focus(); }
+      undo.hidden = true;
     }, err => {
       undo.removeAttribute("aria-disabled");
       note.textContent = memoryRestoreFailedText(err);

@@ -172,6 +172,11 @@ export interface AnswerStream { id: number; text: string; state: "streaming" | "
 /** `forgot`: a "learned" line that says what Ember forgot when asked (memory-v2), with the token its Undo takes. */
 export interface TranscriptEntry {
   t: string; who: "you" | "ember" | "task" | "problem" | "learned"; text: string; truncated?: boolean; fact?: string; heardId?: number; stopped?: true; answerId?: number; forgot?: string;
+  /**
+   * A "learned" line that says Ember forgot the fact (`forgot`, its Undo's token): how many of Ember's notes went with
+   * it, and what holds again (memory-12); `again`: its Undo put it back (memory-c1-3). The line stays where it was.
+   */
+  derived?: number; back?: string[]; again?: true;
   /** Brought back from before Ember restarted (keepConversation): for reading only, which Home marks (home-8). Never saved. */
   restored?: true;
 }

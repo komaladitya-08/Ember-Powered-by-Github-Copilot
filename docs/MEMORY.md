@@ -193,7 +193,7 @@ download, so English-only MiniLM is the trade-off for now.
      `forget_memory` forgets a fact only when the user's own words this turn ask to forget it, with a word of the
      fact after the request (`asksToForget`: "forget that I work at Globex", "remove Priya from your memory"; never
      "don't forget", a routine's steps or unchecked speech), as `delete_routine` does. What it forgot shows in the
-     conversation as "Ember forgot: …" in the fact's stored words, with Undo.
+     conversation as "Ember forgot: …" in the fact's stored words, with what holds again, and Undo.
    - Undo after any Forget (Home's list, "Ember forgot", "forget that") puts the fact back exactly: its notes, what
      it had replaced closed again, its vector rebuilt (`MemoryService.restore`, once per Forget, within 60 seconds,
      held in main's memory only and dropped at Forget everything).
@@ -232,8 +232,10 @@ download, so English-only MiniLM is the trade-off for now.
      line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again
      (`reopenSuperseded`), and Home's line and the reply say so ("Ember remembers “Works at Globex” again").
      Forgetting an older fact forgets it alone, so forgetting "Works at Initech" after leaving never makes "Works at
-     Globex" current again; it stays what used to be true (memory-12). Either way the "Ember learned" line goes;
-     **Forget everything** clears the lines too.
+     Globex" current again; it stays what used to be true (memory-12). Either way the "Ember learned" line stays
+     where it was and says "Ember forgot: …" (with the notes that went and what holds again), with the Undo that puts
+     it back; that Undo makes it "Ember remembers “…” again". Focus moves to the line's new words, never to the page
+     (memory-c1-3). **Forget everything** clears the lines too.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
      only for Ember to forget something about the user ("forget that I…", "forget my…", "forget where I live";

@@ -119,7 +119,7 @@ describe("durable memory deletion", () => {
     l.introduce({ name: "Ram" }); s.memory.flush();
     const id = s.memory.list()[0].id;
     expect(l.forget(id)).toBe(true);
-    expect(forgot).toHaveBeenCalledWith(id);
+    expect(forgot).toHaveBeenCalledWith(id, expect.objectContaining({ undo: expect.any(String) }));
     // Nothing kept lately: said so in code, never left to the model (memory-v1).
     expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
     l.introduce({ work: "Artist" }); s.memory.flush();

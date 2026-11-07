@@ -14,7 +14,7 @@ import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOI
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -1056,11 +1056,18 @@ $("keep-conversation").addEventListener("change", e => { void save({ keepConvers
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");
   li.className = e.who;
-  // "Ember learned: …" with Undo (forgets that fact): a small line of its own, not a message.
+  // "Ember learned: …" with Undo (forgets that fact): a small line of its own, not a message. Once forgotten it says
+  // so where it was, with the Undo that puts it back, and once put back that it is remembered again (memory-c1-3).
   if (e.who === "learned") {
-    const text = Object.assign(document.createElement("p"), { textContent: e.forgot ? forgotLine(e.text) : learnedLine(e.text) });
+    const text = Object.assign(document.createElement("p"), {
+      textContent: e.again ? rememberedAgainLine(e.text) : e.forgot ? forgotLine(e.text, e.derived, e.back) : learnedLine(e.text),
+      // Where focus goes when its own Undo changed the line, so a second Enter does nothing and the change is read out.
+      tabIndex: -1,
+    });
     li.append(text);
+    li.dataset.state = learnedState(e);
     const id = e.fact;
+    if (e.again) return li;
     if (e.forgot) mountForgotUndo(li, e.text, e.forgot, window.ember.restoreMemory);
     else if (id) mountLearnedUndo(li, e.text, id, async fact => { await window.ember.forgetMemory(fact); });
     return li;
@@ -1150,6 +1157,21 @@ function syncStreamRow(list: HTMLElement): void {
   li.hidden = !!q && !conversationMatchesText(row.text, q);
   if (li.parentElement !== list || li !== list.lastElementChild) list.append(li);
 }
+/** What a "learned" line says now: learned (its fact), forgotten (its Undo's token) or remembered again (memory-c1-3). */
+const learnedState = (e: Entry) => (e.again ? "again" : e.forgot ? `forgot:${e.forgot}` : `fact:${e.fact ?? ""}`);
+/**
+ * A "learned" line whose state changed (main keeps the line where it was): drawn again in place. Focus in it, on the
+ * Undo just pressed, moves to its new words, which a screen reader then reads (memory-c1-3).
+ */
+function redrawLearned(row: HTMLElement, e: Entry): HTMLElement {
+  if (e.who !== "learned" || row.dataset.state === undefined || row.dataset.state === learnedState(e)) return row;
+  const had = row.contains(document.activeElement);
+  const next = conversationRow(e);
+  next.hidden = row.hidden;
+  row.replaceWith(next);
+  if (had) next.querySelector("p")?.focus();
+  return next;
+}
 function renderConversation(raw: Entry[]): void {
   answerStream = streamEntries(answerStream, raw);
   const entries = raw;
@@ -1171,7 +1193,7 @@ function renderConversation(raw: Entry[]): void {
   let matches = 0;
   for (let i = 0; i < shown.length; i++) {
     const match = !searching || conversationMatchesText(shown[i].text, conversationSearch.value);
-    (list.children[i] as HTMLElement).hidden = !match;
+    redrawLearned(list.children[i] as HTMLElement, shown[i]).hidden = !match;
     if (match) matches++;
   }
   $("conversation-search-status").textContent = searching ? conversationSearchCount(matches) : "";

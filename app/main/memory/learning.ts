@@ -67,8 +67,11 @@ export interface LearningDeps {
   onLearned?: (items: LearnedItem[]) => void;
   /** Everything was forgotten: what showed as learned goes. */
   onForgotAll?: () => void;
-  /** One fact was forgotten: its "Ember learned" line goes. */
-  onForgot?: (id: string) => void;
+  /**
+   * One fact was forgotten: its "Ember learned" line says so where it was, with the Undo that puts it back (`gone`:
+   * what went, and restore's token: memory-c1-3). Without `gone` (a correction changed its words) the line goes.
+   */
+  onForgot?: (id: string, gone?: { text: string; derived: number; undo: string; back?: string[] }) => void;
   /**
    * The conductor forgot a fact the user asked it to (forget_memory): the conversation says so ("Ember forgot: …", in
    * the fact's stored words, never the model's), with Undo by `undo` (memory-v2).
@@ -230,7 +233,7 @@ export class MemoryLearning {
     const gone = this.d.memory.forgetCounted(id, !!kept && this.now() - kept.at <= FORGET_THAT_MS);
     this.recent = this.recent.filter(r => r.id !== id);
     if (gone) {
-      try { this.d.onForgot?.(id); } catch { this.d.log.warn("memory.delete_notice_failed"); }
+      try { this.d.onForgot?.(id, gone); } catch { this.d.log.warn("memory.delete_notice_failed"); }
     }
     return gone;
   }
@@ -468,6 +471,34 @@ export class MemoryLearning {
     this.recent = [...this.recent, ...items.map(i => ({ id: i.id, text: i.text, at }))].slice(-20);
     if (announce) this.d.onLearned?.(items);
   }
+}
+
+/** A conversation line about memory, as main keeps it beside the conversation ("Ember learned: …", "Ember forgot: …"). */
+export interface MemoryLine { t: string; who: "learned"; text: string; fact?: string; forgot?: string; derived?: number; back?: string[]; again?: true }
+/** What a Forget gave back: its Undo's token, the notes that went with it and what holds again. */
+type Gone = { undo: string; derived: number; back?: string[] };
+const forgotFields = (gone: Gone) => ({
+  forgot: gone.undo, ...(gone.derived ? { derived: gone.derived } : {}), ...(gone.back?.length ? { back: gone.back.slice(0, 3).map(b => b.slice(0, 400)) } : {}),
+});
+
+/**
+ * The memory lines once fact `id` was forgotten (memory-c1-3): its "Ember learned" line stays where it was (its time,
+ * so Home keeps the row and focus in place) and says Ember forgot it, with the Undo that puts it back (`gone`). Without
+ * `gone` (a correction changed its words) the line goes. Null when no line was about it.
+ */
+export function linesAfterForget(lines: readonly MemoryLine[], id: string, gone?: Gone): MemoryLine[] | null {
+  if (!lines.some(l => l.fact === id)) return null;
+  return gone ? lines.map(l => (l.fact === id ? { t: l.t, who: "learned", text: l.text, ...forgotFields(gone) } : l)) : lines.filter(l => l.fact !== id);
+}
+/** And once the user asked Ember to forget it (forget_memory: memory-v2), unless its learned line says so already. */
+export function linesAfterAskedForget(lines: readonly MemoryLine[], f: Gone & { text: string }, t: string): MemoryLine[] | null {
+  if (lines.some(l => l.forgot === f.undo)) return null;
+  return [...lines, { t, who: "learned" as const, text: f.text.slice(0, 400), ...forgotFields(f) }].slice(-30);
+}
+/** And once the Undo of `token` put the fact back: its line says it is remembered again, where it was. */
+export function linesAfterRestore(lines: readonly MemoryLine[], token: string): MemoryLine[] | null {
+  if (!lines.some(l => l.forgot === token)) return null;
+  return lines.map(l => (l.forgot === token ? { t: l.t, who: "learned", text: l.text, again: true } : l));
 }
 
 /** The conversation as Home shows it: Ember's own lines, with the "Ember learned" lines in time order among them. */

@@ -12,7 +12,7 @@ import { copilotOneShot } from "../../app/main/agent/one-shot";
 import { MemoryGraph } from "../../app/main/memory/graph";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_OFF, answerFacts, introFacts, isGetToKnowMe, styleOf } from "../../app/main/memory/intro";
 import { CallBudget, EXTRACT_SYSTEM, Learner, MAX_ANSWER_CHARS, extractPrompt, learnedFacts, parseExtraction, soundsLikeInstruction, subjectOf, turnSource, type OneShot } from "../../app/main/memory/learn";
-import { IDLE_MS, MemoryLearning, REFINE_PER_DAY, withLearned } from "../../app/main/memory/learning";
+import { IDLE_MS, MemoryLearning, REFINE_PER_DAY, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "../../app/main/memory/learning";
 import { FORGET_OFF, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, answersQuestion, describes, forgetReply, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk, namesIn, rememberNote } from "../../app/main/memory/questions";
 import { negated, samePolarity } from "../../app/main/memory/text";
 import { REFINE_FACTS, REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "../../app/main/memory/refine";
@@ -20,7 +20,7 @@ import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { MemoryService } from "../../app/main/memory/service";
 import type { MemoryOwnerReason } from "../../app/main/memory/owner";
 import { memoryPausedReply } from "../../app/shared/memory-owner";
-import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, aboutYouSpoken, forgotLine, memoryPaused, introFromForm, learnedLine, memoryProvenanceLabel, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
+import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, aboutYouSpoken, forgotLine, memoryPaused, introFromForm, learnedLine, rememberedAgainLine, memoryProvenanceLabel, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
 
 const quiet = { info: () => undefined, warn: () => undefined };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-memlearn-"));
@@ -446,6 +446,34 @@ describe("forget_memory's visible line and its Undo (memory-v2)", () => {
   });
 });
 
+describe("the conversation's memory lines after Undo (memory-c1-3)", () => {
+  it("keeps a learned line where it was once its fact is forgotten, saying so with the Undo that puts it back, then that it is remembered again", () => {
+    const learned: MemoryLine[] = [{ t: "2026-11-07T10:00:00Z", who: "learned", text: "Works at Initech", fact: "f2" }, { t: "2026-11-07T10:01:00Z", who: "learned", text: "Uses Firefox", fact: "f3" }];
+    const forgot = linesAfterForget(learned, "f2", { undo: "tok-12345678", derived: 1, back: ["Works at Globex"] })!;
+    expect(forgot).toEqual([{ t: "2026-11-07T10:00:00Z", who: "learned", text: "Works at Initech", forgot: "tok-12345678", derived: 1, back: ["Works at Globex"] }, learned[1]]);
+    expect(forgotLine("Works at Initech", 1, ["Works at Globex"])).toBe("Ember forgot: Works at Initech (and a note Ember made from it). Ember remembers “Works at Globex” again.");
+    // forget_memory of the same fact adds no second line; of another fact it adds its own.
+    expect(linesAfterAskedForget(forgot, { text: "Works at Initech", undo: "tok-12345678", derived: 1 }, "2026-11-07T10:02:00Z")).toBeNull();
+    expect(linesAfterAskedForget(forgot, { text: "Likes tea", undo: "tok-87654321", derived: 0 }, "2026-11-07T10:02:00Z")!.at(-1)).toEqual({ t: "2026-11-07T10:02:00Z", who: "learned", text: "Likes tea", forgot: "tok-87654321" });
+    const again = linesAfterRestore(forgot, "tok-12345678")!;
+    expect(again[0]).toEqual({ t: "2026-11-07T10:00:00Z", who: "learned", text: "Works at Initech", again: true });
+    expect(rememberedAgainLine("Works at Initech")).toBe("Ember remembers “Works at Initech” again.");
+    // A correction changed its words: the line goes. No line about it: nothing changes.
+    expect(linesAfterForget(learned, "f3")).toEqual([learned[0]]);
+    expect(linesAfterForget(learned, "f9", { undo: "x", derived: 0 })).toBeNull();
+    expect(linesAfterRestore(learned, "tok-none")).toBeNull();
+  });
+
+  it("tells main what each Forget gave back, so the line can offer its Undo", () => {
+    const { l, s, forgot } = learning();
+    l.introduce({ name: "Ram" });
+    const id = s.list()[0].id;
+    const gone = l.forgetCounted(id);
+    expect(gone).toMatchObject({ text: "Likes to be called Ram", undo: expect.any(String) });
+    expect(forgot).toHaveBeenCalledExactlyOnceWith(id, gone);
+  });
+});
+
 describe("“forget that”, the instruction check and the conversation's line", () => {
   it("forgets what was kept just now, and says so when nothing was, rather than leaving it to a model that can't (memory-v1)", () => {
     const { l, s, advance } = learning();
@@ -808,9 +836,9 @@ describe("the re-review of PR #142", () => {
     const { l, s, forgot } = learning();
     l.introduce({ name: "Ram" });
     const ram = s.list()[0].id;
-    // Home's Forget (or forget_memory): the line goes, and "forget that" no longer reaches it.
+    // Home's Forget (or forget_memory): the line says so (memory-c1-3), and "forget that" no longer reaches it.
     expect(l.forget(ram)).toBe(true);
-    expect(forgot).toHaveBeenCalledWith(ram);
+    expect(forgot).toHaveBeenCalledWith(ram, expect.objectContaining({ undo: expect.any(String) }));
     expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
     expect(l.conductorMemory().forget("f-none")).toBe(false);
 
@@ -915,7 +943,7 @@ describe("the second re-review of PR #142", () => {
     const mail = s.list().find(i => i.text.includes("Mail"))!;
     // forget_memory goes through learning.forget too: its line goes.
     expect(l.conductorMemory().forget(mail.id)).toBe(true);
-    expect(forgot).toHaveBeenCalledWith(mail.id);
+    expect(forgot).toHaveBeenCalledWith(mail.id, expect.objectContaining({ undo: expect.any(String) }));
     // The newest left is Ram, not the Mail fact already gone.
     expect(l.intent("forget that", { own: true })).toBe("Forgotten: “Likes to be called Ram”.");
     expect(remembered(s)).toEqual([]);

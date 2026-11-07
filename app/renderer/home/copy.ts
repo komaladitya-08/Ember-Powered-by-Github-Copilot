@@ -483,8 +483,14 @@ export function memorySourceLabel(source: string): string {
 
 /** The conversation's line when Ember keeps something new on its own, and its Undo button's name for screen readers. */
 export const learnedLine = (text: string) => `Ember learned: ${text}`;
-/** The conversation's line when Ember forgot a fact you asked it to forget (memory-v2), and its Undo's name. */
-export const forgotLine = (text: string) => `Ember forgot: ${text}`;
+/**
+ * The conversation's line when Ember forgot a fact (memory-v2: asked to; memory-c1-3: by its "Ember learned" line's
+ * Undo, or Forget), with the notes that went with it and what holds again (memory-12); and its Undo's name.
+ */
+export const forgotLine = (text: string, derived = 0, back: readonly string[] = []) =>
+  `Ember forgot: ${text}${derived ? ` (and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it)` : ""}${back.length ? `. Ember remembers ${quotedAnd(back)} again.` : ""}`;
+/** The same line once its Undo put the fact back (memory-c1-3). */
+export const rememberedAgainLine = (text: string) => `Ember remembers “${text.replace(/[“”]/g, "")}” again.`;
 export const undoForgotLabel = (text: string) => `Undo: remember “${text}” again`;
 /**
  * What Memory's list says after Forget, where focus goes (never the next row's Forget, so a second Enter forgets
