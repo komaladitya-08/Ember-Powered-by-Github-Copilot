@@ -965,6 +965,9 @@ function start(): void {
     if (where) sendToHome(IPC.focusSection, where);
   };
 
+  /** Settings › Memory, at its switch. */
+  const openMemory = () => { showHome(); sendToHome(IPC.focusSection, "memory:memory-yes"); };
+
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };
     if (home && !home.isDestroyed() && home.webContents.isLoading()) home.webContents.once("did-finish-load", send); else send();
@@ -1508,6 +1511,8 @@ function start(): void {
   // in the "Ember memory" utility process, used only while memory is on.
   const memoryConfigured = () => consented() && memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
   const memoryOn = () => memoryOwner.ready && memoryConfigured();
+  /** On under an earlier note than today's: paused until the user reviews it, as Home says (memory-r4). */
+  const memoryNoteOutdated = (m: { on: boolean; consent: { version: number } }) => m.on && m.consent.version > 0 && m.consent.version < FEATURE_CONSENT_VERSION.memory;
   const betterRecall = new BetterRecall({
     dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn, memoryWanted: memoryConfigured,
     fork: () => {
@@ -1563,7 +1568,9 @@ function start(): void {
     // "Spoken aloud or not" in the spoken interview is Ember's real speaking choice (memory-5).
     setSpoken: on => { try { settings.update(speakSettings(on ? "always" : "never")); } catch (err) { log.warn("memory.spoken_not_saved", { err }); } },
     // On and agreed to, but its owner isn't verified: Ember says why rather than asking to turn memory on (memory-2).
-    paused: () => (memoryConfigured() && !memoryOwner.ready ? memoryOwner.reason ?? "checking" : null),
+    // On under an earlier note the user hasn't reviewed: paused, as Home says, until they do (memory-r4).
+    paused: () => (memoryConfigured() ? (memoryOwner.ready ? null : memoryOwner.reason ?? "checking")
+      : consented() && memoryAllowed() && memoryNoteOutdated(settings.get().memory) ? "note" : null),
     questionsOn: () => settings.get().memory.questions,
     askedAt: () => settings.get().memory.askedAt,
     setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
@@ -1571,7 +1578,7 @@ function start(): void {
     // Fail closed: without a lock watcher the screen counts as locked (nothing runs while away).
     locked: () => screenLock?.locked ?? true,
     say: text => agent?.sayFromMemory(text) ?? false,
-    openMemory: () => { showHome(); sendToHome(IPC.focusSection, "memory:memory-yes"); },
+    openMemory,
     onLearned: items => {
       const t = new Date().toISOString();
       learnedLines = [...learnedLines, ...items.map(i => ({ t, who: "learned" as const, text: i.text.slice(0, 400), fact: i.id }))].slice(-30);
@@ -1618,6 +1625,7 @@ function start(): void {
     useModel: (model: OneShot | null) => learning.setModel(model),
     taskDone: (title: string, result: string) => learning.taskDone(title, result),
     intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
+    rememberNote: (text: string) => learning.rememberNote(text),
   };
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
@@ -2652,6 +2660,8 @@ function start(): void {
       return;
     }
     if (id === "ui:settings") { openSettings(); return; }
+    // "Memory is off" behind the answer to a "remember…" memory couldn't keep (memory-c1-1): Settings › Memory.
+    if (id === "ui:memory") { openMemory(); return; }
     if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }

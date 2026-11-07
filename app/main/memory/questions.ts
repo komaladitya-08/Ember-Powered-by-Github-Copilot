@@ -10,6 +10,7 @@
 
 import type { NewFact } from "./graph";
 import { soundsLikeInstruction } from "./learn";
+import type { MemoryOwnerReason } from "./owner";
 import { fold, nameKey } from "./text";
 
 /** A gap is asked about once recall has missed it in this many requests. */
@@ -136,28 +137,104 @@ export const NOTHING_TO_FORGET = "I haven't kept anything from just now. Say wha
 
 /** "Ember, please", "can you": what may come before a remember or forget request. */
 const LEAD = String.raw`^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?`;
-/** "Remember that…", "don't forget my…", "keep in mind…" (never "remember to…" or "don't forget to…": reminders). */
-const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|make\s+a\s+note)\s+(?!to\b)\S`, "i");
-/** "Forget that I…", "forget my address", "don't remember where I live" (never "forget about…" or "forget to…"). */
-const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:forget|don'?t\s+remember|do\s+not\s+remember|stop\s+remembering|unlearn)\s+(?!to\b|about\b|it\b)\S`, "i");
-/** More than the one request: another sentence, or ", and…" / "and then…" (the conversation takes those whole). */
-const MORE = /[.!?]\s+\S|,\s*(?:and|then)\b|\band\s+then\b/i;
+/** "Can you…", "could you please…": a request put politely, which may end with "?" and still be no question. */
+const POLITE = /^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:can|could|would|will)\s+you\b/i;
+/** "…I said", "…what I told you": what the user said just now, which "forget" lets go of as "never mind". */
+const SAID = String.raw`(?!\s+(?:said|say|told|asked|ask|wrote|typed|meant|mean|just|was\s+saying)\b)`;
+/**
+ * "Remember that…", "don't forget my…", "keep in mind…", "make a note that…". Never "remember to…" or "don't forget
+ * to…" (reminders), "remember when, what, how…" or "remember me" (questions about what Ember knows), nor "make a note
+ * in…" (a note in an app).
+ */
+const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|make\s+a\s+(?:mental\s+)?note\s+(?:that|of)\b)\s*(?!to\b|when\b|what\b|how\b|who\b|where\b|which\b|whether\b|if\b|me\b)\S`, "i");
+/**
+ * "Forget that I…", "forget my address", "forget where I live", "forget everything about me", "don't remember that
+ * Priya is my manager": the user asking Ember to stop knowing something about them, and nothing else. Never "forget
+ * the…", "forget what I said" or "forget that email" (the conversation's: "never mind", or another request), nor
+ * "forget about…" or "forget to…".
+ */
+const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:forget|don'?t\s+remember|do\s+not\s+remember|stop\s+remembering|unlearn)\s+(?:`
+  // "…that I work at Globex", "…I'm vegetarian", "…my wife's birthday" (never "…I said that").
+  + String.raw`(?:that\s+)?(?:i\b${SAID}|i['’](?:m|ve|d)\b|my\b|we\b|our\b)`
+  // "…where I live", "…who my manager is" (never "…what I said").
+  + String.raw`|(?:where|what|who|when|how)\s+(?:i|my)\b${SAID}`
+  // "…that Priya is my manager", "…that the office is in Leeds": a statement, never "…that email" or "…that file".
+  + String.raw`|that\s+(?:\S+\s+){1,3}?(?:is|are|was|were|has|have|works|lives|likes|leads|uses|prefers)\b`
+  // "…everything about me", "…all you know about me", "…me".
+  + String.raw`|(?:everything|all)\s+(?:(?:you\s+)?(?:know|knew|learned|learnt|remember)\s+)?about\s+me\b|me\b)`, "i");
+/** More than the one request: another sentence, or more after a comma or a semicolon (the conversation takes those). */
+const MORE = /[.!?]\s+\S|[,;]\s*\S/;
 
 /**
- * Whether `text` is only a request for Ember to remember something (`remember`) or forget something it keeps
- * (`forget`), or neither: what Ember answers in code while memory isn't in force, so it never promises what it
- * can't do (memory-v1).
+ * Whether `text` is only a request for Ember to remember something (`remember`) or to forget something it keeps about
+ * the user (`forget`), or neither. A question ("Remember when we talked about Atlas?", "Remember me?") and a request
+ * with more in it ("Forget what I said, open Firefox instead") are neither (memory-c1-1). While memory isn't in force,
+ * only a forget request is answered in code (memory-v1); a remember request still goes to the conversation, which
+ * keeps it until Ember closes, and Ember says after the answer that memory won't (`rememberNote`).
  */
 export function memoryAsk(text: string): "remember" | "forget" | null {
   const t = text.trim();
-  if (MORE.test(t.replace(/[.!]+$/, ""))) return null;
+  // (After "Ember," or "Hey Ember." the request starts: that comma is no more.)
+  if (MORE.test(t.replace(/^(?:hey\s+)?ember[,.!]?\s+/i, "").replace(/[.!?]+$/, ""))) return null;
+  // Asked as a question, unless it is a request put politely ("Can you remember that I'm vegetarian?").
+  if (/\?$/.test(t) && !POLITE.test(t)) return null;
   if (REMEMBER_ASK.test(t)) return "remember";
   if (FORGET_ASK.test(t)) return "forget";
   return null;
 }
 
-/** What Ember says to "remember…" and "forget…" while memory is off; Settings › Memory opens at its switch. */
-export const REMEMBER_OFF = "Memory is off, so I won't keep that after Ember closes. I've opened Memory in Settings.";
-export const FORGET_OFF = "Memory is off, so I can't change what's saved. I've opened Memory in Settings.";
+/**
+ * Why memory can't be used now: off, turned off by the organisation (`managed`), on under an earlier note the user
+ * hasn't reviewed (`note`, memory-r4), or on but paused (MemoryOwnerReason, memory-2).
+ */
+export type MemoryNotNow = "off" | "managed" | "note" | MemoryOwnerReason;
+/** The start of Ember's sentence saying why it can't use memory now. */
+const NOT_NOW: Record<MemoryNotNow, string> = {
+  off: "Memory is off",
+  managed: "Your organisation has turned memory off",
+  note: "Memory is paused until you review its updated note",
+  checking: "I'm still checking your GitHub account",
+  "signed-out": "Memory needs you signed in with GitHub",
+  "own-provider": "Memory is paused while I use your own model provider",
+  "org-provider": "Memory is paused while I use your organisation's model service",
+  unverified: "I couldn't check your GitHub account",
+  "other-account": "The memory saved on this computer isn't matched to your GitHub account",
+  unowned: "The memory saved on this computer isn't matched to your GitHub account",
+};
+
+/** What Ember adds after its answer to "remember…" while memory isn't in force: a bubble and a line. */
+export interface MemoryNote {
+  title: string;
+  text: string;
+  /** The bubble offers Open Memory (Settings › Memory): never when the organisation turned memory off. */
+  open: boolean;
+}
+
+/**
+ * The truth after the conversation answered "remember…" while memory can't keep it (memory-c1-1): it knows what was
+ * said until Ember closes, never after. Ember's words, never the model's.
+ */
+export function rememberNote(why: MemoryNotNow): MemoryNote {
+  return {
+    title: why === "off" || why === "managed" ? "Memory is off" : "Memory paused",
+    text: `${NOT_NOW[why]}, so I won't keep this after Ember closes.`,
+    open: why !== "managed",
+  };
+}
+
+/**
+ * Ember's answer to "forget…" while memory can't change what's saved, and whether Settings › Memory opens (where the
+ * list and its Forget still are while memory is off): only for memory that is off, waits for its note, or isn't
+ * matched to the account.
+ */
+export function forgetReply(why: MemoryNotNow): { text: string; open: boolean } {
+  const open = why === "off" || why === "note" || why === "other-account" || why === "unowned";
+  return { text: `${NOT_NOW[why]}, so I can't change what's saved.${open ? " I've opened Memory in Settings." : ""}`, open };
+}
+
+/** What Ember says to "forget…" while memory is off; Settings › Memory opens at its switch. */
+export const FORGET_OFF = forgetReply("off").text;
 /** And to "forget…" while the organisation has turned memory off. */
-export const FORGET_MANAGED = "Your organisation has turned memory off, so I can't change what's saved.";
+export const FORGET_MANAGED = forgetReply("managed").text;
+/** And to "get to know me" while memory waits for its updated note to be reviewed (memory-r4). */
+export const INTRO_NOTE = "Memory is paused until you review its updated note. I've opened Memory in Settings.";

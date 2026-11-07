@@ -246,7 +246,7 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   `conversation`.
 - **Learning on its own** (`MemoryLearning`, learning.ts; docs/MEMORY.md steps 3–5) runs only while memory is in force,
   and the host and conductor reach it only through `HostOptions.memory` (`heard`, `forRequest`, `taskDone`,
-  `useModel`, `intent`):
+  `useModel`, `intent`, `rememberNote`):
   - every model call is `copilotOneShot()` (agent/one-shot.ts): `hardenedSessionConfig` with `tools: []`,
     `verifySessionTools(session, [])`, deleted after (also when creating it failed); its answer is capped
     (`MAX_ANSWER_CHARS`), zod-checked (`ExtractionSchema`, `RefinementSchema`) and dropped whole if invalid;

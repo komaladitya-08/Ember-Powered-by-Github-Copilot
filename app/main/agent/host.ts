@@ -51,6 +51,7 @@ import type { CommandService } from "../commands/types";
 import { createHash, randomUUID } from "node:crypto";
 import type { OneShot } from "../memory/learn";
 import type { MemoryWait } from "../memory/owner";
+import type { MemoryNote } from "../memory/questions";
 import { runtimeClientOptions } from "./runtime-env";
 import { redactGitHubTokens } from "./auth";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
@@ -205,6 +206,11 @@ export interface HostOptions {
     useModel?(model: OneShot | null): void;
     taskDone?(title: string, result: string): void;
     intent?(text: string, how: { own: boolean }): string | null;
+    /**
+     * "Remember…" while memory isn't in force: what Ember says after the conversation's answer, since the conversation
+     * keeps it only until Ember closes (memory-c1-1). Null for anything else.
+     */
+    rememberNote?(text: string): MemoryNote | null;
   };
   /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
   onReminder?: (r: Reminder) => void;
@@ -778,6 +784,8 @@ interface UserRequest {
   suggested?: boolean;
   /** Spoken and verified by Voice Match as the owner's, at this time (a task it starts holds voice trust from then). */
   verifiedAt?: number;
+  /** "Remember…" while memory can't keep it: said behind its turn's answer (memory-c1-1). */
+  memoryNote?: MemoryNote;
 }
 /** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
 const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
@@ -901,6 +909,8 @@ export class AgentHost {
    * its turn ends, behind the answer (asked before the request, it would be covered by "Thinking…" and run out unseen).
    */
   private hintOwed = false;
+  /** "Memory is off" behind the answer to a "remember…" that memory couldn't keep (memory-c1-1): its presenter. */
+  private memoryHint: Presenter | null = null;
   /** A refused sign-in is being checked with Copilot (checkSignIn): one check at a time. */
   private checkingSignIn = false;
   private checkingProvider = false;
@@ -1176,6 +1186,17 @@ export class AgentHost {
       title: "Commands are off", text: "Ember can run commands for you in its own command window once you turn them on in its settings (Commands).",
       emotion: "neutral", gesture: "rest", mood: "idle", actions: [{ id: "ui:settings", label: "Open settings" }],
     });
+  }
+
+  /**
+   * After the conversation answered "remember…" while memory can't keep it (memory-c1-1): Ember's own line in the
+   * conversation, and a bubble that shows once the answer has gone (it doesn't cut the answer short), with Open Memory.
+   */
+  private noteMemory(n: MemoryNote): void {
+    this.remember("ember", n.text);
+    this.memoryHint?.quiet();
+    const p = this.memoryHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
+    p.outcome({ title: n.title, text: n.text, emotion: "neutral", gesture: "rest", mood: "idle", actions: n.open ? [{ id: "ui:memory", label: "Open Memory" }] : [] });
   }
 
   /** Changes with every Stop: main takes it before a slow step (reading the screen) and passes it to ask(). */
@@ -1906,6 +1927,10 @@ export class AgentHost {
           this.underGen(hg, () => this.endStream(aborted ? "interrupted" : "done", chatOf.chat));
           // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
+          // "Remember…" while memory can't keep it: the conversation knows it until Ember closes, and Ember says memory
+          // won't, behind the answer (memory-c1-1). None for a turn that was stopped.
+          const note = this.turn?.memoryNote;
+          if (note && this.turn) { delete this.turn.memoryNote; if (!aborted) this.noteMemory(note); }
           this.o.onTurnEnd?.(aborted);
           this.releaseHeldSoon();
         },
@@ -2759,6 +2784,9 @@ export class AgentHost {
       ...(how.manual ? { manual: true } : {}),
       ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
     };
+    // "Remember…" while memory can't keep it: the conversation takes it, and Ember says after the answer what memory won't.
+    const note = this.o.memory?.rememberNote?.(text) ?? null;
+    if (note) request.memoryNote = note;
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
     // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once),
@@ -2894,6 +2922,7 @@ export class AgentHost {
     // (And the "Commands are off" hint waiting behind the answer: offered again later if it never showed.)
     this.hintOwed = false;
     this.commandsHint?.quiet();
+    this.memoryHint?.quiet();
     for (const p of this.taskPresenters.values()) p.quiet();
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();

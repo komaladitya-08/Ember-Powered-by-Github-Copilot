@@ -19,8 +19,8 @@ import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, SPOKEN_FACT, introFac
 import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
-  ANSWER_WAIT_MS, FORGET_MANAGED, FORGET_OFF, FORGET_THAT_MS, Gaps, NOTHING_TO_FORGET, QUESTION_EVERY_MS, REMEMBER_OFF, answersQuestion, declinesQuestion, describes,
-  forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk,
+  ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes,
+  forgetReply, forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk, rememberNote, type MemoryNote, type MemoryNotNow,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
 import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
@@ -58,10 +58,11 @@ export interface LearningDeps {
   /** Opens Settings › Memory (the interview asked for while memory is off). */
   openMemory?: () => void;
   /**
-   * Memory is on and agreed to, but its saved memory can't be opened now: why (memory-2). Ember says so rather than
-   * asking for memory to be turned on. Null or absent otherwise.
+   * Memory is on and agreed to, but its saved memory can't be opened now: why (memory-2); or memory is on under an
+   * earlier note the user hasn't reviewed (`note`, memory-r4). Ember says so rather than asking for memory to be turned
+   * on. Null or absent otherwise.
    */
-  paused?: () => MemoryOwnerReason | null;
+  paused?: () => MemoryOwnerReason | "note" | null;
   /** New facts were kept (the "Ember learned" line). */
   onLearned?: (items: LearnedItem[]) => void;
   /** Everything was forgotten: what showed as learned goes. */
@@ -315,11 +316,10 @@ export class MemoryLearning {
       const gone = this.forgetCounted(last.id);
       return gone ? forgotReply(last.text, gone.derived, gone.back) : NOTHING_TO_FORGET;
     }
-    // "Remember that…" or "forget my…" while memory can't: the truth, in code, never a model's promise (memory-v1).
-    if (!this.d.inForce()) {
-      const ask = memoryAsk(text);
-      if (ask) return this.notInForce(ask);
-    }
+    // "Forget my…" while memory can't: the truth, in code, never a model's "done" (memory-v1). "Remember that…" goes to
+    // the conversation, which keeps it until Ember closes; Ember says after the answer that memory won't (rememberNote:
+    // memory-c1-1).
+    if (!this.d.inForce() && memoryAsk(text) === "forget") return this.notInForce("forget");
     // A request ("open Thunderbird and send the report to Bob") is never an answer: the question is let go of and the
     // conversation takes the request. "Call me Ram" to the interview's name question is its answer (memory-6).
     const request = looksLikeRequest(text);
@@ -350,19 +350,39 @@ export class MemoryLearning {
   }
 
   /**
-   * What Ember says when asked for something only memory can do (get to know the user, remember, forget) while it
-   * isn't in force: managed by the organisation, on but paused (and why), or off (Settings › Memory opens at its switch).
+   * What Ember adds after the conversation's answer to "remember…" while memory isn't in force (memory-c1-1): the
+   * conversation keeps it until Ember closes, memory doesn't. Null for anything else, or while memory is in force.
    */
-  private notInForce(asked: "introduce" | "remember" | "forget" = "introduce"): string {
-    if (this.d.managed?.()) return asked === "forget" ? FORGET_MANAGED : INTRO_MANAGED;
-    const why = this.d.paused?.() ?? null;
-    if (why) {
-      const reply = memoryPausedReply(why);
+  rememberNote(text: string): MemoryNote | null {
+    if (this.d.inForce() || memoryAsk(text) !== "remember") return null;
+    return rememberNote(this.notNow());
+  }
+
+  /** Why memory isn't in force now: managed by the organisation, on but paused (and why), or off. */
+  private notNow(): MemoryNotNow {
+    if (this.d.managed?.()) return "managed";
+    return this.d.paused?.() ?? "off";
+  }
+
+  /**
+   * What Ember says when asked for something only memory can do (get to know the user, forget) while it isn't in force:
+   * managed by the organisation, on but paused (and why), or off (Settings › Memory opens at its switch).
+   */
+  private notInForce(asked: "introduce" | "forget" = "introduce"): string {
+    const why = this.notNow();
+    if (asked === "forget") {
+      const reply = forgetReply(why);
       if (reply.open) this.d.openMemory?.();
       return reply.text;
     }
-    this.d.openMemory?.();
-    return asked === "remember" ? REMEMBER_OFF : asked === "forget" ? FORGET_OFF : INTRO_OFF;
+    if (why === "managed") return INTRO_MANAGED;
+    if (why === "off" || why === "note") {
+      this.d.openMemory?.();
+      return why === "off" ? INTRO_OFF : INTRO_NOTE;
+    }
+    const reply = memoryPausedReply(why);
+    if (reply.open) this.d.openMemory?.();
+    return reply.text;
   }
 
   /** One idle check: the sleep-time pass first, else a question. */

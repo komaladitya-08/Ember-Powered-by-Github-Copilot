@@ -233,9 +233,15 @@ download, so English-only MiniLM is the trade-off for now.
      Globex" current again; it stays what used to be true (memory-12). Either way the "Ember learned" line goes;
      **Forget everything** clears the lines too.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
-   - While memory isn't in force (off, paused, managed), a request that is only "remember that…" or "forget my…"
-     (`memoryAsk`, never "remember to…", a reminder) is answered in code with the truth: memory is off (and Memory
-     opens), why it is paused, or that the organisation turned it off. A model with no memory tools never answers it.
+   - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
+     only for Ember to forget something about the user ("forget that I…", "forget my…", "forget where I live";
+     `memoryAsk`) is answered in code with the truth: memory is off (and Memory opens), why it is paused, or that the
+     organisation turned it off. A request that is only "remember that…" or "keep in mind…" goes to the conversation,
+     which knows it until Ember closes, and Ember says behind the answer that memory won't keep it (`rememberNote`:
+     a line in the conversation and a bubble with **Open Memory**, never Settings opened on its own). A question
+     ("Remember when we…?", "Remember me?"), a reminder ("remember to…") and a request with more in it ("Forget what
+     I said, open Firefox instead", "Forget the formatting and just give me plain text") are the conversation's like
+     any other (memory-c1-1).
 4. **Sleep-time refinement** (done; `refine.ts`). After 5 minutes idle (no turn, no task, the screen unlocked; an
    unknown lock counts as locked), `MemoryLearning` runs `consolidate()`, then one model pass (the same one-shot
    session) over up to 40 facts changed or used since the last pass:
