@@ -16,7 +16,7 @@ Updated 4 November 2026. This is the short pickup list; [the review backlog](doc
 - Reapplied #106's bounded Windows window-order walk and #98's one-week slow-Kokoro cache. Fixed extension tool-name/description consistency, provider sign-in advice and hosted-connector availability text, plus the ICU-dependent chart-test expectation.
 - Native Windows testing also closed two safety gaps: the joined “Stored Usernames and Passwords” title is blocked, and Explorer's “Address Bar” refuses program text. The full native desktop and accessibility group passed 74/74 after those fixes.
 - Newer AT-SPI versions report push buttons as “button”; normalizing the role preserves click actions and password-reveal protection. GTK list checkboxes with an alternate activation action stay on the pointer path.
-- The five Windows voice smoke scenarios passed through the native listener with synthetic microphone recordings. On the Windows test machine Kokoro took 1.01–1.37 seconds to produce a second of speech (the cutoff is 0.50); native Piper produced its first audio in 121–257 ms.
+- The five Windows voice smoke scenarios passed through the native listener with synthetic microphone recordings. On the Windows test machine Kokoro took 1.01–1.37 seconds to produce a second of speech (the cutoff is 0.50); native Piper, then the default voice, produced its first audio in 121–257 ms (Piper has since been replaced by Kitten Nano and is no longer in the product).
 - Reconciled #99/#114 with the current voice and gated MCP plugin architecture in [PR-RECONCILIATION.md](docs/PR-RECONCILIATION.md). App and npm launcher versions are aligned at 0.1.1 for release preparation; no tag or release has been published.
 
 ## Next correctness work

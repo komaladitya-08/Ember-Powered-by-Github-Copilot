@@ -28,7 +28,7 @@ import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import { ISSUES_URL } from "../../app/shared/support";
 import { STEP_TEXT, WELCOME_STEPS } from "../../app/renderer/home/welcome-copy";
-import { CLEAR_SPEECH, MEMORY_MODEL, MEMORY_MODEL_BYTES, NATURAL_VOICE, SUPERTONIC_VOICE } from "../../app/voice/models";
+import { CLEAR_SPEECH, LISTENING_MODELS, MEMORY_MODEL, MEMORY_MODEL_BYTES, modelsBytes, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS } from "../../app/voice/models";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
@@ -157,6 +157,32 @@ describe("docs/DEVELOPING.md", () => {
     expect(rhel.replaceAll(root, "").match(/npm install -g npm@/g) ?? []).toEqual([]);
     expect(section(dev, "9. Troubleshooting")).toContain(`\`${root}\``);
     expect(read("CLAUDE.md")).toContain(`\`${root}\``);
+  });
+
+  it("lists every development switch, files nothing under Repository layout, and says CI tests one RPM (install-docs-12)", () => {
+    const dev = read("docs/DEVELOPING.md");
+    // Every devEnv("…") switch the app reads (CLAUDE.md: list new ones in docs/DEVELOPING.md).
+    const files = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true })
+      .flatMap(e => e.isDirectory() ? files(path.join(dir, e.name)) : /\.ts$/.test(e.name) ? [path.join(dir, e.name)] : []);
+    const names = new Set(files("app").flatMap(f => [...read(f).matchAll(/devEnv\("([A-Z0-9_]+)"\)/g)].map(m => m[1])));
+    expect(names.size).toBeGreaterThan(10);
+    for (const n of names) expect(dev, n).toMatch(new RegExp(`\\b${n}\\b`));
+    // Repository layout holds the layout and nothing else.
+    const layout = section(dev, "Repository layout");
+    expect(layout.split("\n").filter(l => /^#{2,} /.test(l) && !l.startsWith("## Repository layout"))).toEqual([]);
+    expect(layout).not.toMatch(/\*\*Hear me more clearly\*\*/);
+    // One RPM, which carries the speech models (ci.yml's lifecycle step tests it alone).
+    const s7 = flat(section(dev, "7. Packages"));
+    expect(read(".github/workflows/ci.yml")).toContain("# The one RPM installed the speech models too (nothing is downloaded for voice).");
+    expect(s7).not.toMatch(/speech models RPM|the RPMs\b|on both\b|removes both|rebuilds both/);
+    // models.ts's header gives the standard set's sizes as its pins add up.
+    const head = read("app/voice/models.ts").split("*/")[0];
+    const mb = (n: number) => Math.round(n / 1e6);
+    const listening = modelsBytes(VOICE_MODELS.filter(m => LISTENING_MODELS.includes(m.id)));
+    expect(head).toContain(`about ${mb(modelsBytes())} MB in all`);
+    expect(head).toContain(`about ${mb(listening)} MB`);
+    expect(head).toContain(`Ember's own voice (${mb(VOICE_MODELS.find(m => m.id === "tts")!.bytes)} MB)`);
+    expect(head).toContain(`Voice Match (${mb(VOICE_MODELS.find(m => m.id === "speaker")!.bytes)} MB)`);
   });
 
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {

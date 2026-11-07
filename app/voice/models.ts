@@ -1,7 +1,7 @@
 /**
- * Speech models Ember downloads on first use (about 142 MB in all), each pinned to a
+ * Speech models Ember downloads on first use (about 220 MB in all), each pinned to a
  * SHA-256. Listening needs only the wake word, voice activity and speech recognition
- * (LISTENING_MODELS, about 48 MB); Ember's own voice (67 MB) and Voice Match (27 MB) are
+ * (LISTENING_MODELS, about 130 MB); Ember's own voice (64 MB) and Voice Match (27 MB) are
  * optional: without them replies are in the system's voice, and Voice Match is off. Each is
  * downloaded into the models folder of Ember's data folder (~/.config/ember/models
  * on Linux). Nothing is used until it verifies. Archives are unpacked in-process

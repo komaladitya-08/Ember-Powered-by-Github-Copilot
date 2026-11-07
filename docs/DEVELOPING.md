@@ -811,7 +811,7 @@ Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
 installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS`, `EMBER_BENCH_LOG`,
-`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER`, `EMBER_TTS_OUTPUT`, `EMBER_NO_OUTPUT_WATCH` (a test that speaks through the speakers as the user would count as other sound) and `EMBER_SHERPA_CAPI` switch):
+`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER`, `EMBER_TTS_OUTPUT`, `EMBER_NO_OUTPUT_WATCH` (a test that speaks through the speakers as the user would count as other sound) and `EMBER_SHERPA_CAPI` switch; `EMBER_TEST_HOOKS=1` puts main's objects on `globalThis.__ember` for the demo tours and the live suites that drive Ember from inside):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &
@@ -1031,12 +1031,12 @@ node_modules (fetching them first with `scripts/voice/fetch-capi.mjs`), and CI c
 ## 7. Packages
 
 ```bash
-npm run package            # dist/package: the RPMs and the AppImage
+npm run package            # dist/package: the RPM and the AppImage
 ```
 
 This section is Linux's. The Windows zip is in §10.5, Ember.app and its dmg in §11.5.
 
-The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `rockylinux:8`, as CI does).
+The RPM carries the build machine's dist tag (`.el8` when built on RHEL 8 or `rockylinux:8`, as CI does).
 
 | Output | What it is |
 |---|---|
@@ -1053,14 +1053,17 @@ staged binary's Electron fuses so the installed Ember ignores `--inspect` and `N
 for its helpers, the desk helper and SSH's askpass helper, where Node's own `--inspect` still works but reaches only
 that new process, not the running Ember: `node scripts/package/fuses.mjs <binary>` lists them; see §11.5 for what
 plain-Node mode allows), `scripts/package/rpm.sh` and `scripts/package/appimage.sh` (pinned, checksummed appimagetool
-and runtime). CI builds Ember's RPM, the speech models RPM (from the cached, checksum-verified models) and the AppImage
-on `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's
-fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user. It
-then installs the speech models RPM, runs `rpm -V` on both, writes an administrator's `/etc/ember/policy.json`, rebuilds
-both as Release 2 (`EMBER_RPM_RELEASE=2 scripts/package/rpm.sh`), upgrades to them with `dnf upgrade`, runs `rpm -V`
-again, checks `chrome-sandbox` is still setuid root and removes both with `rpm -e`. It fails if `/opt/ember`,
-`/usr/share/ember`, `/usr/bin/ember`, the menu entry or `/usr/share/doc/ember` is left, or if the policy changed or
-belongs to a package. It uploads Release 1's packages only when asked (§13): **Actions › ci › Run workflow** with
+and runtime). CI builds Ember's RPM with the speech models inside (`EMBER_RPM_MODELS=required`, from the cached,
+checksum-verified models), the models zip and the AppImage, with the models inside it too, on `rockylinux:8`, checks
+every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's fuses (no debugger,
+`NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user. It then checks the models
+are in `/usr/share/ember/voice-models` and that the RPM provides `ember-voice-models`, runs `rpm -V`, writes an
+administrator's `/etc/ember/policy.json`, rebuilds the RPM as Release 2 (`EMBER_RPM_RELEASE=2
+scripts/package/rpm.sh`), upgrades to it with `dnf upgrade`, runs `rpm -V` again, checks `chrome-sandbox` is still
+setuid root and removes it with `rpm -e`. It fails if `/opt/ember`, `/usr/share/ember`, `/usr/bin/ember`, the menu
+entry or `/usr/share/doc/ember` is left, or if the policy changed or belongs to a package. Last, it starts the AppImage
+as a normal user (unpacked: a container has no FUSE) and checks that it runs speech natively. It uploads Release 1's
+packages only when asked (§13): **Actions › ci › Run workflow** with
 **packages** ticked (kept 3 days), and on a `v*` tag for the release (§15); at about 450 MB a run with the speech
 models, uploading them every time filled the account's artifact storage. Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the
 RPM); staging stops if the spec's `License:` tag doesn't cover a bundled package's licence or a library it bundles
@@ -2126,6 +2129,11 @@ test/fixtures       GTK3 test bench and hostile windows, the Windows bench (win_
                     (mac_bench.js), plist samples, voice clips;  test/demo  recorded tours
 eval/               task suite (eval/tasks), runner, checkers, release gates, report
 ```
+
+## Implementation notes
+
+How three behaviours work inside, for whoever changes them: approvals (§5, "Asking Ember to do things"), voice requests
+(§5, "Talking to Ember") and the npm launcher (§15).
 
 ### Action approval freshness
 
