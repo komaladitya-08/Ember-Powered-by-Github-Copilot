@@ -1488,9 +1488,15 @@ export class Presenter {
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
         const face = aborted ? "neutral" : this.answering ? "happy" : this.state.emotion === "thinking" || this.state.emotion === "focused" ? "neutral" : this.state.emotion;
         this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...said, ...(aborted ? { title: "Stopped", mood: "idle" as const, step: null } : {}) } });
-        // Long answers stay up longer (they also have "Read all", and the settings window keeps them).
-        const chars = Math.max(this.answer.length, this.saidThisTurn.length);
-        this.hideLater(Math.min(30000, 6000 + chars * 50));
+        // Long answers stay up longer (they also have "Read all", and the settings window keeps them). A problem
+        // (session.error's 12 s) or the Stopped notice (stopped()'s 4 s) on screen keeps the time it was given: the turn
+        // ending under it is no answer to read (companion-2: the problem and its Try again went at 6 s, and "Okay, I've
+        // stopped." stayed up to 30 s for the length of the answer it had cut off).
+        const notice = mood === "error" || (this.state.bubble.title === "Stopped" && this.state.bubble.thought === STOPPED_ANSWER);
+        if (!notice || (this.hideTimer === null && this.pendingHide === null)) {
+          const chars = Math.max(this.answer.length, this.saidThisTurn.length);
+          this.hideLater(Math.min(30000, 6000 + chars * 50));
+        }
         this.answering = false;
         // The request had its turn: a later problem (the runtime stopping meanwhile) doesn't offer to ask it again.
         this.turnOn = false;

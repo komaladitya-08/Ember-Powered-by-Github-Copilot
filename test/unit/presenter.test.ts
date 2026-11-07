@@ -1292,6 +1292,40 @@ describe("a wait for Copilot says so and can be stopped (UI audit #4)", () => {
     expect(p.busy).toBe(false);
   });
 
+  it("keeps a failed turn's problem, with Try again, up for its 12 s when the turn then ends (companion-2)", () => {
+    const { p, last } = setup();
+    p.userPrompt("what's on my calendar?");
+    p.event({ type: "user.message", data: { content: "what's on my calendar?" } });
+    p.event({ type: "session.error", data: { message: "Internal Server Error", statusCode: 500 } });
+    p.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(11_900);
+    expect(last().bubble).toMatchObject({ visible: true, mood: "error", actions: [TRY_AGAIN] });
+    vi.advanceTimersByTime(200);
+    expect(last().bubble?.visible).toBe(false);
+    // With More time to read and answer: ten times that, never cut to an answer's time.
+    const states: Partial<EmberState>[] = [];
+    const slow = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { readTime: () => 10 });
+    slow.userPrompt("hi");
+    slow.event({ type: "session.error", data: { message: "Internal Server Error", statusCode: 500 } });
+    slow.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(119_000);
+    expect(states.at(-1)?.bubble).toMatchObject({ visible: true, mood: "error" });
+    vi.advanceTimersByTime(1_100);
+    expect(states.at(-1)?.bubble?.visible).toBe(false);
+  });
+
+  it("lets “Okay, I've stopped.” go after its 4 s, however long the answer it cut off had grown (companion-2)", () => {
+    const { p, last } = setup();
+    p.userPrompt("tell me everything");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "word ".repeat(96) } });
+    p.stopped();
+    p.event({ type: "session.idle", data: { aborted: true } });
+    vi.advanceTimersByTime(3_900);
+    expect(last().bubble).toMatchObject({ visible: true, title: "Stopped", thought: STOPPED_ANSWER });
+    vi.advanceTimersByTime(200);
+    expect(last().bubble?.visible).toBe(false);
+  });
+
   it("offers Stop when a turn goes quiet for 30 s, but a task's bubble keeps its card's Stop", () => {
     const { p, last } = setup();
     p.userPrompt("hi");
