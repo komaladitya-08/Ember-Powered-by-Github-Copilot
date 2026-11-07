@@ -505,6 +505,8 @@ progress[hidden] { display: none; }
 .checks .check-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 /* Check again, under the rows, for a fix the user made outside Ember (first-run-6). */
 .checks-again { margin: 0; padding: 8px 16px 4px; }
+/* What Check again found, above its button (first-run-r2): in line with it. */
+.fold > .hint.checks-msg { margin: 0; padding: 8px 16px 0; }
 .facts { margin: 0; padding: 14px 16px; display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }

@@ -114,6 +114,8 @@ const focusedId = (p: Page) => p.evaluate(() => document.activeElement?.id || do
 const buttons = (p: Page) => p.locator("#welcome button:visible").allInnerTexts();
 const readyAgent = (extra: Record<string, unknown> = {}) => ({ ...SIGNED_OUT, phase: "ready", detail: "Connected.", login: "octo", models: READY_MODELS, conductorModel: "mini", workerModel: "big", ...extra });
 const next = (p: Page) => p.locator("#w-next");
+/** The element is drawn at more than a screen reader's 1 px (the `.sr` class), so a sighted user sees it. */
+const seen = (p: Page, sel: string) => p.locator(sel).evaluate(e => { const r = e.getBoundingClientRect(); return r.width > 20 && r.height > 8 && getComputedStyle(e).clipPath === "none"; });
 
 describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#6)", () => {
   it("(a) Copilot: a failed sign-in is visible, retry works, the models are reviewed, then the first answer", async () => {
@@ -315,8 +317,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     const row = p.locator("#w-checks .w-check-fail");
     await expect.poll(() => row.innerText()).toContain("couldn't change it");
     expect(await row.isVisible()).toBe(true);
-    // Still announced, and the retry button is back, enabled and focused.
+    // Still announced, and the retry button is back, enabled and focused. Read out only: the row shows it (first-run-r2).
     expect(await p.locator("#w-checks-msg").innerText()).toContain("couldn't change it");
+    expect(await seen(p, "#w-checks-msg")).toBe(false);
     expect(await fix.getAttribute("aria-disabled")).toBeNull();
     expect(await p.evaluate(() => document.activeElement?.getAttribute("data-fix"))).toBe("enable-accessibility");
     await fix.click();
@@ -766,7 +769,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
-  it("(t) Check again reads the setup rows anew after a fix made outside Ember, in first run and Home (first-run-6)", async () => {
+  it("(t) Check again reads the setup rows anew after a fix made outside Ember, in first run and Home, and shows what it found (first-run-6, first-run-r2)", async () => {
     const missing = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" };
     const ok = { id: "accessibility", label: "Screen reading", status: "ok", detail: "Accessibility is on" };
     const p = await open({ agent: readyAgent(), checks: [missing] });
@@ -774,16 +777,21 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
     const again = p.locator("#w-checks-again");
     expect(await again.isVisible()).toBe(true);
-    // Nothing changed yet: said, and the row stays.
+    // Nothing changed yet: said, shown under the button as well as read out (first-run-r2), and the row stays.
     await again.click();
     await expect.poll(() => calls(p)).toContain("recheck");
+    expect(await p.locator("#w-checks-msg").innerText()).toBe("Checking…");
+    expect(await seen(p, "#w-checks-msg")).toBe(true);
     await settle(p, "recheck", { checks: [missing], versions: {} });
     await expect.poll(() => p.locator("#w-checks-msg").innerText()).toBe("I checked again. Nothing has changed yet.");
+    expect(await seen(p, "#w-checks-msg")).toBe(true);
+    expect(await p.locator("#w-checks-msg").getAttribute("role")).toBe("status");
     expect(await p.locator("#w-checks .w-check").count()).toBe(1);
     // The command was run: the row goes, and the step says so.
     await again.click();
     await settle(p, "recheck", { checks: [ok], versions: {} }, 1);
     await expect.poll(() => p.locator("#w-checks-msg").innerText()).toBe("I checked again. Screen reading is ready now.");
+    expect(await seen(p, "#w-checks-msg")).toBe(true);
     expect(await p.locator("#w-checks-head").innerText()).toBe("Everything I need is ready.");
     expect(await again.isVisible()).toBe(false);
     expect(await focusedId(p)).toBe("w-title");
@@ -792,8 +800,10 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await h.locator("a[href='#checks-h']").first().click();
     await expect.poll(() => h.locator("#checks-again").isVisible()).toBe(true);
     await h.locator("#checks-again").click();
+    expect(await seen(h, "#checks-msg")).toBe(true);
     await settle(h, "recheck", { checks: [ok], versions: {} });
     await expect.poll(() => h.locator("#checks-msg").innerText()).toBe("I checked again. Screen reading is ready now.");
+    expect(await seen(h, "#checks-msg")).toBe(true);
     expect(await h.locator("#checks-again").isVisible()).toBe(false);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((h as Page & { errors: string[] }).errors).toEqual([]);

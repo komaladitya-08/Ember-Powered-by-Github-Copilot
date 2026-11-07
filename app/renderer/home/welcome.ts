@@ -536,12 +536,23 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     return { label: providerCheck.phase === "failed" ? "Check again" : PROVIDER_STEP.check, why: "" };
   }
 
+  /**
+   * The checks step's live line. What Check again found is shown under it too, so a sighted user sees it looked again
+   * (first-run-r2); a fix's failure is only read out, as its row shows it. Rows drawn anew take a shown result away.
+   */
+  function checksMsg(text: string, shown = false): void {
+    const m = $("w-checks-msg");
+    if (m.textContent !== text) m.textContent = text;
+    m.className = shown && text ? "hint" : "sr";
+  }
+
   function renderChecks(): string {
     const rows = status?.environment.checks ?? [];
     // Unchanged: left as it is, so a "Copied" and the focus stay where they are.
     const key = JSON.stringify([rows, status?.platform?.fixLabels ?? null, [...fixFailures]]);
     if (key === shownChecks) return checksNext(rows);
     shownChecks = key;
+    if ($("w-checks-msg").className === "hint") checksMsg("");
     const head = checksHeadline(rows);
     const h = $("w-checks-head");
     if (h.textContent !== head.text) h.textContent = head.text;
@@ -581,7 +592,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
           if (btn.getAttribute("aria-disabled") === "true" || fixPending.has(fix)) return;
           fixPending.add(fix);
           btn.setAttribute("aria-disabled", "true");
-          if (fixFailures.delete(fix)) { $("w-checks-msg").textContent = ""; shownChecks = ""; render(); }
+          if (fixFailures.delete(fix)) { checksMsg(""); shownChecks = ""; render(); }
           window.ember.applyFix(fix as Parameters<typeof window.ember.applyFix>[0]).then(env => {
             fixPending.delete(fix);
             if (status) status = { ...status, environment: env };
@@ -592,7 +603,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
             fixPending.delete(fix);
             const text = fixFailedText(c.title, ipcErrorText(err));
             fixFailures.set(fix, text);
-            $("w-checks-msg").textContent = text;
+            checksMsg(text);
             // Drawn again with the failure in the row; the retry button keeps (or gets back) the focus.
             shownChecks = "";
             render();
@@ -626,7 +637,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const btn = $("w-checks-again");
     if (btn.getAttribute("aria-disabled") === "true") return;
     btn.setAttribute("aria-disabled", "true");
-    $("w-checks-msg").textContent = "Checking…";
+    checksMsg("Checking…", true);
     const before = status?.environment.checks ?? [];
     window.ember.recheckSetup().then(env => {
       btn.removeAttribute("aria-disabled");
@@ -634,12 +645,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       shownChecks = "";
       deps.checksChanged(env);
       render();
-      $("w-checks-msg").textContent = recheckMessage(before, env.checks);
+      checksMsg(recheckMessage(before, env.checks), true);
       // The button stays while something still needs the user; otherwise the heading takes the focus.
       if ($("w-checks-again-row").hidden) $("w-title").focus();
     }, err => {
       btn.removeAttribute("aria-disabled");
-      $("w-checks-msg").textContent = ipcErrorText(err);
+      checksMsg(ipcErrorText(err), true);
     });
   });
 

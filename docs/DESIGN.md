@@ -297,7 +297,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
 - **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",
   "Needs fixing", never a code such as OK), in one column as wide as the widest word (a subgrid, so the labels line
-  up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows.
+  up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows, which shows
+  what it found (“I checked again. Nothing has changed yet.”) beside it as well as reading it out, in first run's
+  checks step too; a fix's failure is only read out, as its row shows it (first-run-r2).
 - **The conversation** is part of the page, not a box that scrolls inside it: its latest 6 messages (so the composer
   and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
   its reply show; the composer's line says "Thinking…" until the reply, and "Still waiting for Copilot… Stop response

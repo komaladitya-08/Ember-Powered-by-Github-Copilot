@@ -312,8 +312,18 @@ let shownChecks = "";
 let checksNow: Status["environment"]["checks"] = [];
 /** Whether the organisation manages "Work without asking" (applyAutonomySettings): its hint is redrawn with the checks. */
 let autonomyManaged = false;
+/**
+ * The setup check's live line. What Check again found is shown above its button too, so a sighted user sees it looked
+ * again (first-run-r2); a fix's failure is only read out, as its row shows it. Rows drawn anew take a shown result away.
+ */
+function checksMsg(text: string, shown = false): void {
+  const m = $("checks-msg");
+  if (m.textContent !== text) m.textContent = text;
+  m.className = shown && text ? "hint checks-msg" : "sr";
+}
 function renderChecks(environment: Status["environment"]): void {
   shownChecks = JSON.stringify(environment.checks);
+  if ($("checks-msg").className !== "sr") checksMsg("");
   checksNow = environment.checks;
   // The switch's hint says when Ember runs elevated (every command asks then).
   $("autonomy-hint").textContent = autonomyHint(autonomyManaged, elevationOf(checksNow));
@@ -355,14 +365,14 @@ function renderChecks(environment: Status["environment"]): void {
         // Busy, not disabled: a disabled button drops keyboard focus to the page.
         if (btn.getAttribute("aria-disabled") === "true") return;
         btn.setAttribute("aria-disabled", "true");
-        $("checks-msg").textContent = "";
+        checksMsg("");
         window.ember.applyFix(fix).then(renderChecks, err => {
           btn.removeAttribute("aria-disabled");
           // A refused fix says why in its own words (main's message, without Electron's IPC prefix), in its row and
           // in the status line a screen reader reads; focus stays on the button.
           const why = ipcErrorText(err);
           detail.textContent = `Couldn't change it: ${why}`;
-          $("checks-msg").textContent = fixFailedText(c.label, why);
+          checksMsg(fixFailedText(c.label, why));
           if (btn.isConnected) btn.focus();
         });
       });
@@ -400,16 +410,16 @@ $("checks-again").addEventListener("click", () => {
   // Busy, not disabled: a disabled button drops keyboard focus to the page.
   if (btn.getAttribute("aria-disabled") === "true") return;
   btn.setAttribute("aria-disabled", "true");
-  $("checks-msg").textContent = "Checking…";
+  checksMsg("Checking…", true);
   const before = checksNow;
   window.ember.recheckSetup().then(env => {
     btn.removeAttribute("aria-disabled");
     renderChecks(env);
-    $("checks-msg").textContent = recheckMessage(before, env.checks);
+    checksMsg(recheckMessage(before, env.checks), true);
     if ($("checks-again-row").hidden) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
   }, err => {
     btn.removeAttribute("aria-disabled");
-    $("checks-msg").textContent = ipcErrorText(err);
+    checksMsg(ipcErrorText(err), true);
   });
 });
 
