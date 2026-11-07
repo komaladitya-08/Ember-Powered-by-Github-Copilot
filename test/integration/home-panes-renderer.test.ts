@@ -9,6 +9,7 @@ import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
 import type { ActivityEntry } from "../../app/shared/ipc";
 
@@ -395,6 +396,43 @@ describe.skipIf(gate)("Home's Projects and Memory panes, as laid out (2026-11-07
     await evidence(page, "memory-layout");
     await page.close();
   });
+});
+
+describe.skipIf(gate)("the Computers pane's status line", () => {
+  it("wraps a long hyphenated host name instead of scrolling the pane sideways, at 304 px and Larger text (commands-remote-r3, WCAG 1.4.10)", async () => {
+    const page = await open("home", { viewport: { width: 304, height: 700 } });
+    await page.evaluate(() => { document.getElementById("jump-computers")!.hidden = false; document.getElementById("computers")!.hidden = false; });
+    await page.locator('.jump a[href="#computers-h"]').first().click();
+    const over: string[] = [];
+    for (const host of ["jenkins-agent-prod-eu-west-1a.build-farm.internal.example-corp.com", "ip-10-0-12-34.eu-west-1.compute.internal"]) {
+      const runs = unbrokenRuns(`Ember can't find ${host}. Check the name, or add it to your SSH config. It wasn't added to Computers.`);
+      for (const size of ["", "larger"]) {
+        for (const width of [304, 400, 760]) {
+          await page.setViewportSize({ width, height: 700 });
+          const d = await page.evaluate(({ runs, size }) => {
+            if (size) document.documentElement.dataset.textSize = size; else delete document.documentElement.dataset.textSize;
+            // The line as Home's say() draws it: each run whole in its own span.
+            const line = document.getElementById("computers-msg")!;
+            line.textContent = "";
+            for (const r of runs) {
+              if (!r.whole) { line.append(document.createTextNode(r.text)); continue; }
+              const s = document.createElement("span");
+              s.className = "whole";
+              s.textContent = r.text;
+              line.append(s);
+            }
+            return document.documentElement.scrollWidth - document.documentElement.clientWidth;
+          }, { runs, size });
+          if (d > 0) over.push(`${host} at ${width} px ${size || "default"}: +${d}`);
+        }
+      }
+    }
+    expect(over).toEqual([]);
+    await page.setViewportSize({ width: 304, height: 700 });
+    await page.locator("#computers-msg").scrollIntoViewIfNeeded();
+    await evidence(page, "computers-long-host-304-larger");
+    await page.close();
+  }, 60_000);
 });
 
 describe.skipIf(gate)("Home at 200% zoom and more (2026-11-07 product audit)", () => {
