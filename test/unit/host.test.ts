@@ -100,7 +100,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
@@ -692,6 +692,17 @@ describe("live test: what Ember says when it can't take a request", () => {
     expect(idleWord({ phase: "error", reason: "sign-in" })).toBe("Sign-in refused");
     expect(idleWord({ phase: "error", reason: "other" })).toBe("Copilot problem");
     expect(idleWord({ phase: "error", reason: "not-answering", waitingForTasks: true })).toBe("Waiting for tasks");
+  });
+
+  it("names why a request would go unanswered now, in the handle's word, only when it would (companion-6)", () => {
+    // Ready answers; still connecting waits a moment for the connection, so it may answer too.
+    expect(unansweredWord({ phase: "ready" })).toBeNull();
+    expect(unansweredWord({ phase: "starting" })).toBeNull();
+    expect(unansweredWord(undefined)).toBeNull();
+    expect(unansweredWord({ phase: "signed-out" })).toBe("Not connected");
+    expect(unansweredWord({ phase: "error", reason: "network" })).toBe("Offline");
+    expect(unansweredWord({ phase: "error", reason: "not-answering" })).toBe("Reconnecting…");
+    expect(unansweredWord({ phase: "error", reason: "policy" })).toBe("Locked down");
   });
 
   it("the reason goes once Ember is connected again", async () => {

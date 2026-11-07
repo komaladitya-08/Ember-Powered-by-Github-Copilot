@@ -43,6 +43,15 @@ export function seesView(c: Pick<AskContext, "sees" | "carries" | "privateWindow
 }
 
 /**
+ * What the box says at the start of the line under its field while Ember can't answer a request (companion-6): the
+ * handle's word for why (`word`: host.ts unansweredWord), then that a request would get no answer yet. An ellipsis
+ * ("Reconnecting…") is dropped before the colon. Null while Ember can answer.
+ */
+export function unavailableLine(word: string | undefined): string | null {
+  return word ? `${word.replace(/…$/, "")}: I can't answer yet` : null;
+}
+
+/**
  * What the box's live region says when a context arrives, given what it last said in this opening (`said`): "" when
  * the box opens (cleared, so the late words are news again), the whole sentence once the late update brings it (the
  * field had the keyboard first, so its description isn't read again), null to leave it as it is (said already, or

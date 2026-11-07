@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { notificationBody } from "../../app/main/notification";
 import { CUT_NOTE, atLimit, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "../../app/renderer/ask/field";
-import { liveWords, seesView } from "../../app/renderer/ask/chips";
+import { liveWords, seesView, unavailableLine } from "../../app/renderer/ask/chips";
 import { targetChip, targetChipParts } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
 import { Perception, openWindowLines, quickContextText, type Seen } from "../../app/main/perception";
@@ -23,6 +23,23 @@ describe("the ask box's placeholder", () => {
     const placeholder = /placeholder="([^"]*)"/.exec(ASK_HTML)?.[1] ?? "";
     expect(placeholder).toBe("Ask Ember…");
     expect(ASK_HTML).toContain('<label for="q" class="sr">Ask or tell Ember</label>');
+  });
+});
+
+describe("the ask box when Ember can't answer a request now (companion-6)", () => {
+  it("says why in the handle's word, and that a request would get no answer yet, in the first person", () => {
+    expect(unavailableLine(undefined)).toBeNull();
+    expect(unavailableLine("Not connected")).toBe("Not connected: I can't answer yet");
+    expect(unavailableLine("Offline")).toBe("Offline: I can't answer yet");
+    // An ellipsis says something is under way; before the colon it reads as cut off.
+    expect(unavailableLine("Reconnecting…")).toBe("Reconnecting: I can't answer yet");
+  });
+
+  it("is said at the start of the line under the field, and is part of what describes the field", () => {
+    expect(ASK_HTML).toMatch(/<p class="meta"><span id="unavailable" class="unavailable" hidden><\/span>/);
+    expect(ASK_HTML).toContain('aria-describedby="unavailable where cut tip hint sees"');
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main.match(/unavailable: unansweredWord\(agent\?\.getStatus\(\)\) \?\? undefined/g)).toHaveLength(2);
   });
 });
 

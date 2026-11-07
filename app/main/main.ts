@@ -62,7 +62,7 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
-import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { AgentHost, explainSignInError, gitHubReachable, idleWord, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectCommandFolder, projectCommandText, projectNames, projectSelection, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, type ProjectSource } from "./agent/project";
@@ -1258,6 +1258,8 @@ function start(): void {
       // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
       show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {
         sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened), listenOnce: listenOnceStatus("ask"),
+        // Why a request would go unanswered now (not connected, offline): said before it is typed (companion-6).
+        unavailable: unansweredWord(agent?.getStatus()) ?? undefined,
         ...(personalRef?.current().length ? { suggestions: personalRef.current().map(s => s.text) } : {}),
       }, source),
     });
@@ -1268,7 +1270,7 @@ function start(): void {
     // What Ember will read, shown as a chip once the quick look is done: the window, and what else goes with a request.
     void read.then(c => {
       if (askContextRead !== read) return;
-      const ctx: AskContext = { ...askSees(c), history: askHistory, target: askTarget() };
+      const ctx: AskContext = { ...askSees(c), history: askHistory, target: askTarget(), unavailable: unansweredWord(agent?.getStatus()) ?? undefined };
       askWindow.setContext(ctx);
     });
   };

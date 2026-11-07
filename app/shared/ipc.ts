@@ -508,6 +508,11 @@ export interface AskContext {
    */
   suggestions?: string[];
   listenOnce?: ListenOnceStatus;
+  /**
+   * Why a request would go unanswered now, in the handle's word (host.ts unansweredWord: "Not connected", "Offline"…);
+   * absent while Ember can answer. The box says so before the request is typed, not after it is sent (companion-6).
+   */
+  unavailable?: string;
 }
 
 export interface EmberAskApi {

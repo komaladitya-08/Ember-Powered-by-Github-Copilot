@@ -170,6 +170,27 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("says at the start of the line under the field when Ember can't answer yet, and why (companion-6)", async () => {
+    const page = await pageAt();
+    try {
+      const line = page.locator("#unavailable");
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], unavailable: "Not connected" }));
+      expect(await line.isVisible()).toBe(true);
+      expect(await line.textContent()).toBe("Not connected: I can't answer yet");
+      // First on its line, in the label's colour, and read with the field's description.
+      expect(await page.evaluate(() => document.querySelector(".meta")!.firstElementChild?.id)).toBe("unavailable");
+      expect(await line.evaluate(e => getComputedStyle(e).color === getComputedStyle(document.body).color)).toBe(true);
+      expect(await page.locator("#q").getAttribute("aria-describedby")).toMatch(/^unavailable /);
+      // A window's name beside it: both stay on the line, nothing pushed off it.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ sees: "Text Editor · Notes.txt", history: [], unavailable: "Offline" }));
+      expect(await line.textContent()).toBe("Offline: I can't answer yet");
+      expect(await page.locator(".meta").evaluate(e => e.scrollWidth - e.clientWidth)).toBe(0);
+      // Connected again by the next update: gone.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ sees: "Text Editor · Notes.txt", history: [] }));
+      expect(await line.isVisible()).toBe(false);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("retains the draft and selection through late context, microphone updates and dismissal", async () => {
     const page = await pageAt();
     try {

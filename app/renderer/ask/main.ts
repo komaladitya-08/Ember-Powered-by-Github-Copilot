@@ -7,7 +7,7 @@ import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
 import { CUT_NOTE, WAIT_TIP, atLimit, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "./field";
-import { liveWords, seesView, type SeesView } from "./chips";
+import { liveWords, seesView, unavailableLine, type SeesView } from "./chips";
 import { watchPixels } from "../shared/pixels";
 import { mountListenOnce } from "../shared/listen-once";
 
@@ -210,6 +210,11 @@ window.emberAsk.onContext(c => {
   document.getElementById("where-name")!.textContent = chip?.name ?? "";
   document.getElementById("where-state")!.textContent = chip?.state ?? "";
   where.title = chip ? chip.name + chip.state : "";
+  // Ember can't answer a request now (not connected, offline): said before one is typed, not after it is sent.
+  const unavailable = document.getElementById("unavailable")!;
+  const cant = unavailableLine(c.unavailable);
+  unavailable.hidden = !cant;
+  unavailable.textContent = cant ?? "";
   // The window's app and title (shortened on the chip), what else goes with a request, all of it in the tooltip.
   view = seesView(c);
   sees.hidden = !view;
@@ -219,7 +224,7 @@ window.emberAsk.onContext(c => {
   seesText.textContent = view?.text ?? "";
   // Nothing to show once the quick look is done (no readable window, the desktop): the line is just its keys at the
   // trailing edge, not a long empty strip (companion-7). Whole while it waits, so nothing jumps when a name comes.
-  document.querySelector(".meta")!.classList.toggle("bare", c.opened !== true && !view && !chip);
+  document.querySelector(".meta")!.classList.toggle("bare", c.opened !== true && !view && !chip && !cant);
   // The field had the keyboard before this came, so its description isn't read again: a screen reader hears it here.
   const live = liveWords(said, c);
   if (live !== null) seesLive.textContent = said = live;

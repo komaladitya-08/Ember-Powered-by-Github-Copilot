@@ -628,6 +628,14 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
 }
 
 /**
+ * Why a request asked now would go unanswered, in the handle's word (idleWord), or null when Ember can answer it (ready)
+ * or may still (connecting: a request waits a moment for the connection). The Ask box says it (companion-6).
+ */
+export function unansweredWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks"> | undefined): string | null {
+  return !s || s.phase === "ready" || s.phase === "starting" ? null : idleWord(s);
+}
+
+/**
  * Why a start failed, in one plain sentence for the settings window. `reinstall`: how this OS says to install Ember
  * again (default Linux's "Reinstall Ember (sudo dnf reinstall ember).").
  */

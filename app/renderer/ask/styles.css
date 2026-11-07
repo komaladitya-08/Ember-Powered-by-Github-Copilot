@@ -58,6 +58,10 @@ textarea:focus { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 255, 2
 .sees.private .eye { display: none; }
 .sees-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sees-extra { flex: none; color: var(--label-2); font-weight: 400; }
+/* Ember can't answer yet ("Not connected: I can't answer yet"): first on the line, in the label's colour and weight
+   600, never shortened (the window's name gives way first). */
+.unavailable { flex: none; color: var(--label); font-weight: 600; }
+.unavailable[hidden] { display: none; }
 /* The computer a request goes to, when it isn't this one: the label's colour, a little apart from what Ember sees. Its
    name shortens (less on a crowded line: .tight), its state ("(lost)") never does. */
 .where { flex: none; max-width: 240px; min-width: 0; overflow: hidden; display: inline-flex; color: var(--accent-text-on-glass); font-weight: 600; }
