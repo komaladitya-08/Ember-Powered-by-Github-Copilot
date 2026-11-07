@@ -1135,6 +1135,8 @@ function start(): void {
     hasFocus: platform.keyboardHold ? (): boolean => !wsRef || (askXid !== 0 && wsRef.focusWindow()?.id === askXid) : undefined,
     onReveal: source => {
       log.info("ask.reveal", { source });
+      // A request is likely: Ember's voice loads meanwhile (voice-speaking-1).
+      if (maySpeak()) voice?.warmSpeech();
       // Counted where the tip shows, until it no longer does: a moment later, and saved a moment after that, so neither
       // the settings' listeners nor the file hold up the keyboard.
       if (platform.keyboardHold) return;
@@ -3169,6 +3171,8 @@ function start(): void {
       onTurnStart: turn => {
         voice?.cancelListenOnce();
         resetAnswerSpeech();
+        // A typed request isn't warmed by a wake: its voice loads now, while Copilot starts (voice-speaking-1).
+        if (maySpeak()) voice?.warmSpeech();
         askedAt = Date.now();
         answerInterrupted = false;
         lastAskByVoice = turn.spoken && !turn.manual;

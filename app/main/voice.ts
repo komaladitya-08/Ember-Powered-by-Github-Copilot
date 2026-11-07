@@ -997,6 +997,17 @@ export class VoiceService {
     }
   }
 
+  /**
+   * A request is likely (the ask box opened, a typed request was sent): Ember's voice loads meanwhile, and with
+   * listening off its speak-only page too, so the answer isn't heard 2 s after it is shown (voice-speaking-1: 2.7 s to
+   * the first sound cold, 0.8 s warm). Both are let go again when idle (VOICE_IDLE_MS, SPEAKER_IDLE_MS).
+   */
+  warmSpeech(): void {
+    if (this.locked) return;
+    this.warmVoice();
+    if (!this.mic || this.mic.isDestroyed()) this.speakerWindow();
+  }
+
   private cancelVoiceIdle(): void {
     if (this.voiceIdle) clearTimeout(this.voiceIdle);
     this.voiceIdle = null;

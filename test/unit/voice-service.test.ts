@@ -1445,6 +1445,36 @@ describe("speech models", () => {
       expect(electron.windows[0].webContents.send.mock.calls.filter(c => c[0] === VOICE.audio)).toEqual([]);
     });
 
+    it("loads the voice and its speak-only page when a request is likely, once, and lets them go when idle (voice-speaking-1)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true });
+      v.warmSpeech();
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(1);
+      expect(posted(electron.procs[0], "init")).toHaveLength(1);
+      expect(electron.windows.filter(w => w.title === "Ember speech")).toHaveLength(1);
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      // The reply then starts in the voice already loaded.
+      v.speak("Night Light is on.");
+      expect(electron.procs).toHaveLength(1);
+      expect(posted(electron.procs[0], "say")).toEqual([{ type: "say", id: 1, text: "Night Light is on." }]);
+      electron.procs[0].emit("message", { type: "done", id: 1 });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(electron.procs[0].kill).toHaveBeenCalledOnce();
+    });
+
+    it("loads nothing while the screen is locked, and only the page where Ember's own voice isn't in (voice-speaking-1)", () => {
+      const locked = service(true, { neuralVoice: true });
+      locked.v.setLocked(true);
+      locked.v.warmSpeech();
+      expect(electron.procs).toHaveLength(0);
+      expect(electron.windows.filter(w => w.title === "Ember speech")).toHaveLength(0);
+      const system = service(true, { neuralVoice: false });
+      system.v.warmSpeech();
+      expect(electron.procs).toHaveLength(0);
+      expect(electron.windows.filter(w => w.title === "Ember speech")).toHaveLength(1);
+    });
+
     it("stops an unspawned speech process once it starts, with no idle timer left behind", async () => {
       vi.useFakeTimers();
       const { v } = service(true, { neuralVoice: true });

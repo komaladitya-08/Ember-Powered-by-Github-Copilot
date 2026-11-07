@@ -20,7 +20,7 @@ function wiring() {
   const signOut = source.slice(source.indexOf("  ipcMain.handle(IPC.signOut,"), source.indexOf("  ipcMain.handle(IPC.cancelSignIn,"));
   expect(speech.length).toBeGreaterThan(500);
   expect(callbacks.length).toBeGreaterThan(500);
-  const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), micState: "waiting", speaking: false };
+  const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), warmSpeech: vi.fn(), micState: "waiting", speaking: false };
   /** The speaking choice (always, as by default here) and whether a screen reader runs. */
   const prefs = { speak: true, speakWithScreenReader: true, reader: true };
   const agent = { answerOpen: false, tasks: null, pauseAnswer: vi.fn(), forgetConversation: vi.fn(async (): Promise<void> => undefined), start: vi.fn(async (): Promise<void> => undefined) };
@@ -221,6 +221,20 @@ describe("main's answer speech ownership", () => {
     w.onTurnEnd(false);
     expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Would you like the first report?", { append: false });
     expect(w.voice.followUp).not.toHaveBeenCalled();
+  });
+
+  it("loads Ember's voice as a typed request starts, so the answer isn't heard 2 s after it is shown (voice-speaking-1)", () => {
+    const w = wiring();
+    w.onTurnStart({ text: "What's the weather?", spoken: false });
+    expect(w.voice.warmSpeech).toHaveBeenCalledOnce();
+    // Speaking set to Never: nothing is loaded.
+    w.prefs.speak = false; w.prefs.speakWithScreenReader = false;
+    w.onTurnStart({ text: "And tomorrow?", spoken: false });
+    expect(w.voice.warmSpeech).toHaveBeenCalledOnce();
+    // The ask box loads it as it opens, too.
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    const reveal = main.slice(main.indexOf("    onReveal: source => {"), main.indexOf("    onKeyboard: () =>"));
+    expect(reveal).toContain("if (maySpeak()) voice?.warmSpeech();");
   });
 
   it("stops what Ember is saying at once when speaking is set to Never, not at the end of the answer (voice-speaking-4)", () => {
