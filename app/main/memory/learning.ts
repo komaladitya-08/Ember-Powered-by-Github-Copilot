@@ -13,9 +13,11 @@
  * Node: no Electron, no model client (main gives it a OneShot once Copilot is connected).
  */
 
+import { memoryPausedReply } from "../../shared/memory-owner";
 import type { Fact, NewFact, Source } from "./graph";
 import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, introFacts, isGetToKnowMe, type Intro } from "./intro";
 import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
+import type { MemoryOwnerReason } from "./owner";
 import {
   ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes, forgotReply, gapFact, gapQuestion, isForgetThat,
   looksLikeRequest,
@@ -55,6 +57,11 @@ export interface LearningDeps {
   say: (text: string) => boolean;
   /** Opens Settings › Memory (the interview asked for while memory is off). */
   openMemory?: () => void;
+  /**
+   * Memory is on and agreed to, but its saved memory can't be opened now: why (memory-2). Ember says so rather than
+   * asking for memory to be turned on. Null or absent otherwise.
+   */
+  paused?: () => MemoryOwnerReason | null;
   /** New facts were kept (the "Ember learned" line). */
   onLearned?: (items: LearnedItem[]) => void;
   /** Everything was forgotten: what showed as learned goes. */
@@ -257,11 +264,7 @@ export class MemoryLearning {
     if (this.interview && now - this.interviewAt > INTERVIEW_WAIT_MS) this.interview = null;
     if (this.question && now - this.question.at > ANSWER_WAIT_MS) this.question = null;
     if (isGetToKnowMe(text)) {
-      if (!this.d.inForce()) {
-        if (this.d.managed?.()) return INTRO_MANAGED;
-        this.d.openMemory?.();
-        return INTRO_OFF;
-      }
+      if (!this.d.inForce()) return this.notInForce();
       this.question = null;
       this.interview = new Interview(now);
       this.interviewAt = now;
@@ -296,6 +299,22 @@ export class MemoryLearning {
       return this.keepAll([gapFact(q.name, text)]) ? `Thanks. I'll remember that about “${q.name}”.` : "I couldn't keep that.";
     }
     return null;
+  }
+
+  /**
+   * What Ember says when asked for something only memory can do while it isn't in force: managed by the organisation,
+   * on but paused (and why), or off (Settings › Memory opens at its switch).
+   */
+  private notInForce(): string {
+    if (this.d.managed?.()) return INTRO_MANAGED;
+    const why = this.d.paused?.() ?? null;
+    if (why) {
+      const reply = memoryPausedReply(why);
+      if (reply.open) this.d.openMemory?.();
+      return reply.text;
+    }
+    this.d.openMemory?.();
+    return INTRO_OFF;
   }
 
   /** One idle check: the sleep-time pass first, else a question. */

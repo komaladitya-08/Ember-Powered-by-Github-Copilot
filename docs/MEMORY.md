@@ -145,7 +145,12 @@ download, so English-only MiniLM is the trade-off for now.
 - **Account ownership.** Ember checks the authenticated account ID with GitHub and records its digest before saving a new graph. On restart,
   the graph and its vectors stay hidden until the same account is verified. Older data without an owner and data
   left after a failed deletion stay on disk. Use Forget everything to clear them before binding a fresh graph.
-  Memory pauses while the model connection lacks a verified GitHub account.
+  Memory pauses while the model connection lacks a verified GitHub account, and Settings › Memory says why
+  (`MemoryOwner.reason`, app/shared/memory-owner.ts): Ember is still checking the account, nobody is signed in, the
+  user's own model provider or the organisation's model service is in force (memory works only with GitHub Copilot),
+  or GitHub didn't answer. Only another account's memory, memory with no owner Ember can read, or memory left after
+  signing out is offered Forget everything; Home's status line says "Memory paused", Tell Ember about you says why
+  instead of its questions, and "get to know me" answers with the same reason.
 - **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off.
 
 ## 4. Plan

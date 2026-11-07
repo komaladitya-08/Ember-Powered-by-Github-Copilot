@@ -263,6 +263,11 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     the recall tool goes through `MemoryService.context()` for its matches by meaning; `forRequest` awaits it.
 - **Changing memory's note** (`MEMORY_CONSENT_TEXT`) means bumping `FEATURE_CONSENT_VERSION.memory` (now 2).
 - **Sign-out and an account change call `forgetAll()`**, which erases the file too.
+- **Saying why memory is closed.** The host tells `MemoryOwner` why it has no account (`pauseAccount(why)`,
+  `verifyAccount(null, why)`: `checking`, `signed-out`, `own-provider`, `org-provider`, `unverified`), and the owner
+  adds `other-account` or `unowned` for data it can't open (`MemoryOwner.reason`, in every `MemoryView`). Home and
+  the conversation word it through app/shared/memory-owner.ts; only `other-account`, `unowned` and memory left after
+  signing out are offered Forget everything (`memoryOwnerOffersErase`).
 - **Better recall's vectors are facts too** (embed.ts): only in `memory-vectors.json` (0600, through `vectorFile()`),
   dropped with a forgotten fact, erased by `forgetAll()` and Remove, never sent anywhere. The model runs only in the
   "Ember memory" process (embed-process.ts, a `StopPart` through `SemanticMemory.stop()`), is fetched only from Settings

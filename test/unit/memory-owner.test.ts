@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { githubMemoryAccount, MemoryOwner } from "../../app/main/memory/owner";
 
 let dir: string;
@@ -66,4 +66,42 @@ it("verifies the same authenticated login against GitHub and returns its stable 
   expect(await githubMemoryAccount(fetch, "synthetic-token", "another-login")).toBeNull();
   fetch.mockRejectedValueOnce(new Error("unavailable"));
   expect(await githubMemoryAccount(fetch, "synthetic-token", "example")).toBeNull();
+});
+
+describe("why saved memory isn't open (memory-2, integrations-2)", () => {
+  it("says Ember is checking while it connects, and names the model service or the missing answer, never another owner (memory-2)", () => {
+    const first = new MemoryOwner(dir);
+    first.verify(123, true);
+    fs.writeFileSync(saved(), "owner data");
+    const owner = new MemoryOwner(dir);
+    expect([owner.state, owner.reason]).toEqual(["locked", "checking"]);
+    owner.verify(null, true, "own-provider");
+    expect([owner.state, owner.reason]).toEqual(["locked", "own-provider"]);
+    owner.verify(null, true, "org-provider");
+    expect(owner.reason).toBe("org-provider");
+    owner.verify(null, true);
+    expect(owner.reason).toBe("unverified");
+    owner.pause("signed-out");
+    expect(owner.reason).toBe("signed-out");
+    owner.verify(123, true);
+    expect([owner.state, owner.reason]).toEqual(["ready", null]);
+    owner.pause();
+    expect(owner.reason).toBe("checking");
+    // Nothing saved: the same reasons, while memory waits.
+    const empty = new MemoryOwner(fs.mkdtempSync(path.join(os.tmpdir(), "ember-memory-owner-empty-")));
+    empty.verify(null, true, "own-provider");
+    expect([empty.state, empty.reason]).toEqual(["waiting", "own-provider"]);
+  });
+
+  it("tells another account's memory apart from memory with no owner Ember can read (memory-2)", () => {
+    const first = new MemoryOwner(dir);
+    first.verify(123, true);
+    fs.writeFileSync(saved(), "owner data");
+    const other = new MemoryOwner(dir);
+    other.verify(456, true);
+    expect([other.state, other.reason]).toEqual(["locked", "other-account"]);
+    fs.rmSync(saved("memory-owner"));
+    other.refresh(true);
+    expect([other.state, other.reason]).toEqual(["locked", "unowned"]);
+  });
 });

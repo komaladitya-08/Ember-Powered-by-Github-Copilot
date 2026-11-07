@@ -104,7 +104,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
-import { githubMemoryAccount, MemoryOwner } from "./memory/owner";
+import { githubMemoryAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
 import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
@@ -1447,7 +1447,7 @@ function start(): void {
   });
   const memoryView = () => ({
     rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
-    ownership: memoryOwner.state, epoch: memoryEpoch,
+    ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason,
   });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
@@ -1479,6 +1479,8 @@ function start(): void {
   const conversationNow = (entries: TranscriptEntry[] = agent?.getTranscript() ?? []) => withLearned(entries, learnedLines);
   const learning = new MemoryLearning({
     memory, inForce: memoryOn, managed: () => !memoryAllowed(),
+    // On and agreed to, but its owner isn't verified: Ember says why rather than asking to turn memory on (memory-2).
+    paused: () => (memoryConfigured() && !memoryOwner.ready ? memoryOwner.reason ?? "checking" : null),
     questionsOn: () => settings.get().memory.questions,
     askedAt: () => settings.get().memory.askedAt,
     setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
@@ -1519,8 +1521,8 @@ function start(): void {
       publishMemoryOwner();
     },
     resolveAccountId: (token: string, login: string) => githubMemoryAccount((url, init) => net.fetch(url, init), token, login),
-    verifyAccount: (id: number | null) => { memoryEpoch++; memoryOwner.verify(id, memoryConfigured()); publishMemoryOwner(); },
-    pauseAccount: () => { memoryEpoch++; memoryOwner.pause(); publishMemoryOwner(); },
+    verifyAccount: (id: number | null, why?: MemoryWait) => { memoryEpoch++; memoryOwner.verify(id, memoryConfigured(), why); publishMemoryOwner(); },
+    pauseAccount: (why?: MemoryWait) => { memoryEpoch++; memoryOwner.pause(why); publishMemoryOwner(); },
     accountReady: memoryOn,
     useModel: (model: OneShot | null) => learning.setModel(model),
     taskDone: (title: string, result: string) => learning.taskDone(title, result),

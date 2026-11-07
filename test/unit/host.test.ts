@@ -3745,6 +3745,33 @@ describe("memory erasure at account boundaries", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("tells memory why it can't check the owner: signed out, a model provider in force, or GitHub not answering (memory-2, integrations-2)", async () => {
+    const why: string[] = [];
+    const memory = {
+      ...failingMemory(), resolveAccountId: async () => null,
+      verifyAccount: (id: number | null, reason?: string) => { why.push(id === null ? `verify:${reason}` : "verify:id"); },
+      pauseAccount: (reason?: string) => { why.push(`pause:${reason ?? "checking"}`); },
+    };
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    let provider: ActiveProvider | null = null;
+    const { host } = makeHost({ memory, accountRetryMs: [], provider: () => provider });
+    try {
+      expect(await host.start(null)).toBe("signed-out");
+      expect(why.at(-1)).toBe("pause:signed-out");
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(why.at(-1)).toBe("verify:unverified");
+      provider = own;
+      expect(await host.start(null)).toBe("ready");
+      expect(why.slice(-2)).toEqual(["pause:checking", "verify:own-provider"]);
+      provider = { ...own, kind: "admin" };
+      expect(await host.start(null)).toBe("ready");
+      expect(why.at(-1)).toBe("verify:org-provider");
+      provider = null;
+      sim.auth = async () => { throw new Error("getaddrinfo ENOTFOUND api.github.com"); };
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      expect(why.at(-1)).toBe("pause:unverified");
+    } finally { await host.stop(); }
+  });
   it("keeps memory when a verified account changes its login", async () => {
     const memory = { ...failingMemory(), resolveAccountId: async () => 100 };
     const { host } = makeHost({ memory });

@@ -6,7 +6,7 @@ import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/h
 import type { MemoryItem } from "../main/memory/service";
 import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
-import type { MemoryOwnership } from "../main/memory/owner";
+import type { MemoryOwnerReason, MemoryOwnership } from "../main/memory/owner";
 import type { MemoryCorrection } from "./memory-correction";
 
 /** A routine as Home lists it. */
@@ -25,7 +25,8 @@ export interface ProjectWorkspaceReply {
   message?: string;
   opened?: { files: string[]; sizes?: (number | null)[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
 }
-export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number }
+/** `reason`: why memory isn't open, so Home says it truthfully (memory-2); absent from an older main. */
+export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null }
 import type { HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";

@@ -3,7 +3,9 @@
  * Memory and as first run's optional step. The answers go to main (IPC memory:introduce), which checks them whole and
  * keeps them as things the user told Ember, only while memory is on with its own consent. While it isn't, the form
  * offers memory's note first, which needs an explicit yes (FEATURE_CONSENT_VERSION.memory); the organisation's
- * features.memory off hides the questions and says so. The words are in copy.ts (ABOUT_YOU), pinned by tests.
+ * features.memory off hides the questions and says so. Memory that is on but can't be opened (Ember connecting, a model
+ * provider in force: memory-2) hides them too, and says why (`owner`), so Save never fails with "Try again". The words
+ * are in copy.ts (ABOUT_YOU), pinned by tests.
  */
 
 import type { Settings, SettingsPatch } from "../../main/settings";
@@ -25,6 +27,8 @@ export interface AboutYouOptions {
 export interface AboutYou {
   /** New settings, and whether the organisation turned memory off. */
   refresh(s: Settings | null, managed: boolean): void;
+  /** Memory is on but its saved memory can't be opened now: why, in Memory's own words (null while it can). */
+  owner(why: string | null): void;
   /** Memory is on with its consent, so answers can be kept. */
   readonly ready: boolean;
   /** Any question is answered. */
@@ -43,7 +47,9 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   let settings: Settings | null = null;
   let managed = false;
   let saving = false;
-  const ready = () => !managed && !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= FEATURE_CONSENT_VERSION.memory;
+  let paused: string | null = null;
+  const on = () => !managed && !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= FEATURE_CONSENT_VERSION.memory;
+  const ready = () => on() && !paused;
 
   const group = el("div", { className: "group about-you" });
   group.setAttribute("role", "group");
@@ -72,6 +78,7 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
     off.append(note, actions);
   }
   const managedLine = el("p", { className: "row-note", textContent: ABOUT_YOU.managed });
+  const pausedLine = el("p", { className: "row-note about-paused" });
 
   const text = (key: "name" | "work" | "apps" | "hours", label: string, max: number) => {
     const row = el("div", { className: "field-row about-field" });
@@ -106,7 +113,7 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
     save.addEventListener("click", () => { void submit(); });
     saveRow.append(save);
   }
-  group.append(off, managedLine, ...fields, saveRow);
+  group.append(off, managedLine, pausedLine, ...fields, saveRow);
   // Settings says what the card is for under it (first run's step says it in its lead).
   const voice = el("p", { className: "hint", textContent: o.askConsent ? `${ABOUT_YOU.lead} ${ABOUT_YOU.voice}` : ABOUT_YOU.voice });
   host.replaceChildren(group, status, voice);
@@ -139,16 +146,19 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   }
 
   function draw(): void {
-    const on = ready();
-    off.hidden = on || managed;
+    const keeps = ready();
+    off.hidden = on() || managed;
     managedLine.hidden = !managed;
-    for (const f of [...fields, saveRow]) f.hidden = !on;
+    pausedLine.textContent = paused ?? "";
+    pausedLine.hidden = !on() || !paused;
+    for (const f of [...fields, saveRow]) f.hidden = !keeps;
     voice.hidden = managed;
   }
   draw();
 
   return {
     refresh(s, m) { settings = s; managed = m; draw(); o.changed?.(); },
+    owner(why) { if (why === paused) return; paused = why; draw(); o.changed?.(); },
     get ready() { return ready(); },
     get filled() { return Object.keys(answers()).length > 0; },
     submit,

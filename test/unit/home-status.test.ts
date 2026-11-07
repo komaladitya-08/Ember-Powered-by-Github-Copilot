@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
+import { memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage } from "../../app/renderer/home/search-copy";
 import { checksNote, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
@@ -58,6 +58,14 @@ describe("Home's status panel", () => {
     expect(whatsOnText(off)).toBe("Listening off · Memory off · Commands off");
     expect(whatsOnText({ ...off, voice: "listening", memory: true, commands: 2, computers: 2, wsl: true })).toBe("Listening on · Memory on · Commands on · 2 computers over SSH · WSL");
     expect(whatsOnText({ ...off, voice: "muted", computers: 1 })).toBe("Microphone off · Memory off · Commands off · 1 computer over SSH");
+  });
+
+  it("says memory is paused, not on, while its owner isn't verified (memory-2)", () => {
+    expect(memoryWhatsOn(true, false, "ready")).toBe(true);
+    expect(memoryWhatsOn(true, false, "locked")).toBe("paused");
+    expect(memoryWhatsOn(true, false, "waiting")).toBe("paused");
+    expect(memoryWhatsOn(false, false, "locked")).toBe(false);
+    expect(memoryWhatsOn(false, true, "ready")).toBe("paused");
   });
 });
 

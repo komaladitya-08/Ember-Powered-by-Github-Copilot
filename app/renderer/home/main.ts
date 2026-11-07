@@ -13,7 +13,7 @@ import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOI
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  MEMORY_OWNER_LOCKED, MEMORY_OWNER_WAITING, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, learnedLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -42,7 +42,7 @@ import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./a
 import { PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
-import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
+import { memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
@@ -266,7 +266,7 @@ function renderStatus(): void {
   const listening = !!settings?.wakeWord && !!settings?.voice.consent;
   setText("whats-on", whatsOnText({
     voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
-    memory: settings && memoryPaused(settings.memory) ? "paused" : !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION,
+    memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner),
     commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
     computers: settings?.targets.hosts.length ?? 0,
     wsl: !!settings?.targets.wsl.on,
@@ -1146,6 +1146,7 @@ $("conversation-stop").addEventListener("click", () => {
 $("memory-consent-text").textContent = MEMORY_CONSENT_TEXT;
 const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION;
 let memoryOwner: MemoryView["ownership"] = "waiting";
+let memoryReason: MemoryView["reason"];
 let memoryEpoch = 0;
 const memoryCorrection = mountMemoryCorrection(window.ember, () => $("memory-on"), (expected, corrected) => {
   const current = memoryRows.find(row => row.id === expected.id);
@@ -1205,10 +1206,13 @@ function renderMemory(rows: MemoryRow[]): void {
   if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? $("memory-on") : memoryQuery)).focus();
   const owner = $("memory-owner");
   owner.hidden = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn());
-  owner.textContent = memoryOwner === "locked" ? MEMORY_OWNER_LOCKED : MEMORY_OWNER_WAITING;
+  // Why memory isn't open, never advice to erase memory that only waits (a model provider, a reconnect: memory-2).
+  owner.textContent = memoryOwnerText(memoryReason, memoryOwner === "locked");
+  // Tell Ember about you can't keep answers then: it says why instead of its questions.
+  aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : owner.textContent);
   const all = $("memory-forget-all");
   const wasFocused = document.activeElement === all;
-  all.hidden = !rows.length && memoryOwner !== "locked";
+  all.hidden = !rows.length && !memoryOwnerOffersErase(memoryReason, memoryOwner === "locked");
   if (wasFocused && all.hidden) $("memory-on").focus();
 }
 for (const control of [memoryQuery, memorySource]) control.addEventListener("input", () => {
@@ -1222,7 +1226,7 @@ $("memory-more").addEventListener("click", () => {
   // Move into the newly revealed page, including when Show more has reached the end and disappeared.
   $("memory-list").children[before]?.querySelector<HTMLElement>("button")?.focus();
 });
-const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; memoryEpoch = view.epoch ?? 0; renderMemory(view.rows); };
+const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0; renderMemory(view.rows); renderStatus(); };
 /** Memory's settings as they are, so a change to one of its fields keeps the others (the patch replaces it whole). */
 const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, at: null }, questions: true, askedAt: null };
 /** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */

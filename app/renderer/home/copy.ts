@@ -335,8 +335,8 @@ export function memoryPaused(m: { on: boolean; consent: { version: number } }): 
 }
 /** Said in Settings › Memory while memory is paused, above its new note. */
 export const MEMORY_PAUSED_TEXT = "Memory is paused until you review the new account privacy note.";
-export const MEMORY_OWNER_WAITING = "Sign in with GitHub to use saved memory.";
-export const MEMORY_OWNER_LOCKED = "Saved memory is hidden until Ember verifies its owner. Use Forget everything to clear it.";
+/** Memory's line while its saved memory can't be opened, and whether to offer Forget everything (memory-2): shared with main. */
+export { memoryOwnerOffersErase, memoryOwnerText } from "../../shared/memory-owner";
 
 /** Where a remembered fact came from, as Settings › Memory lists it beside the fact. */
 export function memorySourceLabel(source: string): string {

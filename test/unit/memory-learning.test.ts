@@ -17,6 +17,8 @@ import { Gaps, answersQuestion, describes, gapQuestion, isForgetThat, looksLikeR
 import { negated, samePolarity } from "../../app/main/memory/text";
 import { REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "../../app/main/memory/refine";
 import { MemoryService } from "../../app/main/memory/service";
+import type { MemoryOwnerReason } from "../../app/main/memory/owner";
+import { memoryPausedReply } from "../../app/shared/memory-owner";
 import { ABOUT_YOU, MEMORY_CONSENT_TEXT, MEMORY_PAUSED_TEXT, aboutYouSaved, memoryPaused, introFromForm, learnedLine, memorySourceLabel, undoLearnedLabel } from "../../app/renderer/home/copy";
 
 const quiet = { info: () => undefined, warn: () => undefined };
@@ -179,7 +181,7 @@ describe("sleep-time refinement", () => {
   });
 });
 
-function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; model?: OneShot | null; inForce?: () => boolean } = {}) {
+function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; model?: OneShot | null; inForce?: () => boolean; paused?: () => MemoryOwnerReason | null } = {}) {
   const { s, advance, at } = service();
   let askedAt: string | null = null;
   const said: string[] = [];
@@ -191,7 +193,7 @@ function learning(o: { idle?: boolean; locked?: boolean; questions?: boolean; mo
     memory: s, inForce: o.inForce ?? (() => true), questionsOn: () => o.questions ?? true,
     askedAt: () => askedAt, setAskedAt: iso => { askedAt = iso; },
     idle: () => o.idle ?? true, locked: () => o.locked ?? false,
-    say: text => { said.push(text); return true; }, openMemory: opened,
+    say: text => { said.push(text); return true; }, openMemory: opened, paused: o.paused,
     onLearned: items => learned.push(...items.map(i => `${i.source}: ${i.text}`)), onForgotAll: forgotAll, onForgot: forgot, log: quiet, now: at,
   });
   if (o.model !== undefined) l.setModel(o.model);
@@ -362,6 +364,15 @@ describe("getting to know you", () => {
     const { l, opened } = learning({ inForce: () => false });
     expect(l.intent("get to know me", { own: true })).toBe(INTRO_OFF);
     expect(opened).toHaveBeenCalledOnce();
+  });
+
+  it("says why when memory is on but paused, instead of asking to turn it on (memory-2)", () => {
+    const { l, opened } = learning({ inForce: () => false, paused: () => "own-provider" });
+    expect(l.intent("get to know me", { own: true })).toBe(memoryPausedReply("own-provider").text);
+    expect(opened).not.toHaveBeenCalled();
+    const other = learning({ inForce: () => false, paused: () => "other-account" });
+    expect(other.l.intent("get to know me", { own: true })).toBe(memoryPausedReply("other-account").text);
+    expect(other.opened).toHaveBeenCalledOnce();
   });
 });
 

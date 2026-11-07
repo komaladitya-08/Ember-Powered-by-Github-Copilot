@@ -360,6 +360,8 @@ progress[hidden] { display: none; }
 .about-off[hidden] { display: none; }
 .about-off .btn { flex: none; white-space: nowrap; }
 .about-msg:empty { display: none; }
+/* Memory on but paused: its line stands alone in the group, so no rule above it. */
+.group > .about-paused { border-top: 0; }
 /* Its group and the hints under it are spaced as a section's own children are. */
 #about-you, #w-about { display: grid; gap: 8px; }
 

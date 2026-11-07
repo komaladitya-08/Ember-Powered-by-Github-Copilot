@@ -49,6 +49,7 @@ import { afterTheStep } from "../policy/audit";
 import type { CommandService } from "../commands/types";
 import { createHash, randomUUID } from "node:crypto";
 import type { OneShot } from "../memory/learn";
+import type { MemoryWait } from "../memory/owner";
 import { runtimeClientOptions } from "./runtime-env";
 import { redactGitHubTokens } from "./auth";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
@@ -190,8 +191,9 @@ export interface HostOptions {
   memory?: ConductorMemory & {
     forgetAll(): void;
     resolveAccountId?(token: string, login: string): Promise<number | null>;
-    verifyAccount?(id: number | null): void;
-    pauseAccount?(): void;
+    /** `why`: what keeps the account unknown when `id` is null (memory-2: Home says it, rather than "verify its owner"). */
+    verifyAccount?(id: number | null, why?: MemoryWait): void;
+    pauseAccount?(why?: MemoryWait): void;
     accountReady?(): boolean;
     useModel?(model: OneShot | null): void;
     taskDone?(title: string, result: string): void;
@@ -1472,10 +1474,12 @@ export class AgentHost {
     const refused = this.o.refuseConnect?.() ?? null;
     if (refused) {
       this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined, service: undefined });
+      this.o.memory?.pauseAccount?.("unverified");
       return;
     }
     if (!token && !provider) {
       this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined, service: undefined });
+      this.o.memory?.pauseAccount?.("signed-out");
       return;
     }
     this.setStatus({ phase: "starting", detail: provider?.kind === "user" ? `Connecting to ${serviceHost(provider.config.baseUrl)}…` : "Connecting to Copilot…", source: this.source });
@@ -1547,7 +1551,8 @@ export class AgentHost {
       this.restoreHistory();
       // This connection's generation: what it says after the saved copy is invalidated again is never saved (underGen).
       const hg = this.conductorGen = this.connGen;
-      this.o.memory?.verifyAccount?.(accountId);
+      // Memory works only with GitHub Copilot: under a model provider it waits, and Home says which (integrations-2).
+      this.o.memory?.verifyAccount?.(accountId, !provider ? "unverified" : provider.kind === "user" ? "own-provider" : "org-provider");
 
       let models: ModelLike[] = [];
       const admin = this.o.admin?.();
@@ -1919,6 +1924,8 @@ export class AgentHost {
       const reason = startErrorReason(err, ctx);
       this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason });
       await this.doStop();
+      // Not connected, so no account was checked: memory waits for the next connection, and Home says so.
+      if (gen === this.gen) this.o.memory?.pauseAccount?.("unverified");
       // Offline (e.g. started at login before the network or the VPN), or a problem on Copilot's side that passes (a
       // 5xx, a rate limit, a timeout): try again later rather than blaming the sign-in. Not if a newer start or stop
       // came meanwhile: a stale retry would restart a working connection.

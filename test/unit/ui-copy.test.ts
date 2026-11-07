@@ -5,6 +5,7 @@ import {
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { memoryOwnerOffersErase, memoryOwnerText, memoryPausedReply } from "../../app/shared/memory-owner";
 import { HOST_OS } from "../../app/main/platform/os";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
 import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/overlay";
@@ -924,5 +925,37 @@ describe("modelDestination and recipientWords (microphone consent names the real
   it("sends nothing anywhere while locked down, or when the organisation's address can't be read", () => {
     expect(modelDestination({ ...base, locked: true, adminProvider: "https://a.example" }).kind).toBe("none");
     expect(modelDestination({ ...base, adminProvider: "not a url" }).kind).toBe("none");
+  });
+});
+
+describe("what Memory says while saved memory can't be opened (memory-2, integrations-2)", () => {
+  it("names the reason, and never tells someone to erase memory that is only waiting", () => {
+    expect(memoryOwnerText("checking", true)).toBe("Checking your GitHub account…");
+    expect(memoryOwnerText("own-provider", true)).toBe("Memory works only with GitHub Copilot, so it's paused while Ember uses your own model provider. What Ember remembers stays on this computer. Turn off “Use my own model provider” in Models & connections to use it again.");
+    expect(memoryOwnerText("org-provider", false)).toBe("Memory works only with GitHub Copilot, so it's paused while Ember uses your organisation's model service. What Ember remembers stays on this computer.");
+    expect(memoryOwnerText("unverified", true)).toBe("Ember couldn't check your GitHub account, so memory is paused. It comes back when Ember reconnects.");
+    expect(memoryOwnerText("signed-out", false)).toBe("Sign in with GitHub to use saved memory.");
+    expect(memoryOwnerText("signed-out", true)).toBe("Sign in with GitHub to use saved memory. Until then it stays hidden on this computer, and Forget everything clears it.");
+    expect(memoryOwnerText("other-account", true)).toBe("This saved memory belongs to another GitHub account, so Ember keeps it hidden. Use Forget everything to clear it.");
+    expect(memoryOwnerText("unowned", true)).toBe("Ember can't tell which GitHub account this saved memory belongs to, so it stays hidden. Use Forget everything to clear it.");
+    // An older main that sends no reason: what it said before.
+    expect(memoryOwnerText(undefined, true)).toBe(memoryOwnerText("unowned", true));
+    expect(memoryOwnerText(undefined, false)).toBe("Sign in with GitHub to use saved memory.");
+    for (const r of ["checking", "own-provider", "org-provider", "unverified"] as const) {
+      expect(memoryOwnerOffersErase(r, true)).toBe(false);
+      expect(memoryOwnerText(r, true)).not.toContain("Forget everything");
+    }
+    for (const r of ["signed-out", "other-account", "unowned", undefined] as const) expect(memoryOwnerOffersErase(r, true)).toBe(true);
+    expect(memoryOwnerOffersErase("signed-out", false)).toBe(false);
+  });
+
+  it("answers in Ember's own words when memory is on but paused, opening Memory only where the answer is there", () => {
+    expect(memoryPausedReply("checking")).toEqual({ text: "I'm still checking your GitHub account, so memory isn't ready yet. Ask me again in a moment.", open: false });
+    expect(memoryPausedReply("own-provider")).toEqual({ text: "Memory works only with GitHub Copilot, so it's paused while I use your own model provider, and I can't keep what you tell me.", open: false });
+    expect(memoryPausedReply("org-provider")).toEqual({ text: "Memory works only with GitHub Copilot, so it's paused while I use your organisation's model service, and I can't keep what you tell me.", open: false });
+    expect(memoryPausedReply("unverified")).toEqual({ text: "I couldn't check your GitHub account, so memory is paused. It comes back when I reconnect.", open: false });
+    expect(memoryPausedReply("signed-out")).toEqual({ text: "Memory needs you signed in with GitHub, so I can't keep what you tell me yet.", open: false });
+    expect(memoryPausedReply("other-account")).toEqual({ text: "The memory saved on this computer isn't matched to your GitHub account, so memory is paused. I've opened Memory in Settings.", open: true });
+    expect(memoryPausedReply("unowned")).toEqual(memoryPausedReply("other-account"));
   });
 });

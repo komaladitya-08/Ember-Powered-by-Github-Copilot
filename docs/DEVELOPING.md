@@ -211,6 +211,11 @@ runtime. It does not change the app's consent or speaking settings.
   - It never keeps passwords, codes, keys or card numbers.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
     signing out forgets it all. The list says where each fact came from (you, our conversation, a task).
+  - Memory belongs to the verified GitHub account. While Ember can't open it, the pane says why instead of the list:
+    "Checking your GitHub account…" while connecting, that memory works only with GitHub Copilot while your own
+    model provider (or your organisation's model service) is in force, or that Ember couldn't check the account.
+    Forget everything is offered then only for another account's memory or memory with no owner, and Home's status
+    line says "Memory paused".
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
   - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so, `FEATURE_CONSENT_VERSION.memory` 2, so
     someone who agreed to the first note is asked again and memory stays off until they do). After conversation

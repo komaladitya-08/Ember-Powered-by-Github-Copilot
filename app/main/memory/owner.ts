@@ -4,6 +4,17 @@ import path from "node:path";
 
 export type MemoryOwnership = "waiting" | "ready" | "locked";
 
+/**
+ * Why saved memory isn't open, so Home can say it truthfully (memory-2, integrations-2): Ember is still connecting
+ * (`checking`), nobody is signed in to GitHub (`signed-out`), the user's own model provider or the organisation's model
+ * service is in force and memory works only with GitHub Copilot (`own-provider`, `org-provider`), or GitHub didn't
+ * answer (`unverified`). Only the last two belong to the saved memory itself: another GitHub account's
+ * (`other-account`), or with no owner Ember can read (`unowned`). None of the first five is a reason to erase it.
+ */
+export type MemoryOwnerReason = "checking" | "signed-out" | "own-provider" | "org-provider" | "unverified" | "other-account" | "unowned";
+/** Why there is no account to check: what the host says when it has none. */
+export type MemoryWait = Exclude<MemoryOwnerReason, "other-account" | "unowned">;
+
 /** Check the account behind the same credential that Copilot authenticated. Logins can be reassigned. */
 export async function githubMemoryAccount(
   fetch: (url: string, init: RequestInit) => Promise<{ ok: boolean; json(): Promise<unknown> }>,
@@ -27,6 +38,8 @@ export class MemoryOwner {
   private account: string | null = null;
   private status: MemoryOwnership = "waiting";
   private verifiedOwner = false;
+  private wait: MemoryWait = "checking";
+  private lockedBy: "other-account" | "unowned" | null = null;
   private readonly file: string;
 
   constructor(private readonly dir: string) { this.file = path.join(dir, "memory-owner"); this.pause(); }
@@ -35,8 +48,15 @@ export class MemoryOwner {
   get ready(): boolean { return this.status === "ready"; }
   /** A disconnect can precede sign-out cleanup. Unknown and mismatched data require an explicit local erase. */
   get mayEraseOnSignOut(): boolean { return this.verifiedOwner; }
+  /** Why memory isn't ready (null while it is, or while it waits only for memory to be turned on). */
+  get reason(): MemoryOwnerReason | null {
+    if (this.status === "ready") return null;
+    if (!this.account) return this.wait;
+    return this.lockedBy;
+  }
 
-  pause(): void { this.account = null; this.refresh(false); }
+  /** No account to check for now: `why` says what Home tells the user meanwhile. */
+  pause(why: MemoryWait = "checking"): void { this.account = null; this.wait = why; this.refresh(false); }
 
   /** The graph and vectors must already be gone. */
   clear(): void {
@@ -45,14 +65,17 @@ export class MemoryOwner {
     this.verifiedOwner = false;
   }
 
-  verify(id: number | null, create: boolean): void {
+  /** The verified account's id, or null with why there is none (a model provider in force, GitHub not answering). */
+  verify(id: number | null, create: boolean, why: MemoryWait = "unverified"): void {
     this.account = id === null ? null : crypto.createHash("sha256").update(`github-account:${id}`).digest("hex");
+    if (id === null) this.wait = why;
     this.verifiedOwner = false;
     this.refresh(create);
   }
 
   refresh(create: boolean): void {
     this.status = "waiting";
+    this.lockedBy = null;
     try {
       if (!this.account) {
         if (this.hasData()) this.status = "locked";
@@ -66,7 +89,7 @@ export class MemoryOwner {
       }
       this.verifiedOwner = false;
       // A previous build or interrupted write may have left a graph or vectors without a trustworthy owner.
-      if (this.hasData()) { this.status = "locked"; return; }
+      if (this.hasData()) { this.status = "locked"; this.lockedBy = owner === null ? "unowned" : "other-account"; return; }
       if (!create) return;
       const tmp = `${this.file}.${crypto.randomUUID()}.tmp`;
       try {
@@ -79,6 +102,7 @@ export class MemoryOwner {
       this.verifiedOwner = true;
     } catch {
       this.status = "locked";
+      this.lockedBy = "unowned";
       this.verifiedOwner = false;
     }
   }

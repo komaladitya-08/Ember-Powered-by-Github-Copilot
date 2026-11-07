@@ -249,3 +249,64 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps Undo truthful, preserves
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("says why saved memory is paused, never offers to erase memory that only waits, and keeps About you from failing (memory-2, integrations-2)", async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
+  settings.memory = { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+  const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
+    admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
+  const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
+  const dist = path.resolve("dist");
+  const server = http.createServer((req, res) => {
+    const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
+    if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
+    const mime: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+    res.setHeader("content-type", mime[path.extname(file)] ?? "application/octet-stream");
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(seed => {
+      const listeners: Record<string, (value: unknown) => void> = {};
+      (window as unknown as { __push: (view: MemoryView) => void }).__push = view => listeners.onMemory?.(view);
+      window.ember = new Proxy({}, { get: (_target, name: string) => {
+        if (name.startsWith("on")) return (fn: (value: unknown) => void) => { listeners[name] = fn; return () => { delete listeners[name]; }; };
+        if (name === "getStatus") return async () => seed.status;
+        if (name === "memory") return async () => ({ rows: [], ownership: "locked", reason: "own-provider" });
+        if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
+        return () => new Promise(() => undefined);
+      } }) as EmberHomeApi;
+    }, { status });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Renderer fixture didn't start.");
+    await page.goto(`http://127.0.0.1:${address.port}/app/renderer/home/index.html`);
+    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    await expect.poll(() => page.locator("#whats-on").textContent()).toContain("Memory paused");
+    await page.locator('a[href="#memory-h"]').click();
+    await expect.poll(() => page.locator("#memory-owner").textContent()).toContain("paused while Ember uses your own model provider");
+    const owner = page.locator("#memory-owner");
+    expect(await owner.isHidden()).toBe(false);
+    expect(await owner.textContent()).not.toContain("Forget everything");
+    expect(await page.locator("#memory-forget-all").isHidden()).toBe(true);
+    // Tell Ember about you says why instead of asking questions it can't keep the answers to.
+    expect(await page.locator("#ay-name").isVisible()).toBe(false);
+    expect(await page.locator("#about-you").innerText()).toContain("paused while Ember uses your own model provider");
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "memory-provider-paused.png"), fullPage: true });
+    }
+    // Memory that really is another account's may be cleared.
+    await page.evaluate(() => (window as unknown as { __push: (view: MemoryView) => void }).__push({ rows: [], ownership: "locked", reason: "other-account" }));
+    expect(await owner.textContent()).toBe("This saved memory belongs to another GitHub account, so Ember keeps it hidden. Use Forget everything to clear it.");
+    expect(await page.locator("#memory-forget-all").isHidden()).toBe(false);
+    await page.evaluate(() => (window as unknown as { __push: (view: MemoryView) => void }).__push({ rows: [], ownership: "ready", reason: null }));
+    expect(await page.locator("#ay-name").isVisible()).toBe(true);
+    await page.locator('a[href="#home-h"]').click();
+    await expect.poll(() => page.locator("#whats-on").textContent()).toContain("Memory on");
+    expect(errors).toEqual([]);
+  } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+}, 60_000);
