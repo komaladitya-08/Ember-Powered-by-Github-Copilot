@@ -273,7 +273,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   "Needs fixing", never a code such as OK), in one column as wide as the widest word (a subgrid, so the labels line
   up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows.
 - **The conversation** is part of the page, not a box that scrolls inside it: its latest 6 messages (so the composer
-  and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries, shows explicit per-answer truncation beyond
+  and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
+  its reply show), shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. Edit only fills the composer; a fresh Send is required. Home sends
   no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer and its
   buttons in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. **Read the last

@@ -1168,6 +1168,8 @@ $("conversation-compose").addEventListener("submit", event => {
     conversationMessage.focus();
     return;
   }
+  // A search left typed in would hide this request and its reply while the status says the reply came (home-4).
+  if (conversationSearch.value) { conversationSearch.value = ""; renderConversation(conversationAll); }
   send.disabled = true;
   send.textContent = "Sending…";
   conversationAwaitingReply = true;

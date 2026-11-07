@@ -361,4 +361,21 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
+
+  it("shows the new request and its reply after a search was left typed in (home-4)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Find the invoice from March" }, { t: at(1), who: "ember", text: "The invoice is in Downloads." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.locator("#conversation-search").fill("invoice");
+      await page.locator("#conversation-message").fill("Thanks, now open my calendar");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual(["Thanks, now open my calendar"]);
+      await reply(page, seed, "Thanks, now open my calendar", 3);
+      expect(await page.locator("#conversation-search").inputValue()).toBe("");
+      expect(await page.locator("#conversation-search-status").innerText()).toBe("");
+      expect(await page.locator("#conversation > li:visible p").allInnerTexts()).toEqual([seed[0].text, seed[1].text, "Thanks, now open my calendar", expect.stringMatching(/^word0 word1/)]);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
 });
