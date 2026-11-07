@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MANUAL_MAX_MS, Ring, VoiceEngine, heardOtherStop, heardStopWord, holdsWake, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
+import { MANUAL_MAX_MS, Ring, TRAIL_HOLD_MS, VoiceEngine, heardOtherStop, trailsOff, heardStopWord, holdsWake, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
 import { withoutRepeats } from "../../app/voice/sherpa";
 
 /** A scripted backend: frames are tagged by their first sample. */
@@ -274,6 +274,58 @@ describe("VoiceEngine", () => {
     expect(long.filter(e => e.type === "utterance")).toEqual([{ type: "utterance", text: expect.stringMatching(/^And then there was the time when/), window: "manual", ms: 0, cut: true }]);
     expect(endedAt).toBeGreaterThanOrEqual(1000 + MANUAL_MAX_MS);
     expect(endedAt).toBeLessThan(1000 + MANUAL_MAX_MS + 100);
+  });
+
+  describe("a request that trails off (voice-listening-3)", () => {
+    /** "Hey Ember", then `first` said, a pause of `pauseMs`, then `rest` (each segment is one frame of speech). */
+    const pausedRequest = (pauseMs: number, transcripts: string[], window: "wake" | "manual" = "wake") => run(fake(transcripts), (e, c) => {
+      const second = transcripts.length > 1;
+      if (window === "manual") { c.t = 1000; e.listenOnce(c.t, 8000); }
+      else { e.feed(frame(1)); }
+      c.t += 32; e.feed(frame(0, true), c.t);
+      c.t += 32; e.feed(frame(0), c.t); // the VAD ends the first part here
+      for (const end = c.t + pauseMs; c.t < end;) { c.t += 32; e.feed(frame(0), c.t); }
+      if (second) { c.t += 32; e.feed(frame(0, true), c.t); c.t += 32; e.feed(frame(0), c.t); }
+      for (let i = 0; i < 40 && e.listening; i++) { c.t += 32; e.feed(frame(0), c.t); }
+    });
+    const said = (events: VoiceEvent[]) => events.filter(e => e.type === "utterance").map(e => (e as { text: string }).text);
+
+    it("waits for the rest of “And make the text a.” after a 0.7 s pause, and sends it as one request", () => {
+      expect(TRAIL_HOLD_MS).toBe(900);
+      expect(said(pausedRequest(700, ["Hey Ember, and make the text a.", "Bit bigger."]))).toEqual(["And make the text a bit bigger."]);
+      expect(said(pausedRequest(700, ["Open the.", "Calculator."], "manual"))).toEqual(["Open the calculator."]);
+    });
+
+    it("sends it as it was when nothing more is said, and never holds a request that ends as one does", () => {
+      expect(said(pausedRequest(1500, ["Hey Ember, and make the text a."]))).toEqual(["And make the text a."]);
+      const events = run(fake(["Hey Ember, turn on night light."]), (e, c) => {
+        e.feed(frame(1));
+        c.t += 32; e.feed(frame(0, true), c.t);
+        c.t += 32; e.feed(frame(0), c.t);
+      });
+      // At once, as before: no wait after a request that ends as one does.
+      expect(said(events)).toEqual(["Turn on night light."]);
+      for (const t of ["Turn it on.", "Log in.", "What is it for?", "Send it to Sam.", "Open the calculator."]) expect(trailsOff(t), t).toBe(false);
+      for (const t of ["And make the text a.", "Open the", "Send it to my, um.", "Set a timer for", "Call Sam and"]) expect(trailsOff(t), t).toBe(true);
+    });
+
+    it("still stops on a stop said after the pause, and drops the half request", () => {
+      const events = pausedRequest(500, ["Hey Ember, and make the text a.", "Stop."]);
+      expect(said(events)).toEqual([]);
+      expect(events.filter(e => e.type === "stop")).toHaveLength(1);
+    });
+
+    it("never sends the half request after a cancel (the kill switch)", () => {
+      const events = run(fake(["Hey Ember, open the."]), (e, c) => {
+        e.feed(frame(1));
+        c.t += 32; e.feed(frame(0, true), c.t);
+        c.t += 32; e.feed(frame(0), c.t);
+        expect(e.listening).toBe(true); // held, not sent
+        e.cancel();
+        for (let i = 0; i < 60; i++) { c.t += 32; e.feed(frame(0), c.t); }
+      });
+      expect(said(events)).toEqual([]);
+    });
   });
 
   it("does not transcribe queued audio captured in the playback tail", () => {

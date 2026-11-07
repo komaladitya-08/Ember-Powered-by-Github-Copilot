@@ -207,7 +207,11 @@ reported in every PR that touches it.
    Moonshine's 0.13 s off the wait without changing when a request ends.) Lower `MIN_SILENCE` to 450 ms only when the
    transcript so far ends like a finished request ("?", a verb's object, a known command shape). Keep 600–900 ms when
    it trails off ("and…", "the…"). This is a rule-based first step, and it needs streaming partials (phase 2).
-   Measured against the false cut-off rate on the clip set.
+   Measured against the false cut-off rate on the clip set. (2026-11-07: the trailing half is built. A request the VAD
+   ends on a word no request ends on, "a", "the", "to", "and", "my", "um" and the like, with no "?" or "!"
+   (engine.ts `trailsOff`), is held for 0.9 s (`TRAIL_HOLD_MS`) and joined to what follows: "And make the text a" …
+   0.7 or 0.9 s … "bit bigger." is now one request where it was "And make the text a." (voice-listening-3). Nothing
+   else waits longer, a stop after the pause still stops, and a cancel drops what was held.)
 
 ### Phase 2: listen like a person
 

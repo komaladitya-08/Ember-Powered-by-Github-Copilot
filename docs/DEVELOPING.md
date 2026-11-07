@@ -494,7 +494,8 @@ the reply remains readable in the bubble. It never submits speech to an unspecif
 
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
 the standard speech models (about 138.5 MB of downloads, once; agreeing to the microphone note starts the download).
-Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name.
+Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name; a
+pause to think after a word such as “the” or “and” waits 0.9 s more for the rest.
 Ember answers out loud in the default Kitten voice when its native runtime and model are ready, or a local system
 voice otherwise, sentence by sentence as the answer
 arrives. To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say

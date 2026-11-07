@@ -328,6 +328,18 @@ export function isAnswerWord(text: string): boolean {
   return /^((okay|ok|oh|so|um|uh|well|ember)[\s,.!]+)*(no|nope|not\s+now|no\s+thanks?|no\s+thank\s+you|don'?t|do\s+not)([\s,.!]+(thanks|ember))*[\s.!,]*$/i.test(text.trim());
 }
 
+/**
+ * A request that trails off: "And make the text a.", "Open the", "Send it to my, um." (it ends on a word no request ends
+ * on, with no "?" or "!"). People pause to think mid-request, and the VAD ends a request after 0.6 s of silence: such a
+ * one is held for TRAIL_HOLD_MS for the rest of it (voice-listening-3). "Turn it on." and "Log in." aren't held.
+ */
+export function trailsOff(text: string): boolean {
+  return /\b(a|an|the|to|and|or|of|for|with|my|your|from|but|into|than|u+m+|u+h+|e+r+m*)[\s,.…-]*$/i.test(text);
+}
+
+/** How long a request that trails off waits for the rest of it (ms): measured pauses mid-request were 0.7–1.2 s. */
+export const TRAIL_HOLD_MS = 900;
+
 /** "Um." "Hmm.": a filler, not a request (the window keeps listening). */
 export function isFiller(text: string): boolean {
   return /^((u+m+|u+h+|h*m+|mhm|a+h+|o+h+|e+r+m*)[\s,.!?…-]*)+$/i.test(text);
@@ -805,6 +817,8 @@ export class VoiceEngine {
    * for as long as teaching lasted). The VAD is the enrolment's meanwhile: nothing here feeds it.
    */
   private onlyStops = false;
+  /** A request that trailed off, waiting until `until` for the rest of it (trailsOff); `t0`: when it was heard. */
+  private held: { text: string; audio: Float32Array; withWake: boolean; until: number; t0: number } | null = null;
   stopsOnly(on: boolean): void {
     this.onlyStops = on;
     this.pendingWake = null;
@@ -925,6 +939,8 @@ export class VoiceEngine {
   /** One frame of microphone audio, 16 kHz mono. */
   feed(frame: Float32Array, capturedAt?: number): void {
     const now = this.now();
+    // The rest of a request that trailed off didn't come: it goes as it was.
+    if (this.held && now >= this.held.until && !this.backend.speaking()) this.sendHeld();
     if (this.mode.kind === "listening" && this.mode.reason === "manual") {
       if (now >= this.manualFrom + MANUAL_MAX_MS) {
         for (const seg of this.backend.flushVad()) this.handleSegment(this.trim(seg), true);
@@ -1678,7 +1694,22 @@ export class VoiceEngine {
     let text = this.mode.reason === "manual" ? heard.trim() : stripWake(heard, this.mode.first || conversation);
     // The clip holds the wake phrase before the request ("Hey Ember, allow" in one breath): Voice Match then vouches only
     // for what follows it (match.ts afterWakePhrase).
-    const withWake = this.mode.reason !== "manual" && holdsWake(heard, text, this.mode.first || conversation);
+    let withWake = this.mode.reason !== "manual" && holdsWake(heard, text, this.mode.first || conversation);
+    let audio = clip.audio;
+    const held = this.held;
+    if (held) {
+      // The rest of a request that trailed off: one request, its audio whole for Voice Match. A cough or an "um" keeps
+      // it waiting; a stop said on its own still stops (below), and the half request goes.
+      if (!saysSomething(text)) return;
+      this.held = null;
+      if (!stopped(text)) {
+        text = `${held.text.replace(/[\s,.…-]+$/, "")} ${text.replace(/^[A-Z](?![A-Z.])/, c => c.toLowerCase())}`;
+        withWake = held.withWake;
+        audio = new Float32Array(held.audio.length + clip.audio.length);
+        audio.set(held.audio);
+        audio.set(clip.audio, held.audio.length);
+      }
+    }
     const wakePhrase = this.mode.first && this.mode.reason === "wake";
     this.mode.first = false;
     // (One word is the wake phrase misheard over the room's talk: Moonshine base wrote it as "10.".)
@@ -1733,12 +1764,32 @@ export class VoiceEngine {
       this.mode.until = Math.max(this.mode.until, this.now() + 4000);
       return;
     }
+    if (!held && !cut && !bargeIn && !this.overEmber && !this.overSound && trailsOff(text) && !(this.questionWaiting && isAnswerWord(text))) {
+      // "And make the text a.": the speaker paused to think. Held for the rest of it (the window stays open meanwhile).
+      this.held = { text, audio, withWake, until: this.now() + TRAIL_HOLD_MS, t0 };
+      this.mode.until = Math.max(this.mode.until, this.held.until);
+      return;
+    }
+    this.sendRequest(text, audio, withWake, cut, t0);
+  }
+
+  /** A request that trailed off and wasn't continued: sent as it was heard. */
+  private sendHeld(): void {
+    const h = this.held;
+    this.held = null;
+    if (h && this.mode.kind === "listening") this.sendRequest(h.text, h.audio, h.withWake, false, h.t0);
+  }
+
+  /** The window's request goes to main (`audio`: what Voice Match checks), and the window ends or, in a conversation, listens on. */
+  private sendRequest(text: string, audio: Float32Array, withWake: boolean, cut: boolean, t0: number): void {
+    if (this.mode.kind !== "listening") return;
+    const conversation = this.mode.reason === "conversation";
     // A wake's request sets the loudness its follow-up must come near; after three follow-ups in a row, the next request needs "Hey Ember" (MAX_FOLLOW_UPS).
     const window = this.mode.reason;
     // (Not softer than the wake phrase: else each follow-up could take softer room talk.)
     if (window === "wake") this.voice = Math.max(this.wakePeak, this.peak);
     this.followUps = window === "follow-up" ? this.followUps + 1 : 0;
-    this.requestAudio = clip.audio;
+    this.requestAudio = audio;
     this.requestWithWake = withWake;
     this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}) });
     this.echo *= ECHO_DECAY;
@@ -1782,6 +1833,8 @@ export class VoiceEngine {
   private endListening(reason: "timeout" | "done" | "stop" | "rejected"): void {
     const window = this.mode.kind === "listening" ? this.mode.reason : "wake";
     const shown = this.mode.kind !== "listening" || this.mode.announced !== false;
+    // (A request held for the rest of it goes with the window: never sent after a stop or a cancel.)
+    this.held = null;
     this.mode = { kind: "idle" };
     this.wasSpeaking = false;
     this.hushAwaited = false;
