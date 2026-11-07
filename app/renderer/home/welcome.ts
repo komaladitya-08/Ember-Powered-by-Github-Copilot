@@ -171,17 +171,22 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       back.removeAttribute("aria-describedby");
     }
     next.className = "btn";
-    alt.hidden = true;
+    // The step's quiet choice ("" for none), applied once below.
+    let altText = "";
     let label: string = NAV.next;
     let why = "";
-    if (step === "hello") { label = NAV.begin; alt.hidden = false; alt.textContent = NAV.character; }
-    if (step === "consent") ({ label, why } = renderConsent());
-    if (step === "sign-in") ({ label, why } = renderSignIn());
+    if (step === "hello") { label = NAV.begin; altText = NAV.character; }
+    if (step === "consent") ({ label, why, alt: altText } = renderConsent());
+    if (step === "sign-in") ({ label, why, alt: altText } = renderSignIn());
     if (step === "provider") ({ label, why } = renderProvider());
     if (step === "checks") label = renderChecks();
-    if (step === "try") { renderTry(); alt.hidden = false; alt.textContent = NAV.about; }
+    if (step === "try") { renderTry(); altText = NAV.about; }
     if (step === "about") label = aboutNext(about);
     if (step === "done") { renderSummary(); label = START_LABEL; next.className = "start"; }
+    // Never hidden on the way to being shown again: hiding the focused button would throw its focus to the page on
+    // every status that redraws the step (first-run-2, WCAG 2.4.3).
+    if (alt.hidden !== !altText) alt.hidden = !altText;
+    if (altText && alt.textContent !== altText) alt.textContent = altText;
     if (saving) why = "Saving…";
     wantLevel(step === "try" && voiceState() === "listening");
     next.textContent = label;
@@ -190,17 +195,15 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if ($("w-why").textContent !== why) $("w-why").textContent = why;
   }
 
-  function renderConsent(): { label: string; why: string } {
+  function renderConsent(): { label: string; why: string; alt: string } {
     const a = status?.admin;
     const service = a?.provider ? `your organisation's model service (${hostOf(a.provider)})` : "GitHub Copilot";
     const points = consentPoints({ service, kept: a ? keptWords(a) : "kept 30 days", locked: !!a && a.error !== null });
     $("w-points").replaceChildren(...points.map(p => { const li = el("li", { textContent: p.text }); li.dataset.icon = p.icon; return li; }));
     const note = consented() ? CONSENT_TEXT.agreed : declined ? CONSENT_TEXT.declined : "";
     if ($("w-consent-note").textContent !== note) $("w-consent-note").textContent = note;
-    if (consented()) return { label: NAV.next, why: "" };
-    alt.hidden = false;
-    alt.textContent = declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow;
-    return { label: CONSENT_TEXT.agree, why: "" };
+    if (consented()) return { label: NAV.next, why: "", alt: "" };
+    return { label: CONSENT_TEXT.agree, why: "", alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
   }
 
   /** Asks main for the microphone's level, or stops, only when that changes. */
@@ -216,7 +219,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   /** Ember's connection is to the user's own provider (first-run-1): no Copilot sign-in is in use. */
   const ownInUse = () => agent?.service?.kind === "user";
 
-  function renderSignIn(): { label: string; why: string } {
+  function renderSignIn(): { label: string; why: string; alt: string } {
     const v = signInView({
       phase: agent?.phase ?? null, reason: agent?.reason, login: agent?.login, signingIn,
       managedProvider: !!status?.admin.provider, locked: !!status && status.admin.error !== null, service: agent?.service,
@@ -228,10 +231,6 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     line.className = `w-status ${signInMessage?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
     $("w-signin-later").hidden = v.primary === "continue" && !v.why;
     $("w-signin-later").textContent = SKIP_SIGN_IN;
-    if (v.cancel || v.skip) {
-      alt.hidden = false;
-      alt.textContent = v.cancel ? "Cancel" : NAV.skip;
-    }
     if (!signingIn) { $("w-code").hidden = true; waitLink = null; }
     // A sign-in made elsewhere (the GitHub CLI's): the page main offers, and Check again, which looks for it.
     const open = $("w-open-page");
@@ -260,7 +259,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     renderActions(extras);
     renderModels();
     const label = signInPrimary === "continue" ? NAV.next : signInPrimary === "sign-in" ? signInLabel(agent?.signInWith) : ACTION_LABEL[signInPrimary];
-    return { label, why: v.why };
+    return { label, why: v.why, alt: v.cancel ? "Cancel" : v.skip ? NAV.skip : "" };
   }
 
   /** The user's own provider is offered on first run (and if not, why). */
@@ -676,6 +675,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (declined) { void window.ember.quit(); return; }
       declined = true;
       render();
+      // The same button now quits: focus goes to Agree, so a second Enter doesn't quit Ember unasked (first-run-2).
+      next.focus();
       return;
     }
     if (step === "sign-in") {

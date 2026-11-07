@@ -27,7 +27,7 @@ const READY_MODELS = [
 ];
 const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, signInWith: "github-app" };
 
-interface Seed { admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown> }
+interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown> }
 
 let browser: Browser;
 let server: http.Server;
@@ -53,7 +53,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = !!seed.home;
   if (seed.provider) settings.provider = { ...settings.provider, ...seed.provider } as typeof settings.provider;
-  settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
+  settings.consent = { version: seed.consent ?? 99, at: "2026-11-04T12:00:00Z" };
   const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
   const environment = { checks: seed.checks ?? [], versions: { node: "24", electron: "44", chrome: "152" } };
   const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
@@ -434,6 +434,43 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(summary).toContain("Locked down by your organisation");
     expect(summary).not.toMatch(/Not signed in|Copilot/);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(p) the step's quiet button keeps keyboard focus through every redraw (first-run-2, WCAG 2.4.3)", async () => {
+    // Skip for now, focused, while a status arrives.
+    const p = await open();
+    await p.locator("#w-alt").focus();
+    expect(await p.locator("#w-alt").innerText()).toBe("Skip for now");
+    await p.evaluate(a => window.__frEmit("onAgentStatus", a), { ...SIGNED_OUT, detail: "Still not signed in." });
+    await p.waitForTimeout(50);
+    expect(await focusedId(p)).toBe("w-alt");
+    // Sign in puts focus on Cancel, and the device code arriving keeps it there.
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("signIn");
+    expect(await p.locator("#w-alt").innerText()).toBe("Cancel");
+    expect(await focusedId(p)).toBe("w-alt");
+    await emit(p, "onSignInProgress", { state: "code", userCode: "ABCD-1234", verificationUri: "https://github.com/login/device" });
+    await expect.poll(() => p.locator("#w-code").isVisible()).toBe(true);
+    expect(await focusedId(p)).toBe("w-alt");
+    // Personalise memory…, focused on the try step, while the voice status arrives.
+    const t = await open({ agent: readyAgent() });
+    await next(t).click();
+    await next(t).click();
+    await expect.poll(() => t.locator("#w-title").innerText()).toBe("Try me out");
+    await t.locator("#w-alt").focus();
+    await emit(t, "onVoiceStatus", { state: "off", detail: null, modelsReady: false, modelsMissing: [], modelsBytes: 0 });
+    await t.waitForTimeout(50);
+    expect(await focusedId(t)).toBe("w-alt");
+    // Not now on the consent step: focus goes to Agree, never to the page, and a second Enter doesn't quit.
+    const c = await open({ consent: 0 });
+    await next(c).click();
+    await expect.poll(() => c.locator("#w-title").innerText()).toBe("What I do, and what I don't");
+    await c.locator("#w-alt").focus();
+    await c.keyboard.press("Enter");
+    await expect.poll(() => c.locator("#w-alt").innerText()).toBe("Quit Ember");
+    expect(await focusedId(c)).toBe("w-next");
+    expect(await c.locator("#w-consent-note").innerText()).toContain("I'll stay off");
+    expect(await calls(c)).not.toContain("quit");
   });
 
   it("(m) Back, then Home turns the provider on itself: the late switch-off of the abandoned check leaves it on (PR #191 re-review)", async () => {
