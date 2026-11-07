@@ -9,6 +9,7 @@ import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { AGREE_ARM_MS } from "../../app/shared/provider";
 
 declare global {
   interface Window {
@@ -86,6 +87,7 @@ async function open(seed: Seed = {}): Promise<Page> {
       if (name === "conversation") return async () => [];
       if (name === "copyText") return async (text: string) => { window.__frCalls.push(`copy:${text}`); };
       if (name === "openAsk") return async () => { window.__frCalls.push("openAsk"); };
+      if (name === "quit") return async () => { window.__frCalls.push("quit"); };
       return () => new Promise(() => undefined);
     } }) as never;
     if (!noBridge) {
@@ -528,16 +530,52 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await emit(t, "onVoiceStatus", { state: "off", detail: null, modelsReady: false, modelsMissing: [], modelsBytes: 0 });
     await t.waitForTimeout(50);
     expect(await focusedId(t)).toBe("w-alt");
-    // Not now on the consent step: focus goes to Agree, never to the page, and a second Enter doesn't quit.
+  });
+
+  it("(y) a second Enter, a held Enter or a double click after Not now neither agrees nor quits (first-run-c1-1)", async () => {
+    // Not now: focus goes to the note that says what it did, never to Agree (the next Enter would agree) nor to the
+    // same button, now Quit Ember.
     const c = await open({ consent: 0 });
     await next(c).click();
     await expect.poll(() => c.locator("#w-title").innerText()).toBe("What I do, and what I don't");
+    await c.waitForTimeout(AGREE_ARM_MS + 100);
     await c.locator("#w-alt").focus();
     await c.keyboard.press("Enter");
     await expect.poll(() => c.locator("#w-alt").innerText()).toBe("Quit Ember");
-    expect(await focusedId(c)).toBe("w-next");
+    expect(await focusedId(c)).toBe("w-consent-note");
     expect(await c.locator("#w-consent-note").innerText()).toContain("I'll stay off");
-    expect(await calls(c)).not.toContain("quit");
+    await c.keyboard.press("Enter");
+    // A held Enter: the key repeats.
+    await c.keyboard.down("Enter");
+    await c.keyboard.down("Enter");
+    await c.keyboard.up("Enter");
+    await c.waitForTimeout(100);
+    expect(await calls(c)).toEqual([]);
+    expect(await c.locator("#welcome").getAttribute("data-step")).toBe("consent");
+    // Agree is still one deliberate Tab and Enter away (Back, then Quit Ember, then Agree).
+    await c.keyboard.press("Tab");
+    await c.keyboard.press("Tab");
+    await c.keyboard.press("Tab");
+    expect(await focusedId(c)).toBe("w-next");
+    // A double click on Get started lands its second click on Agree, drawn where it was: dropped, nothing agreed.
+    const d = await open({ consent: 0 });
+    await next(d).dblclick();
+    await expect.poll(() => d.locator("#welcome").getAttribute("data-step")).toBe("consent");
+    await d.waitForTimeout(100);
+    expect(await calls(d)).toEqual([]);
+    // A double click on Not now doesn't quit through the same button, now Quit Ember.
+    await d.waitForTimeout(AGREE_ARM_MS);
+    await d.locator("#w-alt").dblclick();
+    await d.waitForTimeout(100);
+    expect(await calls(d)).toEqual([]);
+    expect(await d.locator("#w-alt").innerText()).toBe("Quit Ember");
+    // Pressed once it has been on screen a moment, each does what it says.
+    await d.waitForTimeout(AGREE_ARM_MS);
+    await d.locator("#w-alt").click();
+    await expect.poll(() => calls(d)).toEqual(["quit"]);
+    await next(d).click();
+    await expect.poll(async () => (await calls(d)).some(x => x.startsWith('save:{"consent":{"version":'))).toBe(true);
+    expect((c as Page & { errors: string[] }).errors).toEqual([]);
   });
 
   it("(q) someone who agreed to an earlier version starts at the consent and is told what changed (first-run-4, safety-privacy-8)", async () => {
@@ -551,6 +589,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // The usual points and the full text are still there; nothing goes on until Agree is saved.
     expect(await p.locator("#w-points li").count()).toBe(5);
     expect(await next(p).innerText()).toBe("Agree and continue");
+    // Agree takes a press once it has been on screen a moment (first-run-c1-1).
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
     await next(p).click();
     await expect.poll(async () => (await calls(p)).some(c => c.startsWith('save:{"consent":{"version":7'))).toBe(true);
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");

@@ -921,6 +921,9 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice, #provider-off)
 .w-more h3 + .terms { margin-top: -4px; }
 .w-note { margin: 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
 .w-note:empty { display: none; }
+/* Focused after Not now (first-run-c1-1): the ring gets room round the words without moving them. */
+.w-note[tabindex="-1"] { margin: -2px -6px; padding: 2px 6px; border-radius: var(--r-xs); }
+.w-note[tabindex="-1"]:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 /* A status line with its symbol (never colour alone): connected, all good, or what needs doing. */
 .w-status { margin: 0; display: flex; align-items: flex-start; gap: 8px; color: var(--fg); font: var(--type-headline); text-wrap: pretty; }

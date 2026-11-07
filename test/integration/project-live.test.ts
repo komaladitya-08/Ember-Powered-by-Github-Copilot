@@ -6,6 +6,7 @@ import { _electron } from "playwright-core";
 import { expect, it } from "vitest";
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { MemoryGraph } from "../../app/main/memory/graph";
+import { AGREE_ARM_MS } from "../../app/shared/provider";
 import { memoryFile } from "../../app/main/memory/store";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
@@ -416,6 +417,8 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps personalisation optiona
     expect(await home.locator("#welcome").getAttribute("data-step")).toBe("consent");
     expect(await home.locator("#w-consent-note").innerText()).toContain("nothing is read, heard or sent");
     expect(JSON.parse(fs.readFileSync(path.join(userData, "settings.json"), "utf8")).consent?.version ?? 0).toBeLessThan(CONSENT_VERSION);
+    // Agree takes a press once it has been on screen a moment, so a double click on Get started agrees to nothing.
+    await home.waitForTimeout(AGREE_ARM_MS);
     await home.locator("#w-next").click();
     await expect.poll(() => home.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
     await expect.poll(() => home.locator("#w-next").getAttribute("aria-disabled"), { timeout: 30_000 }).not.toBe("true");

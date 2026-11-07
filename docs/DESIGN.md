@@ -436,7 +436,8 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   Ember's character on its tile beside its line as the step's large title (148 px on the first step, 76 px after),
   and the step's own part. The buttons follow the step, never stuck to the window's foot: Back leading, the step's
   quiet choice (Not now, Skip for now, Cancel), then its one prominent button, with the reason beside it whenever it
-  waits (`aria-describedby`). Rows that need the user, the tries and **Your Ember** are grouped rows on `--surface-1`;
+  waits (`aria-describedby`). Not now leaves focus on the note that says what it did, and Agree and Quit Ember drop a
+  press for half a second after they appear, so a double click or a held Enter can't agree or quit (first-run-c1-1). Rows that need the user, the tries and **Your Ember** are grouped rows on `--surface-1`;
   the full consent text and the setup rows' details are disclosures (an accent chevron and words) over a
   `--surface-2` callout. Every state is a symbol and words. Motion: Ember arrives once (0.6 to 1 over 600 ms on the
   brisk spring, then a happy hop), each step's part comes in from the side it lies on (16 px over 420 ms, Back from the

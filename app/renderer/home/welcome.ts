@@ -12,7 +12,7 @@ import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
 import type { ProviderState, Status, VoiceStatus } from "../../shared/ipc";
-import { endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
+import { AGREE_ARM_MS, endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { LEVEL_STEPS } from "../../shared/level";
 import { holdsBack, needsUser } from "../../shared/setup-attention";
 import { keptWords } from "./admin-copy";
@@ -71,6 +71,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   /** The page main offers while it waits for a sign-in made elsewhere ("Open cli.github.com"), or null. */
   let waitLink: string | null = null;
   let declined = false;
+  /**
+   * When the consent's Agree and, once declined, its Quit Ember came up (performance.now()): a press sooner than
+   * AGREE_ARM_MS is dropped, so a double click on Get started or Not now lands on neither (first-run-c1-1).
+   */
+  const shownAt = { agree: -Infinity, quit: -Infinity };
+  const armed = (at: number) => performance.now() - at >= AGREE_ARM_MS;
   /** What the sign-in step's main button does: an action on the connection, or just go on. */
   let signInPrimary: FailureAction | "continue" = "continue";
   /** The user's own provider as main reports it (null until read, or when it can't be). */
@@ -117,6 +123,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-cards").append(deps.cards);
     deps.cards.setAttribute("aria-labelledby", "w-title");
     step = firstStep(settings?.consent.version ?? 0);
+    if (step === "consent") shownAt.agree = performance.now();
     void readOwn();
     root.hidden = false;
     render();
@@ -143,6 +150,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (to === "sign-in") { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
     }
     step = gated(to, consented());
+    if (step === "consent" && !consented()) shownAt.agree = performance.now();
     navigation++;
     if (step === "try") heardBefore = -1;
     render();
@@ -680,6 +688,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   next.addEventListener("click", () => {
     if (next.getAttribute("aria-disabled") === "true") return;
     if (step === "consent" && !consented()) {
+      // Drawn just now where Get started was: a double click's second press agrees to nothing (first-run-c1-1).
+      if (!armed(shownAt.agree)) return;
       declined = false;
       // Not saved: the notice at the top says why (review #84), so it is brought into view.
       void saveStep(() => deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), "sign-in");
@@ -709,11 +719,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "hello") { go("character"); return; }
     if (step === "try") { go("about"); return; }
     if (step === "consent") {
-      if (declined) { void window.ember.quit(); return; }
+      if (declined) { if (armed(shownAt.quit)) void window.ember.quit(); return; }
       declined = true;
+      shownAt.quit = performance.now();
       render();
-      // The same button now quits: focus goes to Agree, so a second Enter doesn't quit Ember unasked (first-run-2).
-      next.focus();
+      // The same button now quits, and Agree would agree: focus goes to the note that says what Not now did, so a
+      // second or held Enter does neither (first-run-2, first-run-c1-1). Back, Quit Ember and Agree follow it.
+      $("w-consent-note").focus();
       return;
     }
     if (step === "sign-in") {
