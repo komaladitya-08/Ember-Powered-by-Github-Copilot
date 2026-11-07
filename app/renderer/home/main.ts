@@ -245,6 +245,7 @@ function renderTagline(): void {
   const text = tagline({
     failing, look: 0, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,
+    locked: !!lastAdmin && lastAdmin.error !== null, held: !!lastAdmin?.held,
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
   renderStatus();
@@ -258,7 +259,8 @@ const setText = (id: string, text: string) => { if ($(id).textContent !== text) 
 function renderStatus(): void {
   const { running, asking: askingTasks } = taskCounts(tasksNow);
   const asking = Math.max(askingTasks, presence?.approval ? 1 : 0);
-  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking });
+  const locked = !!lastAdmin && lastAdmin.error !== null;
+  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held });
   setText("state-word", s.word);
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
@@ -274,7 +276,8 @@ function renderStatus(): void {
   setText("today", todaySummary(tasksNow, today));
   // Copilot not connected: connecting it is the one prominent action here, and Ask steps back.
   const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;
-  $("p-connect").hidden = !notConnected;
+  // Locked down, connecting can't help (safety-privacy-4): no Connect button.
+  $("p-connect").hidden = !notConnected || locked;
   $("p-ask").classList.toggle("quiet", notConnected);
   $("p-waiting").hidden = !asking;
   const setup = setupLinkText(failing, toLook);
@@ -534,6 +537,7 @@ function renderAdmin(a: Status["admin"]): void {
   lastAdmin = a;
   if (agent) renderAgent(agent);
   renderRecipient();
+  renderTagline();
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);

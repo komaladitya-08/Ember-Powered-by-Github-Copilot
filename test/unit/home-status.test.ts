@@ -33,6 +33,17 @@ describe("Home's status panel", () => {
     expect(statusWord({ ...base, failing: 1, asking: 1 })).toEqual({ word: "Needs setting up", ring: "error" });
   });
 
+  it("under the organisation's lockdown says Ember is locked, never \"Not connected\" or to connect Copilot (safety-privacy-4)", () => {
+    const base = { phase: "error", failing: 0, running: 0, asking: 0 };
+    expect(statusWord({ ...base, locked: true })).toEqual({ word: "Locked by your organisation", ring: "error" });
+    expect(statusWord({ ...base, phase: "ready", locked: true, held: true })).toEqual({ word: "Locked until a restart", ring: "error" });
+    const t = { failing: 0, onboarded: true, phase: "error", hidden: false, overlay: true };
+    expect(tagline({ ...t, locked: true })).toBe("Your organisation's Ember policy has a problem, so Ember can't answer or act until it's fixed.");
+    expect(tagline({ ...t, locked: true, held: true })).toBe("Your organisation changed Ember's policy, so Ember can't answer or act until you restart it.");
+    for (const w of [tagline({ ...t, locked: true }), statusWord({ ...base, locked: true }).word]) expect(w).not.toMatch(/Connect|Not connected|Copilot/);
+    expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("$(\"p-connect\").hidden = !notConnected || locked;");
+  });
+
   it("counts the tasks at work and those waiting from Task activity's list", () => {
     expect(taskCounts([task("running"), task("waiting"), task("done"), task("failed")])).toEqual({ running: 2, asking: 1 });
   });

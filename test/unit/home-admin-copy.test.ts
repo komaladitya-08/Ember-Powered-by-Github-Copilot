@@ -14,9 +14,11 @@ const broken = { error: "/etc/ember/policy.json: Unrecognized key: \"futureKey\"
 const held = { error: "it changed while Ember was running; restart Ember to use it", held: true, retentionDays: null };
 
 describe("the settings window under a lockdown", () => {
-  it("asks for a restart when the policy changed while Ember ran, and names a broken policy's problem", () => {
+  it("asks for a restart when the policy changed while Ember ran, and says who fixes a broken one, never its raw error (safety-privacy-4)", () => {
     expect(lockdownNotice(held)).toBe("Your organisation changed Ember's policy. Restart Ember to use it.");
-    expect(lockdownNotice(broken)).toBe(`Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed (${broken.error}).`);
+    expect(lockdownNotice(broken)).toBe("Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed. Ask whoever manages this computer to fix it.");
+    const json = { error: "/etc/ember/policy.json is not valid JSON: Expected double-quoted property name in JSON at position 65 (line 2 column 1)", retentionDays: null };
+    expect(lockdownNotice(json)).not.toMatch(/\/etc|JSON|position|futureKey/);
     expect(lockdownNotice(inForce)).toBeNull();
   });
 

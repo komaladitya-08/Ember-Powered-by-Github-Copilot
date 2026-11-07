@@ -11,11 +11,15 @@ import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 
 type Lockdown = Pick<Status["admin"], "error" | "held" | "retentionDays">;
 
-/** The notice at the top of the window while Ember is locked down, or null while the policy is in force. */
+/**
+ * The notice at the top of the window while Ember is locked down, or null while the policy is in force. It never quotes
+ * the policy's error (a file path and a parser's message, safety-privacy-4): `ember doctor` and the log name it for
+ * whoever manages the computer.
+ */
 export function lockdownNotice(a: Lockdown): string | null {
   if (a.error === null) return null;
   if (a.held) return "Your organisation changed Ember's policy. Restart Ember to use it.";
-  return `Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed (${a.error}).`;
+  return "Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed. Ask whoever manages this computer to fix it.";
 }
 
 /** Until when the lockdown lasts, in the data list's words. */

@@ -25,6 +25,9 @@ export interface StatusFacts {
   /** Tasks working now, and those waiting for the user's answer. */
   running: number;
   asking: number;
+  /** The organisation's policy locks Ember down (Status.admin.error), `held` until a restart reads a changed one. */
+  locked?: boolean;
+  held?: boolean;
 }
 
 /** "1 task", "2 tasks". */
@@ -35,6 +38,8 @@ const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? on
  * the work under way, else Ready. `ring` is the still ring's state beside it.
  */
 export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
+  // Locked down nothing connects, whatever the sign-in: never "Not connected", which connecting can't help (safety-privacy-4).
+  if (f.locked) return { word: f.held ? "Locked until a restart" : "Locked by your organisation", ring: "error" };
   if (f.failing) return { word: "Needs setting up", ring: "error" };
   if (f.phase === "error" && f.waitingForTasks) return { word: "Waiting for Copilot", ring: "starting" };
   if (f.phase === "signed-out" || f.phase === "error") return { word: "Not connected", ring: "error" };

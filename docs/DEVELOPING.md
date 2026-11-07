@@ -898,7 +898,9 @@ On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Ap
 
 An optional file that makes Ember stricter for everyone on the machine. Its values override users' settings, and
 users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
-and says so in its settings window: no actions, commands or listening, nothing sent to any model service (neither
+and says so in its settings window (Home's status panel reads "Locked by your organisation", with no Connect button,
+and the notice asks the user to have the computer's manager fix it; `ember doctor` and the log name the problem):
+no actions, commands or listening, nothing sent to any model service (neither
 GitHub Copilot nor the organisation's own endpoint), and nothing deleted from the audit log. Ember reads the policy
 again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
 stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the

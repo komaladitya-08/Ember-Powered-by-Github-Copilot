@@ -153,9 +153,14 @@ export function tagline(t: {
   look?: number;
   /** Handle position: the corner the card is in without a compositor (the bottom right when not given). */
   corner?: HandlePosition;
+  /** The organisation's policy locks Ember down, `held` until a restart reads a changed one (safety-privacy-4). */
+  locked?: boolean;
+  held?: boolean;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
+  // Locked down, connecting can't help: say why Ember can't answer, never "Connect Copilot".
+  if (t.locked) return t.held ? "Your organisation changed Ember's policy, so Ember can't answer or act until you restart it." : "Your organisation's Ember policy has a problem, so Ember can't answer or act until it's fixed.";
   if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer.`;
   const where = !t.overlay ? `Ember is in the ${handleCornerText(t.corner)}.` : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks that are running finish.`;
