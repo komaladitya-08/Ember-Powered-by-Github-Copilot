@@ -395,7 +395,11 @@ export const START_LABEL = "Start Ember";
 /** The navigation buttons. */
 export const NAV = { back: "Back", next: "Continue", begin: "Get started", skip: "Skip for now", character: "Choose a character…", about: "Personalise memory…" } as const;
 
-/** The "about you" step's main button: it saves what was answered, or goes on without (nothing kept). */
-export function aboutNext(o: { ready: boolean; filled: boolean }): string {
+/**
+ * The "about you" step's main button: it saves what was answered, or goes on without (nothing kept); and while memory
+ * is paused, when nothing can be answered, it just goes on (memory-c1-2).
+ */
+export function aboutNext(o: { ready: boolean; filled: boolean; paused?: boolean }): string {
+  if (o.paused) return NAV.next;
   return o.ready && o.filled ? "Save and continue" : NAV.skip;
 }

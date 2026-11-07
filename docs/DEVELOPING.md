@@ -257,7 +257,9 @@ runtime. It does not change the app's consent or speaking settings.
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
-    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too.
+    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
+    (your own model provider or your organisation's model service in force), both places say why instead of asking,
+    and first run's step offers only Continue.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
     (all-MiniLM-L6-v2, int8, pinned by SHA-256 in `app/voice/models.ts`) that runs on this computer, so Ember finds a
     fact when you ask in other words ("Who is my manager?" finds "Priya leads the platform team"). It comes from

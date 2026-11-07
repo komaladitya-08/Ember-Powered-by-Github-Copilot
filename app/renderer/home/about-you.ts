@@ -28,10 +28,15 @@ export interface AboutYouOptions {
 export interface AboutYou {
   /** New settings, and whether the organisation turned memory off. */
   refresh(s: Settings | null, managed: boolean): void;
-  /** Memory is on but its saved memory can't be opened now: why, in Memory's own words (null while it can). */
+  /**
+   * Saved memory can't be opened now: why, in Memory's own words (null while it can). Settings gives it while memory is
+   * on; first run also while a model service keeps memory paused before it is turned on (memory-c1-2).
+   */
   owner(why: string | null): void;
   /** Memory is on with its consent, so answers can be kept. */
   readonly ready: boolean;
+  /** Memory is paused (`owner`): no answers can be kept, and nothing is asked. */
+  readonly paused: boolean;
   /** Any question is answered. */
   readonly filled: boolean;
   /** Sends the answers; how many were kept (null: not kept). */
@@ -151,12 +156,14 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
 
   function draw(): void {
     const keeps = ready();
-    off.hidden = on() || managed;
+    // Paused (a model service in force): its reason, never a note to agree to or answers that couldn't be kept.
+    off.hidden = on() || managed || !!paused;
     managedLine.hidden = !managed;
     pausedLine.textContent = paused ?? "";
-    pausedLine.hidden = !on() || !paused;
+    pausedLine.hidden = managed || !paused;
     for (const f of [...fields, saveRow]) f.hidden = !keeps;
-    voice.hidden = managed;
+    // ("Get to know me" can't keep anything either while memory is paused.)
+    voice.hidden = managed || !!paused;
   }
   draw();
 
@@ -164,6 +171,7 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
     refresh(s, m) { settings = s; managed = m; draw(); o.changed?.(); },
     owner(why) { if (why === paused) return; paused = why; draw(); o.changed?.(); },
     get ready() { return ready(); },
+    get paused() { return !managed && !!paused; },
     get filled() { return Object.keys(answers()).length > 0; },
     submit,
   };

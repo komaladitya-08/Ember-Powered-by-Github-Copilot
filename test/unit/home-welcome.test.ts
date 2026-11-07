@@ -45,6 +45,8 @@ describe("first run's steps", () => {
     expect(aboutNext({ ready: false, filled: true })).toBe("Skip for now");
     expect(aboutNext({ ready: true, filled: false })).toBe("Skip for now");
     expect(aboutNext({ ready: true, filled: true })).toBe("Save and continue");
+    // Memory paused (a model service in force): nothing to answer, so the step just goes on (memory-c1-2).
+    expect(aboutNext({ ready: false, filled: true, paused: true })).toBe("Continue");
     // Saving waits for main's answer before going on; skipping keeps nothing.
     expect(SCRIPT).toContain('if (about.ready && about.filled) void saveStep(');
   });

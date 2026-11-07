@@ -1474,6 +1474,9 @@ function renderMemory(rows: MemoryRow[]): void {
   owner.textContent = memoryOwnerText(memoryReason, memoryOwner === "locked");
   // Tell Ember about you can't keep answers then: it says why instead of its questions.
   aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : owner.textContent);
+  // First run's "Tell me about you" too, and before memory is on while a model service keeps it paused (memory-c1-2).
+  const provider = memoryReason === "own-provider" || memoryReason === "org-provider";
+  welcome.memoryOwner(memoryOwner === "ready" || (!memoryOn() && !provider) ? null : owner.textContent);
   const all = $("memory-forget-all");
   const wasFocused = document.activeElement === all;
   all.hidden = !rows.length && !memoryOwnerOffersErase(memoryReason, memoryOwner === "locked");
