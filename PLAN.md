@@ -715,3 +715,131 @@ Owner's choice by ear of six voices and then all ten of Supertonic 3's: its fift
 ### First-run connection (2026-11-06, FE #2–#6)
 
 Audit FE #2 and #3 (own provider offered in setup; failure actions by reason) are implemented in full, #4 (models reviewed before the first request, premium multiplier shown), #5 (a text-only task model is explained, never an empty selector) and #6 (a failed setup fix is shown in its row). No §2 decision changes: the provider's consent card, key store and test are the existing ones (FEATURE_CONSENT_VERSION.provider), driven from first run. The own-provider step is an optional detour at step 3 (like the character and about-you steps), so the six-step route is unchanged.
+
+### Product audit fixes (2026-11-07)
+
+A product audit read `main` at 4d64d3a (0.1.1) in 13 areas: first run and setup, Home, the companion and Ask,
+listening, speaking, tasks and approvals, safety and privacy, commands, WSL and SSH, models, providers, extensions and
+projects, memory, accessibility and copy, reliability and platform, and install, docs and developer experience. For
+each, an auditor read the code and walked its journeys as a first-time person, as an everyday user and with things
+going wrong, probing the live app under Xvfb with the mock model and rendering the built pages in Chromium where that
+helped, and reported findings with file and line evidence. An adversarial verifier per area then tried to refute each
+one, set its own severity and added what the auditor missed. Of 139 findings, 109 were confirmed and 30 confirmed in
+part, none refuted, and the verifiers added 28. The 167 went into 13 work packages in two lanes (overlapping findings
+into one package): 149 are fixed, 15 partly and 3 skipped. Each fix is pinned by unit, renderer or source tests, and
+UI changes were checked in real renders (light, dark, narrow widths, Larger text and forced colours where they apply).
+
+**First run, Home and the companion.** First run, Home and the bubble name the model service actually in use (the
+user's own provider, the organisation's service or a lockdown), not always Copilot: "Locked by your organisation" with
+no Connect button or raw policy error, a failing provider led by its own details, keyless local servers (`keyNeeded`),
+and `stillWaiting()`/`noticeTitle` by service. A returning user whose consent is out of date opens at the consent step
+with what changed since their version (M8.8: `CONSENT_CHANGES`, one line per bump, checked against the full text). The
+setup check has Check again (a fresh pyatspi probe), uses first run's state words with Copy in Home, and counts a row
+that holds Ember back as one to fix in Home and `ember doctor` (M9.3). Home shows the latest 6 messages
+(`CONVERSATION_SHOWN`, was 30: at 760×640 with 30 messages the composer moved from 4,195 px to 1,361 px down and from
+60 to 27 Tab presses), keeps the composer in view as a reply grows, and stays page content with no inner scroller.
+Stop response reports whether anything was under way, the 10 s stall is heard once by screen readers
+(`BubbleState.stalled`, `stalledStep()`), restored lines are marked only in `getTranscript()`'s copy and never saved,
+New conversation asks first and a refused send says why (`composerRefusal()`). Task activity keeps keyboard focus
+across redraws; Search reads a setting's words as shown (`shownText`); What Ember did pages through the whole audit
+(`activityLines()`, `recentLimit()`, `AuditLog.recent` past its 500-entry cache) and keeps its lines when a read
+fails; Projects and reminders follow the one-prominent-button and fold-chevron rules, and no pane reflows sideways at
+304 px. Ask opens clear of the bubble (the overlay reports the bubble's box; `openingBounds`/`clearOfBubble`), takes
+clicks on Linux only on what it shows (an X input shape through the platform shaper), leaves Esc and ↑/↓ to a
+composing input method and says before a request is typed that Ember can't answer yet (`AskContext.unavailable`). The
+no-compositor corner card (M1.3) grows to 640 px for any question and holds every answer but Not now while its
+sentence can't show (`waitsForRoom`). The handle says "Finish setting up" until first run is done.
+
+**Voice.** Teaching Voice Match hears "Ember, stop" (`VoiceEngine.stopsOnly`), ends at `ENROL_LIMITS` (45 s quiet, 180
+s in all), on the kill switch and when Home closes, and says how it ended (`VoiceMatchStatus.ended`). Listen once's 8
+s is a deadline for speech to start, capped at 20 s from the press (`MANUAL_MAX_MS`); it reports a microphone sending
+exact zeros and hushes Ember first. A request that trails off after "the" or "and" is held 0.9 s (`trailsOff`,
+`TRAIL_HOLD_MS`: the trailing half of docs/ASSISTANT.md phase 1 item 5), and the models' download can be cancelled.
+The owner decisions of 2026-11-05 (Voice Match never decides who is heard; over other sound only the name or the
+owner's voice counts) are kept. Spoken text (`spokenText`) says lists, numbered steps, money, clock times, paths and
+"~" for the ear and drops emoji; pieces are at most 120 characters (`CHUNK_MAX`) and synthesis runs at most about 8 s
+ahead of playback. The first sound of the audit's long answer went from 1,892 to 500 ms and a cut-in from 1,451 to 873
+ms; warming the voice at the ask box and at a request's start took a cold first sound from 2.7 to 1.9 s. Never hushes
+at once, the handle has Stop speaking (not the kill switch), Kitten failures and slow timings offer Try again, replies
+in other languages go to a local system voice for that language or aren't said, and Settings › Voice has Speaking
+speed (`voice.rate` 0.8–1.4) and Hear Ember.
+
+**Tasks, safety and commands.** An unanswered question now ends its task as a retryable stop (`endedBy: "expired"`,
+with Try again and a notification when the user is away), and a bare "try again" carries the failed task's own words
+(`TaskManager.askedWith`). The actions-a-minute limit (M8.1) paces steps instead of refusing them
+(`PolicyEngine.paceMs`; refused attempts no longer count). Unasked or steered questions quote the user's words as
+their task line, a refused spoken yes keeps the key hint under its note, outcomes use the card's words, worker tool
+failures are logged and explained, the command review's words leave the journal (sizes only), and a typed "stop" pulls
+the kill switch while a task is at work (M8.9). Users can turn screenshots off for tasks (`settings.screenImages`,
+Home › Apps & privacy; the admin's `features.screenImages: false` forces it off), and every screenshot is audited
+before it is sent (event `read`, kind `screenshot`, app and size only; M8.6). Commands (M12): the session's first run
+gets its window's real fit (`defaultFit`) instead of 100×30; `if`, `for`, `while` and `until` on sh and bash command
+lines are read through as in scripts (`readThrough`, `withoutReadFlow`), on the PC and in the SSH remote's gate alike,
+which also closes two bypasses (a loop over PATH-like names asks; a nested `zsh -c` short form is no longer read
+through); "You didn't ask for this." is kept for words that ask for nothing of the kind (`LINES.inexact` for words of
+the right kind); every risky card looks risky; pre-8.5 SSH question cards say where the answer goes; and a host whose
+name can't be found on first add isn't kept.
+
+**Models, extensions, memory and reliability.** Before connecting to a model server on this computer, Ember asks the
+provider service for Test connection's one GET (`probeProvider`/`providerDown`) and retries like an offline start if
+nothing answers; Test connection names up to 50 listed models. Copilot's built-in marketplace reaches Home as built
+in, with no Remove; extensions have a Use extensions switch and a not-connected state. Project failures carry the
+error's type and status into `friendlyError`'s sentences, and minimising or hiding settings no longer aborts project
+work. The update check persists its last look (`updates.checkedAt`), so it keeps to once a day across restarts.
+Memory's guard refuses secrets however they are phrased, and the commands and log redactors know today's API key
+shapes (`TOKEN_SHAPES`). `MemoryOwner` says why memory is paused; summaries and reflections record `derivedFrom` and
+go with their fact; every Forget can be undone for 60 s; `forget_memory` needs the user's own words (`asksToForget`);
+remember and forget requests made while memory isn't in force are answered truthfully in code; the profile goes with
+each request (`requestContext`, `profileFacts`); a changed preference closes the older fact. The spoken interview
+keeps just the name (`nameFrom`), a Forget reopens what a fact replaced only within `FORGET_THAT_MS`, recall over
+5,000 matching facts went from 97–135 ms to 15–23 ms with bit-identical scores, and a reconnect that finds the same
+account keeps Home's draft, focus and a Better recall download (`MemoryEpochAccount`, `memoryWanted`). The Copilot
+runtime is pinged every 2.5 s while work is under way and every 20 s at rest; each start step has a time limit (30,
+20, 20 and 30 s), logged as `agent.start_failed` `{ why: "timeout", step }` and retried like a 5xx. The accessibility
+helper's restarts back off from 2 to 60 s. Faces at rest are drawn about 6 times a second (`restingGap`,
+`frameSeconds`), the main process's frame loop drops from 60 to 10 Hz after 2 s still, and the whole tree at rest
+measured 8.7–10.1 % of a core on Xvfb (was 11.4–15.2 %). The pyatspi probe runs in the background after its first
+answer, and a run marker (`run.json`, 0600) logs `app.previous_run_ended` and shows a note in Home after an unclean
+exit.
+
+**Install and docs.** README, docs/DEVELOPING.md, the npm launcher's README and the RPM's `policy.README` match what
+0.1.1 ships: what Ember needs and what its first start asks, the AppImage carrying its models and needing fusermount,
+the optional downloads with their sizes and hosts, and all 15 `features` keys with the seven that lock a 0.1.0 Ember
+down. The npm launcher runs the setup check attached, reports an Ember that fails to start and removes older cached
+versions; clicking the new-version notification opens Home's Updates section. CHANGELOG.md's 0.1.0 section is the
+published text again, and 0.1.1 has its own sections, a Getting it list and the administrators' line, guarded by
+docs.test.ts (install-docs-4 and -v1, skipped by the docs package, were done when the lanes were brought together).
+
+**Consent.** `FEATURE_CONSENT_VERSION.memory` went from 3 to 4: memory's note now says what goes to Copilot with every
+request and that the idle tidy sends up to 40 facts up to 6 times a day (memory-5, memory-9).
+`FEATURE_CONSENT_VERSION.extensions` went from 2 to 3: the card for a plugin from Copilot's built-in marketplace no
+longer says the user added that marketplace (integrations-4), so installed extensions are agreed to again once.
+`CONSENT_VERSION` stays 7, and `FEATURE_CONSENT_VERSION.provider` stays 1 on purpose: a bump would take every agreed
+provider back to Copilot until the user agreed again.
+
+**Departures.** None from §2. One earlier §10 entry is superseded: M8's Hard blocks (M8.3) said that while a polkit,
+keyring, sudo or pinentry prompt is open or focused Ember doesn't read it, takes no screenshots and won't type. Now,
+while GNOME Shell's own password prompt is up (or the shell can't be looked through), Ember reads, sends and does
+nothing (`Perception.promptOpen` gates `quickContext`, `describe_screen`, `perceive_window`, tier-1 steps, `open_app`
+and `list_windows`), as CLAUDE.md states. A polkit agent's own X11 window on other desktops still only blocks
+screenshots and the borrowed keyboard while it has focus.
+
+**Left.** Partly fixed: the route after re-agreeing to consent and the provider card's wording (first-run-4, -10,
+safety-privacy-8, integrations-2, -13: rewording the provider card needs a `FEATURE_CONSENT_VERSION.provider` bump);
+Browse fetching the built-in marketplace before extensions are agreed to (integrations-4); Task activity's image
+wording and auditing the conductor's `describe_screen` and quick context (safety-privacy-6); npm.yml skipping a tag
+run without publish credentials (install-docs-2); an hourly retry of a failed update check, which would break the
+once-a-day promise, and a per-install update line (install-docs-11); a microphone picker (voice-listening-v2); idle
+CPU still above docs/ASSISTANT.md §3's 3 % and PSS about 505 MB against its 400 MB (rp-4); a first status read that
+can still wait about 5.7 s on a hung pyatspi import (rp-1); Stop speaking on the bubble (voice-speaking-5); a native
+`generate()` that can't be interrupted, so a cut-in still waits for the piece being made (voice-speaking-10); and
+which Kitten voices to offer, with samples of the optional voices before download (voice-speaking-7). Skipped: showing
+which memories shaped an answer (memory-10), a feature that needs its own design. Native validation: the new-version
+notification's click on real notification servers; the npm launcher's attached `ember doctor` on Windows and macOS; on
+a real RHEL 8 GNOME on Xorg session, whether a shell modal moves X focus, and the cost of `shell_overlays` now that it
+runs on every read; Ask's place beside the bubble and its X input shape, which no CI job with a compositor covers; and
+run-marker-live.test.ts, which failed once in eight runs before it was made to poll. Owner decisions: whether to skip
+the steps after re-agreeing to consent; whether "be quiet", "shut up" and "that's enough" only hush; Cinder's flame at
+about 6 fps between fidgets; keeping local minidumps; whether Forget my voice keeps `words.json`; whether the release
+job publishes as a prerelease titled "(beta, unsigned)" while builds are unsigned; and whether npm.yml should fail a
+tag run that can't publish.
