@@ -313,7 +313,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   identity, while stale/remote/desk/locked/borrowing cases cannot raise another window. While a task waits for an answer, a callout in its
   group says where it is asked (the bubble, with the keys that answer it; the command window; or a consent card's window); Open approval opens the exact live question in a focusable card or its existing panel; Home never answers from
   transcript text. From five tasks, **All**,
-  **Needs you**, **Working** and **Ended** filter it. A working task's clock is text written once a second.
+  **Needs you**, **Working** and **Ended** filter it. A working task's clock is text written once a second. A task's
+  group is drawn again when it changes (every step), and keyboard focus stays on the control it was on (Stop task, a
+  steps row, Open approval), or on the task's own heading when that control is gone.
 - **Settings panes** keep System Settings' grouped rows: switches at the trailing edge, a switch's note inside its
   row (Apps & privacy's **When Ember asks first**), pop-up buttons styled as one (Handle position too), and states
   shown as switches (**Follow my cursor**, **Hide Ember until it needs me**) rather than buttons. Voice shows its

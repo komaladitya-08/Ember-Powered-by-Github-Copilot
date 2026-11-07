@@ -3,7 +3,8 @@
  * newest first, from main's in-memory list (IPC.tasks, pushed again as the cards change, at most twice a second). Every
  * string is set as text: a plan's, a note's, a summary's and a view's words are the worker's own and may carry what it
  * read on the screen. Home never answers a question (the bubble, the card and the keys do): it only says how each was
- * answered. Groups are rebuilt only when what they show changed, and a row the user opened stays open.
+ * answered. Groups are rebuilt only when what they show changed, a row the user opened stays open, and keyboard focus
+ * stays on the control it was on (home-2).
  */
 
 import type { TaskControlAction, TaskEntry } from "../../shared/activity";
@@ -84,6 +85,7 @@ function rowItem(taskId: string, r: TimelineRow): HTMLLIElement {
   fold.open = opened.has(key);
   fold.addEventListener("toggle", () => { if (fold.open) opened.add(key); else opened.delete(key); });
   const summary = el("summary");
+  summary.dataset.control = `steps:${r.id}`;
   summary.append(what);
   const list = el("ol", "step-list");
   list.append(...r.steps.map(s => {
@@ -112,6 +114,7 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
   const action = (label: string, kind: TaskControlAction, available: boolean) => {
     const button = el("button", "btn quiet small", label);
     button.type = "button";
+    button.dataset.control = kind;
     button.setAttribute("aria-label", `${label}: ${t.title}`);
     button.disabled = !available;
     button.addEventListener("click", () => {
@@ -148,6 +151,7 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
   if (result) {
     const show = el("button", "btn quiet small", "View result");
     show.type = "button";
+    show.dataset.control = "view-result";
     show.setAttribute("aria-label", `View result: ${t.title}`);
     show.addEventListener("click", () => { result.scrollIntoView({ block: "nearest" }); result.focus({ preventScroll: true }); });
     group.append(show);
@@ -162,10 +166,12 @@ const ended = (t: TaskEntry) => t.status === "done" || t.status === "failed" || 
 function group(t: TaskEntry, now: number): { node: HTMLElement; meta: HTMLElement } {
   const node = el("article", "task-group");
   node.dataset.status = t.status;
+  node.dataset.task = t.id;
   const headId = `task-${t.id}-t`;
   node.setAttribute("aria-labelledby", headId);
   const fold = ended(t) ? el("details", "task-fold") : null;
   const head = el(fold ? "summary" : "div", "task-head");
+  if (fold) head.dataset.control = "fold";
   const sym = el("i", "sym");
   sym.setAttribute("aria-hidden", "true");
   const text = el("div", "task-text");
@@ -193,6 +199,7 @@ function group(t: TaskEntry, now: number): { node: HTMLElement; meta: HTMLElemen
   const said = t.activity.items.some(i => i.kind === "problem" && i.words === t.summary);
   if ((t.summary && !said) || t.view) {
     const result = el("div", "task-result");
+    result.dataset.control = "result";
     result.tabIndex = -1;
     result.setAttribute("role", "group");
     result.setAttribute("aria-label", `Result: ${t.title}`);
@@ -245,6 +252,33 @@ function renderFilter(all: readonly TaskEntry[]): void {
   }
 }
 
+/** Where keyboard focus was in Task activity before a list is drawn: the element, and the control and task it is. */
+interface HeldFocus { el: HTMLElement; task?: string; control?: string }
+function focusHeld(list: HTMLElement): HeldFocus | null {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !(list.contains(el) || askingNote.contains(el))) return null;
+  const group = el.closest<HTMLElement>(".task-group");
+  return { el, task: group?.dataset.task, control: el.closest<HTMLElement>("[data-control]")?.dataset.control };
+}
+/**
+ * Puts focus back after a list is drawn (home-2): a group whose task changed is a new node (main pushes every step, at
+ * most twice a second), so the control that had focus is found again in it by what it is (Stop task, a steps row…);
+ * one that is gone leaves focus on the task's own heading, never the top of the page.
+ */
+function keepFocus(held: HeldFocus): void {
+  if (document.activeElement === held.el) return;
+  if (held.el.isConnected) { held.el.focus({ preventScroll: true }); return; }
+  const node = held.task ? drawn.get(held.task)?.node : undefined;
+  if (!node?.isConnected) return;
+  const same = held.control ? node.querySelector<HTMLElement>(`[data-control="${CSS.escape(held.control)}"]`) : null;
+  if (same && !(same instanceof HTMLButtonElement && same.disabled)) same.focus({ preventScroll: true });
+  if (same && document.activeElement === same) return;
+  const summary = node.querySelector<HTMLElement>(":scope > details > summary");
+  if (summary) { summary.focus({ preventScroll: true }); return; }
+  const heading = node.querySelector<HTMLElement>(".task-title");
+  if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+}
+
 /** The list main sent last (the filter draws from it). */
 let given: TaskEntry[] = [];
 function render(sent: TaskEntry[]): void {
@@ -255,6 +289,7 @@ function render(sent: TaskEntry[]): void {
   const tasks = filterTasks(all, filter);
   const list = $("tasks");
   const now = Date.now();
+  const focus = focusHeld(list);
   if (!tasks.length) {
     drawn.clear();
     const empty = all.length ? FILTER_EMPTY : TASKS_EMPTY;
@@ -271,14 +306,12 @@ function render(sent: TaskEntry[]): void {
     });
     for (const id of [...drawn.keys()]) if (!tasks.some(t => t.id === id)) drawn.delete(id);
     // Remove changed groups first so adding their replacements leaves the unchanged groups in place.
-    const focused = document.activeElement;
     const keep = new Set<Element>(nodes);
     for (const child of [...list.children]) if (!keep.has(child)) child.remove();
     nodes.forEach((node, i) => {
       const at = list.children[i] ?? null;
       if (node !== at) list.insertBefore(node, at);
     });
-    if (focused instanceof HTMLElement && list.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
   }
   // A task waits for the user's answer: Home says where it is asked, and with which keys, in that task's own group (it
   // never answers itself); otherwise the note waits, hidden, above the list.
@@ -291,6 +324,7 @@ function render(sent: TaskEntry[]): void {
   for (const s of asking.querySelectorAll<HTMLElement>(":scope > [data-asked-in]")) s.hidden = s.dataset.askedIn !== where;
   if (body && asking.parentElement !== body) body.prepend(asking);
   else if (!body && asking.nextElementSibling !== list) list.before(asking);
+  if (focus) keepFocus(focus);
   // A task's state, said once when it changes (not on the first list).
   const live: string[] = [];
   for (const t of all) {
