@@ -24,7 +24,7 @@ import {
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
-  DEFAULT_SIZE, aboutNext, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
+  DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
 /** What the settings window lends the welcome. */
@@ -154,7 +154,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const at = stepPosition(step);
     [...arc.children].forEach((seg, i) => seg.classList.toggle("on", i <= at));
     $("w-count").textContent = stepCount(step);
-    const text = step === "sign-in" ? signInText({ managed: managed(), own: agent?.phase === "ready" && ownInUse() ? agent.service?.host : null }) : STEP_TEXT[step];
+    const text = step === "sign-in" ? signInText({
+      managed: !!status?.admin.provider, locked: locked(), held: !!status?.admin.held,
+      own: agent?.phase === "ready" && ownInUse() ? agent.service?.host : null, ownOffered: ownOffer().offered,
+    }) : STEP_TEXT[step];
     $("w-title").textContent = text.title;
     $("w-lead").textContent = text.lead;
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
@@ -208,6 +211,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   }
   /** The organisation's own model service answers, or its policy locks Ember down: nothing to sign in to. */
   const managed = () => !!status?.admin.provider || (!!status && status.admin.error !== null);
+  /** The organisation's policy can't be used (or changed while Ember ran): nothing connects (first-run-v1). */
+  const locked = () => !!status && status.admin.error !== null;
   /** Ember's connection is to the user's own provider (first-run-1): no Copilot sign-in is in use. */
   const ownInUse = () => agent?.service?.kind === "user";
 
@@ -600,7 +605,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-voice-later").textContent = TRY_TEXT.voiceLater;
     mark("w-try-voice", tried.voice, tried.voice ? TRY_TEXT.voice.done : vs === "listening" ? TRY_TEXT.voice.ask : TRY_TEXT.voiceWaiting);
     $("w-meter").classList.toggle("off", vs !== "listening");
-    mark("w-try-ask", tried.ask, tried.ask ? TRY_TEXT.ask.done : signedIn() ? TRY_TEXT.ask.ask : TRY_TEXT.askWhy);
+    mark("w-try-ask", tried.ask, tried.ask ? TRY_TEXT.ask.done : signedIn() ? TRY_TEXT.ask.ask : askWhy({ locked: locked(), noSignIn: !!status?.admin.provider || ownInUse() }));
     const ask = $("w-ask");
     ask.textContent = TRY_TEXT.ask.open;
     if (signedIn()) ask.removeAttribute("aria-disabled"); else ask.setAttribute("aria-disabled", "true");
@@ -612,9 +617,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const keys = status?.platform?.shortcuts;
     const rows = summaryRows({
       character: name, size: s?.size ?? DEFAULT_SIZE, voice: voiceState(),
-      signedIn: signedIn() ? (agent?.service?.kind === "user" ? `Your own provider (${agent.service.host})` : status?.admin.provider ? "Your organisation's model service" : agent?.login ? `Signed in as ${agent.login}` : "Connected") : null,
+      signedIn: signedIn() ? (agent?.service?.kind === "user" ? `Your own provider (${agent.service.host})` : status?.admin.provider ? "Your organisation's model service" : agent?.login ? `Signed in as ${agent.login}` : "Connected")
+        : locked() ? "Locked down by your organisation" : null,
       keys: keys ? { ask: keys.ask.label, stop: keys.stop.label, settings: keys.settings.label } : null,
-      copilot: !agent?.service && !status?.admin.provider,
+      copilot: !agent?.service && !status?.admin.provider && !locked(),
     });
     $("w-summary").replaceChildren(...rows.flatMap(r => [el("dt", { textContent: r.label }), el("dd", { textContent: r.value })]));
     $("w-summary-note").textContent = SUMMARY_NOTE;

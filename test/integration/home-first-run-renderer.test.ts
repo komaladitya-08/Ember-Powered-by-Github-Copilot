@@ -241,6 +241,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     const off = await open({ admin: { features: { userProvider: false } } });
     expect(await buttons(off)).not.toContain("Use my own provider");
     expect(await off.locator("#w-signin-help").innerText()).toContain("turned off using your own model provider");
+    // The lead doesn't offer what the line under it says is turned off (first-run-7).
+    expect(await off.locator("#w-lead").innerText()).not.toContain("own model provider");
     const fixed = await open({ admin: { provider: "https://models.corp.example/v1" } });
     expect(await buttons(fixed)).not.toContain("Use my own provider");
     expect(await fixed.locator("#w-title").innerText()).toBe("Connecting to your organisation's service");
@@ -411,6 +413,26 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#w-back").click();
     expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
     expect(await p.inputValue("#w-p-url")).toBe("https://api.example.com/v1");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(o) under the organisation's lockdown the steps say so, never that a service runs or to sign in (first-run-v1)", async () => {
+    const p = await open({ admin: { error: "The policy file is writable by others.", provider: null }, agent: { ...SIGNED_OUT, phase: "error", reason: "policy", detail: "Your organisation's policy stops me from connecting." } });
+    expect(await p.locator("#w-title").innerText()).toBe("Your organisation has locked me down");
+    const lead = await p.locator("#w-lead").innerText();
+    expect(lead).toContain("Ask your administrator");
+    expect(lead).not.toMatch(/its own model service|nothing to sign in to/);
+    expect(await buttons(p)).not.toContain("Sign in with GitHub");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
+    expect(await p.locator("#w-try-ask-text").innerText()).toBe("While your organisation's policy locks me down, I can't answer.");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    const summary = await p.locator("#w-summary").innerText();
+    expect(summary).toContain("Locked down by your organisation");
+    expect(summary).not.toMatch(/Not signed in|Copilot/);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 

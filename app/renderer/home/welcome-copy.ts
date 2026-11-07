@@ -137,14 +137,26 @@ export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly str
 };
 
 /**
- * The sign-in step's title and lead: an organisation's own model service has nothing to sign in to, and neither has the
- * user's own provider once Ember is connected to it (`own`, its host: first-run-1).
+ * The sign-in step's title and lead: an organisation's own model service (`managed`) has nothing to sign in to, and
+ * neither has the user's own provider once Ember is connected to it (`own`, its host: first-run-1). Under the
+ * organisation's lockdown (`locked`; `held` until a restart reads a changed policy) nothing connects at all, so the step
+ * says that, never that a service runs (first-run-v1). The lead offers the user's own provider only where it is
+ * offered (`ownOffered`, first-run-7).
  */
-export function signInText(o: { managed: boolean; own?: string | null }): { title: string; lead: string } {
+export function signInText(o: { managed: boolean; locked?: boolean; held?: boolean; own?: string | null; ownOffered?: boolean }): { title: string; lead: string } {
+  if (o.locked) {
+    return o.held
+      ? { title: "Restart me to use your organisation's new policy", lead: "Your organisation changed my policy while I was running, so I can't connect to a model service until you restart me." }
+      : { title: "Your organisation has locked me down", lead: "Your organisation's policy for me has a problem, so I can't connect to a model service for now. Ask your administrator to fix it." };
+  }
   if (o.managed) return { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." };
   if (o.own) return { title: "Your own model provider", lead: `I'm connected to the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.` };
+  if (o.ownOffered === false) return { ...STEP_TEXT["sign-in"], lead: STEP_TEXT["sign-in"].lead.replace(OWN_OFFER, "") };
   return STEP_TEXT["sign-in"];
 }
+
+/** The sign-in lead's last sentence, which offers the user's own provider (left out where it isn't offered). */
+const OWN_OFFER = " No Copilot? You can use your own model provider instead.";
 
 /** The sign-in step as the Copilot status has it: what it says, and which buttons it offers. */
 export interface SignInView {
@@ -267,13 +279,22 @@ export const TRY_TEXT = {
   stop: { title: "Stop me", fallback: "Use Stop everything from my handle or Home whenever you need me to stop. The stop shortcut is unavailable on this computer.", ask: "Press the stop shortcut now. It stops everything I'm doing, at once, anywhere.", done: "That's how you stop me." },
   voice: { title: "Say “Hey Ember”", ask: "Say “Hey Ember”, then ask something and watch the meter.", done: "I heard you." },
   ask: { title: "Ask me something", ask: "Open the ask box and type a question, such as “What can you do?”", done: "You asked me something.", open: "Open the ask box" },
-  /** The ask box can't be opened yet: why, beside its button. */
+  /** The ask box can't be opened yet: why, beside its button (askWhy() picks the one that holds). */
   askWhy: "Sign in first, then you can ask me something.",
+  /** Not connected yet to a service with nothing to sign in to (the organisation's, the user's own). */
+  askWait: "Once I'm connected, you can ask me something.",
+  /** Under the organisation's lockdown nothing connects, so signing in can't help (first-run-v1). */
+  askLocked: "While your organisation's policy locks me down, I can't answer.",
   /** Voice is off (not turned on, or not agreed to): the try isn't shown, and this says where to turn it on. */
   voiceLater: "To talk to me, turn on “Hey Ember” later in Settings › Voice. Then say, for example, “Hey Ember, what's in this window?”",
   /** Voice is on but not listening yet (models still to download, or starting). */
   voiceWaiting: "I'm not listening yet. Once I am, say “Hey Ember”.",
 } as const;
+
+/** Why the try step's ask box can't be opened yet: locked down, waiting for a service with no sign-in, or not signed in. */
+export function askWhy(o: { locked: boolean; noSignIn: boolean }): string {
+  return o.locked ? TRY_TEXT.askLocked : o.noSignIn ? TRY_TEXT.askWait : TRY_TEXT.askWhy;
+}
 
 /**
  * "Say “Hey Ember”" shows only while Ember listens for it: on, agreed to, allowed by the organisation

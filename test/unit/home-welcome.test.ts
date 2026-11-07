@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
 import {
-  CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, aboutNext, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
+  CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
   gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
@@ -169,6 +169,30 @@ describe("the sign-in step", () => {
       .toMatchObject({ primary: "continue", line: "Your organisation's policy locks me down, so I can't connect for now.", retry: false });
     // Sign in (or another way on) is the step's button only while it can help; Continue otherwise.
     expect(SCRIPT).toContain("if (step === \"sign-in\" && signInPrimary !== \"continue\") { perform(signInPrimary); return; }");
+  });
+
+  it("under the organisation's lockdown, never says a service runs or that signing in helps (first-run-v1)", () => {
+    for (const held of [false, true]) {
+      const t = signInText({ managed: false, locked: true, held });
+      expect(t.title + t.lead, String(held)).not.toMatch(/its own model service|nothing to sign in to|Sign in/);
+      expect(t.lead, String(held)).toMatch(held ? /restart me/ : /Ask your administrator/);
+    }
+    // Locked wins over an organisation's service.
+    expect(signInText({ managed: true, locked: true }).title).toBe("Your organisation has locked me down");
+    expect(askWhy({ locked: true, noSignIn: false })).toBe("While your organisation's policy locks me down, I can't answer.");
+    expect(askWhy({ locked: false, noSignIn: true })).toBe("Once I'm connected, you can ask me something.");
+    expect(askWhy({ locked: false, noSignIn: false })).toBe("Sign in first, then you can ask me something.");
+    const row = summaryRows({ character: "Cinder", size: 60, signedIn: "Locked down by your organisation", voice: "off", keys: null, copilot: false })[1];
+    expect(row).toEqual({ label: "Model service", value: "Locked down by your organisation" });
+    expect(SCRIPT).toContain(': locked() ? "Locked down by your organisation" : null,');
+  });
+
+  it("offers the user's own provider in the lead only where it is offered (first-run-7)", () => {
+    expect(signInText({ managed: false }).lead).toContain("No Copilot? You can use your own model provider instead.");
+    const off = signInText({ managed: false, ownOffered: false });
+    expect(off.title).toBe("Sign in to GitHub");
+    expect(off.lead).not.toMatch(/own model provider/);
+    expect(off.lead).toBe("I think with GitHub Copilot, so I need a GitHub account that has Copilot. Your browser opens so you can approve it there.");
   });
 
   it("says who is signed in once connected", () => {
