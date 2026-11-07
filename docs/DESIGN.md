@@ -275,7 +275,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **The conversation** is part of the page, not a box that scrolls inside it: its latest 6 messages (so the composer
   and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
   its reply show), shows explicit per-answer truncation beyond
-  131,072 characters, and offers Copy and Edit. Edit only fills the composer; a fresh Send is required. Home sends
+  131,072 characters, and offers Copy and Edit. A long paste is kept whole: from 1,800 characters the composer counts
+  them, and over 2,000 it says how many too many and Send refuses until it fits. Edit only fills the composer; a fresh Send is required. Home sends
   no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer and its
   buttons in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. **Read the last
   answer** and a long answer's **Open conversation** open it at the newest answer, focused, from its top (once the

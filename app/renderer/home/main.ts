@@ -8,7 +8,7 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
-import type { HistoryProblemKind } from "../../shared/conversation";
+import { CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
@@ -48,7 +48,7 @@ import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whats
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { CONVERSATION_EDIT, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerCount, COMPOSER_OVER, CONVERSATION_EDIT, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountLearnedUndo } from "./learned-undo";
@@ -997,6 +997,7 @@ function conversationRow(e: Entry): HTMLLIElement {
       if (conversationDraftBeforeEdit === null) conversationDraftBeforeEdit = conversationMessage.value;
       $("conversation-cancel-edit").hidden = false;
       conversationMessage.value = e.text;
+      syncComposerCount();
       conversationComposeStatus.textContent = CONVERSATION_EDIT;
       conversationMessage.focus();
     });
@@ -1124,6 +1125,7 @@ window.ember.onConversation(entries => { conversationReceived = true; keepingCom
 const resetConversationView = () => {
   // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
   conversationMessage.value = "";
+  syncComposerCount();
   conversationSearch.value = "";
   conversationComposeStatus.textContent = "";
   conversationAwaitingReply = false;
@@ -1163,8 +1165,8 @@ $("conversation-compose").addEventListener("submit", event => {
   const send = $("conversation-send") as HTMLButtonElement;
   if (send.disabled) return;
   const text = conversationMessage.value;
-  if (!text.trim() || text.length > 2000) {
-    conversationComposeStatus.textContent = "Enter a request of up to 2,000 characters.";
+  if (!text.trim() || text.length > CONVERSATION_REQUEST_LIMIT) {
+    conversationComposeStatus.textContent = text.trim() ? COMPOSER_OVER : "Enter a request of up to 2,000 characters.";
     conversationMessage.focus();
     return;
   }
@@ -1180,6 +1182,7 @@ $("conversation-compose").addEventListener("submit", event => {
     if (generation !== conversationGeneration) return;
     // Preserve any edits made while the acknowledgement was pending.
     if (conversationMessage.value === text) conversationMessage.value = "";
+    syncComposerCount();
     conversationDraftBeforeEdit = null;
     $("conversation-cancel-edit").hidden = true;
     if (conversationAwaitingReply) conversationComposeStatus.textContent = "Request sent. Ember’s reply will appear above.";
@@ -1191,11 +1194,30 @@ $("conversation-compose").addEventListener("submit", event => {
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
   conversationMessage.value = conversationDraftBeforeEdit ?? "";
+  syncComposerCount();
   conversationDraftBeforeEdit = null;
   $("conversation-cancel-edit").hidden = true;
   conversationComposeStatus.textContent = "Edit cancelled. Your previous draft is restored.";
   conversationMessage.focus();
 });
+/**
+ * The count under the composer near the limit, and how much to shorten a message over it: a long paste is kept whole
+ * (no maxlength cutting its end off unseen), and Send refuses it until it fits (home-5). Crossing the limit is said once.
+ */
+let conversationOver = false;
+function syncComposerCount(): void {
+  const n = conversationMessage.value.length;
+  const words = composerCount(n);
+  const count = $("conversation-count");
+  if (count.textContent !== words) count.textContent = words;
+  count.hidden = !words;
+  const over = n > CONVERSATION_REQUEST_LIMIT;
+  if (over) conversationMessage.setAttribute("aria-invalid", "true"); else conversationMessage.removeAttribute("aria-invalid");
+  if (over && !conversationOver) conversationComposeStatus.textContent = COMPOSER_OVER;
+  else if (!over && conversationOver && conversationComposeStatus.textContent === COMPOSER_OVER) conversationComposeStatus.textContent = "";
+  conversationOver = over;
+}
+conversationMessage.addEventListener("input", syncComposerCount);
 conversationMessage.addEventListener("keydown", event => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
     event.preventDefault();

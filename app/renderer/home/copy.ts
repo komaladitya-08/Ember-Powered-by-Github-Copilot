@@ -14,7 +14,7 @@ import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefau
 import { onboardingRest } from "./computers-copy";
 import { holdsBack, needsUser, type SetupRow } from "../../shared/setup-attention";
 import { sideOf, type HandlePosition } from "../../shared/handle-place";
-import { CONVERSATION_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
+import { CONVERSATION_LIMIT, CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
 import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
@@ -38,6 +38,20 @@ export function conversationKeepProblem(problem: HistoryProblemKind | null): str
 export const CONVERSATION_SCOPE = "Sends your message without reading a window. Use Ask Ember to include the app you’re working in. Existing conversation context still applies.";
 export const CONVERSATION_EDIT = "Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.";
 export const CONVERSATION_TRUNCATED = "This message exceeded the session limit of 131,072 characters. Only the text shown here is retained and copied.";
+/** From how many characters the composer counts them (90% of the limit, home-5). */
+export const COMPOSER_COUNT_FROM = 1800;
+/**
+ * The composer's count once a message nears the limit, and how far over it is (home-5): a paste is kept whole, never
+ * cut silently, and nothing is sent until it fits. "" while well under the limit.
+ */
+export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): string {
+  if (n < COMPOSER_COUNT_FROM) return "";
+  const num = (k: number) => k.toLocaleString("en-GB");
+  const over = n - limit;
+  return `${num(n)} of ${num(limit)} characters${over > 0 ? `, ${num(over)} too many` : ""}.`;
+}
+/** Said once as a message goes over the limit, and when Send is tried while it is (home-5). */
+export const COMPOSER_OVER = `This message is longer than ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters. Shorten it to send it.`;
 export function conversationMatchesText(text: string, query: string): boolean {
   return text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 }

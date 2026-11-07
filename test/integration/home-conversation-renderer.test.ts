@@ -378,4 +378,31 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
+
+  it("keeps a long paste whole, says how much to shorten it, and sends nothing until it fits (home-5)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      const long = `${"A long log line that matters. ".repeat(108)}THE IMPORTANT LAST LINE`;
+      expect(long.length).toBe(3263);
+      await page.locator("#conversation-message").focus();
+      await page.keyboard.insertText(long);
+      expect(await page.locator("#conversation-message").inputValue()).toBe(long);
+      expect(await page.locator("#conversation-count").innerText()).toBe("3,263 of 2,000 characters, 1,263 too many.");
+      expect(await page.locator("#conversation-message").getAttribute("aria-invalid")).toBe("true");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("This message is longer than 2,000 characters. Shorten it to send it.");
+      await page.keyboard.press("Control+Enter");
+      await page.locator("#conversation-send").click();
+      expect(await page.evaluate(() => window.__home.sent)).toEqual([]);
+      expect(await page.locator("#conversation-message").inputValue()).toBe(long);
+      // Cut to fit: the count stays while it is near the limit, and Send works.
+      await page.locator("#conversation-message").fill(long.slice(-1900));
+      expect(await page.locator("#conversation-count").innerText()).toBe("1,900 of 2,000 characters.");
+      expect(await page.locator("#conversation-message").getAttribute("aria-invalid")).toBeNull();
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual([long.slice(-1900)]);
+      expect(await page.locator("#conversation-count").isHidden()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
 });

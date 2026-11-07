@@ -180,7 +180,8 @@
         <form id="conversation-compose" class="conversation-compose">
           <label for="conversation-message">Message Ember</label>
           <p id="conversation-scope" class="hint"></p>
-          <textarea id="conversation-message" rows="3" maxlength="2000" placeholder="What would you like help with?" aria-describedby="conversation-scope conversation-send-hint conversation-compose-status"></textarea>
+          <textarea id="conversation-message" rows="3" placeholder="What would you like help with?" aria-describedby="conversation-scope conversation-count conversation-send-hint conversation-compose-status"></textarea>
+          <p id="conversation-count" class="hint" hidden></p>
           <div class="conversation-compose-actions"><button type="submit" id="conversation-send" class="btn primary">Send</button><button type="button" id="conversation-cancel-edit" class="btn quiet" hidden>Cancel edit</button><button type="button" id="conversation-stop" class="btn quiet" aria-describedby="conversation-stop-hint">Stop response</button><button type="button" id="conversation-new" class="btn quiet" aria-describedby="conversation-new-hint">New conversation</button></div>
           <p id="conversation-send-hint" class="hint">Up to 2,000 characters. Enter adds a new line. Ctrl+Enter or ⌘+Enter sends.</p>
           <p id="conversation-stop-hint" class="hint">Stop response ends the current reply and queued messages. Running tasks continue; use Stop everything to end those too.</p>

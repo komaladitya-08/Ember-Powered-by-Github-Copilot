@@ -22,6 +22,7 @@ import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
+import * as conv from "../../app/renderer/home/copy";
 import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerConsentText, recipientWords, providerHint, providerTestText } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
@@ -930,5 +931,17 @@ describe("modelDestination and recipientWords (microphone consent names the real
   it("sends nothing anywhere while locked down, or when the organisation's address can't be read", () => {
     expect(modelDestination({ ...base, locked: true, adminProvider: "https://a.example" }).kind).toBe("none");
     expect(modelDestination({ ...base, adminProvider: "not a url" }).kind).toBe("none");
+  });
+});
+
+describe("Home's conversation words (2026-11-07 product audit)", () => {
+  it("counts a long message near the limit, and says how much to shorten one over it (home-5)", () => {
+    expect(conv.composerCount(0)).toBe("");
+    expect(conv.composerCount(1799)).toBe("");
+    expect(conv.composerCount(1800)).toBe("1,800 of 2,000 characters.");
+    expect(conv.composerCount(2000)).toBe("2,000 of 2,000 characters.");
+    expect(conv.composerCount(2001)).toBe("2,001 of 2,000 characters, 1 too many.");
+    expect(conv.composerCount(3240)).toBe("3,240 of 2,000 characters, 1,240 too many.");
+    expect(conv.COMPOSER_OVER).toBe("This message is longer than 2,000 characters. Shorten it to send it.");
   });
 });
