@@ -240,6 +240,8 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/** A step refused while a password or authentication prompt is open on the user's screen (M8.3, safety-privacy-3). */
+const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.";
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
 const POSES_AS_ANNOUNCEMENT = new RegExp([
   String.raw`without\s+(asking|checking|permission|approval|confirm\w*|a\s+question)`, String.raw`as\s+you\s+(let|allow\w*|permit\w*)`,
@@ -1444,6 +1446,9 @@ export class Worker {
           z.object({ image: z.boolean().optional().describe("Also return a marked screenshot") }),
           async ({ image }) => this.perceive(image === true && this.d.vision)),
       this.tool("list_windows", "List the open windows (app and title).", z.object({}), async () => {
+        // No window's title goes anywhere while the shell's own password prompt is open (safety-privacy-3).
+        const prompt = await this.promptRefusal("read");
+        if (prompt) return prompt;
         // Ember's own windows aren't for tasks.
         const wins = (await this.perception.windows()).filter(w => !isEmberWindow(w));
         // Their titles reach the model (an email's subject, a file's name): text typed elsewhere may carry them.
@@ -2229,6 +2234,11 @@ export class Worker {
     const target = expectTitle ? { title: expectTitle } : this.target;
     const p = await this.perception.perceive({ image, scope: "window", target });
     if (this.isOver) return STOPPED();
+    // The shell's own password prompt is open: nothing was read (safety-privacy-3). The task may wait and look again.
+    if (p.authPrompt) {
+      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: "an authentication prompt is open" });
+      return denied(AUTH_PROMPT_OPEN);
+    }
     if (p.blocked) {
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
       return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
@@ -2691,6 +2701,9 @@ export class Worker {
       if (this.isOver) return STOPPED();
       if (now && isOn(now.states) === (value === "on")) return done(`Already ${value}: ${describeAfter(now)}`);
     }
+    // Never while the shell's own password prompt is open, also by accessibility (safety-privacy-3).
+    const prompt = await this.promptRefusal(kind, element);
+    if (prompt) return prompt;
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     try {
       if (this.isOver) return STOPPED();
@@ -4003,7 +4016,7 @@ export class Worker {
     const authPrompt = () => { const w = c.activeWindow?.(); return !!w && this.sys.privacy.isSecurityWindow(w); };
     if (authPrompt()) {
       this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
-      return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+      return denied(AUTH_PROMPT_OPEN);
     }
     // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too.
     if (await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => false)) {
@@ -4131,6 +4144,9 @@ export class Worker {
     const verdict = await this.authorize(request);
     if (verdict) return verdict;
     if (this.isOver) return STOPPED();
+    // Never while the shell's own password prompt is open: a new app's window would open over it (safety-privacy-3).
+    const prompt = await this.promptRefusal(kind);
+    if (prompt) return prompt;
     try {
       this.authorized(request);
       const text = await run();
@@ -4334,6 +4350,21 @@ export class Worker {
       return null;
     }
     return this.refused(answer);
+  }
+
+  /**
+   * A password prompt the desktop's shell draws itself is open (Perception.promptOpen: GNOME Shell's polkit and keyring
+   * dialogs, which no X11 window shows): no step is taken until it's done, by accessibility as with the borrowed mouse
+   * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that fails refuses (fail closed); a screen
+   * whose perception has no such check (another computer's) goes on as before.
+   */
+  private async promptRefusal(kind: ActionKind, element?: Focus): Promise<ToolResultObject | null> {
+    if (!this.perception.promptOpen) return null;
+    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => true);
+    if (this.isOver) return STOPPED();
+    if (!open) return null;
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt is open" });
+    return denied(AUTH_PROMPT_OPEN);
   }
 
   /**

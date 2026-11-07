@@ -72,6 +72,8 @@ function makeWorker(o: {
   rateLimit?: number;
   /** The task's goal (the conductor's words, default "make it bold") and the user's own words for it (TaskSpec.userWords). */
   goal?: string; userWords?: string;
+  /** A password prompt the desktop's shell draws (GNOME Shell's polkit dialog) is open now (Perception.promptOpen). */
+  promptOpen?: () => boolean;
 } = {}) {
   let closed = false;
   const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
@@ -133,6 +135,7 @@ function makeWorker(o: {
         if (o.listFails?.()) throw new Error("the accessibility helper didn't answer");
         return o.wins ? [...open] : closed ? [] : [window];
       },
+      ...(o.promptOpen ? { promptOpen: async () => o.promptOpen!() } : {}),
     } as never,
     sidecar: {
       readElement: async (id: number) => {
@@ -1784,5 +1787,35 @@ describe("what a question says the task is (tasks-approvals-5)", () => {
     await legacy.call("perceive_window", {});
     await legacy.call("click", { id: 1 });
     expect(legacy.questions[0].taskLine).toBe("");
+  });
+});
+
+describe("while the desktop's own password prompt is open (safety-privacy-3)", () => {
+  it("refuses a step by accessibility, audits the refusal, and leaves the app alone", async () => {
+    let prompt = false;
+    const acted: string[] = [];
+    const { call, audit } = makeWorker({ promptOpen: () => prompt, onAction: () => { acted.push("click"); return { ok: true, after: null }; } });
+    await call("perceive_window", {});
+    prompt = true;
+    const r = await call("click", { id: 1 });
+    expect(r).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/authentication prompt is open/) });
+    expect(acted).toEqual([]);
+    expect(audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "click", verdict: "deny", reason: "an authentication prompt is open" }));
+    expect(audit.some(e => e.event === "action")).toBe(false);
+    // Once it has gone, the step goes ahead.
+    prompt = false;
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+  });
+
+  it("lists no window's title, and reads none, until it's done", async () => {
+    const { call } = makeWorker({ promptOpen: () => true });
+    expect(await call("list_windows", {})).toMatchObject({ resultType: "denied", textResultForLlm: expect.not.stringMatching(/notes\.txt|gedit/) });
+  });
+
+  it("refuses opening an app or changing a setting too", async () => {
+    const { call, audit } = makeWorker({ promptOpen: () => true, launches: { name: "Untitled Document 1", app: "gedit" } });
+    const r = await call("open_app", { name: "gedit" });
+    expect(r).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/authentication prompt is open/) });
+    expect(audit.some(e => e.event === "action")).toBe(false);
   });
 });

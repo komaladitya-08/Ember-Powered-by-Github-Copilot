@@ -346,6 +346,8 @@ export function lockedOutHands(h: Hands, locked: () => boolean): Hands {
     windows: gate(() => p.windows()),
     // Why the system-dialog check is on (macOS's secure keyboard entry, a Wayland session), where this screen says.
     ...(p.systemDialogReason ? { systemDialogReason: gate(() => p.systemDialogReason!()) } : {}),
+    // Whether a shell's password prompt is open (a check, never a read of an app).
+    ...(p.promptOpen ? { promptOpen: gate(() => p.promptOpen!()) } : {}),
   };
   const sidecar: SidecarPort = {
     readElement: gate((...a: Parameters<SidecarPort["readElement"]>) => s.readElement(...a)),

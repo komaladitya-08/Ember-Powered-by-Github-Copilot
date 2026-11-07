@@ -749,7 +749,9 @@ describe("GNOME Shell's own dialogs and notifications", () => {
     expect(await pixel(n.capture!.data, 50, 100)).toBeGreaterThan(170);
     const d = await shot([{ role: "dialog", name: "", text: "Authentication Required Password", bounds: { x: 0, y: 0, width: 50, height: 50 } }]);
     expect(d.capture).toBeNull();
-    expect(d.text).toContain("a system dialog is open");
+    // Nothing is read either while it is up (safety-privacy-3).
+    expect(d).toMatchObject({ nodes: [], authPrompt: true });
+    expect(d.text).toContain("Ember read nothing: a system dialog is open");
   });
 
   it("mean no picture while the overview or the window switcher shows every window", async () => {

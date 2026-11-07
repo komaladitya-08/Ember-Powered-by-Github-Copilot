@@ -128,3 +128,42 @@ describe("the user's selection (live retest: 'I can't see which text you mean' w
     expect(Perception.withSelection({ target: {}, text: "<context untrusted=\"true\">\nApp: \"x\".\n</context>" }, "hunter2")?.text).not.toMatch(/hunter2/);
   });
 });
+
+describe("while GNOME Shell's own password prompt is open (safety-privacy-3)", () => {
+  const POLKIT = { role: "dialog", name: "Authentication Required", text: "Authentication is required to change system settings Password", bounds: { x: 300, y: 200, width: 400, height: 300 } };
+  /** Thunderbird in front, the shell's overlays as given, and every read counted. */
+  function behind(overlays: unknown[], complete = true) {
+    let reads = 0;
+    const sidecar = {
+      readWindow: async () => { reads++; return { window: { app: "thunderbird", pid: 42, name: "Inbox - Priya's mail", role: "frame", active: true, bounds: null }, nodes: [node(1, "text", "Message", { states: ["focused"], text: "Quarterly figures attached" })], ms: 3 }; },
+      shellOverlays: async () => ({ overlays, complete }),
+      listWindows: async () => ({ windows: [] }),
+    } as unknown as AtspiSidecar;
+    const p = new Perception({ sidecar, x11: null, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 1280, height: 1024 }), log: quiet });
+    return { p, reads: () => reads };
+  }
+
+  it("sends no window's title or text in the request's context or describe_screen, and reads nothing for a task", async () => {
+    const { p, reads } = behind([POLKIT]);
+    expect(await p.promptOpen()).toBe(true);
+    const c = await p.quickContext();
+    expect(c?.text).not.toMatch(/Inbox|Priya|Quarterly|thunderbird/i);
+    expect(c?.text).toMatch(/Ember read nothing: a system dialog is open/);
+    expect(c?.target).toEqual({});
+    const d = await p.describe();
+    expect(d).not.toMatch(/Inbox|Priya|Quarterly|thunderbird/i);
+    expect(d).toMatch(/Ember read nothing: a system dialog is open/);
+    const seen = await p.perceive({ image: false, scope: "window" });
+    expect(seen).toMatchObject({ nodes: [], window: null, authPrompt: true, capture: null });
+    expect(seen.text).not.toMatch(/Inbox|Priya|Quarterly/);
+    // describe and perceive look first and read nothing; the request's context is read only to be thrown away.
+    expect(reads()).toBeLessThanOrEqual(1);
+  });
+
+  it("counts a shell too busy to look through as one (fail closed), but not a notification", async () => {
+    expect(await behind([], false).p.promptOpen()).toBe(true);
+    const note = behind([{ role: "notification", name: "Mail", text: "New mail", bounds: { x: 0, y: 0, width: 300, height: 80 } }]);
+    expect(await note.p.promptOpen()).toBe(false);
+    expect((await note.p.quickContext())?.text).toContain("Inbox - Priya's mail");
+  });
+});
