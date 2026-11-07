@@ -46,8 +46,8 @@ What Ember prints after that goes to `.<v>-start.log` beside the version folder.
 | Linux x64 | `Ember-<v>-x86_64.AppImage` (made executable) | `$XDG_CACHE_HOME/ember-npm/<v>` (default `~/.cache`) |
 
 If the download doesn't match `SHA256SUMS`, nothing is installed. On macOS Ember is started with `open`, so macOS asks
-for Accessibility and Screen Recording permissions for Ember itself. On Linux the AppImage needs FUSE 2 (`libfuse2`);
-without it, run `APPIMAGE_EXTRACT_AND_RUN=1 ember`. Linux packages (RPMs for EL8) are on the Releases page too.
+for Accessibility and Screen Recording permissions for Ember itself. On Linux the AppImage needs `fusermount` (on RHEL 8
+and its family, `sudo dnf install fuse`); without it, run `APPIMAGE_EXTRACT_AND_RUN=1 ember`. Linux packages (RPMs for EL8) are on the Releases page too.
 
 ## Launcher options
 

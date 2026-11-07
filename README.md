@@ -72,8 +72,8 @@ libraries that run speech natively on this computer (sherpa-onnx and ONNX Runtim
 download). On a processor or system where they can't run, listening uses WebAssembly and spoken replies use an
 installed local system voice (`ember doctor` shows the speech backend).
 
-Or run `Ember-0.1.1-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
-system packages the RPM would bring for reading apps:
+Or run `Ember-0.1.1-x86_64.AppImage` without installing Ember itself. It doesn't bring the system packages the RPM
+would bring for reading apps, so install those:
 
 ```bash
 sudo dnf install python3-pyatspi python3-gobject at-spi2-core
@@ -83,15 +83,19 @@ chmod +x Ember-0.1.1-x86_64.AppImage
 ./Ember-0.1.1-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
 
-The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): about 220 MB,
-of which listening needs 130 MB. Should Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still
-listens, replies in the system's voice or takes no spoken yes meanwhile, and settings offers just that one to download. Where user
-namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
+The AppImage carries the speech models too, as the RPM does, so nothing is downloaded when voice is turned on. Should
+Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still listens, replies in the system's voice or
+takes no spoken yes meanwhile, and settings offers just that one to download. The AppImage needs `fusermount` to start
+(`sudo dnf install fuse`; without it, it stops with "No suitable fusermount binary found"). Where you can't install
+that, run it unpacked: `APPIMAGE_EXTRACT_AND_RUN=1 ./Ember-0.1.1-x86_64.AppImage`. Where user namespaces are off
+(STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, quit Ember, then install the new RPM the same way (`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`,
 which also replaces the separate `ember-voice-models` RPM of 0.1.0); then start Ember again (it starts by itself at your next
 login when **Start Ember when I log in** is on). If Ember was running during an update (GNOME Software or automatic
-updates included), it asks the next time it opens a window: choose **Restart Ember** to finish the update. To remove
+updates included), it asks the next time it opens a window: choose **Restart Ember** to finish the update. To update
+the AppImage, quit Ember, save the new AppImage where the old one was, make it executable and delete the old one.
+Start the new one once: Ember then points **Start Ember when I log in** at it, if that is on. To remove
 Ember, first remove its helper from the computers you added over SSH (below). Then turn off
 **Start Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`), quit it, run
 `sudo dnf remove ember` or delete the AppImage, and delete `~/.config/ember` (its

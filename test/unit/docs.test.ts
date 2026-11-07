@@ -293,6 +293,27 @@ describe("README.md", () => {
     expect(own).toContain("isn't on GitHub Releases yet");
   });
 
+  it("says the AppImage carries the speech models as CI builds it, what it needs to start, and how to update it (install-docs-5)", () => {
+    // ci.yml builds the release's AppImage with the models inside, and appimage.sh puts them in when they were staged.
+    expect(read(".github/workflows/ci.yml")).toMatch(/name: Build the AppImage \(its speech models inside\)/);
+    expect(read("scripts/package/appimage.sh")).toMatch(/cp -a "\$stage\/voice-models" "\$app\/ember\/resources\/voice-models"/);
+    const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
+    expect(linux).not.toMatch(/The AppImage downloads the speech models/);
+    expect(linux).not.toMatch(/the models RPM needs Ember's RPM/);
+    expect(linux).toContain("The AppImage carries the speech models too");
+    // The type2 runtime it is built with mounts itself with fusermount (it has no libfuse2 of its own).
+    expect(read("scripts/package/appimage.sh")).toMatch(/RUNTIME_URL=https:\/\/github\.com\/AppImage\/type2-runtime\//);
+    expect(linux).toContain("needs `fusermount` to start (`sudo dnf install fuse`");
+    expect(linux).toContain("`APPIMAGE_EXTRACT_AND_RUN=1 ./Ember-");
+    const npm = flat(read("packages/npm/README.md"));
+    expect(npm).toContain("`fusermount`");
+    expect(npm).not.toMatch(/libfuse2/);
+    // Updating: Ember points its login entry at the AppImage it runs from each time it starts with the switch on
+    // (loginItemFollower in autostart.ts), so starting the new one once is enough.
+    expect(read("app/main/autostart.ts")).toMatch(/const appImage = runningAppImage\(env, o\.execPath\);\n {2}if \(appImage\) return \[appImage\];/);
+    expect(linux).toMatch(/To update the AppImage, quit Ember[^.]*\. Start the new one once: Ember then points \*\*Start Ember when I log in\*\* at it/);
+  });
+
   it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {
     const page = read("app/renderer/home/index.html").replace(/&amp;/g, "&");
     const headings = new Set([...page.matchAll(/<h[23][^>]*>([^<]+)<\/h[23]>/g)].map(m => m[1].trim()));
