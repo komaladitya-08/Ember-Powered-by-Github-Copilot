@@ -10,7 +10,7 @@ import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import type { HistoryProblemKind } from "../../shared/conversation";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, heardThrough, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, clearHearingLine, closedUnexpectedlyText, heardThrough, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
@@ -415,6 +415,10 @@ function render(status: Status): void {
   }));
   $("about-note").textContent = `Ember ${status.appVersion}`;
   renderSettingsNotice(status.settingsNotice);
+  // The last run ended unexpectedly (rp-5): said for this run, with where its log is.
+  const runNotice = $("run-notice");
+  runNotice.hidden = !status.unexpectedExit;
+  runNotice.textContent = status.unexpectedExit ? closedUnexpectedlyText(status.logFile) : "";
   applySettings(status.settings);
   targetsStatus(status);
   extensionsStatus(status);

@@ -309,6 +309,8 @@ export interface Status {
   logFile: string;
   /** Set when settings.json couldn't be used as it was (see IPC.settingsNotice). */
   settingsNotice: string | null;
+  /** The last run ended unexpectedly (its marker was left: app/main/run-marker.ts), or null. */
+  unexpectedExit?: { startedAt: string; version: string } | null;
   /** The administrator's policy in force, if any. */
   admin: {
     source: string | null;

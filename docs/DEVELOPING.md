@@ -821,6 +821,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Conversation (Copilot session state), only while Ember runs: resumed if Ember reconnects, deleted when it quits (one left by a crash is deleted at the next start) | `~/.config/ember/copilot/`, id in `~/.config/ember/agent.json` |
 | GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
+| While Ember runs: its process id, when it started and its version (0600), removed as it quits; one left at the next start means the last run ended unexpectedly | `~/.config/ember/run.json` |
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models and Better recall's model (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
 | Long-term memory, and Better recall's vectors of it (0600) | `~/.config/ember/memory.json`, `~/.config/ember/memory-vectors.json` |
@@ -1142,6 +1143,7 @@ On Linux (Windows: §10.9, macOS: §11.8):
 | Ember doesn't react to “Hey Ember” | Check the **Voice** section: the models must be downloaded and the state must say “Listening for ‘Hey Ember’”. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
 | "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf` |
 | "Copilot isn't answering. Ember will try again in a moment." | The Copilot runtime started but didn't answer a step of connecting in time (30 s to start or open the conversation, 20 s for the sign-in check or the model list). Ember stops it and tries again after 15 s, 30 s, then every minute; `ember.log` has `agent.start_failed` with `why: "timeout"` and the step. A proxy or VPN that drops GitHub's traffic without refusing it does this: check `HTTPS_PROXY` and the system proxy |
+| Home says "Ember closed unexpectedly last time" | Ember's main process ended without quitting (a crash, `kill -9`, the computer losing power): the log says `app.previous_run_ended` with when that run started, and its last lines are what it was doing. That run's conversation is deleted at this start, as after any crash. If it keeps happening, report it with `ember.log` |
 | Ember says it can't read the screen | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Apps started before it was turned on must be restarted |
 | "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to |
 
@@ -1332,6 +1334,7 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | Conversation (Copilot session state), only while Ember runs | `%LOCALAPPDATA%\ember\copilot\`, id in `%LOCALAPPDATA%\ember\agent.json` |
 | GitHub token (encrypted for your Windows account with DPAPI) | `%LOCALAPPDATA%\ember\github-token.bin` |
 | Logs | `%LOCALAPPDATA%\ember\logs\ember.log` |
+| While Ember runs (removed as it quits; one left means the last run ended unexpectedly) | `%LOCALAPPDATA%\ember\run.json` |
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days; the file only: no copy goes to a system log) | `%LOCALAPPDATA%\ember\audit\audit-YYYY-MM.jsonl` |
 | Speech models | `%LOCALAPPDATA%\ember\models\`, or bundled: `Ember\resources\voice-models`, then `%ProgramData%\Ember\voice-models` |
 | The compiled accessibility helper | `%LOCALAPPDATA%\ember\uia-cache\` |
@@ -1658,6 +1661,7 @@ Gatekeeper does on first start.
 | Conversation (Copilot session state), only while Ember runs | `~/Library/Application Support/ember/copilot/`, id in `agent.json` beside it |
 | GitHub token (encrypted with a key kept in your login Keychain) | `~/Library/Application Support/ember/github-token.bin` |
 | Logs | `~/Library/Application Support/ember/logs/ember.log` |
+| While Ember runs (removed as it quits; one left means the last run ended unexpectedly) | `~/Library/Application Support/ember/run.json` |
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days; the file only: no copy goes to the system log) | `~/Library/Application Support/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models | `~/Library/Application Support/ember/models/`, or bundled: `Ember.app/Contents/Resources/voice-models`, then `/Library/Application Support/Ember/voice-models` |
 | SSH's password helper, and Node.js downloaded for other computers | `~/Library/Application Support/ember/ssh/`, `~/Library/Application Support/ember/remote/runtime/` |

@@ -17,6 +17,7 @@ import { createLogger, logLevel } from "./logger";
 import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
+import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
@@ -423,7 +424,19 @@ function start(): void {
     if (problem) log.warn("settings.hand_edit", { detail: problem });
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(IPC.settingsNotice, problem);
   });
-  app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
+  // The last run's marker still there: it ended unexpectedly (main crashed, was killed, the power went: rp-5). Home says
+  // so for this run, and the log says when it started; this run's own marker goes as it quits or the session ends.
+  const lastRun = previousRun(userData);
+  if (lastRun) log.warn("app.previous_run_ended", { startedAt: lastRun.startedAt, version: lastRun.version });
+  startRun(userData, { pid: process.pid, version: app.getVersion() });
+  let runEnded = false;
+  const endThisRun = (how: "quit" | "session-end") => {
+    if (runEnded) return;
+    runEnded = true;
+    if (how === "quit") log.info("app.quit", { how });
+    endRun(userData);
+  };
+  app.on("will-quit", () => { endThisRun("quit"); unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
   let projectFiles: string[] = [];
@@ -569,6 +582,7 @@ function start(): void {
     environment: await environmentNow(),
     logFile: log.file,
     settingsNotice,
+    unexpectedExit: lastRun ? { startedAt: lastRun.startedAt, version: lastRun.version } : null,
     admin: { source: admin.source, error: admin.error ?? null, ...(admin.held ? { held: true } : {}), managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
       confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: auditRetentionDays(admin),
       neverLook: policy.neverLook, commands: { local: commandMode(admin, "local"), wsl: commandMode(admin, "wsl"), ssh: commandMode(admin, "ssh") },
@@ -2630,6 +2644,7 @@ function start(): void {
     if (sessionEnding) return;
     sessionEnding = true;
     log.info("app.session_end", { source });
+    endThisRun("session-end");
     try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); }
     borrowRef?.stop();
     inputRef?.releaseAll();

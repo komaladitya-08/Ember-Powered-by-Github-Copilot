@@ -1159,3 +1159,8 @@ export function forgetEverythingScope(c: ForgetCounts): string {
 export function reminderDeleteScope(routines: number, reminders: number): string {
   return `Delete all ${routines} routines and ${reminders} waiting reminders? This removes saved reminders too.`;
 }
+
+/** Home's note after the last run ended unexpectedly (main crashed or was killed: rp-5), with where its log is. */
+export function closedUnexpectedlyText(logFile: string): string {
+  return `Ember closed unexpectedly last time. Its log shows what it was doing until then: ${logFile}`;
+}

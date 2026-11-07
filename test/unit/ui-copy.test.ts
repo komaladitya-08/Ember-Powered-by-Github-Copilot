@@ -994,3 +994,14 @@ describe("What Ember did for a command the review cleared (safety-privacy-v1)", 
     expect(describeEntry({ t: "2026-11-07T10:00:00Z", event: "command", phase: "decided", verdict: "announce", reason: "Reviewed: routine for the request." })?.why).toBe("Reviewed: routine for the request.");
   });
 });
+
+describe("Home after the last run ended unexpectedly (rp-5)", () => {
+  it("says Ember closed unexpectedly and where its log is, in a status note shown only then", async () => {
+    const { closedUnexpectedlyText } = await import("../../app/renderer/home/copy");
+    expect(closedUnexpectedlyText("/home/ada/.config/ember/logs/ember.log")).toBe("Ember closed unexpectedly last time. Its log shows what it was doing until then: /home/ada/.config/ember/logs/ember.log");
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toContain(`<p id="run-notice" class="managed" role="status" hidden></p>`);
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`runNotice.hidden = !status.unexpectedExit;`);
+  });
+});
