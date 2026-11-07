@@ -31,7 +31,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, USER_PROVIDER_NO_MODEL } from "../../app/main/agent/host";
+import { AgentHost, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, noticeTitle, stillConnectingTitle } from "../../app/main/agent/host";
+import type { BubbleState, EmberState } from "../../app/shared/overlay";
 import { SettingsStore } from "../../app/main/settings";
 import type { ActiveProvider } from "../../app/main/provider";
 
@@ -80,6 +81,32 @@ describe("AgentHost with the user's own model provider", () => {
     const { host } = makeHost(() => ({ ...OWN, models: { conductor: null, worker: null } }));
     expect(await host.start(null)).toBe("error");
     expect(host.getStatus()).toMatchObject({ reason: "models", detail: USER_PROVIDER_NO_MODEL });
+  });
+
+  it("names the provider, never Copilot, in the status and the bubble when it can't connect (integrations-3)", async () => {
+    sim.clients = []; sim.sessions = [];
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-own-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const bubbles: BubbleState[] = [];
+    const host = new AgentHost({
+      userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, onStatus: () => undefined,
+      setState: (p: Partial<EmberState>) => { if (p.bubble) bubbles.push(p.bubble); }, provider: () => ({ ...OWN, models: { conductor: null, worker: null } }),
+    });
+    expect(await host.start(null)).toBe("error");
+    // The failed start keeps the service it tried, so Home and first run explain it as the provider's.
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "models", service: { kind: "user", host: "models.example.com" } });
+    await host.ask("what can you do?");
+    expect(bubbles.some(b => b.title === "No model set for your provider")).toBe(true);
+    expect(bubbles.some(b => /Copilot/.test(b.title ?? ""))).toBe(false);
+    // Every reason has words for a provider that never say Copilot; Copilot's own stay as they were.
+    for (const reason of ["sign-in", "network", "no-access", "models", "runtime", "not-answering", "other"] as const) {
+      expect(noticeTitle(reason, "user"), reason).not.toMatch(/Copilot/);
+      expect(noticeTitle(reason, "admin"), reason).not.toMatch(/Copilot/);
+      expect(noticeTitle(reason), reason).toBe(NOTICE_TITLE[reason]);
+    }
+    expect(stillConnectingTitle("user")).toBe("I'm still connecting to your model provider");
+    expect(stillConnectingTitle()).toBe("I'm still connecting to Copilot");
   });
 
   it("switches to it and back without a restart, with a new conversation on each service", async () => {

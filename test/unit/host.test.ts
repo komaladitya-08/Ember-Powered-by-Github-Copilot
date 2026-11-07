@@ -3664,15 +3664,15 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     sim.createGate = new Promise<void>(() => undefined);
     host.tasks!.cancel(t.id);
     await vi.waitFor(() => expect(before.disconnected).toBe(true), { timeout: 3000 });
-    // After the release's wait and the usual one, the held question is told Ember is still connecting, and the
-    // release is over: a later question isn't held behind it.
-    await vi.waitFor(() => expect(patches.some(p => p.bubble?.title === "I'm still connecting to Copilot")).toBe(true), { timeout: 3000 });
+    // After the release's wait and the usual one, the held question is told Ember is still connecting (to the user's
+    // own provider, never called Copilot: integrations-3), and the release is over: a later question isn't held behind it.
+    await vi.waitFor(() => expect(patches.some(p => p.bubble?.title === "I'm still connecting to your model provider")).toBe(true), { timeout: 3000 });
     const h = host as unknown as { releasing: boolean; held: unknown[] };
     await vi.waitFor(() => expect(h.releasing).toBe(false), { timeout: 3000 });
     const shown = patches.length;
     await host.ask("later question");
     expect(h.held).toEqual([]);
-    expect(patches.slice(shown).some(p => p.bubble?.title === "I'm still connecting to Copilot")).toBe(true);
+    expect(patches.slice(shown).some(p => p.bubble?.title === "I'm still connecting to your model provider")).toBe(true);
     // Stop everything during a release that hangs ends it too.
     h.held.push({ text: "x", context: null, epoch: 0, how: {} });
     h.releasing = true;

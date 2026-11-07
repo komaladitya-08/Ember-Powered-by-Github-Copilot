@@ -25,6 +25,8 @@ export interface StatusFacts {
   /** Tasks working now, and those waiting for the user's answer. */
   running: number;
   asking: number;
+  /** The model service the connection uses when it isn't Copilot (the agent's status kind). */
+  service?: string;
   /** The organisation's policy locks Ember down (Status.admin.error), `held` until a restart reads a changed one. */
   locked?: boolean;
   held?: boolean;
@@ -41,7 +43,7 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
   // Locked down nothing connects, whatever the sign-in: never "Not connected", which connecting can't help (safety-privacy-4).
   if (f.locked) return { word: f.held ? "Locked until a restart" : "Locked by your organisation", ring: "error" };
   if (f.failing) return { word: "Needs setting up", ring: "error" };
-  if (f.phase === "error" && f.waitingForTasks) return { word: "Waiting for Copilot", ring: "starting" };
+  if (f.phase === "error" && f.waitingForTasks) return { word: f.service ? "Waiting for the model service" : "Waiting for Copilot", ring: "starting" };
   if (f.phase === "signed-out" || f.phase === "error") return { word: "Not connected", ring: "error" };
   if (f.phase === "starting" || f.phase === null) return { word: "Connecting…", ring: "starting" };
   if (f.asking) return { word: f.asking === 1 ? "A task needs you" : `${f.asking} tasks need you`, ring: "needs" };

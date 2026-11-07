@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { tagline } from "../../app/renderer/home/copy";
+import { statusWord } from "../../app/renderer/home/status-copy";
 
 describe("first run: own provider offer (FE #2)", () => {
   const base = { bridge: true, managedProvider: false, locked: false, userProviderOff: false };
@@ -37,6 +39,36 @@ describe("first run: what a failed connection offers (FE #3)", () => {
     expect(failureView({ reason: "network", ownOffered: true })).toMatchObject({ primary: "retry", others: ["own-provider"] });
     expect(failureView({ reason: "network", ownOffered: false }).others).toEqual([]);
     expect(failureView({ reason: "models", ownOffered: false }).primary).toBe("retry");
+  });
+});
+
+describe("a failing own provider is explained as the provider's, never Copilot's (integrations-3)", () => {
+  it("leads with the provider's details, and offers no GitHub account, sign-in or provider switch", () => {
+    for (const reason of ["models", "sign-in", "no-access"]) {
+      const v = failureView({ reason, detail: "Enter the model your provider should use in Ember's settings, under Models & connections.", ownOffered: true, service: "user" });
+      expect(v, reason).toEqual({ help: "", primary: "provider", others: ["retry"] });
+    }
+    for (const reason of ["network", "not-answering", "other"]) expect(failureView({ reason, ownOffered: true, service: "user" }), reason).toEqual({ help: "", primary: "retry", others: ["provider"] });
+    const home = homeConnectionView({ phase: "error", reason: "models", detail: "Enter the model…", ownOffered: true, signingIn: false, waiting: false, service: "user" });
+    expect(home).toEqual({ help: "", primary: "provider", show: { provider: true, retry: true, "sign-in": false, "switch-account": false, "own-provider": false } });
+    // The organisation's service: only trying again.
+    expect(failureView({ reason: "models", ownOffered: false, service: "admin" })).toEqual({ help: "", primary: "retry", others: [] });
+  });
+  it("says in Home's tagline and status that the provider can't connect, never to connect Copilot", () => {
+    const t = { failing: 0, onboarded: true, hidden: false, overlay: true, service: "user" };
+    expect(tagline({ ...t, phase: "error" })).toBe("Ember is beside your cursor. Ember can't connect to your model provider yet: Models & connections says why.");
+    expect(tagline({ ...t, phase: "starting" })).toBe("Ember is beside your cursor. Connecting to your model provider…");
+    expect(tagline({ ...t, phase: "error", waitingForTasks: true })).toMatch(/Your model provider isn't answering/);
+    expect(tagline({ ...t, service: undefined, phase: "error" })).toBe("Ember is beside your cursor. Connect Copilot to start asking.");
+    expect(statusWord({ phase: "error", failing: 0, running: 0, asking: 0, waitingForTasks: true, service: "user" }).word).toBe("Waiting for the model service");
+  });
+
+  it("words Copilot's own model failure by its cause: the account's settings, or the administrator's list", () => {
+    const personal = failureView({ reason: "models", detail: "None of the models Copilot lists are enabled for this account. Turn one on in your Copilot settings on GitHub.", ownOffered: true });
+    expect(personal.help).toBe("Copilot lists no model this account may use. Turn one on in your Copilot settings on GitHub, or use your own model provider.");
+    expect(personal.help).not.toContain("administrator");
+    const admin = failureView({ reason: "models", detail: "None of the models your administrator allows are available to this account.", ownOffered: false });
+    expect(admin.help).toBe("None of the models your administrator allows is one I can use. Ask them to allow one.");
   });
 });
 
@@ -92,7 +124,7 @@ describe("Home's connection buttons by why Copilot isn't connected (FE #3)", () 
   it("never leads an account without Copilot with signing in again", () => {
     const v = homeConnectionView({ ...base, reason: "no-access", detail: "Copilot isn't available to this account." });
     expect(v.primary).toBe("own-provider");
-    expect(v.show).toEqual({ "own-provider": true, "switch-account": true, retry: true, "sign-in": false });
+    expect(v.show).toEqual({ "own-provider": true, "switch-account": true, retry: true, "sign-in": false, provider: false });
     expect(v.help).toContain("github.com/features/copilot");
   });
   it("names the administrator, and leads with another account when the provider is forbidden by policy", () => {
@@ -105,11 +137,11 @@ describe("Home's connection buttons by why Copilot isn't connected (FE #3)", () 
   it("keeps signing in first for a signed-out Copilot, with the provider beside it and Check again as before", () => {
     const v = homeConnectionView({ ...base, phase: "signed-out" });
     expect(v.primary).toBe("sign-in");
-    expect(v.show).toEqual({ "sign-in": true, "own-provider": true, "switch-account": false, retry: true });
+    expect(v.show).toEqual({ "sign-in": true, "own-provider": true, "switch-account": false, retry: true, provider: false });
   });
   it("shows nothing while signing in, and only Reconnect while waiting for tasks", () => {
-    expect(homeConnectionView({ ...base, signingIn: true }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: false });
-    expect(homeConnectionView({ ...base, waiting: true, reason: "network" }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: true });
+    expect(homeConnectionView({ ...base, signingIn: true }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: false, provider: false });
+    expect(homeConnectionView({ ...base, waiting: true, reason: "network" }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: true, provider: false });
     expect(homeConnectionView({ ...base, phase: "ready" }).show.retry).toBe(false);
   });
 });

@@ -254,7 +254,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // Copilot's sign-in wherever it is offered. An entitlement failure never leads with signing in again.
     const offer = ownOffer();
     const failing = agent?.phase === "error" && !signingIn && !managed();
-    const fv = failing ? failureView({ reason: agent?.reason, detail: agent?.detail, ownOffered: offer.offered }) : null;
+    const fv = failing ? failureView({ reason: agent?.reason, detail: agent?.detail, ownOffered: offer.offered, service: agent?.service?.kind }) : null;
     let extras: FailureAction[] = [];
     signInPrimary = v.primary === "sign-in" ? "sign-in" : "continue";
     if (fv) { signInPrimary = fv.primary; extras = fv.others; }
@@ -298,7 +298,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
 
   /** One way on from a connection that needs something. */
   function perform(a: FailureAction): void {
-    if (a === "own-provider") { openProvider(); return; }
+    if (a === "own-provider" || a === "provider") { openProvider(); return; }
     if (a === "retry") { checkAgain(); return; }
     // "Switch account" is the same GitHub sign-in: the browser page lets them choose another account.
     signIn();

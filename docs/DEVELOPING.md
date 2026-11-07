@@ -874,6 +874,10 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   runtime's provider config. **Remove** and **Sign out** delete it. Another GitHub account signing in leaves it in
   place: the key belongs to the user's model service, not to a GitHub account, so an account change has nothing to do
   with it (Sign out deletes it only because signing out forgets everything the user set up).
+- **When it fails** (no model named, a refused key, a host that doesn't answer), the status names the provider from the
+  moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
+  (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
+  title names the provider ("No model set for your provider", "I'm still connecting to your model provider").
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
   started with. A request asked while a turn or a task is still under way on the service before is held, with a bubble
   saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are

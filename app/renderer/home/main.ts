@@ -245,7 +245,7 @@ function renderTagline(): void {
   const text = tagline({
     failing, look: 0, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,
-    locked: !!lastAdmin && lastAdmin.error !== null, held: !!lastAdmin?.held,
+    locked: !!lastAdmin && lastAdmin.error !== null, held: !!lastAdmin?.held, service: agent?.service?.kind,
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
   renderStatus();
@@ -260,7 +260,7 @@ function renderStatus(): void {
   const { running, asking: askingTasks } = taskCounts(tasksNow);
   const asking = Math.max(askingTasks, presence?.approval ? 1 : 0);
   const locked = !!lastAdmin && lastAdmin.error !== null;
-  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held });
+  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held, service: agent?.service?.kind });
   setText("state-word", s.word);
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
@@ -712,7 +712,7 @@ function renderAgent(a: AgentStatus | null): void {
   // What leads depends on why Copilot isn't connected (FE #3): an account without Copilot is not asked to sign in again.
   const a2 = lastAdmin;
   const view = homeConnectionView({
-    phase: a.phase, reason: a.reason, detail: a.detail, signingIn, waiting,
+    phase: a.phase, reason: a.reason, detail: a.detail, signingIn, waiting, service: a.service?.kind,
     ownOffered: ownProviderOffer({
       bridge: !!window.emberProvider, managedProvider: !!a2?.provider, locked: !!a2 && a2.error !== null,
       userProviderOff: a2?.features.userProvider === false,
@@ -722,6 +722,8 @@ function renderAgent(a: AgentStatus | null): void {
   // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
   $("sign-in").textContent = signInLabel(a.signInWith);
   $("own-provider").hidden = !view.show["own-provider"];
+  $("provider-details").hidden = !view.show.provider;
+  $("provider-details").classList.toggle("quiet", view.primary !== "provider");
   $("switch-account").hidden = !view.show["switch-account"];
   // Only the leading action is filled: one prominent button in the group.
   $("sign-in").classList.toggle("quiet", view.primary !== "sign-in");
@@ -816,6 +818,12 @@ $("sign-in").addEventListener("click", () => {
 let retryFound: { found: boolean; source: string | null; hint?: string } | null = null;
 // "Try a different GitHub account" is the same sign-in: GitHub's page lets them choose another account.
 $("switch-account").addEventListener("click", () => $("sign-in").click());
+// The user's own provider is failing (integrations-3): its fields are the way on, the model's when it names none.
+$("provider-details").addEventListener("click", () => {
+  const field = $(agent?.reason === "models" ? "byok-conductor" : "byok-url");
+  field.scrollIntoView({ block: "center" });
+  field.focus();
+});
 // The user's own provider is the group under this one: its switch is the way in.
 $("own-provider").addEventListener("click", () => {
   const sw = $("byok-on");

@@ -6,8 +6,8 @@
  * valid; that is always the answer of the real check.
  */
 
-/** The ways on from a failed connection. */
-export type FailureAction = "retry" | "switch-account" | "own-provider" | "sign-in";
+/** The ways on from a failed connection ("provider": the user's own provider's details, when it is the one failing). */
+export type FailureAction = "retry" | "switch-account" | "own-provider" | "sign-in" | "provider";
 
 /** What the user is shown for a failed connection: help words, the prominent action and the others. */
 export interface FailureView {
@@ -21,6 +21,7 @@ export const ACTION_LABEL: Readonly<Record<FailureAction, string>> = {
   "switch-account": "Try a different GitHub account",
   "own-provider": "Use my own provider",
   "sign-in": "Sign in with GitHub",
+  provider: "Check my provider's details",
 };
 
 /**
@@ -42,11 +43,20 @@ const ORGANISATION = /organi[sz]ation|\bpolicy\b/i;
 /**
  * What to do about a failed connection, by why it failed. An entitlement failure (`no-access`) is never answered with
  * signing in again as the prominent action: the account has no Copilot, and the same account signing in again changes
- * nothing. `ownOffered` is `ownProviderOffer(...).offered`.
+ * nothing. `ownOffered` is `ownProviderOffer(...).offered`. `service`: the model service that failed when it isn't
+ * Copilot (the agent's status): then no GitHub account, sign-in or Copilot words are offered, and the user's own
+ * provider leads with its own details (integrations-3).
  */
-export function failureView(o: { reason?: string; detail?: string; ownOffered: boolean }): FailureView {
+export function failureView(o: { reason?: string; detail?: string; ownOffered: boolean; service?: string }): FailureView {
   const own = o.ownOffered;
   const withOwn = (list: FailureAction[]): FailureAction[] => (own ? list : list.filter(a => a !== "own-provider"));
+  if (o.service) {
+    // The status line says what went wrong in the service's own words; the way on is its details, or trying again.
+    const mine = o.service === "user";
+    const fields = o.reason === "models" || o.reason === "sign-in" || o.reason === "no-access";
+    if (!mine) return { help: "", primary: "retry", others: [] };
+    return fields ? { help: "", primary: "provider", others: ["retry"] } : { help: "", primary: "retry", others: ["provider"] };
+  }
   switch (o.reason) {
     case "no-access": {
       const org = ORGANISATION.test(o.detail ?? "");
@@ -59,8 +69,14 @@ export function failureView(o: { reason?: string; detail?: string; ownOffered: b
     }
     case "sign-in":
       return { help: "", primary: "sign-in", others: withOwn(["own-provider"]) };
-    case "models":
-      return { help: "Copilot lists no model this account may use. Ask your administrator to allow one, or use your own model provider.", primary: own ? "own-provider" : "retry", others: own ? ["retry", "switch-account"] : ["switch-account"] };
+    case "models": {
+      // The administrator's list leaves none, or the account has its models turned off (the host's detail says which).
+      const admin = /administrator/i.test(o.detail ?? "");
+      const help = admin
+        ? `None of the models your administrator allows is one I can use. Ask them to allow one${own ? ", or use your own model provider" : ""}.`
+        : `Copilot lists no model this account may use. Turn one on in your Copilot settings on GitHub${own ? ", or use your own model provider" : ""}.`;
+      return { help, primary: own ? "own-provider" : "retry", others: own ? ["retry", "switch-account"] : ["switch-account"] };
+    }
     case "network":
       return { help: "", primary: "retry", others: withOwn(["own-provider"]) };
     default:
@@ -77,12 +93,12 @@ export interface HomeConnectionView { help: string; show: Record<FailureAction, 
  * "Sign in with GitHub" first. "Check again" stays for every way of not being connected, as before. `waiting` (Copilot
  * stopped answering with tasks at work) and `signingIn` keep their own buttons and show nothing else.
  */
-export function homeConnectionView(o: { phase: string; reason?: string; detail?: string; ownOffered: boolean; signingIn: boolean; waiting: boolean }): HomeConnectionView {
-  const none: Record<FailureAction, boolean> = { retry: false, "switch-account": false, "own-provider": false, "sign-in": false };
+export function homeConnectionView(o: { phase: string; reason?: string; detail?: string; ownOffered: boolean; signingIn: boolean; waiting: boolean; service?: string }): HomeConnectionView {
+  const none: Record<FailureAction, boolean> = { retry: false, "switch-account": false, "own-provider": false, "sign-in": false, provider: false };
   const notConnected = o.phase === "signed-out" || o.phase === "error";
   if (!notConnected || o.signingIn) return { help: "", show: none, primary: null };
   if (o.waiting) return { help: "", show: { ...none, retry: true }, primary: null };
-  const v = failureView({ reason: o.phase === "signed-out" ? "sign-in" : o.reason, detail: o.detail, ownOffered: o.ownOffered });
+  const v = failureView({ reason: o.phase === "signed-out" ? "sign-in" : o.reason, detail: o.detail, ownOffered: o.ownOffered, service: o.phase === "error" ? o.service : undefined });
   const show = { ...none, retry: true };
   for (const a of [v.primary, ...v.others]) if (a !== "continue") show[a] = true;
   return { help: v.help, show, primary: v.primary === "continue" ? null : v.primary };

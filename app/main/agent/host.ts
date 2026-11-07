@@ -582,6 +582,30 @@ export const NOTICE_TITLE: Record<AgentReason | "signed-out", string> = {
   other: "Copilot isn't working right now",
 };
 
+/**
+ * The bubble's title when Ember can't take a request, for the model service the connection uses (`service`, the
+ * status' kind): NOTICE_TITLE for Copilot, and words that name the user's own provider or the organisation's service
+ * otherwise, never Copilot (integrations-3).
+ */
+export function noticeTitle(reason: AgentReason | "signed-out", service?: ActiveProvider["kind"]): string {
+  if (!service || reason === "signed-out" || reason === "policy") return NOTICE_TITLE[reason];
+  const it = service === "user" ? "your model provider" : "the model service";
+  const It = it[0].toUpperCase() + it.slice(1);
+  switch (reason) {
+    case "sign-in": case "no-access": return `${It} refused the connection`;
+    case "network": return `I can't reach ${it}`;
+    case "models": return service === "user" ? "No model set for your provider" : "No model I can use";
+    case "runtime": return "My model connection isn't running";
+    case "not-answering": return `${It} isn't answering`;
+    default: return `${It} isn't working right now`;
+  }
+}
+
+/** Who Ember is still connecting to, in the bubble's title. */
+export function stillConnectingTitle(service?: ActiveProvider["kind"]): string {
+  return `I'm still connecting to ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}`;
+}
+
 /** What Ember's handle says when nothing else is going on: a few words (the pill is narrow). */
 export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks">): string {
   if (s.phase === "ready") return "Ready";
@@ -1478,7 +1502,11 @@ export class AgentHost {
       this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined, service: undefined });
       return;
     }
-    this.setStatus({ phase: "starting", detail: provider?.kind === "user" ? `Connecting to ${serviceHost(provider.config.baseUrl)}…` : "Connecting to Copilot…", source: this.source });
+    // The service is named from the start, so a failure to reach it is never explained as Copilot's (integrations-3).
+    this.setStatus({
+      phase: "starting", detail: provider?.kind === "user" ? `Connecting to ${serviceHost(provider.config.baseUrl)}…` : "Connecting to Copilot…", source: this.source,
+      service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
+    });
     let unreachable = false;
     try {
       const env = await this.runtimeEnv();
@@ -2536,7 +2564,7 @@ export class AgentHost {
     if (!this.conductor?.sessionId || this.status.phase !== "ready") {
       const signedOut = this.status.phase === "signed-out";
       const why = signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
-      const title = this.status.phase === "starting" ? "I'm still connecting to Copilot" : NOTICE_TITLE[signedOut ? "signed-out" : this.status.reason ?? "other"];
+      const title = this.status.phase === "starting" ? stillConnectingTitle(this.status.service?.kind) : noticeTitle(signedOut ? "signed-out" : this.status.reason ?? "other", this.status.service?.kind);
       const restart = this.status.reason === "policy" && !!this.o.policyHeld?.();
       // Not signed in: signing in is what to do next (as the greeting says it), not a problem. Settings is offered only
       // where it can help: not while Ember waits for the network or reconnects by itself.

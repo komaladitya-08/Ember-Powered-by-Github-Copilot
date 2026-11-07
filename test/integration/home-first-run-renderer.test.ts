@@ -361,6 +361,18 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await r.locator("#connection-help").isVisible()).toBe(false);
   });
 
+  it("(s) Home explains a failing own provider as the provider's: its details lead, with no GitHub account or Copilot words (integrations-3)", async () => {
+    const p = await open({ home: true, provider: { on: true, baseUrl: "https://api.example.com/v1" }, agent: { ...SIGNED_OUT, phase: "error", reason: "models", detail: "Enter the model your provider should use in Ember's settings, under Models & connections.", service: { kind: "user", host: "api.example.com" } } });
+    const shown = (id: string) => p.evaluate(i => !(document.getElementById(i) as HTMLElement).hidden, id);
+    await expect.poll(() => shown("provider-details")).toBe(true);
+    expect(await p.locator("#provider-details").getAttribute("class")).not.toContain("quiet");
+    for (const id of ["own-provider", "switch-account", "sign-in", "connection-help"]) expect(await shown(id), id).toBe(false);
+    expect(await shown("retry")).toBe(true);
+    await p.locator("#provider-details").click();
+    expect(await focusedId(p)).toBe("byok-conductor");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(j) Copilot's own default is reviewed as Copilot's, not as an inactive provider's models (FE #4)", async () => {
     const p = await open({ agent: readyAgent({ models: [], conductorModel: null, workerModel: null }), provider: { on: false, conductor: "gpt-own-a", worker: "gpt-own-b" } });
     await expect.poll(() => p.locator("#w-models").isVisible()).toBe(true);

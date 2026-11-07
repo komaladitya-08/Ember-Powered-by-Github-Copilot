@@ -156,6 +156,8 @@ export function tagline(t: {
   /** The organisation's policy locks Ember down, `held` until a restart reads a changed one (safety-privacy-4). */
   locked?: boolean;
   held?: boolean;
+  /** The model service the connection uses when it isn't Copilot (the agent's status kind): named instead (integrations-3). */
+  service?: string;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
@@ -163,9 +165,11 @@ export function tagline(t: {
   if (t.locked) return t.held ? "Your organisation changed Ember's policy, so Ember can't answer or act until you restart it." : "Your organisation's Ember policy has a problem, so Ember can't answer or act until it's fixed.";
   if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer.`;
   const where = !t.overlay ? `Ember is in the ${handleCornerText(t.corner)}.` : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
-  if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks that are running finish.`;
+  const service = t.service === "user" ? "your model provider" : t.service ? "the model service" : "Copilot";
+  if (t.phase === "error" && t.waitingForTasks) return `${where} ${t.service ? service[0].toUpperCase() + service.slice(1) : "Copilot"} isn't answering: Ember reconnects once the tasks that are running finish.`;
+  if (t.phase === "error" && t.service) return `${where} Ember can't connect to ${service} yet: Models & connections says why.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot to start asking.`;
-  if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
+  if (t.phase === "starting" || t.phase === null) return `${where} Connecting to ${service}…`;
   // Ready, with setup rows still worth a look: said, so a warning isn't left in a closed fold (review #95).
   // An empty label: another app holds the ask shortcut and its fallback (D-45b), so settings' Ask Ember… is the way.
   const ask = askLabel ? `Press ${askLabel} to ask it anything.` : "Ask it anything with Ask Ember… below.";

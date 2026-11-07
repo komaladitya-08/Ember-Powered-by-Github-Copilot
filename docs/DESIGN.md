@@ -375,7 +375,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
   A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
-  provider or a different GitHub account, never the same sign-in. Once connected, “Models I'll use” names both models
+  provider or a different GitHub account, never the same sign-in. A failure of the user's own provider leads with
+  “Check my provider's details” (or Try again for the network), with no GitHub account, sign-in or Copilot words, in
+  first run, Home and the bubble's title alike (integrations-3). Once connected, “Models I'll use” names both models
   with the premium-request multiplier where Copilot gives one, and says so when tasks work from text only; Change is
   optional. A setup fix that fails says so in its own row. Once Ember is connected to the user's own provider, the
   sign-in step, its status line and **Your Ember**'s “Model service” row name that provider, never Copilot, and Back
