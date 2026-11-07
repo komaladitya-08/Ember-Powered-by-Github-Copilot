@@ -391,3 +391,27 @@ describe.skipIf(gate)("Home's Projects and Memory panes, as laid out (2026-11-07
     await page.close();
   });
 });
+
+describe.skipIf(gate)("Home at 200% zoom and more (2026-11-07 product audit)", () => {
+  it("never scrolls a pane sideways at 304 to 420 px wide, at Default and Larger text (accessibility-visual-v1, WCAG 1.4.10)", async () => {
+    const page = await open("home", { viewport: { width: 320, height: 700 } });
+    const panes = await page.locator(".jump a[href]").evaluateAll(as => as.filter(a => !(a as HTMLElement).hidden).map(a => a.getAttribute("href")!));
+    const over: string[] = [];
+    for (const size of ["", "larger"]) {
+      await page.evaluate(sz => { if (sz) document.documentElement.dataset.textSize = sz; else delete document.documentElement.dataset.textSize; }, size);
+      for (const width of [304, 320, 380, 420]) {
+        await page.setViewportSize({ width, height: 700 });
+        for (const href of panes) {
+          await page.locator(`.jump a[href="${href}"]`).first().click();
+          const d = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+          if (d > 0) over.push(`${href} at ${width} px ${size || "default"}: +${d}`);
+        }
+      }
+    }
+    expect(over).toEqual([]);
+    await page.setViewportSize({ width: 380, height: 700 });
+    await page.locator('.jump a[href="#privacy-h"]').first().click();
+    await evidence(page, "privacy-380-larger");
+    await page.close();
+  }, 60_000);
+});

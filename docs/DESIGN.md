@@ -268,7 +268,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   another app took, no pop-up's options, which still find their setting, no words for screen readers only), one
   sentence of a longer footnote: the one with the words typed. Selectable labelled results show in batches of 12. ArrowDown/Tab reaches a chosen result, Enter selects it and marks its row, with its control focused (a group's header
   or footnote stands for the group: a one-row group's row, else the whole group). The sidebar grows with the text size,
-  so its labels stay on one line, but never past what leaves a pane 460 px (no sideways scroll at 640–720 px). The links, most
+  so its labels stay on one line, but never past what leaves a pane 460 px (no sideways scroll at 640–720 px). Below
+  that, a pane never scrolls sideways either, down to 304 px at Larger text (200% zoom): its one column may shrink, and
+  a pop-up's row puts the pop-up under its words. The links, most
   used first: Home, Projects, Models & connections, Voice, Your Ember, Memory, Apps & privacy, Comfort & access, Computers and Commands (once
   available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
   rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below

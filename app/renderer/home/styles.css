@@ -20,6 +20,9 @@ body { margin: 0; color: var(--fg); background: var(--bg); font: var(--type-body
 .home > * { min-width: 0; }
 section { display: grid; gap: 8px; }
 .stack { display: grid; gap: 8px; }
+/* One track that may shrink below its widest child's own width (accessibility-visual-v1): an auto track grew to the
+   never-look field or the Appearance row, and the pane scrolled sideways at 200% zoom with Larger text. */
+section, .stack { grid-template-columns: minmax(0, 1fr); }
 /* What the page hides stays hidden, whatever display a rule gives it (a section, the SSH add form): the browser's own
    [hidden] rule loses to any author rule that sets display. */
 [hidden] { display: none !important; }
@@ -231,7 +234,7 @@ section > p.hint:empty:is([role], [aria-live]) { position: absolute; }
 /* ───── Switch rows: the words first, the switch at the row's end (a checkbox keeps its box in front) ───── */
 .switch-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
 .switch-row:has(> input[role="switch"]) { flex-direction: row-reverse; justify-content: space-between; }
-.switch-row:has(> select) { justify-content: space-between; }
+.switch-row:has(> select) { justify-content: space-between; flex-wrap: wrap; row-gap: 8px; }
 .switch-row > span { min-width: 0; }
 .locked { opacity: 0.5; }
 
