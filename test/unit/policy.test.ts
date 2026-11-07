@@ -1685,3 +1685,23 @@ describe("questions about an element without a name (live retest: 'Borrow your m
     expect(plainQuestion(req({ kind: "text", element: { role: "text", name: "" }, value: "Hi", mode: "replace", currentText: "old" }))).toBe("Replace everything in the text area in Mousepad with “Hi”?");
   });
 });
+
+describe("the limit on actions a minute (tasks-approvals-2)", () => {
+  it("paces rather than refuses for good: a step it turned away isn't counted, and it says when the next one fits", () => {
+    let now = 0;
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ mousepad: "act" }), now: () => now, rateLimit: 3 });
+    for (let i = 0; i < 3; i++) expect(e.decide(req({})).verdict).toBe("allow");
+    expect(e.paceMs()).toBe(60_000);
+    now = 30_000;
+    // Asked again and again while it is full: paced each time, and none of those counts against the next minute.
+    for (let i = 0; i < 5; i++) expect(e.decide(req({}))).toMatchObject({ verdict: "deny", paced: true });
+    expect(e.paceMs()).toBe(30_000);
+    expect(e.perMinute).toBe(3);
+    now = 60_000;
+    expect(e.paceMs()).toBe(0);
+    expect(e.decide(req({})).verdict).toBe("allow");
+    // Still at most three in any 60 s.
+    for (let i = 0; i < 2; i++) expect(e.decide(req({})).verdict).toBe("allow");
+    expect(e.decide(req({}))).toMatchObject({ verdict: "deny", paced: true });
+  });
+});

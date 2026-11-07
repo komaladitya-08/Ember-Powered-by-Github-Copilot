@@ -3311,6 +3311,8 @@ export class Worker {
     this.moving = null;
     const base = { taskId: this.spec.id, kind: "cursor_text" as const, app: this.window.app, window: this.window.name, mode: "replace" as const,
       onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], windowId: this.windowId };
+    // The batch counts as one action: it waits its turn under the limit on actions a minute as one step would.
+    if (!await this.pace()) return STOPPED();
     // Judged after what was typed into the window's other fields before, as each cell would be one after the other.
     let typed = this.typedWindows.get(this.windowKey);
     const judged = jobs.map((job, i) => {
@@ -4249,6 +4251,12 @@ export class Worker {
     const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
     const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
+    // The limit on actions a minute paces the task (tasks-approvals-2): the step waits for the minute to free a slot,
+    // then is decided afresh (another task may take that slot first: it waits again). A Stop ends the wait at once.
+    while (decision.paced) {
+      if (!await this.pace()) return STOPPED();
+      decision = this.d.policy.decide(req);
+    }
     if (decision.aligned === false) this.tainted = true;
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
@@ -4323,6 +4331,22 @@ export class Worker {
       return null;
     }
     return this.refused(answer);
+  }
+
+  /**
+   * Waits while the limit on actions a minute is reached (PolicyEngine.paceMs), the card saying so (tasks-approvals-2);
+   * at least a quarter of a second at a time, so a clock that says otherwise can't spin it. Whether the task goes on.
+   */
+  private async pace(): Promise<boolean> {
+    for (let ms = this.d.policy.paceMs(); ms > 0 && !this.isOver; ms = this.d.policy.paceMs()) {
+      this.activity({ type: "paced", perMinute: this.d.policy.perMinute });
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); this.overSignal.removeEventListener("abort", done); resolve(); };
+        const timer = setTimeout(done, Math.max(250, ms));
+        this.overSignal.addEventListener("abort", done, { once: true });
+      });
+    }
+    return !this.isOver;
   }
 
   /** A question without a yes: "Not now" is the user's no; no answer (null) is a timeout, which approved nothing either. */

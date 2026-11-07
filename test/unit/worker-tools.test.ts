@@ -3,7 +3,7 @@
  * refusal is in the audit log.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, closesWindow, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
 import { KEYS } from "../../app/shared/shortcuts";
 import type { ActionResult, AxNode } from "../../app/main/perception/sidecar";
@@ -68,6 +68,8 @@ function makeWorker(o: {
   launches?: { name: string; role?: string; app: string; pid?: number; path?: string };
   /** The window listing fails when this says so (called once a listing). */
   listFails?: () => boolean;
+  /** The most actions a minute policy lets through (default Ember's 40). */
+  rateLimit?: number;
 } = {}) {
   let closed = false;
   const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
@@ -161,7 +163,7 @@ function makeWorker(o: {
       },
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
-    policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" } }),
+    policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" }, ...(o.rateLimit ? { rateLimit: o.rateLimit } : {}) }),
     confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
@@ -1702,5 +1704,56 @@ describe("guide words and highlights (live retest: font chooser)", () => {
     setTimeout(() => { box = { x: 80, y: 120, width: 0, height: 0 }; }, 80);
     expect((await waiting).textResultForLlm).toMatch(/disappeared|cancelled/i);
     expect(flown.at(-1)).toBeNull();
+  });
+});
+
+describe("the limit on actions a minute (tasks-approvals-2)", () => {
+  type Result = { textResultForLlm: string; resultType: string };
+  /** Awaits a tool call under fake timers, moving the clock on in small steps (its steps wait a moment for the app). */
+  const settle = async <T>(p: Promise<T>): Promise<T> => {
+    let done = false;
+    void p.finally(() => { done = true; });
+    while (!done) await vi.advanceTimersByTimeAsync(50);
+    return p;
+  };
+
+  it("paces a step past the limit instead of refusing it: it waits, saying so, until the minute frees a slot", async () => {
+    vi.useFakeTimers();
+    try {
+      const { call, activity } = makeWorker({ rateLimit: 3 });
+      await call("perceive_window", {});
+      const t0 = Date.now();
+      for (let i = 0; i < 3; i++) expect((await settle(call("click", { id: 1 }))).resultType).toBe("success");
+      let fourth: Result | null = null;
+      let at = 0;
+      const pending = call("click", { id: 1 }).then(r => { fourth = r; at = Date.now(); });
+      await vi.advanceTimersByTimeAsync(30_000);
+      // Not refused: it waits its turn, and the card says why (Ember's words, not the model's).
+      expect(fourth).toBeNull();
+      expect(activity.filter(a => a.type === "paced")).toContainEqual({ type: "paced", perMinute: 3 });
+      await vi.advanceTimersByTimeAsync(31_000);
+      await settle(pending);
+      expect(fourth!.resultType).toBe("success");
+      // Never more than the limit in any minute: the fourth went only once the first had aged out.
+      expect(at - t0).toBeGreaterThanOrEqual(60_000);
+      expect(activity.some(a => a.type === "refused")).toBe(false);
+      expect(JSON.stringify(activity)).not.toMatch(/too many actions|slow down/);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("stops at once when the task is stopped while it waits", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, call, audit } = makeWorker({ rateLimit: 1 });
+      await call("perceive_window", {});
+      expect((await settle(call("click", { id: 1 }))).resultType).toBe("success");
+      let second: Result | null = null;
+      const pending = call("click", { id: 1 }).then(r => { second = r; });
+      await vi.advanceTimersByTimeAsync(1_000);
+      (w as unknown as { stopNow: (why: string | null) => void }).stopNow(null);
+      await settle(pending);
+      expect(second!.textResultForLlm).toBe("Stopped. Do nothing more.");
+      expect(audit.filter(e => e.event === "action")).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
   });
 });

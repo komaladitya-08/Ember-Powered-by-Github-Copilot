@@ -55,6 +55,7 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 - **Definition.** Define the tool with `this.tool()` in worker.ts. It parses the zod arguments (the runtime does not), counts the 150-step limit, and runs one call at a time.
 - **Routing actions.** Send every app action through `act()` or `system()`. These call `authorize()`, which asks `PolicyEngine.decide()`, asks the user when needed, and writes the audit entries. Commands go only through `run_command` → app/main/commands/flow.ts (the classifier, then decide.ts), never through `authorize()`.
 - **Refusals and errors.** Refuse through `refuse()` (logged as a `decision`), return `denied(…)` for a refusal and `fail(…)` for an error.
+- **The minute's limit paces, never refuses.** A decision past the actions-a-minute limit is `paced` (verdict deny, so nothing acts, and it isn't counted); `authorize()` and `authorizeCells()` wait in `pace()` (`PolicyEngine.paceMs()`, on `overSignal`, the card's live line saying so) and decide afresh. Never more than `perMinute` actions go through in any 60 s.
 - **Stopping.** After every `await`, check `if (this.isOver) return STOPPED();`, so a stop takes effect at once.
 - **Wiring.**
   - Decide whether guide mode gets the tool (the `guide` set in `tools()`).

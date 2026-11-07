@@ -10,7 +10,7 @@
  */
 
 import {
-  ACTIVITY_LIMIT, ANSWER_WORDS, HAND_ROW, NOT_STEPS, STATUS_WORDS, STEP_GROUP, activityRows, doingWords, retryWords,
+  ACTIVITY_LIMIT, ANSWER_WORDS, HAND_ROW, NOT_STEPS, STATUS_WORDS, STEP_GROUP, activityRows, doingWords, pacedWords, retryWords,
   stepsWords, summarizeActivity, triedWords, type ActivityItem, type Answer, type AskedIn, type CardActivity, type TaskActivity,
 } from "../../shared/activity";
 import type { TaskHand } from "../../shared/view";
@@ -48,6 +48,8 @@ export type ActivityEvent =
   | { type: "slow"; on: boolean }
   /** Past 80% of the task's step or time limit. */
   | { type: "near-limit" }
+  /** A step waits for the limit on actions a minute (`perMinute`) to free a slot (tasks-approvals-2). */
+  | { type: "paced"; perMinute: number }
   /** Something went wrong, in Ember's words. */
   | { type: "problem"; words: string }
   /** The task ended. */
@@ -224,6 +226,9 @@ export class ActivityLog {
         if (a.nearLimit) return false;
         a.nearLimit = true;
         return true;
+      case "paced":
+        // The live line only: the step itself is the row (it goes on once a slot frees, then says what it did).
+        return this.setDoing(pacedWords(e.perMinute));
       case "problem":
         this.push({ id: this.id("p"), kind: "problem", at, state: "failed", words: e.words });
         return true;
