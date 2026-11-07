@@ -279,6 +279,20 @@ describe("README.md", () => {
     expect(flat(section(read("docs/DEVELOPING.md"), "15. Publishing a release"))).toContain("the README's **Download** line");
   });
 
+  it("says the npm launcher isn't on npm until this version is published, and what to use meanwhile (install-docs-2)", () => {
+    const published = /\/releases\/tag\/v(\d+\.\d+\.\d+)\)/.exec(flat(section(readme, "Download")))?.[1] ?? version;
+    // packages/npm, which npm.yml publishes after a release's ci run, is new since the published release (it has no
+    // launcher), so `npm i -g ember-copilot` answers 404 until this version's release is out.
+    if (published === version) return;
+    const npm = flat(section(readme, "From npm (beta)"));
+    expect(npm).toContain(`\`ember-copilot\` isn't on npm until ${version} is published`);
+    expect(npm).toMatch(/install from the \[Releases page\]/);
+    // Its own README (npm's page for it) says which version it starts from, and what it says when a release is missing.
+    const own = flat(read("packages/npm/README.md"));
+    expect(own).toContain(`published from Ember ${version} on`);
+    expect(own).toContain("isn't on GitHub Releases yet");
+  });
+
   it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {
     const page = read("app/renderer/home/index.html").replace(/&amp;/g, "&");
     const headings = new Set([...page.matchAll(/<h[23][^>]*>([^<]+)<\/h[23]>/g)].map(m => m[1].trim()));

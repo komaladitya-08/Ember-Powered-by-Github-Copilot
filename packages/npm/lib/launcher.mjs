@@ -86,6 +86,17 @@ export function downloadUrl(version, file, env = {}) {
   return `${base}/v${encodeURIComponent(version)}/${encodeURIComponent(file)}`;
 }
 
+/**
+ * What the launcher says when its version's release isn't there (the release's SHA256SUMS answers 404): the package
+ * can reach npm before its release is published, and a mirror can lag behind GitHub.
+ * @param {string} version
+ * @param {Record<string, string | undefined>} [env]
+ */
+export function notReleased(version, env = {}) {
+  const where = env.EMBER_NPM_DOWNLOAD_BASE ? `the mirror at ${env.EMBER_NPM_DOWNLOAD_BASE}` : "GitHub Releases";
+  return `Ember ${version} isn't on ${where} yet, so there is nothing to start. Install a published version from https://github.com/${REPO}/releases instead.`;
+}
+
 /** The version of this package, which is the version of Ember it starts. */
 export function packageVersion() {
   const pkg = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
@@ -100,7 +111,7 @@ const say = msg => { if (!process.env.EMBER_NPM_QUIET) process.stderr.write(`emb
 /** GET `url`, throwing with the status on anything but 2xx. */
 async function get(url) {
   const res = await fetch(url, { redirect: "follow", headers: { "user-agent": "ember-copilot-npm-launcher" } });
-  if (!res.ok || !res.body) throw new Error(`downloading ${url} failed: HTTP ${res.status} ${res.statusText}`);
+  if (!res.ok || !res.body) throw Object.assign(new Error(`downloading ${url} failed: HTTP ${res.status} ${res.statusText}`), { status: res.status });
   return res;
 }
 
@@ -195,7 +206,10 @@ export async function ensureInstalled(o) {
     }
     work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
     say(`getting Ember ${o.version} for ${platform}-${o.arch ?? process.arch} (${target.asset}) from GitHub Releases`);
-    const sumsText = await (await get(downloadUrl(o.version, "SHA256SUMS", env))).text();
+    const sums = await get(downloadUrl(o.version, "SHA256SUMS", env)).catch(err => {
+      throw err?.status === 404 ? new Error(notReleased(o.version, env), { cause: err }) : err;
+    });
+    const sumsText = await sums.text();
     const want = parseSha256Sums(sumsText).get(target.asset);
     if (!want) throw new Error(`the v${o.version} release's SHA256SUMS has no line for ${target.asset}`);
     const file = p.join(work, target.asset);

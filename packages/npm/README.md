@@ -13,6 +13,10 @@ the same version as the package from
 the release's `SHA256SUMS`, unpacks it into a cache folder in your user account, and starts it. After that it starts
 the cached copy straight away.
 
+The launcher is published from Ember 0.1.1 on (Ember 0.1.0 has none), each version after its Ember release is out.
+If the release for its version isn't there, for example on a mirror that hasn't caught up, it says "Ember <v> isn't
+on GitHub Releases yet" (or names the mirror) and starts nothing.
+
 ## Install
 
 ```bash

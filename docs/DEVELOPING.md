@@ -2018,7 +2018,8 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
 1. On `main`, set `version` in package.json to `<v>` and give CHANGELOG.md a `## <v> (<date>)` section: its text
    becomes the release's notes. While `<v>` isn't published, the README's **Download** line sends readers to the
    newest published release's own README (`blob/v<that version>/README.md`) and names what `<v>` packages differently;
-   once the release is out, replace that line with one that says the README describes `<v>` (docs.test.ts checks it).
+   once the release is out, replace that line with one that says the README describes `<v>`, and drop **From npm**'s
+   note that `ember-copilot` isn't on npm until `<v>` is published (docs.test.ts checks both while `<v>` isn't out).
 2. Tag that commit and push the tag: `git tag v<v> && git push origin v<v>`.
 3. The tag runs every job of `ci.yml`, the Intel Mac's included, and each platform's job uploads its packages
    (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,

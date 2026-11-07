@@ -38,6 +38,10 @@ manual CI run with **packages** ticked also keeps them for 3 days as artifacts (
 
 ### From npm (beta)
 
+The npm launcher is new in 0.1.1 and goes to npm with that release: `ember-copilot` isn't on npm until 0.1.1 is
+published (`npm i -g ember-copilot` answers "404 Not Found" until then), so meanwhile install from the
+[Releases page](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases) as below.
+
 With Node.js 18.17 or later, `npm i -g ember-copilot` and then `ember` (or just `npx ember-copilot`) downloads this
 version's Windows zip, macOS zip or Linux AppImage from the Releases page, checks it against `SHA256SUMS`, caches it in
 your user account and starts it. The builds are unsigned betas, as below; see

@@ -4,9 +4,12 @@
  * is the app's, which the publish workflow (.github/workflows/npm.yml) relies on.
  */
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { assetFor, cacheDir, downloadUrl, launchCommand, packageVersion, parseSha256Sums, REPO } from "../../packages/npm/lib/launcher.mjs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { assetFor, cacheDir, downloadUrl, ensureInstalled, launchCommand, notReleased, packageVersion, parseSha256Sums, REPO } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
@@ -70,6 +73,40 @@ describe("downloads and starting", () => {
     expect(launchCommand("darwin", i, [])).toEqual({ file: "open", args: ["-n", "/c/Ember.app"] });
     expect(launchCommand("darwin", i, ["--doctor"])).toEqual({ file: "open", args: ["-n", "/c/Ember.app", "--args", "--doctor"] });
     expect(launchCommand("linux", { exe: "/c/E.AppImage", app: "/c/E.AppImage" }, ["a", "b c"])).toEqual({ file: "/c/E.AppImage", args: ["a", "b c"] });
+  });
+});
+
+/** A local server for a release's files (`files`: path under the download base → content); anything else is a 404. */
+async function serve(files: Record<string, string | Buffer> = {}) {
+  const server = http.createServer((req, res) => {
+    const body = files[decodeURIComponent(req.url ?? "")];
+    if (body === undefined) { res.statusCode = 404; res.end("Not Found"); return; }
+    res.end(body);
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => new Promise<void>(resolve => server.close(() => resolve())) };
+}
+const scratch: string[] = [];
+const tempDir = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-npm-test-")); scratch.push(d); return d; };
+afterEach(() => { vi.unstubAllEnvs(); for (const d of scratch.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+
+describe("a version whose release isn't published", () => {
+  it("says the version isn't on GitHub Releases yet, instead of an HTTP error, and leaves nothing behind (install-docs-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const server = await serve();
+    const cache = tempDir();
+    try {
+      const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache };
+      const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env }).then(() => null, (e: Error) => e);
+      expect(err?.message).toBe(notReleased("9.9.9", env));
+      expect(err?.message).not.toMatch(/HTTP|404|downloading/);
+      // No lock or half-made folder stays in the cache.
+      expect(fs.readdirSync(cache)).toEqual([]);
+    } finally {
+      await server.close();
+    }
+    expect(notReleased("9.9.9", {})).toBe(`Ember 9.9.9 isn't on GitHub Releases yet, so there is nothing to start. Install a published version from https://github.com/${REPO}/releases instead.`);
+    expect(notReleased("9.9.9", { EMBER_NPM_DOWNLOAD_BASE: "http://mirror.example/r" })).toContain("isn't on the mirror at http://mirror.example/r yet");
   });
 });
 
