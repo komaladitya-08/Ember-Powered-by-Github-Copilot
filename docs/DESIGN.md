@@ -280,7 +280,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   its reply show; the composer's line says "Thinking…" until the reply, and "Still waiting for Copilot… Stop response
   ends this reply." after the bubble's own 10 s with nothing written), shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. A long paste is kept whole: from 1,800 characters the composer counts
-  them, and over 2,000 it says how many too many and Send refuses until it fits. Messages kept from before a restart
+  them, and over 2,000 it says how many too many and Send refuses until it fits. Its hint names the send key as the OS
+  does (Ctrl+Enter; Command+Enter on a Mac), and a message's Copy says Copied on itself for 2 s. Messages kept from before a restart
   (**Keep my recent conversation**) show their day beside their time, and a quiet line under the last of them says
   they are for reading and Ember starts afresh below. Edit only fills the composer; a fresh Send is required. Home sends
   no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer and its

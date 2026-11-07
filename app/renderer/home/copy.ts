@@ -19,7 +19,7 @@ import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
 export const CONVERSATION_KEEP_LABEL = "Keep my recent conversation after Ember closes";
-export const CONVERSATION_KEEP_HINT = "Off by default. When on, Ember saves these messages on this computer, in a file only you can read, and shows them again after it restarts. They are for you to read: Ember itself starts a fresh conversation and doesn’t remember them, and nothing in them is run again.";
+export const CONVERSATION_KEEP_HINT = "Off by default. When on, Ember saves these messages on this computer, in a file only you can read, and shows them again after it restarts. They are for you to read: Ember itself starts a fresh conversation and doesn't remember them, and nothing in them is run again.";
 export const CONVERSATION_RETENTION_KEPT = `Keeps the latest ${CONVERSATION_LIMIT} messages on this computer, also after Ember closes. Older messages are forgotten as new ones arrive. Turning this off, New conversation, signing out and Forget everything delete the saved copy.`;
 /** The retention note for the setting as it is now. */
 export function conversationRetention(keep: boolean): string {
@@ -27,15 +27,15 @@ export function conversationRetention(keep: boolean): string {
 }
 /** Under the switch when the saved copy can't be written or deleted (it is never silent). */
 export function conversationKeepProblem(problem: HistoryProblemKind | null): string {
-  if (problem === "exposed") return "Ember couldn’t delete the saved conversation on this computer, and couldn’t make sure it stays hidden, so it may show again after a restart. Try turning this off again later.";
-  if (problem === "unchecked") return "Ember can’t check that the earlier conversation was cleared, so it isn’t showing it. It will look again the next time Ember starts.";
-  if (problem === "account") return "Ember couldn’t confirm which GitHub account is signed in, so it isn’t keeping this conversation. Sign out and in again, or check your connection.";
-  if (problem === "owner") return "Ember can’t tell which model service key this conversation belongs to, so it isn’t saving it. Save the key again in Model provider to fix this.";
-  if (problem === "delete") return "Ember couldn’t delete the saved conversation on this computer. It won’t show it again, and will try to delete it the next time you turn this off, forget or sign out.";
-  if (problem === "save") return "Ember couldn’t save the conversation on this computer, so it may not be here after a restart.";
+  if (problem === "exposed") return "Ember couldn't delete the saved conversation on this computer, and couldn't make sure it stays hidden, so it may show again after a restart. Try turning this off again later.";
+  if (problem === "unchecked") return "Ember can't check that the earlier conversation was cleared, so it isn't showing it. It will look again the next time Ember starts.";
+  if (problem === "account") return "Ember couldn't confirm which GitHub account is signed in, so it isn't keeping this conversation. Sign out and in again, or check your connection.";
+  if (problem === "owner") return "Ember can't tell which model service key this conversation belongs to, so it isn't saving it. Save the key again in Model provider to fix this.";
+  if (problem === "delete") return "Ember couldn't delete the saved conversation on this computer. It won't show it again, and will try to delete it the next time you turn this off, forget or sign out.";
+  if (problem === "save") return "Ember couldn't save the conversation on this computer, so it may not be here after a restart.";
   return "";
 }
-export const CONVERSATION_SCOPE = "Sends your message without reading a window. Use Ask Ember to include the app you’re working in. Existing conversation context still applies.";
+export const CONVERSATION_SCOPE = "Sends your message without reading a window. Use Ask Ember to include the app you're working in. Existing conversation context still applies.";
 export const CONVERSATION_EDIT = "Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.";
 export const CONVERSATION_TRUNCATED = "This message exceeded the session limit of 131,072 characters. Only the text shown here is retained and copied.";
 /** From how many characters the composer counts them (90% of the limit, home-5). */
@@ -70,6 +70,17 @@ export function conversationNewQuestion(messages: number, kept: boolean): string
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
 export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";
+/**
+ * The composer's hint, with its send key as `os` names it (accessibility-visual-7): the composer takes Ctrl+Enter and
+ * Command+Enter alike, but a ⌘ on Linux or Windows names a key that isn't there.
+ */
+export function composerSendHint(os: OS = "linux"): string {
+  return `Up to ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters. ${keyLabel("Return", os)} adds a new line. ${keyLabel(os === "darwin" ? "cmd+Return" : "ctrl+Return", os)} sends.`;
+}
+/** Main's listen-once reason as Home says it: there its Download is right below Listen once, not "in Settings" (home-11). */
+export function homeListenOnce<T extends { phase: string; detail: string }>(s: T | undefined): T | undefined {
+  return s && s.detail === "Download speech models in Settings first." ? { ...s, detail: "Download speech models below first." } : s;
+}
 /** Said once as a message goes over the limit, and when Send is tried while it is (home-5). */
 export const COMPOSER_OVER = `This message is longer than ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters. Shorten it to send it.`;
 export function conversationMatchesText(text: string, query: string): boolean {
@@ -987,6 +998,7 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
     { selector: "#speaker-note", hidden: !p.speakerRejection },
     { selector: "#output-note", hidden: !p.outputLevel },
     { selector: "#conversation", attrs: { "data-empty": emptyConversationText(p.shortcuts.ask.label) } },
+    { selector: "#conversation-send-hint", content: [composerSendHint(p.os)] },
     { selector: "#mic-indicator", content: [p.micIndicator], hidden: !p.micIndicator },
     { selector: "#audit-dir", content: [auditDirLabel(p)] },
     p.auditCopy ? { selector: "#journal-hint", content: auditCopySegments(p.auditCopy), hidden: false } : { selector: "#journal-hint", hidden: true },

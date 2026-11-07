@@ -1365,12 +1365,12 @@ function start(): void {
     const s = settings.get();
     const blocked = (detail: string): ListenOnceStatus => ({ phase: "blocked", detail });
     if (policy.features.voice === false) return blocked("Your organisation has turned voice off.");
-    if (!consented()) return blocked("Finish Ember’s setup first.");
+    if (!consented()) return blocked("Finish Ember's setup first.");
     if (screenLock?.locked) return blocked("The screen is locked.");
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
-    if (confirmer?.waiting) return blocked("Answer Ember’s question first.");
-    if (agent?.answerOpen) return blocked("Wait for Ember’s answer to finish.");
+    if (confirmer?.waiting) return blocked("Answer Ember's question first.");
+    if (agent?.answerOpen) return blocked("Wait for Ember's answer to finish.");
     return voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
   };
   const clearManualCall = () => {
@@ -2270,7 +2270,7 @@ function start(): void {
   ipcMain.handle(IPC.projectClear, guard(clearProject));
   ipcMain.handle(IPC.projectCancel, guard(() => projectJob?.abort()));
   const listenOnceFromHome = guard((on: boolean): ListenOnceStatus => on && (!home?.isVisible() || home.isMinimized())
-    ? { phase: "blocked", detail: "Open Ember’s settings to listen here." }
+    ? { phase: "blocked", detail: "Open Ember's settings to listen here." }
     : requestListenOnce("home", on));
   ipcMain.handle(IPC.listenOnce, (event, on: unknown) => {
     if (typeof on !== "boolean") throw new Error("Invalid listening request");

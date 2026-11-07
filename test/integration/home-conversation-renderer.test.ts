@@ -510,4 +510,20 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
+
+  it("says Copied on a message's Copy, where the eye is, and names no ⌘ in the composer's hint on Linux (home-11)", async () => {
+    const { page, errors } = await home(exchange(2));
+    try {
+      await page.clock.install();
+      const copy = page.locator("#conversation li.ember").getByRole("button", { name: /Copy Ember's answer/ });
+      await copy.click();
+      await expect.poll(() => copy.innerText()).toBe("Copied");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Copied message.");
+      await page.clock.runFor(2_100);
+      expect(await copy.innerText()).toBe("Copy");
+      expect(await page.evaluate(() => window.__home.copied)).toEqual([exchange(2)[1].text]);
+      expect(await page.locator("#conversation-send-hint").innerText()).toBe("Up to 2,000 characters. Enter adds a new line. Ctrl+Enter sends.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
 });

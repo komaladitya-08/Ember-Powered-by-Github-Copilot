@@ -48,7 +48,7 @@ import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whats
 import { SEARCH_ALIASES, searchMatches, searchMessage } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerCount, COMPOSER_OVER, COMPOSER_THINKING, conversationNewQuestion, homeListenOnce, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountLearnedUndo } from "./learned-undo";
@@ -1000,11 +1000,14 @@ function conversationRow(e: Entry): HTMLLIElement {
   const actions = Object.assign(document.createElement("div"), { className: "conversation-message-actions" });
   if (e.who === "ember" || e.who === "you") {
     const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
-    copy.setAttribute("aria-label", `Copy ${e.who === "you" ? "your message" : "Ember’s answer"} from ${when}`);
+    copy.setAttribute("aria-label", `Copy ${e.who === "you" ? "your message" : "Ember's answer"} from ${when}`);
     copy.addEventListener("click", () => {
       copy.disabled = true;
-      void window.ember.copyText(e.text).then(() => { conversationComposeStatus.textContent = "Copied message."; }, () => {
-        conversationComposeStatus.textContent = "Couldn’t copy this message. Select its text and copy it manually.";
+      // Said on the button, where the eye is, for 2 s (as About's Copy does), and in the status line for screen readers.
+      const said = (label: string) => { copy.textContent = label; setTimeout(() => { copy.textContent = "Copy"; }, 2000); };
+      void window.ember.copyText(e.text).then(() => { said("Copied"); conversationComposeStatus.textContent = "Copied message."; }, () => {
+        said("Couldn't copy");
+        conversationComposeStatus.textContent = "Couldn't copy this message. Select its text and copy it manually.";
       }).finally(() => { copy.disabled = false; });
     });
     actions.append(copy);
@@ -1106,7 +1109,7 @@ function renderConversation(raw: Entry[]): void {
   // (An answer stopped short is not a reply received: the problem that follows it, or the Stop, says what happened.)
   if (conversationAwaitingReply && newReply && (latest.who === "problem" || (latest.who === "ember" && !latest.stopped))) {
     awaitingReply(false);
-    conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? "Ember couldn’t finish this reply. Review the message above; you can edit your request and send again." : "Reply received.";
+    conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? "Ember couldn't finish this reply. Review the message above; you can edit your request and send again." : "Reply received.";
   }
   // Requests Ember heard (not typed) offer “That's not what I said”.
   markHeard(list);
@@ -1147,7 +1150,7 @@ const conversationOpened = conversationGeneration;
 let conversationReceived = false;
 void window.ember.conversation().then(entries => {
   if (!conversationReceived && conversationOpened === conversationGeneration) renderConversation(entries);
-}, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t load this conversation. New replies will still appear here."; });
+}, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = "Couldn't load this conversation. New replies will still appear here."; });
 window.ember.onConversation(entries => { conversationReceived = true; keepingComposer(() => renderConversation(entries)); });
 const resetConversationView = () => {
   // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
@@ -1204,7 +1207,7 @@ function startNewConversation(): void {
     resetConversationView();
     conversationComposeStatus.textContent = "Started a new conversation. Memory, reminders and running tasks are untouched.";
     conversationMessage.focus();
-  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t start a new conversation. Try again."; })
+  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn't start a new conversation. Try again."; })
     .finally(() => { button.disabled = false; });
 }
 conversationSearch.addEventListener("input", () => renderConversation(conversationAll));
@@ -1237,7 +1240,7 @@ $("conversation-compose").addEventListener("submit", event => {
   }, error => {
     if (generation !== conversationGeneration) return;
     awaitingReply(false);
-    conversationComposeStatus.textContent = ipcErrorText(error) || "Couldn’t send. Your draft is still here; try again.";
+    conversationComposeStatus.textContent = ipcErrorText(error) || "Couldn't send. Your draft is still here; try again.";
   }).finally(() => { if (generation === conversationGeneration) { send.disabled = false; send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
@@ -1281,7 +1284,7 @@ $("conversation-stop").addEventListener("click", () => {
     awaitingReply(false);
     // (An older main answers nothing: as before, taken as stopped.)
     conversationComposeStatus.textContent = stopped === false ? CONVERSATION_NOTHING_TO_STOP : CONVERSATION_STOPPED;
-  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn’t stop this response. Try again, or use Stop everything."; })
+  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = "Couldn't stop this response. Try again, or use Stop everything."; })
     .finally(() => { if (generation === conversationGeneration) stop.disabled = false; });
 });
 
@@ -1919,7 +1922,7 @@ let voice: VoiceStatus | null = null;
 const showListenOnce = mountListenOnce(
   $("voice-listen-once") as HTMLButtonElement,
   $("voice-listen-once-detail"),
-  on => window.ember.listenOnce(on),
+  on => window.ember.listenOnce(on).then(s => homeListenOnce(s) ?? s),
   LISTEN_ONCE_READY,
 );
 /** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
@@ -1946,7 +1949,7 @@ $("voice-fix").addEventListener("click", () => {
   }).finally(() => { btn.disabled = false; });
 });
 function renderVoice(v: VoiceStatus): void {
-  if (v !== voice) showListenOnce(v.listenOnce);
+  if (v !== voice) showListenOnce(homeListenOnce(v.listenOnce));
   voice = v;
   renderVoiceFix();
   const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   NEVER_LOOK_DEFAULTS, conversationContextLine, dayLabel, describeEntry, forUser, friendlyApp, keyLabel, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
 } from "../../app/renderer/home/copy";
@@ -934,6 +934,11 @@ describe("modelDestination and recipientWords (microphone consent names the real
   });
 });
 
+/** Every file under `dir`, as repository paths. */
+function listFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(d => (d.isDirectory() ? listFiles(`${dir}/${d.name}`) : [`${dir}/${d.name}`]));
+}
+
 describe("Home's conversation words (2026-11-07 product audit)", () => {
   it("counts a long message near the limit, and says how much to shorten one over it (home-5)", () => {
     expect(conv.composerCount(0)).toBe("");
@@ -953,6 +958,38 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     const now = new Date(2026, 10, 7, 15, 0);
     expect(conv.conversationWhen(new Date(2026, 10, 7, 9, 5).toISOString(), "9:05 AM", now)).toBe("9:05 AM");
     expect(conv.conversationWhen(new Date(2026, 10, 6, 9, 5).toISOString(), "9:05 AM", now)).toBe("Yesterday, 9:05 AM");
+  });
+
+  it("names the composer's send key the way each OS does (accessibility-visual-7, home-11)", () => {
+    expect(conv.composerSendHint("linux")).toBe("Up to 2,000 characters. Enter adds a new line. Ctrl+Enter sends.");
+    expect(conv.composerSendHint("win32")).toBe("Up to 2,000 characters. Enter adds a new line. Ctrl+Enter sends.");
+    expect(conv.composerSendHint("darwin")).toBe("Up to 2,000 characters. Enter adds a new line. Command+Enter sends.");
+    for (const os of ["linux", "win32", "darwin"] as const) expect(conv.composerSendHint(os)).not.toContain("⌘");
+  });
+
+  it("says in Home that the speech models' Download is right below Listen once, not \"in Settings\" (home-11)", () => {
+    const blocked = { phase: "blocked" as const, detail: "Download speech models in Settings first." };
+    expect(conv.homeListenOnce(blocked)).toEqual({ phase: "blocked", detail: "Download speech models below first." });
+    expect(conv.homeListenOnce({ phase: "blocked" as const, detail: "The screen is locked." })).toEqual({ phase: "blocked", detail: "The screen is locked." });
+    expect(conv.homeListenOnce(undefined)).toBeUndefined();
+    // The sentence it rewords is main's own (app/main/voice.ts): a change there must change this too.
+    expect(readFileSync("app/main/voice.ts", "utf8")).toContain(`"${blocked.detail}"`);
+  });
+
+  it("writes every apostrophe Ember shows straight, never U+2019 (accessibility-visual-6, home-11)", () => {
+    const files = [...listFiles("app"), ...listFiles("packages")].filter(f => /\.(ts|html)$/.test(f) && !f.endsWith(".test.ts"));
+    // Matching data, not words Ember shows: a quote character set and an app's own localised name.
+    const MATCHING: Record<string, RegExp> = { "app/main/commands/lex-powershell.ts": /SINGLE_QUOTES = /, "app/main/policy/vocabulary.ts": /trousseaux d’accès/ };
+    const curly: string[] = [];
+    for (const f of files) {
+      readFileSync(f, "utf8").split("\n").forEach((line, i) => {
+        const t = line.trim();
+        if (!t.includes("’") || /^(\/\/|\*|\/\*)/.test(t) || MATCHING[f]?.test(t)) return;
+        // Inside a regex character class ([‘’]) it matches what others write.
+        if (t.replace(/\[[^\]]*\]/g, "").replace(/\s\/\/ .*$/, "").includes("’")) curly.push(`${f}:${i + 1}`);
+      });
+    }
+    expect(curly).toEqual([]);
   });
 
   it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {

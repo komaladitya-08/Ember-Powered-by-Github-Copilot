@@ -288,7 +288,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - the focus ring's gap;
   - forced-colours edges, outlines and symbols.
 
-  `ui-copy.test.ts` pins copy, wrapping, the section links and the placeholder's contrast. page-prefs.test.ts and text-size-windows.test.ts check text-size scaling. `packages/bubble/src/bubble.test.ts` covers placement, the keyboard, Calm and the bubble's hierarchy (the question's parts, keycaps, the risky tag, the lock-on). hud-presence.test.ts covers the ring's states, the level stream and the handle's line.
+  `ui-copy.test.ts` pins copy, wrapping, the section links and the placeholder's contrast, and finds any U+2019 apostrophe in `app/` and `packages/` outside comments and regex character classes. page-prefs.test.ts and text-size-windows.test.ts check text-size scaling. `packages/bubble/src/bubble.test.ts` covers placement, the keyboard, Calm and the bubble's hierarchy (the question's parts, keycaps, the risky tag, the lock-on). hud-presence.test.ts covers the ring's states, the level stream and the handle's line.
 - **What nothing checks.** Glass on content windows, literal colours, transition properties and most BUBBLE_CSS fallbacks. Keep those right yourself.
 - **CSS the tests parse.** The tests read CSS with regular expressions:
   - Keep one space after each colon and end every declaration with `;`.

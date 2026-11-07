@@ -27,7 +27,7 @@ export function projectCommandFolder(folder: string, privateDir: string) {
   const resolved = fsSync.realpathSync(folder);
   const relative = path.relative(fsSync.realpathSync(privateDir), resolved);
   if (/^[\\/]{2}|[\p{Cc}\p{Cf}]/u.test(resolved) || !relative || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative))) {
-    throw new ProjectInputError("Choose a local folder outside Ember’s data folder.");
+    throw new ProjectInputError("Choose a local folder outside Ember's data folder.");
   }
   const selected = fsSync.lstatSync(resolved);
   if (!selected.isDirectory()) throw new ProjectInputError("Choose a project folder.");

@@ -87,7 +87,7 @@ export function applyProjectPatch(patch: ProjectPatch, signal: AbortSignal, reco
   try {
     fs.writeFileSync(fd, (source.bom ? "\uFEFF" : "") + output);
     const created = fs.fstatSync(fd);
-    if (created.uid !== stat.uid || created.gid !== stat.gid) throw new ProjectInputError("Ember cannot preserve this file’s owner.");
+    if (created.uid !== stat.uid || created.gid !== stat.gid) throw new ProjectInputError("Ember cannot preserve this file's owner.");
     fs.fchmodSync(fd, stat.mode & 0o777);
     fs.fsyncSync(fd);
   } catch (err) {

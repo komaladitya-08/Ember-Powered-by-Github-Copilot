@@ -33,10 +33,10 @@ describe("the saved conversation", () => {
     expect(conversationRetention(true)).toBe(CONVERSATION_RETENTION_KEPT);
     // Never silent: what is said under the switch when the saved copy can't be written or deleted.
     expect(conversationKeepProblem(null)).toBe("");
-    expect(conversationKeepProblem("save")).toBe("Ember couldn’t save the conversation on this computer, so it may not be here after a restart.");
-    expect(conversationKeepProblem("delete")).toBe("Ember couldn’t delete the saved conversation on this computer. It won’t show it again, and will try to delete it the next time you turn this off, forget or sign out.");
-    expect(conversationKeepProblem("unchecked")).toBe("Ember can’t check that the earlier conversation was cleared, so it isn’t showing it. It will look again the next time Ember starts.");
-    expect(conversationKeepProblem("account")).toBe("Ember couldn’t confirm which GitHub account is signed in, so it isn’t keeping this conversation. Sign out and in again, or check your connection.");
+    expect(conversationKeepProblem("save")).toBe("Ember couldn't save the conversation on this computer, so it may not be here after a restart.");
+    expect(conversationKeepProblem("delete")).toBe("Ember couldn't delete the saved conversation on this computer. It won't show it again, and will try to delete it the next time you turn this off, forget or sign out.");
+    expect(conversationKeepProblem("unchecked")).toBe("Ember can't check that the earlier conversation was cleared, so it isn't showing it. It will look again the next time Ember starts.");
+    expect(conversationKeepProblem("account")).toBe("Ember couldn't confirm which GitHub account is signed in, so it isn't keeping this conversation. Sign out and in again, or check your connection.");
     expect(CONVERSATION_RETENTION).toContain("Closing Ember or signing out forgets");
     expect(CONVERSATION_RETENTION_KEPT).toContain("Forget everything delete the saved copy");
   });
@@ -439,8 +439,8 @@ describe("the saved conversation: a clear that survives a restart (PR #188 re-re
     expect(seen).toEqual(["exposed"]);
     open.mockRestore();
     free(spies);
-    expect(conversationKeepProblem("exposed")).not.toContain("won’t show it again");
-    expect(conversationKeepProblem("delete")).toContain("won’t show it again");
+    expect(conversationKeepProblem("exposed")).not.toContain("won't show it again");
+    expect(conversationKeepProblem("delete")).toContain("won't show it again");
   });
 
   it("a failed delete that the marker covers is not 'exposed' once a later start deletes it", async () => {
@@ -465,6 +465,6 @@ describe("the saved conversation: a clear that survives a restart (PR #188 re-re
     t.setOwnerKnown(true);
     expect(t.problem).toBeNull();
     expect(seen).toEqual(["owner", null]);
-    expect(conversationKeepProblem("owner")).toMatch(/isn’t saving/);
+    expect(conversationKeepProblem("owner")).toMatch(/isn't saving/);
   });
 });

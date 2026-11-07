@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   LINUX_ENTRY_WORDS, NEVER_LOOK_DEFAULTS, auditCopySegments, auditDirLabel, chordSegments, describeEntry, emptyConversationText, entryWords, homePatches,
-  keyLabel, MANAGED_ROW, micOffText, missingDefaults, rereadsStatusOnFocus, tagline, type HomePatch, type Segment,
+  composerSendHint, keyLabel, MANAGED_ROW, micOffText, missingDefaults, rereadsStatusOnFocus, tagline, type HomePatch, type Segment,
 } from "../../app/renderer/home/copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { FALLBACK_SHORTCUTS, SHORTCUTS, heldShortcuts, shownShortcuts, type OS, type ShortcutId } from "../../app/shared/shortcuts";
@@ -275,6 +275,10 @@ describe("the settings window with a Windows or macOS status", () => {
     expect(tagline(base, MAC.shortcuts.ask.label)).toBe("Ember is beside your cursor. Press Control+Shift+Command+Space to ask it anything.");
     expect(micOffText(WINDOWS.shortcuts.mute.label)).toBe("Microphone off (Win+Alt+M to turn on)");
     expect(byId(apply(page(), homePatches(MAC)), "conversation").attrs["data-empty"]).toBe("No messages yet. Write to Ember below, or press Control+Shift+Command+Space to open Ask Ember.");
+    // The composer's send key, as each OS names it: never a ⌘ on Linux or Windows (accessibility-visual-7).
+    expect(visible(byId(page(), "conversation-send-hint"))).toBe(composerSendHint("linux"));
+    expect(visible(byId(apply(page(), homePatches(WINDOWS)), "conversation-send-hint"))).toBe("Up to 2,000 characters. Enter adds a new line. Ctrl+Enter sends.");
+    expect(visible(byId(apply(page(), homePatches(MAC)), "conversation-send-hint"))).toBe("Up to 2,000 characters. Enter adds a new line. Command+Enter sends.");
     // The record doesn't keep which chord was pressed (default or fallback, maybe in an earlier run): it names none.
     expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(WINDOWS))?.what).toBe("Everything stopped (stop shortcut)");
     expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(MAC))?.what).toBe("Everything stopped (stop shortcut)");
