@@ -536,6 +536,13 @@ describe("the card's words from the classifier (review #214)", () => {
     expect(says("rm -r ../build")).toContain("Deletes ../build and everything in it.");
     // A folder's contents copied in (`/tmp/x/.`) are files of the same names, not the folder itself.
     expect(says("cp -r /tmp/x/. .")).toEqual(["Replaces files in the current folder if they exist."]);
+    // After a cd in the same command, "the current folder" isn't the one the card says it starts in: it is named.
+    expect(says("cd ~/Documents && git checkout .")).toEqual(["Throws away changes to /home/ana/Documents."]);
+    expect(says("cd ~/Documents && cp -r /tmp/x/* .")).toEqual(["Replaces files in /home/ana/Documents if they exist."]);
+    expect(says("cd /tmp/x && find .. -name '*.log' -delete")).toEqual(["Deletes what it finds under /tmp."]);
+    // Where it is still the folder the card starts in, or the one above it, it says so.
+    expect(says("cd sub && find .. -name '*.log' -delete")).toEqual(["Deletes what it finds under the current folder."]);
+    expect(says("cd ~ && git checkout .")).toEqual(["Throws away changes to the folder above the current one."]);
   });
 
   it("says what removing packages, crontab -r, a reset to another commit and rm * really do (commands-remote-r1)", () => {
