@@ -376,7 +376,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
   provider or a different GitHub account, never the same sign-in. Once connected, “Models I'll use” names both models
   with the premium-request multiplier where Copilot gives one, and says so when tasks work from text only; Change is
-  optional. A setup fix that fails says so in its own row.
+  optional. A setup fix that fails says so in its own row. Once Ember is connected to the user's own provider, the
+  sign-in step, its status line and **Your Ember**'s “Model service” row name that provider, never Copilot, and Back
+  from the setup check returns to the provider's step (first-run-1).
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay
   put from step to step and a short step no longer leaves the window's lower half empty. A still step indicator

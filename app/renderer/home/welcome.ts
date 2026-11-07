@@ -154,11 +154,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const at = stepPosition(step);
     [...arc.children].forEach((seg, i) => seg.classList.toggle("on", i <= at));
     $("w-count").textContent = stepCount(step);
-    const text = step === "sign-in" ? signInText(managed()) : STEP_TEXT[step];
+    const text = step === "sign-in" ? signInText({ managed: managed(), own: agent?.phase === "ready" && ownInUse() ? agent.service?.host : null }) : STEP_TEXT[step];
     $("w-title").textContent = text.title;
     $("w-lead").textContent = text.lead;
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
-    back.hidden = !stepBefore(step);
+    back.hidden = !stepBefore(step, ownInUse());
     back.textContent = NAV.back;
     if (saving && step === "done") {
       back.setAttribute("aria-disabled", "true");
@@ -208,11 +208,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   }
   /** The organisation's own model service answers, or its policy locks Ember down: nothing to sign in to. */
   const managed = () => !!status?.admin.provider || (!!status && status.admin.error !== null);
+  /** Ember's connection is to the user's own provider (first-run-1): no Copilot sign-in is in use. */
+  const ownInUse = () => agent?.service?.kind === "user";
 
   function renderSignIn(): { label: string; why: string } {
     const v = signInView({
       phase: agent?.phase ?? null, reason: agent?.reason, login: agent?.login, signingIn,
-      managedProvider: !!status?.admin.provider, locked: !!status && status.admin.error !== null,
+      managedProvider: !!status?.admin.provider, locked: !!status && status.admin.error !== null, service: agent?.service,
     });
     const line = $("w-signin-line");
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
@@ -612,6 +614,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       character: name, size: s?.size ?? DEFAULT_SIZE, voice: voiceState(),
       signedIn: signedIn() ? (agent?.service?.kind === "user" ? `Your own provider (${agent.service.host})` : status?.admin.provider ? "Your organisation's model service" : agent?.login ? `Signed in as ${agent.login}` : "Connected") : null,
       keys: keys ? { ask: keys.ask.label, stop: keys.stop.label, settings: keys.settings.label } : null,
+      copilot: !agent?.service && !status?.admin.provider,
     });
     $("w-summary").replaceChildren(...rows.flatMap(r => [el("dt", { textContent: r.label }), el("dd", { textContent: r.value })]));
     $("w-summary-note").textContent = SUMMARY_NOTE;
@@ -656,7 +659,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   });
   back.addEventListener("click", () => {
     if (back.getAttribute("aria-disabled") === "true") return;
-    const to = stepBefore(step);
+    const to = stepBefore(step, ownInUse());
     if (to) go(to);
   });
   alt.addEventListener("click", () => {

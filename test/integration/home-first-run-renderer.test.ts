@@ -192,11 +192,25 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => next(p).getAttribute("aria-disabled")).toBeNull();
     await next(p).click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    // Back returns to the provider's step as it was left, not to a Copilot sign-in that isn't in use (first-run-1).
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Connected to api.example.com. It lists 2 models.");
+    expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
     await next(p).click();
     await p.locator("#w-ask").click();
     await emit(p, "onConversation", [{ t: "1", who: "you", text: "Hi" }, { t: "2", who: "ember", text: "Hello." }]);
     await expect.poll(() => p.locator("#w-try-ask.done").count()).toBe(1);
     expect((await calls(p)).includes("signIn")).toBe(false);
+    // The summary names the provider under its own label, never as Copilot (first-run-1).
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    const summary = await p.locator("#w-summary").innerText();
+    expect(summary).toContain("Model service");
+    expect(summary).toContain("Your own provider (api.example.com)");
+    expect(summary).not.toContain("Copilot");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
@@ -383,6 +397,21 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#provider-off-retry").click();
     await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
     await expect.poll(() => p.locator("#provider-off").isVisible()).toBe(false);
+  });
+
+  it("(n) reopened with the user's own provider in force, the sign-in step names it and Back from the checks returns to it (first-run-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const p = await open({ agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }), provider: { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1" } });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe("Connected to your own provider (api.example.com).");
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await p.locator("#w-lead").innerText()).toContain("api.example.com");
+    for (const id of ["#w-title", "#w-lead", "#w-signin-line"]) expect(await p.locator(id).innerText(), id).not.toContain("Copilot");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
+    expect(await p.inputValue("#w-p-url")).toBe("https://api.example.com/v1");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
   it("(m) Back, then Home turns the provider on itself: the late switch-off of the abandoned check leaves it on (PR #191 re-review)", async () => {

@@ -29,11 +29,15 @@ export function stepCount(step: WelcomeStep): string {
   return `Step ${stepPosition(step) + 1} of ${WELCOME_STEPS.length}`;
 }
 
-/** The step before and after `step`, including the optional detours. */
-export function stepBefore(step: WelcomeStep): WelcomeStep | null {
+/**
+ * The step before and after `step`, including the optional detours. `own`: Ember is connected to the user's own
+ * provider, so Back from the checks returns to its step, not to a Copilot sign-in that isn't in use (first-run-1).
+ */
+export function stepBefore(step: WelcomeStep, own = false): WelcomeStep | null {
   if (step === "character") return "hello";
   if (step === "about") return "try";
   if (step === "provider") return "sign-in";
+  if (step === "checks" && own) return "provider";
   const i = stepPosition(step);
   return i > 0 ? WELCOME_STEPS[i - 1] : null;
 }
@@ -132,11 +136,14 @@ export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly str
   plug: ["The microphone stays off</b> unless you turn on", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
 };
 
-/** The sign-in step's title and lead: an organisation's own model service has nothing to sign in to. */
-export function signInText(managed: boolean): { title: string; lead: string } {
-  return managed
-    ? { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." }
-    : STEP_TEXT["sign-in"];
+/**
+ * The sign-in step's title and lead: an organisation's own model service has nothing to sign in to, and neither has the
+ * user's own provider once Ember is connected to it (`own`, its host: first-run-1).
+ */
+export function signInText(o: { managed: boolean; own?: string | null }): { title: string; lead: string } {
+  if (o.managed) return { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." };
+  if (o.own) return { title: "Your own model provider", lead: `I'm connected to the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.` };
+  return STEP_TEXT["sign-in"];
 }
 
 /** The sign-in step as the Copilot status has it: what it says, and which buttons it offers. */
@@ -157,19 +164,22 @@ export interface SignInView {
 /**
  * `phase`, `reason` and `login` from the agent's status (null while it hasn't come), `signingIn` while a device flow
  * runs, `managedProvider` when the organisation's own model service answers instead of Copilot (nothing to sign in
- * to), `locked` while the organisation's policy locks Ember down (nothing connects; signing in can't help).
+ * to), `locked` while the organisation's policy locks Ember down (nothing connects; signing in can't help). `service`:
+ * the model service the connection uses when it isn't Copilot (the agent's status), so the user's own provider is
+ * never called Copilot (first-run-1).
  */
-export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean }): SignInView {
+export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean; service?: { kind: string; host: string } }): SignInView {
   const none = { cancel: false, skip: false, retry: false };
+  const own = o.service?.kind === "user" ? `your own provider (${o.service.host})` : o.service?.kind === "test" ? o.service.host : null;
   if (o.phase === "ready") {
-    const who = o.managedProvider ? "Connected to your organisation's model service." : o.login ? `Signed in as ${o.login}.` : "Connected to Copilot.";
+    const who = o.managedProvider ? "Connected to your organisation's model service." : own ? `Connected to ${own}.` : o.login ? `Signed in as ${o.login}.` : "Connected to Copilot.";
     return { ...none, line: who, tone: "ok", primary: "continue", why: "" };
   }
   // Signing in can't help: the policy holds Ember back, so the way on is Continue (the line says why).
   if (o.locked) return { ...none, line: "Your organisation's policy locks me down, so I can't connect for now.", tone: "error", primary: "continue", why: "" };
   if (o.phase === "error" && o.reason === "policy") return { ...none, line: "", tone: "error", primary: "continue", why: "" };
   if (o.signingIn) return { ...none, line: "", tone: "", primary: "continue", why: "Waiting for you to approve the sign-in in your browser.", cancel: true };
-  const service = o.managedProvider ? "your organisation's model service" : "Copilot";
+  const service = o.managedProvider ? "your organisation's model service" : own ?? "Copilot";
   if (o.phase === "starting" || o.phase === null) return { ...none, line: `Connecting to ${service}…`, tone: "", primary: "continue", why: `Still connecting to ${service}.`, skip: true };
   // The organisation's service didn't answer: nothing to sign in to, so Continue (settings shows it again later).
   if (o.managedProvider) return { ...none, line: "", tone: "error", primary: "continue", why: "" };
@@ -286,11 +296,13 @@ export function summaryRows(o: {
   character: string; size: number; signedIn: string | null; voice: "listening" | "waiting" | "off";
   /** The keys as Ember holds them ("" while another app holds one); null until the status names this OS's. */
   keys: { ask: string; stop: string; settings: string } | null;
+  /** False when the model service isn't GitHub Copilot (the user's own, the organisation's): the row isn't called Copilot (first-run-1). */
+  copilot?: boolean;
 }): SummaryRow[] {
   const rows: SummaryRow[] = [
     // The size in pixels only once the user changed it: "Default size" says as much without a number to decode.
     { label: "Character", value: o.size === DEFAULT_SIZE ? `${o.character}, default size` : `${o.character}, ${o.size} px` },
-    { label: "Copilot", value: o.signedIn ?? "Not signed in yet" },
+    { label: o.copilot === false ? "Model service" : "Copilot", value: o.signedIn ?? "Not signed in yet" },
     { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : "On" },
   ];
   if (o.keys?.ask) rows.push({ label: "Ask", value: o.keys.ask });

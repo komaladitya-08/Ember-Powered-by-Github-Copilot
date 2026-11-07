@@ -142,9 +142,26 @@ describe("the sign-in step", () => {
     expect(PAGE).toContain("<button type=\"button\" class=\"btn quiet small\" id=\"w-check-again\">Check again</button>");
   });
 
+  it("names the user's own provider once Ember uses it, never Copilot, and Back from the checks returns to it (first-run-1)", () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const ready = signInView({ phase: "ready", signingIn: false, managedProvider: false, service });
+    expect(ready).toMatchObject({ line: "Connected to your own provider (api.example.com).", tone: "ok", primary: "continue" });
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, service }).line).toBe("Connecting to your own provider (api.example.com)…");
+    const text = signInText({ managed: false, own: "api.example.com" });
+    expect(text.title).toBe("Your own model provider");
+    expect(text.lead).toContain("api.example.com");
+    for (const w of [ready.line, text.title, text.lead]) expect(w, w).not.toMatch(/Copilot|Sign in to GitHub/);
+    expect(stepBefore("checks", true)).toBe("provider");
+    expect(stepBefore("checks")).toBe("sign-in");
+    // The summary doesn't call another service Copilot.
+    const rows = summaryRows({ character: "Cinder", size: 60, signedIn: "Your own provider (api.example.com)", voice: "off", keys: null, copilot: false });
+    expect(rows[1]).toEqual({ label: "Model service", value: "Your own provider (api.example.com)" });
+    expect(SCRIPT).toContain("const to = stepBefore(step, ownInUse());");
+  });
+
   it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {
-    expect(signInText(true).title).toBe("Connecting to your organisation's service");
-    expect(signInText(false)).toBe(STEP_TEXT["sign-in"]);
+    expect(signInText({ managed: true }).title).toBe("Connecting to your organisation's service");
+    expect(signInText({ managed: false })).toBe(STEP_TEXT["sign-in"]);
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "Still connecting to your organisation's model service." });
     expect(signInView({ phase: "error", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "", retry: false });
     expect(signInView({ phase: "error", reason: "policy", signingIn: false, managedProvider: false })).toMatchObject({ primary: "continue", why: "", retry: false, skip: false });
