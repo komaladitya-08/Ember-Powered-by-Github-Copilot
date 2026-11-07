@@ -283,6 +283,16 @@ export function nameNamed(name: string, words: string): boolean {
   return false;
 }
 
+/**
+ * A path as the card says it (commands-remote-v1): "." and "./" are the current folder and ".." the folder above it,
+ * since "Deletes what it finds under .." reads as the folder above. Any other path is said as written.
+ */
+export function shownPath(text: string): string {
+  if (/^\.[\\/]*$/.test(text)) return "the current folder";
+  if (/^\.\.[\\/]*$/.test(text)) return "the folder above the current one";
+  return text;
+}
+
 /** "a", "a and b", "a, b and c"; more than `max` items end "and N more". */
 export function joinList(items: readonly string[], max = 5): string {
   const list = items.length > max ? [...items.slice(0, max), `${items.length - max} more`] : [...items];

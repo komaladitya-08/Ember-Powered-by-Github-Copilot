@@ -16,7 +16,7 @@ import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Uncle
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
-  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, values,
+  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, shownPath, values,
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
@@ -252,8 +252,9 @@ class Classifier {
   // ----------------------------------------------------------------------------------------------------------------
   // Findings.
 
-  add(cls: DangerClass, rule: string, says: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string } = {}): void {
+  add(cls: DangerClass, rule: string, said: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string } = {}): void {
     const program = o.program ?? this.program;
+    const says = cardWords(said, o.objects ?? [], this.commands[this.at]?.wrappers ?? []);
     // "If it exists" is asked of the file the kernel opens: `> sub/../x` overwrites the x beside sub's target.
     const ifExists = o.ifExists === undefined ? undefined : (o.objects ?? []).find(ob => ob.abs === o.ifExists && ob.phys !== undefined)?.phys ?? o.ifExists;
     if (this.findings.some(f => f.rule === rule && f.says === says && f.at === this.at && f.ifExists === ifExists)) return;
@@ -1826,6 +1827,25 @@ class Engine extends Classifier {
 const opts = (h: H, spec: OptSpec = {}): Parsed => parseOpts(h.args, spec);
 const objsOf = (h: H, list: Arg[], use: PathUse): Obj[] => list.map(a => h.e.usePath(a, use, h.sc));
 /** Objects for the card: as written; an unresolved one by its text. */
+/**
+ * A finding's words with each of its objects that is a dot folder said as shownPath says it, wherever it stands as a
+ * word of its own ("under .." is "under" and "." and the full stop), and find's `{}` as each file it finds. Only the
+ * words change: the objects, their paths and the matching stay as written.
+ */
+function cardWords(says: string, objects: readonly Obj[], wrappers: readonly string[]): string {
+  let out = says;
+  for (const text of new Set(objects.map(o => o.text))) {
+    const shown = shownPath(text);
+    if (shown === text) continue;
+    const esc = text.replace(/[.\\/]/g, c => `\\${c}`);
+    out = out.replace(new RegExp(`(^|[\\s(])${esc}(?=[\\s,;:)]|\\.?$)`, "g"), (_m, pre: string) => `${pre}${shown}`);
+  }
+  if (objects.some(o => o.text === "{}") && wrappers.some(w => /^find -(exec|execdir|ok|okdir)$/.test(w))) {
+    out = out.replace(/(^|[\s(])\{\}(?=[\s,;:)]|\.?$)/g, (_m, pre: string) => `${pre}each file it finds`);
+  }
+  return out;
+}
+
 const listOf = (objs: Obj[], fallback = "files Ember can't name"): string => (objs.length ? joinList(objs.map(o => o.text || fallback)) : fallback);
 const lower = (a: Arg | undefined): string | null => (a && a.v !== null ? a.v.toLowerCase() : null);
 
@@ -2641,7 +2661,8 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   if (noClobber) return;
   const rule = `posix.${kind}`;
   if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
-  const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "");
+  // `.` and `..` are always folders: `cp x .` puts x in the current folder (commands-remote-v1).
+  const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "") || /^\.\.?$/.test(dest.v ?? "");
   if (intoFolder) {
     for (const s of sources) {
       if (s.v === null || s.glob) {

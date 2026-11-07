@@ -517,6 +517,25 @@ describe("the card's words from the classifier (review #214)", () => {
     }
   });
 
+  it("names the current folder and the one above it in words, never as . or .., and find's {} as each file it finds (commands-remote-v1)", () => {
+    expect(says("find . -name '*.pyc' -delete")).toContain("Deletes what it finds under the current folder.");
+    expect(says("find -name '*.pyc' -delete")).toContain("Deletes what it finds under the current folder.");
+    expect(says("find .. -name '*.log' -delete")).toContain("Deletes what it finds under the folder above the current one.");
+    expect(says("find ./ -name '*.log' -delete")).toContain("Deletes what it finds under the current folder.");
+    expect(says("git checkout .")).toContain("Throws away changes to the current folder.");
+    expect(says("git restore .")).toContain("Throws away changes to the current folder.");
+    expect(says("cp -r src/* .")).toContain("Replaces files in the current folder if they exist.");
+    expect(says("mv build/* .")).toContain("Replaces files in the current folder if they exist.");
+    expect(says("cp ../config.json .")).toContain("Replaces /home/ana/proj/config.json if it exists.");
+    expect(says("find . -name \"*.log\" -exec rm {} \\;")).toEqual(["Deletes each file it finds.", "Deletes what it finds under the current folder."]);
+    for (const cmd of ["find . -name '*.pyc' -delete", "git checkout .", "cp -r src/* .", "find . -name \"*.log\" -exec rm {} \\;", "find .. -delete", "git restore .."]) {
+      for (const l of says(cmd)) expect(l, cmd).not.toMatch(/(^|\s)\.\.?(\s|\.?$)|\{\}/);
+    }
+    // A path with dots in it is said as written.
+    expect(says("rm -r ./build")).toContain("Deletes ./build and everything in it.");
+    expect(says("rm -r ../build")).toContain("Deletes ../build and everything in it.");
+  });
+
   it("says what Ember can't tell in plain words", () => {
     expect(says("ls $(cat names.txt)")).toContain("Ember can't tell which arguments ls gets.");
     expect(says("echo $\"hi\"")).toContain("It uses locale-translated text ($\"…\"), which Ember can't check.");
