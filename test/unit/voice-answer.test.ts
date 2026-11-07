@@ -559,9 +559,10 @@ describe("a refused spoken yes keeps the keys that answer the question (tasks-ap
     const answer = c.ask({ title: "May I?", prompt: "Click “Send”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: "t1" });
     expect(shown.at(-1)?.bubble?.step).toBe("Ctrl+Alt+Y allow · Ctrl+Alt+N not now");
     c.note(VOICE_ANSWER_REFUSED["voice-match-off"]);
-    expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED["voice-match-off"]} Ctrl+Alt+Y allow · Ctrl+Alt+N not now`);
+    // On a line of their own under it: the bubble sets them as keycaps there (packages/bubble stepParts).
+    expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED["voice-match-off"]}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`);
     c.note(VOICE_ANSWER_REFUSED.locked);
-    expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED.locked} Ctrl+Alt+Y allow · Ctrl+Alt+N not now`);
+    expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED.locked}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`);
     c.answerKey("deny");
     expect(await answer).toBe("deny");
   });

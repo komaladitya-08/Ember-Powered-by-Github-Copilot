@@ -73,6 +73,18 @@ export function keyHintParts(step: string | null | undefined): { keys: string[];
   return out;
 }
 
+/**
+ * A step row as the bubble sets it: keycaps for the keys it names (keyHintParts), after a line of words before them
+ * (`lead`: a note, such as why a spoken answer wasn't taken, on the line above: tasks-approvals-6); `keys` null for
+ * a row that is words only, shown as it is.
+ */
+export function stepParts(step: string | null | undefined): { lead: string | null; keys: { keys: string[]; word: string }[] | null } {
+  const at = step?.lastIndexOf("\n") ?? -1;
+  if (at < 0) return { lead: null, keys: keyHintParts(step) };
+  const keys = keyHintParts(step!.slice(at + 1));
+  return keys ? { lead: step!.slice(0, at).trim() || null, keys } : { lead: null, keys: null };
+}
+
 /** The words a risky question's tag says (beside "Needs you"): policy asks about this kind of step every time. */
 export const RISKY_TAG = "Risky step";
 /** The tag beside Ember's own announcement of a step it took without asking (BubbleState.autonomous): never model text. */
@@ -949,11 +961,12 @@ export class ReasoningBubble {
     if (this.step.hidden === !text && this.stepRaw === (text || null)) return;
     this.stepRaw = text || null;
     this.step.hidden = !text;
-    // Keys it names show as keycaps beside their words ("Ctrl" "Alt" "Y" allow); anything else as words.
-    const keys = keyHintParts(text);
+    // Keys it names show as keycaps beside their words ("Ctrl" "Alt" "Y" allow), under a note's line where one comes
+    // first; anything else as words.
+    const { lead, keys } = stepParts(text);
     if (!keys) this.stepText.textContent = text ?? "";
     else {
-      this.stepText.replaceChildren(...keys.flatMap((k, i) => {
+      this.stepText.replaceChildren(...(lead ? [document.createTextNode(lead), document.createElement("br")] : []), ...keys.flatMap((k, i) => {
         const caps = k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key }));
         const word = Object.assign(document.createElement("span"), { className: "eb-key-word", textContent: k.word });
         return [...(i ? [document.createTextNode(" · ")] : []), ...caps, word];

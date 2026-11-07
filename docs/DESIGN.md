@@ -72,9 +72,10 @@ They share one emotion rig, so switching never changes behaviour.
   head at all: it is Ember's bubble, so "Ember" doesn't title it. A question sets its decision (up
   to its "?") in weight 600, what the step does after it, and "Your task: …" under it in the
   secondary label (the task's goal; under a step the user didn't ask for, or once text on screen
-  tried to steer the task, their own words in curly quotes, never the goal passed off as theirs); its title ("May I?") is the quieter lead-in, its keys show as keycaps under the
-  buttons, four corner brackets lock onto the bubble once (180 ms) and then hold still, and nothing
-  about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
+  tried to steer the task, their own words in curly quotes, never the goal passed off as theirs);
+  its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
+  note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`), four corner
+  brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
   no-compositor corner card marks it the same way: the tag beside Ember's name and the bordered

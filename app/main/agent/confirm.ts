@@ -522,7 +522,7 @@ export class Confirmer {
       // the approve key shows its next part: the keys say that, not "allow".
       // A note (why a spoken answer wasn't taken) goes before the keys, never in their place: they are the keyboard's way
       // to answer, and the bubble's buttons are mouse-only (tasks-approvals-6).
-      step: [p.note, (panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.())) || null].filter(Boolean).join(" ") || null, streaming: false,
+      step: [p.note, (panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.())) || null].filter(Boolean).join("\n") || null, streaming: false,
       // A panel question's bubble only brings its window up (or says no): what is allowed must be seen whole first.
       actions: panel
         ? [{ id: `ui:panel:${p.n}`, label: panel.kind === "command" ? "Show the command" : "Read it" }, { id: `q${p.n}:deny`, label: "Not now" }]
