@@ -63,6 +63,7 @@ import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { composerRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectCommandFolder, projectCommandText, projectNames, projectSelection, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, type ProjectSource } from "./agent/project";
 import { exportProjectText } from "./agent/project-export";
@@ -1891,7 +1892,9 @@ function start(): void {
     if (!text) throw new Error("Enter a request of up to 2,000 characters.");
     if (!consented()) throw new Error("Finish setup before sending a request.");
     if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");
-    if (agent?.getStatus().phase !== "ready") throw new Error("Connect Ember in Models & connections, then send again.");
+    // Still starting, offline or reconnecting is said as such: Models & connections can't help with those.
+    const status = agent?.getStatus();
+    if (status?.phase !== "ready") throw new Error(composerRefusal(status ?? { phase: "signed-out" }));
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
   }));

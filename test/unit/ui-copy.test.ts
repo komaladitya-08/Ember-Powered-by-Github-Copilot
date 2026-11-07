@@ -23,6 +23,7 @@ import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
+import { composerRefusal } from "../../app/main/agent/composer-refusal";
 import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerConsentText, recipientWords, providerHint, providerTestText } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
@@ -1012,6 +1013,22 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     // Home's main.ts writes none of them inline any more.
     const home = readFileSync("app/renderer/home/main.ts", "utf8");
     for (const said of Object.values(conv.COMPOSER_SAYS)) expect(home).not.toContain(`"${said}"`);
+  });
+
+  it("refuses a message sent while Ember isn't connected by why, and says it is still there (reliability-performance-v2)", () => {
+    expect(composerRefusal({ phase: "signed-out" })).toBe("Connect Ember in Models & connections, then send again.");
+    expect(composerRefusal({ phase: "starting" })).toBe("Ember is still connecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "network" })).toBe("Ember can't reach Copilot right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering" })).toBe("Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true })).toBe("Copilot isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
+    expect(composerRefusal({ phase: "error", reason: "policy" })).toBe("Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.");
+    for (const reason of ["sign-in", "no-access", "models", "runtime", "other"] as const) {
+      expect(composerRefusal({ phase: "error", reason })).toBe("Ember can't connect to Copilot yet: Models & connections says why. Your message is still here.");
+    }
+    // The service in use is named, never Copilot when it isn't the one.
+    expect(composerRefusal({ phase: "starting", service: { kind: "user", host: "llm.local" } })).toBe("Ember is still connecting to your model provider. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "llm.example.com" } })).toBe("Ember can't reach the model service right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true, service: { kind: "user", host: "llm.local" } })).toBe("Your model provider isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
   });
 
   it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {
