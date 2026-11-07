@@ -160,6 +160,12 @@ export const SettingsSchema = z.object({
   privacy: z.object({
     neverLook: z.array(z.string().max(100)).max(100).default(neverLookDefault()),
   }).default({ neverLook: neverLookDefault() }),
+  /**
+   * Tasks may send screenshots of the window they work in (masked: CLAUDE.md "Screenshots"), on by default; off, they
+   * work from what apps tell them through accessibility only, from the next task (Home › Apps & privacy;
+   * safety-privacy-7). The administrator's `features.screenImages: false` keeps it off, managed.
+   */
+  screenImages: z.boolean().default(true),
   /** Apps Ember may act in without asking first (lower-case app name → grant). */
   grants: z.record(z.string(), z.enum(["observe", "act"])).default({}),
   /** Preferred Copilot models; null lets Ember choose. */

@@ -54,6 +54,16 @@ export const NEVER_LOOK_DEFAULTS: readonly string[] = NEVER_LOOK_BY_OS.linux;
  */
 export const MANAGED_ROW = "label, .choice";
 
+/**
+ * Apps & privacy's switch for screenshots (settings.screenImages; safety-privacy-7): what a task sends, and what turning
+ * it off costs. The page says these words (ui-copy.test.ts).
+ */
+export const SCREEN_IMAGES_TEXT = {
+  heading: "What tasks may send",
+  label: "Send screenshots for tasks",
+  hint: "A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.",
+} as const;
+
 /** How a never-look entry reads on screen (the defaults are stored lower-case, as matched). */
 export function neverLookLabel(item: string): string {
   return NEVER_LOOK_NAMES[item.trim().toLowerCase()] ?? item;

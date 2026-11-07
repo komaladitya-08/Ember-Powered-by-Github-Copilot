@@ -537,6 +537,13 @@
         </form>
         <p class="hint never-look-msg" id="never-look-msg" role="status"></p>
         <p class="hint">Ember never reads, captures or acts in an app or window whose name contains one of these. <button type="button" id="never-look-defaults" class="link">Restore defaults</button></p>
+        <h3 class="sub">What tasks may send</h3>
+        <div class="group">
+          <div class="noted-row">
+            <label class="switch-row"><input type="checkbox" id="screen-images" role="switch" aria-describedby="screen-images-hint"><span>Send screenshots for tasks</span></label>
+            <p class="row-note" id="screen-images-hint">A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.</p>
+          </div>
+        </div>
       </div>
     </section>
 

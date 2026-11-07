@@ -24,7 +24,7 @@ export const SEARCH_ALIASES: Readonly<Record<string, string>> = {
   "voice-h": "mic microphone wake word hey ember speech speak listen voice match hearing",
   "pick-h": "character avatar size handle",
   "memory-h": "remember forget routines reminders",
-  "privacy-h": "permissions never look passwords autonomy work without asking always allow",
+  "privacy-h": "permissions never look passwords autonomy work without asking always allow screenshots screen images pictures",
   "access-h": "appearance light dark mode theme accessibility text size font bigger larger glass transparency contrast motion calm reduce motion keyboard",
   "computers-h": "ssh wsl remote server linux windows",
   "commands-h": "terminal shell command line run",

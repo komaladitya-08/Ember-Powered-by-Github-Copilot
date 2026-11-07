@@ -1634,8 +1634,9 @@ export class AgentHost {
       // show_me say there is no desktop), as the prompt is. Once one can, the next request reconnects first (ask).
       const targets = this.o.targets;
       this.status = { ...this.status, conductorModel: choice.conductor, workerModel: choice.worker };
+      // (And the user's own switch, Send screenshots for tasks, read as each task's worker is made: safety-privacy-7.)
       const workerVision = () => this.models.find(m => m.id === this.status.workerModel)?.capabilities?.supports?.vision === true
-        && this.o.admin?.().features.screenImages !== false;
+        && this.o.admin?.().features.screenImages !== false && this.o.settings.get().screenImages !== false;
       this.tasks = hands || (targets && this.targetsTakeTasks()) ? new TaskManager({
         log: this.o.log.child("tasks"),
         ...(this.o.readTime ? { readTime: this.o.readTime } : {}),

@@ -339,7 +339,8 @@ still asks first, the question says you didn't ask for it, and from then on that
 **Ctrl+Alt+X** (or “Ember, stop”, or **Stop everything** in the handle menu) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
 are listed in **Apps & privacy** in the settings window (with **Remove**), next to the never-look list, which you can
-edit there too. **What Ember did** lists every request, question, action and refusal, by day. Text the keyboard can't
+edit there too. **Send screenshots for tasks** there (on by default) turns tasks' screenshots off from the next task:
+Ember then works only from what apps tell it through accessibility. **What Ember did** lists every request, question, action and refusal, by day. Text the keyboard can't
 type (accents, other layouts) is pasted, and your clipboard is put back afterwards. With commands turned on (settings'
 **Commands** section), a task can also run commands, in Ember's own **Ember commands** window rather than a terminal of
 yours; it asks before dangerous ones ([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)).
@@ -946,7 +947,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, shown as managed |
 | `features.actions` | Ember answers and guides ("show me") but never acts in apps |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
-| `features.screenImages` | Accessibility text only; no screenshots go to the model |
+| `features.screenImages` | Accessibility text only; no screenshots go to the model ("Send screenshots for tasks" off, managed) |
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `maxActionsPerMinute` | At most this many actions a minute across all tasks together (1 to 40; Ember's own limit is 40). A step past it pauses until the minute frees a slot, its card saying "Pausing to keep to 20 steps a minute…", rather than ending the task |

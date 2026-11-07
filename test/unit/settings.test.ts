@@ -288,3 +288,25 @@ describe("natural voice model preference", () => {
     expect(new SettingsStore(file).load().settings.voice).toMatchObject({ natural: false, naturalModel: "kitten", muted: true });
   });
 });
+
+describe("sending screenshots for tasks (safety-privacy-7)", () => {
+  it("is on by default, kept off once the user turns it off, and a bad value is repaired to on", () => {
+    expect(DEFAULT_SETTINGS.screenImages).toBe(true);
+    const s = new SettingsStore(file);
+    s.load();
+    s.update({ screenImages: false });
+    expect(new SettingsStore(file).load().settings.screenImages).toBe(false);
+    fs.writeFileSync(file, JSON.stringify({ screenImages: "nope", speak: false }));
+    expect(new SettingsStore(file).load().settings).toMatchObject({ screenImages: true, speak: false });
+  });
+
+  it("is off and managed where the organisation turned screenshots off, and its true turns nothing on", async () => {
+    const { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy } = await import("../../app/main/admin");
+    const off = AdminPolicySchema.parse({ features: { screenImages: false } });
+    expect(applyAdminPolicy(DEFAULT_SETTINGS, off).screenImages).toBe(false);
+    expect(managedKeys(off)).toContain("screenImages");
+    expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, screenImages: false }, AdminPolicySchema.parse({ features: { screenImages: true } })).screenImages).toBe(false);
+    expect(managedKeys(AdminPolicySchema.parse({}))).not.toContain("screenImages");
+    expect(applyAdminPolicy(DEFAULT_SETTINGS, parseAdminPolicy("{ nope", "/etc/ember/policy.json").policy).screenImages).toBe(false);
+  });
+});

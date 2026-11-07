@@ -535,7 +535,7 @@ function renderAdmin(a: Status["admin"]): void {
   lastAdmin = a;
   if (agent) renderAgent(agent);
   renderRecipient();
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -1706,8 +1706,11 @@ function renderTrust(s: Settings): void {
   }
 }
 
+// Send screenshots for tasks: the user's own switch, shown as applied (the organisation's off wins: safety-privacy-7).
+$("screen-images").addEventListener("change", e => { void save({ screenImages: (e.target as HTMLInputElement).checked }); });
 function renderPrivacy(s: Settings): void {
   renderTrust(s);
+  ($("screen-images") as HTMLInputElement).checked = s.screenImages;
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
   const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);
   if (key === privacyKey) return;

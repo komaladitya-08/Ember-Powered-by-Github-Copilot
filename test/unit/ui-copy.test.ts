@@ -959,3 +959,29 @@ describe("what Memory says while saved memory can't be opened (memory-2, integra
     expect(memoryPausedReply("unowned")).toEqual(memoryPausedReply("other-account"));
   });
 });
+
+describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
+  const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+  const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+
+  it("lets the person stop tasks sending screenshots, saying what that costs, in their own row", async () => {
+    const { SCREEN_IMAGES_TEXT } = await import("../../app/renderer/home/copy");
+    expect(SCREEN_IMAGES_TEXT).toEqual({
+      heading: "What tasks may send",
+      label: "Send screenshots for tasks",
+      hint: "A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.",
+    });
+    expect(page).toContain(`<h3 class="sub">${SCREEN_IMAGES_TEXT.heading}</h3>`);
+    expect(page).toContain(`<label class="switch-row"><input type="checkbox" id="screen-images" role="switch" aria-describedby="screen-images-hint"><span>${SCREEN_IMAGES_TEXT.label}</span></label>`);
+    expect(page).toContain(`<p class="row-note" id="screen-images-hint">${SCREEN_IMAGES_TEXT.hint}</p>`);
+    // Saved as the user's own switch, shown as applied (the organisation's off wins), and dimmed when it manages it.
+    expect(main).toContain(`void save({ screenImages: (e.target as HTMLInputElement).checked });`);
+    expect(main).toContain(`($("screen-images") as HTMLInputElement).checked = s.screenImages;`);
+    expect(main).toContain(`["screen-images", "screenImages"]`);
+  });
+
+  it("is found by searching for screenshots", async () => {
+    const { SEARCH_ALIASES } = await import("../../app/renderer/home/search-copy");
+    expect(SEARCH_ALIASES["privacy-h"]).toMatch(/\bscreenshots\b/);
+  });
+});
