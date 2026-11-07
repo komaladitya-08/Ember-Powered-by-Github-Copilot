@@ -9,7 +9,8 @@ import { SemanticMemory, vectorFile } from "../../app/main/memory/embed";
 import { MemoryLearning } from "../../app/main/memory/learning";
 import type { Fact } from "../../app/main/memory/graph";
 import { applyRefinement, recentFacts } from "../../app/main/memory/refine";
-import { NOTHING_TO_FORGET, forgotReply } from "../../app/main/memory/questions";
+import { FORGET_THAT_MS, NOTHING_TO_FORGET, forgotReply } from "../../app/main/memory/questions";
+import { memoryForgottenText } from "../../app/renderer/home/copy";
 
 const dirs: string[] = [];
 const failure = () => { throw Object.assign(new Error("read-only filesystem"), { code: "EROFS" }); };
@@ -271,6 +272,57 @@ describe("Undo after Forget (memory-v2, memory-7)", () => {
     expect(s.memory.list()).toEqual([]);
     expect(s.memory.restore(gone.undo)).toBe(true);
     expect(s.memory.list()).toEqual(before);
+    s.memory.stop();
+  });
+});
+
+describe("Forget of what holds now (memory-12)", () => {
+  const learning = (s: ReturnType<typeof setup>, now: () => number) => new MemoryLearning({ memory: s.memory, inForce: () => true, questionsOn: () => false, askedAt: () => null,
+    setAskedAt: () => undefined, idle: () => false, locked: () => false, say: () => false, log: s.log, now });
+  const texts = (s: ReturnType<typeof setup>) => s.memory.list().map(i => i.text);
+
+  it("forgets only that when the user forgets their current employer, never bringing the old one back as current", () => {
+    let now = Date.parse("2026-11-07T10:00:00Z");
+    const s = setup(), l = learning(s, () => now);
+    s.memory.remember("Works at Globex", [{ name: "User" }], "I work at Globex", "works_at");
+    s.memory.remember("Works at Initech", [{ name: "User" }], "I work at Initech", "works_at");
+    now += 60_000;
+    const initech = s.memory.list()[0].id;
+    expect(texts(s)).toEqual(["Works at Initech"]);
+    // Home's Forget (and forget_memory) of a fact Ember didn't keep just now.
+    const gone = l.forgetCounted(initech)!;
+    expect(gone.back).toBeUndefined();
+    expect(texts(s)).toEqual([]);
+    // Globex is still what used to be true.
+    expect(s.memory.recall("Globex", 6, true).map(r => [r.fact.text, !!r.fact.invalidAt])).toEqual([["Works at Globex", true]]);
+    // Undo puts back exactly what went.
+    expect(l.restore(gone.undo)).toBe(true);
+    expect(texts(s)).toEqual(["Works at Initech"]);
+    s.memory.stop();
+  });
+
+  it("puts the old value back, and says so, when it undoes what Ember kept just now", () => {
+    let now = Date.parse("2026-11-07T10:00:00Z");
+    const s = setup(), l = learning(s, () => now);
+    s.memory.remember("Works at Globex", [{ name: "User" }], "I work at Globex", "works_at");
+    // Ember keeps the new value in this conversation ("Ember learned" with Undo, or "forget that" just after).
+    const tools = l.conductorMemory();
+    tools.remember("Works at Initech", [{ name: "User" }], "I work at Initech now", "works_at");
+    expect(texts(s)).toEqual(["Works at Initech"]);
+    now += 60_000;
+    expect(l.intent("forget that", { own: true })).toBe("Forgotten: “Works at Initech”. I remember “Works at Globex” again.");
+    expect(texts(s)).toEqual(["Works at Globex"]);
+    // The same through the list's Forget soon after; but not once it is no longer just now.
+    tools.remember("Works at Initech", [{ name: "User" }], "I work at Initech now", "works_at");
+    const soon = l.forgetCounted(s.memory.list()[0].id)!;
+    expect(soon.back).toEqual(["Works at Globex"]);
+    expect(memoryForgottenText(soon.text, soon.derived, soon.back)).toBe("Forgotten: “Works at Initech”. Ember remembers “Works at Globex” again.");
+    tools.remember("Works at Initech", [{ name: "User" }], "I work at Initech now", "works_at");
+    now += FORGET_THAT_MS + 1;
+    expect(l.forgetCounted(s.memory.list()[0].id)!.back).toBeUndefined();
+    expect(texts(s)).toEqual([]);
+    expect(forgotReply("Works at Initech", 0, [])).toBe("Forgotten: “Works at Initech”.");
+    expect(memoryForgottenText("Works at Initech", 1, ["Works at Globex", "Works at Hooli"])).toBe("Forgotten: “Works at Initech”, and a note Ember made from it. Ember remembers “Works at Globex” and “Works at Hooli” again.");
     s.memory.stop();
   });
 });

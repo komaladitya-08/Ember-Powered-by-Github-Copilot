@@ -249,8 +249,8 @@ export class MemoryService {
   }
 
   /** Forgets one fact by id, and reopens what it had replaced (Undo puts the old value back). True if it was there. */
-  forget(id: string): boolean {
-    return this.forgetCounted(id) !== null;
+  forget(id: string, reopen = true): boolean {
+    return this.forgetCounted(id, reopen) !== null;
   }
 
   /** The words of an open fact, or null (forget_memory checks the user asked about it: memory-v2). */
@@ -261,10 +261,11 @@ export class MemoryService {
 
   /**
    * `forget`, saying what went: the fact's words, how many of Ember's own notes made from it went with it (its
-   * summaries and guesses, which hold its words: memory-3), and the token `restore` takes to undo it. Null if it
-   * wasn't there.
+   * summaries and guesses, which hold its words: memory-3), the token `restore` takes to undo it, and (`back`) the
+   * words of what it had replaced, open again. Null if it wasn't there. `reopen` false: the fact goes alone, and what
+   * it replaced stays history (a deliberate Forget of what holds now: memory-12).
    */
-  forgetCounted(id: string): { text: string; derived: number; undo: string } | null {
+  forgetCounted(id: string, reopen = true): { text: string; derived: number; undo: string; back?: string[] } | null {
     // Only an open fact gives back what it replaced: a closed one was itself replaced since, and reopening under it would
     // leave a single predicate with two open values.
     if (!this.g.fact(id)) return null;
@@ -276,8 +277,10 @@ export class MemoryService {
     // The notes the user could see in the list: older closed ones are history.
     const shownNotes = notes.filter(n => !next.fact(n)!.invalidAt).length;
     let reopened = 0;
+    // What the fact itself gives back, in its words, so whoever says what went says this too (memory-12).
+    const back = reopen && !f.invalidAt ? next.allFacts().filter(o => o.supersededBy === id && !notes.includes(o.id)).map(o => o.text) : [];
     // A note that replaced an older one gives it back, unless that one goes too.
-    for (const x of [id, ...notes]) if (!next.fact(x)?.invalidAt) reopened += next.reopenSuperseded(x);
+    for (const x of [id, ...notes]) if (!next.fact(x)?.invalidAt && (reopen || x !== id)) reopened += next.reopenSuperseded(x);
     for (const x of [id, ...notes]) next.forgetFact(x);
     try {
       // Derived data first. If the graph write fails, missing vectors can safely be rebuilt from the retained graph.
@@ -297,7 +300,7 @@ export class MemoryService {
     this.o.log.info("memory.forgot", { count: 1 + notes.length, reopened });
     try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
     const undo = this.keepForUndo(before, next, [id, ...notes]);
-    return { text: f.text, derived: shownNotes, undo };
+    return { text: f.text, derived: shownNotes, undo, ...(back.length ? { back } : {}) };
   }
 
   /**

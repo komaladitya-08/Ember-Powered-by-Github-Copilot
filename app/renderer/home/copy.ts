@@ -369,8 +369,13 @@ export const undoForgotLabel = (text: string) => `Undo: remember “${text}” a
  * What Memory's list says after Forget, where focus goes (never the next row's Forget, so a second Enter forgets
  * nothing more: memory-7), with Undo after it; and after Undo.
  */
-export const memoryForgottenText = (text: string, derived = 0) =>
-  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.`;
+export const memoryForgottenText = (text: string, derived = 0, back: readonly string[] = []) =>
+  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.${back.length ? ` Ember remembers ${quotedAnd(back)} again.` : ""}`;
+/** “A”, “A” and “B”, “A”, “B” and “C”: what is current again after a Forget undid what Ember kept just now (memory-12). */
+const quotedAnd = (texts: readonly string[]) => {
+  const q = texts.map(t => `“${t.replace(/[“”]/g, "")}”`);
+  return q.length > 1 ? `${q.slice(0, -1).join(", ")} and ${q.at(-1)}` : q.join("");
+};
 export const memoryPutBackText = (text: string) => `Put back: “${text.replace(/[“”]/g, "")}”.`;
 /** Undo of a Forget, once it has put the memory back; and when it can't any more. */
 export const MEMORY_PUT_BACK = "Put back";

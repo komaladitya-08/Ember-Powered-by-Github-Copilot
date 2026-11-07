@@ -72,7 +72,7 @@ export interface LearningDeps {
    * The conductor forgot a fact the user asked it to (forget_memory): the conversation says so ("Ember forgot: …", in
    * the fact's stored words, never the model's), with Undo by `undo` (memory-v2).
    */
-  onAskedForget?: (forgot: { id: string; text: string; derived: number; undo: string }) => void;
+  onAskedForget?: (forgot: { id: string; text: string; derived: number; undo: string; back?: string[] }) => void;
   /** The user said in the spoken interview whether they like replies spoken: Ember's speaking choice follows (memory-5). */
   setSpoken?: (on: boolean) => void;
   log: MemoryLog;
@@ -216,14 +216,17 @@ export class MemoryLearning {
   }
 
   /**
-   * `forget`, saying what went: the fact's words, how many of Ember's notes made from it went too (memory-3), and the
-   * token `restore` takes to undo it.
+   * `forget`, saying what went: the fact's words, how many of Ember's notes made from it went too (memory-3), the
+   * token `restore` takes to undo it, and what is current again (`back`). Forgetting what Ember kept just now (within
+   * FORGET_THAT_MS: its "Ember learned" line's Undo, "forget that", a Forget soon after) undoes it, so what it replaced
+   * holds again; anything older is forgotten alone, and what it replaced stays history (memory-12).
    */
-  forgetCounted(id: string): { text: string; derived: number; undo: string } | null {
+  forgetCounted(id: string): { text: string; derived: number; undo: string; back?: string[] } | null {
     // A refinement still reading this fact must never reintroduce it in a summary after Forget.
     this.refining?.abort();
     ++this.recallRevision;
-    const gone = this.d.memory.forgetCounted(id);
+    const kept = this.recent.find(r => r.id === id);
+    const gone = this.d.memory.forgetCounted(id, !!kept && this.now() - kept.at <= FORGET_THAT_MS);
     this.recent = this.recent.filter(r => r.id !== id);
     if (gone) {
       try { this.d.onForgot?.(id); } catch { this.d.log.warn("memory.delete_notice_failed"); }
@@ -310,7 +313,7 @@ export class MemoryLearning {
       // Nothing kept lately: said in code, since forget_memory needs words that name the fact (memory-v1).
       if (!last || now - last.at > FORGET_THAT_MS) return NOTHING_TO_FORGET;
       const gone = this.forgetCounted(last.id);
-      return gone ? forgotReply(last.text, gone.derived) : NOTHING_TO_FORGET;
+      return gone ? forgotReply(last.text, gone.derived, gone.back) : NOTHING_TO_FORGET;
     }
     // "Remember that…" or "forget my…" while memory can't: the truth, in code, never a model's promise (memory-v1).
     if (!this.d.inForce()) {

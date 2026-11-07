@@ -217,8 +217,12 @@ download, so English-only MiniLM is the trade-off for now.
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
      goes through `MemoryGraph.add()` and the guard.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
-     minutes forgets the newest without a model turn. Forgetting an open fact reopens the one it had replaced
-     (`reopenSuperseded`) and takes its "Ember learned" line away; **Forget everything** clears the lines too.
+     minutes forgets the newest without a model turn. Forgetting an open fact Ember kept in those ten minutes (the
+     line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again
+     (`reopenSuperseded`), and Home's line and the reply say so ("Ember remembers “Works at Globex” again").
+     Forgetting an older fact forgets it alone, so forgetting "Works at Initech" after leaving never makes "Works at
+     Globex" current again; it stays what used to be true (memory-12). Either way the "Ember learned" line goes;
+     **Forget everything** clears the lines too.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused, managed), a request that is only "remember that…" or "forget my…"
      (`memoryAsk`, never "remember to…", a reminder) is answered in code with the truth: memory is off (and Memory

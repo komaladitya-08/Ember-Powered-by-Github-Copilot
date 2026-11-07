@@ -125,8 +125,13 @@ const FORGET_THAT = /^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:forget|don'
 export const isForgetThat = (text: string) => FORGET_THAT.test(text.trim());
 
 /** The reply to "forget that": the fact, and how many of Ember's own notes made from it went too (memory-3). */
-export const forgotReply = (text: string, derived = 0) =>
-  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} I made from it` : ""}.`;
+export const forgotReply = (text: string, derived = 0, back: readonly string[] = []) =>
+  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} I made from it` : ""}.${back.length ? ` I remember ${quotedAnd(back)} again.` : ""}`;
+/** “A”, “A” and “B”, “A”, “B” and “C”: what is current again after a Forget (memory-12). */
+const quotedAnd = (texts: readonly string[]) => {
+  const q = texts.map(t => `“${t.replace(/[“”]/g, "")}”`);
+  return q.length > 1 ? `${q.slice(0, -1).join(", ")} and ${q.at(-1)}` : q.join("");
+};
 export const NOTHING_TO_FORGET = "I haven't kept anything from just now. Say what to forget, or use Forget in Settings › Memory.";
 
 /** "Ember, please", "can you": what may come before a remember or forget request. */

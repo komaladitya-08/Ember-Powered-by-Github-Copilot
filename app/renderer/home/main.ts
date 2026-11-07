@@ -1266,7 +1266,7 @@ let memoryUndoTimer: ReturnType<typeof setTimeout> | undefined;
 function showForgotten(text: string, gone: MemoryForgotten | null): void {
   clearTimeout(memoryUndoTimer);
   const said = $("memory-forgotten-text"), undo = $("memory-undo") as HTMLButtonElement;
-  said.textContent = memoryForgottenText(gone?.text ?? text, gone?.derived ?? 0);
+  said.textContent = memoryForgottenText(gone?.text ?? text, gone?.derived ?? 0, gone?.back);
   memoryUndo = gone ? { token: gone.undo, text: gone.text } : null;
   undo.hidden = !memoryUndo;
   undo.removeAttribute("aria-disabled");

@@ -636,7 +636,8 @@ describe("the security review's probes (PR #142)", () => {
     l.introduce({ name: "Ram" });
     l.introduce({ name: "Rum" });
     expect(remembered(s)).toEqual([["Likes to be called Rum", "user"]]);
-    expect(l.intent("forget that", { own: true })).toBe("Forgotten: “Likes to be called Rum”.");
+    // And it says so: the older name is current again (memory-12).
+    expect(l.intent("forget that", { own: true })).toBe("Forgotten: “Likes to be called Rum”. I remember “Likes to be called Ram” again.");
     expect(remembered(s)).toEqual([["Likes to be called Ram", "user"]]);
   });
 

@@ -263,8 +263,10 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     (`own`); a request (`looksLikeRequest`) or "forget that" is never taken as an answer, except "call me <a short
     name>" to the interview's name question (`Interview.answers`), whose name is kept without its lead-in
     (`nameFrom`); Ember's question is built from a name alone (`gapQuestion`), never one that reads like an order;
-  - forgetting an open fact reopens what it had replaced (`reopenSuperseded`), so Undo puts the old value back, and
-    goes through `MemoryLearning.forget()` so its "Ember learned" line and "forget that" let go of it too;
+  - every Forget goes through `MemoryLearning.forget()` so its "Ember learned" line and "forget that" let go of it
+    too; forgetting an open fact Ember kept just now (within `FORGET_THAT_MS`: its line's Undo, "forget that", a
+    Forget soon after) reopens what it had replaced (`reopenSuperseded`), and Home's line and the reply say so
+    (`back`); forgetting an older one forgets it alone, and what it replaced stays history (memory-12);
   - a summary or reflection records what it was made from (`derivedFrom`); forgetting or correcting a fact forgets
     those notes in the same staged write (`notesFrom`), so nothing Ember wrote keeps a forgotten fact's words;
   - every change to the graph tells Better recall (`semantic.changed()`: `remember`, `learn`, `refine`, a reopen), and
