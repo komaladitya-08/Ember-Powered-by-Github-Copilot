@@ -326,7 +326,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Labelled fields** (Models & connections' **Model provider**): a label, then its filled text field (`.field-row`, the never-look
   field's look and height), the field under the label below 480 px. A secret goes in a password field and is never
   shown again: once saved the row says **Key saved** with **Replace** (quiet) and **Remove** (a `--red-text` text
-  button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**.
+  button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**. A
+  disclosure inside a group (Projects' patch, command and saved workspaces) has the folds' chevron (`details.disclose`),
+  a lone button (Refresh list, Choose command folder…) keeps its own size in a row of actions, and an empty status line
+  takes no row: a status or alert stays on the page, out of the flow, so it is still announced when it speaks.
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 

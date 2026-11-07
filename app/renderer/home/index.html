@@ -334,20 +334,20 @@
         <p id="project-previous-question" class="hint" hidden></p>
         <div id="project-answer" class="project-answer" role="region" aria-label="Project answer" tabindex="0" hidden></div>
         <div id="project-answer-actions" class="agent-actions" hidden><button type="button" id="project-copy-answer" class="btn quiet">Copy answer</button><button type="button" id="project-export-answer" class="btn quiet">Export answer…</button></div>
-        <details id="project-patch" hidden>
+        <details class="disclose" id="project-patch" hidden>
           <summary id="project-patch-summary">Review changes before applying</summary>
           <pre id="project-diff" class="project-answer" aria-label="Changes to apply" tabindex="0"></pre>
-          <div class="agent-actions"><button type="button" id="project-apply" class="btn">Apply patch…</button><button type="button" id="project-copy-diff" class="btn quiet">Copy diff</button><button type="button" id="project-export-diff" class="btn quiet">Export diff…</button></div>
+          <div class="agent-actions"><button type="button" id="project-apply" class="btn quiet">Apply patch…</button><button type="button" id="project-copy-diff" class="btn quiet">Copy diff</button><button type="button" id="project-export-diff" class="btn quiet">Export diff…</button></div>
         </details>
         <p id="project-output-status" class="hint" role="status"></p>
         <p id="project-export-hint" class="hint" hidden>Export saves plain text to the destination you choose. Exported files stay there after Ember closes.</p>
       </form>
-      <details class="group" id="project-commands">
+      <details class="group disclose" id="project-commands">
         <summary>Run a project command</summary>
         <form id="project-command-form">
           <p class="hint" id="project-command-hint">Choose the starting folder and enter a command for this computer. Ember shows the exact command and folder for approval before running it.</p>
           <p class="row-note" id="project-commands-off" hidden><span id="project-commands-off-text">Commands are off on this computer. Turn them on in Commands to run one here.</span> <button type="button" class="link" id="project-commands-open" hidden>Open Commands</button></p>
-          <button type="button" class="btn quiet" id="project-folder-pick" disabled>Choose command folder…</button>
+          <div class="agent-actions"><button type="button" class="btn quiet" id="project-folder-pick" disabled>Choose command folder…</button></div>
           <p id="project-folder" class="hint">No command folder selected.</p>
           <div class="field-row"><label for="project-command-text">Command</label>
           <input type="text" id="project-command-text" maxlength="2000" required spellcheck="false" autocomplete="off" aria-describedby="project-commands-off-text project-command-hint project-folder"></div>
@@ -358,7 +358,7 @@
           <p class="hint" id="project-command-status" role="status"></p>
         </form>
       </details>
-      <details class="group" id="project-workspaces">
+      <details class="group disclose" id="project-workspaces">
         <summary>Saved workspaces</summary>
         <p id="project-workspace-hint" class="hint">Ember encrypts saved paths and the last completed request and answer on this computer. Saving with the same name updates that workspace.</p>
         <div class="field-row">
@@ -368,7 +368,7 @@
         <div class="agent-actions"><button type="button" id="project-workspace-save" class="btn" disabled>Save workspace</button></div>
         <label class="choice"><span>Saved workspace</span><select id="project-workspace-list" disabled></select></label>
         <div class="agent-actions">
-          <button type="button" id="project-workspace-open" class="btn" disabled>Open workspace</button>
+          <button type="button" id="project-workspace-open" class="btn quiet" disabled>Open workspace</button>
           <button type="button" id="project-workspace-forget" class="btn quiet" disabled>Forget workspace…</button>
         </div>
         <p class="hint" id="project-workspace-status" role="status"></p>
@@ -431,11 +431,11 @@
           <div class="agent-actions"><button type="button" id="routines-yes" class="btn" aria-describedby="routines-consent-text">I agree, keep them</button><button type="button" id="routines-no" class="btn quiet">Not now</button></div>
         </div>
       </div>
+      <p class="hint" id="routines-hint">Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and Ember still asks before anything risky.</p>
       <ul class="plain-list" id="routines-list" aria-labelledby="routines-h"></ul>
       <h3 class="sub" id="reminders-h">Upcoming reminders</h3>
-      <button type="button" id="reminders-refresh" class="btn quiet small">Refresh list</button>
+      <div class="agent-actions"><button type="button" id="reminders-refresh" class="btn quiet small">Refresh list</button></div>
       <ul class="plain-list" id="reminders-list" aria-labelledby="reminders-h" tabindex="-1"></ul>
-      <p class="hint" id="routines-hint">Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and Ember still asks before anything risky.</p>
       <div class="agent-actions"><button type="button" id="routines-forget-all" class="btn quiet" hidden>Delete all routines and reminders</button></div>
       <div id="routines-delete-confirm" class="consent" role="group" aria-labelledby="routines-delete-scope" hidden>
         <p id="routines-delete-scope"></p>

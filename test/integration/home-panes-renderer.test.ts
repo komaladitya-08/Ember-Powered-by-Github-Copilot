@@ -347,3 +347,47 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     await page.close();
   });
 });
+
+describe.skipIf(gate)("Home's Projects and Memory panes, as laid out (2026-11-07 product audit)", () => {
+  /** Visible buttons as wide as their parent's box, and visible empty children of a group that still take height. */
+  const layout = (p: Page) => p.evaluate(() => {
+    const shown = (e: Element) => (e as HTMLElement).offsetParent !== null && !e.closest(".off-pane");
+    const wide = [...document.querySelectorAll<HTMLElement>(".home button.btn")].filter(b => shown(b) && b.parentElement && b.getBoundingClientRect().width >= b.parentElement.getBoundingClientRect().width - 1 && b.getBoundingClientRect().width > 200).map(b => b.id || b.textContent);
+    const blank = [...document.querySelectorAll<HTMLElement>(".home .group > *")].filter(e => shown(e) && !e.textContent?.trim() && !e.matches("input, select, textarea, button, canvas, progress") && !e.querySelector("input, select, textarea, button, canvas, progress") && e.getBoundingClientRect().height > 0).map(e => e.id || e.className);
+    return { wide, blank };
+  });
+
+  it("keeps lone buttons their own size and leaves no blank rows in Projects (accessibility-visual-4, home-12, accessibility-visual-3)", async () => {
+    const page = await open("project");
+    await page.locator("#project-commands > summary").click();
+    await page.locator("#project-workspaces > summary").click();
+    expect(await layout(page)).toEqual({ wide: [], blank: [] });
+    // The fold's chevron, not the browser's triangle; one filled button in Saved workspaces.
+    for (const id of ["project-commands", "project-workspaces"]) {
+      expect(await page.locator(`#${id} > summary`).evaluate(s => getComputedStyle(s).display)).toBe("flex");
+      expect(await page.locator(`#${id} > summary`).evaluate(s => getComputedStyle(s, "::before").content)).toContain('""');
+    }
+    const accent = await page.locator("#project-workspaces .btn").evaluateAll(bs => bs.filter(b => !b.classList.contains("quiet")).map(b => b.id));
+    expect(accent).toEqual(["project-workspace-save"]);
+    await evidence(page, "projects-layout");
+    await page.close();
+  });
+
+  it("keeps Refresh list its own size, and puts the routines footnote under its switch (accessibility-visual-4, integrations-14)", async () => {
+    const page = await open("memory");
+    await expect.poll(() => page.locator("#reminders-refresh").isVisible()).toBe(true);
+    expect((await layout(page)).wide).toEqual([]);
+    const box = async (id: string) => (await page.locator(`#${id}`).boundingBox())!;
+    expect((await box("routines-hint")).y).toBeLessThan((await box("reminders-h")).y);
+    // No empty footnote leaves a gap under Memory's switches.
+    const under = await page.evaluate(() => {
+      const group = document.getElementById("memory-on")!.closest(".group")!;
+      let next = group.nextElementSibling as HTMLElement | null;
+      while (next && (getComputedStyle(next).display === "none" || getComputedStyle(next).position === "absolute")) next = next.nextElementSibling as HTMLElement | null;
+      return next ? next.getBoundingClientRect().top - group.getBoundingClientRect().bottom : 0;
+    });
+    expect(under).toBeLessThanOrEqual(8);
+    await evidence(page, "memory-layout");
+    await page.close();
+  });
+});

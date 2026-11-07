@@ -706,3 +706,55 @@ describe("HIG pass (Apple's Human Interface Guidelines, checked surface by surfa
     expect(page("command")).toMatch(/\.command \{\n {2}margin: 0; padding: 8px 10px; border-radius: var\(--r-xs\);/);
   });
 });
+
+describe("Home's groups and disclosures (2026-11-07 product audit)", () => {
+  const page = read("app/renderer/home/index.html");
+  const css = read("app/renderer/home/styles.css");
+  const VOID = new Set(["input", "br", "img", "meta", "link", "hr", "source", "col", "wbr"]);
+  const cls = (attrs: string) => /\bclass="([^"]*)"/.exec(attrs)?.[1].split(/\s+/) ?? [];
+
+  it("fills at most one button with the accent in each group, form, disclosure or card (home-12, accessibility-visual-3)", () => {
+    const stack: { tag: string; name: string; container: boolean; filled: string[] }[] = [];
+    const over: string[] = [];
+    for (const m of page.matchAll(/<(\/?)([a-z][a-z0-9-]*)([^>]*)>/g)) {
+      const [, close, tag, attrs] = m;
+      if (close) {
+        const at = stack.map(s => s.tag).lastIndexOf(tag);
+        if (at < 0) continue;
+        for (const s of stack.splice(at)) if (s.container && s.filled.length > 1) over.push(`${s.name}: ${s.filled.join(", ")}`);
+        continue;
+      }
+      const c = cls(attrs);
+      if (tag === "button" && c.includes("btn") && !c.includes("quiet")) {
+        const id = /\bid="([^"]*)"/.exec(attrs)?.[1] ?? "?";
+        for (const s of stack) if (s.container) s.filled.push(id);
+      }
+      if (VOID.has(tag) || attrs.trimEnd().endsWith("/")) continue;
+      const container = tag === "details" || tag === "form" || c.includes("group") || c.includes("consent") || c.includes("card");
+      stack.push({ tag, name: `${tag}#${/\bid="([^"]*)"/.exec(attrs)?.[1] ?? c.join(".")}`, container, filled: [] });
+    }
+    expect(over).toEqual([]);
+  });
+
+  it("draws every disclosure's chevron, never the browser's triangle (home-12, accessibility-visual-3)", () => {
+    const folds = ["fold", "w-more", "disclose"];
+    for (const m of page.matchAll(/<details([^>]*)>/g)) expect(cls(m[1]).some(c => folds.includes(c)), m[0]).toBe(true);
+    for (const f of folds) {
+      expect(css).toContain(`.${f} > summary::-webkit-details-marker { display: none; }`);
+      expect(css).toMatch(new RegExp(`\\.${f} > summary::before \\{\\s*content: "" / "";`));
+    }
+    // In a contrast theme the chevron is the text colour.
+    expect(forced(css, ".disclose > summary::before")).toContain("background: CanvasText");
+  });
+
+  it("keeps a lone button its own size, and an empty line in a group or under one out of the way (accessibility-visual-4, integrations-14)", () => {
+    // Buttons straight in a section's grid stretch across the pane: they sit in a row of actions instead.
+    for (const id of ["reminders-refresh", "project-folder-pick"]) expect(page).toMatch(new RegExp(`<div class="agent-actions"><button type="button" (?:id="${id}"[^>]*|class="[^"]*" id="${id}"[^>]*)>`));
+    expect(css).toContain(".group > p:empty { min-height: 0; padding: 0; border-top: 0; }");
+    expect(css).toContain("section > p.hint:empty:not([role]):not([aria-live]) { display: none; }");
+    // A status or alert stays on the page while empty, so what it says next is still announced.
+    expect(css).toContain("section > p.hint:empty:is([role], [aria-live]) { position: absolute; }");
+    // Routines' footnote is under the routines switch it explains, before the lists.
+    expect(page.indexOf('id="routines-hint"')).toBeLessThan(page.indexOf('id="routines-list"'));
+  });
+});

@@ -96,10 +96,27 @@ h2[tabindex="-1"]:focus { outline: none; }
 #project-files, #project-folder, #project-previous-question { overflow-wrap: anywhere; }
 #project-command-form { display: grid; gap: 10px; }
 #project-commands > summary, #project-workspaces > summary, #project-patch > summary { cursor: pointer; }
+/* A disclosure inside Projects (the patch, a command, saved workspaces): the fold's chevron, never the browser's
+   triangle (home-12). */
+.disclose > summary { list-style: none; display: flex; align-items: center; gap: 8px; border-radius: var(--r-sm); }
+.disclose > summary::-webkit-details-marker { display: none; }
+.disclose > summary::before {
+  content: "" / ""; flex: none; width: 14px; height: 14px; background: var(--muted);
+  -webkit-mask: var(--sym-chevron) center / 12px no-repeat; transition: transform 260ms var(--spring-snappy);
+}
+.disclose[open] > summary::before { transform: rotate(90deg); }
+.disclose > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@media (hover: hover) { .disclose > summary:hover::before { background: var(--fg); } }
 .project-answer { margin: 0; max-height: 22em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .group > * { min-height: 48px; padding: 12px 0; margin: 0; }
 .group > * + * { border-top: 1px solid var(--line); }
 .group > [hidden], .group > .agent-actions:not(:has(> :not([hidden]))) { display: none; }
+/* An empty status line in a group takes no row (accessibility-visual-4: a 48 px blank band with a hairline). */
+.group > p:empty { min-height: 0; padding: 0; border-top: 0; }
+/* An empty footnote under a group takes no gap; one that speaks when filled (a status or an alert) stays on the page,
+   out of the flow, so what it says next is still announced. */
+section > p.hint:empty:not([role]):not([aria-live]) { display: none; }
+section > p.hint:empty:is([role], [aria-live]) { position: absolute; }
 .group > progress { min-height: 0; margin: 14px 0; padding: 0; border-top: 0; }
 .group > .agent-line, .group > .presence-line { display: flex; align-items: center; }
 .group > .consent { margin: 12px 0; }
@@ -576,7 +593,7 @@ html { scroll-padding-top: 16px; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
   .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }
-  .fold > summary::before, .fold > summary:hover::before { background: CanvasText; }
+  .fold > summary::before, .fold > summary:hover::before, .disclose > summary::before, .disclose > summary:hover::before { background: CanvasText; }
   .jump a[aria-current="true"] { outline: 1px solid LinkText; outline-offset: -1px; }
   .jump a::after { background: LinkText; }
   .jump-badge { outline: 1px solid CanvasText; outline-offset: -1px; }
