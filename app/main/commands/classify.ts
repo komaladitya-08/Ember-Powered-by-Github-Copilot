@@ -924,6 +924,15 @@ function setsRiskyName(key: string, args: readonly Arg[]): boolean {
 const COMPOUND_CLOSER: Readonly<Record<string, string>> = { if: "fi", while: "done", until: "done", for: "done" };
 /** The keywords the classifier unwraps a command from (`then rm x`): they stay in the text's own shell. */
 export const FLOW_WRAPPER: ReadonlySet<string> = new Set(["if", "then", "elif", "else", "while", "until", "do", "!"]);
+/**
+ * The reserved words after which bash and zsh still read `NAME=value` words as assignments (`then LD_PRELOAD=./x.so
+ * ls`, `time PATH=/tmp/x ls`), unlike a program that runs the next word (`command`, `nice`, `nohup`).
+ */
+const ASSIGNS_AFTER: ReadonlySet<string> = new Set([...FLOW_WRAPPER, "time"]);
+/** The built-ins that read lines and run nothing: a variable set in front of one lasts only while it reads. */
+const READS_LINES: ReadonlySet<string> = new Set(["read", "mapfile", "readarray"]);
+/** An unquoted `NAME=value` or `NAME+=value` word, as the parser takes one at the start of a command. */
+const ASSIGNMENT_WORD = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
 
 /**
  * The `read` commands (by index) whose `if` or loop takes its input from a file or text (`while read -r l; do …; done
@@ -1253,7 +1262,7 @@ class Engine extends Classifier {
       return;
     }
     this.simple({ words, redirs, stdin, stdinText, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
-      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
+      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v);
     });
   }
 
@@ -1322,10 +1331,16 @@ class Engine extends Classifier {
     }
   }
 
-  /** Assignments before a command or alone (§3.4.1): ones that change how commands are found or run are unclear. */
-  private assignments(list: { name: string; value: Arg }[], sc: Scope): void {
+  /**
+   * Assignments before a command or alone (§3.4.1): ones that change how commands are found or run are unclear. `IFS`
+   * before `read`, `mapfile` or `readarray` (`IFS= read -r l`) lasts only while that built-in splits what it reads, in
+   * bash, zsh and sh alike, so it changes how nothing else runs (commands-remote-2).
+   */
+  private assignments(list: { name: string; value: Arg }[], sc: Scope, program: string | null = null): void {
     if (list.length) this.envChanged = true;
+    const splitOnly = sc.family === "posix" && program !== null && READS_LINES.has(program);
     for (const a of list) {
+      if (splitOnly && a.name === "IFS") continue;
       if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) {
         this.unclear("unclear.assignment", "It changes how commands are found or run.");
       }
@@ -1720,15 +1735,35 @@ class Engine extends Classifier {
   }
 
   /** Unwraps a wrapper: the same command now runs `words`, with the wrapper recorded (sudo rm → program rm, wrappers sudo). */
-  unwrap(h: H, words: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
-    if (words.length === 0) return;
+  unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
+    if (all.length === 0) return;
     const pc = this.commands[this.at];
-    const nameArg = words[0];
+    // After a reserved word the shell still takes `NAME=value` words as assignments: `then LD_PRELOAD=./x.so ls` runs ls
+    // with the library loaded, and `do PATH=/tmp/x:/usr/bin` changes where later commands are found. They are judged as
+    // at the start of a command, never as the program (commands-remote-c1-1).
+    let lead = 0;
+    if (h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
+    const assigns = all.slice(0, lead).map(a => {
+      const eq = a.raw.indexOf("=");
+      const value: Arg = { v: a.v === null ? null : a.v.slice(a.v.indexOf("=") + 1), raw: a.raw.slice(eq + 1), glob: false };
+      return { name: a.raw.slice(0, eq).replace(/\+$/, ""), value };
+    });
+    const words = all.slice(lead);
     const sc = child(h.sc, { ...o, wrappers: [...h.sc.wrappers, wrapper] }, more(h.sc));
     pc.wrappers = [...sc.wrappers];
+    if (words.length === 0) {
+      pc.program = "";
+      pc.args = [];
+      this.program = "";
+      this.assignments(assigns, sc);
+      return;
+    }
+    const nameArg = words[0];
     if (nameArg.v === null) {
       pc.program = nameArg.raw;
       pc.args = words.slice(1).map(a => a.v);
+      this.program = nameArg.raw;
+      this.assignments(assigns, sc, null);
       this.unclear("unclear.program", "It runs a program Ember can't name.");
       if (nameArg.fetch) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       this.readArgs(words.slice(1), sc);
@@ -1745,6 +1780,7 @@ class Engine extends Classifier {
     pc.args = words.slice(1).map(a => a.v);
     this.program = prog;
     this.noteProgram(prog);
+    this.assignments(assigns, sc, nameArg.v);
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
     const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn };
     // Native rows only: a wrapper runs a program, never a cmdlet or a cmd built-in.
@@ -3181,6 +3217,9 @@ reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bi
   // A keyword in front of a command (`then rm x`, `do rm x`): the command after it is classified too.
   if (["then", "elif", "else", "do", "if", "while", "until", "!"].includes(h.key) && h.args.length) h.e.unwrap(h, h.args, h.key);
 });
+// `!` after a flow word (`if ! grep -q x f`, `then ! LD_PRELOAD=./x.so ls`) only turns round what the command after it
+// returns: that command is judged, assignments and all (commands-remote-c1-1).
+reg(NATIVE, ["!"], h => { if (h.sc.family === "posix") h.e.unwrap(h, h.args, "!"); else generic(h); });
 reg(NATIVE, ["read", "mapfile", "readarray"], h => {
   if (h.s.stdin === null && h.key === "read") h.e.unclear("unclear.interactive", SAYS.interactive);
   // mapfile's callback (-C) is shell text it runs for every line.

@@ -94,6 +94,16 @@ describe("gate 2 for commands (§3.16)", () => {
     expect(await real("zsh -c 'while true { rm -rf ~ }'")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
   });
 
+  it("asks, as the PC does, before a loop or an if runs a command with a library preloaded or PATH changed (commands-remote-c1-1)", async () => {
+    const real = (command: string) => gateCommand(input({ spec: spec({}, { command, shell: "bash" }), classify: classifyCommand }));
+    for (const command of [
+      "if true; then LD_PRELOAD=./x.so ls; fi",
+      "for i in 1; do PATH=/tmp/evil:/usr/bin; done; git status",
+      "time LD_PRELOAD=./x.so ls",
+    ]) expect(await real(command), command).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["unclear.assignment"] });
+    expect((await real("while IFS= read -r l; do echo \"$l\"; done < list.txt")).status).toBe("ok");
+  });
+
   it("counts an approval 120 s old or older as none", async () => {
     const s = spec({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], approval: { ageMs: APPROVAL_MAX_MS } });
     expect(await gateCommand(input({ spec: s, classify: classifier(() => [RM]).classify }))).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.approvalMissing });

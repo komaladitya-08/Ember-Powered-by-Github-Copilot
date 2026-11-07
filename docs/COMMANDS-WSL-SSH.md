@@ -169,9 +169,12 @@ Ember stops and asks before a command that:
 **Loops and `if` on a command line** are read as they are in a script (below): in bash or sh, `if`, `for`, `while`
 and `until` and a plain `[[ … ]]` test don't ask by themselves, because Ember judges every command inside them. So
 `for i in 1 2 3; do echo $i; done` and `if [ -f package.json ]; then npm test; fi` run, `if [ -f x ]; then rm x; fi`
-asks only to delete x, and `while read -r l; do …; done < list.txt` isn't taken for a command waiting for your typing.
-zsh's, PowerShell's and cmd's `if` and `for` still ask, and so do a loop in a shell the command starts (`bash -c '…'`),
-a loop whose variable is `PATH` or another that changes how commands are found, `case`, functions and `{ … }` groups.
+asks only to delete x, and `while IFS= read -r l; do …; done < list.txt` isn't taken for a command waiting for your
+typing (`IFS` in front of `read` changes only how that `read` splits the line). zsh's, PowerShell's and cmd's `if` and
+`for` still ask, and so do a loop in a shell the command starts (`bash -c '…'`), a loop whose variable is `PATH` or
+another that changes how commands are found, `case`, functions and `{ … }` groups. A variable set after `then`, `do`,
+`else`, `!` or `time` is judged as one set at the start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as
+`LD_PRELOAD=./x.so ls` does.
 
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the

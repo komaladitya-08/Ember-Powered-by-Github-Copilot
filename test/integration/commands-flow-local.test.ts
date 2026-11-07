@@ -254,6 +254,20 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     for (const want of ["zq3", "built", "got-b"]) expect(result.textResultForLlm).toContain(want);
   }, 20_000);
 
+  it("asks before an if runs a command with a library preloaded, and reads a file with IFS= read without asking (commands-remote-c1-1)", async () => {
+    w.verdicts = () => "deny";
+    const preload = await run("if true; then LD_PRELOAD=./x.so ls; fi", "");
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0].says).toContain("It changes how commands are found or run.");
+    expect(preload.result.resultType).toBe("denied");
+    w.cards.length = 0;
+    fs.writeFileSync(path.join(w.work, "list.txt"), " a \nb\n");
+    const { result } = await run("while IFS= read -r l; do echo \"got-[$l]\"; done < list.txt", "");
+    expect(w.cards).toEqual([]);
+    expect(result.resultType).toBe("success");
+    expect(result.textResultForLlm).toContain("got-[ a ]");
+  }, 20_000);
+
   it("asks before `rm -r build` (the user didn't ask), shows the whole command on the card, and runs it after Allow", async () => {
     const { result } = await run("rm -r build", "");
     expect(w.cards).toHaveLength(1);

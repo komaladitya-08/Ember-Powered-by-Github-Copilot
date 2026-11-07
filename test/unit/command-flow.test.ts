@@ -477,6 +477,33 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     }
   });
 
+  it("asks before a loop or an if runs a command with a library preloaded or PATH changed, as it does without one (commands-remote-c1-1)", async () => {
+    const judged = async (command: string) => {
+      setCommandJudge(null);
+      const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: true, real: p }), run: () => ({ output: ["1\n"] }) });
+      const r = await call(h, { target: "this computer", command });
+      const card = (h.asked[0]?.panel as { card: CommandCard } | undefined)?.card;
+      return { result: r.resultType, rules: h0rules(h), says: card?.says ?? [] };
+    };
+    for (const command of [
+      "LD_PRELOAD=./x.so ls",
+      "if true; then LD_PRELOAD=./x.so ls; fi",
+      "until false; do LD_PRELOAD=./x.so ls; break; done",
+      "if true; then :; else LD_PRELOAD=./x.so ls; fi",
+      "if LD_PRELOAD=./x.so ls; then :; fi",
+      "for i in 1; do PATH=/tmp/evil:/usr/bin; done; git status",
+      "if true; then HOME=/tmp; fi; ls",
+      "time LD_PRELOAD=./x.so ls",
+    ]) {
+      const got = await judged(command);
+      expect(got.result, command).toBe("denied");
+      expect(got.rules, command).toContain("unclear.assignment");
+      expect(got.says, command).toContain("It changes how commands are found or run.");
+    }
+    // The usual way to read a file line by line still runs.
+    expect(await judged("while IFS= read -r l; do echo \"$l\"; done < list.txt")).toMatchObject({ result: "success", rules: [] });
+  });
+
   it("says plainly when it can't read all of a script, and not that the user didn't ask when they named it (review #27)", async () => {
     const named = scriptHarness("case $1 in\n  start) make ;;\nesac\n", "run the build script");
     await call(named, { target: "this computer", command: "./build.sh" });
