@@ -1795,10 +1795,10 @@ function applyUpdateSettings(s: Settings): void {
 function renderUpdates(s: UpdateStatus): void {
   updatesNow = s;
   $("updates-status").textContent = updateStatusText(s);
-  // How to update this kind of install, while a newer version is out (install-docs-11).
-  const how = s.phase === "available" ? updateHowTo(platform?.install ?? null) : "";
-  $("updates-how").textContent = how;
-  $("updates-how").hidden = !how;
+  // How to update this kind of install, while a newer version is out (install-docs-11), its commands as code. A polite
+  // live region that stays on the page while empty, so it is announced as it fills (install-docs-r2-2).
+  const how = s.phase === "available" ? updateHowTo(platform?.install ?? null, s.latest) : [];
+  $("updates-how").replaceChildren(...how.map(segmentNode));
   ($("updates-open") as HTMLButtonElement).hidden = s.phase !== "available";
   const check = $("updates-check") as HTMLButtonElement;
   check.hidden = s.phase === "off";

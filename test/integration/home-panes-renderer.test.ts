@@ -645,8 +645,15 @@ describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 pro
     const page = await open("checks", { settings, platform: linux("rpm"), updates: out });
     await expect.poll(() => page.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out.");
     await expect.poll(() => page.locator("#updates-how").isVisible()).toBe(true);
-    expect(await page.locator("#updates-how").textContent()).toBe("To update, quit Ember, download the new RPM from See what's new… and install it with sudo dnf upgrade.");
+    // The command names the downloaded file, set as code: a bare `sudo dnf upgrade` upgrades the whole system and
+    // leaves Ember as it was (install-docs-r2-2).
+    expect(await page.locator("#updates-how").textContent()).toBe("To update, quit Ember, download the new RPM from See what's new…, then run sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm in the folder you saved it to.");
+    expect(await page.locator("#updates-how code").allTextContents()).toEqual(["sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm"]);
     expect(await page.locator("#updates-open").isVisible()).toBe(true);
+    // A screen reader hears it: announced as it fills, and read with See what's new…, where the notification's click
+    // lands (install-docs-r2-2).
+    expect(await page.locator("#updates-how").getAttribute("aria-live")).toBe("polite");
+    expect(await page.locator("#updates-open").getAttribute("aria-describedby")).toBe("updates-how");
     await page.locator("#updates-h").scrollIntoViewIfNeeded();
     await evidence(page, "updates-rpm-1000");
     await page.setViewportSize({ width: 380, height: 800 });
@@ -660,6 +667,8 @@ describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 pro
     const current = await open("checks", { settings, platform: linux("appimage"), updates: { phase: "current", latest: null, checkedAt: out.checkedAt } });
     await expect.poll(() => current.locator("#updates-status").textContent()).toBe("You have the latest version.");
     expect(await current.locator("#updates-how").isVisible()).toBe(false);
+    // Still on the page while it says nothing, so its words are announced when they come (accessibility-visual-c1-1).
+    expect(await current.locator("#updates-how").evaluate(el => ({ hidden: (el as HTMLElement).hidden, text: el.textContent }))).toEqual({ hidden: false, text: "" });
     await current.close();
     const dev = await open("checks", { settings, platform: linux(null), updates: out });
     await expect.poll(() => dev.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out.");
