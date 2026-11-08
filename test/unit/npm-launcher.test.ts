@@ -16,7 +16,13 @@ import { Writable } from "node:stream";
 import { afterHandover, assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notChecked, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
-const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
+// The real spawn, which a test can make refuse a program as a security policy does (install-docs-v5-1).
+vi.mock("node:child_process", async importOriginal => {
+  const real = await importOriginal<typeof import("node:child_process")>();
+  return { ...real, spawn: vi.fn(real.spawn) };
+});
+
+const read =(f: string) => fs.readFileSync(path.resolve(f), "utf8");
 const root = JSON.parse(read("package.json"));
 const launcher = JSON.parse(read("packages/npm/package.json"));
 
@@ -925,6 +931,99 @@ describe("starting Ember from the launcher", () => {
       await server.close();
     }
   });
+
+  /** A stand-in AppImage of this package's version in a new cache folder, served once; it says where it is and runs for 12 s. */
+  async function installedStandIn() {
+    const v = packageVersion(), asset = `Ember-${v}-x86_64.AppImage`;
+    const body = "#!/bin/sh\necho $$ > \"$EMBER_TEST_PID\"\nexec sleep 12\n";
+    const server = await serve({ [`/v${v}/${asset}`]: body, [`/v${v}/SHA256SUMS`]: `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
+    const cache = tempDir();
+    const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, DISPLAY: ":99", ...noNpmrc };
+    try {
+      return { v, cache, env, installed: await ensureInstalled({ version: v, platform: "linux", arch: "x64", env }) };
+    } finally {
+      await server.close();
+    }
+  }
+  const refusedBy = (exe: string, code: string) => `This computer didn't let Ember start (${code}): a security policy such as fapolicyd, antivirus, or a disk that doesn't let programs run may be blocking ${exe}. Ask whoever manages this computer to allow it, or set EMBER_NPM_CACHE to a folder where programs may run, then run 'ember' again.`;
+
+  it("says this computer didn't let Ember start, not that the cache folder is another user's, when a security policy refuses to run it (install-docs-v5-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const { cache, env, installed } = await installedStandIn();
+    const real = (await vi.importActual<typeof import("node:child_process")>("node:child_process")).spawn;
+    // As fapolicyd answers an untrusted program's start on RHEL 8 (and Windows a blocked Ember.exe): Node throws EPERM.
+    vi.mocked(spawn).mockImplementation(((file: string, ...rest: unknown[]) => {
+      if (file === installed.exe) throw Object.assign(new Error("spawn EPERM"), { errno: -1, code: "EPERM", syscall: "spawn" });
+      return (real as (...a: unknown[]) => unknown)(file, ...rest);
+    }) as never);
+    try {
+      for (const args of [[], ["doctor"]]) {
+        const r = await captured(() => main(args, { platform: "linux", env, earlyMs: 300 }).then(c => c, (e: Error) => e));
+        expect((r.result as Error).message, `ember ${args.join(" ")}`).toBe(refusedBy(installed.exe, "EPERM"));
+      }
+    } finally {
+      vi.mocked(spawn).mockImplementation(real);
+    }
+    // The folder is this user's own, and writable.
+    fs.writeFileSync(path.join(cache, "probe"), "");
+  });
+
+  it.skipIf(process.platform === "win32")("says this computer didn't let Ember start when its program may not run, not that the cache folder is another user's (install-docs-v5-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const { env, installed } = await installedStandIn();
+    // As a disk mounted noexec answers, so does a program with no execute bit: EACCES, which Node reports as an event.
+    fs.chmodSync(installed.exe, 0o644);
+    for (const args of [[], ["doctor"]]) {
+      const r = await captured(() => main(args, { platform: "linux", env, earlyMs: 300 }).then(c => c, (e: Error) => e));
+      expect((r.result as Error).message, `ember ${args.join(" ")}`).toBe(refusedBy(installed.exe, "EACCES"));
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("starts the copy a reinstall said it kept when the cache folder is another user's or on a read-only disk (install-docs-v5-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const { cache, env } = await installedStandIn();
+    const realMkdir = fs.mkdirSync, realTemp = fs.mkdtempSync, realOpen = fs.openSync, realWrite = fs.writeFileSync;
+    for (const [code, why] of [["EACCES", "it, or a folder above it, belongs to another user or is read-only (EACCES), and the copy you had is kept. Run 'ember' to start it, or set EMBER_NPM_CACHE to a folder of your own, or make this one yours again"], ["EROFS", "its disk is read-only (EROFS), and the copy you had is kept. Run 'ember' to start it, or set EMBER_NPM_CACHE to a folder of your own"]] as const) {
+      // Nothing new can be made or written in the cache folder: another user's (a run with sudo that kept HOME, an
+      // administrator's shared one) or a read-only disk.
+      const inCache = (f: unknown) => String(f).startsWith(cache);
+      const denied = (f: unknown) => Object.assign(new Error(`${code}: permission denied, '${String(f)}'`), { code, path: String(f) });
+      const spies = [
+        vi.spyOn(fs, "mkdirSync").mockImplementation(((dir: fs.PathLike, opts?: fs.MakeDirectoryOptions) => {
+          if (inCache(dir) && !fs.existsSync(dir)) throw denied(dir);
+          return realMkdir(dir, opts);
+        }) as never),
+        vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string, opts?: unknown) => {
+          if (inCache(prefix)) throw denied(prefix);
+          return (realTemp as (...a: unknown[]) => string)(prefix, opts);
+        }) as never),
+        vi.spyOn(fs, "openSync").mockImplementation(((file: fs.PathLike, flags?: unknown, ...rest: unknown[]) => {
+          if (inCache(file) && /[wa+]/.test(String(flags ?? "r"))) throw denied(file);
+          return (realOpen as (...a: unknown[]) => number)(file, flags, ...rest);
+        }) as never),
+        vi.spyOn(fs, "writeFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, data: string, opts?: fs.WriteFileOptions) => {
+          if (inCache(file)) throw denied(file);
+          return realWrite(file, data, opts);
+        }) as never),
+      ];
+      const pidFile = path.join(tempDir(), "pid");
+      vi.stubEnv("EMBER_TEST_PID", pidFile);
+      let pid = 0;
+      try {
+        const reinstall = await captured(() => main(["--npm-reinstall"], { platform: "linux", env }).then(c => c, (e: Error) => e));
+        expect((reinstall.result as Error).message, code).toBe(`Ember can't write to ${cache}: ${why}, then run 'ember --npm-reinstall' again.`);
+        // As it says: 'ember' starts it, without a start log, and leaves it running.
+        const r = await captured(() => main([], { platform: "linux", env, earlyMs: 1000 }).then(c => c, (e: Error) => e));
+        expect(r.result, code).toBe(0);
+        expect(r.err, code).toBe("");
+        pid = Number(fs.readFileSync(pidFile, "utf8"));
+        expect(() => process.kill(pid, 0), code).not.toThrow();
+      } finally {
+        for (const s of spies) s.mockRestore();
+        if (pid > 0) try { process.kill(pid); } catch { /* already gone */ }
+      }
+    }
+  }, 20_000);
 });
 
 describe("the launcher's own answers", () => {

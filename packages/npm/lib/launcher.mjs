@@ -788,6 +788,28 @@ function onDisk(err, o) {
 }
 
 /**
+ * Starting a program's own refusal (EPERM, which Node throws, or EACCES, which it reports and startWatched wraps), not
+ * a file's: the error, or the one it wraps; else undefined.
+ * @param {any} err
+ */
+function refusedStart(err) {
+  return [err, err?.cause].find(e => /^spawn\b/.test(String(e?.syscall ?? "")) && (e.code === "EPERM" || e.code === "EACCES"));
+}
+
+/**
+ * What the launcher says when this computer won't run Ember's own program, in place of Node's "spawn EPERM": a
+ * security policy (fapolicyd, which RHEL 8's STIG requires, refuses an untrusted program with EPERM), antivirus (whose
+ * refusal on Windows reads as EPERM too) or, on Linux, a disk that runs no programs (noexec: EACCES), and what to do.
+ * Not cantWrite's sentence: the folder is likely this user's own (install-docs-v5-1).
+ * @param {any} err a refusedStart error
+ * @param {{ exe: string; name: string; platform: string }} o
+ */
+function cantRun(err, o) {
+  const what = o.platform === "linux" ? "a security policy such as fapolicyd, antivirus, or a disk that doesn't let programs run" : "a security policy or antivirus";
+  return `This computer didn't let Ember start (${err.code}): ${what} may be blocking ${o.exe}. Ask whoever manages this computer to allow it, or set EMBER_NPM_CACHE to a folder where programs may run, then run '${o.name}' again.`;
+}
+
+/**
  * Takes the version's install lock: a folder beside the version's, with an `owner` file naming this process and
  * computer. A lock left by an installer that has stopped (killed, crashed) is taken over, and the half-made work
  * folders it left are removed; one whose owner may still be at work (running, on another computer, or not named yet)
@@ -939,8 +961,8 @@ export function runMode(args) {
 const EARLY_MS = 3000;
 
 /**
- * Starts `cmd`. Attached, it waits and passes on its output and exit code. Detached, its stderr goes to `log` and it
- * is watched for `earlyMs`: if it stops in that time with an error, what it said is printed and its exit code
+ * Starts `cmd`. Attached, it waits and passes on its output and exit code. Detached, its stderr goes to `log` (or
+ * nowhere, where the log can't be made in a folder this user can't write in) and it is watched for `earlyMs`: if it stops in that time with an error, what it said is printed and its exit code
  * returned; otherwise it is left running and 0 returned. (A pipe would break once the launcher exits, and Ember's
  * writes to a closed pipe would fail.)
  * @param {{ file: string; args: string[] }} cmd
@@ -967,26 +989,34 @@ export async function startWatched(cmd, o) {
       const child = spawn(cmd.file, cmd.args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: false });
       child.stdout.pipe(stdout, { end: false });
       child.stderr.pipe(stderr, { end: false });
-      child.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
+      child.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`, { cause: err })));
       child.once("close", (code, signal) => resolve({ code: code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 1), stayed: false }));
     });
   }
-  const fd = fs.openSync(o.log, "w", 0o600);
+  let fd = null;
+  try {
+    fd = fs.openSync(o.log, "w", 0o600);
+  } catch (err) {
+    // A folder this user can't write in (another user's, as a run with sudo or an administrator's shared cache leaves
+    // it, or a read-only disk): the copy there still starts, only without a log of what it says, so a reinstall's
+    // "the copy you had is kept. Run 'ember' to start it" holds (install-docs-v5-2). A full disk is said (install-docs-r4-2).
+    if (!LOCKED.has(/** @type {any} */ (err)?.code)) throw err;
+  }
   let child;
   try {
     child = await new Promise((resolve, reject) => {
-      const c = spawn(cmd.file, cmd.args, { detached: true, stdio: ["ignore", "ignore", fd], windowsHide: false });
-      c.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
+      const c = spawn(cmd.file, cmd.args, { detached: true, stdio: ["ignore", "ignore", fd ?? "ignore"], windowsHide: false });
+      c.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`, { cause: err })));
       c.once("spawn", () => resolve(c));
     });
     try {
-      fs.writeSync(fd, `pid ${child.pid}\n`);
+      if (fd !== null) fs.writeSync(fd, `pid ${child.pid}\n`);
     } catch {
       // No room for it (a disk that filled since Ember was installed): Ember has started all the same, and is watched
       // and let go as ever, so the start isn't said as a failure, nor the terminal held until Ember quits (install-docs-r4-2).
     }
   } finally {
-    fs.closeSync(fd);
+    if (fd !== null) fs.closeSync(fd);
   }
   const ended = await new Promise(resolve => {
     const timer = setTimeout(() => resolve(null), o.earlyMs ?? EARLY_MS);
@@ -994,7 +1024,7 @@ export async function startWatched(cmd, o) {
   });
   child.unref();
   if (!ended || ended.code === 0) return { code: 0, stayed: !ended };
-  const said = fs.readFileSync(o.log, "utf8").replace(/^pid \d+\n/m, "").trim();
+  const said = fd === null ? "" : fs.readFileSync(o.log, "utf8").replace(/^pid \d+\n/m, "").trim();
   stderr.write(`ember-copilot: Ember stopped as it started (${ended.code === null ? `signal ${ended.signal}` : `exit ${ended.code}`})${said ? `:\n${said.slice(-4000)}` : "."}\n`);
   return { code: ended.code ?? 1, stayed: false };
 }
@@ -1118,10 +1148,14 @@ export async function main(argv, o = {}) {
   const p = platform === "win32" ? pathWin32 : pathPosix;
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
   if (mode.attached && platform === "darwin") return await doctorMac(installed, mode.args, log);
-  const { code, stayed } = await startWatched(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs }).catch(err => {
-    // A disk too full to make the start log in the cache folder (install-docs-r4-2), or a folder this user can't write
-    // in (install-docs-c4-1), said as this computer's.
-    throw onDisk(err, { folder: p.dirname(installed.dir), version, name, making: true });
+  const cmd = launchCommand(platform, installed, mode.args);
+  const { code, stayed } = await startWatched(cmd, { attached: mode.attached, log, earlyMs: o.earlyMs }).catch(err => {
+    // This computer refusing to run Ember's program (a security policy such as fapolicyd, antivirus), said as such,
+    // not as a folder this user can't write in, which doesn't stop a start (install-docs-v5-1); a disk too full to make
+    // the start log in the cache folder, said as this computer's (install-docs-r4-2).
+    const refused = cmd.file === installed.exe ? refusedStart(err) : undefined;
+    if (refused) throw new Error(cantRun(refused, { exe: installed.exe, name, platform }), { cause: err });
+    throw onDisk(err, { folder: p.dirname(installed.dir), version, name });
   });
   if (!mode.attached && code === 0) {
     // Is this version what runs now? Still running after the watch, or its folder in a running command line (a Mac's

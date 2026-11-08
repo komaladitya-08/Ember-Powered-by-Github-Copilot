@@ -2399,7 +2399,12 @@ run attached (`runMode()`, `start()`: the report and the exit code reach the ter
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
 Ember that stops at once is reported with what it said and its exit code. The log's `pid` line is written best-effort,
 so a disk that filled since the install neither fails a start that worked nor holds the terminal until Ember quits; a
-disk too full to make the log is `noRoom()`'s sentence. The AppImage's AppRun and the RPM's `ember`
+disk too full to make the log is `noRoom()`'s sentence. A log it can't make in a folder this user can't write in
+(`EACCES`, `EPERM`, `EROFS`: another user's, an administrator's shared one, a read-only disk) is left out, so the copy
+there still starts, as a `--npm-reinstall` that stopped there says, only without what it said if it stops at once.
+This computer refusing to start Ember's program (`EPERM` or `EACCES` from starting it: a security policy such as
+fapolicyd, antivirus, a `noexec` disk) is `cantRun()`'s sentence, never `cantWrite()`'s.
+The AppImage's AppRun and the RPM's `ember`
 take `--doctor` as well as `doctor`, and `--help`/`-h` (the launcher answers those itself with `usage()`, since Ember.exe
 and Ember.app have none). On Linux without `DISPLAY`, a plain start says so in the launcher's own words (`noDisplay()`,
 naming the command as it was run) before downloading anything. Once a plain start has kept running past its 3 s watch

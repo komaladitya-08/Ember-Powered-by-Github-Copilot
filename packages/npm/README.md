@@ -34,8 +34,11 @@ Needs Node.js 18.17 or later. Any arguments are passed on to Ember. `ember docto
 setup check in the terminal: it prints the report and exits with the check's code (on a Mac through `open`, so macOS
 judges Ember's own permissions). A plain `ember` starts Ember and returns after a few seconds; if Ember stops in that
 time (no display, for example), the launcher prints what it said and exits with its code instead of saying it started.
-What Ember prints after that goes to `.<v>-start.log` beside the version folder (a disk too full to write in it
-doesn't stop Ember starting; one too full to make the file is said as such). On Linux without a display (an ssh
+What Ember prints after that goes to `.<v>-start.log` beside the version folder (a disk too full to write in it, or a
+cache folder you can't write in, doesn't stop Ember starting; one too full to make the file is said as such). If this
+computer doesn't let Ember start (a security policy such as fapolicyd, or antivirus), the launcher says so: ask
+whoever manages it to allow Ember, or set `EMBER_NPM_CACHE` to a folder where programs may run.
+On Linux without a display (an ssh
 session without `-X`, a text console), it says to start `ember` inside your desktop session or to run `ember doctor`,
 and downloads nothing. `ember --help` lists what Ember takes, and the launcher's own options.
 
