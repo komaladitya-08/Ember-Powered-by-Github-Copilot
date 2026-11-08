@@ -1068,6 +1068,11 @@ function start(): void {
   const answerSpeech = new SpeechStream();
   let answerSpoken = false;
   let answerInterrupted = false;
+  /**
+   * Stop speaking silenced this answer: the rest of it isn't said, but its words still reach the bubble, Home and the
+   * transcript, and it is still the answer (the suggestions, Read the last answer: voice-speaking-c1-1).
+   */
+  let answerHushed = false;
   let answerEpoch = 0;
   /** How long each spoken request takes to be answered aloud, step by step: one `voice.latency` line, times only. */
   const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
@@ -1125,23 +1130,27 @@ function start(): void {
     lastAskByVoice = false;
     turnAnswer = "";
     lastReply = "";
+    answerHushed = false;
     voice?.hush();
   };
   /**
-   * Stop speaking (the handle's menu, while Ember talks): its voice stops and the rest of this answer isn't said, as on
-   * a cut-in, while the answer's words and every task go on (voice-speaking-5). Stop everything stays the kill switch.
+   * Stop speaking (the handle's menu, while Ember talks): its voice stops and the rest of this answer isn't said, while
+   * the answer's words and every task go on (voice-speaking-5). The conductor's answer isn't interrupted, which would
+   * drop the rest of its words and mark it stopped (voice-speaking-c1-1). Stop everything stays the kill switch.
    */
   const stopSpeaking = (source: "menu") => {
     log.info("voice.stop_speaking", { source });
-    if (agent?.answerOpen) agent.interruptAnswer();
+    const open = !!agent?.answerOpen;
     resetAnswerSpeech();
+    answerHushed = open;
   };
   /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
   const pauseAnswerSpeech = () => {
-    const spoken = lastAskByVoice, interrupted = answerInterrupted;
+    const spoken = lastAskByVoice, interrupted = answerInterrupted, hushed = answerHushed;
     resetAnswerSpeech();
     lastAskByVoice = spoken;
     answerInterrupted = interrupted;
+    answerHushed = hushed;
     agent?.pauseAnswer();
   };
 
@@ -3282,11 +3291,12 @@ function start(): void {
       },
       onAnswerInterrupted: resetAnswerSpeech,
       onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
-      onAnswerEnd: text => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); lastReply = text; sayStreamed(answerSpeech.finish(text)); },
-      onAnswer: text => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; sayStreamed(answerSpeech.finish(text)); },
+      // An answer whose voice Stop speaking silenced is still the answer, unsaid (voice-speaking-c1-1).
+      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text)); },
+      onAnswer: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
-        aborted ||= answerInterrupted || !!confirmer?.waiting;
+        aborted ||= (answerInterrupted && !answerHushed) || !!confirmer?.waiting;
         cancelAck();
         // Nothing will be heard of a turn that was stopped, or not spoken: it is logged as it stands.
         if (aborted || !answerSpoken) turnLatency.end();
@@ -3303,6 +3313,7 @@ function start(): void {
         lastAskByVoice = false;
         turnAnswer = "";
         answerInterrupted = true;
+        answerHushed = false;
         syncListenOnce();
       },
       onStatus: status => {

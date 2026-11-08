@@ -280,7 +280,7 @@ describe("main's answer speech ownership", () => {
     w.agent.answerOpen = true;
     const hushes = w.voice.hush.mock.calls.length;
     w.stopSpeaking("menu");
-    expect(w.agent.interruptAnswer).toHaveBeenCalledOnce();
+    expect(w.agent.interruptAnswer).not.toHaveBeenCalled();
     expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
     expect(w.agent.abortAll).not.toHaveBeenCalled();
     // The rest of this answer isn't said; the next request's answer is.
@@ -292,6 +292,46 @@ describe("main's answer speech ownership", () => {
     // Offered only while Ember speaks, beside Stop everything.
     const main = fs.readFileSync("app/main/main.ts", "utf8");
     expect(main).toContain(`...(voice?.speaking ? [{ label: "Stop speaking", click: () => stopSpeaking("menu") }] : []),`);
+  });
+
+  it("keeps the whole answer after Stop speaking: the conductor isn't stopped, and the reply is still the last answer (voice-speaking-c1-1)", () => {
+    const w = wiring();
+    w.onTurnStart({ text: "Tell me about the reports", spoken: true });
+    w.onAnswerDelta("The first is a list of sales. The second");
+    w.agent.answerOpen = true;
+    w.voice.speaking = true;
+    w.stopSpeaking("menu");
+    // Only the voice stops: the conductor's answer goes on reaching the bubble, Home and the transcript.
+    expect(w.agent.interruptAnswer).not.toHaveBeenCalled();
+    const spoken = w.voice.speak.mock.calls.length;
+    w.onAnswerDelta(" is a list of costs. The third is a summary of both, with a marker word.");
+    w.onAnswerEnd("The first is a list of sales. The second is a list of costs. The third is a summary of both, with a marker word.");
+    w.onAnswer("The first is a list of sales. The second is a list of costs. The third is a summary of both, with a marker word.");
+    expect(w.voice.speak).toHaveBeenCalledTimes(spoken);
+    w.agent.answerOpen = false;
+    w.onTurnEnd(false);
+    // The turn ended whole: what the user might say next is worked out from the whole reply, and nothing listens on
+    // after a voice the user chose to silence.
+    expect(w.personal.answered).toHaveBeenCalledWith("The first is a list of sales. The second is a list of costs. The third is a summary of both, with a marker word.", expect.objectContaining({ spoken: false }));
+    expect(w.voice.followUp).not.toHaveBeenCalled();
+    expect(w.voice.speak).toHaveBeenCalledTimes(spoken);
+    // The next request speaks again.
+    w.onTurnStart({ text: "And the next one?", spoken: false });
+    w.onAnswer("The next answer.");
+    expect(w.voice.speak).toHaveBeenLastCalledWith("The next answer.", { append: false });
+  });
+
+  it("still ends a turn stopped by a cut-in as stopped, after an earlier Stop speaking (voice-speaking-c1-1)", () => {
+    const w = wiring();
+    w.onTurnStart({ text: "Tell me about the reports", spoken: false });
+    w.onAnswerDelta("The first sentence. The second");
+    w.agent.answerOpen = true;
+    w.stopSpeaking("menu");
+    // A wake or a cut-in stops the answer itself: nothing of it counts as answered.
+    w.interrupt();
+    w.onAnswer("The first sentence. The second sentence.");
+    w.onTurnEnd(false);
+    expect(w.personal.answered).not.toHaveBeenCalled();
   });
 
   it("keeps background results on cards during a foreground request and appends them after playback", () => {
