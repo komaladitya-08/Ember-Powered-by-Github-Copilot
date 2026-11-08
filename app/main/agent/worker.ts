@@ -245,12 +245,19 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /**
+ * The helper's own answers that it can't read any app (tasks-approvals-8): its Python bindings missing
+ * (ember_atspi.py), no session bus, or macOS not having given Ember the Accessibility permission (ax-darwin-read.ts).
+ * A step can't work again until the user fixes that, so the model is never told to try again.
+ */
+const HELPER_CANT_READ = /accessibility (helper|bridge)|python3-pyatspi is not installed|^no session bus$|\bAccessibility permission\b/i;
+
+/**
  * A tool's result when its handler threw: the accessibility helper's failures as what the user can do about them (the
  * setup check says what's wrong), anything else quoted as untrusted words (an error may carry screen text).
  */
 function toolFailure(err: unknown): ToolResultObject {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/accessibility (helper|bridge)/i.test(msg)) {
+  if (HELPER_CANT_READ.test(msg)) {
     return fail("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
   }
   return fail(`That step didn't work: ${q(msg, 200)}. Call perceive_window and try again, or finish the task saying what's left.`);

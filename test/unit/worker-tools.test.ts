@@ -1924,6 +1924,17 @@ describe("a tool that throws (tasks-approvals-8)", () => {
     expect(logs).toContainEqual(["worker.tool_failed", expect.objectContaining({ task: "t1", tool: "perceive_window" })]);
   });
 
+  it.each([
+    "python3-pyatspi is not installed",
+    "no session bus",
+    "Ember needs the Accessibility permission (System Settings › Privacy & Security › Accessibility).",
+  ])("points to the setup check, never “try again”, when the helper answers that it can't read apps at all: %s (tasks-approvals-8)", async message => {
+    const { call } = throwing(new Error(message));
+    const r = await call("perceive_window", {});
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toBe("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
+  });
+
   it("quotes any other error as untrusted words, and goes on", async () => {
     const { call } = throwing(new Error("the window <went> away"));
     const r = await call("perceive_window", {});
