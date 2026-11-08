@@ -2323,8 +2323,9 @@ Answer speech belongs to the request that actually starts, including queued type
 The npm launcher serialises installs of a version with a cache-adjacent directory lock, keeps the previous install
 as a backup until publication succeeds, and restores it after a failed publication rename. If rollback fails too,
 both the backup and checked stage are retained and their paths reported. The lock holds an `owner` file (`<pid>
-<hostname>`); SIGINT, SIGTERM and SIGHUP while it is held abort the download and remove the work folder and the lock
-(exit 128 + the signal), and a later installer takes over a lock only when its owner was on this computer and that pid
+<hostname>`); SIGINT, SIGTERM and SIGHUP while it is held abort the download, or the unpacking (`unzip()` runs tar.exe,
+ditto or unzip asynchronously, so a stop is heard and said as one), and remove the work folder and the lock (exit 128 +
+the signal), and a later installer takes over a lock only when its owner was on this computer and that pid
 is gone (`takeLock()`, through a `taken-<pid>` folder only one installer can make), removing the stopped one's work
 folders unless they hold a saved `previous` copy. `packages/npm/README.md` says what a person sees. Downloads use
 node:http and node:https, not fetch, through the proxy npm would use (`proxyFor()`: npm's `https-proxy` or `proxy`
@@ -2344,6 +2345,7 @@ cache's other complete versions (renamed aside first, so a Windows Ember running
 keeps it), never one whose installer holds its lock or whose folder a running program's command line
 (`ps -axo command=`) names; the setup check and `--npm-install-only` remove nothing, because only a running Ember points
 **Start Ember when I log in** at itself. A start that ended at once with 0 and isn't what runs has handed over to an
-Ember already running (`startWatched()`): it removes nothing and says so (`handedOver()`, naming the cache's version
-that runs when `ps` shows it). Tests in
+Ember already running (`startWatched()`): it removes nothing and says so (`afterHandover()`: `handedOver()`, naming
+the cache's version that runs when `ps` shows it; where `ps` isn't read, on Windows, the advice to quit only when the
+cache holds another version). Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.

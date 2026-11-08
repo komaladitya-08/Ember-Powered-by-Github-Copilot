@@ -469,31 +469,41 @@ async function download(url, file, o) {
 }
 
 /**
- * Runs a command to completion, throwing with its output when it fails.
+ * Runs a command to completion, rejecting with its output when it fails. Not spawnSync: unpacking takes seconds, and
+ * the launcher must hear a stop meanwhile (`signal` ends the command).
  * @param {string} file
  * @param {string[]} args
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<void>}
  */
-function run(file, args) {
-  const r = spawnSync(file, args, { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
-  if (r.error) throw new Error(`${file} could not start: ${r.error.message}`);
-  if (r.status !== 0) throw new Error(`${file} ${args.join(" ")} failed (exit ${r.status}): ${`${r.stderr}${r.stdout}`.trim().slice(-2000)}`);
+function run(file, args, signal) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], signal });
+    let said = "";
+    const keep = (/** @type {Buffer} */ d) => { said = `${said}${d}`.slice(-4000); };
+    child.stdout.on("data", keep);
+    child.stderr.on("data", keep);
+    child.once("error", err => { if (!signal?.aborted) reject(new Error(`${file} could not start: ${err.message}`)); });
+    child.once("close", (code, sig) => code === 0 ? resolve() : reject(new Error(`${file} ${args.join(" ")} failed (exit ${code ?? sig}): ${said.trim().slice(-2000)}`)));
+  });
 }
 
 /**
  * Unpacks a zip into `dir`: Windows's tar.exe, or PowerShell's Expand-Archive when tar.exe is missing; ditto on macOS
- * (it keeps the app's symlinks and signature).
+ * (it keeps the app's symlinks and signature). `signal` ends it.
  * @param {string} zip
  * @param {string} dir
+ * @param {AbortSignal} [signal]
  */
-function unzip(zip, dir) {
+function unzip(zip, dir, signal) {
   if (process.platform === "win32") {
     const tar = pathWin32.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
-    if (fs.existsSync(tar)) return run(tar, ["-x", "-f", zip, "-C", dir]);
+    if (fs.existsSync(tar)) return run(tar, ["-x", "-f", zip, "-C", dir], signal);
     const q = (/** @type {string} */ s) => `'${s.replace(/'/g, "''")}'`;
-    return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath ${q(zip)} -DestinationPath ${q(dir)} -Force`]);
+    return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath ${q(zip)} -DestinationPath ${q(dir)} -Force`], signal);
   }
-  if (process.platform === "darwin") return run("ditto", ["-x", "-k", zip, dir]);
-  return run("unzip", ["-q", zip, "-d", dir]);
+  if (process.platform === "darwin") return run("ditto", ["-x", "-k", zip, dir], signal);
+  return run("unzip", ["-q", zip, "-d", dir], signal);
 }
 
 /**
@@ -567,7 +577,12 @@ export async function ensureInstalled(o) {
     const stage = p.join(work, "app");
     fs.mkdirSync(stage);
     if (target.kind === "zip") {
-      unzip(file, stage);
+      const failed = await unzip(file, stage, stop.signal).then(() => null, err => err);
+      // Ctrl+C reaches the unpacker too, which can end before the launcher hears of it: a moment for the stop to
+      // arrive, so it is said as a stop, not as the unpacker's failure (install-docs-r3-1).
+      if (failed && !stop.signal.aborted) await new Promise(resolve => setTimeout(resolve, 100));
+      if (stop.signal.aborted) throw stop.signal.reason;
+      if (failed) throw failed;
       fs.rmSync(file, { force: true });
     } else {
       fs.renameSync(file, p.join(stage, target.asset));
@@ -870,6 +885,26 @@ export function handedOver(version, older, name) {
 }
 
 /**
+ * What the launcher says when the Ember it started ended at once with 0 and isn't what runs: it handed what was asked
+ * to an Ember already running (or, on a Mac, open(1) ended, as it always does).
+ * @param {{ version: string; platform: string; name: string; running: string | null; others: { version: string; dir: string }[] }} o
+ *   running: the running programs' command lines (ps), or null where they can't be read (Windows); others: the
+ *   cache's other complete versions
+ */
+export function afterHandover(o) {
+  const sep = o.platform === "win32" ? "\\" : "/";
+  const running = o.running;
+  const older = running === null ? null : o.others.find(c => running.includes(`${c.dir}${sep}`))?.version ?? null;
+  if (older !== null) return handedOver(o.version, older, o.name);
+  // A Mac's open(1) tells nothing, and a new Ember.app may still be starting (Gatekeeper's first check).
+  if (o.platform === "darwin") return `started Ember ${o.version}`;
+  // Where what runs can't be read (Windows), only another version in the cache could be an older Ember running: with
+  // none, running `ember` again for its settings, as the help says, isn't told it may be out of date (install-docs-r3-3).
+  if (running === null && !o.others.length) return "Ember was already running, so it took this.";
+  return handedOver(o.version, null, o.name);
+}
+
+/**
  * The command the person ran, to name it in what the launcher says: `npx ember-copilot` under npx (which npm runs
  * with npm_command "exec"), otherwise `ember-copilot` or `ember` as its bin was called (npm's Windows shims run the
  * script itself, which reads as `ember`).
@@ -974,10 +1009,8 @@ export async function main(argv, o = {}) {
       // Nothing is removed: Start at login still points at the one running.
       let names = [];
       try { names = fs.readdirSync(parent); } catch { /* No cache folder to read: the older one can't be named. */ }
-      const older = names.find(v => v !== version && /^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(v) && shows(p.join(parent, v))) ?? null;
-      // A Mac's open(1) tells nothing, and a new Ember.app may still be starting (Gatekeeper's first check).
-      if (older !== null || platform !== "darwin") say(handedOver(version, older, name));
-      else say(`started Ember ${version}`);
+      const others = names.filter(v => v !== version && /^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(v) && fs.existsSync(p.join(parent, v, MARKER)));
+      say(afterHandover({ version, platform, name, running: ps, others: others.map(v => ({ version: v, dir: p.join(parent, v) })) }));
     }
   }
   return code;

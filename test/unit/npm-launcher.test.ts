@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Writable } from "node:stream";
-import { assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
+import { afterHandover, assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
@@ -407,7 +407,7 @@ describe("what the launcher's pages say about proxies and interrupted downloads"
   it("say an interrupted download cleans up after itself, and when a lock is left to the person (install-docs-c2-1)", () => {
     const own = read("packages/npm/README.md").replace(/\s+/g, " ");
     expect(own).not.toContain("Crash recovery is not automatic");
-    expect(own).toContain("Ctrl+C, closing the terminal or stopping the launcher while it downloads ends the download and removes what it had made");
+    expect(own).toContain("Ctrl+C, closing the terminal or stopping the launcher while it downloads or unpacks Ember ends that and removes what it had made, starting nothing");
     expect(own).toContain("takes the lock over and removes the half-made download");
     expect(own).toContain("A stopped `--npm-reinstall` keeps the copy you had, which `ember` starts.");
   });
@@ -488,6 +488,49 @@ describe("an interrupted first download (install-docs-c2-1)", () => {
       expect(again.err()).not.toContain("already downloading");
       expect(ended.code).toBe(0);
       expect(fs.readdirSync(cache)).toEqual([v]);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  // The Windows and macOS releases are zips that take seconds to unpack (tar.exe, ditto). Here the Mac's is installed
+  // on Linux, whose unpacker is unzip: a slow stand-in on PATH, so a stop lands while it works. Signals are POSIX's.
+  it.skipIf(process.platform !== "linux")("says it stopped, keeps nothing and starts nothing when Ctrl+C or a kill lands while the zip is unpacked (install-docs-r3-1)", async () => {
+    const asset = "Ember-9.9.9-mac-arm64.zip", body = Buffer.alloc(4096, 3);
+    const server = await serve({ [`/v9.9.9/${asset}`]: body, "/v9.9.9/SHA256SUMS": `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
+    const bin = tempDir();
+    fs.writeFileSync(path.join(bin, "unzip"), `#!${process.execPath}
+// unzip -q <zip> -d <dir>: says it has begun, then takes 5 s to unpack an Ember.app.
+const fs = require("node:fs"), path = require("node:path");
+fs.writeFileSync(process.env.EMBER_TEST_UNPACKING, "");
+setTimeout(() => { const d = path.join(process.argv[5], "Ember.app", "Contents", "MacOS"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "Ember"), ""); }, 5000);
+`, { mode: 0o755 });
+    const driver = path.join(bin, "install.mjs");
+    // As bin/ember.mjs reports what ensureInstalled throws, for a Mac's release.
+    fs.writeFileSync(driver, `import { ensureInstalled } from ${JSON.stringify(new URL("../../packages/npm/lib/launcher.mjs", import.meta.url).href)};
+ensureInstalled({ version: "9.9.9", platform: "darwin", arch: "arm64", env: process.env }).then(r => { process.stdout.write(r.exe + "\\n"); }, err => {
+  process.stderr.write("ember-copilot: " + err.message + "\\n");
+  process.exitCode = typeof err?.exitCode === "number" ? err.exitCode : 1;
+});
+`);
+    try {
+      // Ctrl+C in a terminal reaches the whole group (the unpacker too); a kill or a process manager, the launcher alone.
+      for (const [how, sig, code] of [["Ctrl+C", "SIGINT", 130], ["a kill", "SIGTERM", 143]] as const) {
+        const cache = tempDir(), unpacking = path.join(tempDir(), "unpacking");
+        const env = { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, EMBER_NPM_QUIET: "1", EMBER_TEST_UNPACKING: unpacking, ...noNpmrc };
+        const child = spawn(process.execPath, [driver], { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+        let out = "", err = "";
+        child.stdout.on("data", d => { out += String(d); });
+        child.stderr.on("data", d => { err += String(d); });
+        const ended = new Promise<number | null>(resolve => child.once("close", c => resolve(c)));
+        for (let i = 0; i < 400 && !fs.existsSync(unpacking); i++) await new Promise(resolve => setTimeout(resolve, 25));
+        expect(fs.existsSync(unpacking), how).toBe(true);
+        process.kill(how === "Ctrl+C" ? -child.pid! : child.pid!, sig);
+        expect(await ended, how).toBe(code);
+        expect(err, how).toBe("ember-copilot: Stopped before Ember 9.9.9 was installed, and nothing was kept. Run 'ember' again to download it.\n");
+        expect(out, how).toBe("");
+        expect(fs.readdirSync(cache), how).toEqual([]);
+      }
     } finally {
       await server.close();
     }
@@ -709,6 +752,23 @@ describe("updating through npm", () => {
     expect(handedOver("0.1.2", null, "npx ember-copilot")).toBe("Ember was already running, so it took this. If it is older than 0.1.2, quit Ember, then run 'npx ember-copilot' again to start 0.1.2.");
     const own = read("packages/npm/README.md").replace(/\s+/g, " ");
     expect(own).toContain("If an older Ember is still running, the new one hands what you asked over to it instead of starting");
+  });
+
+  it("says plainly on Windows that the Ember running took the request, and hedges only when another version in the cache could be it (install-docs-r3-3)", () => {
+    const cache = "C:\\Users\\k\\AppData\\Local\\ember-npm";
+    // Windows' process list isn't read, so with only this version cached the one running is this one, or one from
+    // outside the cache: running `ember` again for its settings, as the help says, isn't told to quit and update.
+    expect(afterHandover({ version: "0.1.1", platform: "win32", name: "ember", running: null, others: [] })).toBe("Ember was already running, so it took this.");
+    expect(afterHandover({ version: "0.1.1", platform: "win32", name: "ember", running: null, others: [{ version: "0.1.0", dir: `${cache}\\0.1.0` }] })).toBe(handedOver("0.1.1", null, "ember"));
+    // Where ps names the running folder, the version is said; one running from outside the cache may be older.
+    const linux = "/home/k/.cache/ember-npm";
+    const older = [{ version: "0.1.1", dir: `${linux}/0.1.1` }];
+    expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: `${linux}/0.1.1/Ember-0.1.1-x86_64.AppImage\n`, others: older })).toBe(handedOver("0.1.2", "0.1.1", "ember"));
+    expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: "/opt/ember/ember\n", others: [] })).toBe(handedOver("0.1.2", null, "ember"));
+    expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: null, others: [] })).toBe("Ember was already running, so it took this.");
+    // A Mac's open(1) ends at once whatever happens: only a cached older version in ps tells a handover there.
+    expect(afterHandover({ version: "0.1.2", platform: "darwin", name: "ember", running: "", others: [] })).toBe("started Ember 0.1.2");
+    expect(afterHandover({ version: "0.1.2", platform: "darwin", name: "ember", running: `/Users/k/Library/Caches/ember-npm/0.1.1/Ember.app/Contents/MacOS/Ember\n`, others: [{ version: "0.1.1", dir: "/Users/k/Library/Caches/ember-npm/0.1.1" }] })).toBe(handedOver("0.1.2", "0.1.1", "ember"));
   });
 
   it("gives update steps, and uninstall steps in an order that works (install-docs-10)", () => {

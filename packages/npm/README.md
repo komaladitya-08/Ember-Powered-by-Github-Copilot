@@ -94,8 +94,8 @@ Only one installer per version runs at a time. A second one says "Another 'ember
 <version>" and starts nothing; run `ember` again once the first has finished. A normal launch can still use a complete
 cached copy while a reinstall downloads.
 
-Ctrl+C, closing the terminal or stopping the launcher while it downloads ends the download and removes what it had
-made, its `.<version>-install-lock` folder included, so the next `ember` starts over (it exits with 130 after Ctrl+C).
+Ctrl+C, closing the terminal or stopping the launcher while it downloads or unpacks Ember ends that and removes what
+it had made, starting nothing, its `.<version>-install-lock` folder included, so the next `ember` starts over (it exits with 130 after Ctrl+C).
 A stopped `--npm-reinstall` keeps the copy you had, which `ember` starts.
 An installer killed outright (`kill -9`, a crash, a power cut) leaves its lock, which names its process: the next
 `ember` on the same computer sees that process is gone, takes the lock over and removes the half-made download. A lock
@@ -112,7 +112,9 @@ when I log in** at itself), removes the older versions from the cache; one that 
 installer is working on, stays until the next start. `ember doctor` and `--npm-install-only` remove nothing, since
 they don't start Ember. If an older Ember is still running, the new one hands what you asked over to it instead of
 starting: the launcher says which version is running ("Ember 0.1.1 is already running, so it took this instead of
-starting 0.1.2") and removes nothing, so quit Ember and run `ember` again.
+starting 0.1.2") and removes nothing, so quit Ember and run `ember` again. On Windows, where the launcher can't see
+which one is running, it says only that Ember was already running and took it, adding the advice to quit when the cache
+also holds another version.
 
 ## Uninstall
 
