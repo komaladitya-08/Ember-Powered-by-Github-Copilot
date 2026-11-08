@@ -81,13 +81,13 @@ They share one emotion rig, so switching never changes behaviour.
   the goal passed off as theirs);
   its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
   note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`; on the
-  no-compositor corner card too, above its buttons, each chord on a line of its own with its word and no
-  " · " left at a line's end), four corner
+  no-compositor corner card too, above its buttons, each chord kept on one line with its word), four corner
   brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
   no-compositor corner card marks it the same way: the tag beside Ember's name and the bordered
-  Allow. The card grows for any question (up to 640 px, inside the work area) so its sentence shows
+  Allow; in its narrow column each chord is a line of its own, with no " · " left at a line's end.
+  The card grows for any question (up to 640 px, inside the work area) so its sentence shows
   whole at Large and Larger text too, and where even that can't hold it, its answers but Not now
   take no press until the sentence shows. A step Ember took **without asking** (Work without asking) shows its announcement with a
   "Without asking" tag in the accent tint, set only by Ember (`BubbleState.autonomous`): a task's
