@@ -273,6 +273,91 @@ describe("when the launcher can't reach the download (install-docs-r2-1)", () =>
     }
   });
 
+  it("says what answered, through which proxy, and what to do when a proxy or server answers with an error, never a bare HTTP status (install-docs-r2-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const tail = `Then run 'ember' again, or download Ember-9.9.9-x86_64.AppImage from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`;
+    // A proxy that can't get to the mirror, answering 502 as a corporate proxy does for a host it can't reach.
+    const proxy = http.createServer((_req, res) => { res.writeHead(502, "Bad Gateway", { "content-type": "text/html" }); res.end("<html>Bad gateway</html>"); });
+    await new Promise<void>(resolve => proxy.listen(0, "127.0.0.1", resolve));
+    const proxyPort = (proxy.address() as AddressInfo).port;
+    // A mirror whose release file is stored elsewhere (as GitHub redirects to its storage host), which is down.
+    const r = release("9.9.9");
+    const store = http.createServer((_req, res) => { res.writeHead(503, "Service Unavailable"); res.end(); });
+    await new Promise<void>(resolve => store.listen(0, "127.0.0.1", resolve));
+    const storePort = (store.address() as AddressInfo).port;
+    const mirror = http.createServer((req, res) => {
+      const url = decodeURIComponent(req.url ?? "");
+      if (url.endsWith(".AppImage")) { res.writeHead(302, { location: `http://127.0.0.1:${storePort}/store${url}` }); res.end(); return; }
+      const body = r.files[url];
+      if (body === undefined) { res.statusCode = 404; res.end(); return; }
+      res.end(body);
+    });
+    await new Promise<void>(resolve => mirror.listen(0, "127.0.0.1", resolve));
+    const mirrorBase = `http://127.0.0.1:${(mirror.address() as AddressInfo).port}`;
+    try {
+      const cache = tempDir();
+      const viaProxy = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { http_proxy: `127.0.0.1:${proxyPort}`, EMBER_NPM_DOWNLOAD_BASE: "http://mirror.invalid", EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+      expect(viaProxy?.message).toBe(`The download of Ember 9.9.9 from the mirror at http://mirror.invalid through the proxy at 127.0.0.1:${proxyPort} failed: the proxy couldn't get an answer from mirror.invalid (502 Bad Gateway). Check http_proxy, which names that proxy, or ask whoever runs it to let this computer reach mirror.invalid. ${tail}`);
+      const redirected = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: mirrorBase, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+      // It names the host that answered, which an allow-list may be missing, not the address it started from.
+      expect(redirected?.message).toBe(`The download of Ember 9.9.9 from the mirror at ${mirrorBase} failed: 127.0.0.1:${storePort} answered 503 Service Unavailable. ${tail.replace("Then run", "Run")}`);
+      for (const err of [viaProxy, redirected]) expect(err?.message).not.toMatch(/downloading|HTTP/);
+      expect(fs.readdirSync(cache)).toEqual([]);
+    } finally {
+      for (const s of [proxy, store, mirror]) { s.closeAllConnections(); await new Promise<void>(resolve => s.close(() => resolve())); }
+    }
+  });
+
+  it("starts with what to do when the download is cut off part way, not with a \"Then\" after no step (install-docs-r3-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const r = release("9.9.9", 4 * 1024 * 1024);
+    // A quarter of the release file, then the connection drops (a mirror restarting, a network blip).
+    const server = http.createServer((req, res) => {
+      const body = r.files[decodeURIComponent(req.url ?? "")];
+      if (body === undefined) { res.statusCode = 404; res.end(); return; }
+      const buf = Buffer.from(body);
+      res.setHeader("content-length", buf.length);
+      if (!String(req.url).endsWith(".AppImage")) { res.end(buf); return; }
+      res.write(buf.subarray(0, buf.length / 4), () => res.socket?.destroy());
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const cache = tempDir();
+    try {
+      const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: base, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+      expect(err?.message).toBe(`The download of ${r.asset} from the mirror at ${base} stopped: the connection was cut off (ECONNRESET). Run 'ember' again, or download ${r.asset} from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`);
+      expect(fs.readdirSync(cache)).toEqual([]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it("says there isn't room, and where, when the disk or quota fills during the download, instead of blaming the download (install-docs-c3-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const r = release("9.9.9", 3 * 1024 * 1024);
+    const server = await serve(r.files);
+    const real = fs.createWriteStream.bind(fs);
+    try {
+      for (const [code, why] of [["ENOSPC", "the disk is full"], ["EDQUOT", "your disk quota is used up"]]) {
+        const cache = tempDir();
+        // As a full disk answers: the write fails with no file named (Node's write streams name none). Linux's
+        // /dev/full is a real one; elsewhere, and for a quota, a stand-in fails the same way.
+        const spy = vi.spyOn(fs, "createWriteStream").mockImplementation(((file: string) => code === "ENOSPC" && fs.existsSync("/dev/full") && String(file).includes(cache) ? real("/dev/full")
+          : new Writable({ write(_chunk, _enc, done) { done(Object.assign(new Error(`${code}: write failed`), { code, syscall: "write" })); } })) as never);
+        try {
+          const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+          expect(err?.message, code).toBe(`There isn't room in ${cache} for Ember 9.9.9 (3 MB): ${why} (${code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run 'ember' again.`);
+        } finally {
+          spy.mockRestore();
+        }
+        expect(fs.readdirSync(cache), code).toEqual([]);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it("picks the proxy as npm does, and leaves out the hosts NO_PROXY names and this computer (install-docs-r2-1)", () => {
     const gh = "https://github.com/x/releases/download/v1/SHA256SUMS";
     const host = (url: string, env: Record<string, string>, npmrc = {}) => proxyFor(url, env, npmrc)?.url.host ?? null;
@@ -314,7 +399,7 @@ describe("what the launcher's pages say about proxies and interrupted downloads"
   it("say which proxy it uses and what to do when the download can't be reached (install-docs-r2-1)", () => {
     const own = read("packages/npm/README.md").replace(/\s+/g, " ");
     const proxies = own.split("## Proxies and offline computers")[1]?.split("## ")[0] ?? "";
-    for (const w of ["npm's `https-proxy` or `proxy` setting", "`HTTPS_PROXY`", "`NO_PROXY`", "`NODE_EXTRA_CA_CERTS`", "`EMBER_NPM_DOWNLOAD_BASE`", "in your browser"]) expect(proxies, w).toContain(w);
+    for (const w of ["npm's `https-proxy` or `proxy` setting", "`HTTPS_PROXY`", "`NO_PROXY`", "`NODE_EXTRA_CA_CERTS`", "`EMBER_NPM_DOWNLOAD_BASE`", "in your browser", "a proxy or server answers with an error", "set `EMBER_NPM_CACHE` to a folder with room"]) expect(proxies, w).toContain(w);
     expect(read("README.md").replace(/\s+/g, " ")).toContain("Behind a proxy it uses npm's proxy setting or `HTTPS_PROXY`, as npm does.");
     expect(usage("ember")).toContain("Downloads go through npm's https-proxy or proxy setting, else HTTPS_PROXY");
   });
@@ -324,6 +409,7 @@ describe("what the launcher's pages say about proxies and interrupted downloads"
     expect(own).not.toContain("Crash recovery is not automatic");
     expect(own).toContain("Ctrl+C, closing the terminal or stopping the launcher while it downloads ends the download and removes what it had made");
     expect(own).toContain("takes the lock over and removes the half-made download");
+    expect(own).toContain("A stopped `--npm-reinstall` keeps the copy you had, which `ember` starts.");
   });
 });
 

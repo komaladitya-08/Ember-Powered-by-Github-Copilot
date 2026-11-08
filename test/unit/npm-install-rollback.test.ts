@@ -205,6 +205,21 @@ describe("npm reinstall publication", () => {
     }
   });
 
+  it("says the copy already installed is kept, and starts with 'ember', when a reinstall is stopped (install-docs-r3-2)", async () => {
+    const h = harness();
+    let stopped!: () => void;
+    h.beforeDownload = () => new Promise<void>(resolve => { stopped = resolve; });
+    const run = h.ensure({ version: "1", force: true }).catch((e: Error) => e);
+    while (!h.downloads) await new Promise(resolve => setTimeout(resolve, 0));
+    h.signals.get("SIGINT")?.("SIGINT");
+    stopped();
+    const err = await run as Error & { exitCode?: number };
+    expect(err.message).toBe("Stopped before Ember 1 was downloaded again, and the copy you had is kept. Run 'ember' to start it, or 'ember --npm-reinstall' to download it again.");
+    expect(err.exitCode).toBe(130);
+    expect(h.disk.get(exe)).toBe("old");
+    expect([...h.disk.keys()].filter(p => p.startsWith("/cache/."))).toEqual([]);
+  });
+
   it("keeps recovery paths and the primary failure when lock cleanup also fails", async () => {
     const h = harness(); h.fail = (_from, to) => to === dir;
     h.cleanupFail = p => p.endsWith("-install-lock");
