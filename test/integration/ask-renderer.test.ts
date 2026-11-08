@@ -249,6 +249,26 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("counts what is sent, so a request at the limit with line breaks after it is never \"too many\" while Send is lit (companion-r2-3)", async () => {
+    const page = await pageAt();
+    try {
+      const request = `Explain this log. ${"x".repeat(1982)}`;
+      expect(request.length).toBe(2000);
+      const input = page.locator("#q");
+      await input.fill(`${request}\n\n\n`);
+      expect(await page.locator("#cut").innerText()).toBe("2,000 of 2,000 characters.");
+      expect(await input.getAttribute("aria-invalid")).toBeNull();
+      expect(await page.locator("#send").isEnabled()).toBe(true);
+      // Leading spaces aren't sent either; one character more than fits is said, and nothing goes.
+      await input.fill(`   ${request}x\n`);
+      expect(await page.locator("#cut").innerText()).toBe("2,001 of 2,000 characters, 1 too many.");
+      expect(await page.locator("#send").isDisabled()).toBe(true);
+      await input.fill(`${request}\n\n\n`);
+      await page.locator("#send").click();
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([{ kind: "ask", text: request }]);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("retains the draft and selection through late context, microphone updates and dismissal", async () => {
     const page = await pageAt();
     try {

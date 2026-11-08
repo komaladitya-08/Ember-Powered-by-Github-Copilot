@@ -103,7 +103,8 @@ function fit(): void {
   const lines = fieldLines(input.scrollHeight, s);
   field.style.flexBasis = `${fieldHeight(lines, s)}px`;
   input.classList.toggle("scrolls", input.scrollHeight > fieldHeight(lines, s) + 1);
-  const count = askCount(input.value.length);
+  // What is sent (trimmed), as Send and Enter judge it (companion-r2-3: trailing line breaks made it "too many").
+  const count = askCount(input.value.trim().length);
   const full = !!count;
   if (cut.textContent !== count) cut.textContent = count;
   cut.hidden = !full;
