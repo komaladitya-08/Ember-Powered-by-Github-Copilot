@@ -2187,10 +2187,13 @@ page crashing still end it, and closing the window clears the answer and an unap
 them).
 
 While Ember reconnects or can't connect for now (the runtime restarted, a model or the provider changed, the model
-service out of reach, or, with no GitHub sign-in, your own provider turned off or waiting for its card for a new
-address), Projects keeps the chosen files, the request being typed, the answer and its unapplied diff,
-says "Ember isn't connected right now. Your work here stays, and you can send once it connects.", and only sending,
-applying and the command wait (`projectAfterStatus`, app/main/agent/project.ts). A request under way then stops and
+service out of reach, or, with no GitHub sign-in, your own provider turned off or waiting for its card),
+Projects keeps the chosen files, the request being typed, the answer and its unapplied diff,
+says "Ember isn't connected right now. Your work here stays, and you can send once it connects.", and only what
+reaches the model service waits: choosing files, sending, saved workspaces and the command (`projectAfterStatus`,
+app/main/agent/project.ts). **Export answer…**, **Export diff…**, **Apply patch…** and a file's **Remove** work on
+what is kept here and send nothing, so they go on working (`projectMay`'s `local`, integrations-r3-2); consent, the
+screen lock, the organisation's actions switch and the settings window in view still hold. A request under way then stops and
 says the connection dropped. Sign out, another account and the organisation's lockdown clear it all. Once another
 model service, address, key or GitHub account is in force, the previous request and answer stay in view but are no
 longer offered as context, so an answer from one service is never sent to another.

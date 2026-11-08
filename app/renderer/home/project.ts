@@ -73,10 +73,12 @@ export function mountProject() {
   let failedAt = 0;
   const draw = () => {
     pick.disabled = !ready || !!busy;
-    apply.disabled = !ready || !!busy || !patchCurrent;
+    // Applying the reviewed patch, exporting and a file's Remove work on what is kept here and send nothing: they don't
+    // wait for a connection (integrations-r3-2).
+    apply.disabled = !!busy || !patchCurrent;
     apply.hidden = !patchCurrent;
-    exportAnswer.disabled = exportDiff.disabled = !ready || !!busy;
-    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || !!busy;
+    exportAnswer.disabled = exportDiff.disabled = !!busy;
+    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !!busy;
     form.setAttribute("aria-busy", String(busy === "running"));
     send.textContent = busy === "running" ? "Working…" : "Send selected files";
     const off = localCommands === "off" || localCommands === "managed";
@@ -160,7 +162,7 @@ export function mountProject() {
     }
   });
   async function removeFile(name: string): Promise<void> {
-    if (!ready || busy) return;
+    if (busy) return;
     const at = revision;
     busy = "picking";
     let focusAfter: HTMLButtonElement | null = null;
@@ -192,7 +194,7 @@ export function mountProject() {
     }
   }
   const exportOutput = async (kind: "answer" | "diff") => {
-    if (!ready || busy) return;
+    if (busy) return;
     const at = revision;
     busy = "export";
     draw();

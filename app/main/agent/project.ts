@@ -38,6 +38,16 @@ export function projectAfterStatus(s: { phase: string; reason?: string }, exchan
   return "keep";
 }
 
+/**
+ * Whether a Projects action may run now. Each needs consent, an unlocked screen, actions not turned off (LOCKDOWN turns
+ * them off) and the settings window in view (`shown`). What reaches the model service (`send`: choosing what goes,
+ * sending, workspaces, commands) waits for a connection too; work on what is kept here (`local`: export, a file's
+ * Remove, applying the reviewed patch) sends nothing, so it doesn't (integrations-r3-2).
+ */
+export function projectMay(kind: "send" | "local", o: { consented: boolean; locked: boolean; actions: boolean; shown: boolean; ready: boolean }): boolean {
+  return o.consented && !o.locked && o.actions && o.shown && (kind === "local" || o.ready);
+}
+
 /** Said instead of sending a previous answer to another model service or account than the one that gave it (integrations-r1). */
 export const PROJECT_PREVIOUS_ELSEWHERE = "The previous answer came from another model service or account, so Ember didn't send it there. Send again without it.";
 

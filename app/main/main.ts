@@ -67,7 +67,7 @@ import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectAfterStatus, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectAfterStatus, projectMay, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -2285,6 +2285,14 @@ function start(): void {
     agent?.getStatus().phase === "ready" && !!home && !home.isDestroyed();
   /** Project work may start: also with the settings window in view, where it is asked for. */
   const projectAvailable = () => projectContinues() && home?.isVisible() && !home.isMinimized();
+  /**
+   * Work on what Projects keeps here (export, a file's Remove, applying the reviewed patch) sends nothing, so it needs no
+   * connection: the rest of projectAvailable holds (integrations-r3-2).
+   */
+  const projectLocal = () => projectMay("local", {
+    consented: consented(), locked: screenLock?.locked !== false, actions: policy.features.actions !== false,
+    shown: !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized(), ready: agent?.getStatus().phase === "ready",
+  });
   ipcMain.handle(IPC.projectPick, guard(async (): Promise<ProjectSelection> => {
     const names = projectFiles.length ? projectNames(projectFiles) : [];
     const owner = home;
@@ -2313,13 +2321,13 @@ function start(): void {
   }));
   ipcMain.handle(IPC.projectRemove, guard(async (name: unknown): Promise<ProjectSelection> => {
     const files = projectFiles;
-    if (!projectAvailable() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: "Project work is unavailable right now." };
+    if (!projectLocal() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: "Project work is unavailable right now." };
     projectPicking = true;
     try {
       const next = removeProjectFile(files, name);
       const selection = await projectSelection(next);
       if (projectFiles !== files) return { names: [] };
-      if (!projectAvailable()) return { ...await projectSelection(files), error: "Project work is unavailable right now." };
+      if (!projectLocal()) return { ...await projectSelection(files), error: "Project work is unavailable right now." };
       projectFiles = next;
       projectPatch = null;
       projectExchange = null;
@@ -2331,13 +2339,13 @@ function start(): void {
   ipcMain.handle(IPC.projectExport, guard(async (kind: unknown): Promise<{ message: string }> => {
     const output = projectOutput;
     const owner = home;
-    if ((kind !== "answer" && kind !== "diff") || !output || !owner || !projectAvailable() || projectPicking || projectJob) {
+    if ((kind !== "answer" && kind !== "diff") || !output || !owner || !projectLocal() || projectPicking || projectJob) {
       return { message: "Choose an available project answer or diff to export." };
     }
     const text = kind === "diff" ? output.diff : output.answer;
     if (!text) return { message: "No project diff is available to export." };
     projectPicking = true;
-    const current = () => projectOutput === output && home === owner && projectAvailable() === true;
+    const current = () => projectOutput === output && home === owner && projectLocal() === true;
     try {
       const result = await dialog.showSaveDialog(owner, {
         title: kind === "diff" ? "Export project diff" : "Export project answer",
@@ -2396,7 +2404,7 @@ function start(): void {
     const patch = projectPatch;
     const owner = home;
     const record = audit;
-    if (!patch || !owner || !record || !projectAvailable() || projectJob || projectPicking) {
+    if (!patch || !owner || !record || !projectLocal() || projectJob || projectPicking) {
       return { done: false, message: "Draft an applicable patch before trying to apply it." };
     }
     const run = projectJob = new AbortController();
@@ -2405,7 +2413,7 @@ function start(): void {
         type: "warning", title: "Apply project patch", message: `Apply the reviewed patch to ${patch.source.name}?`,
         detail: patch.source.file, buttons: ["Cancel", "Apply patch"], cancelId: 0, defaultId: 0, signal: run.signal,
       });
-      if (response !== 1 || run.signal.aborted || !projectAvailable() || projectPatch !== patch || home !== owner) {
+      if (response !== 1 || run.signal.aborted || !projectLocal() || projectPatch !== patch || home !== owner) {
         return { done: false, message: "Patch application cancelled." };
       }
       applyProjectPatch(patch, run.signal, () => record.write({ event: "confirm", kind: "project-patch", answer: "once" }));

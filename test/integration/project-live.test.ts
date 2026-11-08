@@ -254,7 +254,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps the chosen files, the t
   }
 }, 120_000);
 
-it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps my own provider in force while its new address waits for its card, keeps Projects' work through the switch and while nothing is connected with no GitHub sign-in, and forgets it only at Sign out (integrations-c3-1, integrations-c2-1)", async () => {
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps my own provider in force while its new address waits for its card, keeps Projects' work through the switch and while nothing is connected with no GitHub sign-in, exports it meanwhile, and forgets it only at Sign out (integrations-c3-1, integrations-c2-1, integrations-r3-2)", async () => {
   const requireCjs = createRequire(import.meta.url);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-provider-edit-"));
   const userData = path.join(dir, "profile");
@@ -339,6 +339,13 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps my own provider in forc
     expect(await home.locator("#project-answer").innerText()).toContain(diff);
     await expect.poll(() => home.locator("#project-status").innerText()).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
     expect(await home.locator("#project-send").isEnabled()).toBe(false);
+    // Saving the answer to a file sends nothing, so it doesn't wait for a connection (integrations-r3-2).
+    const saved = path.join(dir, "answer.txt");
+    await app.evaluate(({ dialog }, to) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: to }); }, saved);
+    expect(await home.locator("#project-apply").isEnabled()).toBe(true);
+    await home.locator("#project-export-answer").click();
+    await expect.poll(() => home.locator("#project-output-status").innerText(), { timeout: 15_000 }).toBe("Project answer exported.");
+    expect(fs.readFileSync(saved, "utf8")).toContain(diff);
     // Sign out forgets it all, here and in main.
     await home.evaluate(() => window.ember.signOut());
     await expect.poll(() => home.locator("#project-files").innerText()).toBe("");

@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { readFileSync } from "node:fs";
 import { applyProjectPatch, draftProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
 import { copilotOneShot, type OneShotFailure } from "../../app/main/agent/one-shot";
@@ -205,6 +206,26 @@ describe("Projects' work as Ember's connection changes", () => {
     // Not yet known while it connects: it is decided once it is ready.
     expect(projectAfterStatus({ phase: "starting" }, answered, null)).toBe("keep");
     expect(PROJECT_PREVIOUS_ELSEWHERE).toBe("The previous answer came from another model service or account, so Ember didn't send it there. Send again without it.");
+  });
+  it("lets me export, remove a file and apply the reviewed patch while Ember isn't connected, as they send nothing, and nothing else (integrations-r3-2)", () => {
+    const ok = { consented: true, locked: false, actions: true, shown: true, ready: true };
+    expect(projectMay("send", ok)).toBe(true);
+    expect(projectMay("local", ok)).toBe(true);
+    expect(projectMay("send", { ...ok, ready: false })).toBe(false);
+    expect(projectMay("local", { ...ok, ready: false })).toBe(true);
+    // Consent, the screen lock, actions (LOCKDOWN turns them off) and Home in view hold either way.
+    for (const off of [{ consented: false }, { locked: true }, { actions: false }, { shown: false }]) {
+      for (const kind of ["send", "local"] as const) expect(projectMay(kind, { ...ok, ...off, ready: false }), `${kind} ${JSON.stringify(off)}`).toBe(false);
+      for (const kind of ["send", "local"] as const) expect(projectMay(kind, { ...ok, ...off }), `${kind} ${JSON.stringify(off)}`).toBe(false);
+    }
+    // Main's export, Remove and Apply patch handlers ask the local gate, before and after their dialogs.
+    const main = readFileSync("app/main/main.ts", "utf8");
+    for (const channel of ["projectExport", "projectRemove", "projectApply"]) {
+      const start = main.indexOf(`ipcMain.handle(IPC.${channel},`);
+      const body = main.slice(start, main.indexOf("ipcMain.handle(IPC.", start + 10));
+      expect(body, channel).toContain("projectLocal()");
+      expect(body, channel).not.toContain("projectAvailable()");
+    }
   });
   it("says a request stopped because the connection dropped, not that it was cancelled (integrations-r1)", () => {
     expect(projectStopped(false)).toBe("Project request cancelled.");
