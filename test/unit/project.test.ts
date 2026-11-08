@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { projectCommandFolder, projectCommandText, projectFailureText, projectNames, projectPrompt, projectRequest, PROJECT_MODEL_FAILED, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM } from "../../app/main/agent/project";
 import { applyProjectPatch, draftProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
 import { copilotOneShot, type OneShotFailure } from "../../app/main/agent/one-shot";
@@ -166,6 +166,36 @@ it("words a project's own failures for the files, the wait and the unknown (inte
   expect(projectFailureText({ message: "one-shot timed out", timedOut: true })).toBe("The model took more than two minutes over it. Try fewer or smaller files, or a shorter request.");
   expect(projectFailureText({ message: "fetch failed ECONNREFUSED" }, { provider: "user" })).toBe("I can't reach your model service right now. Check the network, then ask again.");
   expect(projectFailureText(null)).toBe(PROJECT_MODEL_FAILED);
+});
+
+describe("Projects' work as Ember's connection changes", () => {
+  const answered = { scope: "copilot-account" };
+  it("keeps the files, the request, the answer and its diff while Ember reconnects or can't connect for now (integrations-r1)", () => {
+    for (const s of [
+      { phase: "starting" }, { phase: "error", reason: "network" }, { phase: "error", reason: "runtime" }, { phase: "error", reason: "not-answering" },
+      { phase: "error", reason: "sign-in" }, { phase: "error", reason: "models" }, { phase: "ready" },
+    ] as const) {
+      expect(projectAfterStatus(s, answered, "copilot-account"), JSON.stringify(s)).toBe("keep");
+      expect(projectAfterStatus(s, null, null), JSON.stringify(s)).toBe("keep");
+    }
+  });
+  it("clears it all at sign-out and when the organisation's policy locks Ember down (integrations-r1)", () => {
+    expect(projectAfterStatus({ phase: "signed-out" }, answered, null)).toBe("all");
+    expect(projectAfterStatus({ phase: "signed-out" }, null, null)).toBe("all");
+    expect(projectAfterStatus({ phase: "error", reason: "policy" }, answered, null)).toBe("all");
+  });
+  it("never sends an answer from one model service or account to another: only its use as context goes (integrations-r1)", () => {
+    // The user's own provider turned on, its address or key changed, another GitHub account, or an owner not verified.
+    expect(projectAfterStatus({ phase: "ready" }, answered, "own-provider")).toBe("previous");
+    expect(projectAfterStatus({ phase: "ready" }, answered, null)).toBe("previous");
+    // Not yet known while it connects: it is decided once it is ready.
+    expect(projectAfterStatus({ phase: "starting" }, answered, null)).toBe("keep");
+    expect(PROJECT_PREVIOUS_ELSEWHERE).toBe("The previous answer came from another model service or account, so Ember didn't send it there. Send again without it.");
+  });
+  it("says a request stopped because the connection dropped, not that it was cancelled (integrations-r1)", () => {
+    expect(projectStopped(false)).toBe("Project request cancelled.");
+    expect(projectStopped(true)).toBe("Ember lost its connection, so the request stopped. Send it again once Ember is connected.");
+  });
 });
 
 it("verifies the temporary Copilot session before sending and deletes it after an answer", async () => {

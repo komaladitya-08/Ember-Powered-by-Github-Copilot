@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { projectSelection, removeProjectFile } from "../../app/main/agent/project";
 import { exportProjectText } from "../../app/main/agent/project-export";
-import { PROJECT_COMMANDS_OFF, projectAnswerParts, projectBytes, projectCommandsOn, projectSelectionText } from "../../app/renderer/home/project-copy";
+import { PROJECT_COMMANDS_OFF, projectAnswerParts, projectBytes, projectCommandsOn, projectConnectionText, projectSelectionText } from "../../app/renderer/home/project-copy";
 
 let dir: string;
 let privateDir: string;
@@ -43,6 +43,14 @@ it("says commands are off on this computer before a project command is typed, an
   expect(projectCommandsOn({ commands: { "wsl:Ubuntu": { on: true } } })).toBe(false);
   expect(projectCommandsOn({ commands: { local: { on: true } } })).toBe(true);
   expect(projectCommandsOn(null)).toBe(false);
+});
+
+it("says only sending waits while Ember isn't connected, and that the person's work stays (integrations-r1)", () => {
+  expect(projectConnectionText(false, { files: true, work: true })).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
+  expect(projectConnectionText(false, { files: false, work: true })).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
+  expect(projectConnectionText(false, { files: false, work: false })).toBe("Connect a model to work with project files.");
+  expect(projectConnectionText(true, { files: true, work: true })).toBe("Review the selection before sending.");
+  expect(projectConnectionText(true, { files: false, work: true })).toBe("Choose the files for this request.");
 });
 
 it("exports exact inert text only after the destination is chosen, privately and without staging residue", () => {

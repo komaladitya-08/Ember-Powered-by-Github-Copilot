@@ -116,6 +116,7 @@ export const IPC = {
   projectChooseFolder: "project:choose-folder",
   projectRunCommand: "project:run-command",
   projectWorkspace: "project:workspace",
+  projectForgot: "project:forgot",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -419,6 +420,8 @@ export interface EmberHomeApi {
   projectChooseFolder(): Promise<{ folder: string | null; message?: string }>;
   projectRunCommand(command: string): Promise<string>;
   projectWorkspace(input: ProjectWorkspaceAction): Promise<ProjectWorkspaceReply>;
+  /** Main forgot Projects' work: all of it, or only the previous request and answer as context (integrations-r1). */
+  onProjectForgot(fn: (what: "all" | "previous") => void): () => void;
   onAgentStatus(fn: (s: AgentStatus) => void): () => void;
   signIn(): Promise<void>;
   onSignInProgress(fn: (p: SignInProgress) => void): () => void;

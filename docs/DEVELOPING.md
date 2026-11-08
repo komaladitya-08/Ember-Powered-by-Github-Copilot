@@ -2081,6 +2081,14 @@ there when it shows again. Closing the window, the screen locking, the policy ch
 page crashing still end it, and closing the window clears the answer and an unapplied patch (save a workspace to keep
 them).
 
+While Ember reconnects or can't connect for now (the runtime restarted, a model or the provider changed, the model
+service out of reach), Projects keeps the chosen files, the request being typed, the answer and its unapplied diff,
+says "Ember isn't connected right now. Your work here stays, and you can send once it connects.", and only sending,
+applying and the command wait (`projectAfterStatus`, app/main/agent/project.ts). A request under way then stops and
+says the connection dropped. Sign-out, another account and the organisation's lockdown clear it all. Once another
+model service, address, key or GitHub account is in force, the previous request and answer stay in view but are no
+longer offered as context, so an answer from one service is never sent to another.
+
 Open **Run a project command** to choose a local starting folder and enter a command. While commands are off on
 this computer (the default), the form says so with **Open Commands** before anything is typed, and the command field
 and **Review command…** wait. Ember applies the same settings, classifier and stop controls as its command window. Each run waits for approval of the

@@ -1,6 +1,6 @@
 /** Project selection, explicit context sharing and inert, reviewable output in the Projects destination. */
 import { renderProjectAnswer } from "./project-output";
-import { PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectBytes, projectCommandsOn, projectSelectionText } from "./project-copy";
+import { PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectBytes, projectCommandsOn, projectConnectionText, projectSelectionText } from "./project-copy";
 import type { ProjectMode, ProjectWorkspaceAction } from "../../shared/ipc";
 
 export function mountProject() {
@@ -348,19 +348,37 @@ export function mountProject() {
       if (at === revision) { busy = null; running.hidden = true; draw(); }
     }
   });
+  /** What the person chose and wrote here: it stays while Ember reconnects (integrations-r1). */
+  const kept = () => ({
+    files: files.childElementCount > 0,
+    work: files.childElementCount > 0 || !!question.value || !answer.hidden || !!commandFolder || !!command.value,
+  });
+  // Main forgot this work: all of it (sign-out, another account, the organisation's lockdown), or only the previous
+  // request and answer as context, once another model service or account is in force (they stay in view).
+  window.ember.onProjectForgot(what => {
+    if (what === "all") {
+      reset();
+      workspaceName.value = "";
+      status.textContent = projectConnectionText(ready, kept());
+    } else {
+      previousControl.hidden = true;
+      includePrevious.checked = false;
+      draw();
+    }
+  });
   return (on: boolean, service = "GitHub Copilot", model: string | null = null) => {
     providerText = `${service}${model ? ` · ${model}` : ""}`;
     provider.textContent = on ? `Next send uses ${providerText}.` : "Connect a model in Models & connections.";
     if (ready === on) return;
     ready = on;
+    // Not connected (a reconnect, a service out of reach for now): sending waits, and nothing chosen or written goes.
+    // Saved workspaces are listed again when opened: another service or account has its own.
     if (!on) {
-      reset();
       workspaces.open = false;
-      workspaceName.value = "";
       saved.replaceChildren();
       workspaceStatus.textContent = "";
     }
-    status.textContent = on ? "Choose the files for this request." : "Connect a model to work with project files.";
+    status.textContent = projectConnectionText(on, kept());
     draw();
   };
 }

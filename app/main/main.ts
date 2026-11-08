@@ -67,7 +67,7 @@ import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectCommandFolder, projectCommandText, projectNames, projectSelection, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, type ProjectSource } from "./agent/project";
+import { projectAfterStatus, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -447,9 +447,16 @@ function start(): void {
   let projectPatch: ProjectPatch | null = null;
   let projectFolder: ReturnType<typeof projectCommandFolder> | null = null;
   let projectExchange: ProjectExchange | null = null;
+  /** Whose the previous answer is (AgentHost.projectWorkspaceScope as it was given): it goes to no other service or account. */
+  let projectExchangeScope: string | null = null;
   let projectOutput: { answer: string; diff?: string } | null = null;
   const projectWorkspaces = new ProjectWorkspaceStore(userData, safeStorage, platform.os === "darwin");
   const clearProject = () => { projectFiles = []; projectPatch = null; projectFolder = null; projectExchange = null; projectOutput = null; projectJob?.abort(); };
+  /** Forgets Projects' work here and in Home together (integrations-r1): all of it, or the previous request and answer as context. */
+  const forgetProject = (what: "all" | "previous") => {
+    if (what === "all") clearProject(); else projectExchange = null;
+    if (home && !home.isDestroyed()) home.webContents.send(IPC.projectForgot, what);
+  };
   /** First run's "Hey Ember" try is showing: the microphone's level goes to the settings window too (IPC.watchLevel). */
   let homeWantsLevel = false;
   /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
@@ -2202,10 +2209,13 @@ function start(): void {
     projectPicking = true;
     try {
       const selected = await dialog.showOpenDialog(owner, { title: "Choose project files", properties: ["openFile", "multiSelections"] });
-      if (home !== owner || projectFiles !== previous || !projectAvailable()) return { names: [] };
+      if (home !== owner || projectFiles !== previous) return { names: [] };
+      // Not connected now (integrations-r1): the selection Home shows stays.
+      if (!projectAvailable()) return { ...await projectSelection(previous), error: "Project work is unavailable right now." };
       if (selected.canceled) return await projectSelection(previous);
       const next = await projectSelection(selected.filePaths);
-      if (home !== owner || projectFiles !== previous || !projectAvailable()) return { names: [] };
+      if (home !== owner || projectFiles !== previous) return { names: [] };
+      if (!projectAvailable()) return { ...await projectSelection(previous), error: "Project work is unavailable right now." };
       projectFiles = selected.filePaths;
       projectPatch = null;
       projectExchange = null;
@@ -2224,7 +2234,8 @@ function start(): void {
     try {
       const next = removeProjectFile(files, name);
       const selection = await projectSelection(next);
-      if (projectFiles !== files || !projectAvailable()) return { names: [] };
+      if (projectFiles !== files) return { names: [] };
+      if (!projectAvailable()) return { ...await projectSelection(files), error: "Project work is unavailable right now." };
       projectFiles = next;
       projectPatch = null;
       projectExchange = null;
@@ -2262,21 +2273,29 @@ function start(): void {
     if (!input.success) return { error: "Enter a project request of up to 4,000 characters." };
     const host = agent;
     if (!host || !projectAvailable() || projectJob || projectPicking) return { error: "Project work is unavailable right now." };
+    const { mode, question, includePrevious } = input.data;
+    // An answer from another model service or account is never sent to this one (integrations-r1): Home hides the choice.
+    if (includePrevious && projectExchange && projectExchangeScope !== host.projectWorkspaceScope()) {
+      forgetProject("previous");
+      return { error: PROJECT_PREVIOUS_ELSEWHERE };
+    }
     const run = projectJob = new AbortController();
     const files = projectFiles;
+    // Stopped by the connection dropping (a reconnect, the service out of reach), not by the person (integrations-r1).
+    const lost = () => agent?.getStatus().phase !== "ready";
     try {
       projectPatch = null;
       const sources: ProjectSource[] = [];
-      const { mode, question, includePrevious } = input.data;
       const prompt = await projectPrompt(files, mode, question, run.signal, userData, mode === "patch" ? sources : undefined,
         includePrevious ? projectExchange : null);
-      if (run.signal.aborted || projectFiles !== files || host !== agent || !projectContinues()) return { error: "Project request cancelled." };
+      if (run.signal.aborted || projectFiles !== files || host !== agent || !projectContinues()) return { error: projectStopped(lost()) };
       const answer = await host.runProject(prompt, run);
-      if (run.signal.aborted || !projectContinues()) return { error: "Project request cancelled." };
-      if (!answer) return { error: PROJECT_MODEL_FAILED };
+      if (run.signal.aborted || !projectContinues()) return { error: projectStopped(lost()) };
+      if (!answer) return { error: lost() ? projectStopped(true) : PROJECT_MODEL_FAILED };
       projectPatch = mode === "patch" ? draftProjectPatch(answer, sources) : null;
       const shown = answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer;
       projectExchange = memoryRefusal(answer) ? null : { mode, question, answer: shown };
+      projectExchangeScope = host.projectWorkspaceScope();
       projectOutput = { answer: shown, ...(projectPatch ? { diff: projectPatch.diff } : {}) };
       return {
         answer: shown, canContinue: projectExchange !== null,
@@ -2284,7 +2303,7 @@ function start(): void {
       };
     } catch (err) {
       // The model service's refusal says what to do about it (integrations-5); a file that couldn't be read says which.
-      return { error: run.signal.aborted ? "Project request cancelled." : err instanceof ProjectInputError || err instanceof ProjectModelError ? err.message : "Couldn't read the selected files. Choose them again." };
+      return { error: run.signal.aborted ? projectStopped(lost()) : err instanceof ProjectInputError || err instanceof ProjectModelError ? err.message : "Couldn't read the selected files. Choose them again." };
     } finally {
       if (projectJob === run) projectJob = null;
     }
@@ -2322,7 +2341,7 @@ function start(): void {
     projectPicking = true;
     try {
       const selected = await dialog.showOpenDialog(owner, { title: "Choose command folder", properties: ["openDirectory"] });
-      if (home !== owner || projectFiles !== previous || !projectAvailable()) return { folder: null, message: "Folder selection cancelled." };
+      if (home !== owner || projectFiles !== previous || !projectAvailable()) return { folder: projectFolder?.path ?? null, message: "Folder selection cancelled." };
       if (!selected.canceled && selected.filePaths.length === 1) projectFolder = projectCommandFolder(selected.filePaths[0], userData);
       return { folder: projectFolder?.path ?? null };
     } catch (err) {
@@ -2395,6 +2414,7 @@ function start(): void {
       projectFiles = entry.files;
       projectFolder = folder;
       projectExchange = entry.exchange;
+      projectExchangeScope = scope;
       projectOutput = entry.exchange ? { answer: entry.exchange.answer } : null;
       projectPatch = null;
       return {
@@ -3288,7 +3308,12 @@ function start(): void {
         syncListenOnce();
       },
       onStatus: status => {
-        if (status.phase !== "ready") clearProject();
+        // Projects' work goes only where it must (integrations-r1): a reconnect stops a request under way, but keeps the
+        // files, the request, the answer and its diff; sign-out and the lockdown forget it all; another service or
+        // account, only the previous answer as context.
+        if (status.phase !== "ready") projectJob?.abort();
+        const forget = projectAfterStatus(status, projectExchange ? { scope: projectExchangeScope } : null, status.phase === "ready" ? agent?.projectWorkspaceScope() ?? null : null);
+        if (forget !== "keep") forgetProject(forget);
         // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.
         // Ember's own that ran out unnoticed (the computer slept) is renewed and reconnected instead (cross-review X12).
         if (status.phase === "error" && status.reason === "sign-in" && currentToken) { refusedTokens.add(currentToken); keeper.refused(currentToken); }
@@ -3310,7 +3335,7 @@ function start(): void {
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
-      onAccountChanged: () => { askHistory = []; clearProject(); },
+      onAccountChanged: () => { askHistory = []; forgetProject("all"); },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.

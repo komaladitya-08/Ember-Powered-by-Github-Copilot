@@ -23,6 +23,28 @@ export class ProjectModelError extends Error {}
 export const PROJECT_MODEL_FAILED = "The model didn't finish the project request. Try again.";
 
 /**
+ * What a change of Ember's connection does to the Projects pane's work (integrations-r1): `keep` it, drop only the
+ * `previous` request and answer as context for the next send, or forget `all` of it. Sign-out and the organisation's
+ * lockdown forget it all (an account change is reported apart, onAccountChanged). A reconnect, a model service out of
+ * reach for now, Copilot not answering or a refused sign-in keep the chosen files, the request, the answer and its
+ * diff: only sending waits. Once ready with another owner than the answer's (projectWorkspaceScope: another model
+ * service, address, key or GitHub account, or one not verified), the answer stays in view but is never sent there.
+ */
+export function projectAfterStatus(s: { phase: string; reason?: string }, exchange: { scope: string | null } | null, scopeNow: string | null): "keep" | "previous" | "all" {
+  if (s.phase === "signed-out" || (s.phase === "error" && s.reason === "policy")) return "all";
+  if (exchange && s.phase === "ready" && exchange.scope !== scopeNow) return "previous";
+  return "keep";
+}
+
+/** Said instead of sending a previous answer to another model service or account than the one that gave it (integrations-r1). */
+export const PROJECT_PREVIOUS_ELSEWHERE = "The previous answer came from another model service or account, so Ember didn't send it there. Send again without it.";
+
+/** A project request that ended before its answer: the person's Cancel, or the connection dropping under it (integrations-r1). */
+export function projectStopped(connectionLost: boolean): string {
+  return connectionLost ? "Ember lost its connection, so the request stopped. Send it again once Ember is connected." : "Project request cancelled.";
+}
+
+/**
  * What Projects says when the model call failed (integrations-5): the conversation's own sentence for the cause
  * (friendlyError: a refused key, a usage limit, a model that isn't there, the service down), and words of its own where
  * a project differs, a request over the model's limit (the files, not the conversation) and the two-minute wait.

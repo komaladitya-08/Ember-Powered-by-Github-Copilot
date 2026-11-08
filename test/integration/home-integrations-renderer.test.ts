@@ -76,6 +76,9 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
       if (name === "agentStatus") return async () => agent;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { window.__ixCalls.push(`save:${JSON.stringify(patch)}`); };
       if (name === "conversation") return async () => [];
+      // Projects, as main answers when connected: one file chosen, a drafted patch.
+      if (name === "projectPick") return async () => ({ names: ["greeting.ts"], sizes: [46], changed: true });
+      if (name === "projectRun") return async () => ({ answer: "```diff\n-hi\n+hello\n```", patch: { name: "greeting.ts", diff: "-hi\n+hello" }, canContinue: true });
       return () => new Promise(() => undefined);
     } }) as never;
     let changed = () => undefined as void;
@@ -151,6 +154,51 @@ describe.skipIf(gate)("Home's Projects, as the person sets up a command (2026-11
     await expect.poll(() => note.isVisible()).toBe(true);
     await page.getByRole("button", { name: "Open Commands" }).click();
     await expect.poll(() => page.locator("#commands-h").isVisible()).toBe(true);
+    await page.close();
+  });
+});
+
+describe.skipIf(gate)("Home's Projects, as Ember's connection changes (2026-11-07 product audit)", () => {
+  it("keeps the chosen files, the typed request, the answer and its diff while Ember reconnects, and says only sending waits (integrations-r1)", async () => {
+    const page = await open("project");
+    await page.locator("#project-pick").click();
+    await expect.poll(() => page.locator("#project-files").innerText()).toContain("greeting.ts");
+    await page.locator("#project-mode").selectOption("patch");
+    await page.locator("#project-question").fill("Make the greeting say hello.");
+    await page.locator("#project-send").click();
+    await page.locator("#project-answer").waitFor({ state: "visible" });
+    await page.locator("#project-question").fill("A follow-up I was typing.");
+    const kept = async (why: string) => {
+      expect(await page.locator("#project-files").innerText(), why).toContain("greeting.ts");
+      expect(await page.locator("#project-question").inputValue(), why).toBe("A follow-up I was typing.");
+      expect(await page.locator("#project-answer").isVisible(), why).toBe(true);
+      expect(await page.locator("#project-diff").textContent(), why).toBe("-hi\n+hello");
+      expect(await page.locator("#project-previous-control").isVisible(), why).toBe(true);
+    };
+    // A reconnect (the runtime restarted, a model changed) and a model service out of reach for now.
+    for (const s of [{ phase: "starting", detail: "Connecting to Copilot…" }, { phase: "error", reason: "network", detail: "Ember can't reach Copilot." }]) {
+      await page.evaluate(st => window.__ixEmit("onAgentStatus", st), { ...READY, ...s });
+      await expect.poll(() => page.locator("#project-status").innerText(), { message: s.phase }).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
+      await kept(s.phase);
+      expect(await page.locator("#project-send").isDisabled()).toBe(true);
+      expect(await page.locator("#project-apply").isDisabled()).toBe(true);
+    }
+    await evidence(page, "project-reconnecting");
+    await page.evaluate(st => window.__ixEmit("onAgentStatus", st), READY);
+    await expect.poll(() => page.locator("#project-send").isDisabled()).toBe(false);
+    await kept("ready again");
+    expect(await page.locator("#project-apply").isEnabled()).toBe(true);
+    expect(await page.locator("#project-status").innerText()).toBe("Review the selection before sending.");
+    // Another model service or account in force: the answer stays in view, but is no longer offered as context.
+    await page.evaluate(() => window.__ixEmit("onProjectForgot", "previous"));
+    await expect.poll(() => page.locator("#project-previous-control").isVisible()).toBe(false);
+    expect(await page.locator("#project-include-previous").isChecked()).toBe(false);
+    expect(await page.locator("#project-answer").isVisible()).toBe(true);
+    // Sign-out or the organisation's lockdown: main forgot it all, and so does Home.
+    await page.evaluate(() => window.__ixEmit("onProjectForgot", "all"));
+    await expect.poll(() => page.locator("#project-files").isVisible()).toBe(false);
+    expect(await page.locator("#project-answer").isVisible()).toBe(false);
+    expect(await page.locator("#project-question").inputValue()).toBe("");
     await page.close();
   });
 });

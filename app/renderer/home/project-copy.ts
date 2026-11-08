@@ -5,6 +5,14 @@ export const PROJECT_COMMANDS_OFF = "Commands are off on this computer. Turn the
 export const PROJECT_COMMANDS_OPEN = "Open Commands";
 /** Whether commands may run on this computer, as the settings say (the organisation's policy already applied). */
 export const projectCommandsOn = (s: { commands?: Partial<Record<string, { on?: boolean }>> } | null | undefined): boolean => s?.commands?.local?.on === true;
+/**
+ * Projects' status line as Ember connects, or can't for now (integrations-r1): only sending waits, and what the person
+ * chose and wrote stays. `files`: files are chosen; `work`: anything is (files, a request, an answer, a command).
+ */
+export function projectConnectionText(connected: boolean, kept: { files: boolean; work: boolean }): string {
+  if (connected) return kept.files ? "Review the selection before sending." : "Choose the files for this request.";
+  return kept.work ? "Ember isn't connected right now. Your work here stays, and you can send once it connects." : "Connect a model to work with project files.";
+}
 export function projectBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
 }
