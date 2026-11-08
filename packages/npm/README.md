@@ -80,8 +80,9 @@ When the download can't be reached, or a proxy or server answers with an error, 
 user name and password (407).") and what to do: fix the proxy setting, ask for the host it names to be allowed (after
 GitHub's redirect, that is its storage host), download the release file from the Releases page in your browser, or
 point `EMBER_NPM_DOWNLOAD_BASE` at your organisation's mirror. It gives up on a connection that is silent for 30
-seconds. If the cache folder's disk or your quota fills up, it says there isn't room, where and how big the download
-is: free some space or set `EMBER_NPM_CACHE` to a folder with room, then run `ember` again.
+seconds. If the cache folder's disk or your quota is full, or fills up as Ember is downloaded or unpacked, it says
+there isn't room and where (and how big the download is, once it knows): free some space or set `EMBER_NPM_CACHE` to
+a folder with room, then run `ember` again.
 
 ## Failed or interrupted installs
 

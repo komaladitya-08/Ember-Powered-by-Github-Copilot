@@ -358,6 +358,75 @@ describe("when the launcher can't reach the download (install-docs-r2-1)", () =>
     }
   });
 
+  it("says there isn't room, and where, when the disk or quota is already full before the download starts (install-docs-v4-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const port = await closedPort();
+    const realMkdir = fs.mkdirSync, realWrite = fs.writeFileSync;
+    for (const [code, why] of [["ENOSPC", "the disk is full"], ["EDQUOT", "your disk quota is used up"]] as const) {
+      // Where a disk that is already full strikes first: the cache folder, the lock folder, or the lock's owner file.
+      for (const at of ["cache folder", "lock", "owner file"] as const) {
+        const cache = path.join(tempDir(), "cache");
+        const full = () => Object.assign(new Error(`${code}: no space left on device, write`), { code, syscall: "write" });
+        const mkdir = vi.spyOn(fs, "mkdirSync").mockImplementation(((dir: fs.PathLike, opts?: fs.MakeDirectoryOptions) => {
+          if (at === "cache folder" && String(dir) === cache) throw full();
+          if (at === "lock" && String(dir).endsWith("-install-lock")) throw full();
+          return realMkdir(dir, opts);
+        }) as never);
+        const write = vi.spyOn(fs, "writeFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, data: string, opts?: fs.WriteFileOptions) => {
+          if (at === "owner file" && /-install-lock[\\/]owner$/.test(String(file))) throw full();
+          return realWrite(file, data, opts);
+        }) as never);
+        try {
+          const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: `http://127.0.0.1:${port}`, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+          // No size: the download's isn't known yet.
+          expect(err?.message, `${code} at the ${at}`).toBe(`There isn't room in ${cache} for Ember 9.9.9: ${why} (${code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run 'ember' again.`);
+        } finally {
+          mkdir.mockRestore();
+          write.mockRestore();
+        }
+        expect(fs.existsSync(cache) ? fs.readdirSync(cache) : [], `${code} at the ${at}`).toEqual([]);
+      }
+    }
+  });
+
+  // The Windows and macOS zips unpack to about 2.5 times their size, so a disk often fills as they unpack. Here the
+  // Mac's is installed on Linux, whose unpacker is unzip: a stand-in on PATH says what each unpacker says, and fails.
+  it.skipIf(process.platform !== "linux")("says there isn't room, and where, when the disk or quota fills as the zip is unpacked, in place of the unpacker's words (install-docs-v4-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const asset = "Ember-9.9.9-mac-arm64.zip", body = Buffer.alloc(4096, 3);
+    const server = await serve({ [`/v9.9.9/${asset}`]: body, "/v9.9.9/SHA256SUMS": `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
+    const bin = tempDir();
+    fs.writeFileSync(path.join(bin, "unzip"), `#!${process.execPath}
+process.stdout.write(process.env.EMBER_TEST_UNZIP_SAYS);
+process.exitCode = Number(process.env.EMBER_TEST_UNZIP_EXIT);
+`, { mode: 0o755 });
+    vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH ?? ""}`);
+    const room = (code: string, why: string) => (cache: string) => `There isn't room in ${cache} for Ember 9.9.9: ${why} (${code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run 'ember' again.`;
+    const full = room("ENOSPC", "the disk is full"), quota = room("EDQUOT", "your disk quota is used up");
+    const cases: [string, string, number, ((cache: string) => string) | null][] = [
+      ["unzip", "/c/Ember.app/Contents/MacOS/Ember:  write error (disk full?).  Continue? (y/n/^C) \nwarning:  /c/Ember.app/Contents/MacOS/Ember is probably truncated\n", 50, full],
+      ["ditto", "ditto: /c/Ember.app/Contents/Frameworks/Electron Framework.framework/Electron Framework: No space left on device\n", 1, full],
+      ["ditto, over quota", "ditto: /c/Ember.app/Contents/Resources/app.asar: Disc quota exceeded\n", 1, quota],
+      ["tar.exe", "tar.exe: Ember/resources/app.asar: Write failed: No space left on device\ntar.exe: Error exit delayed from previous errors.\n", 1, full],
+      ["Expand-Archive", "Exception calling \"ExtractToFile\" with \"3\" argument(s): \"There is not enough space on the disk.\"\n", 1, full],
+      // Anything else the unpacker says stays its own.
+      ["a broken zip", "  End-of-central-directory signature not found.\n", 9, null],
+    ];
+    try {
+      for (const [who, says, exit, want] of cases) {
+        const cache = tempDir();
+        vi.stubEnv("EMBER_TEST_UNZIP_SAYS", says);
+        vi.stubEnv("EMBER_TEST_UNZIP_EXIT", String(exit));
+        const err = await ensureInstalled({ version: "9.9.9", platform: "darwin", arch: "arm64", env: { ...process.env, EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+        if (want) expect(err?.message, who).toBe(want(cache));
+        else expect(err?.message, who).toMatch(/^unzip -q .* failed \(exit 9\): End-of-central-directory signature not found\.$/);
+        expect(fs.readdirSync(cache), who).toEqual([]);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it("picks the proxy as npm does, and leaves out the hosts NO_PROXY names and this computer (install-docs-r2-1)", () => {
     const gh = "https://github.com/x/releases/download/v1/SHA256SUMS";
     const host = (url: string, env: Record<string, string>, npmrc = {}) => proxyFor(url, env, npmrc)?.url.host ?? null;

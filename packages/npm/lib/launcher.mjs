@@ -484,7 +484,8 @@ function run(file, args, signal) {
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
     child.once("error", err => { if (!signal?.aborted) reject(new Error(`${file} could not start: ${err.message}`)); });
-    child.once("close", (code, sig) => code === 0 ? resolve() : reject(new Error(`${file} ${args.join(" ")} failed (exit ${code ?? sig}): ${said.trim().slice(-2000)}`)));
+    // What it said is kept apart too (`output`), to be read without the paths in its command line.
+    child.once("close", (code, sig) => code === 0 ? resolve() : reject(Object.assign(new Error(`${file} ${args.join(" ")} failed (exit ${code ?? sig}): ${said.trim().slice(-2000)}`), { output: said })));
   });
 }
 
@@ -527,7 +528,14 @@ export async function ensureInstalled(o) {
   }
 
   const parent = p.dirname(dir);
-  fs.mkdirSync(parent, { recursive: true });
+  // A full disk or quota, wherever it strikes (a disk already full strikes here or at the lock, before the download's
+  // size is known), said as this computer's, not as Node's bare "ENOSPC" (install-docs-v4-1).
+  const roomy = (/** @type {any} */ err) => ROOM.has(err?.code) ? new Error(noRoom(err, { folder: parent, version: o.version, name }), { cause: err }) : err;
+  try {
+    fs.mkdirSync(parent, { recursive: true });
+  } catch (err) {
+    throw roomy(err);
+  }
   // Caught from before the lock is taken until it is given back, so no stop leaves it behind: the download is ended,
   // and the finally below removes the work folder and the lock. A second Ctrl+C stops the launcher at once.
   const stop = new AbortController();
@@ -550,7 +558,7 @@ export async function ensureInstalled(o) {
     takeLock({ lock, parent, version: o.version, name, p });
   } catch (err) {
     unhook();
-    throw err;
+    throw roomy(err);
   }
   let work;
   let preserveWork = false;
@@ -582,6 +590,10 @@ export async function ensureInstalled(o) {
       // arrive, so it is said as a stop, not as the unpacker's failure (install-docs-r3-1).
       if (failed && !stop.signal.aborted) await new Promise(resolve => setTimeout(resolve, 100));
       if (stop.signal.aborted) throw stop.signal.reason;
+      // The zips unpack to about 2.5 times their size, so the disk often fills here: the unpacker's words for that are
+      // said as noRoom's (install-docs-v4-1).
+      const full = roomSaid(failed?.output);
+      if (full) throw Object.assign(failed, { code: full });
       if (failed) throw failed;
       fs.rmSync(file, { force: true });
     } else {
@@ -620,8 +632,8 @@ export async function ensureInstalled(o) {
     say(`installed Ember ${o.version} in ${dir}`);
     return { dir, exe: at(target.exe), app: at(target.app), fresh: true };
   } catch (err) {
-    // A full disk or quota, wherever it struck (the download, the work folder, the marker), said as this computer's.
-    installError = ROOM.has(/** @type {any} */ (err)?.code) ? new Error(noRoom(err, { folder: parent, version: o.version, name }), { cause: err }) : err;
+    // A full disk or quota, wherever it struck (the download, the work folder, the unpacking, the marker).
+    installError = roomy(err);
     throw installError;
   } finally {
     // Cleanup must not hide the original failure, especially the saved-copy paths after a failed rollback.
@@ -650,6 +662,19 @@ export async function ensureInstalled(o) {
 
 /** Node's codes for a disk with no room left: full, or the person's quota used up. */
 const ROOM = new Set(["ENOSPC", "EDQUOT"]);
+
+/**
+ * The ROOM code an unpacker's words name, or undefined: unzip's "write error (disk full?)", ditto's and tar.exe's "No
+ * space left on device" (macOS's "Disc quota exceeded" for a quota), Expand-Archive's "There is not enough space on
+ * the disk".
+ * @param {unknown} said what the unpacker printed
+ */
+function roomSaid(said) {
+  const text = String(said ?? "");
+  if (/\b(?:disc|disk) quota\b|\bquota (?:exceeded|violation)|\bEDQUOT\b/i.test(text)) return "EDQUOT";
+  if (/no space left on device|\bdisk (?:is )?full\b|not enough space on the disk|\bENOSPC\b/i.test(text)) return "ENOSPC";
+  return undefined;
+}
 
 /**
  * What the launcher says when the cache's disk has no room for Ember, in place of Node's "ENOSPC": where, how big the
