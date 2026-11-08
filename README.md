@@ -3,8 +3,9 @@
 A small, expressive companion that lives next to your cursor, listens for "Hey Ember",
 and does the work in your real apps where you can watch, without taking over your mouse.
 The agent loop runs on the GitHub Copilot SDK. Spoken replies use the native Kitten Nano 0.8 voice by default;
-the Kokoro and Supertonic voices are explicit optional downloads, as is **Hear me more clearly**, a clearer recogniser
-for what you say to Ember, and unavailable or failed neural speech uses an installed local system voice.
+the Kokoro and Supertonic voices are explicit optional downloads on Windows and macOS. **Hear me more clearly**, a
+clearer recogniser for what you say to Ember, is another optional download, and unavailable or failed neural speech
+uses an installed local system voice.
 
 Ember runs on:
 - **RHEL 8.4** and the rest of the RHEL 8 family (Rocky, Alma, Oracle Linux 8) with GNOME on Xorg, its first platform;
@@ -79,8 +80,9 @@ speech-dispatcher-espeak-ng`, then restart Ember.
 
 The RPM carries Ember's verified speech models, so nothing is downloaded when voice is turned on. The standard
 model downloads total about 220 MB: listening needs 130 MB, the default Kitten Nano 0.8 voice 63.8 MB, and Voice
-Match 26.5 MB. These are download sizes; the archives expand when installed. Kitten runs locally on one CPU thread;
-Kokoro remains an explicit optional voice download in Voice settings. Both the RPM and the AppImage also carry the
+Match 26.5 MB. These are download sizes; the archives expand when installed. Kitten runs locally on one CPU thread.
+Kitten is Ember's neural voice on RHEL: the optional Kokoro and Supertonic voices are Windows and macOS only, so Voice
+settings doesn't offer them here. Both the RPM and the AppImage also carry the
 libraries that run speech natively on this computer (sherpa-onnx and ONNX Runtime: 32 MB installed, about 9 MB of each
 download). On a processor or system where they can't run, listening uses WebAssembly and spoken replies use an
 installed local system voice (`ember doctor` shows the speech backend).
@@ -234,9 +236,9 @@ and the Node.js runtime it installs on computers you bring it to over SSH (each 
 Four optional extras are downloaded only when you turn them on, each showing its size first and checked against its
 pinned SHA-256, so a computer that can't reach their host goes without them:
 
-- **Hear me more clearly** (482 MB, Settings › Voice), the clearer recogniser, and the Kokoro voice (350 MB) and the
-  Supertonic voice (129 MB, on Windows and macOS), from sherpa-onnx's releases on `github.com`, which hands the files
-  over from `release-assets.githubusercontent.com`;
+- **Hear me more clearly** (482 MB, Settings › Voice), the clearer recogniser, and the Kokoro voice (350 MB, Windows
+  and macOS) and the Supertonic voice (129 MB, Windows and macOS), from sherpa-onnx's releases on `github.com`, which
+  hands the files over from `release-assets.githubusercontent.com`;
 - Better recall (23 MB, Settings › Memory), a small language model from Hugging Face (`huggingface.co`, served from
   `*.hf.co`), only when you click its Download.
 

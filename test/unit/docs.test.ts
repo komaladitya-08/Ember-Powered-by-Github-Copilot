@@ -18,6 +18,7 @@ import { logLevel } from "../../app/main/logger";
 import { pagePrefs, prefsScript } from "../../app/main/page-prefs";
 import * as commandWindow from "../../app/main/commands/window";
 import { CHARACTERS, DEFAULT_SETTINGS } from "../../app/main/settings";
+import { naturalVoiceChoices } from "../../app/main/voice-choice";
 import { macVersionFromDarwin } from "../../app/main/platform/darwin/system/permissions";
 import type { TargetEntry } from "../../app/main/targets/registry";
 import { targetMenu } from "../../app/main/targets/menu";
@@ -471,6 +472,32 @@ describe("README.md", () => {
     const speech = flat(section(read("docs/DEVELOPING.md"), "How speech runs (native synthesis, native or WebAssembly listening)"));
     expect(speech).toContain("Supertonic 3");
     expect(speech).toContain("**Hear me more clearly** (`voice.clearHearing`, Settings › Voice)");
+  });
+
+  it("offers the Kokoro and Supertonic voices only on Windows and macOS, where Ember has them, never to RHEL (install-docs-r2)", () => {
+    // Linux runs speech on sherpa-onnx's C API, whose only neural voice is Kitten (main.ts asks naturalVoiceChoices).
+    expect(read("app/main/platform/linux/system.ts")).toMatch(/\n {6}naturalVoice: false,\n/);
+    expect(naturalVoiceChoices(false, true)).toEqual(["kitten"]);
+    expect(naturalVoiceChoices(true, false)).toEqual(["kitten", "kokoro", "supertonic"]);
+    const intro = flat(readme.slice(0, readme.indexOf("## What you need")));
+    expect(intro).toContain("the Kokoro and Supertonic voices are explicit optional downloads on Windows and macOS");
+    const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
+    expect(linux).not.toMatch(/Kokoro remains/);
+    expect(linux).toContain("Kitten is Ember's neural voice on RHEL: the optional Kokoro and Supertonic voices are Windows and macOS only");
+    const offline = flat(section(readme, "Computers without internet access"));
+    for (const voice of ["Kokoro", "Supertonic"]) expect(offline, voice).toMatch(new RegExp(`the ${voice} voice \\(\\d+ MB, Windows and macOS\\)`));
+    // The developer guide's speech table and its paragraph on Kokoro.
+    const speech = section(read("docs/DEVELOPING.md"), "How speech runs (native synthesis, native or WebAssembly listening)");
+    const replies = /^\| Spoken replies \| ([^|]+) \| ([^|]+) \|$/m.exec(speech);
+    expect(replies?.[1].trim()).toBe("Default Kitten or the installed local system voice");
+    expect(replies?.[2]).toMatch(/optional Kokoro or Supertonic 3/);
+    expect(flat(speech)).toContain("Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) is an explicit optional download in Voice settings on Windows and macOS");
+    // The spec's own notes: the models RPM went with 0.1.1, and the size it installs.
+    const spec = read("packaging/rpm/ember.spec");
+    expect(spec).not.toMatch(/before 0\.2\b|142 MB/);
+    // 0.1.0 shipped the separate ember-voice-models RPM, which the spec now obsoletes.
+    expect(spec).toContain("before 0.1.1 they were a");
+    expect(flat(spec)).toContain(`(about ${Math.round(modelsBytes() / 1e6)} MB downloaded`);
   });
 
   it("says what you need before the downloads, and what happens at first start after the installs (install-docs-7)", () => {

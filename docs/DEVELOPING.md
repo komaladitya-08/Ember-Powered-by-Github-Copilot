@@ -640,7 +640,7 @@ Neural synthesis needs the native runtime; otherwise replies use an installed lo
 | Listening fallback | WebAssembly (`sherpa-onnx`: one thread, no GPU) | WebAssembly if the addon cannot load |
 | Threads | As on Windows and macOS (WebAssembly listening: 1) | Moonshine 2, Kitten 1, Kokoro up to 4 leaving a core free; the per-frame models 1 |
 | GPU | None required | macOS may probe CoreML for optional Kokoro and keep it only when faster than CPU; Kitten and Moonshine use CPU. Windows has no supported DirectML backend in the pinned addon. |
-| Spoken replies | Default Kitten, explicitly selected optional Kokoro, or the installed local system voice | The same choices |
+| Spoken replies | Default Kitten or the installed local system voice | Default Kitten, explicitly selected optional Kokoro or Supertonic 3, or the installed local system voice |
 
 **Which build on Linux.** At start, main asks `capiChoice()` (app/voice/runtime.ts) and logs its answer as
 `voice.backend` (`backend`, `why`); `ember doctor` shows it under **Speech**. The native libraries must be present
@@ -677,7 +677,8 @@ Kitten couldn't make or its process ending uses the local system voice for the r
 Voice says which ("too slow just now", "stopped working", "couldn't load") with **Try again**, which loads and times
 Kitten again at once.
 
-Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) remains an explicit optional download in Voice settings. Saving
+Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) is an explicit optional download in Voice settings on Windows
+and macOS (the native addon: on Linux's C API `naturalVoiceChoices()` offers Kitten alone). Saving
 a choice while off does not enable speech or start that download. Enabling or changing the optional model names the
 download size and waits for confirmation. Kokoro uses the same real-time gate and falls back to Kitten when unavailable
 or too slow; if Kitten cannot run either, the system voice speaks. Saved preferences remain inspectable. Policy,

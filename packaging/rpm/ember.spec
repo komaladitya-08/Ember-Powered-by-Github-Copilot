@@ -52,7 +52,7 @@ Recommends:     speech-dispatcher, speech-dispatcher-espeak-ng, pulseaudio-utils
 Recommends:     gnome-shell-extension-top-icons
 Suggests:       metacity
 %if 0%{?with_models}
-# The speech models are in this package (one RPM installs everything Ember runs here); before 0.2 they were a
+# The speech models are in this package (one RPM installs everything Ember runs here); before 0.1.1 they were a
 # package of their own, which this one replaces on upgrade.
 Provides:       ember-voice-models = %{version}-%{release}
 Obsoletes:      ember-voice-models < %{version}-%{release}
@@ -130,7 +130,7 @@ done
 
 %if 0%{?with_models}
 # The wake-word spotter, voice-activity detector, speech recogniser, Ember's own voice and Voice Match's model
-# (about 142 MB): Ember never downloads them.
+# (about 220 MB downloaded, 256 MB installed): Ember never downloads them.
 %dir %{_datadir}/ember
 %{_datadir}/ember/voice-models
 %endif
