@@ -1053,13 +1053,13 @@ macOS without its Accessibility permission included, as not knowing whether a pa
 again (reliability-performance-r2-1, -c2-2, with safety-privacy-r5, -c2-1 and tasks-approvals-r5); and Updates' RPM
 line, a bare `sudo dnf upgrade`, left Ember as it was (install-docs-r2-2, also reported as accessibility-visual-c2-2
 and integrations-r2-4). The P3s were slips in what Ember says or when: the corner card's stray " · ", "You didn't ask
-for this." beside "don't forget to", Ask's count, the box moving for a wake and throwing an answer across the screen,
-an unanswered card's screen-reader prefix, the bubble's Stop told in Home as no reply, "can't connect" when only a
-model name was missing, the "won't keep this" note after any remember, "Provider problem" while the runtime restarts,
-the data list's "a model service I can't tell yet", a timed-out note promising Try again on a finished task, and an
-accented name holding back an English answer (accessibility-visual-r2-2, commands-remote-r2-1,
-companion-r2-2, -r2-3, -r2-5, -c2-3, -c2-4, home-c2-2, integrations-c2-2, memory-r8, reliability-performance-c2-3,
-safety-privacy-r6, tasks-approvals-c2-2, voice-speaking-r2-2).
+for this." beside "don't forget to", a Listen once that a question ended without a word, Ask's count, the box moving for
+a wake and throwing an answer across the screen, an unanswered card's screen-reader prefix, the bubble's Stop told in
+Home as no reply, "can't connect" when only a model name was missing, the "won't keep this" note after any remember,
+"Provider problem" while the runtime restarts, the data list's "a model service I can't tell yet", a timed-out note
+promising Try again on a finished task, and an accented name holding back an English answer (accessibility-visual-r2-2,
+commands-remote-r2-1, companion-r2-2, -r2-3, -r2-5, -c2-3, -c2-4, home-c2-2, integrations-c2-2, memory-r8,
+reliability-performance-c2-3, safety-privacy-r6, tasks-approvals-c2-2, voice-speaking-r2-2).
 
 **First run, Home and the companion.** The consent step's short form names the recipient from the same answer as its
 full text (`modelDestination`; first-run-r2-2, M8.8). An edit to a provider in use is checked as typed before it
@@ -1143,10 +1143,10 @@ parks focus on Memory's heading (-c2-1, -8); `memoryAsk` leaves the conversation
 conversation, adding `forgetNote` after a forget with more, answers "forget everything", "clear your memory" and a
 capitalised name in code, and adds the "won't keep this" note only after a statement (-c1-1, -v1, -r8); a preference
 closes only for another value of the same kind (`PREFERENCE_KINDS`, -r1); and an unreadable memory.json makes Home say
-"Memory paused" (-r2, partly). Reliability: the handle and the Ask box say "Reconnecting…" while the runtime restarts,
-and "Connection problem" or "Copilot problem" once it can't, never the provider's (`idleWord`), and the conversation
-says when Ember gives up (reliability-performance-c2-3); `scripts/perf/footprint.mjs` measures with the consent Ember
-asks for and fails past `--max-cpu` or `--max-pss` (rp-4, partly).
+"Memory paused" (-r2, partly). Reliability: the handle says "Reconnecting…" (the Ask box "Reconnecting: I can't answer
+yet") while the runtime restarts, and "Connection problem" or "Copilot problem" once it can't, never the provider's
+(`idleWord`), and the conversation says when Ember gives up (reliability-performance-c2-3); `scripts/perf/footprint.mjs`
+measures with the consent Ember asks for and fails past `--max-cpu` or `--max-pss` (rp-4, partly).
 
 **Install and docs.** The npm launcher downloads with node:http and node:https through the proxy npm would use (npm's
 https-proxy or proxy from npm_config_* or the .npmrc files, then HTTPS_PROXY or HTTP_PROXY, never for NO_PROXY's hosts
