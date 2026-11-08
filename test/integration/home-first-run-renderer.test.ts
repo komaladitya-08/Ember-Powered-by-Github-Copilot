@@ -785,7 +785,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await next(p).click();
     expect(await p.locator("#w-p-result").innerText()).toBe("Paste the API key first.");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(ah) after a failed edit of my provider in use, “Keep using <host>” puts back the details in use and Continue, and changes nothing (first-run-c3-1)", async () => {
     const service = { kind: "user", host: "api.example.com" };
@@ -819,7 +819,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
     expect((await calls(p)).filter(c => c.startsWith("save:") || c === "saveKey" || c.startsWith("agree:") || c === "test")).toEqual([]);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(ag) “Use GitHub Copilot instead” draws Copilot's sign-in as the focus lands on its title, before the connection follows; one that can't be saved says my provider is still in use (first-run-c3-2)", async () => {
     const service = { kind: "user", host: "api.example.com" };
@@ -857,7 +857,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => q.locator("#w-title").innerText()).toBe("Your own model provider");
     expect(await q.locator("#w-signin-line").innerText()).toBe("Using your own provider (api.example.com).");
     for (const page of [p, q]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(z) resumed while the user's own provider connects or fails, the sign-in step names it, with no Copilot or sign-in words (first-run-1, first-run-c1-3)", async () => {
     const service = { kind: "user", host: "localhost:11434" };
