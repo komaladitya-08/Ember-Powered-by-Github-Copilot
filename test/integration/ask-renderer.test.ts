@@ -536,11 +536,16 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       expect(await page.locator("#suggest").isVisible()).toBe(false);
       expect(await chips.count()).toBe(0);
       expect(await reachable("Yes, please")).toBe(0);
+      // Nor does a screen reader meet an empty "Ember suggests" group meanwhile.
+      const group = page.getByRole("group", { name: "Ember suggests", exact: true });
+      expect(await group.count()).toBe(0);
       // The answer is whole and its follow-ups come: into that row, the field where it was.
       await offer(["Yes, please", "Read it out"]);
       await fit(page);
       expect(await page.locator("#suggest button:visible").allTextContents()).toEqual(["Yes, please", "Read it out"]);
       expect(await reachable("Yes, please")).toBe(1);
+      // In the named group a screen reader reads them in (browse mode and Tab alike).
+      expect(await group.getByRole("button").allTextContents()).toEqual(["Yes, please", "Read it out"]);
       expect(await room()).toBe(oneRow);
       expect((await harness()).rows).toBe(rows);
       expect(await fieldFromBottom()).toBe(at);
