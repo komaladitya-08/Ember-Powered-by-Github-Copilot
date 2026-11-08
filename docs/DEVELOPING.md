@@ -174,7 +174,8 @@ runtime. It does not change the app's consent or speaking settings.
     (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
     asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
     filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, through a
-    reconnect (a finished task's row then offers nothing to press, its card having gone), and gone at quit, sign-out
+    reconnect (a finished task's row then offers nothing to press, its card having gone, except after a switch of model
+    service that waited for the tasks: their cards go on), and gone at quit, sign-out
     or an account change; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most
     twice a second, only to the settings window.
   - Once Ember is set up, starting it on Linux, Windows or macOS (the app menu entry, `ember`, the Start menu, Ember.app
@@ -1112,7 +1113,9 @@ the address in force and its saved key are kept and come back with the switch (i
   next request. A request asked while a turn or a task is still under way on the service before is held, with a bubble
   saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are
   done, in the order asked (one asked during the switch goes behind them); it never goes to the one before, and no new
-  task starts on it (a queued one ends saying the service changed). "Done" is the runtime's own word for the turn, not
+  task starts on it (a queued one ends saying the service changed). A finished task's card stays through the switch's
+  reconnect with the time it had left (`TaskManager.keptCards`): its Try again is held back while the switch waits (a
+  try then would start on the service before) and offered again once the switch is made. "Done" is the runtime's own word for the turn, not
   the bubble's; after a Stop the turn is over at once. The switch's connect is waited on for at most 15 s, as a
   request waits for any connect: then they go on, and are told Ember is still connecting. Stop, Stop everything and
   quitting drop the held requests and end the switch's wait. A

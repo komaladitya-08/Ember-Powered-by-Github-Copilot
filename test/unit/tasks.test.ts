@@ -754,6 +754,51 @@ describe("Home's Task activity across a reconnect (tasks-approvals-c2-1)", () =>
       expect(again[0].title).toBe("task 24");
     } finally { vi.useRealTimers(); }
   });
+
+  it("hands a finished card on with its Try again and the time it had left, lists it once, and never a task still at work (tasks-approvals-r4-2)", async () => {
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<WorkerResult>();
+      let n = 0;
+      const old = manager(() => (n++ === 0 ? fakeWorker(async () => ({ success: false, summary: "It broke." })) : fakeWorker(() => gate.promise)), { failureCardMs: 1000, maxRunning: 2 });
+      const failed = old.start("Rename the report", { userWords: "rename the report" });
+      const running = old.start("Tidy the desktop");
+      await vi.advanceTimersByTimeAsync(400);
+      const kept = old.keptCards();
+      expect(kept.map(c => c.task.id)).toEqual([failed.id]);
+      const earlier = old.history();
+      old.close();
+      const cards: TaskCard[][] = [];
+      const next = manager(() => fakeWorker(async () => ({ success: true, summary: "Done." })), { failureCardMs: 1000, carried: kept, earlier: () => earlier, setCards: (c: TaskCard[]) => cards.push(c) });
+      expect(cards.at(-1)?.map(c => [c.id, c.actions?.map(a => a.label)])).toEqual([[failed.id, ["Try again", "Close"]]]);
+      expect(next.activities().filter(e => e.id === failed.id)).toEqual([expect.objectContaining({ controls: expect.objectContaining({ retry: true }) })]);
+      expect(next.get(running.id)).toBeUndefined();
+      // The rest of its minute, then it goes as it would have.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(next.get(failed.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(next.get(failed.id)).toBeUndefined();
+      gate.resolve({ success: true, summary: "" });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("offers no Try again while the next try would wait for a switch of model service (tasks-approvals-c4-1)", async () => {
+    vi.useFakeTimers();
+    try {
+      let waits = true;
+      const cards: TaskCard[][] = [];
+      const tm = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke." })), { retryWaits: () => waits, setCards: (c: TaskCard[]) => cards.push(c), failureCardMs: 60_000 });
+      const failed = tm.start("Rename the report", { userWords: "rename the report" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(cards.at(-1)?.[0].actions?.map(a => a.label)).toEqual(["Close"]);
+      expect(tm.canRetry(failed.id)).toBe(false);
+      expect(tm.retry(failed.id)).toBeNull();
+      waits = false;
+      tm.refresh();
+      expect(cards.at(-1)?.[0].actions?.map(a => a.label)).toEqual(["Try again", "Close"]);
+      expect(tm.canRetry(failed.id)).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 describe("how a finished task is worded (tasks-approvals-9)", () => {

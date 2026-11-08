@@ -4379,6 +4379,65 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     await host.stop();
   });
 
+  const taskSession = (id: string) => sim.sessions.find(s => s.sessionId === `ember-task-${id}`);
+  const taskSessions = () => sim.sessions.filter(x => x.sessionId.startsWith("ember-task-"));
+  const tool = (session: any, name: string) => session.config.tools.find((t: { name: string }) => t.name === name);
+  const cardOf = (screen: () => Partial<EmberState>, id: string) => (screen().tasks ?? []).find(c => c.id === id);
+
+  it("keeps a task's card, its Try again and Close, when the switch that waited for it is made, and Try again then starts it on the new service (tasks-approvals-r4-2)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, screen } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("turn on night light", { userWords: "turn on night light" });
+    await vi.waitFor(() => expect(taskSession(t.id)).toBeDefined());
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    await tool(taskSession(t.id), "finish_task").handler({ success: false, summary: "The switch wasn't there." });
+    taskSession(t.id).emit("session.idle", {});
+    // The switch is made as the task ends: its card is still there afterwards, as are Try again and Close.
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    expect(conductorSession()).not.toBe(before);
+    await vi.waitFor(() => expect(cardOf(screen, t.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+    const rows = host.taskActivities().filter(e => e.id === t.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].controls?.retry).toBe(true);
+    // Try again starts it on the new service, never refused for the switch.
+    expect(host.retryTask(t.id)).toBe(true);
+    await vi.waitFor(() => expect(taskSessions().length).toBe(2));
+    const retried = host.tasks!.list().find(x => x.id !== t.id)!;
+    expect(retried.result?.summary).not.toBe(PROVIDER_MOVED_TASK);
+    expect(cardOf(screen, t.id)).toBeUndefined();
+    await host.stop();
+  });
+
+  it("offers no Try again while a switch waits, so it never starts a task refused at once, and offers it once the switch is made (tasks-approvals-c4-1)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, screen } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const a = host.tasks!.start("turn on night light", { userWords: "turn on night light" });
+    const b = host.tasks!.start("tidy my desktop", { userWords: "tidy my desktop" });
+    await vi.waitFor(() => expect(taskSession(a.id) && taskSession(b.id)).toBeDefined());
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    expect(host.getStatus().switchPending).toBe(true);
+    await tool(taskSession(a.id), "finish_task").handler({ success: false, summary: "The switch wasn't there." });
+    taskSession(a.id).emit("session.idle", {});
+    await vi.waitFor(() => expect(host.tasks!.get(a.id)?.status).toBe("failed"));
+    // While the other task keeps the switch waiting: Close only, and no Try again in Home's row.
+    expect(cardOf(screen, a.id)?.actions?.map(x => x.label)).toEqual(["Close"]);
+    expect(host.taskActivities().find(e => e.id === a.id)?.controls?.retry).toBe(false);
+    const rows = host.taskActivities().length;
+    expect(host.retryTask(a.id)).toBe(false);
+    expect(host.taskActivities()).toHaveLength(rows);
+    expect(host.tasks!.list().some(x => x.result?.summary === PROVIDER_MOVED_TASK)).toBe(false);
+    // The other task ends, the switch is made, and Try again is back on the card.
+    host.tasks!.cancel(b.id);
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    await vi.waitFor(() => expect(cardOf(screen, a.id)?.actions?.map(x => x.label)).toEqual(["Try again", "Close"]));
+    await host.stop();
+  });
+
   it("drops the held requests on Stop: none is sent afterwards", async () => {
     let now: ActiveProvider | null = at("a.example");
     const { host } = makeHost({ hands: hands(), provider: () => now });

@@ -24,7 +24,7 @@ import type { Logger } from "../logger";
 import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
-import { TaskManager, taskOutcome, titleOf, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
+import { TaskManager, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -924,6 +924,14 @@ export class AgentHost {
   private earlierTasks: TaskEntry[] = [];
   /** The manager whose tasks were forgotten with the conversation (sign-out): its history isn't handed on. */
   private tasksForgotten: TaskManager | null = null;
+  /**
+   * The finished cards of the manager before a reconnect, for the next one (TaskManager.keptCards): a switch of model
+   * service made once the work under way was done keeps its cards' Try again, Close and View result
+   * (tasks-approvals-r4-2). Any other restart takes them off for good, as before.
+   */
+  private keptCards: KeptCard[] = [];
+  /** The next stop is the waiting switch's own reconnect (switchWhenQuiet, releaseHeld): its cards are kept. */
+  private keepCards = false;
   private status: AgentStatus;
   /** Bumped by every start() and stop(): an older start gives up at its next step. */
   private gen = 0;
@@ -2039,6 +2047,10 @@ export class AgentHost {
         provider: kindOf(provider),
         actionsAllowed: () => this.actionsAllowed(),
         earlier: () => this.earlierTasks,
+        // No Try again while the switch waits: a task started on the service before would be refused at once
+        // (tasks-approvals-c4-1). The cards before this connection go on here (tasks-approvals-r4-2).
+        retryWaits: () => this.providerMoved(),
+        carried: this.keptCards,
         makeWorker: (spec, progress, update, activity) => {
           // The model service changed since this connection started: no task starts on the one before (a queued task, or
           // one a turn already under way asked for). Tasks running now finish where they started.
@@ -2080,6 +2092,8 @@ export class AgentHost {
           }, spec);
         },
       }) : null;
+      // Handed on once: a later reconnect hands on that manager's own (tasks-approvals-r4-2).
+      this.keptCards = [];
       const tasks = this.tasks;
       // What the conversation's prompt may promise is fixed when it is created and kept for its resumes (§3.15).
       const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
@@ -2707,7 +2721,10 @@ export class AgentHost {
     try {
       // The connect to the new service, for at most CONNECT_WAIT_MS: one that hangs doesn't hold the requests for ever.
       // They go on down the usual path, which waits a little more and then says Ember is still connecting.
-      if (this.providerMoved()) await Promise.race([this.launch(this.token, this.source), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
+      if (this.providerMoved()) {
+        this.keepCards = true;
+        await Promise.race([this.launch(this.token, this.source), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
+      }
       // Each held request, in order, then any asked meanwhile (they queued behind, `releasing`), until none is left. A
       // Stop meanwhile ends the release (dropHeld): nothing more is sent.
       while (this.held.length && !this.quitting && gen === this.releaseGen) {
@@ -2760,6 +2777,8 @@ export class AgentHost {
     if (this.switchWaits === on) return;
     this.switchWaits = on;
     this.setStatus({});
+    // A failed card's Try again waits with it (tasks-approvals-c4-1).
+    this.tasks?.refresh();
   }
 
   /**
@@ -2772,6 +2791,8 @@ export class AgentHost {
     void Promise.resolve().then(() => {
       if (this.quitting || this.held.length || this.releasing || this.status.phase !== "ready" || !this.providerMoved() || !this.quietForSwitch()) return;
       this.o.log.info("agent.provider_changed", { kind: this.providerNow()?.kind ?? "copilot", after: "quiet" });
+      // The tasks it waited for keep their cards (tasks-approvals-r4-2).
+      this.keepCards = true;
       void this.launch(this.token, this.source);
     });
   }
@@ -3483,6 +3504,7 @@ export class AgentHost {
     // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one, nor Task activity.
     this.finishedLately = [];
     this.earlierTasks = [];
+    this.keptCards = [];
     this.o.onAccountChanged?.();
     // Never without a word: the new account's conversation starts by saying what went (memory-11).
     if (erased) this.remember("ember", ACCOUNT_CHANGED_FORGOT);
@@ -3539,6 +3561,11 @@ export class AgentHost {
     this.reconnectAfterTasks = null;
     const cutOff = this.cutOff;
     this.cutOff = null;
+    // The waiting switch's reconnect: the finished cards go on with the next connection's manager, as they were before
+    // this stop, each within the time it had left; never the tasks a stop cuts off, nor after a sign-out, an account
+    // change or when quitting, nor when Ember doesn't connect (tasks-approvals-r4-2).
+    this.keptCards = !forget && this.keepCards && this.tasks && this.tasks !== this.tasksForgotten ? this.tasks.keptCards() : [];
+    this.keepCards = false;
     // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit). Cut off by a runtime
     // that stopped (or stopped answering), tasks end as failed.
     this.tasks?.cancelAll(cutOff ?? undefined);
