@@ -287,6 +287,8 @@ class Classifier {
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
   private varValues = new Map<string, string[]>();
+  /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
+  private psVarValues = new Map<string, string[]>();
   /** Words of a variable Ember couldn't resolve, with how they were used: judged again once a loop's input gives it a value. */
   private unseenUses: { parts: readonly (string | { name: string | null })[]; use: PathUse; sc: Scope }[] = [];
   /** The text a command was given on stdin by a here-document or here-string (null: Ember can't see all of it), by index. */
@@ -496,7 +498,50 @@ class Classifier {
     if (a.v === null && a.parts && sc.path.flavour === "posix") {
       for (const form of this.formsOf(a.parts)) this.judgeForm(form, use, sc);
       this.unseenUses.push({ parts: a.parts, use, sc });
+    } else if (a.v === null && a.parts && sc.path.flavour === "win32") {
+      for (const form of this.formsOf(a.parts, this.psVarValues)) this.judgeWinForm(form, use, sc);
     }
+  }
+
+  /**
+   * A PowerShell variable's value the text sets (`$d = "$env:LOCALAPPDATA\ember"`, `$d = Join-Path …`; null: one Ember
+   * can't see), kept for the words that use it later, for Ember's own refusal only (commands-remote-c3-2).
+   */
+  setPsVar(name: string, value: Arg | null): void {
+    const key = name.toLowerCase().replace(/^(script|global|local|private|using):/, "");
+    const forms = value === null ? [UNSEEN] : value.v !== null ? [value.v] : value.parts ? this.formsOf(value.parts, this.psVarValues) : [UNSEEN];
+    const all = [...new Set([...(this.psVarValues.get(key) ?? []), ...forms])];
+    this.psVarValues.set(key, all.length > MAX_FORMS ? [UNSEEN] : all);
+  }
+
+  /**
+   * Ember's own refusal for one form of a Windows word (judgeForm's rules in Windows paths): the path it names, a
+   * pattern (PowerShell's -Path takes wildcards even when quoted), or, with a part Ember can't see, anything in one of
+   * Ember's folders or (to change or read) a name that could be one in the folder that holds it.
+   */
+  private judgeWinForm(value: string, use: PathUse, sc: Scope): void {
+    const form = value.startsWith(PATTERN) ? value.slice(1) : value;
+    const cut = form.indexOf(UNSEEN);
+    const known = cut < 0 ? form : form.slice(0, cut);
+    if (known === "" || (!/^[A-Za-z]:[\\/]|^[\\/]{2}/.test(known) && !sc.cwd)) return;
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" };
+    const kind = accessOf(use);
+    if (cut < 0) {
+      const abs = resolveTargetPath(form, at);
+      if (/[*?[]/.test(form)) {
+        let reaches: boolean;
+        try { reaches = globReaches(abs, use, sc.path, false).ember || isEmberPath(globPrefix(abs, sc.path), sc.path); } catch { reaches = isEmberPath(abs.replace(/[*?[].*$/, ""), sc.path); /* a pattern the matcher can't read: its fixed part decides */ }
+        if (reaches) this.refuseWith("ember.path", kind);
+      } else if (isEmberPath(abs, sc.path)) this.refuseWith("ember.path", kind);
+      else if ((use === "deleteTree" || use === "move" || use === "permTree") && holdsEmberPath(abs, sc.path)) this.refuseWith("ember.path", "safety");
+      return;
+    }
+    const slash = Math.max(known.lastIndexOf("\\"), known.lastIndexOf("/"));
+    const dir = resolveTargetPath(slash < 0 ? "." : known.slice(0, slash) || "\\", at);
+    const stem = known.slice(slash + 1).toLowerCase();
+    if (isEmberPath(dir, sc.path) || isEmberPath(resolveTargetPath(known, at), sc.path)) { this.refuseWith("ember.path", kind); return; }
+    if (use === "list" || use === "cd") return;
+    if (sc.path.ember.some(e => win32.dirname(e).toLowerCase() === dir.toLowerCase() && win32.basename(e).toLowerCase().startsWith(stem))) this.refuseWith("ember.path", kind);
   }
 
   /** The names a `read` sets, for a loop's here-string to give them values (result). */
@@ -525,10 +570,10 @@ class Classifier {
   }
 
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
-  private formsOf(parts: readonly (string | { name: string | null })[]): string[] {
+  private formsOf(parts: readonly (string | { name: string | null })[], vars: ReadonlyMap<string, string[]> = this.varValues): string[] {
     let out = [""];
     for (const p of parts) {
-      const vals = typeof p === "string" ? [p] : (p.name !== null && this.varValues.get(p.name)) || [UNSEEN];
+      const vals = typeof p === "string" ? [p] : (p.name !== null && vars.get(p.name)) || [UNSEEN];
       const next = out.flatMap(a => vals.map(b => a + b));
       // Too many to judge one by one: what stands there is unseen (judgeForm's rule for an unseen part).
       out = next.length > MAX_FORMS ? out.map(a => a + UNSEEN) : next;
@@ -1626,6 +1671,7 @@ class Engine extends Classifier {
     sts.forEach((st, si) => {
       if (st.assign) {
         this.envChanged = true;
+        this.setPsVar(st.assign, this.psAssigned(st, sc));
         const env = /^env:(.+)$/i.exec(st.assign);
         if (env && (RISKY_ASSIGNMENTS.has(env[1].toUpperCase()) || RISKY_ASSIGNMENTS.has(env[1]) || RISKY_ASSIGNMENT_PREFIX.test(env[1].toUpperCase()))) {
           this.newCommand("", [], sc, [], false);
@@ -1681,14 +1727,41 @@ class Engine extends Classifier {
     return fetch;
   }
 
+  /**
+   * The value a PowerShell assignment gives its variable, for Ember's own refusal (commands-remote-c3-2): a plain value
+   * (`"$env:LOCALAPPDATA\ember"`) or `Join-Path` of plain values; null for anything else (a command's output).
+   */
+  private psAssigned(st: PsStatement, sc: Scope): Arg | null {
+    if (st.elements.length !== 1) return null;
+    const el = st.elements[0];
+    if (el.kind === "expr") return el.subs.length ? null : this.psValue(el.segs, el.raw, sc, true);
+    if (el.name.segs.length !== 1 || el.name.segs[0].t !== "lit" || el.name.segs[0].s.toLowerCase() !== "join-path") return null;
+    const parts: Arg[] = [];
+    let named: string | null = null;
+    for (const a of el.args) {
+      if (a.kind === "param") { named = a.param?.toLowerCase() ?? null; if (a.attached) { parts.push(this.psValue(a.segs, a.raw, sc, a.quoted)); named = null; } continue; }
+      if (a.kind !== "word" || (named !== null && !/^(path|childpath|additionalchildpath)$/.test(named))) return null;
+      parts.push(this.psValue(a.segs, a.raw, sc, a.quoted));
+      named = null;
+    }
+    if (parts.length < 2) return null;
+    if (parts.every(x => x.v !== null)) return lit(win32.join(...parts.map(x => x.v!)));
+    // A part Ember can't see: what is joined so far, then that part, for the refusal.
+    const pieces: (string | { name: string | null })[] = [];
+    parts.forEach((x, k) => { if (k > 0) pieces.push("\\"); if (x.v !== null) pieces.push(x.v); else pieces.push(...(x.parts ?? [{ name: null }])); });
+    return { v: null, raw: el.name.raw, glob: false, parts: pieces };
+  }
+
   /** A PowerShell value's parts resolved: $HOME, $PWD, $env:USERPROFILE and the profile folders, $PROFILE, $null. */
   psValue(segs: PsSeg[], raw: string, sc: Scope, quoted: boolean): Arg {
     let v = "";
     let unresolved = false;
     const w = sc.windows;
+    // What stands in it, a variable's name for a part Ember can't resolve: for Ember's own refusal (commands-remote-c3-2).
+    const parts: (string | { name: string | null })[] = [];
     for (const seg of segs) {
-      if (seg.t === "lit") { v += seg.s; continue; }
-      if (seg.t === "unres") { unresolved = true; continue; }
+      if (seg.t === "lit") { v += seg.s; parts.push(seg.s); continue; }
+      if (seg.t === "unres") { unresolved = true; parts.push({ name: null }); continue; }
       const n = seg.name.toLowerCase();
       const known: Record<string, string | null | undefined> = {
         home: sc.home, pwd: sc.cwd, "env:userprofile": w?.home ?? sc.home, "env:temp": w?.temp, "env:tmp": w?.temp,
@@ -1697,14 +1770,14 @@ class Engine extends Classifier {
       };
       if (n === "profile" || n.startsWith("profile.")) {
         const home = w?.home ?? sc.home;
-        if (home) { v += `${home}\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`; continue; }
+        if (home) { const pf = `${home}\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`; v += pf; parts.push(pf); continue; }
       }
       const val = known[n];
-      if (val === undefined || val === null) unresolved = true;
-      else v += val;
+      if (val === undefined || val === null) { unresolved = true; parts.push({ name: n.replace(/^(script|global|local|private|using):/, "") }); }
+      else { v += val; parts.push(val); }
     }
     void quoted;
-    return { v: unresolved ? null : v, raw, glob: !unresolved && /[*?[]/.test(v) };
+    return { v: unresolved ? null : v, raw, glob: !unresolved && /[*?[]/.test(v), ...(unresolved ? { parts } : {}) };
   }
 
   /** A PowerShell argument as one or more values (an array gives one per element). */
@@ -6476,8 +6549,22 @@ reg(NATIVE, ["format"], h => {
 reg(NATIVE, ["robocopy"], h => {
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
   const [src, dst] = h.args.filter(a => !(a.v ?? "").startsWith("/"));
-  if (src) h.e.usePath(src, flags.some(f => /^\/(move|mov)$/.test(f)) ? "move" : "readTree", h.sc);
+  // `robocopy SOURCE DEST [FILE…] [/OPTION…]`: the names before the first option are the files it copies from the
+  // source folder (all of them by default); names after one belong to it (/XF's, /XD's).
+  const first = h.args.findIndex(a => (a.v ?? "").startsWith("/"));
+  const files = (first < 0 ? h.args : h.args.slice(0, first)).filter(a => !(a.v ?? "").startsWith("/")).slice(2);
+  const move = flags.some(f => /^\/(move|mov)$/.test(f));
+  const inSrc = (f: Arg): Arg => (src?.v != null && f.v !== null ? { ...f, v: win32.join(src.v, f.v), glob: f.glob || /[*?]/.test(f.v) } : { v: null, raw: f.raw, glob: false });
+  const named = files.length > 0 && !flags.some(f => /^\/(s|e|mir)$/.test(f));
+  if (src && named) { h.e.usePath(src, "list", h.sc); for (const f of files) h.e.usePath(inSrc(f), move ? "move" : "read", h.sc); }
+  else if (src) h.e.usePath(src, move ? "move" : "readTree", h.sc);
   const destObj = dst ? h.e.usePath(dst, flags.some(f => /^\/(mir|purge)$/.test(f)) ? "deleteTree" : "write", h.sc) : null;
+  // A download it copies or moves is the download in the destination folder, as with copy and Copy-Item
+  // (commands-remote-c2-2): the file of its name there, or the whole folder for a folder or pattern that holds one.
+  if (src && destObj?.abs) {
+    if (files.length) h.e.carryCopies(files.map(inSrc).filter(f => !f.glob), { ...destObj, text: `${destObj.text.replace(/[\\/]+$/, "")}\\` }, h.sc);
+    if ((!named || files.some(f => f.glob || f.v === null)) && (h.e.isDownloaded(src, h.sc) || h.e.holdsDownload(src, h.sc))) h.e.carryDownload(destObj.abs, h.sc);
+  }
   if (flags.some(f => /^\/(mir|purge|move|mov)$/.test(f))) h.e.add("destroy", "cmd.robocopy", `Deletes files in ${destObj?.text ?? "the destination"} that aren't in ${src?.v ?? "the source"}.`, { objects: destObj ? [destObj] : [] });
   else if (destObj?.abs) h.e.add("destroy", "cmd.robocopy", `Replaces files in ${destObj.text} if they exist.`, { objects: [destObj], ifExists: destObj.abs });
 });

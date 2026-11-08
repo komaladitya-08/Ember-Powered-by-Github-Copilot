@@ -183,6 +183,31 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     ]) expect(refused(cmd), cmd).toBeUndefined();
   });
 
+  it("refuses Ember's own folder reached through a PowerShell variable the command sets, as when it is named (commands-remote-c3-2)", () => {
+    const ps = (cmd: string) => says(cmd, "powershell", "win32");
+    for (const cmd of [
+      "$d = \"$env:LOCALAPPDATA\\ember\"; Remove-Item -Recurse -Force $d",
+      "$d = 'C:\\Users\\ana\\AppData\\Local\\ember'; Remove-Item -Recurse -Force $d",
+      "$d = Join-Path $env:LOCALAPPDATA 'ember'; Remove-Item -Recurse -Force $d",
+      "$d = Join-Path -Path $env:LOCALAPPDATA -ChildPath ember; Remove-Item -Recurse $d",
+      "$f = \"$env:LOCALAPPDATA\\ember\\settings.json\"; Set-Content $f '{}'",
+      "$f = \"$env:LOCALAPPDATA\\ember\\audit.jsonl\"; Clear-Content $f",
+      "$d = $env:LOCALAPPDATA; Remove-Item -Recurse -Force \"$d\\emb*\"",
+      "$d = $env:LOCALAPPDATA; Remove-Item -Recurse -Force \"$d\\ember\"",
+      "$env:D = \"$env:LOCALAPPDATA\\ember\"; Remove-Item -Recurse $env:D",
+      "$d = $env:LOCALAPPDATA; Remove-Item -Recurse \"$d\\$x\"",
+    ]) expect(ps(cmd), cmd).toBe(CHANGE);
+    expect(ps("$f = \"$env:LOCALAPPDATA\\ember\\settings.json\"; Get-Content $f")).toBe(READ);
+    // As the named path is: Test-Path reads it, Write-Output only prints the name.
+    expect(ps("$d = \"$env:LOCALAPPDATA\\ember\"; Test-Path $d")).toBe(ps("Test-Path $env:LOCALAPPDATA\\ember"));
+    // Nothing of Ember's, or a variable only printed: asked or run as before.
+    for (const cmd of [
+      "$d = \"$env:LOCALAPPDATA\\proj\"; Remove-Item -Recurse -Force $d", "$d = 'build'; Remove-Item -Recurse $d",
+      "$d = \"$env:LOCALAPPDATA\\ember\"; Write-Output $d",
+      "$d = $env:LOCALAPPDATA; Get-ChildItem \"$d\\$x\"",
+    ]) expect(ps(cmd), cmd).toBeUndefined();
+  });
+
   it("keeps the input refusal's words, and lets a read refusal give way to it", () => {
     expect(says("xdotool key y")).toBe(INPUT);
     expect(says("cat ~/.config/ember/settings.json; xdotool key y")).toBe(INPUT);
@@ -853,6 +878,22 @@ describe("loops and ifs (commands-remote-2)", () => {
     // A file that isn't a download passes nothing on.
     expect(cls("Move-Item notes.txt y.py").downloads).toEqual([]);
     expect(cls("ren notes.txt y.py", "cmd").downloads).toEqual([]);
+  });
+
+  it("keeps a download a download when robocopy copies or moves it, so running the copy asks (commands-remote-c2-2)", () => {
+    const P = "C:\\Users\\ana\\proj";
+    const cls = (cmd: string, shell: ShellId = "powershell", downloaded = [`${P}\\x.exe`]) => classifyCommand(cmd, shell, contextOf("win32", downloaded)) as ClassificationExtra;
+    for (const shell of ["powershell", "cmd"] as const) {
+      expect(cls("robocopy . tools x.exe", shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
+      expect(cls("robocopy . tools x.exe /MOV", shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
+      expect(cls(`robocopy ${P} ${P}\\tools x.exe /NJH`, shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
+      // A whole folder that holds a download marks where it goes; one that doesn't, nothing.
+      expect(cls("robocopy dl tools /E", shell, [`${P}\\dl\\x.exe`]).downloads, shell).toContain(`${P}\\tools`);
+      expect(cls("robocopy . tools notes.txt", shell).downloads, shell).toEqual([]);
+      expect(cls("robocopy src tools /E", shell).downloads, shell).toEqual([]);
+      // Names after an option are what it leaves out, not what it copies.
+      expect(cls("robocopy . tools notes.txt /XF x.exe", shell).downloads, shell).toEqual([]);
+    }
   });
 
   it("keeps a download a download when a pipeline or xargs copies, moves or renames it (commands-remote-v4-5)", () => {

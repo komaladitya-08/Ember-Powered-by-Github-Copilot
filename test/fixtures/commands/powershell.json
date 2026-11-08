@@ -5770,6 +5770,34 @@
    "rules": [
     "net.unc"
    ]
+  },
+  {
+   "cmd": "$d = \"$env:LOCALAPPDATA\\ember\"; Remove-Item -Recurse -Force $d",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "$d = Join-Path $env:LOCALAPPDATA 'ember'; Remove-Item -Recurse -Force $d",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "$f = \"$env:LOCALAPPDATA\\ember\\settings.json\"; Set-Content $f '{}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "$d = \"$env:LOCALAPPDATA\\proj\"; Remove-Item -Recurse -Force $d",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
   }
  ]
 }

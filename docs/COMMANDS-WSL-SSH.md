@@ -169,7 +169,7 @@ Ember stops and asks before a command that:
   `rsync`, `cat x.py > y.py` or `tee`, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell
   which files a pipeline or a variable hands over, the copy counts as a download whenever the task downloaded
-  something), or with cmd's `ren`, `move`, `copy` or `mklink`, run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
+  something), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy`, run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
@@ -358,7 +358,8 @@ keys and click in Ember's windows (`xdotool`, `SendKeys`, `osascript` keystrokes
 it would change Ember's own safety settings, records or programs." ("it would read …" for a command that only reads
 them, such as `cat` or `Get-Content`) or "Ember won't run this: it could press keys or click in Ember's own windows."
 The same goes when a shell loop's list or a variable the command sets names them (`for f in ~/.config/ember/*; do …`,
-`d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), and so do `set --` (`"$1"`, `"$@"`),
+`d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), in PowerShell too (`$d = "$env:LOCALAPPDATA\ember";
+Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do `set --` (`"$1"`, `"$@"`),
 `printf -v` and the text a here-string or here-document gives `read` (`while read f; do rm -rf "$f"; done <<<
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`) or a pattern before it
