@@ -209,6 +209,19 @@ describe("a secret split across fields (review S2)", () => {
   });
 });
 
+describe("a disk's use and code that names a token, which hold no secret (memory-c4-2, memory-r4-2)", () => {
+  it("shows a disk's use as a label and value, and an auth module's code", () => {
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Root", value: "45G / 100G" }] }))).toBe(null);
+    expect(why(stack({ kind: "text", text: "Disk usage: root: 45GB / 100GB" }))).toBe(null);
+    expect(why(stack({ kind: "code", lines: ["export function verify(token: string): boolean {", "  return token.length > 0;", "}"] }))).toBe(null);
+  });
+
+  it("still refuses a password in code or as a label and value", () => {
+    expect(why(stack({ kind: "code", lines: ['const password = "Summer2024!";'] }))).toBe("secret");
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Admin", value: "admin / j3nkins!" }] }))).toBe("secret");
+  });
+});
+
 describe("ordinary paths and words that only look private (re-review S-d)", () => {
   it.each([
     "/private/tmp/report.txt", "/private/var/folders/x/notes.txt", "~/Documents/Talk.key", "My keyring is on the desk", "Keychains sync across Macs",

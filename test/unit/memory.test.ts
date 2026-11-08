@@ -281,6 +281,66 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
+  // Code that names a token, a password, a PIN or credentials with code where the value would be: Projects' files and
+  // requests, a patch's text and a task's view share this guard, and refused all of these (memory-r4-1, memory-r4-2).
+  it.each([
+    ["export function verify(token: string): boolean {"], ["def __init__(self, user: str, password: str) -> None:"], ["        self.password = password"],
+    ["secretName: string;"], ["interface Session { token: string }"], ["readonly token: string | undefined;"], ["tokens: string[] = []"],
+    ['const secret: string = process.env.SECRET ?? "";'], ["const token = process.env.GITHUB_TOKEN;"], ["const token = await getToken();"],
+    ['api_key = os.environ["API_KEY"]'], ["apiKey: process.env.OPENAI_API_KEY,"], ["token: ${{ secrets.GITHUB_TOKEN }}"], ["password: z.string().min(8),"],
+    ["def login(username, password=None):"], ["export function validPin(pin: string): boolean {"], ["const pin = nodeVersion(pinned);"],
+    ['const tokens = text.split(" ");'], ["tokens = text.split()"], ["token_count = len(tokens)"], ['csrf_token = request.form.get("csrf_token")'],
+    ["password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())"], ['tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")'],
+    ['response = client.chat.completions.create(model="gpt-4o", max_tokens=256)'], ['"max_tokens": 1024,'], ["export const MAX_TOKENS = 128;"],
+    ["const firstToken = sourceCode.getFirstToken(node);"], ["self.next_token: Optional[Token] = None"], ["self.secret_key = settings.SECRET_KEY"],
+    ["const password = form.password.value;"], ['return token.value === "*" && token.type === "Punctuator";'], ["tokens.forEach(token => token.value);"],
+    ['"js-tokens": "^8.0.2",'], ["const HTTP_TOKEN_CODEPOINTS = /^[-!#$%&'*+.^_|~A-Za-z0-9]+$/u"], ["const tokens = [];"], ["const token = tokens[index];"],
+    ["if creds and creds.expired and creds.refresh_token:\n    creds.refresh(Request())"], ['with open("token.json", "w") as token:\n    token.write(creds.to_json())'],
+    ["set OPENAI_API_KEY=..."], ["export GITHUB_TOKEN=$(gh auth token)"], ['-H "Authorization: Bearer $(gh auth token --hostname github.com)"'],
+    ["Add a max_tokens: 1024 limit to the request"], ["MasterUserPassword: !Ref DBPassword"], ["db_password: \"{{ vault_db_password }}\""],
+    ["unregister(unregisterToken: WeakKey): boolean;"], ["export type ProgressToken = number | string;"], ["this.messageToken = 0;"],
+    ['if (typeof token === "string") {'], ['readonly secret: "password" | "passphrase" | "code";'], ['field.type = masked ? "password" : "text";'],
+    ["const isFirstTokenOnLine =\n  start.line === lineNumber;"], ["const next = cond\n  ? maybeParenToken\n  : argToken;"], ["class Token:\n    name: str"],
+    ["type CommentOrToken = Comment | Token;"], ["secret: !!n.secret || n.role === \"password text\","], ["this[STATE].jsxAttrValueToken = true;"],
+    // Credentials loaded in code, which round four's login rule refused (memory-r4-1).
+    ["credentials = boto3.Session().get_credentials()"], ["const creds = loadCreds(argv[2]);"], ["let creds = config.creds2;"], ["creds = get_creds(2)"],
+    ["credentials = s3.get_credentials()"], ["            creds = flow.run_local_server(port=0)"], ["self.credentials = credentials_v2"], ["creds = creds_v2"],
+    ["const credential = /^((GH|GITHUB|COPILOT)_([A-Z0-9]+_)*TOKEN)$/i;"], ["credentials = Credentials.from_service_account_file(KEY_PATH_2)"],
+  ])("keeps %j, code with no secret where the value would be (memory-r4-1, memory-r4-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // A literal secret in code is still refused, and so is code that gives one as a default (memory-r4-2).
+  it.each([
+    ['password = "hunter2"'], ['const password = "Summer2024!";'], ["token: 'abc123def456'"], ["password: hunter2"], ["password = actual-password-here"],
+    ["PASSWORD=hunter2"], [`GITHUB_TOKEN=ghp_${"a".repeat(36)}`], ['const password = process.env.PW || "hunter2";'], ['password = os.getenv("DB_PASSWORD", "changeme")'],
+    ['password: str = "changeme"'], ['creds = pika.PlainCredentials("admin", "S3cret!")'], ["pin = 4821"], ["cvv: 123"], ["const token = abc123def456ghi789;"],
+    ["Wi-Fi password:\nBlueSky99"], ['if (password == "hunter2") {'], ['"password": "hunter2"'], ["api_key = sk-12345678"], ["DB_PASSWORD=${PW:-hunter2}"],
+    ['password = isProd ? "Tr0ub4dor&3" : ""'], ["The router creds: P@ssw0rd"], ["The user's Netflix credentials: hunter2"],
+    ['const x = cond ? "password" : "hunter2";'], ['if (passwordField.value === "hunter2") {'], ["password=$(echo hunter2)"], ["password: >\n  hunter2"],
+    ["password = (hunter2)"], ["password: # hunter2"], ["const password = Summer2024;"], ['password = os.environ.get("PW") or "letmein"'],
+    // Prose after a secret's name that starts with a word code also uses (memory-r4-2).
+    ["Wi-Fi password: if anyone asks, BlueSky99"], ["PIN: number 4821"], ["Password: new one is BlueSky99"], ["Password: hunter (the usual)"],
+    ["Password: [Summer2024, Winter2025]"], ['"password": "<hunter2>"'], ["Password: abc then hunter2"], ["Password: true story, BlueSky99"],
+  ])("still refuses %j, a literal secret in code or a setting (memory-r4-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+
+  // A version, an issue, a setting or a user at a computer said as a login, a disk's size and a formula: round four's
+  // login and admin rules refused them (safety-privacy-c4-3, memory-c4-2).
+  it.each([
+    ["Credentials: AWS_PROFILE=dev2"], ["The login is v2.0"], ["Login was v1.4.2 and is now v2."], ["Login was #142 in the issue tracker."],
+    ["My work login is jsmith@corp"], ["The login is user@host:2222"], ["The login is admin@nas1:22"],
+    ["Root: 45G / 100G (45%)"], ["Disk usage: root: 45GB / 100GB"], ["root - 12GB / 50GB used"], ["const root = -b / (2*a);"], ["root = width / 2000"],
+  ])("keeps %j, which names no password (safety-privacy-c4-3, memory-c4-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["The login is admin@nas1"], ["The login is P@ssword"], ["The login is p@ss.word1"], ["Jenkins admin: admin / j3nkins!"], ["Admin: admin / P@ssw0rd"],
+  ])("still refuses %j as a login or an admin's password (safety-privacy-c4-3, memory-c4-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],

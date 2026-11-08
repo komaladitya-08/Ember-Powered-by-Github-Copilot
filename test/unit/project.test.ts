@@ -99,6 +99,37 @@ it("sends a README and a request that name a user at a computer, which hold no p
   await expect(prompt([nas])).rejects.toThrow("contain a password");
 });
 
+it("sends auth, credentials and model-client code that names a token or a password with code for its value (memory-r4-1, memory-r4-2)", async () => {
+  const auth = await file("auth.ts", "/** Checks a session for the request. */\nexport function verify(token: string): boolean {\n  return token.length > 0;\n}\nexport const apiKey = process.env.OPENAI_API_KEY;\n");
+  const login = await file("login.py", "class Login:\n    def __init__(self, user: str, password: str) -> None:\n        self.user = user\n        self.password = password\n");
+  const client = await file("client.py", 'response = client.chat.completions.create(model="gpt-4o", max_tokens=256)\ntokens = text.split()\n');
+  const aws = await file("aws.py", "import boto3\n\nsession = boto3.Session()\ncredentials = boto3.Session().get_credentials()\nprint(credentials.access_key is not None)\n");
+  const deploy = await file("deploy.ts", "export async function main(argv: string[]): Promise<void> {\n  const creds = loadCreds(argv[2]);\n  await deploy(creds);\n}\n");
+  // Google's Drive quickstart, whose "creds.refresh_token:" and "as token:" end their lines with code on the next.
+  const quickstart = await file("quickstart.py", [
+    "def main():", "  creds = None", '  if os.path.exists("token.json"):', '    creds = Credentials.from_authorized_user_file("token.json", SCOPES)',
+    "  if not creds or not creds.valid:", "    if creds and creds.expired and creds.refresh_token:", "      creds.refresh(Request())", "    else:",
+    '      flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)', "      creds = flow.run_local_server(port=0)",
+    '    with open("token.json", "w") as token:', "      token.write(creds.to_json())", "",
+  ].join("\n"));
+  const result = await projectPrompt([auth, login, client, aws, deploy, quickstart], "review", "Why is const creds = loadCreds(argv[2]) undefined?", new AbortController().signal, privateDir);
+  for (const line of ["verify(token: string)", "self.password = password", "max_tokens=256", "get_credentials()", "loadCreds(argv[2])", "creds.refresh(Request())"]) expect(result).toContain(line);
+  const literal = await file("config.ts", 'export const password = "Summer2024!";\n');
+  await expect(prompt([literal])).rejects.toThrow("contain a password");
+  const fallback = await file("db.py", 'password = os.getenv("DB_PASSWORD", "changeme")\n');
+  await expect(prompt([fallback])).rejects.toThrow("contain a password");
+});
+
+it("offers a reviewed patch whose new line sets max_tokens or reads a key from the environment (memory-r4-2, integrations-c4-1)", async () => {
+  const source = await file("client.ts", "export const options = {\n  temperature: 0.2,\n};\n");
+  const snapshots: ProjectSource[] = [];
+  await projectPrompt([source], "patch", "Add a max_tokens limit and read the key from the environment.", new AbortController().signal, privateDir, snapshots);
+  const change = diff("client.ts", "@@ -1,3 +1,5 @@\n export const options = {\n   temperature: 0.2,\n+  max_tokens: 1024,\n+  apiKey: process.env.OPENAI_API_KEY,\n };");
+  expect(draftProjectPatch(diffAnswer(change), snapshots)?.diff).toBe(change);
+  const literal = diff("client.ts", "@@ -1,3 +1,4 @@\n export const options = {\n   temperature: 0.2,\n+  apiKey: \"Tr0ub4dor&3xyz\",\n };");
+  expect(draftProjectPatch(diffAnswer(literal), snapshots)).toBeNull();
+});
+
 const diffAnswer = (diff: string) =>"A change to review.\n\n" + ["```diff", diff, "```"].join("\n");
 const diff = (name: string, hunks: string) => `--- a/${name}\n+++ b/${name}\n${hunks}`;
 

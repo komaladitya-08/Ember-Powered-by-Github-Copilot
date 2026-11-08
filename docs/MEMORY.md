@@ -74,9 +74,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   4821", "the code to get into the office is 4821", "the bank code for the vault is 4821", "HR portal pw
   Summer2024!", "my wifi password, it's BlueSky99", "hunter2 is my password", "the user's Netflix login is hunter2",
   "Netflix credentials: hunter2" (a login said with a digit or a symbol, even a user name such as "my login is
-  jsmith42" or a user at a computer named only by a word such as "admin@nas1", since one said that way is as often
-  its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never that it is
-  one), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  jsmith42" or a user at a computer whose name has a digit and no port, such as "admin@nas1", since one said that way
+  is as often its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never
+  that it is one), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value, and a code counts only for
   something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
@@ -86,14 +86,28 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   OAuth2", "last login was 10:30", "the credentials are AES-256 encrypted"), a user at a computer named by its address
   or as localhost, a handle with no digit, a host with its port and an environment variable in code ("my SSH login is
   pi@192.168.1.20", "the admin login is admin@localhost", "my GitHub login is @octocat", "login is localhost:8080",
-  "credentials: process.env.AWS_CREDS_V2", safety-privacy-v4-1), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
+  "credentials: process.env.AWS_CREDS_V2", safety-privacy-v4-1), a version, an issue, a setting or a user at a
+  computer by a word or with its port said as a login ("the login is v2.0", "login was #142", "Credentials:
+  AWS_PROFILE=dev2", "my work login is jsmith@corp", "the login is user@host:2222": safety-privacy-c4-3), a disk's use
+  and a formula ("Root: 45G / 100G", "const root = -b / (2*a);": an admin's pair is never after "=", nor with a size
+  for the user name, memory-c4-2), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
   GPIO0 as the boot pin", "never share your password, it's personal": a value said before "the data pin" or "the
   boot pin" counts only as digits, and ", it's" only before a value with a digit or a symbol, memory-v4-6), how a
   token is made ("the access token is HS256-signed", "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
   long") and an Indian postcode called a "PIN code" after an address (a road, a place, an Indian city or state) in its
   sentence or the lines just before it ("Bengaluru, PIN code: 560001"; "my PIN code is 560034", "Garage, PIN code:
   482193" and a "PIN code: 482193" line with no address before it are still refused): memory-c3-1, memory-r3-3,
-  memory-v4-5 (Projects and task views share this guard). Secrets are refused whole, never stored redacted.
+  memory-v4-5 (Projects and task views share this guard). Code is passed over where a secret's name has code for its
+  value, not a value (memory-r4-1, memory-r4-2: Projects' files, requests and patches, and task views, share this
+  guard): a type ("token: string", "password: str"), a call, a member or an index ("text.split()",
+  "process.env.GITHUB_TOKEN", "loadCreds(argv[2])"), a reference, a template or a placeholder ("${{ secrets.X }}",
+  "$(gh auth token)", "<your-key>"), a keyword, a literal or a collection ("await", "None", "[]"), a variable that
+  names a secret or the same name ("self.password = password", "creds = creds_v2"), a count ("max_tokens=256"), an
+  arrow or a property ("token => …", "token.type === …") and code on the next line ("creds.refresh_token:"); only the
+  name is passed over, so a token in the value is still found. A quoted value, a bare word, a value with a digit or a
+  symbol and a PIN's number stay values, and so does code that gives a literal as a default or one shaped like a
+  password ("os.getenv('PW', 'changeme')", "pw || 'hunter2'", "f(user, 'S3cret!')"). Secrets are refused whole, never
+  stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
