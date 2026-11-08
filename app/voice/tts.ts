@@ -111,7 +111,7 @@ function sentenceEnds(text: string, from = 0, seen?: (end: number) => void): num
  * $200"): cut there, they were heard as two prices, "fifty dollars." then "One hundred dollars" (voice-speaking-c3-1).
  */
 const betweenAmounts = (text: string, m: RegExpExecArray) =>
-  /[—–-]/.test(m[0]) && /\d(?:[ \t]?[\p{L}]+)?$/u.test(text.slice(Math.max(0, m.index - 24), m.index)) && /^[$£€¥]?\d/.test(text.slice(m.index + m[0].length, m.index + m[0].length + 2));
+  /[—–-]/.test(m[0]) && /\d(?:[ \t]?\p{L}+){0,2}$/u.test(text.slice(Math.max(0, m.index - 32), m.index)) && /^[$£€¥]?\d/.test(text.slice(m.index + m[0].length, m.index + m[0].length + 2));
 
 /** Cuts `chunk` at its first clause break (", " "; " " — ") between `min` and `max` characters, or returns it whole. */
 function cutAtClause(chunk: string, min: number, max: number): [string, string] | null {

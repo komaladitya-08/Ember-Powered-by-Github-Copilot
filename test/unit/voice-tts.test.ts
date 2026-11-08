@@ -169,6 +169,7 @@ describe("speechChunks", () => {
     const sum = "After the discount, that's $1,500 - $200 for fees, so $1,300 is left for the rest of the trip.";
     expect(speechChunks(spokenText(sum))).toEqual(["After the discount,", "that's 1,500 dollars - 200 dollars for fees, so 1,300 dollars is left for the rest of the trip."]);
     expect(speechChunks(spokenText("That's $1,500 - $200 for fees, so $1,300 is left after it."))[0]).toBe("That's 1,500 dollars - 200 dollars for fees,");
+    expect(speechChunks(spokenText("The two offers came to $3M - $2.5M in fees, so the second one is better for you."))[0]).toBe("The two offers came to 3 million dollars - 2.5 million dollars in fees,");
     // Streamed too, also when the dash is the last of what has come: the first clause is never cut at it.
     const text = "The two quotes you have come to $1,500 - $200 in fees, so the cheaper one is better for you.";
     for (const delta of [1, 2, 3, 4, 16]) {
