@@ -24,11 +24,15 @@ export function listeningSeen(text) {
     } else if (m?.msg === "voice.native_failed") {
       seen = { backend: "wasm", from: m.msg, detail: "a voice process died loading the C API", ready: false, onWasm: [] };
     } else if (m?.msg === "voice.model_wasm_fallback" && seen.ready) {
-      seen = { ...seen, onWasm: Array.isArray(m.models) && m.models.length ? m.models.map(String) : ["a model"] };
+      // Each once: both of Silero's voice activity models (speech detection and the idle voice check) fall back together.
+      seen = { ...seen, onWasm: Array.isArray(m.models) && m.models.length ? [...new Set(m.models.map(String))] : ["a model"] };
     }
   }
   return seen;
 }
+
+/** Names as a list: "a", "a and b", "a, b and c". */
+const listed = names => names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names.join("");
 
 /**
  * The backend in words, for footprint.mjs's first line: "sherpa-onnx's C API", "WebAssembly" or "an unknown backend",
@@ -39,7 +43,7 @@ export function listeningSeen(text) {
 export function listeningWords(seen) {
   if (seen.backend === "wasm") return "WebAssembly";
   if (seen.backend !== "native") return "an unknown backend";
-  return seen.onWasm.length ? `sherpa-onnx's C API, with the ${seen.onWasm.join(" and ")} on WebAssembly` : "sherpa-onnx's C API";
+  return seen.onWasm.length ? `sherpa-onnx's C API, with the ${listed(seen.onWasm)} on WebAssembly` : "sherpa-onnx's C API";
 }
 
 /**
@@ -54,6 +58,6 @@ export function notNative(seen) {
     return `listening ran on ${listeningWords(seen)}${said}`;
   }
   if (!seen.ready) return "no voice process said what it runs (no voice.ready in Ember's log), only main's choice of sherpa-onnx's C API";
-  if (seen.onWasm.length) return `the ${seen.onWasm.join(" and ")} ran on WebAssembly (voice.model_wasm_fallback)`;
+  if (seen.onWasm.length) return `the ${listed(seen.onWasm)} ran on WebAssembly (voice.model_wasm_fallback)`;
   return null;
 }

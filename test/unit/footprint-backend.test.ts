@@ -15,6 +15,7 @@ const log = (...lines: object[]) => lines.map(l => JSON.stringify(l)).join("\n")
 const CHOSE_NATIVE = { backend: "native", why: "sherpa-onnx's C API", level: "info", msg: "voice.backend" };
 const READY_WASM = { loadMs: 2751, backend: "wasm", detail: "the C API didn't load: Failed to load shared library: file too short", provider: "cpu", threads: 1, tried: [{ provider: "cpu" }], level: "info", msg: "voice.ready", scope: "voice" };
 const READY_NATIVE = { loadMs: 3093, backend: "native", detail: "sherpa-onnx 1.13.8 (11afbd00, C API through koffi, layouts from 1.13.8)", provider: "cpu", threads: 2, tried: [{ provider: "cpu" }], level: "info", msg: "voice.ready", scope: "voice" };
+const fellBack = (...models: string[]) => ({ models, detail: "sherpa-onnx 1.13.8 (11afbd00, C API through koffi, layouts from 1.13.8)", level: "warn", msg: "voice.model_wasm_fallback", scope: "voice" });
 
 describe("footprint.mjs's listening backend", () => {
   it("says WebAssembly, and fails --native, when the C API didn't load though main chose it (reliability-performance-v6-1)", () => {
@@ -54,6 +55,18 @@ describe("footprint.mjs's listening backend", () => {
     expect(listeningSeen("")).toMatchObject({ backend: null, ready: false, onWasm: [] });
     expect(listeningWords(listeningSeen(""))).toBe("an unknown backend");
     expect(listeningSeen(log(CHOSE_NATIVE) + '{"loadMs":12,"backend":"wa')).toMatchObject({ backend: "native", ready: false });
+  });
+
+  it("names each model a native process made on WebAssembly once, as a list (reliability-performance-w6-2)", () => {
+    // Both Silero voice activity models (speech detection and the idle voice check) fall back together.
+    const vad = listeningSeen(log(CHOSE_NATIVE, READY_NATIVE, fellBack("voice activity model", "voice activity model")));
+    expect(vad.onWasm).toEqual(["voice activity model"]);
+    expect(listeningWords(vad)).toBe("sherpa-onnx's C API, with the voice activity model on WebAssembly");
+    expect(notNative(vad)).toBe("the voice activity model ran on WebAssembly (voice.model_wasm_fallback)");
+    const two = listeningSeen(log(CHOSE_NATIVE, READY_NATIVE, fellBack("wake word model", "voice activity model", "voice activity model")));
+    expect(notNative(two)).toBe("the wake word model and voice activity model ran on WebAssembly (voice.model_wasm_fallback)");
+    const all = listeningSeen(log(CHOSE_NATIVE, READY_NATIVE, fellBack("wake word model", "voice activity model", "voice activity model", "speech recognition model")));
+    expect(listeningWords(all)).toBe("sherpa-onnx's C API, with the wake word model, voice activity model and speech recognition model on WebAssembly");
   });
 
   it("is what footprint.mjs reports and checks --native with (reliability-performance-v6-1)", () => {
