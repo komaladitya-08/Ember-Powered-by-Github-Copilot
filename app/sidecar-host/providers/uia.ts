@@ -312,7 +312,14 @@ export const START_DETAIL = {
 export function spawnDetail(err: Error): string {
   const code = (err as NodeJS.ErrnoException).code;
   // EACCES and EPERM: Windows refused to run powershell.exe (AppLocker, Software Restriction Policies, its permissions).
-  return code === "ENOENT" ? START_DETAIL.notFound : code === "EACCES" || code === "EPERM" ? START_DETAIL.notAllowed : START_DETAIL.notRun;
+  // UNKNOWN: libuv has no code for ERROR_ACCESS_DISABLED_BY_POLICY, what CreateProcess says for a program a policy
+  // blocks (reliability-performance-r5-1).
+  return code === "ENOENT" ? START_DETAIL.notFound : code === "EACCES" || code === "EPERM" || code === "UNKNOWN" ? START_DETAIL.notAllowed : START_DETAIL.notRun;
+}
+
+/** Why the bridge couldn't start when Windows PowerShell couldn't be run at all: what requests are told, and the failure. */
+function notRun(err: Error): [string, Omit<StartFailure, "at" | "why">] {
+  return [`the accessibility bridge could not run (${err.message})`, { kind: "other", detail: spawnDetail(err), cause: `Windows PowerShell could not be run (${err.message})` }];
 }
 /** How much of a starting bridge's stderr is kept to tell a refusal (never logged, never past its start). */
 const STDERR_KEPT = 16_384;
@@ -476,7 +483,21 @@ export class UiaProvider implements AxProvider {
   private launch(): Bridge {
     const command = this.o.command ?? powershellPath(this.env);
     const args = this.o.args ?? ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", this.o.script];
-    const child = this.spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: bridgeEnv(this.env), windowsHide: true });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = this.spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: bridgeEnv(this.env), windowsHide: true });
+    } catch (e) {
+      // Node throws, rather than emitting "error", for spawn's codes other than EACCES, ENOENT, EAGAIN, EMFILE and
+      // ENFILE: Windows' EPERM and UNKNOWN for a powershell.exe that AppLocker or Software Restriction Policies block. A
+      // failed start like the "error" event's, so status says why, helperCantRun holds and the back-off applies, rather
+      // than a new CreateProcess (and an AppLocker block event) on every request (reliability-performance-r5-1).
+      const err = e instanceof Error ? e : new Error(String(e));
+      const [why, start] = notRun(err);
+      this.failures++;
+      this.failure = { why, at: Date.now(), ...start };
+      this.note("uia.start_failed", { kind: this.failure.kind, failures: this.failures });
+      throw new Error(why, { cause: e });
+    }
     let settle!: { resolve: () => void; reject: (e: Error) => void };
     const ready = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
     // Nobody may be waiting when a start fails in the background: that is no unhandled rejection.
@@ -572,7 +593,7 @@ export class UiaProvider implements AxProvider {
         if (!b.done) fail(...this.exitBeforeReady(b, how));
       });
     });
-    child.on("error", err => fail(`the accessibility bridge could not run (${err.message})`, { kind: "other", detail: spawnDetail(err), cause: `Windows PowerShell could not be run (${err.message})` }));
+    child.on("error", err => fail(...notRun(err)));
     child.stdin.on("error", () => fail("the accessibility bridge stopped"));
     return b;
   }

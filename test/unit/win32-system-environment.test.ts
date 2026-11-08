@@ -249,6 +249,11 @@ describe("the Windows environment inputs", () => {
         "Windows didn't let Ember run Windows PowerShell. Ask your administrator to allow it.", `spawn ${ps} EACCES`],
       ["no PowerShell at all", powershell({ error: { code: "ENOENT", message: `spawn ${ps} ENOENT` } }),
         "Ember couldn't find Windows PowerShell on this computer.", `spawn ${ps} ENOENT`],
+      // As Node reports a powershell.exe that a policy blocks, ERROR_ACCESS_DENIED or ERROR_ACCESS_DISABLED_BY_POLICY:
+      // thrown by spawn, never an "error" event (reliability-performance-r5-1).
+      ...(["EPERM", "UNKNOWN"].map(code => [`Windows' policy blocking PowerShell (${code}, thrown)`,
+        (() => { throw Object.assign(new Error(`spawn ${ps} ${code}`), { errno: -4048, code, syscall: `spawn ${ps}` }); }) as never,
+        "Windows didn't let Ember run Windows PowerShell. Ask your administrator to allow it.", `spawn ${ps} ${code}`]) as [string, never, string, string][]),
       ["PowerShell stopping before the ready line", powershell({ code: 3 }), "Windows PowerShell stopped before it was ready.", "exit code 3"],
       ["a bridge of another version", powershell({ stdout: '{"ready":true,"version":2,"dpi":"per-monitor-v2"}\n' }),
         "it doesn't match this Ember (it is out of date). Reinstall or update Ember.", ""],
