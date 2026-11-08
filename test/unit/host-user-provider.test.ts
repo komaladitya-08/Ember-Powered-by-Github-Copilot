@@ -190,6 +190,30 @@ describe("AgentHost with the user's own model provider", () => {
     await host.stop();
   });
 
+  it("keeps its status still while a model server on this computer stays off, rather than saying Connecting… at every retry (integrations-c1-2)", async () => {
+    vi.useFakeTimers();
+    try {
+      sim.clients = []; sim.sessions = [];
+      let answer: TestResult = REFUSED;
+      let probes = 0;
+      const { host, statuses } = makeHost(() => LOCAL, async () => { probes++; return answer; });
+      expect(await host.start(null)).toBe("error");
+      const after = statuses.length;
+      // Three background tries (15 s, 30 s, a minute): each asks the server, and says nothing while it doesn't answer.
+      for (const wait of [15_000, 30_000, 60_000]) await vi.advanceTimersByTimeAsync(wait + 100);
+      expect(probes).toBe(4);
+      expect(statuses.slice(after)).toEqual([]);
+      expect(host.getStatus().phase).toBe("error");
+      expect(sim.clients).toHaveLength(0);
+      // Started: the next try connects, saying so.
+      answer = { ok: true, host: "127.0.0.1:18109", models: 1 };
+      await vi.advanceTimersByTimeAsync(60_100);
+      expect(host.getStatus()).toMatchObject({ phase: "ready", detail: "Connected to 127.0.0.1:18109." });
+      expect(statuses.slice(after).map(s => JSON.parse(s).phase)).toContain("starting");
+      await host.stop();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("tells memory it waits for the own provider, never for a GitHub account, when the provider can't connect (integrations-r5)", async () => {
     sim.clients = []; sim.sessions = [];
     const why: string[] = [];

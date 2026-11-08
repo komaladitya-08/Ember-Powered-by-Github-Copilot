@@ -2165,8 +2165,29 @@ export class AgentHost {
     this.offline = [...recent, Date.now()];
     // 15 s, 30 s, then every minute: the network (or the VPN) is often back within minutes.
     const ms = Math.min(60_000, 15_000 * 2 ** Math.min(recent.length, 2));
-    this.retry = setTimeout(() => { this.retry = null; void this.launch(this.token, this.source); }, ms);
+    this.retry = setTimeout(() => { this.retry = null; void this.retryQuietly(); }, ms);
     this.retry.unref?.();
+  }
+
+  /**
+   * A background try. While a model server on this computer can't be reached, it is asked first, and the status stays
+   * as it is while nothing answers: no "Connecting…" and the same sentence again every minute, which a screen reader
+   * would repeat and the handle would flip with (integrations-c1-2). Once it answers, Ember connects as usual. A try
+   * the person asked for (Check again, a request) or a network change still says it is connecting.
+   */
+  private async retryQuietly(): Promise<void> {
+    const p = this.providerNow();
+    const probe = this.o.probeProvider;
+    const waiting = this.status.phase === "error" && this.status.reason === "network";
+    if (waiting && p?.kind === "user" && probe && !keyNeeded(p.config.baseUrl)) {
+      const gen = this.gen;
+      let down: string | null = null;
+      try { down = providerDown(await probe(), serviceHost(p.config.baseUrl), true); } catch { /* unknown: connect as before */ }
+      // Something else started, stopped or scheduled meanwhile: it decides.
+      if (gen !== this.gen || this.retry || this.quitting) return;
+      if (down) { this.o.log.info("agent.provider_still_down"); this.retryLater(); return; }
+    }
+    void this.launch(this.token, this.source);
   }
 
   /** A start that failed for want of a network and waits to try again tries now. Returns whether one did. */

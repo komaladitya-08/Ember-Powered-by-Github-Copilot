@@ -960,7 +960,8 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   unreachable), Ember leaves Ready for that reason: the status says "Ember can't reach the model server on this computer
   (127.0.0.1:11434). Start it, and Ember will connect in a moment.", the handle "Can't connect", and the next request
   says why at once instead of waiting about 24 s. It tries again as an offline start does (15 s, 30 s, then every
-  minute, and at once on the next request), each try only that GET. A remote host isn't asked at a start: Electron's
+  minute, and at once on the next request), each try only that GET, and a background try leaves the status as it is
+  while nothing answers, so no "Connecting…" comes and goes every minute (integrations-c1-2). A remote host isn't asked at a start: Electron's
   fetch follows the system's proxy settings, which can differ from the runtime's, so its test may not veto a connect.
   So a server on this computer that answered reads "Connected to <host>.", and a remote host only "Using <host>.",
   or "Using <host>, with no API key saved. If it needs one, save it under Model provider." when no key is saved for
