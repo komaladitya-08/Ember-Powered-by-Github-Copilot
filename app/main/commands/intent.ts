@@ -374,7 +374,7 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
         // after it but fillers ("then nginx too"), and after any list a particle ("and nginx back up", "on 80") says
         // another verb's (commands-remote-v5-6).
         const rest = at < 0 ? [] : userWordList(tokens.slice(at + 1).join(" "));
-        if (then0 ? !rest.every(x => THEN_AFTER.has(x) || (shape.heads ?? []).includes(x)) : rest.some(x => PARTICLE.has(x))) { end(); return; }
+        if (then0 ? !rest.every(x => THEN_AFTER.has(x) || (shape.heads ?? []).includes(x)) : rest.some((x, j) => PARTICLE.has(x) && !(x === "on" && ON_WHERE.has(rest[j + 1] ?? "")))) { end(); return; }
       }
       if (!leads && !(chain && listed && first !== undefined && nounish(first))) { end(); return; }
       if (leads) end();
@@ -410,10 +410,15 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
   return out;
 }
 
-/** Words a thing listed after "then" may have after it and still be the verb's ("then nginx too", "then the dist folder"). */
-const THEN_AFTER = new Set([...FILLERS, "too", "also", "as", "well", "folder", "folders", "directory", "directories", "dir", "file", "files", "branch", "service", "process", "package", "image"]);
+/**
+ * Words a thing listed after "then" may have after it and still be the verb's ("then nginx too", "then the dist folder",
+ * "then nginx right away": commands-remote-w5-6).
+ */
+const THEN_AFTER = new Set([...FILLERS, "too", "also", "as", "well", "folder", "folders", "directory", "directories", "dir", "file", "files", "branch", "service", "process", "package", "image", "away", "immediately", "asap"]);
 /** Words after a listed thing that make it another verb's ("and nginx back up", "then nginx on 80"). */
 const PARTICLE = new Set(["up", "down", "back", "on", "off", "out", "over"]);
+/** Words after "on" that say where, not that the thing goes back on ("dist/ on my machine", "on this computer": w5-6). */
+const ON_WHERE = new Set(["my", "this", "the", "our", "that", "machine", "server", "computer", "laptop", "box", "host"]);
 
 /** Words that say a program or a service is hung ("1234 is hung", "nginx is stuck", "the nginx service seems frozen"). */
 const STUCK = new Set([
@@ -452,8 +457,14 @@ function verbEnd(tokens: readonly string[], words: readonly string[], starts: re
   return 0;
 }
 
-/** Words that may follow "it" when it is all the verb acts on ("kill it now", "restart it again, please", "kill it for me"). */
-const AFTER_IT = new Set(["now", "please", "pls", "for", "me", "us", "too", "again", "also", "right", "away", "quickly", "asap", "immediately", "thanks"]);
+/**
+ * Words that may follow "it" when it is all the verb acts on ("kill it now", "restart it again, please", "kill it for me",
+ * "kill it already", "kill it off", "kill it for good"), before a purpose ("restart it to fix it": commands-remote-w5-6).
+ */
+const AFTER_IT = new Set([
+  "now", "please", "pls", "for", "me", "us", "too", "again", "also", "right", "away", "quickly", "asap", "immediately", "thanks",
+  "already", "off", "good",
+]);
 
 /**
  * The verb's clause with "it" for the hung thing the clause before named, when it names no thing of its own and "it" is
@@ -464,7 +475,10 @@ function referBack(tokens: readonly string[], thing: string | null, names: (t: s
   if (thing === null || tokens.some(t => names(t))) return tokens;
   const object = starts.some(s => verbs.some(v => {
     const parts = v.split(" ");
-    return parts.every((p, j) => s[j] === p) && s[parts.length] === "it" && s.slice(parts.length + 1).every(x => AFTER_IT.has(x));
+    // What follows "to" says what it is for ("restart it to fix it"), not what the verb acts on.
+    const rest = s.slice(parts.length + 1);
+    const to = rest.indexOf("to");
+    return parts.every((p, j) => s[j] === p) && s[parts.length] === "it" && (to < 0 ? rest : rest.slice(0, to)).every(x => AFTER_IT.has(x)) && (to < 0 || to < rest.length - 1);
   }));
   if (!object) return tokens;
   return tokens.map(t => (userWordList(t).join(" ") === "it" ? thing : t));
@@ -535,6 +549,8 @@ const FOLDER_WORDS = new Set(["folder", "folders", "directory", "directories", "
 const NOT_A_PLACE_AFTER = new Set([
   "me", "us", "you", "it", "them", "now", "good", "real", "sure", "ever", "once", "last", "least", "all", "first", "most",
   "random", "will", "today", "tonight", "tomorrow", "later", "free",
+  // "at the root", "at the top level", "at this point", "at your convenience", "of mine", "at my request" (w5-6).
+  "root", "top", "level", "point", "convenience", "mine", "request",
 ]);
 
 /**

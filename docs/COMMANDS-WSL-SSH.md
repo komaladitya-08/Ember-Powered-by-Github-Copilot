@@ -317,14 +317,17 @@ to overwrite: "overwrite config.yml with the contents of config.yml.bak" and "sa
 never cover writing over config.yml.bak or notes.txt. "delete build/, dist/ and the cache folder" covers all three, and so do the same verb
 said again ("delete build/ and delete dist/", "delete build/. Delete dist/ too.") and a list after a colon ("delete
 these folders: build/ and dist/"), a thing after "then" or a sentence that only adds one ("stop apache, then nginx",
-"stop apache. nginx too."; "then nginx back up" or "and nginx on 80" asks, since that is another verb's), and "it" for the one thing you just said is hung ("1234 is hung, kill it", "nginx is
-stuck, restart it"), when "it" is all the verb acts on ("kill whatever is blocking it" asks), but never another verb ("stop apache and restart nginx" doesn't cover restarting
+"stop apache. nginx too.", "then nginx right away", "and dist/ on my machine"; "then nginx back up" or "and nginx on 80"
+asks, since that is another verb's), and "it" for the one thing you just said is hung ("1234 is hung, kill it", "nginx is
+stuck, restart it"), when "it" is all the verb acts on ("kill it already", "kill it for good", "restart it to fix it";
+"kill whatever is blocking it" asks), but never another verb ("stop apache and restart nginx" doesn't cover restarting
 apache). A pull request you numbered anywhere in your words keeps `gh pr merge` without a number asking ("look at pull
 request 45. merge the pr"), since that merges the current branch's; "check pr 45, then merge the pr" covers
 `gh pr merge 45`. A folder you place a name
 in is where it must be: "delete the build folder in dist" covers `rm -r dist/build`, never `rm -r build`, and so do
 "the build folder, which is in dist", "(the one in dist)", "from dist", "the build folder of dist", "… for dist", "… at
-dist/", "in dist, delete the build folder" and "dist's build folder"; "in my home folder" means the home folder. Anything broader than what you named asks: a force flag, a
+dist/", "in dist, delete the build folder" and "dist's build folder"; "in my home folder" means the home folder, and "at the
+root", "at this point", "at your convenience" and "of mine" name no folder. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).

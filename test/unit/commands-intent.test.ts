@@ -518,6 +518,18 @@ describe("matchIntent: a name that only places, describes or does something else
   });
 
   it.each([
+    // "at", "of" with words that say where in the project, when or whose, never which folder.
+    ["rm -rf build", "delete the build folder at the root"],
+    ["rm -rf build", "delete the build folder at the top level"],
+    ["rm -rf build", "delete build/ at this point"],
+    ["rm -rf build", "delete build/ at your convenience"],
+    ["rm -rf build", "delete the build folder of mine"],
+    ["rm -rf build", "delete the build folder at my request"],
+  ])("announces `%s` after %j, which names no folder (commands-remote-w5-6)", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe("Deleting build, as you asked.");
+  });
+
+  it.each([
     // What the verb itself acts on, with words that place it, say how or name where it goes.
     ["rm -rf dist/build", "delete the build folder in dist", "Deleting dist/build, as you asked."],
     ["rm -rf dist/build", "in dist delete the build folder", "Deleting dist/build, as you asked."],
@@ -850,6 +862,14 @@ describe("matchIntent: plain chains and a hung thing referred back to (commands-
   });
 
   it.each([
+    // "right away" after "then", and "on" before where it runs, bring nothing back.
+    ["systemctl stop nginx", "stop apache, then nginx right away", "Stopping nginx, as you asked."],
+    ["rm -rf build dist", "delete build/ and dist/ on my machine", "Deleting build and dist, as you asked."],
+  ])("announces `%s` after %j (commands-remote-w5-6)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
     // "it" inside a description of something else is never the hung thing itself (commands-remote-v5-1).
     ["kill 1234", "1234 is stuck, kill whatever is blocking it"],
     ["kill 1234", "1234 is stuck, kill the parent that owns it"],
@@ -867,6 +887,16 @@ describe("matchIntent: plain chains and a hung thing referred back to (commands-
     ["kill 1234", "1234's stuck, just kill it", "Stopping 1234, as you asked."],
     ["systemctl restart nginx", "nginx is stuck, restart it again", "Restarting nginx, as you asked."],
   ])("still announces `%s` after %j, where \"it\" is all the verb acts on (commands-remote-v5-1)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // "already", "off" and "for good" after "it", and what it is for.
+    ["kill 1234", "1234 is hung, kill it already", "Stopping 1234, as you asked."],
+    ["kill 1234", "1234 is hung, kill it off", "Stopping 1234, as you asked."],
+    ["kill 1234", "1234 is frozen, kill it for good", "Stopping 1234, as you asked."],
+    ["systemctl restart nginx", "nginx is broken, restart it to fix it", "Restarting nginx, as you asked."],
+  ])("announces `%s` after %j, where \"it\" is still all the verb acts on (commands-remote-w5-6)", (cmd, words, said) => {
     expect(announce(cmd, words)).toBe(said);
   });
 });
