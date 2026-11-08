@@ -8,6 +8,7 @@
  * Pure: MemoryLearning (./learning.ts) decides when.
  */
 
+import { APP_NAMES } from "../../shared/apps";
 import type { NewFact } from "./graph";
 import { soundsLikeInstruction } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
@@ -145,11 +146,6 @@ const POLITE = /^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:can|could|would|
  */
 const SAID = String.raw`(?!\s+(?:even\s+|ever\s+|just\s+)?(?:said|say|told|asked|ask|wrote|typed|meant|mean|just|was\s+saying|mentioned|mention|brought|bring|talked|talk|spoke|discussed|ever|even|sent|were\s+(?:saying|talking))\b)`;
 /**
- * "…my last message", "…our previous conversation", "…my typo", "…my old instructions": the conversation's own words,
- * never something about the user (memory-c1-1). "My old address" and "my first name" are the user's.
- */
-const CONVERSATION = String.raw`(?!\s+(?:(?:very\s+)?(?:last|previous|earlier|latest|recent|prior)\b|(?:(?:old|other|first|second|whole|original|new|current)\s+)?(?:message|request|question|instruction|draft|answer|reply|replies|typo|conversation|chat|edit|change|prompt|comment|word|mistake|plan|command|search|query)s?\b))`;
-/**
  * "Remember that…", "don't forget my…", "keep in mind…", "make a note that…", and what follows. Never "remember to…"
  * or "don't forget to…" (reminders), "remember when, what, how…" or "remember me" (questions about what Ember knows),
  * nor "make a note in…" (a note in an app).
@@ -162,32 +158,74 @@ const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do
  */
 const STATES = /^(?:that\b|i\b|i['’]|we\b|we['’])|\b(?:is|are|was|were|am|isn['’]t|aren['’]t|wasn['’]t|has|have)\b|\b(?:it|that|there|he|she|they|what|who|this|here)['’]s\b|['’](?:re|m|ve)\b/i;
 /**
- * "Forget that I…", "forget my address", "forget where I live", "forget everything about me", "don't remember that
- * Priya is my manager": the user asking Ember to stop knowing something about them, and nothing else. Never "forget
- * the…", "forget what I said" or "forget that email" (the conversation's: "never mind", or another request), nor
- * "forget about…" or "forget to…".
+ * What someone tells Ember about themselves after "my" or "our": "my address", "my wife's birthday", "my favourite
+ * colour", "my old phone number". Only these, since "forget" is also the system's word for a device or a network ("my
+ * AirPods", "my home Wi-Fi network") and the conversation's for an app's things ("my reminder", "my email to Bob") and
+ * its own words ("my last message"): those reach the conversation (memory-c1-1).
+ */
+const ABOUT_ME = String.raw`(?:(?:full|first|last|middle|maiden|old|new|current|previous|real|legal|home|work|personal|private|mobile|postal|email|e-mail)\s+)?`
+  + String.raw`(?:names?|nickname|surname|initials|age|birthdays?|birth\s*date|date\s+of\s+birth|pronouns|gender|nationality|religion|address(?:es)?|`
+  + String.raw`(?:phone|mobile|cell)\s+numbers?|number|email\s+address(?:es)?|e-mail\s+address(?:es)?|home\s*town|location|post\s*code|zip\s*code|time\s*zone|`
+  + String.raw`job(?:\s+title)?|title|role|employer|company|workplace|boss|manager|salary|profession|occupation|wife|husband|partner|spouse|girlfriend|boyfriend|`
+  + String.raw`fianc[eé]e?|kids?|children|child|sons?|daughters?|baby|family|mum|mom|mother|dad|father|parents?|sisters?|brothers?|siblings?|`
+  + String.raw`grand(?:ma|pa|mother|father|parents?)|friends?|pets?|dog|cat|preferences?|favou?rites?|favou?rite\s+\S+|likes|dislikes|allerg(?:y|ies)|diet|`
+  + String.raw`hobb(?:y|ies)|interests|habits|details|personal\s+details|info|information|data|personal\s+data|profile|health|medications?|anniversary)\b`;
+/** What Ember keeps about someone, after "everything you know about…": "me", "us", "my wife", "Priya". */
+const YOU_KEPT = String.raw`(?:(?:that\s+)?you(?:['’]ve|\s+have|['’]d|\s+had)?\s+)?(?:know|knew|learned|learnt|remember|remembered|saved|kept|stored|noted)`;
+/**
+ * "Forget that I…", "forget my address", "forget where I live", "forget everything about me", "forget what you know
+ * about me", "clear my memory", "don't remember that Priya is my manager": the user asking Ember to stop knowing
+ * something about them, or to empty its memory, and nothing else. Never "forget the…", "forget what I said" or "forget
+ * that email" (the conversation's: "never mind", or another request), nor "forget about…" or "forget to…"; never "clear
+ * all" or "delete everything" alone (the conversation's: a list on the screen, a folder's files): memory-r3-1.
  */
 const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:(?:forget|don'?t\s+remember|do\s+not\s+remember|stop\s+remembering|unlearn)\s+(?:`
-  // "…that I work at Globex", "…I'm vegetarian", "…my wife's birthday" (never "…I said that", "…my last message").
-  + String.raw`(?:that\s+)?(?:i\b${SAID}|i['’](?:m|ve|d)\b|(?:my|our)\b${CONVERSATION}|we\b${SAID})`
-  // "…where I live", "…who my manager is" (never "…what I said").
-  + String.raw`|(?:where|what|who|when|how)\s+(?:i|my)\b${SAID}`
+  // "…that I work at Globex", "…I'm vegetarian", "…my wife's birthday" (never "…I said that", "…my last message", "…my AirPods").
+  + String.raw`(?:(?:the\s+fact\s+)?that\s+)?(?:i\b${SAID}|i['’](?:m|ve|d)\b|(?:my|our)\s+${ABOUT_ME}|we\b${SAID})`
+  // "…where I live", "…who my manager is", "…what I like" (never "…what I said", "…where I put it").
+  + String.raw`|(?:where|what|who|when|how)\s+(?:my\b|i['’]m\b|i\s+(?:live|work|am|do|like|love|hate|prefer|eat|drink|study|come|grew|was\s+born|take|use|stay)\b)`
   // "…that Priya is my manager", "…that the office is in Leeds": a statement, never "…that email" or "…that file".
   + String.raw`|that\s+(?:\S+\s+){1,3}?(?:is|are|was|were|has|have|works|lives|likes|leads|uses|prefers)\b`
-  // "…everything about me", "…all you know about me", "…things about me", "…me".
-  + String.raw`|(?:everything|all|things|stuff|anything)\s+(?:(?:you\s+)?(?:know|knew|learned|learnt|remember)\s+)?about\s+me\b|me\b)`
-  // "Erase your memory", "clear Ember's memory" (memory-v1).
-  + String.raw`|(?:forget|erase|delete|clear|wipe|reset|empty)\s+(?:all\s+(?:of\s+)?)?(?:your|ember['’]s)\s+(?:memory|memories)\b`
-  // "Forget everything", "…everything you know", "delete everything you remember" (never "…everything I said").
-  + String.raw`|(?:forget|erase|delete|clear|wipe)\s+(?:everything|all)(?:\s+(?:you\s+)?(?:know|knew|learned|learnt|remember|saved|kept|have\s+(?:saved|kept|learned|learnt)))?\s*$`
-  // "Remove Priya from your memory".
-  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+(?:\S+\s+){1,4}?from\s+(?:your|ember['’]s)\s+(?:memory|memories)\b)`, "i");
+  // "…everything about me", "…all you know about me", "…things about my wife", "…me".
+  + String.raw`|(?:everything|all|things|stuff|anything)\s+(?:${YOU_KEPT}\s+)?about\s+(?:me|us|my\s+\S+)\b|me\b)`
+  // "Forget what you know about Python", "delete everything you've learned about me" (memory-v1).
+  + String.raw`|(?:forget|erase|delete|clear|wipe|remove)\s+(?:everything|all|anything|what|whatever)\s+${YOU_KEPT}\s+about\s+\S`
+  // "Erase your memory", "clear my memory", "delete all my memories", "reset memory" (never "…your memory cache").
+  + String.raw`|(?:forget|erase|delete|clear|wipe|reset|empty)\s+(?:all\s+(?:of\s+)?)?(?:(?:your|ember['’]s|my)\s+)?(?:memory|memories)(?:\s+(?:of|about)\s+\S.*)?$`
+  // "Forget everything", "…everything you know", "delete everything you remember" (never "…everything I said", nor "delete
+  // everything you saved", which may be a task's files).
+  + String.raw`|forget\s+(?:everything|all)(?:\s+${YOU_KEPT})?\s*$`
+  + String.raw`|(?:erase|delete|clear|wipe)\s+(?:everything|all)\s+(?:(?:that\s+)?you(?:['’]ve|\s+have)?\s+)?(?:know|knew|learned|learnt|remember)\s*$`
+  // "Remove Priya from your memory", "remove my address from memory".
+  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+(?:\S+\s+){1,4}?from\s+(?:(?:your|ember['’]s|my)\s+)?(?:memory|memories)\b)`, "i");
 /**
- * "Forget Priya", "forget Priya Shah": a name alone, capitalised as names are, never a word of the conversation ("Forget
- * It", "Forget The last part"): memory-v1.
+ * "Forget Priya", "forget Priya Shah", "forget Priya's birthday", "forget everything about Priya": a name, capitalised as
+ * names are, never a word of the conversation ("Forget It", "Forget The last part"): memory-v1. Never an app, a day, a
+ * folder, a device or a network ("Forget Outlook", "Forget Monday", "Forget AirPods", "Forget HomeNet"): memory-r3-1.
  */
-const FORGET_NAME = new RegExp(String.raw`${LEAD}forget\s+(\S+(?:\s+\S+)?)$`, "i");
+const FORGET_NAME = new RegExp(String.raw`${LEAD}forget\s+(?:(?:everything|all)\s+(?:${YOU_KEPT}\s+)?about\s+)?(\S+(?:\s+\S+)?)$`, "i");
+const FORGET_NAMES_DETAIL = new RegExp(String.raw`${LEAD}(?:forget|unlearn)\s+(\S+(?:\s+\S+)?)['’]s\s+${ABOUT_ME}$`, "i");
 const NOT_A_NAME = /^(?:it|that|this|the|a|an|about|what|where|when|who|how|my|our|your|everything|all|me|i|we|to|them|him|her|those|these|instead)$/i;
+/** A word of a name as people write one: "Priya", "Jean-Luc", "O'Brien". Never "HomeNet", "AirPods" or "iPhone". */
+const NAME_WORD = /^(?:\p{Lu}\p{Ll}+(?:-\p{Lu}\p{Ll}+)?|\p{Lu}['’]\p{Lu}\p{Ll}+)$/u;
+/** Capitalised words that name an app, a day, a folder, a device or a network, not someone Ember knows (memory-r3-1). */
+const NOT_SOMEONE = new Set([
+  ...Object.values(APP_NAMES).flatMap(names => Object.values(names)).flatMap(name => [name, ...name.split(/\s+/)]),
+  "outlook", "teams", "slack", "firefox", "chrome", "edge", "safari", "word", "excel", "jira", "confluence", "zoom", "skype", "spotify",
+  "discord", "telegram", "signal", "notion", "trello", "asana", "gmail", "thunderbird", "terminal", "settings", "files", "finder", "mail",
+  "calendar", "notes", "photos", "music", "maps", "messages", "reminders", "contacts", "python", "java", "docker", "linux", "ubuntu",
+  "windows", "fedora", "steam", "netflix", "amazon", "facebook", "twitter", "reddit", "google", "copilot", "gimp", "inkscape", "blender",
+  "dropbox", "drive", "sheets", "docs", "evernote", "todoist",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december", "today", "tomorrow", "yesterday", "tonight", "weekend", "christmas",
+  "downloads", "documents", "desktop", "pictures", "videos", "home", "trash",
+  "wi-fi", "wifi", "bluetooth", "buds", "earbuds", "headphones", "headset", "speaker", "speakers", "keyboard", "mouse", "printer", "scanner",
+  "phone", "pixel", "galaxy", "watch", "monitor", "display", "network", "hotspot", "router", "ethernet", "vpn", "connection", "device",
+  "mac", "macbook", "laptop", "computer", "tablet", "kindle", "echo", "alexa", "siri", "chromecast", "roku", "xbox", "playstation",
+].map(fold));
+/** Whether `words` ("Priya", "Priya Shah") are a name Ember may keep facts about. */
+const isName = (words: string) => words.split(/\s+/).every(w => NAME_WORD.test(w) && !NOT_A_NAME.test(w) && !NOT_SOMEONE.has(fold(w)))
+  && !NOT_SOMEONE.has(fold(words));
 /** More than the one request: another sentence, or more after a comma, a semicolon or a dash (the conversation takes those). */
 const MORE = /[.!?]\s+\S|[,;]\s*\S|\s[-–—]+\s*\S/;
 /**
@@ -218,8 +256,7 @@ export function memoryAsk(text: string): "remember" | "forget" | null {
 /** Whether `t` (no more in it) asks Ember to forget something about the user, everything, or a name. */
 function forgets(t: string): boolean {
   if (FORGET_ASK.test(t)) return true;
-  const name = FORGET_NAME.exec(t);
-  return !!name && name[1]!.split(/\s+/).every(w => /^\p{Lu}\p{Ll}/u.test(w) && !NOT_A_NAME.test(w));
+  return [FORGET_NAME.exec(t), FORGET_NAMES_DETAIL.exec(t)].some(name => !!name && isName(name[1]!));
 }
 
 /**

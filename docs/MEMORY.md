@@ -245,9 +245,10 @@ download, so English-only MiniLM is the trade-off for now.
      (memory-c1-3). **Forget everything** clears the lines too.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
-     only for Ember to forget something about the user ("forget that I…", "forget my…", "forget where I live"),
-     everything ("forget everything", "clear your memory", "delete everything you remember") or a name ("Forget Priya",
-     "remove Priya from your memory"; `memoryAsk`, memory-v1) is answered in code with the truth: memory is off (and
+     only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's
+     birthday", "forget where I live", "forget what you know about me"), everything ("forget everything", "clear my
+     memory", "delete everything you remember") or a name ("Forget Priya", "Forget Priya's birthday", "remove Priya
+     from your memory"; `memoryAsk`, memory-v1) is answered in code with the truth: memory is off (and
      Memory opens at its search, never at its note's "I agree, remember": memory-r7), why it is paused, or that the
      organisation turned it off. A request that says something to keep ("remember that…", "keep in mind the deadline
      is Friday", "remember I'm vegetarian") goes to the conversation, which knows it until Ember closes, and Ember says
@@ -255,7 +256,11 @@ download, so English-only MiniLM is the trade-off for now.
      Memory**, never Settings opened on its own); "remember the file I mentioned", "remember this" and "don't forget my
      umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
      a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
-     "Forget my previous instructions") and a request with more in it (after a comma, a semicolon, a dash, or "and" or
+     "Forget my previous instructions"), what isn't memory ("Clear all" and "Delete everything" without a word for
+     what Ember knows; "my…" only for something about the user (`ABOUT_ME`), never a device, a network or an app's
+     things: "Forget my home Wi-Fi network", "Forget my AirPods", "Forget my reminder"; a name only as names are
+     written, never an app, a day, a folder or a device: "Forget Outlook", "Forget Monday", "Forget HomeNet":
+     memory-r3-1) and a request with more in it (after a comma, a semicolon, a dash, or "and" or
      "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox
      instead") are the conversation's like any other (memory-c1-1). When the first part was a forget request ("Forget
      my address and open Firefox"), Ember says behind the answer that memory can't change what's saved (`forgetNote`).

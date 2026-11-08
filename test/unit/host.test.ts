@@ -4397,6 +4397,15 @@ describe("“remember…” while memory is off (memory-c1-1, memory-i1)", () =>
       conductorSession().emit("assistant.message", { content: "Opening Firefox." });
       conductorSession().emit("session.idle", {});
       expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox." });
+      // "Clear all" after a list, and the system's own "forget" for a network, are the conversation's too: nothing is
+      // answered in code, nothing opens and no note follows (memory-r3-1, memory-c1-1).
+      for (const [text, answer] of [["Clear all", "Cleared your notifications."], ["Forget my home Wi-Fi network", "I'll forget it in Settings."]]) {
+        await host.ask(text);
+        expect(conductorSession().sent.at(-1), text).toContain(text);
+        conductorSession().emit("assistant.message", { content: answer });
+        conductorSession().emit("session.idle", {});
+        expect(host.getTranscript().at(-1), text).toMatchObject({ who: "ember", text: answer });
+      }
       // "Forget my last request and open Firefox instead" is about the conversation: it reaches it whole, with no note
       // (memory-c1-1).
       await host.ask("Forget my last request and open Firefox instead");

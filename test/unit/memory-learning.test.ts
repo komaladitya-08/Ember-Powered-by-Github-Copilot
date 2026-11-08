@@ -606,6 +606,43 @@ describe("“forget that”, the instruction check and the conversation's line",
     }
   });
 
+  it("answers in code the ways people most often ask Ember to forget what it knows about them, a name or its memory, while memory is off (memory-v1)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of [
+      "Forget what you know about me", "Forget whatever you know about me", "Forget what you remember about me", "Delete what you know about me",
+      "Erase what you know about me", "Forget everything you know about me", "Clear my memory", "Erase my memory", "Wipe my memory", "Delete my memories",
+      "Delete all my memories", "Clear my memories", "Forget everything you've learned", "Delete everything you've saved about me",
+      "Remove my address from memory", "Delete my address from your memory", "Forget everything about Priya", "Forget everything you know about Priya",
+      "Forget Priya's birthday", "Clear memory", "Reset memory", "Reset your memory", "Forget what you know about my wife", "Delete your memory of me",
+      "Forget the fact that I'm vegetarian", "Forget my data", "Forget all about me", "Forget my email address", "Forget my last name",
+      "Forget my home address", "Forget who I am", "Forget what I like",
+    ]) {
+      expect(memoryAsk(text), text).toBe("forget");
+      expect(off.l.intent(text, { own: true }), text).toBe(FORGET_OFF);
+    }
+    // Memory's settings and cache are something else.
+    for (const text of ["Clear your memory cache", "Reset your memory settings"]) expect(memoryAsk(text), text).toBeNull();
+  });
+
+  it("lets “Clear all”, “Delete everything”, an app, a day, a device or a network reach the conversation while memory is off, with no note and nothing opened (memory-r3-1, memory-c1-1)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of [
+      "Clear all", "Delete all", "Delete everything", "Clear everything", "Erase all", "Erase everything", "Wipe everything", "Wipe all",
+      "Please delete all", "Hey Ember, clear all", "Delete everything you have saved", "Forget Outlook", "Forget Teams", "Forget Firefox",
+      "Forget Monday", "Forget Python", "Forget Slack", "Forget Settings", "Forget Downloads", "Forget AirPods", "Forget Wi-Fi", "Forget HomeNet",
+      "Forget Galaxy Buds", "Forget GitHub", "Forget Google Chrome", "Forget my home Wi-Fi network", "Forget my Wi-Fi network", "Forget my home Wi-Fi",
+      "Forget my AirPods", "Forget my headphones", "Forget my Bluetooth speaker", "Forget my printer", "Forget my phone", "Forget my mouse",
+      "Forget my saved passwords", "Forget my password in Firefox", "Forget my meeting", "Forget my order", "Forget my booking", "Forget my reminder",
+      "Forget my meeting at 3", "Forget my email to Bob", "Forget my notes", "Forget my file", "Forget our meeting", "Forget my calendar",
+      "Forget where I put it", "Forget how I did it", "Forget my AirPods and connect my headphones",
+    ]) {
+      expect(memoryAsk(text), text).toBeNull();
+      expect(off.l.intent(text, { own: true }), text).toBeNull();
+      expect(off.l.rememberNote(text), text).toBeNull();
+    }
+    expect(off.opened).not.toHaveBeenCalled();
+  });
+
   it("adds “I won't keep this” only after a request that says something to keep, never after “remember the file I mentioned” (memory-r8)", () => {
     const off = learning({ inForce: () => false });
     for (const text of [
