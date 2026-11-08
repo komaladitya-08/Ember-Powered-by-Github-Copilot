@@ -1191,7 +1191,8 @@ export class Worker {
    * A step Work without asking let through (authorize, authorizeCells): its decisions' audit entries and its
    * announcement, held until the look right before acting has passed (act, system, withCursor: goAhead). So a step a
    * password prompt then stops is never said, nor recorded, as going ahead without asking, and no extra look through the
-   * shell is made to find out (safety-privacy-v4-2). The next decision drops one that never got that far.
+   * shell is made to find out (safety-privacy-v4-2). The next decision, and the next tool call, drop one that never got
+   * that far (safety-privacy-r4-1).
    */
   private ahead: { entries: AuditEntry[]; words: string | null } | null = null;
   /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
@@ -1492,6 +1493,9 @@ export class Worker {
   private wrappingUp = false;
 
   private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
+    // A step held to go ahead without asking that its own call didn't take (a password prompt, the keyboard or the desk
+    // refused it) is never written by a later call's action entry, after its refusal (safety-privacy-r4-1).
+    this.ahead = null;
     if (this.halted) return STOPPED();
     if (this.result) return denied("The task is already finished. Stop now.");
     // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.

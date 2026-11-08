@@ -60,7 +60,9 @@ function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; an
   /** An authentication prompt (an X11 pinentry) has the keyboard, as the borrow's window check sees it. */
   authWindow?: () => boolean;
   /** The user's clipboard can't be saved, so nothing is pasted. */
-  clipboardFails?: boolean; } = {}) {
+  clipboardFails?: boolean;
+  /** The helper says the text area is a list's row, so a toggle on it fails before anything is decided about it. */
+  listRow?: boolean; } = {}) {
   // `walks`: each look through the shell (promptOpen, systemDialogOpen), in order.
   const st = { asked: [] as string[], audit: [] as Record<string, unknown>[], activity: [] as Record<string, unknown>[], keys: [] as string[], borrows: 0, walks: [] as string[] };
   const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "list.txt - Notepad", states: [], bounds: FRAME };
@@ -87,6 +89,7 @@ function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; an
       readElement: async (id: number) => { const n = nodes().find(x => x.id === id); return n ? { role: n.role, name: n.name, states: n.states, bounds: n.bounds, ...(n.text !== undefined ? { text: n.text } : {}) } : null; },
       setText: async () => { throw new Error("background_unavailable: this app takes no text this way"); },
       doAction: async () => { throw new Error("background_unavailable: no accessible action"); },
+      ...(o.listRow ? { canDo: async (_id: number, kind: string) => kind === "toggle" ? { tier1: true, action: "select row" } : { tier1: true } } : {}),
     } as never,
     policy: winPolicy(scopes),
     autonomy: () => scopes,
@@ -899,6 +902,23 @@ describe("working without asking while the desktop's own password prompt is open
     expect(borrow).toEqual([["decision", "allow", true], ["action", false, null]]);
     expect(h.st.activity.filter(e => e.type === "announce").map(e => e.text)).toEqual([`Typing 9 characters in ${NOTEPAD}, without asking as you let me.`]);
   });
+
+  it.each([[true], ["unchecked"], ["helper"]] as const)("records a step it stopped only as refused, though the next step fails before it is decided (safety-privacy-r4-1, promptOpen %j)", async now => {
+    let prompt: boolean | "unchecked" | "helper" = false;
+    const h = notepadWorker({ prompt: () => prompt, listRow: true });
+    await h.call("perceive_window", {});
+    prompt = now;
+    expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("denied");
+    prompt = false;
+    // A toggle on a list's row fails before Ember decides anything about it, and writes what it tried.
+    expect((await h.call("toggle", { id: 2, on: true })).resultType).toBe("failure");
+    expect(h.st.audit.some(e => e.autonomy === true)).toBe(false);
+    expect(h.st.audit.filter(e => e.event !== "read").map(e => [e.event, e.kind, e.verdict ?? e.ok])).toEqual([
+      ["decision", "text", "deny"], ["action", "toggle", false],
+    ]);
+    expect(h.st.activity.some(e => e.type === "announce")).toBe(false);
+    expect(h.st.borrows).toBe(0);
+  });
 });
 
 describe("working without asking while an authentication prompt has the keyboard (safety-privacy-v4-3)", () => {
@@ -913,6 +933,21 @@ describe("working without asking while an authentication prompt has the keyboard
     expect(h.decisions("cursor_text").map(e => [e.verdict, e.autonomy ?? null, e.reason])).toEqual([
       ["deny", null, "an authentication prompt has the keyboard"], ["deny", null, "an authentication prompt has the keyboard"],
     ]);
+  });
+
+  it("records a borrow it stopped only as refused, though the next step fails before it is decided (safety-privacy-r4-1)", async () => {
+    let auth = true;
+    const h = notepadWorker({ authWindow: () => auth, listRow: true });
+    await h.call("perceive_window", {});
+    expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("denied");
+    auth = false;
+    expect((await h.call("toggle", { id: 2, on: true })).resultType).toBe("failure");
+    expect(h.st.borrows).toBe(0);
+    expect(h.decisions("cursor_text").map(e => [e.verdict, e.autonomy ?? null, e.reason])).toEqual([["deny", null, "an authentication prompt has the keyboard"]]);
+    // Nothing after the refusal says the borrow went ahead without asking.
+    const refusal = h.st.audit.findIndex(e => e.event === "decision" && e.kind === "cursor_text");
+    expect(h.st.audit.slice(refusal + 1).filter(e => e.event !== "read").map(e => [e.event, e.kind, e.verdict ?? e.ok])).toEqual([["action", "toggle", false]]);
+    expect(h.st.activity.filter(e => e.type === "announce").map(e => e.text)).not.toContainEqual(expect.stringMatching(/^Using your keyboard/));
   });
 
   it("asks nothing about borrowing the keyboard with the mode off, and once the prompt has gone asks as before", async () => {
