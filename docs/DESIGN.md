@@ -181,7 +181,9 @@ They share one emotion rig, so switching never changes behaviour.
   answer opened in full with **Read all** while the box is open. An answer opened in full that fits
   nowhere clear whole (a 1024 x 768 screen at Larger text) is cut short a line at a time to the
   tallest place clear of the box, the handle, the cards and the settings window, never under three
-  lines, and its text scrolls inside it; with no such place it goes where it always went.
+  lines, and its text scrolls inside it; with no such place it goes where it always went. Once
+  the box closes, one cut short for it keeps off the box's place no more and shows whole where it
+  can (it may move to do so); one that showed whole stays where it is.
   While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times

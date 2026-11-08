@@ -1267,6 +1267,11 @@ export class ReasoningBubble {
     return { x: pos.x, y: pos.y, width: this.box.width, height: this.box.height };
   }
 
+  /** Its text is cut short to the room where it was last placed (an answer opened in full, in part: bubbleCut). */
+  isCut(): boolean {
+    return this.cut > 0;
+  }
+
   /** The parts that take the pointer (buttons; a long question's scroll area), in host coordinates. */
   interactiveRects(pad = 4): Rect[] {
     const pos = this.pos;

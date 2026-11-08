@@ -571,11 +571,37 @@ describe("the open Ask box, for a bubble that comes up while it is open (compani
     expect(askKeepOff({ ...mid, y: 100 }, askKeepOffKey(full), opened, true)).toBe(opened);
   });
 
+  it("shows an answer cut short for the open Ask box whole once the box closes, where all of it fits (companion-v6-3)", () => {
+    // As measured live on a 1024 x 768 screen at Larger text, Ember mid-screen: Read all with the box open cut a nine-line
+    // answer (410 x 307, 26 px lines) to seven under Ember; after Esc it stayed cut, its last two lines (the offer)
+    // behind the scroll bar for as long as it showed, because it still kept off the closed box's place.
+    const cut = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+    const full = { ...cut, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const handle = { x: 752, y: 700, width: 260, height: 56 }, screen = { width: 1024, height: 768 };
+    const box = { x: 195, y: 242, width: 728, height: 173 }, anchor = { x: 559, y: 461 }, own = { width: 410, height: 307 };
+    const opened = askKeepOff(box, askKeepOffKey(full), askKeepOff(box, askKeepOffKey(cut), none), true);
+    expect(bubbleFit(anchor, own, screen, 60, [handle, box], () => 307, [box])).toBeNull();
+    // Cut short under Ember, its last lines scrolling inside.
+    expect(bubbleCut(anchor, own, screen, 60, [handle, box], [box], 26, 307 - 234 + 3 * 26)).toEqual({ x: 336, y: 479, width: 410, height: 281 });
+    // The box closes (state.askBox null): the cut answer keeps off it no more ...
+    const closed = askKeepOff(null, askKeepOffKey(full), opened, true, true);
+    expect(closed).toEqual({ box: null, question: askKeepOffKey(full) });
+    // ... and goes whole above Ember, where all of it fits clear of the handle.
+    expect(bubbleFit(anchor, own, screen, 60, [handle], () => 307, [])).toEqual({ x: 537, y: 58, width: 410, height: 307 });
+    // It never moves for the box opening again (the box opens clear of it: companion-c2-4).
+    expect(askKeepOff(box, askKeepOffKey(full), closed, true, false)).toBe(closed);
+    // One opened in full that shows whole (not cut) stays where it is as the box closes: nothing to gain by moving it.
+    expect(askKeepOff(null, askKeepOffKey(full), opened, true, false)).toBe(opened);
+    // Nor does any other bubble that kept off the box (an answer that grew into it; a question): companion-c2-4.
+    const grown = { box, question: askKeepOffKey(cut), grew: true as const };
+    expect(askKeepOff(null, askKeepOffKey(cut), grown, false, false)).toBe(grown);
+  });
+
   it("is a place the bubble keeps off where it can, never one it hides from (main sends it apart from the windows)", async () => {
     const { readFileSync } = await import("node:fs");
     const overlayPage = readFileSync("app/renderer/overlay/main.ts", "utf8");
     expect(overlayPage).toContain("bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff, askAcross)");
-    expect(overlayPage).toMatch(/askHeld = askKeepOff\(state\?\.askBox \?\? null, askKeepOffKey\(state\?\.bubble \?\? IDLE_BUBBLE\), askHeld, state\?\.bubble\.expanded === true\);\n\s+const askAt = askHeld\.box && \{[^\n]+\};\n\s+if \(askAt\) list\.push\(askAt\);\n\s+askAcross = askAt && askHeld\.grew \? \[askAt\] : \[\];/);
+    expect(overlayPage).toMatch(/askHeld = askKeepOff\(state\?\.askBox \?\? null, askKeepOffKey\(state\?\.bubble \?\? IDLE_BUBBLE\), askHeld, state\?\.bubble\.expanded === true, bubble\.isCut\(\)\);\n\s+const askAt = askHeld\.box && \{[^\n]+\};\n\s+if \(askAt\) list\.push\(askAt\);\n\s+askAcross = askAt && askHeld\.grew \? \[askAt\] : \[\];/);
     // Grown into the box as it streams or finishes: placed again at once, clear of it (companion-c3-1).
     expect(overlayPage).toContain("if (showBubble && grewIntoAsk() && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff, askAcross)) interactiveDirty = true;");
     expect(overlayPage).toContain("const next = askGrownInto(askHeld, state?.askBox ?? null, at, askGrew(b, askSeen.key === key ? askSeen.at : null, at));");

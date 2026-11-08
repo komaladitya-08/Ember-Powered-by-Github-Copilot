@@ -109,10 +109,12 @@ export interface AskHeld { box: Rect | null; question: string; grew?: true }
  * answer being read isn't thrown across the screen (companion-c2-4); the box keeps clear of it instead (ask.ts). One
  * that grows into the box on its own (askGrew: as its words stream in, or as it finishes) keeps off it from then on
  * (askGrownInto). So does an answer opened in full (`opened`: "Read all") while the box is open, which may go above or
- * below the box at once (`grew`; companion-c5-1: the whole answer was laid under the field).
+ * below the box at once (`grew`; companion-c5-1: the whole answer was laid under the field). One cut short to the room
+ * for it (`cut`: bubbleCut) keeps off the box no more once it closes, so it shows whole where it can (companion-v6-3:
+ * its last lines stayed behind the scroll bar for as long as it showed, though all of it fitted above Ember).
  */
-export function askKeepOff(box: Rect | null, question: string, held: AskHeld, opened = false): AskHeld {
-  if (question && question === held.question) return held;
+export function askKeepOff(box: Rect | null, question: string, held: AskHeld, opened = false, cut = false): AskHeld {
+  if (question && question === held.question) return opened && cut && !box && held.box ? { box: null, question } : held;
   return opened && box ? { box, question, grew: true } : { box, question };
 }
 

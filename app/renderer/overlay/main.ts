@@ -353,8 +353,8 @@ function measureTasks(): void {
   list.push(...windows);
   // The open Ask box: kept off where the bubble can, never hidden from (the box is where the user answers it), and a
   // bubble already shown doesn't move for it (companion-c1-1, companion-c2-4); one opened in full while it is open may go
-  // across it (companion-c5-1).
-  askHeld = askKeepOff(state?.askBox ?? null, askKeepOffKey(state?.bubble ?? IDLE_BUBBLE), askHeld, state?.bubble.expanded === true);
+  // across it (companion-c5-1), and once it closes, one cut short for it shows whole where it can (companion-v6-3).
+  askHeld = askKeepOff(state?.askBox ?? null, askKeepOffKey(state?.bubble ?? IDLE_BUBBLE), askHeld, state?.bubble.expanded === true, bubble.isCut());
   const askAt = askHeld.box && { x: askHeld.box.x - bounds.x, y: askHeld.box.y - bounds.y, width: askHeld.box.width, height: askHeld.box.height };
   if (askAt) list.push(askAt);
   askAcross = askAt && askHeld.grew ? [askAt] : [];
