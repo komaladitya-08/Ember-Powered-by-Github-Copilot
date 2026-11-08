@@ -73,7 +73,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const ctx: Record<string, unknown> = {
     active: true, step: "provider", checkEpoch: 0, checkRun: 0, providerCheck: { phase: "checking", line: "Checking" }, navigation: 0, heardBefore: -1,
     // The visit set the provider up (it wasn't in use as the step opened): Back to Copilot puts it away (first-run-c1-2).
-    visitInUse: false, checkSaves: true, edited: false, ownInForce: () => false, inUseHost: () => null,
+    visitInUse: false, checkSaves: true, edited: false, ownInForce: () => false, inUseHost: () => null, offPending: 0, see() {},
     get settings() { return settings.get(); },
     latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, providerFailField, providerKeptLine, PROVIDER_STEP, gated, stepPosition,
     root: { dataset: {} }, consented: () => true, render() {}, $: (id: string) => (nodes[id] ??= { hidden: true, textContent: "", focus() {} }), provField: () => ({ focus() {} }), next: { focus() {} },

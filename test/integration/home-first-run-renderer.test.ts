@@ -787,6 +787,44 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(ag) “Use GitHub Copilot instead” draws Copilot's sign-in as the focus lands on its title, before the connection follows; one that can't be saved says my provider is still in use (first-run-c3-2)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const inForce = { inForce: true, host: "api.example.com", agreed: true, keySaved: true };
+    const details = async (failOff = false) => {
+      const p = await open({ provider, providerState: inForce, failOff, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+      await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+      await next(p).click();
+      await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+      await p.locator("#w-back").click();
+      expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+      return p;
+    };
+    // What the step says the moment the press moves the focus (a screen reader reads it then), while main's status
+    // still names my provider: the mock sends none of its own.
+    const press = (p: Page) => p.evaluate(() => {
+      document.getElementById("w-alt")!.click();
+      const text = (id: string) => document.getElementById(id)!.textContent;
+      return { focus: document.activeElement?.id, title: text("w-title"), lead: text("w-lead"), line: text("w-signin-line"), next: text("w-next"), why: text("w-why") };
+    });
+    const p = await details();
+    const at = await press(p);
+    expect(at).toEqual({ focus: "w-title", title: "Sign in to GitHub", lead: expect.not.stringContaining("you set up") as unknown as string, line: "Connecting to Copilot…", next: "Continue", why: "Still connecting to Copilot." });
+    expect(await p.locator("#w-models").isHidden()).toBe(true);
+    // Main's status follows: Copilot's sign-in, the focus still on the title.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => next(p).innerText()).toBe("Sign in with GitHub");
+    expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect(await focusedId(p)).toBe("w-title");
+    // A switch-off that couldn't be saved: my provider is still on and in use, and the step and the notice say so.
+    const q = await details(true);
+    expect((await press(q)).title).toBe("Sign in to GitHub");
+    await expect.poll(() => q.locator("#provider-off").isVisible()).toBe(true);
+    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await q.locator("#w-signin-line").innerText()).toBe("Using your own provider (api.example.com).");
+    for (const page of [p, q]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(z) resumed while the user's own provider connects or fails, the sign-in step names it, with no Copilot or sign-in words (first-run-1, first-run-c1-3)", async () => {
     const service = { kind: "user", host: "localhost:11434" };
     const own = { on: true, baseUrl: "http://localhost:11434/v1", conductor: "llama3.2:3b", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "localhost:11434" } };

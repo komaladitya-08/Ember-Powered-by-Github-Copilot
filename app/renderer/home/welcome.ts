@@ -71,7 +71,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let active = false;
   let settings: Settings | null = null;
   let status: Status | null = null;
+  /** The connection as the steps draw it (see()): main's status, except while it still names a provider switched off. */
   let agent: AgentStatus | null = null;
+  /** The connection as main last reported it. */
+  let reported: AgentStatus | null = null;
+  /** Switch-offs of the user's own provider being saved (turnOwnOff). */
+  let offPending = 0;
   let voice: VoiceStatus | null = null;
   let signingIn = false;
   let signInMessage: { text: string; tone: string } | null = null;
@@ -176,7 +181,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (to === "provider" && step !== "provider") {
       // In use now, by the settings as they are: a provider switched off ("Use GitHub Copilot instead") isn't in use,
       // whatever an older read of main's state said (first-run-r3-1).
-      visitInUse = !!settings?.provider.on && ownInForce();
+      visitInUse = !!settings?.provider.on && !offPending && ownInForce();
       checkSaves = !visitInUse;
       edited = false;
       // In use: its fields show the details it uses now, not an edit left unchecked on an earlier visit.
@@ -512,8 +517,14 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (!force && !settings?.provider.on) return;
     if (since !== undefined && since !== providerChoice()) return;
     let ok = false;
+    offPending++;
+    see();
     try { ok = await deps.save({ provider: { on: false } } as SettingsPatch); } catch { /* counted as failed below */ }
+    offPending--;
+    see();
     showOffFailure(!ok);
+    // Not saved: the connection is the provider's again, and the step says so (first-run-c3-2).
+    if (!ok) render();
   }
   /** The notice above first run and Home alike (so it is seen on whichever is up): the provider is still on, with a retry. */
   function showOffFailure(failed: boolean): void {
@@ -951,7 +962,17 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (!active || step !== "try" || heardBefore < 0 || tried.ask) return;
     if (c.slice(heardBefore).some(e => e.who === "you")) { tried.ask = true; live(TRY_TEXT.ask.done); render(); }
   });
-  const onAgent = (a: AgentStatus) => { agent = a; if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };
+  /**
+   * The user's own provider is switched off ("Use GitHub Copilot instead", or a check that put it away) but main's status
+   * still names it until it reconnects: the steps draw Copilot's connection as starting from the moment of the press, so
+   * the title the focus lands on is Copilot's sign-in, never "Your own model provider" (first-run-c3-2). A switch-off
+   * that couldn't be saved leaves it named, as it is still in use.
+   */
+  function see(): void {
+    const leaving = reported?.service?.kind === "user" && (offPending > 0 || settings?.provider.on === false);
+    agent = leaving && reported ? { ...reported, phase: "starting", detail: "", reason: undefined, login: undefined, service: undefined, models: [], conductorModel: null, workerModel: null } : reported;
+  }
+  const onAgent = (a: AgentStatus) => { reported = a; see(); if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };
   void window.ember.agentStatus().then(onAgent, () => { /* the next status brings it */ });
   window.ember.onAgentStatus(onAgent);
   const onVoice = (v: VoiceStatus) => {
@@ -973,6 +994,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       const consentOf = (x: Settings | null) => JSON.stringify([x?.provider.on, x?.provider.consent]);
       const providerMoved = active && consentOf(s) !== consentOf(settings);
       settings = s;
+      see();
       if (providerMoved) void readOwn();
       about.refresh(s, memoryManaged());
       if (!s.onboarded && !active) begin();
