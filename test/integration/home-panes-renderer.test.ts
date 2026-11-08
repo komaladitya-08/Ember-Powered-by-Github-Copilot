@@ -306,6 +306,33 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     await page.close();
   });
 
+  it("gives each entry's words the whole row in a narrow window at a large text size, and keeps one row when there is room (accessibility-visual-r1)", async () => {
+    const thunderbird = { app: "thunderbird", kind: "click", element: { role: "push button", name: "Send" } };
+    const entries: ActivityEntry[] = [{ t: minutesAgo(1), event: "confirm", answer: "always", ...thunderbird }];
+    const page = await open("home", { activity: entries, viewport: { width: 420, height: 900 } });
+    await page.locator("#activity-fold > summary").click();
+    await expect.poll(() => lineCount(page)).toBe(1);
+    const shape = () => page.evaluate(() => {
+      const list = document.getElementById("activity")!.getBoundingClientRect();
+      const [t, tag, what] = [...document.querySelectorAll("#activity li:not(.day) > *")].map(e => e.getBoundingClientRect());
+      return { share: what.width / list.width, below: what.top >= Math.max(t.bottom, tag.bottom) - 1 };
+    });
+    for (const [width, size] of [[420, "larger"], [700, "larger"], [420, "large"], [380, ""]] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(sz => { if (sz) document.documentElement.dataset.textSize = sz; else delete document.documentElement.dataset.textSize; }, size);
+      const s = await shape();
+      // It was 107 of about 340 px at 420 px Larger (31%), wrapping two or three words a line into a 277 px row.
+      expect(s.share, `${width} px ${size || "default"}`).toBeGreaterThanOrEqual(0.4);
+    }
+    // With room for all three side by side, the words stay beside the time and the tag.
+    for (const [width, size] of [[1000, "larger"], [1000, ""], [700, ""]] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(sz => { if (sz) document.documentElement.dataset.textSize = sz; else delete document.documentElement.dataset.textSize; }, size);
+      expect((await shape()).below, `${width} px ${size || "default"}`).toBe(false);
+    }
+    await page.close();
+  });
+
   it("never says Ember did nothing when its first read of the record fails (home-10)", async () => {
     const page = await open("home", { activity: "fail" });
     await page.locator("#activity-fold > summary").click();

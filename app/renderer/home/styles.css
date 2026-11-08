@@ -471,7 +471,7 @@ progress[hidden] { display: none; }
 .task-view { min-width: 0; }
 
 /* ───── What Ember did: time, a fixed-width state tag, the step ───── */
-.activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
+.activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; container: activity / inline-size; }
 .activity:empty::before { content: "Nothing yet. When Ember works in your apps, each step shows here."; display: block; padding: 14px 16px; color: var(--muted); }
 .activity li { display: grid; grid-template-columns: 4.6em 8em 1fr; gap: 10px; align-items: baseline; margin: 0 16px; padding: 9px 0; font: var(--type-callout); }
 .activity li + li:not(.day) { border-top: 1px solid var(--line); }
@@ -486,6 +486,12 @@ progress[hidden] { display: none; }
 .activity .tag.no { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-text); }
 .activity .what { overflow-wrap: anywhere; }
 .activity .why { display: block; color: var(--muted); font: var(--type-footnote); }
+/* Narrow, or at a large text size, the words take the whole row under the time and the tag: beside them they kept
+   107 of 340 px at 420 px Larger, two or three words a line (accessibility-visual-r1). In em, so it follows the text size. */
+@container activity (max-width: 24em) {
+  .activity li { grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; }
+  .activity .what { grid-column: 1 / -1; }
+}
 /* Show earlier, after the lines drawn (safety-privacy-5); a line it moved focus to shows the ring inside the list. */
 .activity li.more { display: block; }
 .activity li[tabindex="-1"]:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-xs); }
