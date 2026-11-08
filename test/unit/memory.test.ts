@@ -199,6 +199,27 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
 
+  // A login or credentials said as one value, the way the model writes a fact: round four's re-rating found them kept.
+  it.each([
+    ["The user's Netflix login is hunter2"], ["The user's Netflix credentials: hunter2"], ["My Netflix login is Summer2024!"],
+    ["The login for the NAS is Tr0ub4dor&3"], ["Credentials for the NAS are Tr0ub4dor&3"], ["The router creds: P@ssw0rd"],
+    ["my gmail login was hunter22."], ["The VPN credentials are 'blue-sky-99' for now"], ["The user's work login is j5m1th!\nTheir desk is on floor 3"],
+  ])("refuses %j, a login said as its password (safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+
+  // A login's user name, address, protocol or when it happened, and credentials in code: still facts (safety-privacy-1).
+  it.each([
+    ["The user's GitHub login is octocat"], ["My work login is priya.k@example.com"], ["The login is via SSO"], ["The login is 2FA-protected"],
+    ["Our app's login is OAuth2, how do I add PKCE?"], ["The login is SAML2 based"], ["Last login was 10:30 yesterday"], ["The last login was 2024-01-05"],
+    ["The last login was 2023"], ["The credentials are AES-256 encrypted"], ["Credentials: https://vault.example.com/team"],
+    ["fetch(url, { credentials: 'include' })"], ["credentials: ${{ secrets.DEPLOY_KEY }}"], ["login: user1"], ["The login page is https://example.com/sign-in2"],
+    ["The credentials are 30 days old"], ["The user's login is the same as their email"], ["The login is 10am-6pm"], ["Login is 404ing"],
+    ["The credentials are base64"], ["credentials are sha256"],
+  ])("keeps %j, which names no password (safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   // A six-digit PIN code is a postcode only after an address (a road, a city, a state, an office), never after a lock, a
   // profile or a bare comma, nor on a line with no address before it (memory-v4-5).
   it.each([

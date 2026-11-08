@@ -72,13 +72,16 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   "the door code is 4821", "the code for the front door is 4821", "use hunter2 as the password for…", "login for the
   router: admin / P@ssw0rd", "…with CVV 123", "my PIN number is 1234", "my phone code is 4821", "my house code is
   4821", "the code to get into the office is 4821", "the bank code for the vault is 4821", "HR portal pw
-  Summer2024!", "my wifi password, it's BlueSky99", "hunter2 is my password", a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  Summer2024!", "my wifi password, it's BlueSky99", "hunter2 is my password", "the user's Netflix login is hunter2",
+  "Netflix credentials: hunter2" (a login said with a digit or a symbol, even a user name such as "my login is
+  jsmith42", since one said that way is as often its password: safety-privacy-1), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value, and a code counts only for
   something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
   "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
   "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
-  are ordinary words, as are a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
+  are ordinary words, as are a login's address, protocol or time ("my work login is priya@example.com", "the login is
+  OAuth2", "last login was 10:30", "the credentials are AES-256 encrypted"), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
   GPIO0 as the boot pin", "never share your password, it's personal": a value said before "the data pin" or "the
   boot pin" counts only as digits, and ", it's" only before a value with a digit or a symbol, memory-v4-6), how a
   token is made ("the access token is HS256-signed", "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits

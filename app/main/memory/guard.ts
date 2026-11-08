@@ -163,6 +163,23 @@ const LOGIN_PAIR = new RegExp(
   "i",
 );
 /**
+ * A login or credentials said as one value with a digit or a symbol, the way the model writes a fact ("The user's
+ * Netflix login is hunter2", "The user's Netflix credentials: hunter2": safety-privacy-1). A login only with "is" or
+ * "was" ("login: user1" in a file names a user), and the value where what is said ends, so a user name, an email or web
+ * address, a variable ("credentials: ${{ secrets.DEPLOY_KEY }}"), a protocol or an encoding ("the login is OAuth2", "the
+ * credentials are base64"), a time, a date or a year ("Last login was 10:30", "the login is 10am-6pm"), a status ("Login
+ * is 404ing") and how it is made ("the credentials are AES-256 encrypted", "the login is 2FA-protected") stay facts.
+ */
+const AUTH_SCHEME = String.raw`oauth|saml|fido|ntlm|ntlmv|kerberos|krb|ldaps?|openid|oidc|u2f|webauthn|totp|hotp|2fa|mfa|sso|pkce|tls|ssl|base|sha|md5|aes|rsa|hmac|utf|jwt|x509`;
+const LOGIN_VALUE = String.raw`["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))(?![^\s@"'”]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:[\s.,;!?"'”]|$))`
+  + String.raw`(?![a-z][a-z0-9+.-]*:\/\/|www\.)(?![$%{])(?!(?:${AUTH_SCHEME})\d*(?:[\s.,;!?"'”]|$))(?!(?:19|20)\d\d(?:[\s.,;!?"'”]|$))`
+  + String.raw`(?!\d{1,4}(?:[-/:.]\d{1,4})+(?:am|pm)?(?:[\s.,;!?"'”]|$))(?!\d{1,2}(?::\d\d)?\s?(?:am|pm)\b)(?!\d+(?:ing|ed|s)\b)(?![^\s"'”]{1,11}-[a-z]{3,}(?:[\s.,;!?"'”]|$))`
+  + String.raw`(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}["'”]?(?=\s*(?:$|\n)|[.,;!?)]|\s+[-–—]|\s+(?:and|but|so|for|on|at|to|in|with|from|which|if|or)\b)`;
+const TOLD_LOGIN = new RegExp(
+  String.raw`\b(?:(?:login|log-in|sign-in)\b${FOR_WHAT}\s+(?:is|was)\s+|(?:credentials?|creds)\b${FOR_WHAT}(?:\s*[:=]\s*|\s+(?:is|are|was|were)(?:\s*[:=])?\s+))${LOGIN_VALUE}`,
+  "i",
+);
+/**
  * An admin's or root's user name and password ("Jenkins admin: admin / j3nkins!"): only with a spaced slash between and a
  * digit or a symbol in the second, so "root: /opt/app2" and "the admin is Priya, with Bob as backup" stay (memory-1).
  */
@@ -260,7 +277,7 @@ export function memoryRefusal(text: string): string | null {
   const pins = withoutPostcodes(text);
   if (TOLD_SECRET.test(text) || BARE_PASSWORD.test(text) || BARE_PIN.test(pins) || LOGIN_PASS.test(text) || PLACE_CODE.test(text)
     || CODE_FOR_PLACE.test(text) || BARE_CVV.test(text) || USED_AS.test(text) || LOGIN_PAIR.test(text) || WIFI_KEY.test(text) || SEED_WORDS.test(text)
-    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(text) || TOLD_TOKEN.test(text) || ADMIN_PAIR.test(text) || VALUE_FIRST.test(text)) {
+    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(text) || TOLD_TOKEN.test(text) || ADMIN_PAIR.test(text) || VALUE_FIRST.test(text) || TOLD_LOGIN.test(text)) {
     return "it holds a password, PIN or code";
   }
   for (const m of text.match(CARD) ?? []) {
