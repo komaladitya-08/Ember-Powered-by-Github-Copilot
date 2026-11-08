@@ -804,28 +804,36 @@ one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`Spee
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
 character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
 field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
-before its first joining word ("and", "which", "because"…, never "to", "for", "from" or "with", which follow verbs)
-once it has 4 words, or else at its last space before 90 ("I looked through the folder you mentioned | and found…"),
-streamed or whole, and never inside a code span or a link's words. No piece of speech is longer than 120
+before its first joining word ("and", "which", "because"…, never "to", "for", "from" or "with", which follow verbs;
+"until", "after" and "before" only before a clause, and never "between two | and four") once it has 4 words
+("I looked through the folder you mentioned | and found…"), or else before its last preposition before 90 ("is free |
+from two until four", never just after "is" or "going"), or else at its last space before 90, streamed or whole, and never inside a code span or a link's words; a cut inside bold or italic words leaves no star
+or underscore to be said. No piece of speech is longer than 120
 characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
 it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into
-a list, three or more short lines in a row that each start with a capital (a list without its markers) and a
+a list, three or more short lines in a row that each start with a capital (a list without its markers), two or more
+such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…") and a
 paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
 its number ("2. Choose Privacy", never "Open Settings 2."), and a streamed list is said as each item's line ends, not
 after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
 last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
-"Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", and other emoji and typed smileys not at
-all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
+"Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
+key" as "the right arrow key"), a range's dash as "to" ("$5-$10", "10:30–11:00", "5–10"), and other emoji and typed
+smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
-language, not counting names such as "La Vie en Rose" or "Los Angeles": `speechLanguage`) is said by a local system
-voice for that language, or not at all when there is none, which isn't reported as Ember failing to speak, even with no
-voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided once, from its first 60
-letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English list's "1. La La Land." is
-Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters English seldom writes) or
-any piece after a request typed in another language waits for more of the answer, a reply too short to tell follows the
-request's language, and words for the system voice wait until the pieces Kitten is still making are done.
+language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by
+a local system voice for that language, or not at all when there is none, which isn't reported as Ember failing to
+speak, even with no voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided
+once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English
+list's "1. La La Land." is Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters
+English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
+typed in another language (three different short words of it outside quotes, and none only English writes:
+`requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer. A reply too short to tell follows that
+request's language unless it has as many English short words ("It means that's life."), and a message that ends before
+a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
+pieces Kitten is still making are done.
 
 **When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
 lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,

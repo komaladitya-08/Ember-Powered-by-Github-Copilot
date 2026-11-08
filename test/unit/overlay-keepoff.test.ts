@@ -33,7 +33,7 @@ import type { Logger } from "../../app/main/logger";
 import type { Settings } from "../../app/main/settings";
 import type { OverlayShaper } from "../../app/main/platform/types";
 import { besideControl, followTarget } from "../../app/main/follow";
-import { askKeepOff, bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
+import { askKeepOff, askKeepOffKey, bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const shaper: OverlayShaper = { setInputRegion: () => false, release() {}, forward: false, floating: () => ({ options: {}, allWorkspaces: null }) };
@@ -360,14 +360,37 @@ describe("the open Ask box, for a bubble that comes up while it is open (compani
     expect(askKeepOff(box, "q3:once", before)).toBe(before);
   });
 
+  it("never moves an answer already shown for the box opening, growing or closing: only one that comes while it is open keeps off it (companion-c2-4)", () => {
+    const answer = { visible: true, mood: "idle" as const, title: "Ember", actions: [] as { id: string; label: string }[] };
+    // An answer on screen when the box opens: it keeps off nothing of the box, so it is never thrown across the screen
+    // (it went 678 px to the far edge for a box that grew 1 px into it); the box keeps clear of it instead (ask.ts).
+    const shown = askKeepOff(null, askKeepOffKey(answer), none);
+    expect(askKeepOff(box, askKeepOffKey(answer), shown)).toBe(shown);
+    expect(askKeepOff(moved, askKeepOffKey(answer), shown).box).toBeNull();
+    // However its words stream in, it is one bubble from when it shows until it goes.
+    expect(askKeepOffKey({ ...answer, thought: "Tokyo" } as typeof answer)).toBe(askKeepOffKey(answer));
+    // One that comes while the box is open keeps off it where the box was then, and doesn't follow it after.
+    const result = { ...answer, mood: "done" as const, title: "Tidy up" };
+    const came = askKeepOff(box, askKeepOffKey(result), shown);
+    expect(came.box).toEqual(box);
+    expect(askKeepOff(moved, askKeepOffKey(result), came)).toBe(came);
+    expect(askKeepOff(null, askKeepOffKey(result), came)).toBe(came);
+    // "Read all" opened in full is a new bubble (it is larger): it keeps off the box where it is now.
+    expect(askKeepOff(moved, askKeepOffKey({ ...answer, expanded: true } as typeof answer), shown).box).toEqual(moved);
+    // Gone: nothing is held.
+    expect(askKeepOffKey({ ...answer, visible: false })).toBe("");
+    // A question is held by its answers' ids, as before.
+    expect(askKeepOffKey({ ...answer, mood: "attention", actions: [{ id: "q1:once", label: "Allow" }, { id: "ui:more", label: "More" }] })).toBe("q1:once");
+  });
+
   it("is a place the bubble keeps off where it can, never one it hides from (main sends it apart from the windows)", async () => {
     const { readFileSync } = await import("node:fs");
     const overlayPage = readFileSync("app/renderer/overlay/main.ts", "utf8");
     expect(overlayPage).toContain("bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)");
-    expect(overlayPage).toMatch(/askHeld = askKeepOff\(state\?\.askBox \?\? null, questionOf\(state\), askHeld\);\n\s+if \(askHeld\.box\) list\.push\(/);
+    expect(overlayPage).toMatch(/askHeld = askKeepOff\(state\?\.askBox \?\? null, askKeepOffKey\(state\?\.bubble \?\? IDLE_BUBBLE\), askHeld\);\n\s+if \(askHeld\.box\) list\.push\(/);
     const main = readFileSync("app/main/main.ts", "utf8");
-    expect(main).toMatch(/onBounds: askBox => \{ if \(JSON\.stringify\(lastState\.askBox \?\? null\) !== JSON\.stringify\(askBox\)\) showState\(\{ askBox \}\); \},/);
-    expect(main).toMatch(/overlay\.setBubble\(event\.sender, rect\);\n\s+\/\/[^\n]*\n\s+askWindow\.bubbleChanged\(stepsAsideFor\(lastState\.bubble\)\);/);
+    expect(main).toMatch(/onBounds: askBox => \{ if \(JSON\.stringify\(lastState\.askBox \?\? null\) !== JSON\.stringify\(askBox\)\) showState\(\{ askBox \}\); agent\?\.holdForAsk\(askBox !== null\); \},/);
+    expect(main).toMatch(/overlay\.setBubble\(event\.sender, rect\);\n(\s+\/\/[^\n]*\n)+\s+askWindow\.bubbleChanged\(stepsAsideFor\(lastState\.bubble, manualCall\?\.source === "ask"\)\);/);
     // Without a compositor, the corner card grows for a question: the open box moves off it.
     expect(main).toMatch(/handle\.fit\(height\); deskViewRef\?\.handleMoved\(\); askWindow\.keepClear\(\);/);
   });

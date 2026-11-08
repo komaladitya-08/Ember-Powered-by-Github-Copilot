@@ -7,7 +7,7 @@ import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
 import { ASK_OVER, WAIT_TIP, askCount, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, overLimit, sendKey, textScaleOf } from "./field";
-import { liveWords, seesView, unavailableLine, type SeesView } from "./chips";
+import { ANSWERS_AGAIN, liveWords, seesView, unavailableLine, type SeesView } from "./chips";
 import { watchPixels } from "../shared/pixels";
 import { mountListenOnce } from "../shared/listen-once";
 
@@ -80,6 +80,11 @@ const field = input.parentElement!;
 const listenRow = document.getElementById("listen-once-row")!;
 let suggested: string[] = [];
 /**
+ * What main offers now, while the field holds a draft (companion-r2-1, companion-c2-2): the chips are put away then
+ * (keeping their room), so the change waits until the field is cleared, and the field never jumps while it is typed in.
+ */
+let offered: string[] | null = null;
+/**
  * The window opens with one field row and two rows for the comfortable Listen once control, plus any wait tip.
  */
 let shownRows = 3;
@@ -98,7 +103,8 @@ function fit(): void {
   const lines = fieldLines(input.scrollHeight, s);
   field.style.flexBasis = `${fieldHeight(lines, s)}px`;
   input.classList.toggle("scrolls", input.scrollHeight > fieldHeight(lines, s) + 1);
-  const count = askCount(input.value.length);
+  // What is sent (trimmed), as Send and Enter judge it (companion-r2-3: trailing line breaks made it "too many").
+  const count = askCount(input.value.trim().length);
   const full = !!count;
   if (cut.textContent !== count) cut.textContent = count;
   cut.hidden = !full;
@@ -161,6 +167,7 @@ window.emberAsk.onListenOnce(showListenOnce);
  * the first letter moved the field 48 px down).
  */
 function showSuggestions(list: string[]): void {
+  offered = null;
   suggested = list.slice(0, 3);
   for (const b of [...suggest.querySelectorAll("button")]) b.remove();
   for (const text of suggested) {
@@ -173,6 +180,7 @@ function showSuggestions(list: string[]): void {
   syncSuggestions();
 }
 function syncSuggestions(): void {
+  if (offered && input.value.trim() === "") { showSuggestions(offered); return; }
   suggest.hidden = !suggested.length;
   suggest.classList.toggle("away", input.value.trim() !== "");
 }
@@ -273,11 +281,14 @@ function showUnavailable(word: string | undefined, live: boolean): void {
   const unavailable = document.getElementById("unavailable")!;
   const cant = unavailableLine(word);
   const news = live && !!cant && cant !== cantSay.full;
+  // Back while the box is open: said too, so the live region doesn't keep the old "Offline" (companion-6).
+  const back = live && !cant && !!cantSay.full;
   cantSay = { full: cant ?? "", word: cant ? word!.replace(/…$/, "") : "" };
   unavailable.hidden = !cant;
   unavailable.textContent = cant ?? "";
   unavailable.title = cant ?? "";
   if (news) seesLive.textContent = cant;
+  if (back) seesLive.textContent = ANSWERS_AGAIN;
   if (!live) return;
   document.querySelector(".meta")!.classList.toggle("bare", quiet && !cant);
   fitMeta();
@@ -286,6 +297,16 @@ function showUnavailable(word: string | undefined, live: boolean): void {
 /** The quick look found nothing to show and no computer is named: the line is just its keys (and any line above). */
 let quiet = false;
 window.emberAsk.onUnavailable?.(w => showUnavailable(w ?? undefined, true));
+// What the open box suggests changed (a question came or went, or the answer they follow went): the chips follow, at
+// once while the field is empty, else once it is cleared (they are put away meanwhile and take no click).
+window.emberAsk.onSuggestions?.(list => {
+  if (input.value.trim() !== "") { offered = list; return; }
+  // A chip that had the keyboard goes: the field has it, not the page.
+  const had = suggest.contains(document.activeElement);
+  showSuggestions(list);
+  if (had) input.focus();
+  fit();
+});
 // Typed while the box was opening: it goes where the caret is, as if typed here.
 window.emberAsk.onTyped(t => {
   if (t.cancel) { window.emberAsk.close(); return; }

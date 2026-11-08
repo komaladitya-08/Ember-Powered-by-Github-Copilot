@@ -1726,6 +1726,17 @@ export function questionHoldsListen(question: boolean, own: ListenOnceStatus | u
   return question && !(own?.phase === "starting" || own?.phase === "listening" || own?.phase === "checking");
 }
 
+/** Listen once's line on the control whose request a question ended, while that question is up (companion-r2-2). */
+export const LISTEN_CUT_BY_QUESTION = "I stopped listening to ask you something. Answer it, then ask again.";
+
+/**
+ * The control (`source`: whose Listen once it is) whose request a question that comes now ends (main cancels a Listen once
+ * under way for it), given the voice's status; null when none is under way.
+ */
+export function cutByQuestion(source: "ask" | "home" | undefined, status: ListenOnceStatus | undefined): "ask" | "home" | null {
+  return source && !questionHoldsListen(true, status) ? source : null;
+}
+
 /** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */
 export function downloadHelp(message: string, bytes = VOICE_MODELS_BYTES): string {
   if (/ERR_CERT_|certificate|self.signed|issuer|SSL|TLS/i.test(message)) {

@@ -362,6 +362,33 @@ describe("main's answer speech ownership", () => {
     expect(w.voice.speak).toHaveBeenLastCalledWith("Done. I opened Por Una Cabeza.", { append: false, lang: null });
   });
 
+  it("says a short English reply to a lower-case request naming a French title in Ember's voice, and every message after a preamble too (voice-speaking-r2-1)", () => {
+    const w = wiring();
+    const calls = () => w.voice.speak.mock.calls as [string, { append: boolean; lang: string | null }][];
+    w.onTurnStart({ text: "what does c'est la vie mean?", spoken: false });
+    w.onAnswer("It means that's life.");
+    expect(w.voice.speak).toHaveBeenLastCalledWith("It means that's life.", { append: false, lang: null });
+    w.onTurnEnd(false);
+    w.voice.speak.mockClear();
+    // A message before a tool call, then the answer: the preamble decides nothing for it.
+    w.onTurnStart({ text: "play la vie en rose on spotify", spoken: false });
+    const preamble = "Sure, one moment.";
+    for (let i = 0; i < preamble.length; i += 4) w.onAnswerDelta(preamble.slice(i, i + 4));
+    w.onAnswerEnd(preamble);
+    const answer = "Playing La Vie en Rose by Édith Piaf in Spotify now. It's the 1947 recording, and the volume is at half.";
+    for (let i = 0; i < answer.length; i += 4) w.onAnswerDelta(answer.slice(i, i + 4));
+    w.onAnswer(answer);
+    expect(calls().map(c => c[0]).join(" ")).toBe(`${preamble} ${answer}`);
+    expect(calls().map(c => c[1].lang)).toEqual(calls().map(() => null));
+    w.onTurnEnd(false);
+    w.voice.speak.mockClear();
+    // Nor does a short English preamble fix a French answer after it to Kitten's English sounds.
+    w.onTurnStart({ text: "Open the files", spoken: false });
+    w.onAnswerEnd("One moment.");
+    w.onAnswer("Voici les trois fichiers que vous avez demandés. Le premier est le rapport de ventes.");
+    expect(calls().map(c => [c[0], c[1].lang])).toEqual([["One moment.", null], ["Voici les trois fichiers que vous avez demandés. Le premier est le rapport de ventes.", "fr"]]);
+  });
+
   it("keeps background results on cards during a foreground request and appends them after playback", () => {
     const w = wiring();
     const task = { title: "A background task", status: "done", text: "The task is done.", summary: "Done" };

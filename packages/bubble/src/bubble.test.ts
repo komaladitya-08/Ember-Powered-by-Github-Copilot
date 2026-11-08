@@ -437,6 +437,14 @@ describe("the bubble's hierarchy (UI audit #9)", () => {
     expect(keyHintParts(null)).toBeNull();
   });
 
+  it("keeps each chord on one line with its word, also in a bubble narrowed beside the Ask box, as the corner card does (companion-r2-4)", () => {
+    // Narrowed to 273 px beside the open box at Larger text, the hint broke inside a chord ("Ctrl Alt" / "N not now").
+    expect(BUBBLE_CSS).toContain(".eb-step .eb-key { white-space: nowrap; }");
+    const src = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "bubble.ts"), "utf8");
+    const step = src.slice(src.indexOf("  setStep(text: string | null): void {"), src.indexOf("  setWhole("));
+    expect(step).toMatch(/className: "eb-key" \}\);\n\s+chord\.append\(\.\.\.caps, word\);/);
+  });
+
   it("keeps a question's keys as keycaps under a note before them, on a line of its own (tasks-approvals-6)", () => {
     const note = "To answer yes by voice, set up Voice Match in Settings › Voice, so I know it's you. For now, click Allow.";
     expect(stepParts(`${note}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`)).toEqual({ lead: note, keys: [{ keys: ["Ctrl", "Alt", "Y"], word: "allow" }, { keys: ["Ctrl", "Alt", "N"], word: "not now" }] });

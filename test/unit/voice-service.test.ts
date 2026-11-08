@@ -43,7 +43,7 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { VoiceService, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
+import { LISTEN_CUT_BY_QUESTION, VoiceService, cutByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
@@ -321,6 +321,24 @@ describe("VoiceService", () => {
     const at = (t: string) => main.indexOf(t);
     expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeGreaterThan(0);
     expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeLessThan(at("if (questionHoldsListen("));
+  });
+
+  it("says a question ended the request it was hearing, on that control only, while the question is up (companion-r2-2)", () => {
+    // A question that comes while Listen once hears a request ends it (main's questionChanged cancels it): the control
+    // whose listen it was says so, not just "Answer Ember's question first.", so nobody talks on to a closed microphone.
+    for (const phase of ["starting", "listening", "checking"] as const) expect(cutByQuestion("ask", { phase, detail: "" }), phase).toBe("ask");
+    expect(cutByQuestion("home", { phase: "listening", detail: "" })).toBe("home");
+    expect(cutByQuestion("ask", { phase: "ready", detail: "" })).toBeNull();
+    expect(cutByQuestion(undefined, { phase: "listening", detail: "" })).toBeNull();
+    expect(LISTEN_CUT_BY_QUESTION).toBe("I stopped listening to ask you something. Answer it, then ask again.");
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    const qc = main.slice(main.indexOf("const questionChanged = "));
+    const body = qc.slice(0, qc.indexOf("\n  };"));
+    // Taken before anything else in it (before the listen is cancelled), and forgotten once no question is up.
+    expect(body.indexOf("listenCutFor = q ? listenCutFor ?? cutByQuestion(manualCall?.source, voice?.listenOnceStatus) : null;")).toBeGreaterThan(0);
+    expect(body.indexOf("listenCutFor = q ?")).toBeLessThan(body.indexOf("syncListenOnce();"));
+    expect(body.indexOf("listenCutFor = q ?")).toBeLessThan(body.indexOf("voice?.cancelListenOnce();"));
+    expect(main.indexOf("if (confirmer?.waiting && listenCutFor === source) return blocked(LISTEN_CUT_BY_QUESTION);")).toBeLessThan(main.indexOf("if (questionHoldsListen("));
   });
 
   it("says which microphone it hears through while it captures, and nothing once it doesn't (voice-listening-v2)", async () => {

@@ -18,7 +18,7 @@ import { Rig, FACTORIES, PRESETS, frameSeconds, restingGap, type Character, type
 import { ReasoningBubble, onPress, plainStream, snapToDevice } from "@ember/bubble";
 import { canvasSize, watchPixels } from "../shared/pixels";
 import { LEVEL_STEPS } from "../../shared/level";
-import { TASK_READING_LEASE_MS, TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
+import { IDLE_BUBBLE, TASK_READING_LEASE_MS, TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { STOP_ACK_MS, cardLines, cardStateWord, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { ArmClock, TASK_ARM_MS } from "../handle/arm";
@@ -26,7 +26,7 @@ import { ArmClock, TASK_ARM_MS } from "../handle/arm";
 /** The bubble's Try again and Stop ignore presses for a moment after they come up, as a task card's buttons do. */
 const bubbleArm = new ArmClock();
 import { shortWhere, whereText } from "../handle/badge";
-import { askKeepOff, bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
+import { askKeepOff, askKeepOffKey, bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
 import { handleCorner, type HandleSide } from "../../shared/handle-place";
 import { presenceOf } from "../../shared/presence";
 import { PresenceView } from "./presence";
@@ -348,8 +348,8 @@ function measureTasks(): void {
   windows = (state?.avoid ?? []).map(r => ({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height }));
   list.push(...windows);
   // The open Ask box: kept off where the bubble can, never hidden from (the box is where the user answers it), and a
-  // question already shown doesn't move for it (companion-c1-1).
-  askHeld = askKeepOff(state?.askBox ?? null, questionOf(state), askHeld);
+  // bubble already shown doesn't move for it (companion-c1-1, companion-c2-4).
+  askHeld = askKeepOff(state?.askBox ?? null, askKeepOffKey(state?.bubble ?? IDLE_BUBBLE), askHeld);
   if (askHeld.box) list.push({ x: askHeld.box.x - bounds.x, y: askHeld.box.y - bounds.y, width: askHeld.box.width, height: askHeld.box.height });
   // The control Ember works on: the bubble keeps off its ring (what Ember is about to click, or is showing you) where
   // it can do that and still keep off the handle, the cards and the windows above.
@@ -411,11 +411,8 @@ setInterval(reportReading, TASK_READING_LEASE_MS / 3);
 document.addEventListener("visibilitychange", reportReading);
 window.addEventListener("pagehide", () => { for (const id of readingCards) api.taskReading(id, false); readingCards.clear(); });
 
-/** The question the bubble shows (its answers' ids), "" for none. */
-const questionOf = (s: EmberState | null): string =>
-  s?.bubble.visible ? s.bubble.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id).join(",") : "";
 /** What the bubble keeps off besides the cards: the windows main names, the open Ask box and the control Ember works on. */
-const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null, s?.askBox ?? null, questionOf(s)]);
+const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null, s?.askBox ?? null, askKeepOffKey(s?.bubble ?? IDLE_BUBBLE)]);
 const cards = new Map<string, CardEls>();
 let tasksKey = "";
 /** The cards in stack order (top first), as last rendered. */
@@ -666,7 +663,8 @@ function renderTasks(tasks: TaskCard[]): boolean {
       setTimeout(() => { delete li.dataset.justDone; }, 700);
     }
     c.li.dataset.status = t.status;
-    if (c.state.textContent !== cardStateWord(t)) c.state.textContent = cardStateWord(t);
+    const said = cardStateWord(t);
+    if (c.state.textContent !== said) c.state.textContent = said;
     const where = whereText(t.where) ?? "";
     if (c.where.textContent !== where) c.where.textContent = where;
     c.where.hidden = !where;

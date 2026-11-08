@@ -60,6 +60,16 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["It's at github.com/foo/bar and docs.python.org/3/library.", "It's at github.com and docs.python.org."],
   ])("%j is said %j, a heart as a word, a duration and an address without its path (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
+  it.each([
+    ["Press the → key to go on.", "Press the right arrow key to go on."],
+    ["Use the ← and → keys.", "Use the left arrow and right arrow keys."],
+    ["Press ↑ twice, then ↓.", "Press up arrow twice, then down arrow."],
+    ["Go Back→Next.", "Go Back to Next."],
+    ["It's $5-$10 a month, or £5 – £8.", "It's 5 dollars to 10 dollars a month, or 5 pounds to 8 pounds."],
+    ["Free 10:30–11:00 and 14:00 - 15:30.", "Free 10 30 to 11 o'clock and 14 hundred to 15 30."],
+    ["Read pages 5–10, from 2020–2024.", "Read pages 5 to 10, from 2020 to 2024."],
+  ])("%j is said %j, an arrow by its name and a range with its 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
   it("says nothing for an answer that is only emoji", () => {
     expect(spokenText("🎉🎉")).toBe("");
     expect(spokenText("- 🎉\n- ✅")).toBe("");
@@ -73,6 +83,7 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     "Read and/or write 1/2 of it, at github.com.",
     "Open src/main.ts and notes.txt/old, about 15m away.",
     "Install C++ and © 2026 Ember™.",
+    "A 5-star hotel, rows 1-2 and a well-known 3-4 day trip.",
   ])("leaves %j as it is", text => expect(spokenText(text)).toBe(text.replace("John 3:16", "John 3 16")));
 });
 
@@ -111,6 +122,12 @@ describe("spokenText", () => {
     ["**Done**\nI closed it.", "Done.\nI closed it."],
     ["**Next steps:**\nOpen the file.", "Next steps:\nOpen the file."],
     ["I looked at the\nfolder and found\nthree errors.", "I looked at the\nfolder and found\nthree errors."],
+    // Longer lines led into by a colon, each starting with a capital, are a list too; one such line, or a line that goes
+    // on in lower case, isn't.
+    ["Here is the plan:\nStep one is to open the file you sent\nStep two is to save it as a copy in Documents\nStep three is to close it", "Here is the plan:\nStep one is to open the file you sent.\nStep two is to save it as a copy in Documents.\nStep three is to close it."],
+    ["Here's what it says:\nThe meeting moved to Friday and the room changed", "Here's what it says:\nThe meeting moved to Friday and the room changed"],
+    ["Here is the plan:\nOpen the file you sent me and\nsave a copy of it in Documents", "Here is the plan:\nOpen the file you sent me and\nsave a copy of it in Documents"],
+    ["I opened the report you sent and\nFound the totals at the bottom of it\nAll of them add up", "I opened the report you sent and\nFound the totals at the bottom of it\nAll of them add up"],
   ])("ends the lines of %j so they are said apart (voice-speaking-3)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
 
   // Stars and underscores that aren't emphasis are said as they are shown: a marker with a space on its inner side is
@@ -243,6 +260,18 @@ describe("speechLanguage: which language a reply is in, so Kitten (English only)
     ["Pronto! A reunião é às três com Maria e Paulo.", "pt"],
     ["Klaar! De vergadering is om drie uur met Anna en Paul.", "nl"],
   ])("still finds %j is %j, beside its names (voice-speaking-r1)", (text, lang) => expect(speechLanguage(text)).toBe(lang));
+
+  it.each([
+    "It's « je ne sais pas ». In casual speech people often say « chais pas » or just « sais pas ».",
+    "You'd say \"¿Dónde está el baño?\" It means \"Where is the bathroom?\" and works anywhere.",
+    "Say 'je ne sais pas' when you don't know.",
+  ])("takes %j, English quoting another language, as English (voice-speaking-r2-1)", text => expect(speechLanguage(text)).toBeNull());
+
+  it.each([
+    ["Le titre est « La Vie en Rose », et le fichier est dans vos documents.", "fr"],
+    ["« Merci beaucoup, je vous remercie. »", "fr"],
+    ["Ich habe „Bericht.pdf“ geöffnet und die Tabelle ist fertig.", "de"],
+  ])("still finds %j is %j, beside what it quotes, or all quotes (voice-speaking-r2-1)", (text, lang) => expect(speechLanguage(text)).toBe(lang));
 });
 
 describe("AnswerLanguage: an answer is said in one language, decided once from enough of it (voice-speaking-r1, voice-speaking-11)", () => {
@@ -291,6 +320,67 @@ describe("AnswerLanguage: an answer is said in one language, decided once from e
     expect(said(["Fertig!", "Ich habe die Datei geöffnet und zwei Fehler in der Tabelle gefunden."], { request: "Kannst du die Datei öffnen und mir sagen, was nicht stimmt?" }).map(x => x.lang)).toEqual(["de", "de"]);
     // A long enough answer is judged by its own words.
     expect(said(["Sure.", "I opened the files you asked for, and the totals are at the bottom of the first one."], { request: "¿Puedes abrir los archivos?" }).map(x => x.lang)).toEqual([null, null]);
+  });
+
+  it.each([
+    ["play la vie en rose", ["Playing La Vie en Rose."]],
+    ["play por una cabeza on spotify", ["Playing Por Una Cabeza in Spotify now."]],
+    ["what does c'est la vie mean?", ["It means that's life."]],
+    ["Translate 'je ne sais pas' for me", ["It means I don't know."]],
+    ["what does je ne sais quoi mean", ["It means an indefinable quality."]],
+    ["search for la casa de papel", ["I found it on Netflix."]],
+    ["put on por una cabeza", ["It's playing now."]],
+  ])("says a short English reply to %j, a request that only names or quotes another language, in Ember's voice (voice-speaking-r2-1)", (request, pieces) => {
+    expect(said(pieces, { request }).map(x => x.lang)).toEqual(pieces.map(() => null));
+  });
+
+  it("follows the request's language only when the request is clearly in it and the reply has no more English than that (voice-speaking-r2-1)", () => {
+    // Clearly Spanish, a reply with no English: Spanish.
+    expect(said(["Sí, claro."], { request: "¿Puedes abrir los archivos que te pedí ayer?" }).map(x => x.lang)).toEqual(["es"]);
+    // Clearly French, but the reply is English: Ember's voice.
+    expect(said(["It means I don't know."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual([null]);
+    // Quoted words aren't the request's language.
+    expect(said(["Claro."], { request: "What does \"no sé lo que es\" mean?" }).map(x => x.lang)).toEqual([null]);
+  });
+
+  /** A turn of several messages: each but the last ends before a tool call (main's onAnswerEnd). */
+  const turn = (messages: string[][], request: string) => {
+    const a = new AnswerLanguage();
+    a.reset(request);
+    return messages.flatMap((pieces, m) => pieces.flatMap((p, i) => a.take([p], i === pieces.length - 1, m < messages.length - 1)));
+  };
+
+  it("lets no message before a tool call decide the language of the messages after it (voice-speaking-r2-1)", () => {
+    const english = turn([["Sure, opening Spotify."], ["Playing La Vie en Rose by Édith Piaf in Spotify now.", "It's the 1947 recording, and the volume is at half."]], "play la vie en rose on spotify");
+    expect(english.map(x => x.lang)).toEqual([null, null, null]);
+    const netflix = turn([["Opening Netflix."], ["I found Money Heist, the English title of La Casa de Papel.", "Shall I start the first episode?"]], "find la casa de papel on netflix");
+    expect(netflix.map(x => x.lang)).toEqual([null, null, null]);
+    // A question in English about a French saying is English, so its preamble is Ember's too.
+    expect(turn([["One moment."], ["It means that's life."]], "what does c'est la vie mean").map(x => x.lang)).toEqual([null, null]);
+    expect(turn([["Un instant."], ["Cela veut dire que je ne sais pas."]], "que veut dire je ne sais pas ?").map(x => x.lang)).toEqual(["fr", "fr"]);
+    // A short English preamble doesn't fix a French answer after it to Ember's English voice either.
+    const french = turn([["One moment."], ["Voici les trois fichiers que vous avez demandés.", "Le premier est le rapport de ventes."]], "Open the files");
+    expect(french.map(x => x.lang)).toEqual([null, "fr", "fr"]);
+  });
+
+  it.each([
+    [["Sure, I opened Café Nero.", "The menu lists soups and salads."]],
+    [["Playing Beyoncé in Spotify.", "Shall I turn it up?"]],
+    [["There's a café two streets away.", "It opens at eight."]],
+    [["I opened your résumé in LibreOffice.", "It is two pages long."]],
+    [["São Paulo is three hours ahead.", "Shall I add it to your clocks?"]],
+  ])("says the first words of %j at once, an accented name or loanword no reason to wait (voice-speaking-r2-2)", pieces => {
+    const out = said(pieces);
+    expect(out.map(x => x.at)).toEqual([0, 1]);
+    expect(out.map(x => x.lang)).toEqual([null, null]);
+  });
+
+  it("still holds the short first words of a reply that may be in another language (voice-speaking-r2-2)", () => {
+    for (const first of ["Bien sûr !", "¡Listo!", "Natürlich.", "Voilà !", "On a déjà ouvert le fichier."]) {
+      const a = new AnswerLanguage();
+      a.reset("");
+      expect(a.take([first]), first).toEqual([]);
+    }
   });
 
   it("decides nothing from an empty message, and starts again for the next answer", () => {

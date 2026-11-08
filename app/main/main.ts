@@ -27,7 +27,7 @@ import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } fr
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
-import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, askSuggestions, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -45,7 +45,7 @@ import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFo
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { VoiceService, electronDownloader, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
+import { LISTEN_CUT_BY_QUESTION, VoiceService, cutByQuestion, electronDownloader, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { capiChoice, type BackendChoice } from "../voice/runtime";
@@ -676,9 +676,13 @@ function start(): void {
   let deskInControl = false;
   /** The task cards changed: Home's Task activity hears of it (set once the agent's handlers are, below). */
   let tasksShown = () => { /* nothing to tell until then */ };
+  /** What the Ask box offers may have changed: an open box hears of it (set once the box is made, below). */
+  let askOffersChanged = () => { /* no box yet */ };
   const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
     if (next.tasks) tasksShown();
+    // The answer its chips follow went, or a new one came (companion-c2-2).
+    if (next.bubble || "suggest" in next) askOffersChanged();
     // Shown just for an answer the user asked for while Ember was hidden: hidden again once it's read.
     if (hidesAgainAfter(shownForAnswer, next)) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
@@ -1024,6 +1028,8 @@ function start(): void {
   /** The keys that answer the question now up, for its bubble (only keys Ember actually holds). */
   const questionKeyHint = () => { holdQuestionKeys(); return heldKeys().map(k => k.hint).join(" · ") || undefined; };
   const questionChanged = (q: { n: number; question: Question } | null) => {
+    // A Listen once hearing a request ends for the question (below): its control says so while one is up (companion-r2-2).
+    listenCutFor = q ? listenCutFor ?? cutByQuestion(manualCall?.source, voice?.listenOnceStatus) : null;
     // The keys are held first, so a command card names the keys that answer it (the targets runtime asks keyHint).
     if (q) holdQuestionKeys();
     // A question with a panel (a command, a consent card) shows its window; the window goes with it. While a command
@@ -1033,6 +1039,8 @@ function start(): void {
     voice?.questionUp(q !== null);
     // "Answer Ember's question first." comes and goes with it (Listen once takes no press while it holds: companion-3).
     syncListenOnce();
+    // So do the Ask box's suggestions: "Yes, please" there would only seem to answer it (companion-r2-1).
+    askOffersChanged();
     targets?.questionChanged(q);
     presenceChanged();
     stepAside();
@@ -1113,10 +1121,13 @@ function start(): void {
     if (speechSilenced(!!voice?.speaking, allowed)) { cancelAck(); voice?.hush(); }
     return allowed;
   };
-  /** `end`: the message is complete, so nothing of it waits any longer to tell its language. */
-  const sayStreamed = (chunks: string[], end = false) => {
+  /**
+   * `end`: the message is complete, so nothing of it waits any longer to tell its language; `more`: it ended before a
+   * tool call, so a short one decides nothing for the messages after it (voice-speaking-r2-1).
+   */
+  const sayStreamed = (chunks: string[], end = false, more = false) => {
     if (answerInterrupted || confirmer?.waiting || !silenceIfOff()) return;
-    for (const { text: chunk, lang } of answerLanguage.take(chunks, end)) {
+    for (const { text: chunk, lang } of answerLanguage.take(chunks, end, more)) {
       const c = afterAck(chunk, ackSaid);
       ackSaid = null;
       if (!c.trim()) continue;
@@ -1192,7 +1203,8 @@ function start(): void {
     // The answer or question Ember shows: the box opens beside it, not on it (companion-1).
     bubble: () => overlay?.bubbleRect() ?? null,
     // Where the box is while it is open: a bubble that comes up meanwhile keeps off it (companion-c1-1).
-    onBounds: askBox => { if (JSON.stringify(lastState.askBox ?? null) !== JSON.stringify(askBox)) showState({ askBox }); },
+    // While it is open, the answer being replied to stays beside it (companion-c2-1).
+    onBounds: askBox => { if (JSON.stringify(lastState.askBox ?? null) !== JSON.stringify(askBox)) showState({ askBox }); agent?.holdForAsk(askBox !== null); },
     // Clicks only on what it shows, where the window system can say so (Linux's input shape: companion-4).
     shape: (w, rects) => platform.overlay.setInputRegion(w, rects, screen.getDisplayMatching(w.getBounds()).scaleFactor || 1),
     windowId: w => ownId(w),
@@ -1249,6 +1261,8 @@ function start(): void {
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
   let askContextRead = callContext;
   let manualCall: { source: "ask" | "home"; context: Promise<QuickContext | null>; before?: Pick<EmberState, "emotion" | "bubble"> } | null = null;
+  /** The control whose Listen once the question now up ended mid-request (cutByQuestion), or null. */
+  let listenCutFor: "ask" | "home" | null = null;
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
   const consented = () => hasConsent(settings.get());
   /**
@@ -1284,6 +1298,12 @@ function start(): void {
    * user's own words, and what they might say next. Made once the stores it reads are (below).
    */
   let personalRef: PersonalVoice | null = null;
+  /**
+   * What the Ask box suggests now (askSuggestions): none while a question is up, and those that follow the answer only
+   * while it shows (companion-r2-1, companion-c2-2).
+   */
+  const askOffers = () => askSuggestions(lastState, personalRef?.current() ?? [], !!confirmer?.waiting);
+  askOffersChanged = () => askWindow.setSuggestions(askOffers());
   /** When the latest request went (for the task it may have started), and the latest reply's words. */
   let askedAt = 0;
   let lastReply = "";
@@ -1360,7 +1380,7 @@ function start(): void {
         sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened), listenOnce: listenOnceStatus("ask"),
         // Why a request would go unanswered now (not connected, offline): said before it is typed (companion-6).
         unavailable: unansweredWord(agent?.getStatus()) ?? undefined,
-        ...(personalRef?.current().length ? { suggestions: personalRef.current().map(s => s.text) } : {}),
+        ...(askOffers().length ? { suggestions: askOffers() } : {}),
       }, source),
     });
     const read = askContextRead = callContext;
@@ -1479,6 +1499,8 @@ function start(): void {
     if (screenLock?.locked) return blocked("The screen is locked.");
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
+    // A Listen once of this control's that the question ended says so while it is up (companion-r2-2).
+    if (confirmer?.waiting && listenCutFor === source) return blocked(LISTEN_CUT_BY_QUESTION);
     // A question holds it back, but not this control's own Listen once under way: its Cancel listening stays (companion-r1).
     if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return blocked("Answer Ember's question first.");
     const now = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
@@ -2667,8 +2689,9 @@ function start(): void {
     sendToHome(IPC.focusSection, "voice:voice-download");
   });
   // One of Ember's suggestions chosen in the Ask box: only one it offers now, sent as Ember's words the user chose.
+  // Never while a question is up, nor one that followed an answer no longer shown (companion-r2-1, companion-c2-2).
   ipcMain.on(IPC.askSuggestion, (event, text: unknown) => {
-    if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;
+    if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text) || !askOffers().includes(text)) return;
     askWindow.hide();
     log.info("ask.suggestion");
     void askEmber(text, { suggested: true });
@@ -2682,8 +2705,9 @@ function start(): void {
   ipcMain.on(OVERLAY.bubble, (event, rect: unknown) => {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
     overlay.setBubble(event.sender, rect);
-    // A question (or "Listening…") that found no room clear of the open Ask box: the box steps aside, once (companion-c1-1).
-    askWindow.bubbleChanged(stepsAsideFor(lastState.bubble));
+    // A question (or the box's own Listen once's "Listening…", never a wake's: companion-c2-3) that found no room clear
+    // of the open Ask box: the box steps aside, once (companion-c1-1).
+    askWindow.bubbleChanged(stepsAsideFor(lastState.bubble, manualCall?.source === "ask"));
   });
   ipcMain.on(OVERLAY.motion, (event, on: unknown) => {
     if (overlay?.owns(event.sender) && typeof on === "boolean") overlay.reducedMotionChanged(on);
@@ -2904,7 +2928,7 @@ function start(): void {
     // Made now (hidden), so the ask shortcut opens it at once: a box still loading took the first letters typed. Agreed
     // to later (the first run), it is made then (review #78).
     if (consented()) askWindow.prepare();
-    settings.onChange(() => { if (consented()) askWindow.prepare(); });
+    settings.onChange(() => { if (consented()) askWindow.prepare(); askOffersChanged(); });
     // Where the pointer is, in global DIP, and the buttons held: from the window system (X11's XQueryPointer reports
     // physical pixels; Electron's position can be stale there), else Electron's.
     const cursor = () => {
@@ -3370,7 +3394,7 @@ function start(): void {
       onAnswerInterrupted: resetAnswerSpeech,
       onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
       // An answer whose voice Stop speaking silenced is still the answer, unsaid (voice-speaking-c1-1).
-      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
+      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true, true); },
       onAnswer: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {

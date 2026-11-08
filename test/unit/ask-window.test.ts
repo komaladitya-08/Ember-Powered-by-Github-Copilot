@@ -61,6 +61,7 @@ vi.mock("electron", () => {
 });
 
 const { AskWindow, MAC_SETTLE_MS, stepsAsideFor } = await import("../../app/main/ask");
+const { IDLE_BUBBLE, askSuggestions } = await import("../../app/shared/overlay");
 
 afterEach(() => { made.length = 0; menus.length = 0; vi.useRealTimers(); });
 
@@ -232,11 +233,73 @@ describe("the ask box", () => {
   it("steps aside for a question or Listen once's \"Listening…\", never for an answer it can be typed beside (companion-c1-1)", () => {
     const actions = (...ids: string[]) => ids.map(id => ({ id, label: id }));
     expect(stepsAsideFor({ visible: true, mood: "attention", actions: actions("q4:once", "q4:always", "q4:deny") })).toBe("q4:once,q4:always,q4:deny");
-    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] })).toBe("listening");
+    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] }, true)).toBe("listening");
+    // Only for the box's own Listen once: a wake's "Listening…" (someone nearby said "Hey Ember") or speech heard in a
+    // follow-up window never moves the box being typed in (companion-c2-3).
+    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] })).toBeNull();
+    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] }, false)).toBeNull();
     // An answer and its own buttons (Stop, Try again), a problem, or nothing up: the bubble keeps off the box itself.
     expect(stepsAsideFor({ visible: true, mood: "done", actions: actions("ui:retry") })).toBeNull();
     expect(stepsAsideFor({ visible: true, mood: "thinking", actions: actions("ui:stop") })).toBeNull();
     expect(stepsAsideFor({ visible: false, mood: "attention", actions: actions("q4:once") })).toBeNull();
+  });
+
+  it("offers no suggestion while a question is up, and one that follows an answer only while that answer shows (companion-r2-1, companion-c2-2)", () => {
+    const answer = { ...IDLE_BUBBLE, visible: true, thought: "Tokyo is 9 hours ahead. Want me to add a world clock?" };
+    const s = { bubble: answer, suggest: { thought: answer.thought, items: ["Yes, please", "No, thanks", "Remind me in an hour"] } };
+    const items = [{ text: "Yes, please", follows: true }, { text: "No, thanks", follows: true }, { text: "Remind me in an hour" }];
+    // Beside the answer they were made for: all of them.
+    expect(askSuggestions(s, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+    // A task asks something: none, so "Yes, please" never sits by its Allow, also before the bubble shows the question.
+    const question = { ...answer, mood: "attention" as const, thought: "May I click “Apply” in Settings?", actions: [{ id: "q3:once", label: "Allow" }, { id: "q3:deny", label: "Not now" }] };
+    expect(askSuggestions(s, items, true)).toEqual([]);
+    expect(askSuggestions({ ...s, bubble: question }, items, false)).toEqual([]);
+    // The answer has gone (its time ran out, or something else shows): only the ones that stand on their own.
+    expect(askSuggestions({ ...s, bubble: IDLE_BUBBLE }, items, false)).toEqual(["Remind me in an hour"]);
+    expect(askSuggestions({ ...s, bubble: { ...answer, thought: "Night light is on." } }, items, false)).toEqual(["Remind me in an hour"]);
+    expect(askSuggestions({ bubble: answer, suggest: null }, items, false)).toEqual(["Remind me in an hour"]);
+    // An answer's own buttons (Read all, Try again) are no question.
+    expect(askSuggestions({ ...s, bubble: { ...answer, actions: [{ id: "ui:more", label: "Read all" }] } }, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+  });
+
+  it("tells an open box what it offers now on a channel of its own, and nothing while it is closed (companion-r2-1)", async () => {
+    const sent: [string, unknown][] = [];
+    const ask = new AskWindow();
+    ask.prepare();
+    const [win] = made;
+    win.webContents.send = (ch: string, t: unknown) => { sent.push([ch, t]); };
+    win.emit("ready-to-show");
+    ask.show({ x: 400, y: 300 }, { sees: null, history: [], suggestions: ["Yes, please", "No, thanks"] });
+    const offered = () => sent.filter(([ch]) => ch === "agent:ask-suggestions").map(([, w]) => w);
+    const contexts = () => sent.filter(([ch]) => ch === "agent:ask-context").length;
+    const before = contexts();
+    // A question came: the chips go, and only they change (the draft and the rest of the page stay).
+    ask.setSuggestions([]);
+    ask.setSuggestions([]);
+    expect(offered()).toEqual([[]]);
+    expect(contexts()).toBe(before);
+    // It was answered: what stands on its own comes back.
+    ask.setSuggestions(["Remind me in an hour"]);
+    expect(offered()).toEqual([[], ["Remind me in an hour"]]);
+    // Closed: nothing is sent (the next opening brings its own).
+    ask.hide();
+    ask.setSuggestions(["Yes, please"]);
+    expect(offered()).toHaveLength(2);
+    // Main offers in the box only what askSuggestions offers now, and takes a chip back only if it is offered now.
+    const { readFileSync } = await import("node:fs");
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toMatch(/const askOffers = \(\) => askSuggestions\(lastState, personalRef\?\.current\(\) \?\? \[\], !!confirmer\?\.waiting\);/);
+    const open = main.slice(main.indexOf("const openAsk = "), main.indexOf("let audit: AuditLog"));
+    expect(open).toMatch(/suggestions: askOffers\(\)/);
+    expect(open).not.toMatch(/personalRef\.current\(\)/);
+    const chip = main.slice(main.indexOf("ipcMain.on(IPC.askSuggestion,"));
+    expect(chip.slice(0, chip.indexOf("\n  });"))).toMatch(/!askOffers\(\)\.includes\(text\)/);
+    // An open box hears of every change: a question coming or going, the answer going, a new answer.
+    expect(main).toMatch(/askOffersChanged = \(\) => askWindow\.setSuggestions\(askOffers\(\)\);/);
+    const qc = main.slice(main.indexOf("const questionChanged = "));
+    expect(qc.slice(0, qc.indexOf("\n  };"))).toMatch(/askOffersChanged\(\);/);
+    const show = main.slice(main.indexOf("const showState = "));
+    expect(show.slice(0, show.indexOf("\n  };"))).toMatch(/askOffersChanged\(\);/);
   });
 
   it("says why Ember can't answer as that changes while the box is open, without opening it afresh (companion-6)", async () => {

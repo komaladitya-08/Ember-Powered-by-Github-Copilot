@@ -202,15 +202,16 @@ export function openingBounds(near: { x: number; y: number; size?: number } | nu
 
 /**
  * The bubble the open box steps aside for when it comes up under it (companion-c1-1), by what it is: a question (its
- * answers' ids), which must be read and answered there, or Listen once's "Listening…" (the box's own request). Null for
- * the others (an answer, a reminder, a task's result), which keep off the box where they can but never move the field
- * being typed in.
+ * answers' ids), which must be read and answered there, or the box's own Listen once's "Listening…" (`ownListen`: the
+ * box's Listen once is under way). Null for the others (an answer, a reminder, a task's result, a wake's or a
+ * follow-up's "Listening…": companion-c2-3), which keep off the box where they can but never move the field being
+ * typed in.
  */
-export function stepsAsideFor(b: Pick<BubbleState, "visible" | "mood" | "actions">): string | null {
+export function stepsAsideFor(b: Pick<BubbleState, "visible" | "mood" | "actions">, ownListen = false): string | null {
   if (!b.visible) return null;
   const answers = b.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id);
   if (answers.length) return answers.join(",");
-  return b.mood === "listening" ? "listening" : null;
+  return b.mood === "listening" && ownListen ? "listening" : null;
 }
 
 /** What the field's right-click menu may do now (Electron's context-menu editFlags). */
@@ -554,7 +555,8 @@ export class AskWindow {
 
   /** What Ember will read, once the quick look at the screen is done. */
   setContext(context: AskContext): void {
-    this.context = { ...context, listenOnce: this.context.listenOnce };
+    // (What it suggests stays as the opening or setSuggestions left it: only those change the chips.)
+    this.context = { ...context, listenOnce: this.context.listenOnce, ...(this.context.suggestions ? { suggestions: this.context.suggestions } : {}) };
     this.sendContext();
   }
 
@@ -568,6 +570,19 @@ export class AskWindow {
     this.context = { ...this.context, unavailable: word };
     if (this.win && !this.win.isDestroyed() && this.win.isVisible() && !this.win.webContents.isLoading()) {
       this.win.webContents.send(IPC.askUnavailable, word ?? null);
+    }
+  }
+
+  /**
+   * What the open box suggests now (main's askSuggestions) changed: a question came or went, or the answer they follow
+   * went (companion-r2-1, companion-c2-2). Only the chips change, and only in an open box: each opening brings its own.
+   */
+  setSuggestions(list: string[]): void {
+    const now = list.slice(0, 3);
+    if (JSON.stringify(now) === JSON.stringify(this.context.suggestions ?? [])) return;
+    this.context = { ...this.context, suggestions: now };
+    if (this.win && !this.win.isDestroyed() && this.win.isVisible() && !this.win.webContents.isLoading()) {
+      this.win.webContents.send(IPC.askSuggestions, now);
     }
   }
 

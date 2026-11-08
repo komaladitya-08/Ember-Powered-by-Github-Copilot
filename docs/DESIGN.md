@@ -83,7 +83,7 @@ They share one emotion rig, so switching never changes behaviour.
   the goal passed off as theirs);
   its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
   note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`; on the
-  no-compositor corner card too, above its buttons, each chord kept on one line with its word), four corner
+  no-compositor corner card too, above its buttons; on both each chord kept on one line with its word), four corner
   brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
@@ -108,7 +108,9 @@ They share one emotion rig, so switching never changes behaviour.
   answer (and only that answer) the bubble may show what you might say next: a caption, "Ember suggests", then up to
   three quiet 24 px capsules (never the accent, never under a question), in its clickable area; the Ask box shows the
   same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7); a typed letter
-  puts them out of sight but keeps their room, so the box and its field don't move. A question's
+  puts them out of sight but keeps their room, so the box and its field don't move. Neither shows any while a question
+  is up, and the box shows the ones that answer or follow the answer ("Yes, please", "Close it", "Read it out") only
+  while that answer shows (`askSuggestions`; a change while a reply is typed waits until the field is cleared). A question's
   answer ("Thanks! Carrying on.", "Okay, I won't.") stays 1.5 s; then what the question covered or held off shows
   again, or the bubble empties and the ring rests, so a task that ends on its card never leaves "Working" behind. A
   turn that only ran steps (it started a task and said nothing) leaves no "Working" bubble either, and one that
@@ -146,8 +148,13 @@ They share one emotion rig, so switching never changes behaviour.
   its mark (no shake, no flash). The Ask box grows out of Ember beneath it, and opens beside the
   bubble, or over or under it where it fits beside neither (larger text, a 1024-wide screen), never
   on it nor on Ember (the bubble never moves for it). A bubble that comes up while the box is open
-  keeps off it where it can (never hiding for it); a question or "Listening…" that finds no room
-  moves the box aside once, and a question already shown never moves for the box. Without a
+  keeps off it where it can (never hiding for it); a question, or its own Listen once's
+  "Listening…" (never a wake's), that finds no room moves the box aside once, and a bubble already
+  shown, a question or an answer being read, never moves for the box: where the box can't keep
+  clear of it whole (a small screen at Larger text), the box may come against it. While the box is
+  open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
+  closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
+  More time to read). Without a
   compositor the box moves off the corner card as it grows for a question. On Linux it takes clicks only on what it
   shows (an X input shape the page reports), so a click in its clear margins reaches the app
   beneath and closes it. The line under its field is as wide as the field while the quick look

@@ -134,6 +134,21 @@ describe("speechChunks", () => {
     expect(speechChunks(next)[0].length).toBeLessThanOrEqual(90);
   });
 
+  it.each([
+    ["The update you asked about is going to take about twenty minutes to finish installing on this computer and then it will restart.", "The update you asked about is going to take about twenty minutes to finish installing"],
+    ["The meeting room next to the kitchen area on the second floor is free from two until four this afternoon if you want it.", "The meeting room next to the kitchen area on the second floor is free"],
+    ["Your meeting with the design team about the new onboarding flow is at 3:30 PM in the large room on the second floor today.", "Your meeting with the design team about the new onboarding flow is at 3 30 PM"],
+    ["The package you ordered last week from the online shop is expected to arrive between two and four tomorrow afternoon at your door.", "The package you ordered last week from the online shop is expected to arrive"],
+  ])("cuts a long first sentence with no joining word where a phrase starts, not inside one: %j (voice-speaking-r2)", (text, first) => {
+    expect(speechChunks(spokenText(text))[0]).toBe(first);
+    const s = new SpeechStream();
+    const said: string[] = [];
+    for (let i = 0; i < text.length; i += 4) said.push(...s.push(text.slice(i, i + 4)));
+    said.push(...s.finish(text));
+    expect(said[0]).toBe(first);
+    expect(said.join(" ")).toBe(spokenText(text));
+  });
+
   it("keeps every piece to 120 characters, so a new answer never waits long behind one being made (voice-speaking-10)", () => {
     const text = `${LONG} The largest one is the October summary, which has the revenue tables and the notes from the planning meeting that you asked me about earlier this week. I can open any of them for you.`;
     const chunks = speechChunks(text);
@@ -229,6 +244,21 @@ describe("SpeechStream", () => {
     expect(link.all.join(" ")).toContain("the report that you wrote for the board last quarter");
   });
 
+  it.each([
+    "I have **finished updating every one of the documents in your shared folder and the archive** so nothing is left to do now.",
+    "I have **finished every one of the documents, and the old archive** too, so nothing is left.",
+    "I have _finished updating every one of the documents in your shared folder and the old archive_ so nothing is left to do now.",
+    "I have *finished every one of the documents, and the old archive* too, so nothing is left.",
+    "**Done. I closed the window and saved the file.** Anything else?",
+  ])("never says a bold or italic marker that a cut inside it leaves in a piece: %j (voice-speaking-c2-1)", text => {
+    const s = new SpeechStream();
+    const said: string[] = [];
+    for (let i = 0; i < text.length; i += 4) said.push(...s.push(text.slice(i, i + 4)));
+    said.push(...s.finish(text));
+    for (const p of said) expect(p, p).not.toMatch(/[*_]/);
+    expect(said.join(" ")).toBe(spokenText(text));
+  });
+
   it("keeps a long answer's streaming cheap, so Ember's main process stays free while it streams (voice-speaking-r4)", () => {
     let paragraph = "";
     for (let i = 0; paragraph.length < 6000; i++) paragraph += `The ${i}th report covers sales in the north region and the totals by month for last year. `;
@@ -242,6 +272,26 @@ describe("SpeechStream", () => {
     expect(said[0]).toBe("Reports.");
     expect(said).toContain("Totals.");
     expect(ms).toBeLessThan(200);
+  });
+
+  it("keeps a long table's or code block's streaming cheap too, and says what is after it (voice-speaking-r4)", () => {
+    const row = "| Paris | France. | 2.1 million. |\n";
+    const line = "const value = compute(alpha, beta); // done. Next step. Then more.\n";
+    for (const answer of [
+      `Here are the cities:\n\n| City | Country | People |\n|---|---|---|\n${row.repeat(Math.ceil(12_000 / row.length))}\nThat's all. Anything else?`,
+      `Here is the script.\n\n\`\`\`js\n${line.repeat(Math.ceil(20_000 / line.length))}\`\`\`\n\nRun it. Then tell me.`,
+    ]) {
+      const s = new SpeechStream(Infinity);
+      const said: string[] = [];
+      const t0 = performance.now();
+      for (let i = 0; i < answer.length; i += 4) said.push(...s.push(answer.slice(i, i + 4)));
+      const streamed = said.length;
+      said.push(...s.finish(answer));
+      expect(performance.now() - t0).toBeLessThan(300);
+      expect(said.join(" ")).toBe(spokenText(answer).replace(/\s+/g, " "));
+      // What follows the table or the code is said as it streams, not left to the end.
+      expect(streamed).toBeGreaterThan(2);
+    }
   });
 
   it("waits for the sentence when the first clause is too short to say alone", () => {

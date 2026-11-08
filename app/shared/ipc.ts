@@ -169,6 +169,11 @@ export const IPC = {
   askContext: "agent:ask-context",
   /** Why a request would go unanswered now, as it changes while the box is open (companion-6): the word, or null. */
   askUnavailable: "agent:ask-unavailable",
+  /**
+   * What the open box suggests now, as that changes (companion-r2-1: none while a question is up; companion-c2-2: those
+   * that follow an answer only while it shows): at most three short strings.
+   */
+  askSuggestions: "agent:ask-suggestions",
   /** What was typed while the ask box was opening (Ember held the keyboard meanwhile). */
   askTyped: "agent:ask-typed",
   /** The ask box's field needs this many lines (1 to 4) for its text: the box grows to fit. */
@@ -611,6 +616,8 @@ export interface EmberAskApi {
   onContext(fn: (c: AskContext) => void): void;
   /** Why a request would go unanswered changed while the box is open (the handle's word; null: it would be answered). */
   onUnavailable?(fn: (word: string | null) => void): void;
+  /** What the open box suggests changed (a question came or went, the answer they follow went): the chips follow. */
+  onSuggestions?(fn: (list: string[]) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
   onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;
   /** The box went away (nothing can be typed in it now): what was left in the field is selected for the next opening. */

@@ -1326,6 +1326,14 @@ export class AgentHost {
   }
 
   /**
+   * The Ask box opened (`open`) or closed: while it is open, no bubble goes on its timer, so the answer being replied to
+   * stays beside the box (companion-c2-1); once it closes, each goes after what was left of its time, or a moment.
+   */
+  holdForAsk(open: boolean): void {
+    this.owner.holdForAsk(open);
+  }
+
+  /**
    * The expanded answer went without its Close button (main cleared it for settings, or a question replaced it): a pinned
    * hold has nothing left to keep, and no timer would end it, so it ends now as Close ends it. Any other hold of main's
    * ("Listening…") keeps its own time. `showing`: what is on screen now.

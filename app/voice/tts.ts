@@ -55,6 +55,15 @@ export const SPOKEN_MAX = 700;
 /** What Ember says where it stops reading a long answer out. */
 export const REST_IN_BUBBLE = "The rest is in the bubble.";
 
+/**
+ * How far back from what has come a full stop on the last line is judged for good (a run of "…" or of closing quotes
+ * may still be growing). A possible end before the last line break is judged for good too: a line break's own ending
+ * (a paragraph's, a list item's) is decided by the line after it.
+ */
+const SCAN_BACK = 64;
+/** A line that opens or closes a code block. */
+const FENCE_LINE = /^[ \t]*(?:```|~~~)/;
+
 /** Abbreviations whose full stop doesn't end a sentence. */
 const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig|a\.m|p\.m)\.$/i;
 /** A day's or a month's short name ("on Tue.", "Jan. 5"), with its capital: "We sat." still ends a sentence. */
@@ -65,14 +74,16 @@ const SHORT_NAMES = /(?:^|\s)(?:Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun|Jan|
  * A list's item and a heading end at their line too, and a numbered step starts its own piece ("2. Choose Privacy"):
  * its number is never said at the end of the step before it (voice-speaking-v1). Each ending is checked by the few
  * characters before it, never by all the text before it, so a long answer streams cheaply (voice-speaking-r4: a
- * heading's lookbehind made a 3,000-character paragraph cost 4 s).
+ * heading's lookbehind made a 3,000-character paragraph cost 4 s). `seen` is told where every possible ending was looked
+ * at, ending or not: a scan started there again finds the same endings after it.
  */
-function sentenceEnds(text: string, from = 0): number[] {
+function sentenceEnds(text: string, from = 0, seen?: (end: number) => void): number[] {
   const ends: number[] = [];
   const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|(\n)/g;
   re.lastIndex = from;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const end = m.index + m[0].length;
+    seen?.(end);
     // A lone line break ends only a heading's line ("## Totals").
     if (m[1]) {
       const start = text.lastIndexOf("\n", m.index - 1) + 1;
@@ -105,21 +116,35 @@ function cutAtClause(chunk: string, min: number, max: number): [string, string] 
 /**
  * Words a long sentence with no comma can be cut before: the voice pauses there as a speaker would ("I looked through
  * the folder you mentioned | and found…"). Not "to", "for", "from" or "with", which so often follow a verb ("is going
- * | to take" was said with a full stop's fall: voice-speaking-r2).
+ * | to take" was said with a full stop's fall: voice-speaking-r2), "until", "after" and "before" only where a clause
+ * follows them ("until it finishes", never "from two | until four"), and never "between two | and four".
  */
-const JOINS = /\s+(?=(?:and|but|or|so|because|which|that|while|when|where|until|after|before|together)\s)/gi;
+const JOINS = /(?<!\bbetween\s+[\p{L}\p{N}']+)\s+(?=(?:and|but|or|so|because|which|that|while|when|where|together)\s|(?:until|after|before)\s+(?:I|you|he|she|it|we|they|this|there)\b)/giu;
+/**
+ * Where a phrase starts, for a long sentence with no joining word: before a preposition, though not one just after
+ * "is" or "going" ("is | at"), rather than at a space inside a phrase ("installing on | this computer", "in the large
+ * | room": voice-speaking-r2).
+ */
+const PHRASES = /(?<!\b(?:is|are|was|were|be|been|am|going|get|got|go|come))\s+(?=(?:in|on|at|for|from|with|about|into|onto|over|under|between|through|during|near|by|across|behind)\s)/gi;
 
 /**
  * Where to cut `chunk`: before its first joining word between `min` and `max` characters that leaves FIRST_WORDS words
- * or more before it, else at its last space before `max` (voice-speaking-8); -1 when neither fits. `ok`: whether a cut
- * there may be made (a stream's Markdown is closed there: voice-speaking-r2).
+ * or more before it, else before its last phrase there, else at its last space before `max` (voice-speaking-8); -1 when
+ * none fits. `ok`: whether a cut there may be made (a stream's Markdown is closed there: voice-speaking-r2).
  */
 function joinAt(chunk: string, min: number, max: number, ok: (at: number) => boolean = () => true): number {
+  const enough = (at: number) => (chunk.slice(0, at).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS && ok(at);
   for (const m of chunk.matchAll(JOINS)) {
     if (m.index < min) continue;
     if (m.index > max) break;
-    if ((chunk.slice(0, m.index).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS && ok(m.index)) return m.index;
+    if (enough(m.index)) return m.index;
   }
+  let phrase = -1;
+  for (const m of chunk.matchAll(PHRASES)) {
+    if (m.index > max) break;
+    if (m.index > min && enough(m.index)) phrase = m.index;
+  }
+  if (phrase > 0) return phrase;
   for (let at = chunk.lastIndexOf(" ", max); at > min; at = chunk.lastIndexOf(" ", at - 1)) if (ok(at)) return at;
   return -1;
 }
@@ -176,6 +201,11 @@ export class SpeechStream {
   private capped = false;
   /** Past the cap, the last of the answer left unsaid (its closing question may still be said). */
   private dropped = "";
+  /** Where sentenceCut looks for sentence ends again: none before it can be cut, then or later (voice-speaking-r4). */
+  private scanFrom = 0;
+  /** The start of each whole line of `raw` that opens or closes a code block, and of the first line not looked at yet. */
+  private fences: number[] = [];
+  private fenceScan = 0;
 
   /** `maxChars`: the most of an answer said aloud (SPOKEN_MAX); the rest is left to the bubble, which shows it all. */
   constructor(private maxChars = SPOKEN_MAX) {}
@@ -248,6 +278,9 @@ export class SpeechStream {
     this.spokenChars = 0;
     this.capped = false;
     this.dropped = "";
+    this.scanFrom = 0;
+    this.fences = [];
+    this.fenceScan = 0;
   }
 
   /**
@@ -290,16 +323,30 @@ export class SpeechStream {
   }
 
   private sentenceCut(): number {
-    let best = 0;
-    for (const end of sentenceEnds(this.raw, this.said)) {
+    for (let nl = this.raw.indexOf("\n", this.fenceScan); nl >= 0; nl = this.raw.indexOf("\n", this.fenceScan)) {
+      if (FENCE_LINE.test(this.raw.slice(this.fenceScan, nl))) this.fences.push(this.fenceScan);
+      this.fenceScan = nl + 1;
+    }
+    const tail = FENCE_LINE.test(this.raw.slice(this.fenceScan)) ? this.fenceScan : -1;
+    // A possible end judged for good (SCAN_BACK): sentenceEnds looks again only after the last of them, never at all of
+    // a long table or code block on every delta (voice-speaking-r4: a 12,000-character table cost 20 s of main's time).
+    const lastBreak = this.fenceScan - 1;
+    const settled = (at: number) => at <= lastBreak || (at > lastBreak + 1 && at <= this.raw.length - SCAN_BACK);
+    let best = 0, fence = 0, scanned = this.scanFrom;
+    for (const end of sentenceEnds(this.raw, Math.max(this.said, this.scanFrom), at => { if (settled(at)) scanned = at; })) {
       if (end <= this.said) continue;
+      // Inside a code block: as many fence lines start before it as speechMarkupOpen would count, and an odd number.
+      while (fence < this.fences.length && this.fences[fence] < end) fence++;
+      if ((fence + (tail >= 0 && tail < end ? 1 : 0)) % 2 !== 0) continue;
       const before = this.raw.slice(0, end);
-      if (speechMarkupOpen(before)) continue;
       // In a table (a line that starts with "|"), or right after one: wait for the line after it.
       const line = before.slice(before.lastIndexOf("\n") + 1);
       if (/^[ \t]*\|/.test(line)) continue;
+      if (speechMarkupOpen(before)) continue;
       best = end;
     }
+    // Every end before `scanned` was cut at (`said` is past it) or can't be: they aren't looked at again.
+    this.scanFrom = Math.max(this.scanFrom, scanned);
     return best;
   }
 }

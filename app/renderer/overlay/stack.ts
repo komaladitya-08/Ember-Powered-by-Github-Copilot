@@ -15,7 +15,11 @@ export const STATE_WORD: Record<TaskCard["status"], string> = {
   done: `${STATUS_WORDS.done}: `, failed: `${STATUS_WORDS.failed}: `, stopped: `${STATUS_WORDS.stopped}: `,
 };
 
-/** STATE_WORD for a card: a stopped one whose question went unanswered says so, as its telemetry does (tasks-approvals-r1). */
+/**
+ * Card `t`'s state in words for screen readers: STATE_WORD by its status, but "No answer in time: " for a task stopped
+ * because its question went unanswered, as its row and its telemetry say (tasks-approvals-r1, companion-r2-5: it was
+ * read as "Stopped: ").
+ */
 export const cardStateWord = (t: Pick<TaskCard, "status" | "unanswered">): string =>
   t.status === "stopped" && t.unanswered ? `${STATUS_WORDS.unanswered}: ` : STATE_WORD[t.status];
 
