@@ -485,6 +485,61 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("keeps the room its suggestions opened with, on two rows, so neither a question nor fewer or more of them after it moves the empty field (companion-v4-1)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => (window as unknown as TestWindow).askHarness);
+      const open = (list: string[]) => page.evaluate(suggestions => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions, listenOnce: { phase: "ready", detail: "" } }), list);
+      const offer = (list: string[]) => page.evaluate(list => (window as unknown as TestWindow).askHarness.suggestions(list), list);
+      const fieldFromBottom = () => page.evaluate(() => Math.round(innerHeight - document.getElementById("q")!.getBoundingClientRect().top));
+      // Every chip shown sits whole inside the row's glass (none clipped or past it).
+      const inside = () => page.evaluate(() => {
+        const row = document.getElementById("suggest")!.getBoundingClientRect();
+        return [...document.querySelectorAll("#suggest button")].every(b => { const r = b.getBoundingClientRect(); return r.top >= row.top && r.bottom <= row.bottom && r.right <= row.right; });
+      });
+      const chips = page.locator("#suggest button");
+      // Beside an answer that offered something: its two offers and a request said twice, wrapping to two rows.
+      const all = ["Yes, please", "No, thanks", "What's the weather in London now"];
+      const alone = all.slice(2);
+      await open(all);
+      await fit(page);
+      expect(await chips.count()).toBe(3);
+      expect(await page.evaluate(() => {
+        const b = [...document.querySelectorAll("#suggest button")].map(e => e.getBoundingClientRect());
+        return b[2].top >= b[0].bottom;
+      })).toBe(true);
+      const rows = (await harness()).rows, at = await fieldFromBottom();
+      // A question takes them away; "Not now" and its "Okay, I won't." bring back only the one that stands on its own
+      // (it moved the field 48 px down for 1.4 s); the answer back brings all three.
+      for (const list of [[], alone, all]) {
+        await offer(list);
+        await fit(page);
+        const what = list.join(", ") || "none";
+        expect(await page.locator("#suggest button:visible").allTextContents(), what).toEqual(list);
+        expect((await harness()).rows, what).toBe(rows);
+        expect(await fieldFromBottom(), what).toBe(at);
+        expect(await inside(), what).toBe(true);
+      }
+      // Opened beside "Okay, I won't." with the one alone, on one row: the answer back offers all three, which need a
+      // second row. The one shown stays and the others wait for the next opening, so the field doesn't move up.
+      await open(alone);
+      await fit(page);
+      const oneRow = (await harness()).rows, oneAt = await fieldFromBottom();
+      expect(oneRow).toBeLessThan(rows);
+      await offer(all);
+      await fit(page);
+      expect(await chips.allTextContents()).toEqual(alone);
+      expect((await harness()).rows).toBe(oneRow);
+      expect(await fieldFromBottom()).toBe(oneAt);
+      expect(await inside()).toBe(true);
+      await open(all);
+      await fit(page);
+      expect(await chips.allTextContents()).toEqual(all);
+      expect((await harness()).rows).toBe(rows);
+      expect((await harness()).calls).toEqual([]);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("takes clicks only where it shows something, so one in its clear margins or beside a short row reaches the app (companion-4)", async () => {
     const page = await pageAt();
     try {

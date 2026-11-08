@@ -86,6 +86,12 @@ let suggested: string[] = [];
  */
 let suggestRoom = false;
 /**
+ * How tall the row opened (layout px, at the form's width then), held as its least until the next opening: a list on
+ * fewer rows than the opening's keeps its room, so the field doesn't move (companion-v4-1: two rows of chips, then the
+ * one that stands on its own under "Okay, I won't.", moved the empty field 48 px down and back).
+ */
+let suggestHeld = { height: 0, width: 0 };
+/**
  * What main offers now, while the field holds a draft (companion-r2-1, companion-c2-2): the chips are put away then
  * (keeping their room), so the change waits until the field is cleared, and the field never jumps while it is typed in.
  */
@@ -175,10 +181,25 @@ window.emberAsk.onListenOnce(showListenOnce);
 function showSuggestions(list: string[], opening = false): void {
   offered = null;
   if (opening) suggestRoom = list.length > 0;
+  const showing = suggested;
   // Only into the room the box opened with: ones that come into a box that opened with none wait for its next opening
   // (the bubble shows them under their answer meanwhile), and none puts the row away with its chips (companion-r3-1).
   suggested = suggestRoom ? list.slice(0, 3) : [];
   if (!suggested.length && !opening) { syncSuggestions(); return; }
+  drawSuggestions();
+  syncSuggestions();
+  if (opening) holdSuggestRoom();
+  // More rows than it opened with (the answer back with its offers, where the box opened beside "Okay, I won't."): the
+  // ones it shows that are still offered stay and the others wait for its next opening, as for a box that opened with
+  // none, so the field doesn't move up either (companion-v4-1).
+  else if (pastSuggestRoom()) {
+    suggested = suggested.filter(t => showing.includes(t));
+    drawSuggestions();
+    while (suggested.length && pastSuggestRoom()) { suggested.pop(); drawSuggestions(); }
+    syncSuggestions();
+  }
+}
+function drawSuggestions(): void {
   for (const b of [...suggest.querySelectorAll("button")]) b.remove();
   for (const text of suggested) {
     const b = document.createElement("button");
@@ -187,8 +208,16 @@ function showSuggestions(list: string[], opening = false): void {
     b.addEventListener("click", () => { (window.emberAsk.askSuggestion ?? window.emberAsk.ask)(text); input.value = ""; fit(); });
     suggest.appendChild(b);
   }
-  syncSuggestions();
 }
+/** The row's layout height (the opening's scale doesn't count), to the fraction of a pixel. */
+const suggestHeight = (): number => parseFloat(getComputedStyle(suggest).height) || 0;
+/** The row's room as it is laid out now, held until the next opening (or a change of the box's width). */
+function holdSuggestRoom(): void {
+  suggest.style.minHeight = "";
+  suggestHeld = { height: suggestRoom ? suggestHeight() : 0, width: form.clientWidth };
+  suggest.style.minHeight = suggestHeld.height ? `${suggestHeld.height}px` : "";
+}
+const pastSuggestRoom = (): boolean => suggestHeld.height > 0 && suggestHeight() > suggestHeld.height + 0.5;
 function syncSuggestions(): void {
   if (offered && input.value.trim() === "") { showSuggestions(offered); return; }
   suggest.hidden = !suggestRoom;
@@ -225,7 +254,9 @@ input.addEventListener("input", fit);
 // The text size changed (main sets it on the page, the box hidden meanwhile): the field is measured again at it.
 new MutationObserver(fit).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
 // A small work area can narrow the window independently of the text size; measure every wrapped row again.
-new ResizeObserver(() => { fitMeta(); fit(); }).observe(form);
+// The suggestions' room is measured again at a new width (it wraps them differently): one that opened before its window
+// had its width, or a work area that narrowed it.
+new ResizeObserver(() => { fitMeta(); if (suggestRoom && form.clientWidth !== suggestHeld.width) holdSuggestRoom(); fit(); }).observe(form);
 // Esc while an input method composes a word cancels that word, not the box (companion-5).
 window.addEventListener("keydown", e => { if (e.key === "Escape" && !e.isComposing) window.emberAsk.close(); });
 window.addEventListener("focus", () => input.focus());
