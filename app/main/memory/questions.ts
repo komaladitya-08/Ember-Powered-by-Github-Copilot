@@ -150,18 +150,20 @@ const SAID = String.raw`(?!\s+(?:even\s+|ever\s+|just\s+)?(?:said|say|told|asked
  * or "don't forget to…" (reminders), "remember when, what, how…" or "remember me" (questions about what Ember knows),
  * nor "make a note in…" (a note in an app).
  */
-const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|keep\s+(?:this|that)\s+in\s+mind|make\s+a\s+(?:mental\s+)?note(?:\s+(?:that|of)\b|(?=\s*:))`
-  // "Add to your memory that I'm vegetarian" (memory-r3-2).
-  + String.raw`|(?:add|save|put|store|write|keep)\s+(?:to|in|into)\s+(?:(?:your|ember['’]s)\s+)?memory(?:\s+that)?\b)\s*(?!to\b|when\b|what\b|how\b|who\b|where\b|which\b|whether\b|if\b|me\b)(\S.*)$`, "is");
+const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|(?:keep|bear)\s+in\s+mind|(?:keep|bear)\s+(?:this|that)\s+in\s+mind|make\s+a\s+(?:mental\s+)?note(?:\s+(?:that|of)\b|(?=\s*:))`
+  // "Add to your memory that I'm vegetarian", "Store this in your memory: …" (memory-r3-2).
+  + String.raw`|(?:add|save|put|store|write|keep)\s+(?:(?:this|that|it)\s+)?(?:to|in|into)\s+(?:(?:your|ember['’]s)\s+)?memory(?:\s+that|\s*:)?\b)\s*(?!to\b|when\b|what\b|how\b|who\b|where\b|which\b|whether\b|if\b|me\b)(\S.*)$`, "is");
 /** "Remember," "keep in mind," or "remember -" with a pause after it. */
-const REMEMBER_PAUSE = new RegExp(String.raw`^(${LEAD.slice(1)}(?:remember|keep\s+in\s+mind|don'?t\s+forget|do\s+not\s+forget))\s*(?:,|\s[-–—]+)\s*`, "i");
+const REMEMBER_PAUSE = new RegExp(String.raw`^(${LEAD.slice(1)}(?:remember|(?:keep|bear)\s+in\s+mind|don'?t\s+forget|do\s+not\s+forget))\s*(?:,|\s[-–—]+)\s*`, "i");
 /**
  * What may come before "remember" and leave it a request to keep something (memory-r3-2): "okay", "so", "always", "in
- * future", "I want you to", "I'd like you to" ("Always remember that I'm vegetarian", "In future, remember…").
+ * future", "I want you to", "I'd like you to" ("Always remember that I'm vegetarian", "In future, remember…"), "just",
+ * "make sure you", "try to" ("Just remember that I'm vegetarian", "Make sure to remember I'm vegetarian").
  */
 const REMEMBER_LEAD = new RegExp(String.raw`^((?:(?:hey\s+)?ember[,.!]?\s+)?)(?:(?:ok(?:ay)?|so|and|also|now|right|alright|well|oh)\b[,.!]?\s+)*`
   + String.raw`(?:(?:always|in\s+(?:the\s+)?future|from\s+now\s+on|going\s+forward|for\s+(?:the\s+)?future)\b,?\s+)?(?:i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d|\s+would)\s+like\s+you\s+to\s+)?`
-  + String.raw`(?=(?:please\s+)?(?:remember|keep\s+(?:in|this|that)\b|don'?t\s+forget|do\s+not\s+forget|make\s+a\s+(?:mental\s+)?note|add\s+to\b)\b)`, "i");
+  + String.raw`(?:(?:please\s+)?(?:just|make\s+sure(?:\s+(?:you|to))?|be\s+sure\s+to|try\s+(?:to|and))\s+)?`
+  + String.raw`(?=(?:please\s+)?(?:remember|(?:keep|bear)\s+(?:in|this|that)\b|don'?t\s+forget|do\s+not\s+forget|make\s+a\s+(?:mental\s+)?note|add\s+to\b)\b)`, "i");
 /**
  * "Remember that", "keep this in mind", "add that to your memory", "save it to memory": a request to keep what was just
  * said, which names nothing more (memory-r3-2). Never "save that to the memory card".

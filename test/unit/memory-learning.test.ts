@@ -748,12 +748,18 @@ describe("“forget that”, the instruction check and the conversation's line",
       "Keep this in mind: I'm vegetarian", "Remember - I'm vegetarian",
       // Round four's rare misses.
       "Remember Sam drives", "Remember my in-laws visit in May", "Remember people call me Ram", "Remember they call me Ram", "Make a note: I prefer email",
+      // Round five's misses: a lead-in, "bear in mind" and storing in memory (memory-r3-2).
+      "Just remember that I am vegetarian", "Make sure you remember that I'm vegetarian", "Make sure to remember I'm vegetarian",
+      "Try to remember that I'm vegetarian", "Bear in mind that I'm vegetarian", "Bear in mind I'm vegetarian", "Store this in your memory: I'm vegetarian",
     ]) {
       expect(off.l.intent(text, { own: true }), text).toBeNull();
       expect(off.l.rememberNote(text)?.text, text).toBe("Memory is off, so I won't keep this after Ember closes.");
     }
     // Still no note: a request with "remember that" after it, a memory card, and what only points at something.
-    for (const text of ["Open Firefox, remember that", "Save that to the memory card", "Book a table for Friday, don't forget", "Remember the steps"]) {
+    for (const text of [
+      "Open Firefox, remember that", "Save that to the memory card", "Book a table for Friday, don't forget", "Remember the steps",
+      "Make sure you remember to lock the door", "Just remember to send the report", "Try to remember where I put my keys", "Bear in mind the deadline",
+    ]) {
       expect(off.l.rememberNote(text), text).toBeNull();
     }
     expect(off.opened).not.toHaveBeenCalled();

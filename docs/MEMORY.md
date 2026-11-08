@@ -356,7 +356,8 @@ download, so English-only MiniLM is the trade-off for now.
      `remembersWithMore`, memory-r3-2), one that names memory or keeps what was just said ("add that to your memory",
      "keep that in mind", "remember this"), a fact with the request after it ("I'm vegetarian, remember that", "my
      wife's birthday is 12 March, don't forget") and a lead-in before it ("I want you to remember that…", "always
-     remember…", "in future, remember…", "so remember…") goes to the conversation, which knows it until Ember closes, and Ember says
+     remember…", "in future, remember…", "so remember…", "just remember…", "make sure you remember…", "try to
+     remember…", and "bear in mind…" or "store this in your memory: …": memory-r3-2) goes to the conversation, which knows it until Ember closes, and Ember says
      behind the answer that memory won't keep it (`rememberNote`: a line in the conversation and a bubble with **Open
      Memory**, never Settings opened on its own); "remember the file I mentioned", "remember the file attached", "don't
      forget the documents Priya sent", "remember the tests that failed", "don't forget my car keys on the table" and
