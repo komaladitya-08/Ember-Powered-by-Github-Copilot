@@ -1157,7 +1157,7 @@ describe("VoiceService", () => {
     electron.net.fetch.mockRejectedValue(new Error("net::ERR_PROXY_CONNECTION_FAILED"));
     await expect(v.downloadModels(() => undefined)).rejects.toThrow(/ERR_PROXY/);
     expect(states.map(s => s.s)).toContain("downloading");
-    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "Couldn't download the speech models. This computer can't reach the download site (github.com) right now. Check the network or proxy, then try again." });
+    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "Couldn't download the speech models. The download couldn't reach github.com right now. Check the network or proxy, then try again." });
     expect(v.micState).toBe("needs-models");
     expect(fs.readdirSync(root)).toEqual([]);
   });
@@ -1475,13 +1475,13 @@ describe("the echo check (scripts/voice/echo-check.mjs)", () => {
 
 describe("a failed download, in plain words", () => {
   it.each([
-    ["net::ERR_CERT_AUTHORITY_INVALID", /can't verify the download site's certificate.*ask IT/],
-    ["self signed certificate in certificate chain", /can't verify the download site's certificate/],
-    ["net::ERR_PROXY_CONNECTION_FAILED", /can't reach the download site/],
-    ["net::ERR_INTERNET_DISCONNECTED", /can't reach the download site/],
-    ["nothing arrived for 30 seconds (check the network or proxy)", /can't reach the download site/],
-    ["download failed: HTTP 503", /can't reach the download site/],
-    ["download failed: HTTP 407", /proxy asked for a sign-in/],
+    ["net::ERR_CERT_AUTHORITY_INVALID", /couldn't verify github\.com's certificate.*ask IT/],
+    ["self signed certificate in certificate chain", /couldn't verify github\.com's certificate/],
+    ["net::ERR_PROXY_CONNECTION_FAILED", /couldn't reach github\.com/],
+    ["net::ERR_INTERNET_DISCONNECTED", /couldn't reach github\.com/],
+    ["nothing arrived for 30 seconds (check the network or proxy)", /from github\.com stalled/],
+    ["download failed: HTTP 503", /\(github\.com\) had a problem\. Try again later/],
+    ["download failed: HTTP 407", /proxy asks for a sign-in before downloads/],
     ["download failed: HTTP 403", /refused the request/],
     ["ENOSPC: no space left on device, write", /enough free disk space for the speech models \(about \d+ MB\)/],
     ["Command failed: tar -xjf x.tar.bz2\ntar: Cannot write: No space left on device", /enough free disk space/],
@@ -1491,6 +1491,21 @@ describe("a failed download, in plain words", () => {
     const { downloadHelp } = await import("../../app/main/voice");
     expect(downloadHelp(raw)).toMatch(plain);
     expect(downloadHelp(raw)).not.toMatch(/net::|ERR_|ENOSPC|EACCES/);
+  });
+
+  it("puts what went wrong on the download or the site, never on this computer, which reached it (voice-listening-w5-1)", async () => {
+    // "This computer can't reach the download site…" was said for a 503 and for a transfer that stalled after it
+    // started: the computer had reached github.com, so the person checked a network that worked.
+    const { downloadHelp } = await import("../../app/main/voice");
+    expect(downloadHelp("download failed: HTTP 503")).toBe("The download site (github.com) had a problem. Try again later.");
+    expect(downloadHelp("download failed: HTTP 502")).toBe("The download site (github.com) had a problem. Try again later.");
+    expect(downloadHelp("nothing arrived for 30 seconds (check the network or proxy)")).toBe("The download from github.com stalled. Check the network or proxy, then try again.");
+    expect(downloadHelp("net::ERR_INTERNET_DISCONNECTED")).toBe("The download couldn't reach github.com right now. Check the network or proxy, then try again.");
+    expect(downloadHelp("net::ERR_CERT_AUTHORITY_INVALID")).toBe("The download couldn't verify github.com's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.");
+    expect(downloadHelp("download failed: HTTP 407")).toBe("The network proxy asks for a sign-in before downloads. Ask IT to allow downloads from github.com without one.");
+    for (const raw of ["download failed: HTTP 503", "nothing arrived for 30 seconds (check the network or proxy)", "net::ERR_CONNECTION_RESET", "fetch failed", "self signed certificate in certificate chain", "net::ERR_PROXY_AUTH_UNSUPPORTED"]) {
+      expect(downloadHelp(raw), raw).not.toMatch(/this computer can't|can't give/i);
+    }
   });
 });
 
@@ -2370,7 +2385,7 @@ describe("speech models", () => {
         v.setNaturalVoice(true);
         await vi.waitFor(() => expect(v.naturalStatus.state).toBe("failed"));
         expect(seen.map(status => status.state)).toEqual(["downloading", "downloading", "failed"]);
-        expect(v.naturalStatus).toMatchObject({ model: "kokoro", voice: "kitten", detail: expect.stringMatching(/can.t reach the download site/) });
+        expect(v.naturalStatus).toMatchObject({ model: "kokoro", voice: "kitten", detail: expect.stringMatching(/download site \(github\.com\) had a problem/) });
         expect(downloader.mock.calls[0][0]).toBe(NATURAL_VOICE.url);
         v.retryNaturalVoice();
         await vi.waitFor(() => expect(downloader).toHaveBeenCalledTimes(2));

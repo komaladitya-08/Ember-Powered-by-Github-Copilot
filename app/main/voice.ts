@@ -1808,12 +1808,16 @@ export function cutByQuestion(source: "ask" | "home" | undefined, status: Listen
  * request in 37 of 40 real-model placements (voice-listening-v5-1).
  */
 export function downloadHelp(message: string, bytes = VOICE_MODELS_BYTES): string {
+  // Each line says what went wrong with the download, or at the site, never "this computer can't…": for a 5xx or a
+  // transfer that stalled, the computer had reached github.com (voice-listening-w5-1).
   if (/ERR_CERT_|certificate|self.signed|issuer|SSL|TLS/i.test(message)) {
-    return "This computer can't verify the download site's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.";
+    return "The download couldn't verify github.com's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.";
   }
-  if (/ERR_PROXY_AUTH|HTTP 407/i.test(message)) return "The network proxy asked for a sign-in the download can't give. Ask IT to allow downloads from github.com.";
-  if (/nothing arrived for|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|fetch failed|socket hang up|net::ERR_|HTTP 5\d\d/i.test(message)) {
-    return "This computer can't reach the download site (github.com) right now. Check the network or proxy, then try again.";
+  if (/ERR_PROXY_AUTH|HTTP 407/i.test(message)) return "The network proxy asks for a sign-in before downloads. Ask IT to allow downloads from github.com without one.";
+  if (/HTTP 5\d\d/i.test(message)) return "The download site (github.com) had a problem. Try again later.";
+  if (/nothing arrived for/i.test(message)) return "The download from github.com stalled. Check the network or proxy, then try again.";
+  if (/ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|fetch failed|socket hang up|net::ERR_/i.test(message)) {
+    return "The download couldn't reach github.com right now. Check the network or proxy, then try again.";
   }
   if (/HTTP 4\d\d/i.test(message)) return "The download site refused the request. Try again later; if it keeps happening, ask IT whether github.com downloads are blocked.";
   if (/ENOSPC|no space left/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(bytes / 1e6)} MB).`;
