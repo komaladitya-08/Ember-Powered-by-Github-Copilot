@@ -6,7 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { FEATURE_TEXT, keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "../../app/renderer/home/admin-copy";
+import { FEATURE_TEXT, keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "../../app/renderer/home/admin-copy";
 import { AdminPolicySchema } from "../../app/main/admin";
 
 const inForce = { error: null, retentionDays: 30 };
@@ -27,6 +27,19 @@ describe("the settings window under a lockdown", () => {
     expect(lockdownSendLine(broken)).toMatch(/^, nothing is sent to a model service until your organisation fixes its policy/);
     expect(lockdownSendLine(held)).toMatch(/^, nothing is sent to a model service until you restart Ember/);
     for (const a of [broken, held]) expect(lockdownSendLine(a)).not.toMatch(/Copilot/);
+  });
+
+  it("says plainly that nothing heard is sent anywhere while locked down, instead of naming no model service mid-sentence (safety-privacy-r4)", () => {
+    const before = "unless you turn on “Hey Ember” in settings or choose Listen once for one request. Once you call Ember it keeps listening through the conversation, and what it hears there goes to ";
+    const after = " as text, without its name, until you say “That's all” or it has been quiet for 30 seconds. Listen once processes audio on this computer.";
+    expect(lockdownMicWords(inForce, before, after)).toBeNull();
+    expect(lockdownMicWords(broken, before, after)).toEqual([
+      "unless you turn on “Hey Ember” in settings or choose Listen once for one request. Nothing it hears is sent anywhere until your organisation fixes its policy.",
+      " Listen once processes audio on this computer.",
+    ]);
+    expect(lockdownMicWords(held, before, after)?.[0]).toMatch(/Nothing it hears is sent anywhere until you restart Ember\.$/);
+    // Words it doesn't know (the page reworded): left alone rather than cut wrongly.
+    expect(lockdownMicWords(broken, "something else ", after)).toBeNull();
   });
 
   it("says records are kept, none deleted, while locked down", () => {

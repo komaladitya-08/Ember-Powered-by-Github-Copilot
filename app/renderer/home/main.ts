@@ -35,7 +35,7 @@ import {
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
-import { modelDestination, recipientWords } from "./copy";
+import { modelDestination, privacyFoldWords, recipientWords } from "./copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
@@ -43,7 +43,7 @@ import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-
 import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
 import { holdsBack } from "../../shared/setup-attention";
 import { mountNaturalVoice } from "./natural-voice";
-import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
+import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
@@ -530,6 +530,8 @@ let confirmEvery = false;
 let adminNeverLook = new Set<string>();
 /** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
 let sendAsWritten: Node[] | null = null;
+/** The data list's microphone line as the page wrote it (its conversation sentence changes while locked down). */
+let micAsWritten: Node[] | null = null;
 let lastAdmin: Status["admin"] | null = null;
 /**
  * Names where requests actually go (copy.ts modelDestination) in the data list's "When you ask something" line and in
@@ -583,6 +585,16 @@ function renderAdmin(a: Status["admin"]): void {
   if (send) {
     sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
+  }
+  // And what a conversation sends is said as nothing sent, not as going to "no model service (…)" (safety-privacy-r4).
+  const mic = document.querySelector<HTMLElement>("#w-full li[data-icon='mic']");
+  if (mic) {
+    micAsWritten ??= [...mic.childNodes].map(n => n.cloneNode(true));
+    mic.replaceChildren(...micAsWritten.map(n => n.cloneNode(true)));
+    const to = mic.querySelector(".model-recipient");
+    const [before, after] = [to?.previousSibling, to?.nextSibling];
+    const words = to && before?.nodeType === Node.TEXT_NODE && after?.nodeType === Node.TEXT_NODE ? lockdownMicWords(a, before.textContent ?? "", after.textContent ?? "") : null;
+    if (to && before && after && words) { before.textContent = words[0]; after.textContent = words[1]; to.remove(); }
   }
   lastAdmin = a;
   if (agent) renderAgent(agent);
@@ -1759,6 +1771,12 @@ function syncPrivacyTerms(): void {
   if (!source) return;
   const copy = source.cloneNode(true) as HTMLElement;
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
+  // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4).
+  const walk = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
+  for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+    const words = privacyFoldWords(t.textContent ?? "", { screenImages: settings?.screenImages !== false });
+    if (words !== t.textContent) t.textContent = words;
+  }
   copy.setAttribute("aria-label", "What Ember reads, sends and keeps");
   $("privacy-terms").replaceChildren(copy);
 }
@@ -1980,6 +1998,8 @@ $("screen-images").addEventListener("change", e => { void save({ screenImages: (
 function renderPrivacy(s: Settings): void {
   renderTrust(s);
   ($("screen-images") as HTMLInputElement).checked = s.screenImages;
+  // The copy of the consent says whether screenshots are off (safety-privacy-r4).
+  if (($("privacy-terms-fold") as HTMLDetailsElement).open) syncPrivacyTerms();
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
   const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);
   if (key === privacyKey) return;

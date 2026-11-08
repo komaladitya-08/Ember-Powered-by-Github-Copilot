@@ -28,7 +28,7 @@ declare global {
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number } }
+interface Seed { settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number } }
 
 let browser: Browser;
 let server: http.Server;
@@ -55,7 +55,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...seed.settings };
   settings.onboarded = true;
   settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
-  const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] };
+  const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
@@ -358,7 +358,9 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     await fold.locator("summary").click();
     const shown = await page.locator("#privacy-terms").evaluate(e => e.textContent);
     const consent = await page.locator("#w-full ul.terms").evaluate(e => e.textContent);
-    expect(shown).toBe(consent);
+    // Word for word, but for where the never-look list is: below, in this pane (safety-privacy-r4).
+    expect(consent).toContain("The list is in settings");
+    expect(shown).toBe(consent?.replace("The list is in settings", "The list is below, under Never look at"));
     expect(shown).toContain("It sends no usage statistics.");
     expect(shown).toContain("~/.config/ember");
     // The copy keeps no ids: each still names one element.
@@ -375,6 +377,40 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     await expect.poll(() => fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
     expect(await page.evaluate(() => document.activeElement?.closest("details")?.id)).toBe("privacy-terms-fold");
     await evidence(page, "privacy-terms");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+});
+
+describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and the organisation's leave it (safety-privacy-r4)", () => {
+  it("says screenshots are off once the person turned them off, and changes as the setting does", async () => {
+    const page = await open("privacy", { settings: { screenImages: false } });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const shown = () => page.locator("#privacy-terms").innerText();
+    expect(await shown()).toContain("through the desktop's accessibility service. Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
+    expect(await shown()).not.toContain("it may take a screenshot");
+    // First run's own words are untouched.
+    expect(await page.locator("#w-full ul.terms").evaluate(e => e.textContent)).toContain("and for tasks it may take a screenshot of it.");
+    // Turned back on (main tells Home the settings changed): the fold says so at once, still open.
+    const on = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" }, screenImages: true };
+    await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), on);
+    await expect.poll(shown).toContain("and for tasks it may take a screenshot of it.");
+    expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("says nothing heard is sent anywhere while the organisation's policy has Ember locked down", async () => {
+    const page = await open("privacy", { admin: { source: "/etc/ember/policy.json", error: "Unrecognized key", retentionDays: null, features: { voice: false, screenImages: false }, managed: ["screenImages"] }, settings: { screenImages: false } });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const mic = await page.locator("#privacy-terms li[data-icon='mic']").innerText();
+    expect(mic).toContain("for one request. Nothing it hears is sent anywhere until your organisation fixes its policy. Listen once processes audio");
+    expect(mic).not.toMatch(/no model service|goes to/);
+    // First run's text says the same, as its send line already does.
+    expect(await page.locator("#w-full li[data-icon='mic']").evaluate(e => e.textContent)).toContain("Nothing it hears is sent anywhere until your organisation fixes its policy.");
+    await evidence(page, "privacy-terms-lockdown");
     expect(page.errors).toEqual([]);
     await page.close();
   });

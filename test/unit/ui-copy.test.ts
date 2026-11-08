@@ -1164,6 +1164,19 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     expect(main).toContain(`["screen-images", "screenImages"]`);
   });
 
+  it("is what Apps & privacy's copy of the consent says, where first run's words no longer fit there (safety-privacy-r4)", async () => {
+    const { privacyFoldWords } = await import("../../app/renderer/home/copy");
+    const first = "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.";
+    // The words are first run's own, as the page has them.
+    expect(page.replace(/<[^>]+>/g, "")).toContain(first);
+    expect(privacyFoldWords(first, { screenImages: true })).toBe(
+      "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is below, under Never look at, and common password managers are on it already.");
+    expect(privacyFoldWords(first, { screenImages: false })).toBe(
+      "It reads the window you're working in through the desktop's accessibility service. Send screenshots for tasks is off (below), so it takes no screenshots for tasks. App windows on your never-look list and password prompts are never read. The list is below, under Never look at, and common password managers are on it already.");
+    // Any other text is left as it is.
+    expect(privacyFoldWords("It sends no usage statistics.", { screenImages: false })).toBe("It sends no usage statistics.");
+  });
+
   it("is found by searching for screenshots, by its own words, and by \"pictures\"", async () => {
     const { SCREEN_IMAGES_TEXT } = await import("../../app/renderer/home/copy");
     const { SEARCH_ALIASES } = await import("../../app/renderer/home/search-copy");

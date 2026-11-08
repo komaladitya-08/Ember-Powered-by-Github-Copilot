@@ -132,6 +132,17 @@ export const SCREEN_IMAGES_TEXT = {
   hint: "A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.",
 } as const;
 
+/**
+ * A piece of the text in Apps & privacy's copy of "Before Ember starts" (safety-privacy-9), said as it is there
+ * (safety-privacy-r4): the never-look list is below in that pane, not somewhere "in settings", and with Send
+ * screenshots for tasks off the screenshot clause says so. First run's own words stay as they are.
+ */
+export function privacyFoldWords(text: string, o: { screenImages: boolean }): string {
+  const out = text.replace("The list is in settings", "The list is below, under Never look at");
+  return o.screenImages ? out
+    : out.replace(", and for tasks it may take a screenshot of it.", `. ${SCREEN_IMAGES_TEXT.label} is off (below), so it takes no screenshots for tasks.`);
+}
+
 /** How a never-look entry reads on screen (the defaults are stored lower-case, as matched). */
 export function neverLookLabel(item: string): string {
   return NEVER_LOOK_NAMES[item.trim().toLowerCase()] ?? item;
