@@ -1,14 +1,18 @@
 /**
- * The setup check's Screen reading row on Windows and macOS follows the shared accessibility host
+ * The setup check's Screen reading row on Windows follows the shared accessibility host
  * (reliability-performance-c4-1): its status is asked again on Check again, and when reads find the helper can't work
  * while the row says it does, or work while the row says they can't, so the row the model's "see the setup check"
- * words point to says what is wrong now.
+ * words point to says what is wrong now. macOS's row reads the Accessibility permission live, so it has no watch
+ * (reliability-performance-v5-2).
  */
 
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { inspectEnvironment } from "../../app/main/environment";
 import { HelperWatch } from "../../app/main/helper-watch";
+import { darwinEnvironment } from "../../app/main/platform/darwin/system/environment";
 import type { HelperStatus } from "../../app/main/platform/types";
+import { fakeDarwinWindows, fakeElectron } from "./darwin-system-fakes";
 
 const CANT = new Error("accessibility bridge could not start (it stopped before it was ready again: exit code 3)");
 const TIMEOUT = new Error("accessibility helper did not answer read_window in 5000 ms");
@@ -114,6 +118,30 @@ describe("main.ts's use of the watch (reliability-performance-c4-1)", () => {
   it("asks the host again on Check again, and tells the watch every request's outcome (reliability-performance-c4-1)", () => {
     expect(main).toContain("if (fresh && helperWatch) await helperWatch.again();");
     expect(main).toContain("request<T>(method, params, timeoutMs).then(v => { watch.saw(method, null); return v; }, (err: unknown) => { watch.saw(method, err); throw err; });");
-    expect(main).toContain("setTimeout(() => void watch.again(), atLogin ? 60_000 : 10_000).unref();");
+    expect(main).toContain("setTimeout(() => void (watch ? watch.again() : ask()), atLogin ? 60_000 : 10_000).unref();");
+  });
+
+  it("makes the watch only on Windows, so a Mac without the Accessibility permission doesn't ask the host on every read for an answer its row never shows (reliability-performance-v5-2)", () => {
+    expect(main).toContain('const watch = helperWatch = platform.os === "win32" ? new HelperWatch({ ask, row: () => helper, waitMs: HELPER_RECHECK_MS }) : null;');
+    // Only a watch wraps the host's requests; without one (macOS) the status is asked once after start, as before.
+    const made = main.slice(main.indexOf("const watch = helperWatch ="), main.indexOf("setTimeout(() => void (watch ? watch.again() : ask())"));
+    expect(made).toMatch(/if \(watch\) \{\s+const request = sidecar\.request\.bind\(sidecar\);/);
+    expect(main.match(/new HelperWatch\(/g)).toHaveLength(1);
+  });
+});
+
+describe("macOS's Reading and using apps row (reliability-performance-v5-2)", () => {
+  it("is the same whatever the host's status said, so there is nothing for a watch to keep current there (reliability-performance-v5-2)", () => {
+    const e = fakeElectron({ systemPreferences: { isTrustedAccessibilityClient: vi.fn(() => false) } });
+    const d = {
+      env: { HOME: "/Users/ada" }, app: e.app, systemPreferences: e.systemPreferences, desktopCapturer: e.desktopCapturer, shell: e.shell,
+      windows: () => fakeDarwinWindows({ trusted: false, inputMonitoring: true }), uid: () => 501, systemVersion: () => "15.1",
+    };
+    // (darwinEnvironment says process.platform, which is this test machine's.)
+    const row = (helper: HelperStatus | null | undefined) =>
+      inspectEnvironment({ ...darwinEnvironment(d, { windows: undefined, helper }), platform: "darwin" }).checks.find(c => c.id === "accessibility");
+    expect(row(undefined)).toMatchObject({ label: "Reading and using apps", status: "fail" });
+    const asked = [null, { toolkitAccessibility: true }, { toolkitAccessibility: false, detail: "Ember needs the Accessibility permission" }];
+    for (const h of asked) expect(row(h)).toEqual(row(undefined));
   });
 });

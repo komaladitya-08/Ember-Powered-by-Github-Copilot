@@ -431,9 +431,10 @@ export interface EnvContext {
   /** Ember's accelerators another app holds; undefined while unknown. */
   shortcutsTaken?: string[];
   /**
-   * win32/darwin: the shared host's `status` answer, fetched in the background after start, again on Check again and
-   * when reads find the helper can't work while it says it does, or the reverse (main's HelperWatch; never on Linux,
-   * where the Python sidecar still starts on demand only): null when it didn't answer, undefined when not asked yet.
+   * win32/darwin: the shared host's `status` answer, fetched in the background after start (never on Linux, where the
+   * Python sidecar still starts on demand only); on Windows, whose Screen reading row reads it, also on Check again and
+   * when reads find the helper can't work while it says it does, or the reverse (main's HelperWatch; macOS's row reads
+   * the Accessibility permission live): null when it didn't answer, undefined when not asked yet.
    */
   helper?: HelperStatus | null;
   /** The user pressed Check again: a probe that waits between tries (Linux's pyatspi, every 30 s) tries now (first-run-6). */

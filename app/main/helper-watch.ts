@@ -1,10 +1,13 @@
 /**
- * Keeps the setup check's Screen reading row (Windows, macOS: the shared accessibility host's `status`) in step with
- * the helper (reliability-performance-c4-1). It was asked once, 10 s after start, so a bridge that began failing later
+ * Keeps the setup check's Screen reading row (Windows: the shared accessibility host's `status`) in step with the
+ * helper (reliability-performance-c4-1). It was asked once, 10 s after start, so a bridge that began failing later
  * left the row green while the model, told the helper can't work here, sent the person to the setup check "which says
  * what's wrong"; and one early exit left "didn't start" up for the whole run while reads worked. Now the status is
  * asked again on Check again (waited for, briefly), and in the background when a read finds the helper can't work while
- * the row says it does, or works while the row says it can't. Plain Node, so it is unit-tested with fakes.
+ * the row says it does, or works while the row says it can't. Plain Node, so it is unit-tested with fakes. Windows
+ * only: macOS's row reads the Accessibility permission live, not the host, and there shell_overlays works without the
+ * permission while reads fail for it, so each read would ask the host again for an answer nothing shows
+ * (reliability-performance-v5-2).
  */
 
 import { helperCantRun } from "./perception/sidecar";
