@@ -542,7 +542,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
   }, 60_000);
 
   /** Main's word of the conversation's turn (AgentHost.conversationTurn), as it pushes it to Home. */
-  const turn = (page: Page, state: "idle" | "thinking" | "slow") => page.evaluate(t => window.__home.emit("onConversationTurn", t), state);
+  const turn = (page: Page, state: "idle" | "thinking" | "slow" | "held") => page.evaluate(t => window.__home.emit("onConversationTurn", t), state);
   const READY = { phase: "ready", detail: "", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } };
 
   it("says in the window that Ember is thinking, then still waiting with how to stop while the bubble says so, until the reply comes (home-7, home-c1-1)", async () => {
@@ -576,6 +576,27 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.evaluate(() => window.__home.emit("onConversationStream", { id: 3, text: "Rain", state: "streaming" }));
       await turn(page, "slow");
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says a message held for a new model service waits for the switch, never that Ember is thinking, until it is sent (home-r4-4)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await page.locator("#conversation-message").fill("Summarise my inbox");
+      await page.locator("#conversation-send").click();
+      await turn(page, "held");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Ember will send this to the new model service once what it's doing now has finished. Stop response cancels it.");
+      expect(await page.locator("#state-word").innerText()).toBe("Switching model service…");
+      if (process.env.EMBER_UI_EVIDENCE) {
+        fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+        await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "conversation-held.png") });
+      }
+      // Switched and sent: now it is answered.
+      await turn(page, "thinking");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);

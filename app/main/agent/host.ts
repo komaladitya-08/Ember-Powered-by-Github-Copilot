@@ -2717,6 +2717,8 @@ export class AgentHost {
       return;
     }
     this.releasing = true;
+    // (No longer only held: Ember connects to the new service for them.)
+    this.turnChanged();
     const gen = ++this.releaseGen;
     try {
       // The connect to the new service, for at most CONNECT_WAIT_MS: one that hangs doesn't hold the requests for ever.
@@ -2868,6 +2870,8 @@ export class AgentHost {
    */
   get conversationTurn(): ConversationTurn {
     if (!this.answerOpen && !this.held.length && !this.waitingAsks) return "idle";
+    // Held for the new model service while a task finishes, with nothing answering: never "thinking" (home-r4-4).
+    if (this.held.length && !this.answerOpen && !this.releasing && !this.waitingAsks) return "held";
     return this.presenter.stalledNow ? "slow" : "thinking";
   }
 

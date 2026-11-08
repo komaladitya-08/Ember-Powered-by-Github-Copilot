@@ -24,13 +24,15 @@ export function conversationRequest(input: unknown): string | null {
 /**
  * Whether the conversation is answering a request, as main knows it (home-c1-1): "thinking" from the moment a request
  * is asked until its turn ends (or it is stopped, dropped or answered), "slow" while the bubble says Ember is still
- * waiting for the model service, else "idle". Home's composer and status panel say this, never a guess of their own.
+ * waiting for the model service, "held" while what was asked waits, unsent, for a switch of model service that waits
+ * for the work under way, with nothing answering meanwhile (home-r4-4), else "idle". Home's composer and status panel
+ * say this, never a guess of their own.
  */
-export type ConversationTurn = "idle" | "thinking" | "slow";
+export type ConversationTurn = "idle" | "thinking" | "slow" | "held";
 
 /** A turn state as main pushes it, or null for anything else. */
 export function conversationTurnOf(value: unknown): ConversationTurn | null {
-  return value === "idle" || value === "thinking" || value === "slow" ? value : null;
+  return value === "idle" || value === "thinking" || value === "slow" || value === "held" ? value : null;
 }
 
 /**

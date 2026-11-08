@@ -9,7 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
-import { checksNote, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
+import { checksNote, COMPOSER_HELD, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { formatDoctor } from "../../app/main/doctor";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
 import { IPC, TASKS_PUSH_MS } from "../../app/shared/ipc";
@@ -45,6 +45,15 @@ describe("Home's status panel", () => {
     expect(composerStillWaiting()).toBe("Still waiting for Copilot… Stop response ends this reply.");
     expect(composerStillWaiting("user")).toBe("Still waiting for your model provider… Stop response ends this reply.");
     expect(composerStillWaiting("admin")).toBe("Still waiting for the model service… Stop response ends this reply.");
+  });
+
+  it("says a message held for a new model service waits for the switch, never that Ember is thinking (home-r4-4)", () => {
+    const base = { phase: "ready", failing: 0, running: 0, asking: 0 };
+    expect(statusWord({ ...base, answering: true, switching: true })).toEqual({ word: "Switching model service…", ring: "starting" });
+    // A task at work, or one that needs you, is what it waits for: said first.
+    expect(statusWord({ ...base, answering: true, switching: true, running: 1 }).word).toBe("Working on 1 task");
+    expect(statusWord({ ...base, answering: true, switching: true, asking: 1 }).word).toBe("A task needs you");
+    expect(COMPOSER_HELD).toBe("Ember will send this to the new model service once what it's doing now has finished. Stop response cancels it.");
   });
 
   it("under the organisation's lockdown says Ember is locked, never \"Not connected\" or to connect Copilot (safety-privacy-4)", () => {

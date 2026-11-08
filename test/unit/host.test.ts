@@ -4438,6 +4438,28 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     await host.stop();
   });
 
+  it("tells Home a request held for the new service waits for the switch, never that Ember is thinking, until it is sent (home-r4-4)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const turns: string[] = [];
+    const { host } = makeHost({ hands: hands(), provider: () => now, onConversationTurn: t => { turns.push(t); } });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    expect(await host.ask("summarise my inbox")).toBe(true);
+    expect(host.conversationTurn).toBe("held");
+    expect(turns).toEqual(["held"]);
+    // The task ends: Ember switches and sends it, and only then is it answering.
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    await vi.waitFor(() => expect(conductorSession().sent.join("\n")).toContain("summarise my inbox"), { timeout: 3000 });
+    expect(host.conversationTurn).toBe("thinking");
+    expect(turns.at(-1)).toBe("thinking");
+    await host.stop();
+  });
+
   it("drops the held requests on Stop: none is sent afterwards", async () => {
     let now: ActiveProvider | null = at("a.example");
     const { host } = makeHost({ hands: hands(), provider: () => now });

@@ -57,6 +57,8 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
  * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it.
  */
 export const COMPOSER_THINKING = "Thinking… Ember's reply will appear above.";
+/** The same while it waits, unsent, for a switch of model service that waits for the work under way (main's "held" turn: home-r4-4). */
+export const COMPOSER_HELD = "Ember will send this to the new model service once what it's doing now has finished. Stop response cancels it.";
 export function composerStillWaiting(service?: string): string {
   return `Still waiting for ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}… Stop response ends this reply.`;
 }

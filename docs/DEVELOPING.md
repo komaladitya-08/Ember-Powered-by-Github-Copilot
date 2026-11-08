@@ -1116,7 +1116,8 @@ the address in force and its saved key are kept and come back with the switch (i
   first-run-c4-1), and Ember
   reconnects to the new service as soon as they are done (the turn's end, a Stop, the last task's end), not at the
   next request. A request asked while a turn or a task is still under way on the service before is held, with a bubble
-  saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are
+  saying so ("Switching model service", up for as long as anything is held; Home's composer and status word say it waits
+  for the switch, never "Thinking…": the `held` turn, home-r4-4), and sent to the new one once they are
   done, in the order asked (one asked during the switch goes behind them); it never goes to the one before, and no new
   task starts on it (a queued one ends saying the service changed). A finished task's card stays through the switch's
   reconnect with the time it had left (`TaskManager.keptCards`): its Try again is held back while the switch waits (a
