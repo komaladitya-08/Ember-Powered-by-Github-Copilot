@@ -892,8 +892,9 @@ mounted while empty (one `:is([role="status"], [aria-live]):empty` rule), Send, 
 where it fits beside neither (it covered the bubble in 11 and 9 of 14 live openings at two screen and text sizes, and
 now in none of 56 across four); main tells the overlay where the open box is (`EmberState.askBox`), so a later bubble
 keeps off it, a question already shown never moves (`askKeepOff`), and one with no room moves the box aside once,
-inside the Confirmer's 500 ms arming. The no-compositor corner card (M1.3) draws keys as keycaps (`stepParts`), Listen
-once keeps its Cancel listening (`questionHoldsListen`), and the Ask field keeps a long paste whole with Home's count.
+inside the Confirmer's 500 ms arming. The no-compositor corner card (M1.3) draws keys as keycaps (`stepParts`),
+`questionHoldsListen` was to keep Listen once's Cancel listening (it changed nothing, since a question still ends the
+listening: see the third round, below), and the Ask field keeps a long paste whole with Home's count.
 
 **Voice.** While Voice Match is taught, `VoiceEngine.stopsOnly` takes a spotted bare name or "Hey Ember" as a stop
 candidate confirmed from the transcript (`saidWakeStop`), so the spoken kill phrase (M5.3, M8.9) works there on the
@@ -1185,57 +1186,73 @@ never announce a command (§2 "Commands"), and the shell's password prompt is ch
 before acting, with a desktop child the helper can't hand over counted as unchecked (M8.3, as round one's change to
 its §10 entry has it).
 
-**Left.** Partly fixed (9): WSL's move into a folder still reads "Replaces ~/Documents if it exists.", since its
-inspect script reports no folder (commands-remote-r1); a failing save still shows "Ember learned" and "Memory on", and
-the first remember after a full disk claims success (memory-r2); a Try again on Home's Problem row, which needs its
-own route under the bubble's retry rule (home-7); the npm handover message on a Mac and on Windows
-(install-docs-c2-3); a sooner retry of a failed first update check, which would break the once-a-day promise
-(install-docs-11); X11 authentication prompt windows (safety-privacy-3); auditing `describe_screen` and each request's
-quick context, which needs a `CONSENT_VERSION` bump (safety-privacy-6); awake rest, listening in silence with Home
-open, at 11.3 % of a core and 758 MB (the listening process 384 MB) against docs/ASSISTANT.md §3's 3 % and 400 MB,
-since what is still drawn is the first minute's fidgets and the blinks (rp-4); and phone numbers, fractions and
-"$5-10" (voice-speaking-2). Skipped (31): five because another lane did them (accessibility-visual-c1-2, whose rest
-lane F's integrations-v1 did; accessibility-visual-c2-2 and integrations-r2-4, done as install-docs-r2-2; and the
-integrator notes accessibility-visual-i3 and integrations-i3); owner decisions: the route after re-agreeing
+**Left.** Partly fixed (9): WSL's move into a folder still reads "Replaces ~/Documents if it exists.", since its inspect
+script reports no folder (commands-remote-r1); a failing save still shows "Ember learned" and "Memory on", and the first
+remember after a full disk claims success (memory-r2); a Try again on Home's Problem row, which needs its own route
+under the bubble's retry rule (home-7); the npm handover message on a Mac and on Windows (install-docs-c2-3); a sooner
+retry of a failed first update check, which would break the once-a-day promise (install-docs-11); X11 authentication
+prompt windows (safety-privacy-3); auditing `describe_screen` and each request's quick context, which needs a
+`CONSENT_VERSION` bump (safety-privacy-6); awake rest, listening in silence with Home open, at 11.3 % of a core and
+758 MB (the listening process 384 MB) against docs/ASSISTANT.md §3's 3 % and 400 MB, since what is still drawn is the
+first minute's fidgets and the blinks (rp-4); and phone numbers, fractions and "$5-10" (voice-speaking-2). Skipped (31):
+five because another lane did them (accessibility-visual-c1-2, done by lane H's reliability-performance-c2-3 and, for
+the rest, by lane F's integrations-v1; accessibility-visual-c2-2 and integrations-r2-4, done as install-docs-r2-2; and
+the integrator notes accessibility-visual-i3 and integrations-i3); owner decisions: the route after re-agreeing
 (first-run-4, safety-privacy-8), the provider card's wording (first-run-10, integrations-2, -13), probing a remote
 provider at each start (integrations-1), browsing marketplaces before the extensions card (integrations-i2), memory's
 predicate names (memory-4), which memories shaped an answer (memory-10), npm.yml's tag run without publish credentials
 (install-docs-2), Stop speaking on the bubble and which words only hush (voice-speaking-5) and a notice when the voice
-changes (voice-speaking-6); larger work in another area's code: an Undo for a forgotten learnt word (memory-7),
-actions on Home's crash notice (reliability-performance-r2-2), a Try again on Home's problem entry
+changes (voice-speaking-6); larger work in another area's code: an Undo for a forgotten learnt word (memory-7), actions
+on Home's crash notice (reliability-performance-r2-2), a Try again on Home's problem entry
 (reliability-performance-c1-1), an unknown state for a hung pyatspi import (rp-1) and a microphone chooser
 (voice-listening-v2); native hardware: names forgotten as typos behind split DNS or on a Mac (commands-remote-6), the
-Ask box's margins on Windows and macOS (companion-4) and a cut-in that waits for the piece being made
-(voice-speaking-10); 800×600 at Larger text, where no layout fits both the Ask box and the bubble
-(companion-1, -c1-1); trade-offs left as they are: room talk that begins after Listen once's first second, which only
-a voiceprint could tell from the user's and the owner decision of 2026-11-05 rules out (voice-listening-c1-1), and an
+Ask box's clear margins under Mutter's click-to-focus and on Windows and macOS (companion-4) and a cut-in that waits for
+the piece being made (voice-speaking-10); 800×600 at Larger text, where no layout fits both the Ask box and the bubble
+(companion-1, -c1-1); trade-offs left as they are: room talk that begins after Listen once's first second, which only a
+voiceprint could tell from the user's and the owner decision of 2026-11-05 rules out (voice-listening-c1-1), and an
 unaccented short first word of a foreign reply (voice-speaking-11); safety-privacy-1's phrasings, in the memory guard,
 where memory-1 went as far as it could without new over-refusal; and folding 0.1.1's older dated sections into its
-feature sections (install-docs-4). Found on the way: a Mac's `ditto` merges into a folder without a question; a
-download inside `case … esac` isn't remembered, and PowerShell's and cmd's copy verbs don't carry the mark; unpacking
-a download marks its whole folder; the overlay's status pill and Ask's Listen once detail are still hidden until
-filled; a narrowed bubble can end a line on " · "; the model's task result and an unanswered question's answer row
-still say "stopped"; the setup check's "Copilot's file watchers" row and Home's tagline still name Copilot while a
-provider card waits; first run's Agree doesn't wait while the recipient is unknown; a Stop while a request waits for a
-connection leaves "Thinking…" until the wait ends; a spoken forget or "get to know me" still brings Home to the front
-with the keyboard; the guard still keeps "HR portal pw …", a login written with a slash and some Netflix and Wi-Fi
-phrasings; a "Prefers long answers" that replaces About you's length drops the answer-length predicate; Voice Match
-checks Listen once's whole audio, a screen reader's announcement included; the launcher refuses SOCKS proxies; and
-several tests flake under load (platform-win32-backend, memory-14's timing, desk-live's reapDesks, approval-ui-live,
-two first-run renderer cases, project-live and the packaging stand-in smoke test).
+feature sections (install-docs-4). Found on the way: a Mac's `ditto` merges into a folder without a question; a download
+inside `case … esac` isn't remembered, and PowerShell's and cmd's copy verbs don't carry the mark; unpacking a download
+marks its whole folder; a card says "Replaces ~ if it exists." for the home folder itself; the overlay's status pill and
+Ask's Listen once detail are still hidden until filled; an answer expanded with Read all loses its reply-bound
+suggestions, and the Ask box's placement and the overlap probes measure its window, clear 10 px margin included, not its
+visible field; a narrowed bubble can end a line on " · "; the model's task result and an unanswered question's answer
+row still say "stopped", and the away notice for a failed or unanswered task carries only its summary; the setup check's
+"Copilot's file watchers" row still names Copilot under a provider, and Home's tagline while a provider card waits; the
+add-marketplace sentence quotes the address as Ember checked it (without `.git`), not as typed; first run's Agree
+doesn't wait while the recipient is unknown, and the consent copy's "a model service I can't tell yet" is in the first
+person; a key that fails to save after an adopted provider edit leaves the new address on but not agreed, the old key
+already deleted; a Stop while a request waits for a connection leaves "Thinking…" until the wait ends; a spoken forget
+or "get to know me" still brings Home to the front with the keyboard; the guard still keeps "HR portal pw …", a login
+written with a slash and some Netflix and Wi-Fi phrasings; a "Prefers long answers" that replaces About you's length
+drops the answer-length predicate; Voice Match checks Listen once's whole audio, a screen reader's announcement
+included, and Home still announces its voice line as Listen once opens, which leaves the engine more to take off; a
+short run of bare lines split by a streamed sentence cut isn't ended, and a bare list waits for its paragraph's end; the
+launcher refuses SOCKS proxies, and its prune takes a running 0.1.10 for 0.1.1 (it only keeps more); round two's polish
+is still to do (an outline for What Ember did's tags in forced colours, the 8 px gap above "Kitten Nano is selected…");
+`footprint.mjs` could run in CI's el8 job with its budget; and several tests flake under load (platform-win32-backend,
+memory-14's timing, desk-live's reapDesks, approval-ui-live, two first-run renderer cases, project-live and the
+packaging stand-in smoke test). Round three's own trade-offs: a Listen once request begun within about 0.1 s of the
+window opening is taken for talk under way, and one begun in its first second must end within 12 s, while TV talk that
+begins in its first second keeps "Listening…" up for 12 s rather than 8 before nothing is sent (voice-listening-r2-1);
+and a very short reply to a short request with only two short words of its language is said by Kitten
+(voice-speaking-r2-1).
 
 **Native validation and owner decisions.** Still to check natively: WSL's inspect script with a folder column, and
 commands-remote-6 with a real ssh client and a Mac; Orca, NVDA, Narrator and VoiceOver on the newly mounted status
 lines, the "No answer in time: " and "Ended: " prefixes and Ask's live region, and Listen once with a screen reader
-through real speakers and each OS's echo canceller; Windows contrast themes on the corner card; on RHEL 8.4 GNOME
-3.32, the extra shell walk before a question (about 1 s at worst), how often a desktop child that can't be handed over
-leaves the check incomplete, the sidecar self-test and the bindings retry on platform-python 3.6, the eval with
-AT-SPI, gedit and Firefox, and the new phrase-start cuts by ear; a real Mac without and then with the Accessibility
-permission, and Windows with a UIA bridge that can't start; powerMonitor's idle time for the away wait on GNOME,
-Windows and macOS; the npm launcher behind a real corporate proxy (one that inspects TLS too), console-close cleanup
-on Windows and the handover on Windows and a Mac; and language routing with real foreign system voices, and what
-Moonshine writes for a spoken "play la vie en rose". For the owner, beside round two's list: whether a question should
-end a Listen once, with a listening earcon (§6); how to name the Copilot runtime to someone using their own provider
-(round three says "my model connection"); the resting frame rate and the fidgets' pace (`RESTING_FRAME_MS`), and the
-listening process's cost, before docs/ASSISTANT.md's target is restated; an upper bound on how long a card waits while
-the user is away; and whether first run's Stop rehearsal is optional.
+through real speakers and each OS's echo canceller; Windows contrast themes on the corner card; on RHEL 8.4 GNOME 3.32,
+the extra shell walk before a question (about 1 s at worst), how often a desktop child that can't be handed over leaves
+the check incomplete, the sidecar self-test and the bindings retry on platform-python 3.6, the eval with AT-SPI, gedit
+and Firefox, and the new phrase-start cuts by ear; a real Mac without and then with the Accessibility permission, and
+Windows with a UIA bridge that can't start; powerMonitor's idle time for the away wait on GNOME, Windows and macOS; the
+npm launcher behind a real corporate proxy (one that inspects TLS too), console-close cleanup on Windows and the
+handover on Windows and a Mac; and language routing with real foreign system voices, and what Moonshine writes for a
+spoken "play la vie en rose". Still to see in a render: the floating task card's longer picture row at Larger text and
+in each Glass setting. For the owner, beside round two's list: whether a question should end a Listen once; a listening
+earcon (§6), which would also ease Listen once's early-start trade-offs; whether `describe_screen` should still send
+every open window's title; how to name the Copilot runtime to someone using their own provider (round three says "my
+model connection"); the resting frame rate and the fidgets' pace (`RESTING_FRAME_MS`), and the listening process's cost,
+before docs/ASSISTANT.md's target is restated; an upper bound on how long a card waits while the user is away; and
+whether first run's Stop rehearsal is optional.

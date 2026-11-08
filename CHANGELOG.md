@@ -40,9 +40,9 @@ the automated tests don't stand in for them.
   well as keeping screenshots from the model. Ember 0.1.0 knows this key, so a policy with it doesn't lock 0.1.0 down.
 - **The npm launcher downloads through the proxy npm uses:** npm's `https-proxy` or `proxy` setting (from npm's
   environment or its `.npmrc` files), else `HTTPS_PROXY` (`HTTP_PROXY` for an `http://` mirror), never for the hosts
-  in `NO_PROXY` or npm's `noproxy`. Behind a proxy that inspects HTTPS, set `NODE_EXTRA_CA_CERTS` to your
-  organisation's certificate file; `EMBER_NPM_DOWNLOAD_BASE` points it at your own mirror.
-  [Its README](packages/npm/README.md) has the details.
+  in `NO_PROXY` or npm's `noproxy`. It takes an `http://` or `https://` proxy, not a SOCKS one. Behind a proxy that
+  inspects HTTPS, set `NODE_EXTRA_CA_CERTS` to your organisation's certificate file; `EMBER_NPM_DOWNLOAD_BASE` points
+  it at your own mirror. [Its README](packages/npm/README.md) has the details.
 
 ### First run
 
@@ -60,7 +60,8 @@ the automated tests don't stand in for them.
   setting found), and the window reopens where you left it. **Home** shows what Ember is doing now: its state, what is
   on, today's tasks and approvals, **Ask Ember…** and **Stop everything**; then the conversation and **Task activity**.
 - **Task activity**: each task of this session, step by step, with its plan, its questions and how you answered them,
-  and what it found. A task waiting for you says where it asks and which keys answer. Kept until you quit.
+  and what it found. A task waiting for you says where it asks and which keys answer. Kept until you quit (the latest
+  20 finished tasks).
 - **Ember on screen** (Settings › Your Ember): **Follow my cursor** and **Hide Ember until it needs me** are switches
   now; **Quit Ember** is under them.
 - **Starting Ember** once it is set up only greets you, unless the setup check needs you; start it again (or press the
@@ -153,8 +154,8 @@ the automated tests don't stand in for them.
 
 - **Ember can remember you** (Settings › **Memory** › **Remember what I tell you**, off until you turn it on and agree
   to its note): what you tell it about yourself, your work and how you like things done stays on this computer, tied
-  to your verified GitHub account, and you can review and forget each fact. It never keeps passwords, PINs, lock codes
-  or card numbers.
+  to your verified GitHub account, and you can review and forget each fact. It refuses to keep the passwords, PINs,
+  lock codes and card numbers it recognises.
 - **Ember learns on its own** while memory is on: after you talk and when a task finishes, it picks out what's worth
   keeping (your preferences, your work, the people and apps in it), tidies its memory while you're away, and at most
   once a day asks about a name it keeps finding nothing on (**Ask me questions now and then** turns that off). Only
@@ -283,8 +284,7 @@ the automated tests don't stand in for them.
 - **New conversation asks first** while there are messages to clear, and says when it will also delete the copy saved
   on this computer.
 - **A message sent while Ember connects, reconnects or is offline says why,** and that it is still there, instead of
-  sending you to Models & connections. With your own model server on this computer, it asks whether the server is
-  running.
+  sending you to Models & connections.
 - **A Problem line in Home that sends you to Ember's settings names Models & connections** instead, and offers
   **Models & connections…**, which goes there.
 - **Home names your computer's send key** (Ctrl+Enter, or Command+Enter on a Mac), and a message's **Copy** says
@@ -328,9 +328,10 @@ the automated tests don't stand in for them.
   “Read it out” only while the answer they reply to shows. A suggestion no longer offered can't be sent.
 - **The Ask box says when Ember can't answer yet** (“Not connected: I can't answer yet”) before you type, not after
   you send, and keeps it true while the box is open, telling screen readers “I can answer again.” once it can. It
-  names the service in use (“Provider problem”, “Service problem”), as the handle does, says “Reconnecting: I can't
-  answer yet” while Ember reconnects by itself, and a crowded line shortens to just why. When Ember will see nothing,
-  the line under the field shrinks to its keys.
+  names the service in use (“Provider problem”, “Service problem”), as the handle does, and a crowded line shortens to
+  just why. While Ember reconnects by itself, the handle says “Reconnecting…” and the box “Reconnecting: I can't answer
+  yet”, and once Ember stops trying, “Connection problem” (“Copilot problem” with Copilot), never blaming your
+  provider. When Ember will see nothing, the line under the field shrinks to its keys.
 - **A long paste in the Ask box is kept whole**, as in Home: from 1,800 characters it counts what would be sent (blank
   lines after it don't count), and over 2,000 it says how many too many and sends nothing until it fits.
 - **Esc while an input method is composing a word** cancels the word, not the whole Ask box.
@@ -366,8 +367,9 @@ the automated tests don't stand in for them.
   someone else is talking as it starts, it sends nothing and ends with “No request heard. Try again.” (at 8 seconds,
   or 12 when that talk paused just as you pressed). While it waits for you, Settings' voice line says “Listening…” and
   the handle's microphone badge “Listening”. With a screen reader running, what it announces as Listen once opens is
-  left out of your request. On a muted microphone it says “The microphone is sending only silence…”, and pressed while
-  Ember talks or answers, it stops that first and listens, as “Hey Ember” does.
+  left out of your request, and when that is heard, your 8 seconds start after it. On a muted microphone it says “The
+  microphone is sending only silence…”, and pressed while Ember talks or answers, it stops that first and listens, as
+  “Hey Ember” does.
 - **Pause to think mid-request.** After a word such as “the” or “and”, Ember waits 0.9 seconds more for the rest: “And
   make the text a… bit bigger” is now one request, also when the pause falls as Listen once's 8 seconds run out.
   Quieter talk from someone else that follows isn't joined to it, and when only that talk follows, what you said
@@ -436,15 +438,15 @@ the automated tests don't stand in for them.
 - **When a spoken yes isn't taken,** the question keeps its answer keys under the note, and Ember says them aloud.
 - **A third task says it waits its turn** instead of “On it”, and Home shows it as “Waiting its turn”, with no clock.
   Every outcome is worded as its card says it (“didn't finish”, not “failed”). When the accessibility helper can't
-  work at all (Linux's accessibility bindings missing, no session bus, no Accessibility permission on a Mac, or the
-  helper unable to start), Ember reads nothing and takes no step, and it and its tasks say its accessibility helper
-  isn't working and that the setup check says why, never to try again in a moment. After a read that only took too
-  long, or a helper started again after another task's slow request, the task is told to try the step again.
+  read apps at all (Linux's accessibility bindings missing, no session bus, no Accessibility permission on a Mac, or
+  the helper unable to start), Ember and its tasks say the helper isn't working and that the setup check says why,
+  never to try again in a moment. After a read that only took too long, or a helper started again after another
+  task's slow request, the task is told to try the step again.
 - **Typing “stop” while a task is at work stops everything at once,** in the Ask box or in Home (also while Ember
   waits for running tasks before it reconnects), and so do “stop typing”, “abort” and “no, stop”. Home's conversation
-  keeps your “stop” with Ember's “Okay, I've stopped everything.”, and its composer says everything stopped.
-- **Task activity keeps the latest 20 finished tasks until you quit Ember,** also after Stop everything and your next
-  request, and through a reconnect; signing out or another account clears it.
+  keeps your “stop” with Ember's “Okay, I've stopped everything.”
+- **Task activity keeps finished tasks until you quit Ember,** also after Stop everything and your next request, and
+  through a reconnect; signing out or another account clears it.
 - **Screen readers hear why an Allow didn't count** (pressed too soon, or after the question moved on), and the
   approval card's key hints as they appear.
 
@@ -536,10 +538,9 @@ the automated tests don't stand in for them.
   key is saved for it, and the setup check warns about that.
 - **Messages about a model service that isn't answering name the one in use,** your own model provider or your
   organisation's, when Ember reconnects and when it stops a task, not Copilot. One behind a proxy that refuses it, or
-  whose name doesn't resolve, is said to be out of reach (“Check the network, then ask again.”). Under either, when
-  Ember's own connection stops it says its model connection stopped (“My model connection stopped…”), never Copilot,
-  and so do the tasks it cut off (“Ember's model connection stopped…”) and the status line about the computer's
-  file-watcher limit.
+  whose name doesn't resolve, is said to be out of reach (“Check the network, then ask again.”). Under either, the
+  tasks that Ember's own connection cut off say “Ember's model connection stopped…”, never Copilot, and so does the
+  status line about the computer's file-watcher limit.
 - **Test connection names your provider's models** (“It lists 1 model: llama3.2:3b.”), and both model fields suggest
   them, so you pick the exact name instead of typing it blind.
 - **The provider's note is announced when you enter its address,** a line under Test connection says why it waits, and
@@ -620,8 +621,8 @@ the automated tests don't stand in for them.
 #### Reliability
 
 - **Ember notices at once when Copilot stops mid-answer.** It used to show a half answer as “Answering” for up to 20
-  seconds; now it says Copilot stopped (or, under your own provider or your organisation's service, that its model
-  connection stopped) within about 3 seconds and reconnects, and a running task's card says so as fast.
+  seconds; now it says the connection stopped within about 3 seconds and reconnects, and a running task's card says so
+  as fast.
 - **A Copilot that never answers no longer leaves Ember “Connecting…” for good.** Each step of connecting has a time
   limit; Ember then says “Copilot isn't answering. Ember will try again in a moment.” and tries again.
 - **A crashing accessibility helper no longer spins a processor core.** One that crashed on every request was started
