@@ -1195,6 +1195,26 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("make -j \"$X/install\"").decision.rules).toContain("unclear.target");
   });
 
+  it("builds the target a job count's variable or substitution holds, as make does, so a deploy there asks (commands-remote-w5-2)", () => {
+    for (const [cmd, plain] of [
+      ["T=deploy; make -j \"$T\"", "make deploy"], ["T=release; gmake -j $T", "gmake release"], ["T=publish; make -j \"$T\"", "make publish"],
+      ["T=deploy; make --jobs \"$T\"", "make deploy"], ["T=deploy; make -l \"${T}\"", "make deploy"], ["T=4; T=deploy; make -j \"$T\"", "make deploy"],
+    ] as const) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+      expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
+    }
+    expect(decided("T=deploy; make -j \"$T\"").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    // Any other substitution may print a target, and a value like an option or a make variable asks.
+    for (const cmd of ["make -j \"$(printf deploy)\"", "make -j `echo deploy`", "T=-f/tmp/x.mk; make -j \"$T\"", "T='SHELL=/tmp/x'; make -j \"$T\""]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // A number, a value Ember can't see and the processor counts are the job count, as before.
+    for (const cmd of ["make -j $(nproc)", "make -j \"$JOBS\"", "T=4; make -j \"$T\"", "T=$(nproc); make -j \"$T\"", "make -j $(nproc --all)", "make -j $(getconf _NPROCESSORS_ONLN)", "T=build; make -j \"$T\""]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+    expect(decided("make -j $(sysctl -n hw.logicalcpu)", "darwin").decision.verdict).toBe("run");
+  });
+
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {
     for (const cmd of ["cp notes.txt", "mv notes.txt", "install x.sh", "docker run --rm", "podman run -P"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     for (const cmd of ["cp --help", "mv --version", "rsync -a src", "rsync src/"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");

@@ -15661,6 +15661,20 @@
   {
    "cmd": "cat \"${HOME:?}/notes.txt\"",
    "verdict": "run"
+  },
+  {
+   "cmd": "T=deploy; make -j \"$T\"",
+   "verdict": "ask",
+   "rules": [
+    "script.publish"
+   ]
+  },
+  {
+   "cmd": "make -j \"$(printf deploy)\"",
+   "verdict": "ask",
+   "rules": [
+    "unclear.target"
+   ]
   }
  ]
 }

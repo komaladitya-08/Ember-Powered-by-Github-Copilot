@@ -56,8 +56,9 @@ export interface OptSpec {
    */
   shortOptional?: string;
   /**
-   * Short options that take the next word as their value only when it is a number, or a substitution or variable Ember
-   * can't see (make's `-j 4` and `-j $(nproc)`, but `-j install`).
+   * Short options that take the next word as their value only when it is a number, or a processor count's substitution
+   * or a variable Ember can't see (make's `-j 4` and `-j $(nproc)`, but `-j install`); the variable's values the text
+   * gives it are the row's to judge.
    */
   shortNumeric?: string;
   /** Long options that take the next word only when it is a number (make's `--jobs 4`). */
@@ -88,8 +89,14 @@ export interface Parsed {
   missingValue: boolean;
 }
 
-/** A word that is only a command substitution, an arithmetic expansion or a variable, quoted or not. */
-const COUNT_WORD = /^"?(\$\([^()]*\)|\$\(\([^()]*\)\)|`[^`]*`|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"?$/;
+/** A command that prints the number of processors (`nproc`, `getconf _NPROCESSORS_ONLN`, `sysctl -n hw.ncpu`). */
+const CPU_COUNT = String.raw`\s*(nproc(\s+--(all|ignore=\d+))*|getconf\s+_?NPROCESSORS_ONLN|sysctl\s+-n\s+hw\.(ncpu|logicalcpu|physicalcpu|activecpu))\s*`;
+/**
+ * A word that is only a processor count's substitution, an arithmetic expansion or a variable, quoted or not: any
+ * other substitution may print a target (`make -j "$(printf deploy)"`), and a variable's value is the caller's to judge
+ * (commands-remote-w5-2).
+ */
+const COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)|` + "`" + CPU_COUNT + "`" + String.raw`|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"?$`);
 
 /**
  * Parses options GNU-style (clusters, attached values, `--` ends options, options after operands unless
@@ -105,8 +112,8 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
   const shortNumeric = spec.shortNumeric ?? "";
   const longValue = new Set(spec.longValue ?? []);
   const longNumeric = new Set(spec.longNumeric ?? []);
-  // A word Ember can't see that is only a command substitution or a variable (`$(nproc)`, `` `nproc` ``, `"$JOBS"`) is
-  // the usual job count, as a number is; a literal word (`install`) is still a target (commands-remote-v5-4).
+  // A word Ember can't see that is only a processor count's substitution or a variable (`$(nproc)`, `` `nproc` ``,
+  // `"$JOBS"`) is the usual job count, as a number is; a literal word (`install`) is still a target (commands-remote-v5-4).
   const numberNext = (k: number): boolean => k + 1 < args.length && (/^\d+(\.\d+)?$/.test(args[k + 1].v ?? "") || (args[k + 1].v === null && COUNT_WORD.test(args[k + 1].raw)));
   for (let k = 0; k < args.length; k++) {
     const a = args[k];

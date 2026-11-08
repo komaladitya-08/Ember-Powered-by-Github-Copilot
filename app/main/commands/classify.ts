@@ -640,6 +640,16 @@ class Classifier {
     for (const [closer, hv] of this.hereVarsAt) if (!fedClosers.has(closer)) this.useUnjudged(hv.names);
   }
 
+  /**
+   * The values the text gives a word (formsOf): null for one with a part Ember can't see, a resolved word its own value
+   * (`T=deploy; make -j "$T"`: commands-remote-w5-2).
+   */
+  knownForms(a: Arg): (string | null)[] {
+    if (a.v !== null) return [a.v];
+    if (!a.parts) return [null];
+    return this.formsOf(a.parts).map(f => (f.includes(UNSEEN) ? null : f.replace(PATTERN, "")));
+  }
+
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
   private formsOf(parts: readonly Part[], vars: ReadonlyMap<string, string[]> = this.varValues): string[] {
     let out = [""];
@@ -5463,11 +5473,25 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
+  // make takes the word after -j or -l only when it is all digits, so a value the text gives a variable there that isn't
+  // one is a target or a variable, as written there (`T=deploy; make -j "$T"`), and an option-like one asks
+  // (commands-remote-w5-2).
+  const counts: Arg[] = [];
+  if (/make$/.test(h.key)) {
+    for (const o of p.opts) {
+      if (o.value !== null || !/^(-[jl]|--(jobs|load-average))$/.test(o.name)) continue;
+      for (const f of h.e.knownForms(args[o.at + 1])) {
+        if (f === null || /^\d+(\.\d+)?$/.test(f)) continue;
+        if (f.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+        else counts.push(lit(f));
+      }
+    }
+  }
   // make: `--eval` and variable overrides that name a shell or hold command text run code Ember can't see in the
   // makefile's recipes (`make SHELL='rm -rf ~' build`, `make CC='sh -c …'`).
   if (/make$/.test(h.key)) {
     if (has(p, "eval") || values(p, "E").length || h.args.some(a => /^--eval/.test(a.v ?? ""))) h.e.unclear("unclear.make-eval", "It adds make rules Ember can't see.");
-    for (const a of p.operands) {
+    for (const a of [...p.operands, ...counts]) {
       const m = a.v === null ? null : /^([A-Za-z_.][A-Za-z0-9_.]*)\s*[:+?!]?=(.*)$/s.exec(a.v);
       if (a.v !== null && !m) continue;
       if (a.v === null || /^(\.?SHELL|\.SHELLFLAGS|MAKESHELL|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|\.RECIPEPREFIX)$/.test(m![1]) || /[$`;|&<>()\n"']/.test(m![2]) || /^\s*(sh|bash|zsh|dash|ksh|fish|python\d*(\.\d+)?|perl|ruby|node|env|eval|exec|busybox|xargs)(\s|$)/.test(m![2])) {
@@ -5476,7 +5500,7 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     }
   }
   if (h.key === "rake" && (values(p, "e", "p", "E").length || has(p, "execute", "execute-print", "execute-continue"))) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
-  let targets = p.operands.filter(a => a.v === null || !/^[A-Za-z_][A-Za-z0-9_.]*=/.test(a.v));
+  let targets = [...p.operands, ...counts].filter(a => a.v === null || !/^[A-Za-z_][A-Za-z0-9_.]*=/.test(a.v));
   if (h.key === "nox") targets = values(p, "s", "session", "sessions").map(v => lit(v ?? "?"));
   if (h.key === "tox") targets = values(p, "e", "environment", "envlist").map(v => lit(v ?? "?"));
   if (h.key === "mvn" || h.key === "mvnw") targets = targets.filter(t => !(t.v ?? "").startsWith("-"));
