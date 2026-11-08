@@ -14,7 +14,7 @@ import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, 
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, logLevel } from "./logger";
-import { dataFolderProblem } from "./data-folder";
+import { dataFolderProblem, startupDialogText, startupProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
@@ -211,16 +211,19 @@ watchCrashes(app, log);
 
 /** Set once Ember couldn't start: its exit isn't the session ending (the run marker stays). */
 let startFailed = false;
-/** Ember could not start: say so plainly and exit, so the single-instance lock isn't held by a hidden Ember. */
-function startupFailed(err: unknown): void {
+/**
+ * Ember could not start: say so plainly and exit, so the single-instance lock isn't held by a hidden Ember. `said` is
+ * the dialog's sentence: by default the plain words for `err` (startupProblem), never its own text, which the log keeps
+ * (reliability-performance-r4-1).
+ */
+function startupFailed(err: unknown, said = startupProblem(err, userData)): void {
   startFailed = true;
   log.error("app.start_failed", { err });
-  const message = err instanceof Error ? err.message : String(err);
   void app.whenReady().then(() => {
     // A dialog with no parent window comes up in front only once Ember is the active app (macOS).
     sys.lifecycle.focusOwnApp();
     // A log that couldn't be written (its folder can't be) isn't pointed to.
-    dialog.showErrorBox("Ember couldn't start", fs.existsSync(log.file) ? `${message}\n\nThe details are in ${log.file}.` : message);
+    dialog.showErrorBox("Ember couldn't start", startupDialogText(said, fs.existsSync(log.file) ? log.file : null));
     // Leave Electron from its message loop, not from inside ready (electron/electron#55011).
     setImmediate(() => app.exit(1));
   });
@@ -238,7 +241,7 @@ if (process.argv.includes("--doctor")) {
 } else if (!app.requestSingleInstanceLock()) {
   // Chromium can't take the lock in a data folder it can't write to either: that isn't another Ember (review #80).
   const unusable = dataFolderProblem(userData);
-  if (unusable) startupFailed(new Error(unusable));
+  if (unusable) startupFailed(new Error(unusable), unusable);
   else {
     log.info("instance.handover", { pid: process.pid });
     app.quit();
