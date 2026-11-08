@@ -593,6 +593,10 @@ the four phrases it shows. While it learns, Ember takes no requests (the phrases
 “Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
 stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),
 after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
+While a screen reader runs, which reads each prompt aloud, teaching takes nothing it reads: speech that begins within
+1.5 s of a prompt showing, or in a prompt's own words ("Say…", "Heard 2 of 4…", "That was too short…"), teaches
+nothing, and a phrase said so soon after the reading that the two ran together is asked for again ("Your screen reader
+was still reading. Wait for it to finish, then say: …"). Listen once's line then isn't announced either.
 It decides only what a voice may approve: every voice is heard, and a request it doesn't
 match simply can't approve anything (owner decision of 2026-11-05: on a laptop's microphone the owner's own requests
 scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint and the words Ember learnt (the button says so). With **Keep learning my voice** (on by default once Voice Match knows you), the

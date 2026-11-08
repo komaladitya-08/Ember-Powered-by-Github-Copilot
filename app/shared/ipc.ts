@@ -328,8 +328,11 @@ export interface VoiceMatchStatus {
   model?: boolean;
   /** Turned on in settings with a voiceprint kept, but off for now: its model is missing or was damaged. */
   wanted?: boolean;
-  /** `got` of `of` phrases kept; `phrase`: the one to say now; `again`: the last wasn't kept, and why. */
-  enrolling: { got: number; of: number; phrase: string; again?: "short" | "unlike" | "failed" } | null;
+  /**
+   * `got` of `of` phrases kept; `phrase`: the one to say now; `again`: the last wasn't kept, and why (`over`: said while a
+   * screen reader still read the prompt).
+   */
+  enrolling: { got: number; of: number; phrase: string; again?: "short" | "unlike" | "failed" | "over" } | null;
   /**
    * How the last teaching ended, since this window opened: `learnt`; `cancelled` (the user's Cancel, or settings closed);
    * `stopped` ("Ember, stop" or Stop everything); `timeout` (no phrase heard for a while, or too long in all);

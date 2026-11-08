@@ -203,6 +203,15 @@ describe.skipIf(gate)("Home's Task activity, while a task works (2026-11-07 prod
     // Outside a window, a change is said at once, as before.
     await emit("onTasks", [task("3-cccc", "Turn on night light", one, "failed")]);
     await expect.poll(said).toEqual(["tasks-live: Turn on night light: Done", "tasks-live: Turn on night light: Didn't finish"]);
+    // While Voice Match is taught, only its prompts are said: anything else read aloud was taken for a phrase
+    // (voice-listening-r4-1).
+    const teaching = { ...voice("waiting", { phase: "blocked", detail: "Finish teaching Ember your voice first.", reason: "listening" }), match: { enrolled: false, on: false, model: true, wanted: false, enrolling: { got: 0, of: 4, phrase: "Ember, what's the weather like today?" }, learnt: 0 } };
+    await emit("onVoiceStatus", teaching);
+    await emit("onTasks", [task("3-cccc", "Turn on night light", one, "running")]);
+    await page.waitForTimeout(1300);
+    expect(await said()).toHaveLength(2);
+    await emit("onVoiceStatus", voice("waiting", { phase: "ready", detail: "" }));
+    await expect.poll(said, { timeout: 3000 }).toEqual(["tasks-live: Turn on night light: Done", "tasks-live: Turn on night light: Didn't finish", "tasks-live: Turn on night light: Working"]);
     expect(page.errors).toEqual([]);
     await page.close();
   }, 30_000);

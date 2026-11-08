@@ -31,8 +31,11 @@ type FromMain =
   | { type: "voiceprint"; generation: number; refresh?: boolean; print: string | null; anchor?: string; clips?: number }
   /** Voice Match keeps learning (adapt.ts): the owner's well-matched requests are offered to main as samples, or not. */
   | { type: "learning"; on: boolean }
-  /** Enrolment: listen for the owner's phrases (nothing heard meanwhile is a request), or stop doing so. */
-  | { type: "enrol"; generation: number }
+  /**
+   * Enrolment: listen for the owner's phrases (nothing heard meanwhile is a request), or stop doing so. `reader`: a
+   * screen reader runs, and reads each prompt aloud (Enrolment's EnrolReader).
+   */
+  | { type: "enrol"; generation: number; reader?: boolean }
   /** `why`: the kill switch stopped it (EnrolEnd), not the user's Cancel. */
   | { type: "enrol-cancel"; why?: "stopped" }
   | { type: "self-speaking"; on: boolean }
@@ -162,14 +165,20 @@ gate.onSample = (print, score, rest) => {
  * still hears "Ember, stop" meanwhile (VoiceEngine.stopsOnly), which ends the teaching too (voice-listening-v1).
  */
 let enrolment: Enrolment | null = null;
+/** When the VAD began hearing the speech it is in the middle of (Date.now()), for a screen reader's reading of a prompt. */
+let enrolSpeechFrom: number | null = null;
 function enrolFrame(frame: Float32Array, capturedAt?: number): void {
   if (!backend || !enrolment) return;
   engine?.feed(frame, capturedAt);
   if (!enrolment) return; // "Ember, stop" in this frame ended it
-  for (const seg of backend.vad(frame)) void enrolment.heard(seg);
+  const now = Date.now();
+  for (const seg of backend.vad(frame)) { void enrolment.heard(seg, enrolSpeechFrom ?? now); enrolSpeechFrom = null; }
+  if (!backend.speaking()) enrolSpeechFrom = null;
+  else enrolSpeechFrom ??= now;
 }
 function endEnrolment(): void {
   enrolment = null;
+  enrolSpeechFrom = null;
   backend?.resetVad();
   engine?.stopsOnly(false);
 }
@@ -317,11 +326,15 @@ parent.on("message", e => {
     engine?.cancel();
     engine?.stopsOnly(true);
     backend.resetVad();
+    const speech = backend;
     const made: Enrolment = new Enrolment(voiceprinter(), st => {
       if (st.state === "done") send({ type: "enrol", state: "done", got: st.got, of: st.of, print: encodePrint(st.print) });
       else send({ type: "enrol", state: st.state, got: st.got, of: st.of, ...("why" in st ? { why: st.why } : {}) });
       if ((st.state === "done" || st.state === "cancelled") && enrolment === made) endEnrolment();
-    });
+    }, undefined, undefined, m.reader === true ? {
+      // (A recognizer that fails says nothing: the segment is then judged by when it began alone.)
+      said: samples => { try { return speech.transcribe(samples); } catch { return ""; } },
+    } : undefined);
     enrolment = made;
   } else if (m.type === "enrol-cancel") {
     enrolment?.cancel(m.why === "stopped" ? "stopped" : undefined);

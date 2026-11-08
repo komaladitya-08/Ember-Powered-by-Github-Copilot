@@ -455,7 +455,8 @@ export class VoiceService {
     const blocked = (detail: string): ListenOnceStatus => ({ phase: "blocked", detail });
     if (this.locked) return blocked("The screen is locked.");
     if (this.muted) return blocked("Unmute the microphone first.");
-    if (this.enrolling) return blocked("Finish teaching Ember your voice first.");
+    // (Not told screen readers: said as teaching began, into its microphone, it was taken for a phrase: voice-listening-r4-1.)
+    if (this.enrolling) return { ...blocked("Finish teaching Ember your voice first."), reason: "listening" };
     if (!this.modelsReady) return this.downloading ? blocked("Speech models are downloading.") : { ...blocked("Download speech models in Settings first."), reason: "needs-models" };
     // Ember talking: Listen once hushes it first, as "Hey Ember" does (it was blocked, and the keyboard had no other way
     // to cut in but Stop response or Stop everything: voice-listening-7).
@@ -811,7 +812,8 @@ export class VoiceService {
     this.cancelListenOnce();
     this.enrolling = true;
     this.enrolGot = { got: 0, of: 0 };
-    this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
+    // (A screen reader reads each prompt aloud, into the teaching microphone: voice-listening-r4-1.)
+    this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration, ...(this.o.screenReaderOn?.() ? { reader: true } : {}) });
     // (A conversation or follow-up listening now ends at once in the voice process: voice-listening-r2.)
     if (this.state === "waiting" || this.state === "active") this.setState("waiting", ENROL_TEXT);
     this.o.onListenOnce?.();

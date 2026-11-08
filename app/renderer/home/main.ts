@@ -2430,9 +2430,11 @@ let voiceTold = "";
 const VOICE_LINE_SETTLE_MS = 1000;
 /**
  * The microphone opens or is open for a request: a wake's window, a conversation's or Listen once's, or listening (or a
- * Listen once's own voice process) starting. Status lines besides the voice line's are held then (held-live.ts).
+ * Listen once's own voice process) starting, or for Voice Match's phrases while it is taught (only its prompts are said
+ * then: anything else read aloud was taken for one of the owner's phrases, voice-listening-r4-1). Status lines besides
+ * the voice line's are held then (held-live.ts).
  */
-const micHeld = (v: VoiceStatus): boolean => v.state === "active" || v.state === "starting" || v.listenOnce?.phase === "starting" || v.listenOnce?.phase === "listening";
+const micHeld = (v: VoiceStatus): boolean => v.state === "active" || v.state === "starting" || v.listenOnce?.phase === "starting" || v.listenOnce?.phase === "listening" || !!v.match?.enrolling;
 let voiceLineSoon: ReturnType<typeof setTimeout> | undefined;
 /** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
 function renderVoiceFix(): void {

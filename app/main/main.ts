@@ -3657,7 +3657,7 @@ function start(): void {
           if (p.why) log.info("voice.match_not_enrolled", { why: p.why, phrases: p.got });
           enrolling = null;
         } else {
-          enrolling = { got: p.got, of: p.of, phrase: ENROL_PHRASES[Math.min(p.got, ENROL_PHRASES.length - 1)], ...(p.state === "again" && p.why ? { again: p.why as "short" | "unlike" | "failed" } : {}) };
+          enrolling = { got: p.got, of: p.of, phrase: ENROL_PHRASES[Math.min(p.got, ENROL_PHRASES.length - 1)], ...(p.state === "again" && p.why ? { again: p.why as "short" | "unlike" | "failed" | "over" } : {}) };
         }
         broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
       },

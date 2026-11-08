@@ -13,7 +13,7 @@ export const MATCH_TEXT = {
   /** enrolVoice() said no: Ember isn't listening just now (muted, starting, or not working), so it can't hear the phrases. */
   notListening: "Ember isn't listening just now, so it can't learn your voice. Try again once it's listening for “Ember”.",
   say: "Say:",
-  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:" },
+  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" },
   teach: "Teach Ember my voice",
   teachAgain: "Teach Ember my voice again",
   cancel: "Cancel",

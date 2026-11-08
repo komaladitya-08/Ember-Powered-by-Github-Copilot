@@ -15,7 +15,7 @@ const main = read("main.ts");
 const css = read("styles.css");
 
 const none: VoiceMatchStatus = { enrolled: false, on: false, enrolling: null };
-const enrolling = (got: number, again?: "short" | "unlike" | "failed", phrase = "Ember, what's the weather like"): VoiceMatchStatus =>
+const enrolling = (got: number, again?: "short" | "unlike" | "failed" | "over", phrase = "Ember, what's the weather like"): VoiceMatchStatus =>
   ({ enrolled: false, on: false, enrolling: { got, of: 4, phrase, ...(again ? { again } : {}) } });
 const onNow: VoiceMatchStatus = { enrolled: true, on: true, enrolling: null };
 const offNow: VoiceMatchStatus = { enrolled: true, on: false, enrolling: null };
@@ -41,6 +41,8 @@ describe("Voice Match's states", () => {
     expect(matchView(enrolling(2, "short"), shown).prompt).toBe("That was too short. Say it again: “Ember, what's the weather like”");
     expect(matchView(enrolling(2, "unlike"), shown).prompt).toBe("That didn't sound like the others (another voice, or noise). Say it again: “Ember, what's the weather like”");
     expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("Ember couldn't hear that clearly. Say it again: “Ember, what's the weather like”");
+    // Said while a screen reader still read the prompt, the two came as one (voice-listening-r4-1).
+    expect(matchView(enrolling(1, "over"), shown).prompt).toBe("Your screen reader was still reading. Wait for it to finish, then say: “Ember, what's the weather like”");
   });
 
   it("without its model: off with a note (a kept voiceprint isn't used, so every voice is heard), nothing to switch on or teach", () => {

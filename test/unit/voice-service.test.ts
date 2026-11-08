@@ -957,6 +957,24 @@ describe("VoiceService", () => {
     expect(events).toEqual([{ type: "utterance", text: "Fresh request.", ms: 0, window: "wake" }]);
   });
 
+  it("tells the voice process a screen reader reads the prompts aloud as teaching starts, and says Listen once waits for it in a line screen readers aren't told (voice-listening-r4-1)", async () => {
+    // "Finish teaching Ember your voice first." was said through the speakers as teaching began, into its microphone.
+    let reader = true;
+    const { v } = service(true, { screenReaderOn: () => reader });
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 10 });
+    captured();
+    expect(v.enrol()).toBe(true);
+    expect(posted(proc, "enrol")).toEqual([{ type: "enrol", generation: 1, reader: true }]);
+    expect(v.listenOnceStatus).toEqual({ phase: "blocked", detail: "Finish teaching Ember your voice first.", reason: "listening" });
+    v.cancelEnrol();
+    reader = false;
+    expect(v.enrol()).toBe(true);
+    expect(posted(proc, "enrol").at(-1)).toEqual({ type: "enrol", generation: 2 });
+    v.cancelEnrol();
+  });
+
   it("kills a voice process stopped before it had started, once it starts (Electron's kill() does nothing until then) (review #256)", async () => {
     const { v } = service();
     await v.setWanted(true);

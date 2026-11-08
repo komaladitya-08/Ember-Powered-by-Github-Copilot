@@ -25,10 +25,16 @@ export interface Printer {
  */
 export type EnrolEnd = "timeout" | "stopped" | "gave-up";
 
+/**
+ * Why a phrase is asked for again: too short, unlike the others, not heard clearly, or (`over`, while a screen reader
+ * runs) said while the screen reader was still reading its prompt, so the two came as one.
+ */
+export type EnrolAgain = "short" | "unlike" | "failed" | "over";
+
 /** What enrolment tells main: `got` of `of` phrases kept; `again`: the last one wasn't kept (`why`). */
 export type EnrolState =
   | { state: "listening" | "heard"; got: number; of: number }
-  | { state: "again"; got: number; of: number; why: "short" | "unlike" | "failed" }
+  | { state: "again"; got: number; of: number; why: EnrolAgain }
   | { state: "done"; got: number; of: number; print: Float32Array }
   | { state: "cancelled"; got: number; of: number; why?: EnrolEnd };
 
@@ -251,7 +257,34 @@ export class VoiceGate {
 
 }
 
-/** Enrolment: the owner says `of` phrases (any speech the VAD hands over counts as one); their voiceprint comes at the end. */
+/**
+ * A segment that began this soon after a prompt showed (ms) is a screen reader reading it aloud: the owner has to hear
+ * which phrase to say first (the shortest prompt read at 400 words a minute takes over a second). The VAD says speech
+ * began about 0.2 s after it did.
+ */
+export const READER_LEAD_MS = 1500;
+/** What a screen reader reads of a prompt (match-copy.ts), as the recognizer writes it: never how a phrase begins. */
+const PROMPT_WORDS = /^\W*(?:say|says|said|heard|that|your\s+screen|wait|finish|learning)\b/i;
+
+/**
+ * While a screen reader runs, what it reads aloud of each prompt reaches the teaching microphone over speakers: `said`
+ * (the recognizer), and `now` for when each prompt showed (ms, the clock `heard`'s `startedAt` counts on).
+ */
+export interface EnrolReader {
+  said(samples: Float32Array): string;
+  now?(): number;
+}
+
+/** The phrase's own longer words (not the name), each said twice when the owner's phrase ran on from the reading. */
+function saidTwice(words: string, phrase: string): boolean {
+  const heard = words.toLowerCase().replace(/whether/g, "weather");
+  return phrase.toLowerCase().split(/[^a-z']+/).filter(w => w.length >= 5 && w !== "ember").some(w => heard.split(w).length > 2);
+}
+
+/**
+ * Enrolment: the owner says `of` phrases (any speech the VAD hands over counts as one, but for a screen reader's reading
+ * of a prompt while one runs: `reader`); their voiceprint comes at the end.
+ */
 export class Enrolment {
   private prints: Float32Array[] = [];
   private tries = 0;
@@ -261,18 +294,38 @@ export class Enrolment {
   private quiet: ReturnType<typeof setTimeout> | null = null;
   private readonly total: ReturnType<typeof setTimeout>;
 
-  constructor(private printer: Printer, private tell: (s: EnrolState) => void, readonly of = ENROL_PHRASES.length, private limits: { quietMs: number; totalMs: number } = ENROL_LIMITS) {
+  /** When the prompt now showing showed (`reader`'s clock). */
+  private promptAt: number;
+
+  constructor(private printer: Printer, private tell: (s: EnrolState) => void, readonly of = ENROL_PHRASES.length, private limits: { quietMs: number; totalMs: number } = ENROL_LIMITS, private reader?: EnrolReader) {
     this.maxTries = of * 3;
     this.total = setTimeout(() => this.cancel("timeout"), limits.totalMs);
     this.total.unref?.();
     this.waitQuietly();
+    this.promptAt = this.now();
     tell({ state: "listening", got: 0, of });
   }
 
-  /** A phrase the VAD heard. */
-  async heard(samples: Float32Array): Promise<void> {
+  private now(): number {
+    return this.reader?.now?.() ?? Date.now();
+  }
+
+  /**
+   * A phrase the VAD heard; `startedAt`: when its speech began (`reader`'s clock). While a screen reader runs, one begun
+   * as a prompt showed, or in a prompt's words, is the screen reader's reading, and teaches nothing: a voiceprint learnt
+   * from it was mostly the screen reader's, which Voice Match then took for the owner (voice-listening-r4-1).
+   */
+  async heard(samples: Float32Array, startedAt?: number): Promise<void> {
     if (this.finished) return;
     this.waitQuietly();
+    if (this.reader) {
+      const words = this.reader.said(samples);
+      if ((startedAt !== undefined && startedAt - this.promptAt < READER_LEAD_MS) || PROMPT_WORDS.test(words)) {
+        // (Its own reading says the phrase once; said twice, the owner's ran on from it, and is asked for again.)
+        if (saidTwice(words, ENROL_PHRASES[Math.min(this.prints.length, ENROL_PHRASES.length - 1)])) { this.tries++; this.again("over"); }
+        return;
+      }
+    }
     if (samples.length < ENROL_MIN_SECONDS * 16_000) { this.again("short"); return; }
     this.tries++;
     let print: Float32Array;
@@ -292,6 +345,7 @@ export class Enrolment {
       this.tell({ state: "done", got: this.prints.length, of: this.of, print: averagePrint(this.prints) });
       return;
     }
+    this.promptAt = this.now();
     this.tell({ state: "heard", got: this.prints.length, of: this.of });
   }
 
@@ -320,8 +374,9 @@ export class Enrolment {
     this.quiet.unref?.();
   }
 
-  private again(why: "short" | "unlike" | "failed"): void {
+  private again(why: EnrolAgain): void {
     if (this.tries >= this.maxTries) { this.cancel("gave-up"); return; }
+    this.promptAt = this.now();
     this.tell({ state: "again", got: this.prints.length, of: this.of, why });
   }
 }
