@@ -50,12 +50,12 @@ const TOKEN = "gho_" + "t".repeat(36); // not a real token
 const KEY = "sk-" + "k".repeat(40); // not a real key
 const OWN: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: KEY }, models: { conductor: "gpt-4.1", worker: null } };
 
-function makeHost(provider: () => ActiveProvider | null, probeProvider?: () => Promise<TestResult>) {
+function makeHost(provider: () => ActiveProvider | null, probeProvider?: () => Promise<TestResult>, extra: Record<string, unknown> = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-own-"));
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
   const statuses: string[] = [];
-  const host = new AgentHost({ userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: s => statuses.push(JSON.stringify(s)), provider, ...(probeProvider ? { probeProvider } : {}) });
+  const host = new AgentHost({ userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: s => statuses.push(JSON.stringify(s)), provider, ...(probeProvider ? { probeProvider } : {}), ...extra });
   return { host, statuses };
 }
 
@@ -188,6 +188,28 @@ describe("AgentHost with the user's own model provider", () => {
     expect(await until(() => host.getStatus().phase === "ready")).toBe(true);
     expect(host.getStatus().detail).toBe("Connected to 127.0.0.1:18109.");
     await host.stop();
+  });
+
+  it("tells memory it waits for the own provider, never for a GitHub account, when the provider can't connect (integrations-r5)", async () => {
+    sim.clients = []; sim.sessions = [];
+    const why: string[] = [];
+    const memory = {
+      verifyAccount: (id: number | null, reason?: string) => { why.push(id === null ? `verify:${reason}` : "verify:id"); },
+      pauseAccount: (reason?: string) => { why.push(`pause:${reason ?? "checking"}`); },
+    };
+    // The model server on this computer isn't running: nothing says "Checking your GitHub account…".
+    const down = makeHost(() => LOCAL, async () => REFUSED, { memory });
+    expect(await down.host.start(null)).toBe("error");
+    expect(why.length).toBeGreaterThan(0);
+    expect(why.every(w => w.endsWith(":own-provider"))).toBe(true);
+    await down.host.stop();
+    // No model named: never "Ember couldn't check your GitHub account… It comes back when Ember reconnects."
+    why.length = 0;
+    const noModel = makeHost(() => ({ ...OWN, models: { conductor: null, worker: null } }), undefined, { memory });
+    expect(await noModel.host.start(null)).toBe("error");
+    expect(why.filter(w => !w.endsWith(":own-provider"))).toEqual([]);
+    expect(why.at(-1)).toBe("pause:own-provider");
+    await noModel.host.stop();
   });
 
   it("leaves Ready when a turn on its provider fails and nothing answers there, and never probes a remote host at the start (integrations-1)", async () => {

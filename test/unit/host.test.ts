@@ -4012,7 +4012,8 @@ describe("memory erasure at account boundaries", () => {
       expect(why.at(-1)).toBe("verify:unverified");
       provider = own;
       expect(await host.start(null)).toBe("ready");
-      expect(why.slice(-2)).toEqual(["pause:checking", "verify:own-provider"]);
+      // Connecting under the own provider waits for it, never for a GitHub account check (integrations-r5).
+      expect(why.slice(-2)).toEqual(["pause:own-provider", "verify:own-provider"]);
       provider = { ...own, kind: "admin" };
       expect(await host.start(null)).toBe("ready");
       expect(why.at(-1)).toBe("verify:org-provider");

@@ -572,6 +572,11 @@ function serviceOf(p: ActiveProvider | null): string {
   return p ? `${p.kind} ${p.config.baseUrl}` : "copilot";
 }
 
+/** Why memory waits while `p` is in force (integrations-r5): a model provider's, never a GitHub account check. */
+function memoryWaitFor(p: ActiveProvider | null, otherwise: MemoryWait): MemoryWait {
+  return !p ? otherwise : p.kind === "user" ? "own-provider" : "org-provider";
+}
+
 /** The words an error uses for `p` (ServiceKind). */
 function kindOf(p: ActiveProvider | null): ServiceKind {
   return p ? (p.kind === "user" ? "user" : true) : false;
@@ -1710,7 +1715,7 @@ export class AgentHost {
       // This connection's generation: what it says after the saved copy is invalidated again is never saved (underGen).
       const hg = this.conductorGen = this.connGen;
       // Memory works only with GitHub Copilot: under a model provider it waits, and Home says which (integrations-2).
-      this.o.memory?.verifyAccount?.(accountId, !provider ? "unverified" : provider.kind === "user" ? "own-provider" : "org-provider");
+      this.o.memory?.verifyAccount?.(accountId, memoryWaitFor(provider, "unverified"));
 
       let models: ModelLike[] = [];
       const admin = this.o.admin?.();
@@ -2094,7 +2099,8 @@ export class AgentHost {
         this.o.log.warn("agent.provider_unreachable", { during: "start" });
         this.setStatus({ phase: "error", reason: "network", detail: err.message });
         await this.doStop();
-        if (gen === this.gen) this.retryLater();
+        // Memory waits for the provider, not for a GitHub account (integrations-r5).
+        if (gen === this.gen) { this.o.memory?.pauseAccount?.(memoryWaitFor(provider, "unverified")); this.retryLater(); }
         return;
       }
       const online = this.o.isOnline?.();
@@ -2106,8 +2112,9 @@ export class AgentHost {
       // A runtime that didn't answer is hung: it is killed rather than asked to stop (which would wait on it too).
       if (err instanceof StartTimeout && this.client) { const hung = this.client; this.client = null; await hung.forceStop().catch(() => undefined); }
       await this.doStop();
-      // Not connected, so no account was checked: memory waits for the next connection, and Home says so.
-      if (gen === this.gen) this.o.memory?.pauseAccount?.("unverified");
+      // Not connected, so no account was checked: memory waits for the next connection, and Home says so. Under a model
+      // provider it waits for that, and doesn't come back when Ember reconnects (integrations-r5).
+      if (gen === this.gen) this.o.memory?.pauseAccount?.(memoryWaitFor(provider, "unverified"));
       // Offline (e.g. started at login before the network or the VPN), or a problem on Copilot's side that passes (a
       // 5xx, a rate limit, a timeout): try again later rather than blaming the sign-in. Not if a newer start or stop
       // came meanwhile: a stale retry would restart a working connection.
@@ -3123,7 +3130,8 @@ export class AgentHost {
 
   /** `forget`: a clean stop (quit) deletes the conversation; a restart keeps it to resume. */
   private async doStop(forget = false): Promise<void> {
-    this.o.memory?.pauseAccount?.();
+    // Under a model provider memory waits for it, never "Checking your GitHub account…" (integrations-r5).
+    this.o.memory?.pauseAccount?.(memoryWaitFor(this.providerNow(), "checking"));
     this.projectRun?.abort();
     this.projectRun = null;
     this.projectModel = null;
