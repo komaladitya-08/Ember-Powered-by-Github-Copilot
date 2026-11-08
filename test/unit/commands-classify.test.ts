@@ -767,6 +767,24 @@ describe("loops and ifs (commands-remote-2)", () => {
     expect(cls("cat notes.txt > y.py").downloads).toEqual([]);
   });
 
+  it("keeps a download a download when PowerShell or cmd renames, copies, moves or links it, so running it asks (commands-remote-c2-2)", () => {
+    const P = "C:\\Users\\ana\\proj";
+    const cls = (cmd: string, shell: ShellId = "powershell") => classifyCommand(cmd, shell, contextOf("win32", [`${P}\\x.py`, `${P}\\x.exe`])) as ClassificationExtra;
+    for (const [cmd, as] of [
+      ["Rename-Item x.exe y.exe", `${P}\\y.exe`], ["Rename-Item -Path x.py -NewName y.py", `${P}\\y.py`], ["Move-Item x.py y.py", `${P}\\y.py`],
+      ["Copy-Item x.py y.py", `${P}\\y.py`], ["mv x.py y.py", `${P}\\y.py`], ["cp x.py y.py", `${P}\\y.py`], ["Copy-Item x.py -Destination tools", `${P}\\tools\\x.py`],
+      ["Copy-Item x.py C:\\Users\\ana\\proj\\tools\\", `${P}\\tools\\x.py`], ["New-Item -ItemType SymbolicLink -Path y.py -Value x.py", `${P}\\y.py`],
+    ]) expect(cls(cmd).downloads, cmd).toContain(as);
+    for (const [cmd, as] of [["ren x.py y.py", `${P}\\y.py`], ["move x.py y.py", `${P}\\y.py`], ["copy x.py y.py", `${P}\\y.py`], ["copy x.py tools", `${P}\\tools\\x.py`], ["mklink y.py x.py", `${P}\\y.py`]]) {
+      expect(cls(cmd, "cmd").downloads, cmd).toContain(as);
+    }
+    // Run in the same command line, it is a download run.
+    expect(cls("Rename-Item x.exe y.exe; .\\y.exe").findings.map(f => f.rule)).toContain("escape.run-downloaded");
+    // A file that isn't a download passes nothing on.
+    expect(cls("Move-Item notes.txt y.py").downloads).toEqual([]);
+    expect(cls("ren notes.txt y.py", "cmd").downloads).toEqual([]);
+  });
+
   it("asks before a tool runs a download it picks up by name: a Makefile, tests, package.json, a module, a preload (commands-remote-c2-2)", () => {
     const P = "/home/ana/proj";
     const ran = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)).findings.map(f => f.rule);

@@ -165,7 +165,8 @@ Ember stops and asks before a command that:
   launchers and desktop extensions (`~/.local/share/applications`, GNOME Shell extensions), even when the file is new;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
   downloaded in this task (also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
-  `rsync`, `cat x.py > y.py` or `tee`, run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
+  `rsync`, `cat x.py > y.py` or `tee`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item` or a `New-Item`
+  link, or with cmd's `ren`, `move`, `copy` or `mklink`, run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;

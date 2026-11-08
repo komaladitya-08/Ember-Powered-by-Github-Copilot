@@ -740,6 +740,25 @@ class Classifier {
   }
 
   /**
+   * The copies a Windows copy, move, rename or link makes of a download (PowerShell's Copy-Item, Move-Item, Rename-Item
+   * and New-Item links with their aliases; cmd's copy, move, ren, xcopy and mklink): downloads too, as copyLike carries
+   * the POSIX tools' (commands-remote-c2-2). Into a folder, the file of its name there; a name that may be a folder
+   * counts until the target says it is one. `asIs`: the destination is the new file's own name (a rename, a link).
+   */
+  carryCopies(sources: readonly Arg[], dest: Obj, sc: Scope, asIs = false): void {
+    if (dest.abs === null) return;
+    const mod = sc.path.flavour === "win32" ? win32 : posix;
+    const intoFolder = /[\\/]$/.test(dest.text) || /^\.\.?$/.test(dest.text);
+    for (const s of sources) {
+      if (!this.isDownloaded(s, sc)) continue;
+      const name = asIs || s.v === null || s.glob ? null : baseName(s.v.replace(/[\\/]+$/, ""), sc.path.flavour);
+      const named = name !== null && name !== "." && name !== "..";
+      if (named) this.carryDownload(mod.join(dest.abs, name), sc);
+      if (!named || !intoFolder) this.carryDownload(dest.abs, sc, named);
+    }
+  }
+
+  /**
    * Whether this task downloaded, under `folder`, a file a build tool, test runner or package manager there runs
    * or follows by its name (a Makefile, package.json, conftest.py, a test file: PROJECT_FILE), so running the tool
    * runs the download (commands-remote-c2-2).
@@ -6443,6 +6462,7 @@ function psCopyMove(h: H, kind: "copy" | "move" | "rename"): void {
   const rule = kind === "copy" ? "ps.Copy-Item" : kind === "move" ? "ps.Move-Item" : "ps.Rename-Item";
   if (dest.v !== null && REGISTRY.test(dest.v)) { h.e.add("system", "system.registry", "Changes the Windows registry."); return; }
   const destObj = h.e.usePath(dest, "write", h.sc);
+  h.e.carryCopies(srcs, destObj, h.sc, kind === "rename");
   if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
   if (b.switches.has("Force")) h.e.add("destroy", rule, `Replaces ${destObj.text} if it exists.`, { objects: [destObj], widening: ["-Force"] });
   else h.e.add("destroy", rule, `Replaces ${destObj.text} if it exists.`, { objects: [destObj], ifExists: destObj.abs });
@@ -6485,7 +6505,12 @@ reg(CMDLETS, ["new-item"], h => {
   const type = ((b.named.get("ItemType") ?? [])[0]?.v ?? "").toLowerCase();
   const files = psTargets(h, paths, true);
   const objs = objsOf(h, files, "write");
-  if (/symboliclink|junction|hardlink/.test(type)) for (const t of b.named.get("Value") ?? []) h.e.usePath(t, "read", h.sc);
+  if (/symboliclink|junction|hardlink/.test(type)) {
+    const targets = b.named.get("Value") ?? [];
+    for (const t of targets) h.e.usePath(t, "read", h.sc);
+    // A link to a download runs the download (commands-remote-c2-2).
+    for (const o of objs) h.e.carryCopies(targets, o, h.sc, true);
+  }
   if (b.switches.has("Force") && type !== "directory") for (const o of objs) if (o.abs) h.e.add("destroy", "ps.New-Item", `Replaces ${o.text} if it exists.`, { objects: [o], ifExists: o.abs });
 });
 reg(CMDLETS, ["get-content", "get-item", "select-string", "get-itemproperty", "get-filehash", "import-csv", "import-clixml", "get-acl", "test-path", "import-powershelldatafile", "format-hex", "get-itempropertyvalue"], h => {
@@ -6752,6 +6777,7 @@ function cmdCopy(h: H): void {
   if (h.key === "copy" || h.key === "xcopy") sources = sources.flatMap(s => (s.v !== null && s.v.includes("+") ? s.v.split("+").filter(x => x).map(x => ({ ...s, v: x })) : [s]));
   objsOf(h, sources, h.key === "move" || rule === "cmd.ren" ? "move" : sw.has("s") || sw.has("e") ? "readTree" : "read");
   const destObj = h.e.usePath(dest, "write", h.sc);
+  h.e.carryCopies(sources, destObj, h.sc, rule === "cmd.ren");
   if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
   if (sw.has("y")) h.e.add("destroy", rule, `Replaces ${destObj.text} if it exists.`, { objects: [destObj], widening: ["/y"] });
   else h.e.add("destroy", rule, `Replaces ${destObj.text} if it exists.`, { objects: [destObj], ifExists: destObj.abs });
@@ -6760,7 +6786,13 @@ reg(CMD_BUILTINS, ["copy", "move", "ren", "rename", "xcopy"], h => cmdCopy(h));
 reg(CMD_BUILTINS, ["type", "dir", "tree", "more", "find", "findstr", "fc", "comp", "sort", "attrib", "where", "vol", "cls", "ver", "title", "color", "prompt", "pushd", "popd", "exit", "rem", "echo.", "verify", "break", "endlocal", "chcp", "md", "mkdir", "mklink"], h => {
   const { sw, ops } = cmdSwitches(h);
   if (h.key === "md" || h.key === "mkdir") { objsOf(h, ops, "write"); return; }
-  if (h.key === "mklink") { if (ops[0]) h.e.usePath(ops[0], "write", h.sc); if (ops[1]) h.e.usePath(ops[1], "read", h.sc); return; }
+  if (h.key === "mklink") {
+    const link = ops[0] ? h.e.usePath(ops[0], "write", h.sc) : null;
+    if (ops[1]) h.e.usePath(ops[1], "read", h.sc);
+    // A link to a download runs the download (commands-remote-c2-2).
+    if (link && ops[1]) h.e.carryCopies([ops[1]], link, h.sc, true);
+    return;
+  }
   if (h.key === "rem" || h.key === "title" || h.key === "color" || h.key === "prompt" || h.key === "exit" || h.key === "cls" || h.key === "ver" || h.key === "verify" || h.key === "break" || h.key === "endlocal" || h.key === "chcp") return;
   if (h.key === "pushd") { NATIVE.cd(h); return; }
   if (h.key === "popd") { h.e.cdTarget = null; return; }
