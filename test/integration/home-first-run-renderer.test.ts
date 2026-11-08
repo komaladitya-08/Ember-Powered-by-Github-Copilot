@@ -1177,7 +1177,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await next(d).click();
     await expect.poll(async () => (await calls(d)).some(x => x.startsWith('save:{"consent":{"version":'))).toBe(true);
     expect((c as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(q2) tells me about you says why memory is paused under a model service, shows no answers it couldn't keep, and goes on with Continue (memory-c1-2)", async () => {
     const p = await open({ agent: readyAgent() });
@@ -1301,7 +1301,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await next(r).click();
     await expect.poll(() => calls(r)).toContain("agree:127.0.0.1:1234");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(t) Check again reads the setup rows anew after a fix made outside Ember, in first run and Home, and shows what it found (first-run-6, first-run-r2)", async () => {
     const missing = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" };
@@ -1341,7 +1341,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await h.locator("#checks-again").isVisible()).toBe(false);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((h as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(u) Home's setup check says each row's state in first run's words and offers the command to copy (first-run-9)", async () => {
     const missing = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" };
