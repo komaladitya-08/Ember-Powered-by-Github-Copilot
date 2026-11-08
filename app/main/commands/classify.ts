@@ -214,6 +214,11 @@ interface Simple {
    * expansions); null when it can't. A program that reads its own program text from stdin is judged by it (review #166).
    */
   stdinText?: string | null;
+  /**
+   * A here-string or unquoted here-document on stdin whose text uses variables (`<<< "$d"`): their names, and a
+   * here-string's word, so Ember's own refusal follows a variable into the program's input (commands-remote-v5-2).
+   */
+  stdinVars?: HereVars;
   /** An earlier command in its pipeline fetches from the network or decodes hidden text. */
   fetchBefore: boolean;
   background: boolean;
@@ -221,6 +226,9 @@ interface Simple {
   /** PowerShell: the parsed command (for cmdlet parameters). */
   ps?: PsCommand;
 }
+
+/** The variables a here-string or here-document's text uses, and a here-string's word (null for a here-document). */
+interface HereVars { names: string[]; word: Arg | null }
 
 /** An object as the classifier tracks it. */
 interface Obj extends CommandObject {
@@ -301,6 +309,12 @@ class Classifier {
   private judgedWords = new WeakSet<Arg>();
   /** Variables a command used in a word Ember didn't judge as a path, apart from testing or printing it. */
   private usedUnjudged = new Set<string>();
+  /** Words a wrapper hands to the command it runs (payload, unwrap): the rest of its words are its own. */
+  protected payloadWords = new WeakSet<Arg>();
+  /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
+  protected hereVarsAt = new Map<number, HereVars>();
+  /** `set -a`: every variable set after it is exported to the programs that run (commands-remote-v5-2). */
+  allExport = false;
   /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
   private psVarValues = new Map<string, string[]>();
   /** Words of a variable Ember couldn't resolve, with how they were used: judged again once a loop's input gives it a value. */
@@ -501,7 +515,7 @@ class Classifier {
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
-    if (exported || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc);
+    if (exported || this.allExport || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc);
     else this.pendingSets.push({ name, forms, sc });
     const all = [...new Set([...(this.varValues.get(name) ?? []), ...forms])];
     this.varValues.set(name, all.length > MAX_FORMS ? [UNSEEN] : all);
@@ -511,9 +525,10 @@ class Classifier {
    * Ember's own refusal for a word Ember couldn't resolve, by the values the text gave the variables in it (`rm -rf
    * "$d"` after `d=~/.config/ember`, `for f in ~; do rm -rf "$f"; done`): refused as the path itself would be.
    */
-  judgeUnseen(a: Arg, use: PathUse, sc: Scope): void {
-    // An option with its value attached (`--dir="$d"`) isn't a path, whatever was asked of it.
-    if (typeof a.parts?.[0] !== "string" || !a.parts[0].startsWith("-")) this.judgedWords.add(a);
+  judgeUnseen(a: Arg, use: PathUse, sc: Scope, asPath = true): void {
+    // An option with its value attached (`--dir="$d"`) isn't a path, whatever was asked of it; nor is a program word
+    // (`env X="$d" make`'s first word may be an assignment), which stays a use Ember didn't judge (noteVarUses).
+    if (asPath && (typeof a.parts?.[0] !== "string" || !a.parts[0].startsWith("-"))) this.judgedWords.add(a);
     if (a.v === null && a.parts && sc.path.flavour === "posix") {
       for (const form of this.formsOf(a.parts)) this.judgeForm(form, use, sc);
       this.unseenUses.push({ parts: a.parts, use, sc });
@@ -579,6 +594,14 @@ class Classifier {
     }
   }
 
+  /**
+   * Variables a command uses where Ember judges no path: its stdin's text (`xargs rm -rf <<< "$d"`) or an export to
+   * the programs it runs (`export d`): their values are judged at the end (commands-remote-v5-2).
+   */
+  useUnjudged(names: readonly string[]): void {
+    for (const n of names) this.usedUnjudged.add(n);
+  }
+
   /** The values of variables used in a word Ember didn't judge (noteVarUses), judged as round four judged every value. */
   protected judgePendingSets(): void {
     for (const p of this.pendingSets) if (this.usedUnjudged.has(p.name)) for (const f of p.forms) this.judgeForm(f, null, p.sc);
@@ -595,18 +618,24 @@ class Classifier {
    * again with them, for Ember's own refusal (commands-remote-v4-4).
    */
   protected feedReads(): void {
+    const fedClosers = new Set<number>();
     for (const [r, closer] of fedReadsByCloser(this.commands, i => this.stdinGiven.has(i))) {
       const text = this.hereAt.get(closer);
       const set = this.readSets.get(r);
-      if (typeof text !== "string" || !set) continue;
+      // Text Ember can't see that uses a variable (`done <<< "$d"`): the here-string's word is what the read gets.
+      const word = this.hereVarsAt.get(closer)?.word;
+      if ((typeof text !== "string" && !word) || !set) continue;
+      fedClosers.add(closer);
       for (const name of set.names) {
-        this.setVar(name, textValues(text), set.sc, true);
+        this.setVar(name, typeof text === "string" ? textValues(text) : [word as Arg], set.sc, true);
         for (const u of this.unseenUses) {
           if (!u.parts.some(p => typeof p !== "string" && p.name === name)) continue;
           for (const form of this.formsOf(u.parts)) this.judgeForm(form, u.use, u.sc);
         }
       }
     }
+    // A closer's text that no read takes, or a here-document's: a use Ember didn't judge (commands-remote-v5-2).
+    for (const [closer, hv] of this.hereVarsAt) if (!fedClosers.has(closer)) this.useUnjudged(hv.names);
   }
 
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
@@ -1619,13 +1648,14 @@ class Engine extends Classifier {
     const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
       : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
     const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : undefined;
+    const stdinVars = stdinText === null ? this.hereVars(c.redirs, sc) : undefined;
     if (c.words.length === 0) {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
       this.redirects(redirs, sc);
       return;
     }
-    this.simple({ words, redirs, stdin, stdinText, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
+    this.simple({ words, redirs, stdin, stdinText, stdinVars, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
   }
@@ -1643,6 +1673,23 @@ class Engine extends Classifier {
     }
     if (!last.heredoc) return null;
     return last.heredoc.quoted || !/[$`\\]/.test(last.heredoc.body) ? last.heredoc.body : null;
+  }
+
+  /**
+   * The variables the last here-string or unquoted here-document on stdin uses, when Ember can't see its text
+   * (hereText null), with a here-string's word (commands-remote-v5-2).
+   */
+  private hereVars(redirs: PRedir[], sc: Scope): HereVars | undefined {
+    const last = redirs.filter(r => (r.fd === null || r.fd === 0) && r.dup === undefined && ["<", "<<", "<<-", "<<<"].includes(r.op)).pop();
+    if (!last) return undefined;
+    if (last.op === "<<<" && last.target) {
+      const word = this.posixWord(last.target, sc, false);
+      const names = (word.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? [p.name] : []));
+      return names.length ? { names, word } : undefined;
+    }
+    if (!last.heredoc || last.heredoc.quoted) return undefined;
+    const names = [...last.heredoc.body.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map(m => m[1]);
+    return names.length ? { names, word: null } : undefined;
   }
 
   /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`, `$(pwd)`); anything else unresolved. */
@@ -1681,6 +1728,10 @@ class Engine extends Classifier {
         // `$1`, `"$@"`: the values `set --` gives them (commands-remote-v4-4).
         unresolved = true;
         parts.push({ name: seg.why.slice(1) });
+      } else if (seg.t === "unres" && seg.of !== undefined) {
+        // `${d:?}`, `${d:-x}`, `${d%/}`: the variable's values, for Ember's own refusal (commands-remote-v5-2).
+        unresolved = true;
+        parts.push({ name: seg.of });
       } else { unresolved = true; parts.push({ name: null }); }
     }
     const globs = /[*?]/.test(unquoted) || /\[[^\]]*\]/.test(unquoted);
@@ -2007,6 +2058,8 @@ class Engine extends Classifier {
       this.newCommand(nameArg.raw, args, sc, s.redirs, s.background, s.pipedFrom);
       before?.();
       this.unclear("unclear.program", "It runs a program Ember can't name.");
+      // `"$d/bin/ember"`: run from Ember's own folder through a variable, refused as by its name (commands-remote-v5-2).
+      this.judgeUnseen(nameArg, "exec", sc, false);
       if (nameArg.fetch) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       this.redirects(s.redirs, sc);
       this.readArgs(args, sc);
@@ -2024,6 +2077,11 @@ class Engine extends Classifier {
     this.newCommand(prog, args, sc, s.redirs, s.background, s.pipedFrom);
     if (s.stdin === "file" || s.stdin === "heredoc") this.stdinGiven.add(this.at);
     if (s.stdin === "heredoc") this.hereAt.set(this.at, s.stdinText ?? null);
+    // Text on stdin that uses a variable (`xargs rm -rf <<< "$d"`) is a use Ember doesn't judge as a path, unless a read
+    // takes a here-string's word as its value, a loop's closer hands it to the reads in the loop (feedReads), or the
+    // program reads no stdin (commands-remote-v5-2).
+    if (s.stdinVars && (key === "done" || key === "fi")) this.hereVarsAt.set(this.at, s.stdinVars);
+    else if (s.stdinVars && !(key === "read" ? s.stdinVars.word !== null : VAR_SHOWN_ONLY.has(key))) this.useUnjudged(s.stdinVars.names);
     this.noteProgram(prog);
     before?.();
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
@@ -2034,8 +2092,9 @@ class Engine extends Classifier {
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     const inner = this.commands.length;
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
-    // A wrapper's own words (`do echo "$f"`, `sudo rm "$d"`): the command it runs noted its words itself.
-    if (this.commands.length === inner) this.noteVarUses(key, args);
+    // A wrapper's own words (`sudo -D "$d" ls`, `xargs -a "$d/x" echo`; commands-remote-v5-2): the command it runs
+    // (`do echo "$f"`, `sudo rm "$d"`) noted its words itself.
+    this.noteVarUses(key, this.commands.length === inner ? args : args.filter(a => !this.payloadWords.has(a)));
     this.unnamedWrites(key, args, sc);
     this.afterArgs(args);
     this.afterRun(key, args, s, sc);
@@ -2144,6 +2203,7 @@ class Engine extends Classifier {
   /** Classifies an argument vector as a command of its own (a payload: find -exec, xargs, timeout…). */
   payload(words: Arg[], sc: Scope, wrapper: string, o: Partial<Simple> = {}): void {
     if (words.length === 0) return;
+    for (const w of words) this.payloadWords.add(w);
     const savedAt = this.at;
     const savedProg = this.program;
     const savedPipe = this.pipe;
@@ -2157,6 +2217,7 @@ class Engine extends Classifier {
   /** Unwraps a wrapper: the same command now runs `words`, with the wrapper recorded (sudo rm → program rm, wrappers sudo). */
   unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
     if (all.length === 0) return;
+    for (const w of all) this.payloadWords.add(w);
     const pc = this.commands[this.at];
     // After a reserved word the shell still takes `NAME=value` words as assignments: `then LD_PRELOAD=./x.so ls` runs ls
     // with the library loaded, and `do PATH=/tmp/x:/usr/bin` changes where later commands are found. They are judged as
@@ -2185,6 +2246,7 @@ class Engine extends Classifier {
       this.program = nameArg.raw;
       this.assignments(assigns, sc, null, true);
       this.unclear("unclear.program", "It runs a program Ember can't name.");
+      this.judgeUnseen(nameArg, "exec", sc, false);
       if (nameArg.fetch) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       this.readArgs(words.slice(1), sc);
       return;
@@ -2736,9 +2798,10 @@ type OptionFileUse = "read" | "write" | "into" | "cd";
 /**
  * The files and folders a row's value options name (`--redirect-warnings f`, `-F f`, `--wd d`), judged as the bare path
  * is: an option an option table lists as taking a value takes the word after it, so that word is judged only where the
- * row reads it (commands-remote-v5-3). A value Ember can't see is judged by its parts, and asks.
+ * row reads it (commands-remote-v5-3). A value Ember can't see is judged by its parts, and asks unless `askUnseen` is
+ * false.
  */
-function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Record<OptionFileUse, readonly string[]>>): void {
+function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Record<OptionFileUse, readonly string[]>>, askUnseen = true): void {
   const mark = h.e.written.length;
   for (const use of ["read", "write", "into", "cd"] as const) {
     const names = files[use] ?? [];
@@ -2751,7 +2814,7 @@ function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Recor
       const next = args[o.at + 1];
       const apart = next !== undefined && next.v === v && (w === o.name || (!w.startsWith("--") && w.endsWith(o.name.slice(1))));
       const a: Arg = apart ? next : v === null ? { v: null, raw: "?", glob: false } : lit(v);
-      if (a.v === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog || "the program"} gets.`);
+      if (a.v === null && askUnseen) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog || "the program"} gets.`);
       const obj = h.e.usePath(a, use === "into" ? "write" : use, h.sc);
       if (use === "into" && obj.abs !== null) h.e.judgeInside(obj.abs, "write", h.sc, obj.text);
     }
@@ -3195,7 +3258,8 @@ reg(NATIVE, ["xargs"], h => {
     shortValue: "adEILnPsJRS", shortOptional: "lie", longValue: ["arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"],
     longOptional: ["eof", "replace", "max-lines"], stopAtOperand: true,
   });
-  for (const f of values(p, "a", "arg-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  // The file it reads its input from, a variable in it judged for Ember's own refusal (commands-remote-v5-2).
+  optionFiles(h, h.args, p, { read: ["a", "arg-file"] }, false);
   // A bare -i or --replace replaces {}.
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
@@ -3923,7 +3987,7 @@ reg(NATIVE, ["read", "mapfile", "readarray"], h => {
   // The names it sets from each line it reads (`read -r l`; -a, -d, -n, -N, -p, -t, -u, -i take a value).
   if (h.key === "read") {
     // Text it is given itself (`read d <<< ~/.config/ember`): its lines and words (commands-remote-v4-4).
-    const given = typeof h.s.stdinText === "string" ? textValues(h.s.stdinText) : null;
+    const given = typeof h.s.stdinText === "string" ? textValues(h.s.stdinText) : h.s.stdinVars?.word ? [h.s.stdinVars.word] : null;
     const names: string[] = [];
     for (let k = 0; k < h.args.length; k++) {
       const v = h.args[k].v;
@@ -4013,6 +4077,14 @@ reg(NATIVE, ["set"], h => {
     if (from >= 0) for (const n of POSITIONAL) h.e.setVar(n, h.args.slice(from), h.sc);
   }
   if (h.sc.family === "posix" && h.args.some(a => a.v === "-o" || a.v === "+o") && h.args.length === 1) h.e.add("secret", "secret.env", SAYS.env);
+  // `set -a` (allexport) exports every variable set after it (commands-remote-v5-2); `set +a` stops.
+  if (h.sc.family === "posix") {
+    for (const [k, a] of h.args.entries()) {
+      const v = a.v ?? "";
+      if (v === "--") break;
+      if ((/^[-+][A-Za-z]*a/.test(v) && !v.startsWith("--")) || ((v === "-o" || v === "+o") && h.args[k + 1]?.v === "allexport")) h.e.allExport = v.startsWith("-");
+    }
+  }
   // `set -P` / `set -o physical`: every later `cd` follows links, and `cd link; cd ..` lands beside link's target, not
   // where Ember's lexical folder says.
   if (h.sc.family === "posix" && setChases(h.args)) h.e.unclear("unclear.chase-links", CHASE_SAYS);
@@ -4040,8 +4112,10 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
     const name = (n.v ?? n.raw).split("=")[0].replace(/\[.*$/, "").replace(/\+$/, "");
     if (RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
     if (n.v !== null && n.v.includes("=") && commandLineSecret(n.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-    // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2).
+    // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2); `export d` hands the value
+    // it has to the programs that run, so it is judged as when it is exported as it is set (commands-remote-v5-2).
     if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc, false, h.key === "export" || has(p, "x"));
+    else if (h.key === "export" || has(p, "x")) h.e.useUnjudged([name]);
   }
 });
 reg(NATIVE, ["compgen"], h => { if (h.args.some(a => /^-[a-zA-Z]*[ev]/.test(a.v ?? ""))) h.e.add("secret", "secret.env", SAYS.env); });

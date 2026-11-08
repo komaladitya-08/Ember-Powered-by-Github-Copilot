@@ -206,6 +206,25 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     }
   });
 
+  it("refuses a variable set to Ember's folder that reaches a program through a wrapper's option, its input, an expansion, its name or a later export (commands-remote-v5-2)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "d=~/.config/ember; xargs -a \"$d/settings.json\" echo", "d=~/.config/ember; xargs -a \"$d/audit.jsonl\" printf '%s\\n'", "d=~/.config/ember; xargs rm -rf <<< \"$d\"",
+      "d=~/.config/ember; read -r f <<< \"$d\"; rm -rf \"$f\"", "d=~/.config/ember; while read -r f; do rm -rf \"$f\"; done <<< \"$d\"",
+      "d=~/.config/ember; rm -rf \"${d:?}\"", "d=~/.config/ember/; rm -rf \"${d%/}\"", "d=~/.config/ember; rm -rf \"${d:-build}\"", "d=~/.config/ember; \"$d/bin/ember\" --reset",
+      "d=~/.config/ember; export d; python3 -c \"import os,shutil; shutil.rmtree(os.environ['d'])\"", "d=~/.config/ember; declare -x d; make", "set -a; d=~/.config/ember; make",
+      "d=~/.config/ember; sudo -D \"$d\" ls", "d=~/.config/ember; python3 <<EOF\nimport shutil; shutil.rmtree(\"$d\")\nEOF", "d=~/.config/ember; env X=\"$d\" make",
+    ]) expect(refused(cmd), cmd).toBeDefined();
+    // Testing, printing or reading it into a variable that is then printed still runs, and so does a variable that names
+    // anything else.
+    for (const cmd of [
+      "d=~/.config/ember; read -r f <<< \"$d\"; echo \"$f\"", "d=~/.config/ember; while read -r f; do echo \"$f\"; done <<< \"$d\"", "d=~/.config/ember; echo \"${d:?}\"",
+      "set -e; d=~/.config/ember; echo \"$d\"", "set -euo pipefail; d=~/.config/ember; [ -d \"$d\" ]", "d=~/.config/ember; xargs echo <<< hello", "d=build; rm -rf \"${d:?}\"",
+      "d=build; xargs rm -rf <<< \"$d\"", "d=./bin; \"$d/tool\" --x", "f=notes.txt; xargs -a \"$f\" echo", "d=x; rm -rf \"${d:+y}\"",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+    expect(classifyCommand("f=notes.txt; xargs -a \"$f\" echo", "bash", contextOf("linux")).findings).toEqual([]);
+  });
+
   it("refuses Ember's own folder reached through a PowerShell variable the command sets, as when it is named (commands-remote-c3-2)", () => {
     const ps = (cmd: string) => says(cmd, "powershell", "win32");
     for (const cmd of [

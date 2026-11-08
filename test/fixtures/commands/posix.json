@@ -15604,6 +15604,45 @@
    "rules": [
     "script.system"
    ]
+  },
+  {
+   "cmd": "d=~/.config/ember; xargs -a \"$d/settings.json\" echo",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "d=~/.config/ember; read -r f <<< \"$d\"; rm -rf \"$f\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "d=~/.config/ember; rm -rf \"${d:?}\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "d=~/.config/ember; \"$d/bin/ember\" --reset",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "d=~/.config/ember; export d; make",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "d=~/.config/ember; read -r f <<< \"$d\"; echo \"$f\"",
+   "verdict": "run"
   }
  ]
 }
