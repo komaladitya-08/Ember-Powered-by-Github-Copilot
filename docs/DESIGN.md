@@ -344,8 +344,11 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   couldn't finish this reply…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says
   with the end when a Stop ended it: "Response stopped. Running tasks continue." for the bubble's Stop too, "Stopped
   everything, running tasks included." for Stop everything (home-c2-2); a Stop ends a request still waiting for a
-  reconnect at once, and a message of the composer's that it ended before it went comes back in the composer (never
-  over anything typed since), with "Your message wasn't sent, so it's back here to edit or send again." (home-r3-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
+  reconnect at once, and every message of the composer's that it ended before it went (its own line never came) comes
+  back in the composer, oldest first, never over anything typed since (above it, the caret kept where it was), with
+  "Your message wasn't sent, so it's back here to edit or send again." ("Your 2 messages weren't sent…", "…back here,
+  above what you were writing, …": home-r3-1, home-v4-2); one whose line came (Ember answered it itself, or it went to
+  the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
   "Okay, I've stopped everything."; the status panel says "Thinking…" while Ember answers any request, from the Ask
   box and by voice too: main's `conversationTurn`, never a guess, home-c1-1), shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. A Problem line that settings can help with names Models & connections

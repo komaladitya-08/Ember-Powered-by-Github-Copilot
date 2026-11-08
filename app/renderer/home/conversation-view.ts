@@ -46,6 +46,33 @@ export function conversationChange<T extends Said>(before: readonly T[], after: 
   return { drop: before.length, add: [...after] };
 }
 
+/**
+ * The messages of `after` that came since `before`: those after the newest message of `before` still in it (main adds at
+ * the end, drops the oldest past 60, and may restate its last Problem line in place). All of them when none is.
+ */
+export function conversationAdded<T extends Said>(before: readonly Said[], after: readonly T[]): T[] {
+  for (let i = before.length - 1; i >= 0; i--) {
+    const b = before[i];
+    for (let j = after.length - 1; j >= 0; j--) if (after[j].t === b.t && after[j].who === b.who && after[j].text === b.text) return after.slice(j + 1);
+  }
+  return [...after];
+}
+
+/**
+ * The composer's messages still without a line of their own once `added` came (home-v4-1): main writes a request's
+ * line once it goes to the model, or is answered or refused, so each new line of yours takes off the oldest message
+ * with its words. What is left when a Stop comes never went (home-r3-1, home-v4-2).
+ */
+export function stillUnsent<T extends { text: string }>(unsent: readonly T[], added: readonly Said[]): T[] {
+  const left = [...unsent];
+  for (const e of added) {
+    if (e.who !== "you") continue;
+    const i = left.findIndex(u => u.text.trim() === e.text);
+    if (i >= 0) left.splice(i, 1);
+  }
+  return left;
+}
+
 /** "Show 1 earlier message", "Show 12 earlier messages"; null when none is hidden. */
 export function earlierLabel(hidden: number): string | null {
   return hidden > 0 ? (hidden === 1 ? "Show 1 earlier message" : `Show ${hidden} earlier messages`) : null;

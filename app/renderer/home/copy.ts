@@ -106,11 +106,13 @@ export const PROBLEM_SETTINGS = "Models & connections…";
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
 export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";
 /**
- * How a Stop ended the composer's message (`stopped`: CONVERSATION_STOPPED, COMPOSER_SAYS.stoppedAll) when it hadn't
- * gone yet (it waited for a reconnect), so its words are back in the composer (home-r3-1).
+ * How a Stop ended the composer's `messages` (`stopped`: CONVERSATION_STOPPED, COMPOSER_SAYS.stoppedAll) when they
+ * hadn't gone yet (they waited for a reconnect), so their words are back in the composer (home-r3-1), above the `draft`
+ * typed since where there is one (home-v4-2).
  */
-export function composerGivenBack(stopped: string): string {
-  return `${stopped} Your message wasn't sent, so it's back here to edit or send again.`;
+export function composerGivenBack(stopped: string, messages = 1, draft = false): string {
+  const which = messages > 1 ? `Your ${messages} messages weren't sent, so they're` : "Your message wasn't sent, so it's";
+  return `${stopped} ${which} back here${draft ? ", above what you were writing," : ""} to edit or send again.`;
 }
 /** The composer's lines that say how something earlier went: they give way to a wait of the Ask box's or voice's. */
 const COMPOSER_OUTCOMES: ReadonlySet<string> = new Set([

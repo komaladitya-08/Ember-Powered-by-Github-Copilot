@@ -696,14 +696,15 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
       expect(await line.innerText()).toBe(back);
       expect(await field.inputValue()).toBe("Q2 during reconnect");
-      // Never over something typed since, and never for a message that went: its line has Copy and Edit.
+      // Never over something typed since: above it, and said so (home-v4-2). Never for a message that went: its line has
+      // Copy and Edit.
       await page.locator("#conversation-send").click();
       await turn(page, "thinking");
       await expect.poll(() => field.inputValue()).toBe("");
       await field.fill("Something new");
       await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped-everything" }));
-      expect(await line.innerText()).toBe("Stopped everything, running tasks included.");
-      expect(await field.inputValue()).toBe("Something new");
+      expect(await line.innerText()).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here, above what you were writing, to edit or send again.");
+      expect(await field.inputValue()).toBe("Q2 during reconnect\n\nSomething new");
       await field.fill("Q3");
       await page.locator("#conversation-send").click();
       await turn(page, "thinking");
@@ -711,6 +712,110 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
       expect(await line.innerText()).toBe("Response stopped. Running tasks continue.");
       expect(await field.inputValue()).toBe("");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("never gives back a message Ember answered itself, however far the conversation has moved past it (home-v4-1)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      // Answered by Ember itself, with no turn: its line and the answer come after main took the send.
+      await field.fill("What are you doing?");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => field.inputValue()).toBe("");
+      const answered: TranscriptEntry[] = [{ t: at(0), who: "you", text: "What are you doing?" }, { t: at(1), who: "ember", text: "Nothing's running right now." }];
+      await page.evaluate(e => window.__home.emit("onConversation", e), answered);
+      expect(await line.innerText()).toBe("Reply received.");
+      // Then by voice or the Ask box, until main's 60 lines have dropped it.
+      const later = [...answered, ...exchange(30, 2)];
+      await page.evaluate(e => window.__home.emit("onConversation", e), later);
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...later, ...exchange(32, 32)].slice(-60));
+      expect(await page.evaluate(() => [...document.querySelectorAll("#conversation li.you p")].some(p => p.textContent === "What are you doing?"))).toBe(false);
+      // Stop response while a spoken answer is under way: it stopped that, and gives nothing back.
+      await turn(page, "thinking");
+      await page.locator("#conversation-stop").click();
+      await expect.poll(() => page.evaluate(() => window.__home.stops)).toBe(1);
+      await expect.poll(() => line.innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(await field.inputValue()).toBe("");
+      // Its line came before main answered the send: the same.
+      await page.evaluate(() => { window.__home.hold = true; });
+      await field.fill("status?");
+      await page.locator("#conversation-send").click();
+      const status = [...later, ...exchange(32, 32)].slice(-58).concat([{ t: at(70), who: "you", text: "status?" }, { t: at(71), who: "ember", text: "Nothing's running right now." }]);
+      await page.evaluate(e => window.__home.emit("onConversation", e), status);
+      await page.evaluate(() => { window.__home.hold = false; window.__home.release(); });
+      await expect.poll(() => field.inputValue()).toBe("");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...status, ...exchange(60, 72)].slice(-60));
+      await page.locator("#conversation-stop").click();
+      await expect.poll(() => page.evaluate(() => window.__home.stops)).toBe(2);
+      await expect.poll(() => line.innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(await field.inputValue()).toBe("");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("gives back every message a Stop dropped before it went, above anything typed since, and says so (home-v4-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const sendWhileReconnecting = async (text: string) => {
+        await field.fill(text);
+        await page.locator("#conversation-send").click();
+        await turn(page, "thinking");
+        await expect.poll(() => field.inputValue()).toBe("");
+      };
+      // (a) One waits for the reconnect, the next is being written: Stop response.
+      await sendWhileReconnecting("Book the meeting room for Friday");
+      await field.fill("And tell Sam");
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above what you were writing, to edit or send again.");
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nAnd tell Sam");
+      expect(await field.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.selectionEnd, el.value.length])).toEqual([46, 46, 46]);
+      // While someone types (the caret in the middle of the draft), Stop everything from elsewhere: the caret stays put in it.
+      await sendWhileReconnecting("Book the meeting room for Friday");
+      await field.fill("And tell Sam");
+      await field.evaluate((el: HTMLTextAreaElement) => { el.focus(); el.setSelectionRange(4, 8); });
+      await page.evaluate(() => window.__home.emit("onStopped", "hotkey"));
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped-everything" }));
+      expect(await line.innerText()).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here, above what you were writing, to edit or send again.");
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nAnd tell Sam");
+      expect(await field.evaluate((el: HTMLTextAreaElement) => el.value.slice(el.selectionStart, el.selectionEnd))).toBe("tell");
+      // (b) Both sent while it waits: both come back, oldest first.
+      await field.fill("");
+      await sendWhileReconnecting("Book the meeting room for Friday");
+      await sendWhileReconnecting("And tell Sam");
+      expect(await page.evaluate(() => window.__home.sent.slice(-2))).toEqual(["Book the meeting room for Friday", "And tell Sam"]);
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => line.innerText()).toBe("Response stopped. Running tasks continue. Your 2 messages weren't sent, so they're back here to edit or send again.");
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nAnd tell Sam");
+      // Only those that never went: the first went (its line came), the second waited.
+      await sendWhileReconnecting("Book the meeting room for Friday");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...seed, { t: at(2), who: "you" as const, text: "Book the meeting room for Friday" }]);
+      await sendWhileReconnecting("And tell Sam");
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here to edit or send again.");
+      expect(await field.inputValue()).toBe("And tell Sam");
+      // One waits, the next was refused (its draft stays), then Stop everything: the first comes back above it too.
+      await field.fill("");
+      await sendWhileReconnecting("Book the meeting room for Friday");
+      const refused = "Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.";
+      await page.evaluate(e => { window.__home.sendError = e; }, refused);
+      await field.fill("And tell Sam");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => line.innerText()).toBe(refused);
+      await page.evaluate(() => { window.__home.sendError = undefined; window.__home.emit("onStopped", "hotkey"); });
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped-everything" }));
+      expect(await line.innerText()).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here, above what you were writing, to edit or send again.");
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nAnd tell Sam");
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
