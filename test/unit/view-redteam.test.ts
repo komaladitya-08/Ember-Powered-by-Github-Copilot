@@ -232,6 +232,12 @@ describe("a code block's line read with the lines before it (memory-w5-2)", () =
     expect(why(stack({ kind: "code", lines: ["const auth = {", "  password: hunter2", "};"] }))).toBe("secret");
     expect(why(stack({ kind: "code", lines: ["Router password:", "hunter2 is my password"] }))).toBe("secret");
   });
+  it("refuses a password under a section, a mapping or a hash's entry named for secrets, and shows a schema (safety-privacy-r5-1, safety-privacy-c5-1)", () => {
+    expect(why(stack({ kind: "file", path: "appsettings.json", lines: ["{", '  "Secrets": {', '    "Database": "Wint3r!Sh0p"', "  }", "}"] }))).toBe("secret");
+    expect(why(stack({ kind: "file", path: "vars.yml", lines: ["passwords:", "  db: Summer2024!"] }))).toBe("secret");
+    expect(why(stack({ kind: "code", lines: ["SMTP = {", "  :password => 'Kx7#pQ2!mz',", "}"] }))).toBe("secret");
+    expect(why(stack({ kind: "code", lines: ["password: {", "  type: String,", "  required: true", "}"] }))).toBe(null);
+  });
 });
 
 describe("a password's state as a label's value (memory-w5-3)", () => {

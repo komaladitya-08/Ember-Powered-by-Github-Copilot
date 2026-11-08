@@ -164,6 +164,28 @@ it("sends an object's last property, a multi-line signature, a Python block's bo
   await expect(projectPrompt([literal], "review", "Review this.", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
 });
 
+it("holds back a mailer's hash, a pretty-printed config, a dict of passwords, a WordPress define and a Maven server with the password's line, and sends a schema and a lexer's table (safety-privacy-r5-1, safety-privacy-c5-1)", async () => {
+  const mailer = await file("mailer.rb", "class Mailer\n  SMTP = {\n    :address => 'smtp.example.com',\n    :user_name => 'noreply',\n    :password => 'Kx7#pQ2!mz',\n  }\nend\n");
+  await expect(prompt([mailer])).rejects.toThrow(new Error("mailer.rb appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const settings = await file("appsettings.json", '{\n  "Logging": { "LogLevel": "Warning" },\n  "Secrets": {\n    "Database": "Wint3r!Sh0p"\n  }\n}\n');
+  await expect(prompt([settings])).rejects.toThrow(new Error("appsettings.json appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const py = await file("settings.py", "DEBUG = False\nPASSWORDS = {\n    'prod': 'Wint3r!Sh0p',\n}\n");
+  await expect(prompt([py])).rejects.toThrow(new Error("settings.py appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const vars = await file("vars.yml", "db:\n  host: db1\npasswords:\n  db: Summer2024!\n");
+  await expect(prompt([vars])).rejects.toThrow(new Error("vars.yml appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const wp = await file("INSTALL.md", "# Install\n\n```php\ndefine( 'DB_PASSWORD', 'Wint3r!Sh0p' );\n```\n");
+  await expect(prompt([wp])).rejects.toThrow(new Error("INSTALL.md appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const maven = await file("MAVEN.md", "```xml\n<server>\n  <username>deploy</username>\n  <password>Wint3r!Sh0p</password>\n</server>\n```\n");
+  await expect(prompt([maven])).rejects.toThrow(new Error("MAVEN.md appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const setup = await file("SETUP.md", "# Setup\n\n```php\n'password' => 'Wint3r!Sh0p',\n```\n");
+  await expect(prompt([setup])).rejects.toThrow(new Error("SETUP.md appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const schema = await file("user.js", "const User = new Schema({\n  password: {\n    type: String,\n    required: true,\n    minlength: 8\n  }\n});\n");
+  const lexer = await file("lexer.py", "tokens = {\n    'root': [\n        (r'\\s+', Text),\n        (r'(if|else)\\b', Keyword),\n    ],\n}\n");
+  const k8s = await file("deploy.yaml", "env:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: db-credentials\n        key: password\n");
+  const result = await prompt([schema, lexer, k8s]);
+  for (const line of ["minlength: 8", "(if|else)", "key: password"]) expect(result).toContain(line);
+});
+
 it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {
   const app = await file("app.py", "print(1)\n");
   for (const q of ["Why don't the user scripts pass linting?", "How do I make user uploads pass scanning?", "Do the user queries pass sanitisation?"]) {

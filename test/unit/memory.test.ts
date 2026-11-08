@@ -442,6 +442,59 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
 
+  // A literal under a key named for a secret is the secret, wherever the key sits: a hash's entry, a property that
+  // names one of several, a mapping or a list under it, a bracket opened on its line. Round five read all of these as
+  // code (safety-privacy-r5-1, safety-privacy-c5-1).
+  const PHP_CONFIG = "<?php\n\nreturn [\n    'connections' => [\n        'mysql' => [\n            'host' => '10.0.0.12',\n"
+    + "            'username' => 'shop_app',\n            'password' => 'Wint3r!Sh0p',\n        ],\n    ],\n];\n";
+  it.each([
+    ["'password' => 'Summer2024!',"], [":password => 'Kx7#pQ2!mz'"], ['"password" => "hunter2"'], ["my %h = (password => 'Summer2024!');"],
+    ["'api_key' => 'Zx9vQ2mK7pL4rT8w',"], ["'db_password' => env('DB_PASSWORD', 'Summer2024!'),"], ["password => Summer2024!"], [PHP_CONFIG],
+    ["SMTP = {\n  :address => 'smtp.example.com',\n  :password => 'Kx7#pQ2!mz',\n}"], ["my %db = (\n    user     => 'report',\n    password => 'Rep0rt$2026',\n);"],
+    ["secrets.db: Summer2024!"], ["passwords.home = BlueSky99"], ["password.old: Summer2024!"], ['password.new = "Summer2024!"'],
+    ['token.prod = "ghx_abcdefghijklmnop1234"'], ["database.password.prod = Wint3r!Sh0p"], ["app.secrets.db=Summer2024!"], ["password.type: hunter2"],
+    ["passwords:\n  db: Summer2024!"], ["password:\n  production: Wint3r!Sh0p\n  staging: hunter22"], ["secrets:\n  admin: Summer2024!"],
+    ["credentials:\n  admin: Wint3r!Sh0p"], ["tokens:\n  github: ghx_abcdefghijklmnop1234"], ["api_keys:\n  openai: sk-proj-abcdef1234567890abcdef"],
+    ["password:\n  value: Wint3r!Sh0p"], ["wifi:\n  home: BlueSky99"], ["database:\n  host: db1\n  password:\n    production: Wint3r!Sh0p\n"],
+    ["passwords:\n  - name: db\n    value: Wint3r!Sh0p"], ["passwords:\n  - Wint3r!Sh0p\n  - hunter22"], ['{\n  "secrets": {\n    "db": "Wint3r!Sh0p"\n  }\n}'], ["PASSWORDS = {\n    'prod': 'Wint3r!Sh0p',\n}"],
+    ['PASSWORDS = [\n    "Wint3r!Sh0p",\n]'], ['password = {\n  prod = "Wint3r!Sh0p"\n}'], ["passwords = {\n  db: 'Summer2024!'\n}"],
+    ["type Password = 'Summer2024!'"], ["if password:\n    return 'Summer2024!'"], ["class Password:\n    value = 'Summer2024!'"],
+    ['print("password: {0}".format("Summer2024!"))'], ["print(f'password: {pw}')  # Summer2024!"],
+    ["define( 'DB_PASSWORD', 'Wint3r!Sh0p' );"], ["<password>Wint3r!Sh0p</password>"], ['<add key="Password" value="Wint3r!Sh0p" />'],
+    ["$config['password'] = 'Wint3r!Sh0p';"], ["os.environ['PASSWORD'] = 'Wint3r!Sh0p'"], ['map.put("password", "Wint3r!Sh0p");'],
+    ['props.setProperty("db.password", "hunter2");'],
+  ])("refuses %j, a literal under a key named for a secret (safety-privacy-r5-1, safety-privacy-c5-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  // Memory runs a fact's lines together before it looks, so a mapping is read on one line there.
+  it.each([
+    ["Remember my passwords:\n  bank: Wint3r!Sh0p\n  email: Summer2024!"], ["credentials:\n  admin: Wint3r!Sh0p"], ["Wi-Fi password:\n    home: BlueSky99"],
+    ["wifi:\n  home: BlueSky99"], ["Netflix password => hunter2!"], ["pin => 4821"], ["The router login: admin: P@ssw0rd"],
+  ])("saves nothing for %j, a password under another label (safety-privacy-r5-1)", text => {
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([["Wi-Fi: SSID: Home5G"], ["Wi-Fi: speed: 300Mbps"], ["Credentials: username: admin"]])(
+    "keeps %j, a setting under a secret's name (safety-privacy-r5-1)", text => {
+      expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).not.toBe("refused");
+    });
+  it.each([
+    ["token => token.trim()"], ["tokens.filter(token => !!token)"], ["'password' => $password,"], ["'password' => env('DB_PASSWORD'),"],
+    [":password => ENV['SMTP_PASSWORD'],"], ['token.type = "bearer";'], ["token.start = 1024;"], ["    token.line = line"], ["self.token.refresh = refresh"],
+    ["if (tokenBefore.loc.end.line ===\n    comment.loc.start.line - 1) {"], ["com.sun.management.jmxremote.password.file=filepath"],
+    ["password:\n  min_length: 12\n  require_symbols: true"], ["secretKeyRef:\n  name: db-credentials\n  key: password"],
+    ["password:\n  secure: fN5b3I7B9Kma75TXOQuU4MTdkzAQ"], ["wifi:\n  ssid: HomeNet\n  enabled: true"], ['tokens:\n  primary: "#ff0000"\n  spacing: 8px'],
+    ["secrets:\n  - db_password\n  - api_key"], ["password: {\n  type: String,\n  required: true,\n  minlength: 8\n}"], ['const tokens = [\n  "if",\n  "else",\n];'],
+    ['"tokens": {\n  "input": 1200,\n  "output": 340\n}'], ['PASSWORD_MESSAGES = {\n  tooShort: "Password is too short",\n}'],
+    ['"credentials": {\n  "key": "base64 encoded json representation of credentials."\n}'], ["PROJECTS_SECRETS = [\n  'projects.secrets',\n]"],
+    ["const secrets = {\n  db: process.env.DB_PASSWORD,\n  api: getKey(),\n};"], ["class Token:\n    name: str\n    text: str"],
+    ["if node.type == token.SEMI: # *sigh*\n    break"], ["for ttype, value in tokensource:\n    color = self.colorscheme.get(ttype)\n    while color is None:"],
+    ["Create a new access token from a refresh_token.\n\n:param request: OAuthlib request."], ["PROJECTS_SECRETS = (\n    'projects.secrets',\n)"],
+    ["<password>${env.PW}</password>"], ["<password>{password}</password>"], ["define('DB_PASSWORD', getenv('DB_PASSWORD'));"], ['map.put("password", password);'],
+    ["$config['password'] = '';"], ["<passwordPolicy>strict</passwordPolicy>"], ["define('AUTH_KEY', 'put your unique phrase here');"],
+  ])("keeps %j, code or settings under a key named for a secret (safety-privacy-r5-1, safety-privacy-c5-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   // A login's password written with "@", a setting that names a password, an admin's pair after "=" and a letters-only
   // "pass" after a user name, which round five's login and admin rules kept (memory-v5-4).
   it.each([
