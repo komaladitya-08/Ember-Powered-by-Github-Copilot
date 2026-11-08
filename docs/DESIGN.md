@@ -157,7 +157,8 @@ They share one emotion rig, so switching never changes behaviour.
   bubble, or over or under it where it fits beside neither (larger text, a 1024-wide screen), never
   on it nor on Ember (the bubble never moves for it). A bubble that comes up while the box is open
   keeps off it where it can (never hiding for it); a question, or its own Listen once's
-  "Listening…" (never a wake's), that finds no room moves the box aside once, and a bubble already
+  "Listening…" (never a wake's), that finds no room moves the box aside once (again only once it
+  has grown under the field: a spoken yes that wasn't taken adds its note), and a bubble already
   shown, a question or an answer being read, never moves for the box: where the box can't keep
   clear of it whole (a small screen at Larger text), the box may come against it. An answer that
   grows into the box on its own, as its words come in or as it finishes (its Read all, its hint

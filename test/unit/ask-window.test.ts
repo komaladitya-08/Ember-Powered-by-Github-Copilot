@@ -230,6 +230,33 @@ describe("the ask box", () => {
     expect(win.bounds).toEqual(aside);
   });
 
+  it("steps aside again for the same question once it has grown under the field, and only then (companion-c4-1)", () => {
+    type Box = { x: number; y: number; width: number; height: number };
+    const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+    let bubble: Box | null = null;
+    const ask = new AskWindow({ bubble: () => bubble });
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    ask.show({ x: 687, y: 113, size: 60 });
+    // A question comes up under the field, as wide as there is no room beside it: the box steps aside, under it.
+    bubble = { x: 380, y: 155, width: 520, height: 224 };
+    ask.bubbleChanged("q1:once,q1:always,q1:deny");
+    const aside = { ...win.bounds };
+    expect(overlaps(aside, bubble)).toBe(false);
+    // A spoken yes that wasn't taken adds its note: the same question (the same answers), 63 px taller, now under the
+    // field, which covered the note's end and the keys it names. The box steps aside again, clear of all of it.
+    bubble = { ...bubble, height: 287 };
+    expect(overlaps(aside, bubble)).toBe(true);
+    ask.bubbleChanged("q1:once,q1:always,q1:deny");
+    expect(overlaps(win.bounds, bubble), JSON.stringify(win.bounds)).toBe(false);
+    // Still once for each size: no dance after a question that only moved, or grew no further.
+    const again = { ...win.bounds };
+    bubble = { ...again, height: 287 };
+    ask.bubbleChanged("q1:once,q1:always,q1:deny");
+    expect(win.bounds).toEqual(again);
+  });
+
   it("steps aside for a question or Listen once's \"Listening…\", never for an answer it can be typed beside (companion-c1-1)", () => {
     const actions = (...ids: string[]) => ids.map(id => ({ id, label: id }));
     expect(stepsAsideFor({ visible: true, mood: "attention", actions: actions("q4:once", "q4:always", "q4:deny") })).toBe("q4:once,q4:always,q4:deny");

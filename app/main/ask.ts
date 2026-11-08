@@ -257,6 +257,8 @@ export class AskWindow {
   private near: { x: number; y: number; size?: number } | null = null;
   /** The bubble (stepsAsideFor) the box last stepped aside for in this opening: once for each, so it never dances. */
   private steppedFor: string | null = null;
+  /** How tall that bubble was then: it steps aside again only for the same one grown taller (companion-c4-1). */
+  private steppedHeight = 0;
   /** Where main last heard the box is (onBounds), as JSON: said again only when it changed. */
   private told = "null";
   /** The field's right-click menu is open: the box keeps its place while the menu has the keyboard. */
@@ -455,6 +457,7 @@ export class AskWindow {
   show(near: { x: number; y: number; size?: number } | null, context?: AskContext, source = "open"): void {
     this.near = near;
     this.steppedFor = null;
+    this.steppedHeight = 0;
     this.context = { ...(context ?? this.context), opened: true };
     this.source = source;
     this.wanted = true;
@@ -527,17 +530,21 @@ export class AskWindow {
    * Ember's bubble came up or moved while the box is open (`asideFor`: stepsAsideFor of what it shows). The bubble keeps
    * off the box where it can (onBounds); where it found no room, a question, or Listen once's "Listening…", under the box
    * moves the box off it, once for each (companion-c1-1: a question that came while the box was open showed under the
-   * field, and the box never moved). The question itself never moves for the box.
+   * field, and the box never moved), and again only for the same one grown taller under it since (companion-c4-1: a
+   * spoken yes that wasn't taken adds its note, and the field covered the keys it names). The question itself never
+   * moves for the box.
    */
   bubbleChanged(asideFor: string | null): void {
     const win = this.win;
-    if (!asideFor || asideFor === this.steppedFor || !win || win.isDestroyed() || !win.isVisible()) return;
+    if (!asideFor || !win || win.isDestroyed() || !win.isVisible()) return;
     const bubble = this.bubble();
+    if (!bubble || (asideFor === this.steppedFor && bubble.height <= this.steppedHeight)) return;
     const b = win.getBounds();
-    if (!bubble || !overlap(b, bubble)) return;
+    if (!overlap(b, bubble)) return;
     const next = clearOfBubble(b, screen.getDisplayMatching(b).workArea, bubble, this.keepOff(), this.near);
     if (next === b) return;
     this.steppedFor = asideFor;
+    this.steppedHeight = bubble.height;
     // It grows away from Ember from here: up when it is above Ember now.
     this.up = !this.near || next.y + next.height <= this.near.y;
     win.setBounds(next);
