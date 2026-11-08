@@ -12,7 +12,7 @@
 
 import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts } from "./types";
 import { ALWAYS_ASK, PKG_PRUNES, PKG_REMOVES } from "./types";
-import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList } from "./words";
+import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList, verbForms } from "./words";
 import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, type PathEnv } from "./paths";
 
 /** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
@@ -818,6 +818,9 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
     const objectNamed = f.objects.length === 0 || f.objects.some(o => (o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0)));
     // A program and its subcommand named in full ("run npm ci", "docker push it"): the user asked for it (commands-remote-v2).
     if (subcommandNamed(f, w)) return true;
+    // Removing what the project doesn't list is named only as a prune (commands-remote-r3-2: "install the dependencies"
+    // doesn't ask for it).
+    if (f.says === PKG_PRUNES) return hasVerb(w.list, ["prune"]);
     if (row) return hasVerb(w.list, ROW_VERBS[row] ?? []) && objectNamed;
     const program = f.program.split(" ").pop() ?? "";
     return (program !== "" && (w.list.includes(program.toLowerCase()) || nameNamed(program, w.raw))) || (f.objects.length > 0 && objectNamed);
@@ -851,33 +854,42 @@ const EXCLUDES = /(^|[^\p{L}\p{N}])(except|excepting|excluding|without|other\s+t
  * about the clause's own step drops the clause ("don't git push yet", "I don't want you to push", "push nothing", "a
  * push isn't needed").
  */
-function sortClause(clause: string): { asked: string; leftOut: string } {
+function sortClause(clause: string): { asked: string; leftOut: string; ruled: string } {
   const neg = new RegExp(NEGATION.source, "iu").exec(clause);
   const exc = EXCLUDES.exec(clause);
   const at = neg ? neg.index + neg[1].length : clause.length;
   const excAt = exc ? exc.index + exc[1].length : clause.length;
-  if (exc && excAt <= at) return { asked: clause.slice(0, excAt), leftOut: clause.slice(excAt) };
-  if (!neg) return { asked: clause, leftOut: "" };
+  if (exc && excAt <= at) return { asked: clause.slice(0, excAt), leftOut: clause.slice(excAt), ruled: "" };
+  if (!neg) return { asked: clause, leftOut: "", ruled: "" };
   // "delete build/, not src/": what follows the "not" is left out.
-  if (/^\s*not\s/iu.test(clause)) return { asked: "", leftOut: clause };
-  if (neg[2].toLowerCase() === "unless") return { asked: clause.slice(0, at), leftOut: "" };
+  if (/^\s*not\s/iu.test(clause)) return { asked: "", leftOut: clause, ruled: "" };
+  if (neg[2].toLowerCase() === "unless") return { asked: clause.slice(0, at), leftOut: "", ruled: "" };
   const before = clause.slice(0, at);
   const rel = RELATIVE_NOT.exec(before);
   if (rel) {
     const start = rel.index + rel[1].length;
-    if (!SAYS_THAT.test(before.slice(0, start))) return { asked: clause.slice(0, start), leftOut: "" };
+    if (!SAYS_THAT.test(before.slice(0, start))) return { asked: clause.slice(0, start), leftOut: "", ruled: "" };
   }
   let cut = -1;
   for (const m of before.matchAll(SUBORDINATE)) cut = m.index + m[1].length;
-  return { asked: cut < 0 ? "" : clause.slice(0, cut), leftOut: "" };
+  // The step a "not" turns round ("don't publish", "no force push"): ruled out (ruledOut), not only unasked.
+  return { asked: cut < 0 ? "" : clause.slice(0, cut), leftOut: "", ruled: cut < 0 ? clause.slice(at) : "" };
 }
 
+/**
+ * An aside in brackets or between two dashes ("don't (ever) delete build", "don't — and I mean it — push"): a clause of
+ * its own, and the words around it joined, so a "not" before it still turns round the verb after it (commands-remote-c1-2).
+ */
+const ASIDE = /\(([^()]*)\)|\[([^[\]]*)\]|\s[-–—]+\s+([^-–—]*?)\s+[-–—]+\s/gu;
+
 /** The user's words as clauses, sorted (sortClause). */
-function sorted(userWords: string): { asked: string; leftOut: string }[] {
-  return userWords.normalize("NFKC").replace(AFFIRMING, "$1")
+function sorted(userWords: string): { asked: string; leftOut: string; ruled: string }[] {
+  const asides: string[] = [];
+  const text = userWords.normalize("NFKC").replace(AFFIRMING, "$1")
     // "everything but build" leaves build out; "but" parts clauses otherwise.
     .replace(/(^|[^\p{L}\p{N}])(everything|anything|all)\s+but(?=\s)/giu, "$1$2 except")
-    .split(CLAUSE_BREAK).map(sortClause);
+    .replace(ASIDE, (_m, a?: string, b?: string, c?: string) => { asides.push(a ?? b ?? c ?? ""); return " "; });
+  return [...text.split(CLAUSE_BREAK), ...asides.flatMap(a => a.split(CLAUSE_BREAK))].map(sortClause);
 }
 
 /**
@@ -900,6 +912,38 @@ function leftOut(f: Finding, userWords: string): boolean {
   if (out === "") return false;
   const w = wordsOf(out);
   return f.objects.some(o => o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0));
+}
+
+/** Words a part that rules a step out may hold besides the step ("don't force it", "never, ever push", "no pushing yet"). */
+const RULED_FILLER = new Set([
+  "not", "never", "no", "don", "t", "do", "does", "doesn", "didn", "won", "without", "except", "nor", "neither", "avoid",
+  "it", "them", "this", "that", "anything", "ever", "yet", "now", "please", "just", "at", "all", "again", "i", "you", "we",
+  "repeat", "mean", "want", "to", "a", "an", "the", "any", "and", "or", "s", "under", "circumstances", "whatever", "with", "using",
+]);
+
+/**
+ * Whether the words rule out one of these findings (commands-remote-c1-2): they leave out what it acts on by name
+ * (leftOut), or a part that says not to, or leaves out, names its kind of step or what it adds ("push without force"
+ * for a force push, "prepare the release (don't publish)" for `npm publish`) and nothing else, so "delete build/ but
+ * don't delete src/" rules out only src's delete. Its card then says "You didn't ask for this.", whatever else the words
+ * asked. Card words only: any "not" already keeps a step from being announced.
+ */
+export function ruledOut(findings: readonly Finding[], userWords: string): boolean {
+  if (!userWords || userWords.trim() === "") return false;
+  const parts = sorted(userWords).flatMap(c => [c.ruled, c.leftOut]).filter(c => c.trim() !== "");
+  return findings.some(f => {
+    if (leftOut(f, userWords)) return true;
+    const row = rowOf(f, findings);
+    const verbs = [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])];
+    // A flag's words: `--force` (and `--force-with-lease`) is "force".
+    const flags = f.widening.filter(x => /^--?[a-z]/i.test(x)).map(x => userWordList(x)[0] ?? "").filter(x => x.length > 2);
+    const forms = new Set(verbs.flatMap(v => v.split(" ").flatMap(verbForms)));
+    return parts.some(p => {
+      const ws = userWordList(p);
+      if (!hasVerb(ws, verbs) && !ws.some(x => flags.includes(x))) return false;
+      return ws.every(x => RULED_FILLER.has(x) || forms.has(x) || flags.includes(x));
+    });
+  });
 }
 
 /** Whether the words name a finding's program with its subcommand, in full and in order ("npm ci", "git push"). */
@@ -935,8 +979,12 @@ const KIND_VERBS: Readonly<Record<string, readonly string[]>> = {
   "upload.host": ["upload", "sync", "transfer"],
   "kill.process": ["kill"],
 };
-/** Kind verbs by a finding's own rule: a copy or a move that replaces a file, find's deleting, removing scheduled jobs. */
+/**
+ * Kind verbs by a finding's own rule: a copy or a move that replaces a file, find's deleting, removing scheduled jobs,
+ * replacing them from a file ("schedule the jobs in jobs.txt"; "install my cron jobs" is KIND_PHRASES').
+ */
 const RULE_KIND_VERBS: Readonly<Record<string, readonly string[]>> = {
+  "system.schedule": ["schedule", "reschedule"],
   "system.unschedule": ["remove", "delete", "clear", "cancel"],
   "posix.cp": ["copy"],
   "ps.Copy-Item": ["copy"],
@@ -954,7 +1002,17 @@ export function namedKind(findings: readonly Finding[], userWords: string): bool
   const w = wordsOf(affirmed(userWords));
   return findings.some(f => {
     if (leftOut(f, userWords)) return false;
+    if (f.says === PKG_PRUNES) return hasVerb(w.list, PRUNE_KIND_VERBS);
+    if (KIND_PHRASES[f.rule]?.(w.list)) return true;
     const row = rowOf(f, findings);
     return hasVerb(w.list, [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])]);
   });
 }
+
+/** A prune's kind (commands-remote-r3-2): pruning, removing or cleaning up packages, or installing them as a project lists them. */
+const PRUNE_KIND_VERBS: readonly string[] = ["prune", "remove", "uninstall", "clean up", "clean", "tidy", "install", "reinstall"];
+
+/** Kinds said with a noun of their own ("install my cron jobs from jobs.txt", "set up the crontab"; commands-remote-r3-2). */
+const KIND_PHRASES: Readonly<Record<string, (list: readonly string[]) => boolean>> = {
+  "system.schedule": l => hasWord(l, ["cron", "crontab", "cronjob", "cronjobs", "cron job", "cron jobs"]) && hasVerb(l, ["install", "add", "set up", "load", "replace", "update", "change", "put"]),
+};

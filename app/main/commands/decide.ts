@@ -10,7 +10,7 @@
 import type { ClassificationExtra } from "./classify";
 import type { CommandDecision, DangerClass, DecideInput, Finding } from "./types";
 import { standingFindings } from "./types";
-import { matchIntent, mentioned, namedKind } from "./intent";
+import { matchIntent, mentioned, namedKind, ruledOut } from "./intent";
 import { joinList } from "./words";
 
 /** The classes in the card's order (§3.8.4), which is also "most serious first". */
@@ -131,9 +131,11 @@ export function decideCommand(i: DecideInput): CommandDecision {
     rules.push("carried");
   }
   if (i.tainted) { lines.push(LINES.tainted); reasons.push("an earlier step in the task wasn't the user's"); rules.push("tainted"); }
-  // Words that ask for this kind of step, but not exactly this one, aren't "You didn't ask for this." (commands-remote-v2).
-  const unnamed = F.length > 0 && !mentioned(F, i.userWords);
-  const inexact = unnamed && namedKind(F, i.userWords);
+  // Words that ask for this kind of step, but not exactly this one, aren't "You didn't ask for this." (commands-remote-v2);
+  // words that rule a step of it out are, whatever else they ask (commands-remote-c1-2).
+  const ruled = F.length > 0 && ruledOut(F, i.userWords);
+  const unnamed = F.length > 0 && (ruled || !mentioned(F, i.userWords));
+  const inexact = unnamed && !ruled && namedKind(F, i.userWords);
   const unasked = unnamed && !inexact;
   if (unasked) lines.push(LINES.unasked);
   if (inexact) lines.push(LINES.inexact);

@@ -234,6 +234,54 @@ describe("decideCommand: the rules in order", () => {
     }
   });
 
+  it("still says \"You didn't ask for this.\" when the words rule out that kind of step or its force, in an aside or after a dash (commands-remote-c1-2)", () => {
+    for (const [cmd, words] of [
+      // What the step does beyond the request, ruled out by name: the force, the publishing.
+      ["git push --force origin main", "push without force"],
+      ["git push --force origin main", "push my changes without force pushing"],
+      ["git push --force origin main", "push my branch (no force push)"],
+      ["git push --force origin main", "push my branch — don't force it"],
+      ["git push --force-with-lease origin main", "push my branch, never force"],
+      ["git push --force origin main", "push the branch normally, not with force"],
+      ["npm publish", "prepare the release - don't publish"],
+      ["npm publish", "prepare the release (don't publish)"],
+      ["git push origin main", "commit the fix (don't push)"],
+      // A "not" set apart from its verb by an aside still turns it round.
+      ["rm -rf build", "don't (ever) delete build"],
+      ["git push origin main", "don't (I repeat) push main"],
+      ["git push origin main", "don't — and I mean it — push"],
+      // One step of several ruled out: the card says so whatever else the words asked.
+      ["rm -r build && rm -r src", "delete build/ but not src/"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(true);
+    }
+    // A "not" about something else leaves the step as asked: another folder, the force of a push that has none.
+    expect(decide("rm -r build", { words: "delete build/ but don't delete src/" }).says).not.toContain(LINES.unasked);
+    expect(decide("git push origin main", { words: "push my changes, but don't force it" }).says).toContain(LINES.inexact);
+    expect(decide("git push origin main", { words: "push main (it's ready)" }).says).not.toContain(LINES.unasked);
+  });
+
+  it("says the words ask for that kind of step when they schedule jobs or prune packages in plain words; it still asks (commands-remote-r3-2)", () => {
+    for (const [cmd, words] of [
+      ["crontab jobs.txt", "schedule the jobs in jobs.txt"],
+      ["crontab jobs.txt", "install my cron jobs from jobs.txt"],
+      ["npm prune", "clean up node_modules"],
+      ["npm prune", "install the dependencies"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.inexact);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
+    }
+    expect(decide("npm prune", { words: "prune the packages" }).says).toEqual(["Removes packages the project doesn't list."]);
+    expect(decide("crontab jobs.txt", { words: "fix the readme" }).says).toContain(LINES.unasked);
+    expect(decide("npm prune", { words: "fix the readme" }).says).toContain(LINES.unasked);
+  });
+
   it("never says \"You didn't ask for this.\" for the step asked for beside a \"not\" about something else: a condition, an exception, a reminder; it still asks (commands-remote-r2-1)", () => {
     for (const [cmd, words] of [
       ["git push origin main", "Don't forget to push my changes"],
