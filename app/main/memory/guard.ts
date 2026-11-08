@@ -46,14 +46,21 @@ const FOR_WHAT = String.raw`(?:\s+(?:for|to|at|on|of|in|into|with|from)(?:\s+[^\
  * "is", "'s", "was", "are", "is:", or ":", "=", a spaced "-", "–" or "—" or one before a digit ("PIN-4821"), or ", it's"
  * and "? it's" ("my wifi password, it's BlueSky99": memory-i4).
  */
-const SAYS = String.raw`(?:\s*[:=]|\s*[-–—](?=\s|\d)|['’]s\s|\s+(?:is|was|are|were)(?:\s*[:=])?\s|\s*[,?]\s*(?:it|that)(?:['’]s|\s+is)\s)\s*`;
+const SAYS_IS = String.raw`\s*[:=]|\s*[-–—](?=\s|\d)|['’]s\s|\s+(?:is|was|are|were)(?:\s*[:=])?\s`;
+const SAYS_IT = String.raw`\s*[,?]\s*(?:it|that)(?:['’]s|\s+is)\s`;
+const SAYS = String.raw`(?:${SAYS_IS}|${SAYS_IT})\s*`;
+/**
+ * SAYS before a value that may be a word: ", it's" only before one with a digit or a symbol ("my netflix password? it's
+ * hunter2"), never "your password, it's personal" or "a long passphrase, it's easier to remember" (memory-v4-6).
+ */
+const SAYS_VALUE = String.raw`(?:${SAYS_IS}|${SAYS_IT}(?=\s*["'“]?[^\s"'”]{0,64}[0-9!@#$%^&*]))\s*`;
 
 /**
  * "my password is…", "PIN: 1234", "the wifi key is…", "the password for the HR portal is…": a secret's name, perhaps
  * what it is for, then its value (not a word like "required").
  */
 const TOLD_SECRET = new RegExp(
-  String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|puk|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:my|the|a) security question|cvv|cvc|wi-?fi (?:key|password)|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)s?\b${FOR_WHAT}(?:\s+(?:everywhere|anywhere|here|there|now|too|also|always|usually|still|today|currently))?${SAYS}${VALUE}`,
+  String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|puk|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:my|the|a) security question|cvv|cvc|wi-?fi (?:key|password)|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)s?\b${FOR_WHAT}(?:\s+(?:everywhere|anywhere|here|there|now|too|also|always|usually|still|today|currently))?${SAYS_VALUE}${VALUE}`,
   "i",
 );
 
@@ -135,11 +142,17 @@ const TOLD_TOKEN = new RegExp(String.raw`\btokens?\b${FOR_WHAT}${SAYS}["'“]?${
 /** A card's security code with its digits straight after ("…with CVV 123", "CVC 4821"). */
 const BARE_CVV = /\b(?:cvv2?|cvc2?|csc)\s*(?:code|number)?\s*[:#]?\s*\d{3,4}\b/i;
 /**
- * "Use hunter2 as the password for…", "uses hunter2 as their Netflix password", "hunter2 is my password": a value said
- * before the secret's name ("…as the PIN pad app" and "Bitwarden is my password manager" name no password).
+ * "Use hunter2 as the password for…", "uses hunter2 as their Netflix password", "hunter2 is my password", "4821 is my bank
+ * PIN": a value said before the secret's name ("…as the PIN pad app" and "Bitwarden is my password manager" name no
+ * password). A PIN with a word before it only with digits for its value, so "GPIO4 is the data pin" and "the ESP32 uses
+ * GPIO0 as the boot pin" are wiring (memory-v4-6).
  */
-const USED_AS = new RegExp(String.raw`\buses?\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))\S+["'”]?\s+as\s+(?:(?:the|my|our|your|their|his|her|a)\s+)?(?:[^\s.,;!?]+\s+)?(?:pass(?:word|phrase|code)|pin|pw)s?(?=\s*$|[.,;!?]|\s+(?:for|on|at|to|of|in|with)\b)`, "i");
-const VALUE_FIRST = new RegExp(String.raw`(?:^|\s)["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}["'”]?\s+is\s+(?:the|my|our|your|their|his|her)\s+(?:[^\s.,;!?]+\s+)?(?:pass(?:word|phrase|code)|pin|pw)s?(?=\s*$|[.,;!?]|\s+(?:for|on|at|to|of|in|with)\b)`, "i");
+const SECRET_ENDS = String.raw`s?(?=\s*$|[.,;!?]|\s+(?:for|on|at|to|of|in|with)\b)`;
+const WHOSE = String.raw`(?:the|my|our|your|their|his|her)`;
+const USED_AS = new RegExp(String.raw`\buses?\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))(?:\d{4,12}["'”]?\s+as\s+(?:(?:${WHOSE}|a)\s+)?(?:[^\s.,;!?]+\s+)?(?:pass(?:word|phrase|code)|pin|pw)`
+  + String.raw`|\S+["'”]?\s+as\s+(?:(?:${WHOSE}|a)\s+)?(?:(?:[^\s.,;!?]+\s+)?(?:pass(?:word|phrase|code)|pw)|pin))${SECRET_ENDS}`, "i");
+const VALUE_FIRST = new RegExp(String.raw`(?:^|\s)["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))(?:\d{4,12}["'”]?\s+is\s+${WHOSE}\s+(?:[^\s.,;!?]+\s+)?(?:pass(?:word|phrase|code)|pin|pw)`
+  + String.raw`|(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}["'”]?\s+is\s+${WHOSE}\s+(?:[^\s.,;!?]+\s+)?(?:pass(?:word|phrase|code)|pw))${SECRET_ENDS}`, "i");
 /**
  * A login with its user name and password together ("Login for the router: admin / P@ssw0rd", "credentials for staging
  * are admin and hunter22"): only when the second has a digit or a symbol, so "Login for the wiki is via SSO and Okta"

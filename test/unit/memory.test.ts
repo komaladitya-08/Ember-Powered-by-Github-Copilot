@@ -215,6 +215,21 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
+  // A board's pins and advice about passwords name no secret; a PIN said first only with digits, and ", it's" only before
+  // a value with a digit or a symbol (memory-v4-6).
+  it.each([
+    ["GPIO4 is the data pin and GPIO5 is the clock pin."], ["The ESP32 uses GPIO0 as the boot pin"], ["GPIO4 is the data pin; update the wiring doc"],
+    ["Never share your password, it's personal."], ["Pick a long passphrase, it's easier to remember"], ["Your PIN, it's private"],
+    ["D13 is the LED pin on the Uno"], ["The board uses GPIO2 as its status pin"],
+  ])("keeps %j, wiring or advice (memory-v4-6)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["4821 is my PIN"], ["4821 is my bank PIN"], ["Use 4821 as the door PIN"], ["Use hunter2 as the PIN"], ["my PIN, it's 4821"], ["My password? it's Tr0ub4dor&3"],
+  ])("still refuses %j, a PIN or a password said first or after “it's” (memory-v4-6)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+
   // A house, a home or an office locks only as someone's ("my house code", "the office code"), never a post office's, a
   // branch office's, a box office's or in-house source code (memory-v4-3).
   it.each([

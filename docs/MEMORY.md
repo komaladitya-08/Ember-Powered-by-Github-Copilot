@@ -78,8 +78,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
   "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
   "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
-  are ordinary words, as are how a token is made ("the access token is HS256-signed",
-  "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
+  are ordinary words, as are a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
+  GPIO0 as the boot pin", "never share your password, it's personal": a value said before "the data pin" or "the
+  boot pin" counts only as digits, and ", it's" only before a value with a digit or a symbol, memory-v4-6), how a
+  token is made ("the access token is HS256-signed", "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
   long") and an Indian postcode called a "PIN code" after an address (a road, a place, an Indian city or state) in its
   sentence or the lines just before it ("Bengaluru, PIN code: 560001"; "my PIN code is 560034", "Garage, PIN code:
   482193" and a "PIN code: 482193" line with no address before it are still refused): memory-c3-1, memory-r3-3,

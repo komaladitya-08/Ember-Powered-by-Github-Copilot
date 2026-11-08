@@ -80,6 +80,16 @@ it("sends a file that names in-house source and an office's cost code, which hol
   await expect(prompt([house])).rejects.toThrow("contain a password");
 });
 
+it("sends a wiring note, a security guide and a request about a board's pins, which hold no secret (memory-v4-6)", async () => {
+  const wiring = await file("wiring.md", "# Wiring\n\nGPIO4 is the data pin and GPIO5 is the clock pin. The ESP32 uses GPIO0 as the boot pin.\n");
+  const security = await file("SECURITY.md", "# Passwords\n\nNever share your password, it's personal. Pick a long passphrase, it's easier to remember.\n");
+  const result = await projectPrompt([wiring, security], "review", "GPIO4 is the data pin; update the wiring doc", new AbortController().signal, privateDir);
+  expect(result).toContain("GPIO0 as the boot pin");
+  expect(result).toContain("it's personal");
+  const pin = await file("pin.txt", "4821 is my bank PIN.");
+  await expect(prompt([pin])).rejects.toThrow("contain a password");
+});
+
 const diffAnswer = (diff: string) =>"A change to review.\n\n" + ["```diff", diff, "```"].join("\n");
 const diff = (name: string, hunks: string) => `--- a/${name}\n+++ b/${name}\n${hunks}`;
 
