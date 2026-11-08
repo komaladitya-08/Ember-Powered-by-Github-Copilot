@@ -259,6 +259,21 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     ]) expect(refused(cmd), cmd).toBeDefined();
   });
 
+  it("refuses Ember's folder given to an awk or sed program that runs or writes what it reads, while one that only filters runs (commands-remote-r5-4)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "d=~/.config/ember; awk '{system(\"rm -rf \" $0)}' <<< \"$d\"", "d=~/.config/ember/settings.json; awk '{print \"{}\" > $0}' <<< \"$d\"",
+      "d=~/.config/ember/settings.json; awk '{while ((getline l < $0) > 0) print l}' <<< \"$d\"", "d=~/.config/ember; sed 's/^/rm -rf /e' <<< \"$d\"",
+      "d=~/.config/ember; sed e <<< \"rm -rf $d\"", "d=~/.config/ember; echo \"$d\" | awk '{system(\"rm -rf \" $0)}'",
+      // The literal forms, which only asked.
+      "awk '{system(\"rm -rf \" $0)}' <<< ~/.config/ember", "sed 's/^/rm -rf /e' <<< ~/.config/ember", "echo ~/.config/ember | awk '{system(\"rm -rf \" $0)}'",
+    ]) expect(refused(cmd), cmd).toBe(CHANGE);
+    for (const cmd of [
+      "d=~/.config/ember; awk '{print $1}' <<< \"$d\"", "d=~/.config/ember; sed s/a/b/ <<< \"$d\"", "d=~/.config/ember; sed -n -e p <<< \"$d\"",
+      "d=~/.config/ember; awk -F/ '{print $NF}' <<< \"$d\"", "d=~/.config/ember; echo \"$d\" | sed s/x/y/", "awk '{system(\"ls \" $0)}' <<< build",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+  });
+
   it("says a command that hands Ember's folder to a program that deletes it would change Ember's files, not read them (commands-remote-w5-5)", () => {
     const refused = (cmd: string) => withoutReadFlow(classifyCommand(`d=~/.config/ember; ${cmd}`, "bash", contextOf("linux")), "bash").refuse?.says;
     const change = "Ember won't run this: it would change Ember's own safety settings, records or programs.";

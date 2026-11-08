@@ -81,7 +81,19 @@ const TEXT_READERS: ReadonlySet<string> = new Set([
 ]);
 const readsText = (key: string, args: readonly Arg[]): boolean => TEXT_READERS.has(key)
   && !(key === "sed" && args.some(a => a.v === null || /^(-[A-Za-z]*f|--file)/.test(a.v)))
-  && !(/awk$/.test(key) && args.some(a => a.v === null || /^(-[A-Za-z]*[fEil]|--(file|exec|include|load))/.test(a.v)));
+  && !(/awk$/.test(key) && args.some(a => a.v === null || /^(-[A-Za-z]*[fEil]|--(file|exec|include|load))/.test(a.v)))
+  // A program that runs what it reads or writes files (`awk '{system($0)}'`, `sed 's/^/rm /e'`) isn't only reading it
+  // (commands-remote-r5-4).
+  && !(key === "sed" && !filterPrograms(key, args).every(t => t !== null && sedScriptOk(t)))
+  && !(/awk$/.test(key) && !filterPrograms(key, args).every(t => t !== null && awkProgramOk(t)));
+/** The program text sed or awk runs: its -e (sed's --expression, gawk's --source) values, else its first operand. */
+function filterPrograms(key: string, args: readonly Arg[]): (string | null)[] {
+  const p = key === "sed"
+    ? parseOpts(args, { shortValue: "efl", longValue: ["expression", "file", "line-length"], longOptional: ["in-place"] })
+    : parseOpts(args, { shortValue: "fFvWeilE", longValue: ["file", "field-separator", "assign", "source", "include", "load", "exec"] });
+  const given = values(p, "e", ...(key === "sed" ? ["expression"] : ["source"]));
+  return given.length ? given : [p.operands[0]?.v ?? null];
+}
 /** The shell's positional parameters (`$1`…`$9`, `$@`, `$*`), as `set --` gives them values. */
 const POSITIONAL: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"];
 /** What `read` may set from a text: each of its lines, and each word of each line. */
@@ -696,6 +708,14 @@ class Classifier {
   protected judgePendingSets(): void {
     if (this.compoundOnward) this.useUnjudged([...this.printedVars], true);
     for (const p of this.pendingSets) if (this.usedUnjudged.has(p.name)) for (const f of p.forms) this.judgeForm(f, null, p.sc, this.changedUnjudged.has(p.name));
+  }
+
+  /**
+   * Text a program that may run or write what it reads is given whole (`awk '{system("rm -rf " $0)}' <<<
+   * ~/.config/ember`): each line and word judged by Ember's own refusal as a path it may change (commands-remote-r5-4).
+   */
+  judgeInput(text: string, sc: Scope): void {
+    for (const a of textValues(text)) if (a.v !== null) this.judgeForm(a.v, null, sc, true);
   }
 
   /** The names a `read` sets, for a loop's here-string to give them values (result). */
@@ -3902,6 +3922,7 @@ reg(NATIVE, ["sed", "gsed"], h => {
   for (const f of scriptFiles) if (f) h.e.usePath(lit(f), "read", h.sc);
   if (scripts.length === 0 && scriptFiles.length === 0) { scripts = [files[0]?.v ?? null]; files = files.slice(1); }
   for (const s of scripts) if (s === null || !sedScriptOk(s)) h.e.unclear("unclear.sed-script", "Its sed script can run commands or write files Ember can't see.");
+  if (scripts.some(s => s === null || !sedScriptOk(s)) && typeof h.s.stdinText === "string") h.e.judgeInput(h.s.stdinText, h.sc);
   objsOf(h, files, inPlace ? "write" : "read");
   if (files.some(f => f.v === null)) h.e.unclear("unclear.unresolved-arg", "Ember can't tell which arguments sed gets.");
 });
@@ -3978,6 +3999,7 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   const inline = values(p, "e", "source");
   if (progFiles.length === 0 && inline.length === 0) { inline.push(files[0]?.v ?? null); files = files.slice(1); }
   for (const prog of inline) if (prog === null || !awkProgramOk(prog)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files.");
+  if (inline.some(prog => prog === null || !awkProgramOk(prog)) && typeof h.s.stdinText === "string") h.e.judgeInput(h.s.stdinText, h.sc);
   const read = files.filter(f => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(f.v ?? ""));
   if (inPlace) objsOf(h, read, "write");
   h.e.readArgs(read, h.sc, { unresolvedUnclear: true });

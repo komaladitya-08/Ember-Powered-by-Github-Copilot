@@ -405,7 +405,9 @@ and when a name Ember can't see stands where one of Ember's folders is (`rm -rf 
 of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or a pattern before it could match one
 (`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is. A variable is judged where a command uses it, so one that only names Ember's
 folder to test or print it on the terminal (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
-input while nothing takes what it prints (`grep -q ember <<< "$p"`, `echo "$p" | wc -c`), runs, unless it is exported to a
+input while nothing takes what it prints (`grep -q ember <<< "$p"`, `echo "$p" | wc -c`; never an awk or sed program
+that runs or writes what it reads, such as `awk '{system(…)}'` or `sed '…/e'`, which is refused given Ember's folder,
+named or not), runs, unless it is exported to a
 program (`export p`, `set -a`) or a program gets it some other way: as its own name (`"$p/bin/ember"`), through a
 wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.json"`), on its input (`xargs rm -rf <<< "$p"`, `read -r f <<< "$p"; rm -rf
 "$f"`, `mapfile -t a <<< "$p"; rm -rf "${a[@]}"`), printed into another program or a file (`echo "$p" | xargs rm -rf`,
