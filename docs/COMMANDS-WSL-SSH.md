@@ -234,8 +234,10 @@ jobs.txt`) the card says "Your words don't name exactly this,
 so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. Words
 that say not to ("don't git push yet", "never force push") ask for nothing, so the card still says "You didn't ask for
 this.", typed or spoken, and so does a step on what your words leave out ("delete everything except build/" for
-`rm -r build`) or a step of the kind they rule out ("push without force" for a force push, "prepare the release
-(don't publish)" for `npm publish`, "don't (ever) delete build"). A "not" in a condition, an exception or a reminder leaves the rest as you asked it ("push my changes if
+`rm -r build`), a step of the kind they rule out ("push without force" for a force push, "prepare the release
+(don't publish)" for `npm publish`, "don't (ever) delete build") or one they say not to do by name ("delete build/
+but don't delete src/" for `rm -r src`, "kill 5678 but don't kill 1234"); "delete build/ and don't delete anything
+else" says it of every step but the one you named. A "not" in a condition, an exception or a reminder leaves the rest as you asked it ("push my changes if
 the tests don't fail", "delete everything in build except .gitkeep", "don't forget to push"); any "not" in your words
 still keeps Ember from announcing a step instead of asking. A
 command that asks for what it does (deleting, publishing, secrets, system changes, downloading and running code, or

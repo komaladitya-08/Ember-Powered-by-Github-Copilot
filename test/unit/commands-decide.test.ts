@@ -265,6 +265,49 @@ describe("decideCommand: the rules in order", () => {
     expect(decide("git push origin main", { words: "push main (it's ready)" }).says).not.toContain(LINES.unasked);
   });
 
+  it("says \"You didn't ask for this.\" on the step the words rule out by saying its verb again, and only on it (commands-remote-c1-2)", () => {
+    for (const [cmd, words] of [
+      ["rm -r src", "delete build/ but don't delete src/"],
+      ["rm -r src", "delete build/ and don't delete the src folder"],
+      ["kill 1234", "kill 5678 but don't kill 1234"],
+      ["git branch -D main", "delete old branches, don't delete main"],
+      ["rm -r build && rm -r src", "delete build/ but don't delete src/"],
+      ["rm -r src", "delete build/ and not src/"],
+      ["rm -r src", "delete build/ and don't touch src/"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+    }
+    // The step the words asked for keeps no line about the words.
+    for (const [cmd, words] of [
+      ["rm -r build", "delete build/ but don't delete src/"],
+      ["kill 5678", "kill 5678 but don't kill 1234"],
+      ["rm -r build", "delete build/ and not src/"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+    }
+  });
+
+  it("keeps the asked-for step's card free of \"You didn't ask for this.\" when the words add \"and don't delete anything else\" (commands-remote-r4-6)", () => {
+    expect(decide("rm -rf build", { words: "delete build/ and don't delete anything else" }).says).toEqual(["Deletes build and everything in it."]);
+    expect(decide("rm -rf build", { words: "delete build/ and nothing else" }).says).toEqual(["Deletes build and everything in it."]);
+    expect(decide("kill 5678", { words: "kill 5678 and don't kill anything more" }).says).toEqual(["Stops programs that are running (5678)."]);
+    // Anything else is what those words rule out.
+    for (const [cmd, words] of [
+      ["rm -rf src", "delete build/ and don't delete anything else"],
+      ["rm -rf src", "delete build/ and nothing else"],
+      ["kill 1234", "kill 5678 and don't kill anything more"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+    }
+  });
+
   it("says the words ask for that kind of step when they schedule jobs or prune packages in plain words; it still asks (commands-remote-r3-2)", () => {
     for (const [cmd, words] of [
       ["crontab jobs.txt", "schedule the jobs in jobs.txt"],

@@ -1216,6 +1216,9 @@ function sorted(userWords: string): { asked: string; leftOut: string; ruled: str
   const text = userWords.normalize("NFKC").replace(AFFIRMING, "$1")
     // "everything but build" leaves build out; "but" parts clauses otherwise.
     .replace(/(^|[^\p{L}\p{N}])(everything|anything|all)\s+but(?=\s)/giu, "$1$2 except")
+    // "delete build/ and don't delete src/", "… and nothing else": the "not" turns round only what follows it, so the
+    // step before it stays asked (commands-remote-r4-6).
+    .replace(/\s+(and|or|then|but)\s+(?=((also|then)\s+)?(don['’]?t|do\s+not|never|not|nothing|no)(?=$|[^\p{L}\p{N}]))/giu, ". ")
     .replace(ASIDE, (_m, a?: string, b?: string, c?: string) => { asides.push(a ?? b ?? c ?? ""); return " "; });
   return [...text.split(CLAUSE_BREAK), ...asides.flatMap(a => a.split(CLAUSE_BREAK))].map(sortClause);
 }
@@ -1244,7 +1247,7 @@ function leftOut(f: Finding, userWords: string): boolean {
 
 /** Words a part that rules a step out may hold besides the step ("don't force it", "never, ever push", "no pushing yet"). */
 const RULED_FILLER = new Set([
-  "not", "never", "no", "don", "t", "do", "does", "doesn", "didn", "won", "without", "except", "nor", "neither", "avoid",
+  "not", "never", "no", "nothing", "none", "don", "t", "do", "does", "doesn", "didn", "won", "without", "except", "nor", "neither", "avoid",
   "it", "them", "this", "that", "anything", "ever", "yet", "now", "please", "just", "at", "all", "again", "i", "you", "we",
   "repeat", "mean", "want", "to", "a", "an", "the", "any", "and", "or", "s", "under", "circumstances", "whatever", "with", "using",
 ]);
@@ -1259,6 +1262,7 @@ const RULED_FILLER = new Set([
 export function ruledOut(findings: readonly Finding[], userWords: string): boolean {
   if (!userWords || userWords.trim() === "") return false;
   const parts = sorted(userWords).flatMap(c => [c.ruled, c.leftOut]).filter(c => c.trim() !== "");
+  const asked = wordsOf(affirmed(userWords));
   return findings.some(f => {
     if (leftOut(f, userWords)) return true;
     const row = rowOf(f, findings);
@@ -1266,13 +1270,27 @@ export function ruledOut(findings: readonly Finding[], userWords: string): boole
     // A flag's words: `--force` (and `--force-with-lease`) is "force".
     const flags = f.widening.filter(x => /^--?[a-z]/i.test(x)).map(x => userWordList(x)[0] ?? "").filter(x => x.length > 2);
     const forms = new Set(verbs.flatMap(v => v.split(" ").flatMap(verbForms)));
+    // Its own things' words: "don't delete src/" rules out `rm -r src`, never `rm -r build` (commands-remote-c1-2).
+    const own = new Set(f.objects.flatMap(o => userWordList(o.text)));
+    // "don't delete anything else" rules out only a step the asked-for words don't name (commands-remote-r4-6).
+    const named = f.objects.some(o => o.text !== "" && (nameNamed(o.text, asked.raw) || pathTokenLoose(o, asked) >= 0));
     return parts.some(p => {
       const ws = userWordList(p);
-      if (!hasVerb(ws, verbs) && !ws.some(x => flags.includes(x))) return false;
-      return ws.every(x => RULED_FILLER.has(x) || forms.has(x) || flags.includes(x));
+      const kindSaid = hasVerb(ws, verbs) || ws.some(x => flags.includes(x));
+      const rest = ws.filter(x => !(RULED_FILLER.has(x) || forms.has(x) || flags.includes(x)));
+      // Besides its kind and its things, at most another verb before them ("don't touch src/").
+      const extra = rest.filter(x => !(own.has(x) || AFTER_OBJECT.has(x) || OF_THING.has(x) || OTHER_THAN.has(x)));
+      if (extra.length > 1 || (extra.length === 1 && (kindSaid || rest[0] !== extra[0]))) return false;
+      // "… and nothing else", "don't delete anything else": everything but what the asked-for words named.
+      if (rest.some(x => OTHER_THAN.has(x))) return !named;
+      if (rest.some(x => own.has(x))) return true;
+      return rest.length === 0 && kindSaid;
     });
   });
 }
+
+/** "anything else", "anything more", "any other": what the words didn't name (ruledOut). */
+const OTHER_THAN = new Set(["else", "more", "other", "others"]);
 
 /** Whether the words name a finding's program with its subcommand, in full and in order ("npm ci", "git push"). */
 function subcommandNamed(f: Finding, w: Words): boolean {
