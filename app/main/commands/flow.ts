@@ -31,7 +31,7 @@ import { notReviewable, reviewedDecision, type CommandReviewer } from "./review"
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
-import { mentioned, namedKind } from "./intent";
+import { mentioned, namedKind, ruledOut } from "./intent";
 import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
@@ -802,7 +802,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
   // says so instead of "You didn't ask for this."
   const spoken = ctx.task.spokenWords?.() ?? "";
-  if (d.verdict === "ask" && d.unasked && spoken.trim() && (mentioned(cls.findings, spoken) || namedKind(cls.findings, spoken))) {
+  if (d.verdict === "ask" && d.unasked && spoken.trim() && !ruledOut(cls.findings, spoken) && (mentioned(cls.findings, spoken) || namedKind(cls.findings, spoken))) {
     const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
     if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
     d = { ...d, unasked: false, says };

@@ -314,7 +314,7 @@ function request(url, proxy, signal) {
         parts.push(socket);
         quiet(socket);
         if (res.statusCode !== 200) {
-          fail(Object.assign(new Error(`the proxy answered ${res.statusCode}`), { code: "EMBER_PROXY_REFUSED", status: res.statusCode }));
+          fail(Object.assign(new Error(`the proxy answered ${res.statusCode}`), { code: "EMBER_PROXY_REFUSED", status: res.statusCode, host: u.host }));
           return;
         }
         send(https, { host, port, path: `${u.pathname}${u.search}`, createConnection: () => tls.connect({ socket, host, servername }) });
@@ -341,8 +341,9 @@ const WHY = /** @type {Record<string, string>} */ ({
 });
 
 /**
- * What the launcher says when it can't reach where Ember comes from, or the download stops part way, in place of
- * Node's bare "fetch failed": where, why in a few words, and what to do next (the proxy setting, the browser
+ * What the launcher says when it can't reach where Ember comes from, a proxy or server answers with an error (code
+ * EMBER_HTTP, with the status and the host that answered), or the download stops part way, in place of Node's bare
+ * "fetch failed" or an HTTP status: where, why in a few words, and what to do next (the proxy setting, the browser
  * download, a mirror). A proxy is named by its host only: its address can hold a password.
  * @param {any} err
  * @param {Net & { proxy: { url: URL; setting: string } | null; midway?: boolean }} o
@@ -352,26 +353,44 @@ function cantReach(err, o) {
   const where = releaseSource(o.env);
   const via = o.proxy ? ` through the proxy at ${o.proxy.url.host}` : "";
   const cert = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|ERR_TLS/.test(code);
+  const answered = code === "EMBER_HTTP";
+  const status = answered ? `${err.status}${err.statusText ? ` ${err.statusText}` : ""}` : "";
+  // A proxy's Bad Gateway and Gateway Timeout are its own when it forwards a plain http request: it couldn't get to
+  // that host. Inside an https tunnel it only passes bytes, so the answer is the host's (install-docs-v4-3).
+  const gateway = answered && o.proxy && !err.tunnelled && (err.status === 502 || err.status === 504);
   const why = code === "EMBER_PROXY_REFUSED"
     ? err.status === 407 ? "the proxy asked for a user name and password (407)" : `the proxy refused to connect to it (${err.status})`
+    : gateway ? `the proxy couldn't get an answer from ${err.host} (${status})`
+    : answered ? `${err.host} answered ${status}`
     : cert ? `the certificate it showed isn't one this computer trusts (${code})`
     : WHY[code] ? `${WHY[code]} (${code})`
     : code || String(err?.message ?? err);
-  const first = o.midway ? `The download of ${o.asset} from ${where}${via} stopped: ${why}.` : `Ember couldn't reach ${where}${via}: ${why}.`;
+  const first = o.midway ? `The download of ${o.asset} from ${where}${via} stopped: ${why}.`
+    : answered ? `The download of Ember ${o.version} from ${where}${via} failed: ${why}.`
+    : `Ember couldn't reach ${where}${via}: ${why}.`;
   const secure = !o.env.EMBER_NPM_DOWNLOAD_BASE || /^https:/i.test(o.env.EMBER_NPM_DOWNLOAD_BASE);
+  // The host that answered or was refused, which an organisation's allow-list may be missing (GitHub's storage host,
+  // after its redirect): not for an answer inside an https tunnel, the host's own, unless it is a block (one from a
+  // proxy that inspects HTTPS).
+  const ask = o.proxy && (code === "EMBER_PROXY_REFUSED" || (answered && (!err.tunnelled || err.status === 403 || err.status === 451)));
   const next = code === "EMBER_PROXY_REFUSED" && err.status === 407 && o.proxy
     ? `Put your user name and password in ${o.proxy.setting} (http://name:password@${o.proxy.url.host}).`
     : cert ? "Behind a proxy that inspects HTTPS, set NODE_EXTRA_CA_CERTS to your organisation's certificate file."
-    : o.proxy ? `Check ${o.proxy.setting}, which names that proxy.`
-    : o.midway ? ""
+    : ask ? `Check ${o.proxy.setting}, which names that proxy, or ask whoever runs it to let this computer reach ${err.host}.`
+    : o.proxy && !answered ? `Check ${o.proxy.setting}, which names that proxy.`
+    : o.midway || answered ? ""
     : `If this computer reaches the internet through a proxy, set ${secure ? "HTTPS_PROXY" : "HTTP_PROXY"} (or npm's ${secure ? "https-proxy" : "proxy"} setting) to it.`;
   const mirror = o.env.EMBER_NPM_DOWNLOAD_BASE ? "" : ", or set EMBER_NPM_DOWNLOAD_BASE to your organisation's mirror";
-  return `${first}${next ? ` ${next}` : ""} Then run '${o.name}' again, or download ${o.asset} from https://github.com/${REPO}/releases/tag/v${o.version} in your browser${mirror}.`;
+  // A server's own failure (5xx) is its to mend: run again later.
+  const later = answered && !gateway && err.status >= 500 ? " later" : "";
+  const again = `un '${o.name}' again${later}, or download ${o.asset} from https://github.com/${REPO}/releases/tag/v${o.version} in your browser${mirror}.`;
+  // "Then" only after a step to take first.
+  return next ? `${first} ${next} Then r${again}` : `${first} R${again}`;
 }
 
 /**
- * GET `url`, following redirects, through the proxy proxyFor picks for each address; throws with the status on
- * anything but 2xx, and with cantReach's sentence when the network fails.
+ * GET `url`, following redirects, through the proxy proxyFor picks for each address; throws with cantReach's sentence
+ * (and the status) on any answer but 2xx, and with cantReach's sentence when the network fails.
  * @param {string} url
  * @param {Net} o
  * @returns {Promise<{ status: number; length: number; body: http.IncomingMessage; text(): Promise<string> }>}
@@ -400,7 +419,11 @@ async function get(url, o) {
     }
     if (status < 200 || status >= 300) {
       res.resume();
-      throw Object.assign(new Error(`downloading ${url} failed: HTTP ${status} ${res.statusMessage ?? ""}`.trim()), { status });
+      // Named by the host that answered (after a redirect, not the one asked first), its status text kept printable.
+      const statusText = String(res.statusMessage ?? "").replace(/[^\x20-\x7e]/g, "").trim().slice(0, 60);
+      // Inside an https tunnel (through a proxy), the answer is the host's own, not the proxy's (install-docs-v4-3).
+      const tunnelled = proxy !== null && new URL(at).protocol === "https:";
+      throw Object.assign(new Error(cantReach({ code: "EMBER_HTTP", status, statusText, host: new URL(at).host, tunnelled }, { ...o, proxy })), { status });
     }
     const body = res;
     return {
@@ -443,8 +466,11 @@ async function download(url, file, o) {
   } catch (err) {
     if (tty && shown >= 0) process.stderr.write("\n");
     if (o.signal?.aborted) throw o.signal.reason;
-    // A write that failed (a full disk) names its file; anything else is the network stopping part way.
-    if (/** @type {any} */ (err)?.path) throw err;
+    const e = /** @type {any} */ (err);
+    // This computer's disk, not the network: no room left (a write stream's failed write names no file, so its code
+    // tells it; ensureInstalled says it with the size), or a file that couldn't be opened, which names its file.
+    if (ROOM.has(e?.code)) throw Object.assign(e, { bytes: total });
+    if (e?.path) throw err;
     throw new Error(cantReach(err, { ...o, proxy: proxyFor(url, o.env, npmrcProxy(o.env)), midway: true }), { cause: err });
   }
   if (tty) process.stderr.write("\n");
@@ -452,31 +478,42 @@ async function download(url, file, o) {
 }
 
 /**
- * Runs a command to completion, throwing with its output when it fails.
+ * Runs a command to completion, rejecting with its output when it fails. Not spawnSync: unpacking takes seconds, and
+ * the launcher must hear a stop meanwhile (`signal` ends the command).
  * @param {string} file
  * @param {string[]} args
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<void>}
  */
-function run(file, args) {
-  const r = spawnSync(file, args, { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
-  if (r.error) throw new Error(`${file} could not start: ${r.error.message}`);
-  if (r.status !== 0) throw new Error(`${file} ${args.join(" ")} failed (exit ${r.status}): ${`${r.stderr}${r.stdout}`.trim().slice(-2000)}`);
+function run(file, args, signal) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], signal });
+    let said = "";
+    const keep = (/** @type {Buffer} */ d) => { said = `${said}${d}`.slice(-4000); };
+    child.stdout.on("data", keep);
+    child.stderr.on("data", keep);
+    child.once("error", err => { if (!signal?.aborted) reject(new Error(`${file} could not start: ${err.message}`)); });
+    // What it said is kept apart too (`output`), to be read without the paths in its command line.
+    child.once("close", (code, sig) => code === 0 ? resolve() : reject(Object.assign(new Error(`${file} ${args.join(" ")} failed (exit ${code ?? sig}): ${said.trim().slice(-2000)}`), { output: said })));
+  });
 }
 
 /**
  * Unpacks a zip into `dir`: Windows's tar.exe, or PowerShell's Expand-Archive when tar.exe is missing; ditto on macOS
- * (it keeps the app's symlinks and signature).
+ * (it keeps the app's symlinks and signature). `signal` ends it.
  * @param {string} zip
  * @param {string} dir
+ * @param {AbortSignal} [signal]
  */
-function unzip(zip, dir) {
+function unzip(zip, dir, signal) {
   if (process.platform === "win32") {
     const tar = pathWin32.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
-    if (fs.existsSync(tar)) return run(tar, ["-x", "-f", zip, "-C", dir]);
+    if (fs.existsSync(tar)) return run(tar, ["-x", "-f", zip, "-C", dir], signal);
     const q = (/** @type {string} */ s) => `'${s.replace(/'/g, "''")}'`;
-    return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath ${q(zip)} -DestinationPath ${q(dir)} -Force`]);
+    return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath ${q(zip)} -DestinationPath ${q(dir)} -Force`], signal);
   }
-  if (process.platform === "darwin") return run("ditto", ["-x", "-k", zip, dir]);
-  return run("unzip", ["-q", zip, "-d", dir]);
+  if (process.platform === "darwin") return run("ditto", ["-x", "-k", zip, dir], signal);
+  return run("unzip", ["-q", zip, "-d", dir], signal);
 }
 
 /**
@@ -500,14 +537,27 @@ export async function ensureInstalled(o) {
   }
 
   const parent = p.dirname(dir);
-  fs.mkdirSync(parent, { recursive: true });
+  // A full disk or quota, wherever it strikes (a disk already full strikes here or at the lock, before the download's
+  // size is known), said as this computer's, not as Node's bare "ENOSPC" (install-docs-v4-1).
+  const roomy = (/** @type {any} */ err) => ROOM.has(err?.code) ? new Error(noRoom(err, { folder: parent, version: o.version, name }), { cause: err }) : err;
+  try {
+    fs.mkdirSync(parent, { recursive: true });
+  } catch (err) {
+    throw roomy(err);
+  }
   // Caught from before the lock is taken until it is given back, so no stop leaves it behind: the download is ended,
   // and the finally below removes the work folder and the lock. A second Ctrl+C stops the launcher at once.
   const stop = new AbortController();
-  const onSignal = (/** @type {string} */ sig) => stop.abort(Object.assign(
-    new Error(`Stopped before Ember ${o.version} was installed, and nothing was kept. Run '${name}' again to download it.`),
-    { code: "EMBER_NPM_STOPPED", exitCode: 128 + (/** @type {Record<string, number>} */ ({ SIGHUP: 1, SIGINT: 2, SIGTERM: 15 }))[sig] },
-  ));
+  const onSignal = (/** @type {string} */ sig) => {
+    // A reinstall stopped before it publishes leaves the copy that was there, which a plain run starts.
+    const kept = fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe));
+    stop.abort(Object.assign(
+      new Error(kept
+        ? `Stopped before Ember ${o.version} was downloaded again, and the copy you had is kept. Run '${name}' to start it, or '${name} --npm-reinstall' to download it again.`
+        : `Stopped before Ember ${o.version} was installed, and nothing was kept. Run '${name}' again to download it.`),
+      { code: "EMBER_NPM_STOPPED", exitCode: 128 + (/** @type {Record<string, number>} */ ({ SIGHUP: 1, SIGINT: 2, SIGTERM: 15 }))[sig] },
+    ));
+  };
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
   for (const sig of signals) process.once(sig, onSignal);
   const unhook = () => { for (const sig of signals) process.removeListener(sig, onSignal); };
@@ -517,7 +567,7 @@ export async function ensureInstalled(o) {
     takeLock({ lock, parent, version: o.version, name, p });
   } catch (err) {
     unhook();
-    throw err;
+    throw roomy(err);
   }
   let work;
   let preserveWork = false;
@@ -544,7 +594,16 @@ export async function ensureInstalled(o) {
     const stage = p.join(work, "app");
     fs.mkdirSync(stage);
     if (target.kind === "zip") {
-      unzip(file, stage);
+      const failed = await unzip(file, stage, stop.signal).then(() => null, err => err);
+      // Ctrl+C reaches the unpacker too, which can end before the launcher hears of it: a moment for the stop to
+      // arrive, so it is said as a stop, not as the unpacker's failure (install-docs-r3-1).
+      if (failed && !stop.signal.aborted) await new Promise(resolve => setTimeout(resolve, 100));
+      if (stop.signal.aborted) throw stop.signal.reason;
+      // The zips unpack to about 2.5 times their size, so the disk often fills here: the unpacker's words for that are
+      // said as noRoom's (install-docs-v4-1).
+      const full = roomSaid(failed?.output);
+      if (full) throw Object.assign(failed, { code: full });
+      if (failed) throw failed;
       fs.rmSync(file, { force: true });
     } else {
       fs.renameSync(file, p.join(stage, target.asset));
@@ -554,10 +613,15 @@ export async function ensureInstalled(o) {
     if (target.kind === "appimage") fs.chmodSync(staged, 0o755);
     if (platform === "darwin") {
       // The download came through Node, which sets no quarantine flag, but a copied or re-downloaded cache can carry
-      // one; Ember is ad-hoc signed, so Gatekeeper would refuse it with the flag on.
-      spawnSync("xattr", ["-dr", "com.apple.quarantine", p.join(stage, target.app)], { stdio: "ignore" });
+      // one; Ember is ad-hoc signed, so Gatekeeper would refuse it with the flag on. Through run(), not spawnSync, so
+      // a stop meanwhile is heard (install-docs-v4-2); a failure is ignored, as it always was.
+      await run("xattr", ["-dr", "com.apple.quarantine", p.join(stage, target.app)], stop.signal).catch(() => {});
     }
     fs.writeFileSync(p.join(stage, MARKER), `${target.asset} ${got}\n`);
+    // A stop is heard only when the event loop turns, and nothing from here on lets it until the signal handlers are
+    // gone: one turn first, so a stop that landed during the steps above publishes and starts nothing (install-docs-v4-2).
+    await new Promise(resolve => setImmediate(resolve));
+    if (stop.signal.aborted) throw stop.signal.reason;
 
     // Keep the previous installation until publication succeeds. In particular, Windows open handles can make
     // either rename fail. The version lock prevents another installer from publishing into the rollback gap.
@@ -582,8 +646,9 @@ export async function ensureInstalled(o) {
     say(`installed Ember ${o.version} in ${dir}`);
     return { dir, exe: at(target.exe), app: at(target.app), fresh: true };
   } catch (err) {
-    installError = err;
-    throw err;
+    // A full disk or quota, wherever it struck (the download, the work folder, the unpacking, the marker).
+    installError = roomy(err);
+    throw installError;
   } finally {
     // Cleanup must not hide the original failure, especially the saved-copy paths after a failed rollback.
     const cleanupErrors = [];
@@ -607,6 +672,35 @@ export async function ensureInstalled(o) {
         { cause: installError ?? cleanupErrors[0] });
     }
   }
+}
+
+/** Node's codes for a disk with no room left: full, or the person's quota used up. */
+const ROOM = new Set(["ENOSPC", "EDQUOT"]);
+
+/**
+ * The ROOM code an unpacker's words name, or undefined: unzip's "write error (disk full?)", ditto's and tar.exe's "No
+ * space left on device" (macOS's "Disc quota exceeded" for a quota), Expand-Archive's "There is not enough space on
+ * the disk".
+ * @param {unknown} said what the unpacker printed
+ */
+function roomSaid(said) {
+  const text = String(said ?? "");
+  if (/\b(?:disc|disk) quota\b|\bquota (?:exceeded|violation)|\bEDQUOT\b/i.test(text)) return "EDQUOT";
+  if (/no space left on device|\bdisk (?:is )?full\b|not enough space on the disk|\bENOSPC\b/i.test(text)) return "ENOSPC";
+  return undefined;
+}
+
+/**
+ * What the launcher says when the cache's disk has no room for Ember, in place of Node's "ENOSPC": where, how big the
+ * download is (when known), and what to do, which is this computer's to fix: running again or another download
+ * wouldn't help.
+ * @param {any} err a ROOM error, with `bytes` when the download's size is known
+ * @param {{ folder: string; version: string; name: string }} o
+ */
+function noRoom(err, o) {
+  const why = err.code === "EDQUOT" ? "your disk quota is used up" : "the disk is full";
+  const size = err.bytes ? ` (${Math.max(1, Math.round(err.bytes / 1048576))} MB)` : "";
+  return `There isn't room in ${o.folder} for Ember ${o.version}${size}: ${why} (${err.code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run '${o.name}' again.`;
 }
 
 /**
@@ -830,6 +924,26 @@ export function handedOver(version, older, name) {
 }
 
 /**
+ * What the launcher says when the Ember it started ended at once with 0 and isn't what runs: it handed what was asked
+ * to an Ember already running (or, on a Mac, open(1) ended, as it always does).
+ * @param {{ version: string; platform: string; name: string; running: string | null; others: { version: string; dir: string }[] }} o
+ *   running: the running programs' command lines (ps), or null where they can't be read (Windows); others: the
+ *   cache's other complete versions
+ */
+export function afterHandover(o) {
+  const sep = o.platform === "win32" ? "\\" : "/";
+  const running = o.running;
+  const older = running === null ? null : o.others.find(c => running.includes(`${c.dir}${sep}`))?.version ?? null;
+  if (older !== null) return handedOver(o.version, older, o.name);
+  // A Mac's open(1) tells nothing, and a new Ember.app may still be starting (Gatekeeper's first check).
+  if (o.platform === "darwin") return `started Ember ${o.version}`;
+  // Where what runs can't be read (Windows), only another version in the cache could be an older Ember running: with
+  // none, running `ember` again for its settings, as the help says, isn't told it may be out of date (install-docs-r3-3).
+  if (running === null && !o.others.length) return "Ember was already running, so it took this.";
+  return handedOver(o.version, null, o.name);
+}
+
+/**
  * The command the person ran, to name it in what the launcher says: `npx ember-copilot` under npx (which npm runs
  * with npm_command "exec"), otherwise `ember-copilot` or `ember` as its bin was called (npm's Windows shims run the
  * script itself, which reads as `ember`).
@@ -934,10 +1048,8 @@ export async function main(argv, o = {}) {
       // Nothing is removed: Start at login still points at the one running.
       let names = [];
       try { names = fs.readdirSync(parent); } catch { /* No cache folder to read: the older one can't be named. */ }
-      const older = names.find(v => v !== version && /^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(v) && shows(p.join(parent, v))) ?? null;
-      // A Mac's open(1) tells nothing, and a new Ember.app may still be starting (Gatekeeper's first check).
-      if (older !== null || platform !== "darwin") say(handedOver(version, older, name));
-      else say(`started Ember ${version}`);
+      const others = names.filter(v => v !== version && /^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(v) && fs.existsSync(p.join(parent, v, MARKER)));
+      say(afterHandover({ version, platform, name, running: ps, others: others.map(v => ({ version: v, dir: p.join(parent, v) })) }));
     }
   }
   return code;

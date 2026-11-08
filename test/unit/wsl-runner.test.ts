@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NO_RC, WSL_CD, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
 import { OPEN_SPAN_END } from "../../app/main/commands/prompts";
-import type { CommandCard, CommandService, JobHostRef, RunSpec, RunExit } from "../../app/main/commands/types";
+import type { CommandCard, CommandService, JobHostRef, PathFact, RunSpec, RunExit } from "../../app/main/commands/types";
 import { runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
 import { BOOT_TIMEOUT_MS, createWslExec } from "../../app/main/wsl/discover";
 import {
@@ -19,6 +19,10 @@ import {
   windowsRunEnv, wslLaunch, type WslRunner,
 } from "../../app/main/wsl/runner";
 import type { WslDistro } from "../../app/main/wsl/types";
+import { classifyCommand } from "../../app/main/commands/classify";
+import { decideCommand } from "../../app/main/commands/decide";
+import { withRealPaths } from "../../app/main/commands/scripts";
+import { bindingOf, contextOf, factsOf } from "../fixtures/commands/corpus";
 import { fakeLog, fakeSpawn, flush, forbiddenOptions, answerWith, utf16, type SpawnCall } from "./wsl-wa-fakes";
 
 const EXE = "C:\\Program Files\\WSL\\wsl.exe";
@@ -141,6 +145,15 @@ describe("parseInspect and parseGitFacts", () => {
       { exists: true, real: "/home/ana/.ssh" }, { exists: false, real: "/home/ana/new\tname" }, { exists: true, real: null },
     ]);
     expect(parseInspect("1\t/a\n", 2)).toBeNull();
+  });
+
+  it("reads which paths are folders, so a move into one is about the file inside it (commands-remote-r1, commands-remote-r3-1)", () => {
+    expect(parseInspect("1\t1\t/home/ana/Documents\n0\t0\t/home/ana/new\tname\n1\t0\t/home/ana/a.txt\n", 3)).toEqual([
+      { exists: true, real: "/home/ana/Documents", dir: true }, { exists: false, real: "/home/ana/new\tname" }, { exists: true, real: "/home/ana/a.txt" },
+    ]);
+    // The script asks the distro itself: a folder (or a link to one) prints 1 between the two columns.
+    expect(INSPECT_SCRIPT).toContain("[ -d \"$p\" ]");
+    expect(INSPECT_SCRIPT).toContain("printf '%s\\t%s\\t%s\\n' \"$e\" \"$d\" \"$r\"");
   });
 
   it("reads git's push facts; outside a work tree there are none", () => {
@@ -728,6 +741,31 @@ describe("WSL runner: inspect and git facts", () => {
     expect(call.wsl).toEqual(["-d", "Ubuntu", "--cd", "/", "--exec", "/bin/sh", "-s"]);
     expect(call.child.stdinText().startsWith("{\ncd -- '/home/ana/proj' || exit 97\n")).toBe(true);
     expect(hereDoc(call.child.stdinText())).toEqual(["/home/ana/k", "/tmp/$(reboot)"]);
+  });
+
+  it("says which paths are folders, so a download moved into one marks only its file there (commands-remote-r3-1)", async () => {
+    const w = distro({ inspect: lines => lines.map(p => (p === "/home/ana/proj" ? `1\t1\t${p}\n` : `0\t0\t${p}\n`)).join("") });
+    expect(await w.runner.inspect(["/home/ana/proj", "/home/ana/proj/data.csv"], "/home/ana")).toEqual([
+      { exists: true, real: "/home/ana/proj", dir: true }, { exists: false, real: "/home/ana/proj/data.csv" },
+    ]);
+    // As the flow carries it: the folder stops counting as a download, so npm test there runs.
+    const ctx = contextOf("wsl", ["/tmp/data.csv"]);
+    const moved = classifyCommand("mv /tmp/data.csv ~/proj", "bash", ctx);
+    const facts = await w.runner.inspect(moved.probe, "/home/ana");
+    const paths = new Map(moved.probe.map((p, k) => [p, facts[k]]));
+    const after = withRealPaths(moved, paths);
+    expect(after.downloads).toContain("/home/ana/proj/data.csv");
+    expect(after.downloads).not.toContain("/home/ana/proj");
+    const decided = (facts2: Map<string, PathFact>) => decideCommand({
+      cls: withRealPaths(moved, facts2), paths: facts2, git: null, binding: bindingOf("wsl"), facts: factsOf("wsl", {}), mode: "on", userAskEvery: false,
+      userWords: "", agreed: [], tainted: false, carried: null,
+    });
+    // Into a folder with no data.csv in it the move runs; with one, the card says that file, never "Replaces ~/proj".
+    expect(decided(paths)).toMatchObject({ verdict: "run", says: [] });
+    const there = new Map([...paths].map(([p, f]) => [p, p === "/home/ana/proj/data.csv" ? { ...f, exists: true } : f]));
+    expect(decided(there).says).toEqual(["Replaces ~/proj/data.csv if it exists.", "You didn't ask for this."]);
+    const test = classifyCommand("npm test", "bash", contextOf("wsl", after.downloads));
+    expect(test.findings.map(f => f.rule)).not.toContain("escape.run-downloaded");
   });
 
   it("answers \"couldn't tell\" for everything when the distro fails, and never throws", async () => {

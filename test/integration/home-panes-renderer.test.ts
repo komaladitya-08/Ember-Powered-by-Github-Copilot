@@ -752,6 +752,34 @@ describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 pro
     await page.close();
   });
 
+  it("leaves the how-to and the status line alone when a push brings the same words, so a screen reader hears each once (install-docs-c3-2)", async () => {
+    const page = await open("checks", { settings, platform: linux("rpm"), updates: out });
+    await expect.poll(() => page.locator("#updates-how code").count()).toBe(1);
+    await page.evaluate(() => {
+      const w = window as unknown as { __muts: string[] };
+      w.__muts = [];
+      for (const id of ["updates-how", "updates-status"]) {
+        new MutationObserver(rs => { for (const r of rs) w.__muts.push(`${id}: -${r.removedNodes.length} +${r.addedNodes.length}`); })
+          .observe(document.getElementById(id)!, { childList: true, subtree: true, characterData: true });
+      }
+    });
+    // Main's pushes during one Check now with 0.1.2 already known (checking, checking, available), then the refresh a
+    // settings change brings (another available).
+    for (const phase of ["checking", "checking", "available", "available"] as const) {
+      await page.evaluate(s => window.__pane.emit("onUpdates", s), { ...out, phase });
+    }
+    await page.waitForTimeout(100);
+    // The status line changes twice ("Checking…", then "Ember 0.1.2 is out."); the polite how-to is never rewritten.
+    expect(await page.evaluate(() => (window as unknown as { __muts: string[] }).__muts)).toEqual(["updates-status: -1 +1", "updates-status: -1 +1"]);
+    expect(await page.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out.");
+    expect(await page.locator("#updates-how code").allTextContents()).toEqual(["sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm"]);
+    // A different version's words are written: the how-to follows what is out.
+    await page.evaluate(s => window.__pane.emit("onUpdates", s), { ...out, latest: "0.1.3" });
+    await expect.poll(() => page.locator("#updates-how code").allTextContents()).toEqual(["sudo dnf upgrade ./ember-0.1.3-1.el8.x86_64.rpm"]);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
   it("keeps the version it found, See what's new… and the how-to when a later look fails (install-docs-c2-2)", async () => {
     const page = await open("checks", { settings, platform: linux("rpm"), updates: { phase: "failed", latest: "0.1.2", checkedAt: out.checkedAt } });
     await expect.poll(() => page.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out. Ember couldn't look for anything newer just now, and will try again tomorrow.");

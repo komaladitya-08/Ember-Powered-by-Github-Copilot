@@ -75,10 +75,15 @@ addresses and IPv4 ranges such as `10.0.0.0/8`, each with an optional `:port`. A
 proxy's address (`http://name:password@proxy.example.com:8080`); the launcher never prints them. Behind a proxy that
 inspects HTTPS, set `NODE_EXTRA_CA_CERTS` to your organisation's certificate file, as for any Node program.
 
-When the download can't be reached, the launcher says why in one sentence (for example "Ember couldn't reach GitHub
-Releases through the proxy at proxy.example.com:8080: the proxy asked for a user name and password (407).") and what to
-do: fix the proxy setting, download the release file from the Releases page in your browser, or point
-`EMBER_NPM_DOWNLOAD_BASE` at your organisation's mirror. It gives up on a connection that is silent for 30 seconds.
+When the download can't be reached, or a proxy or server answers with an error, the launcher says why in one sentence
+(for example "Ember couldn't reach GitHub Releases through the proxy at proxy.example.com:8080: the proxy asked for a
+user name and password (407).") and what to do: fix the proxy setting, ask for the host it names to be allowed when a
+proxy blocks it (after GitHub's redirect, that is its storage host), run `ember` again later when the server itself
+fails (an error answer inside an HTTPS proxy's tunnel is the server's, not the proxy's), download the release file
+from the Releases page in your browser, or point `EMBER_NPM_DOWNLOAD_BASE` at your organisation's mirror. It gives up
+on a connection that is silent for 30 seconds. If the cache folder's disk or your quota is full, or fills up as Ember
+is downloaded or unpacked, it says there isn't room and where (and how big the download is, once it knows): free some
+space or set `EMBER_NPM_CACHE` to a folder with room, then run `ember` again.
 
 ## Failed or interrupted installs
 
@@ -91,8 +96,9 @@ Only one installer per version runs at a time. A second one says "Another 'ember
 <version>" and starts nothing; run `ember` again once the first has finished. A normal launch can still use a complete
 cached copy while a reinstall downloads.
 
-Ctrl+C, closing the terminal or stopping the launcher while it downloads ends the download and removes what it had
-made, its `.<version>-install-lock` folder included, so the next `ember` starts over (it exits with 130 after Ctrl+C).
+Ctrl+C, closing the terminal or stopping the launcher while it downloads or unpacks Ember ends that and removes what
+it had made, starting nothing, its `.<version>-install-lock` folder included, so the next `ember` starts over (it exits with 130 after Ctrl+C).
+A stopped `--npm-reinstall` keeps the copy you had, which `ember` starts.
 An installer killed outright (`kill -9`, a crash, a power cut) leaves its lock, which names its process: the next
 `ember` on the same computer sees that process is gone, takes the lock over and removes the half-made download. A lock
 whose installer is still running, was started on another computer sharing the cache, or names no process is never
@@ -108,7 +114,9 @@ when I log in** at itself), removes the older versions from the cache; one that 
 installer is working on, stays until the next start. `ember doctor` and `--npm-install-only` remove nothing, since
 they don't start Ember. If an older Ember is still running, the new one hands what you asked over to it instead of
 starting: the launcher says which version is running ("Ember 0.1.1 is already running, so it took this instead of
-starting 0.1.2") and removes nothing, so quit Ember and run `ember` again.
+starting 0.1.2") and removes nothing, so quit Ember and run `ember` again. On Windows, where the launcher can't see
+which one is running, it says only that Ember was already running and took it, adding the advice to quit when the cache
+also holds another version.
 
 ## Uninstall
 

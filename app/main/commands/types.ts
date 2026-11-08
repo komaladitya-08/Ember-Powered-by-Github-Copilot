@@ -63,6 +63,8 @@ export interface Finding {
 export const PKG_REMOVES = "Removes packages.";
 /** `npm prune`'s line: it removes what the project doesn't list, which no words name exactly, so it always asks. */
 export const PKG_PRUNES = "Removes packages the project doesn't list.";
+/** `yarn autoclean --force`'s line: it deletes files in the installed packages, so it always asks too (commands-remote-r1). */
+export const PKG_CLEANS = "Deletes files in node_modules that .yarnclean lists.";
 
 /** One simple command as parsed (wrappers unwrapped, quotes removed). */
 export interface ParsedCommand {

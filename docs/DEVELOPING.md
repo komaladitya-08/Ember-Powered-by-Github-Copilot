@@ -2366,14 +2366,22 @@ Answer speech belongs to the request that actually starts, including queued type
 The npm launcher serialises installs of a version with a cache-adjacent directory lock, keeps the previous install
 as a backup until publication succeeds, and restores it after a failed publication rename. If rollback fails too,
 both the backup and checked stage are retained and their paths reported. The lock holds an `owner` file (`<pid>
-<hostname>`); SIGINT, SIGTERM and SIGHUP while it is held abort the download and remove the work folder and the lock
-(exit 128 + the signal), and a later installer takes over a lock only when its owner was on this computer and that pid
+<hostname>`); SIGINT, SIGTERM and SIGHUP while it is held abort the download, or the unpacking (`unzip()` runs tar.exe,
+ditto or unzip, and a Mac's `xattr -dr com.apple.quarantine` runs after it, asynchronously, so a stop is heard and said
+as one; the installer lets the event loop turn once more before publishing, so a stop that landed during its last
+synchronous steps publishes nothing), and remove the work folder and the lock (exit 128 +
+the signal), and a later installer takes over a lock only when its owner was on this computer and that pid
 is gone (`takeLock()`, through a `taken-<pid>` folder only one installer can make), removing the stopped one's work
 folders unless they hold a saved `previous` copy. `packages/npm/README.md` says what a person sees. Downloads use
 node:http and node:https, not fetch, through the proxy npm would use (`proxyFor()`: npm's `https-proxy` or `proxy`
 from `npm_config_*` or the `.npmrc` files, then `HTTPS_PROXY` or `HTTP_PROXY`, never for `NO_PROXY`'s hosts or this
-computer; https by a CONNECT tunnel), and a network failure is one sentence with the next steps (`cantReach()`), never
-Node's "fetch failed". `ember doctor` and `ember --doctor`
+computer; https by a CONNECT tunnel), and a network failure, or an error status from a proxy or server, is one
+sentence naming the host that answered and the next steps (`cantReach()`), never Node's "fetch failed" or a bare HTTP
+status (inside a tunnel a status is the host's own, so only a 403 or 451 there, or a refused CONNECT, sends the person
+to whoever runs the proxy, and a server's 5xx says to run it again later); a full disk or quota (`ENOSPC`, `EDQUOT`, or the unpacker's words for them, `roomSaid()`), from making the
+cache folder and the lock to writing the marker, names the cache folder and, once known, the download's size instead
+(`noRoom()`).
+`ember doctor` and `ember --doctor`
 run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
 Ember that stops at once is reported with what it said and its exit code. The AppImage's AppRun and the RPM's `ember`
@@ -2385,6 +2393,7 @@ cache's other complete versions (renamed aside first, so a Windows Ember running
 keeps it), never one whose installer holds its lock or whose folder a running program's command line
 (`ps -axo command=`) names; the setup check and `--npm-install-only` remove nothing, because only a running Ember points
 **Start Ember when I log in** at itself. A start that ended at once with 0 and isn't what runs has handed over to an
-Ember already running (`startWatched()`): it removes nothing and says so (`handedOver()`, naming the cache's version
-that runs when `ps` shows it). Tests in
+Ember already running (`startWatched()`): it removes nothing and says so (`afterHandover()`: `handedOver()`, naming
+the cache's version that runs when `ps` shows it; where `ps` isn't read, on Windows, the advice to quit only when the
+cache holds another version). Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.

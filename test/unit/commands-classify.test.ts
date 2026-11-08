@@ -130,6 +130,59 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(says("reg add HKLM\\SOFTWARE\\Policies\\Ember /v x /d 1", "powershell", "win32")).toBe(CHANGE);
   });
 
+  it("refuses Ember's own files reached through a loop's list or a variable the command sets, as when they are named (commands-remote-c3-2)", () => {
+    // As the flow judges a loop: by the commands in it.
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "for f in ~/.config/ember/*; do rm -f \"$f\"; done",
+      "for f in ~/.config/ember; do rm -rf \"$f\"; done",
+      "for f in ~/.config/ember/audit/*; do : > \"$f\"; done",
+      "for f in ~/.config/ember/settings.json; do cat \"$f\"; done",
+      "for f in ~; do rm -rf \"$f\"; done",
+      "for f in ~/.config; do rm -rf \"$f\"; done",
+      "d=~/.config/ember; rm -rf \"$d\"",
+      "d=~/.config; rm -rf \"$d/ember\"",
+      "export d=~/.config/ember; rm -rf \"$d\"",
+      "for f in *.log; do f=~/.config/ember; rm -rf \"$f\"; done",
+      "for d in ~/.config ~/.cache; do rm -rf \"$d\"/ember; done",
+      // A name Ember can't see, right where one of its folders is or inside one.
+      "rm -rf ~/.config/$x",
+      "rm -rf ~/.config/emb$x",
+      "cat ~/.config/ember/$x",
+    ]) expect(refused(cmd), cmd).toMatch(/^Ember won't run this: it would (change|read) Ember's own/);
+    expect(refused("for f in ~/.config/ember/settings.json; do cat \"$f\"; done")).toBe(READ);
+    expect(refused("for f in ~/.config/ember/*; do rm -f \"$f\"; done")).toBe(CHANGE);
+    expect(refused("for f in ~/.config/ember/audit/*; do : > \"$f\"; done")).toBe(CHANGE);
+    expect(refused("d=~/.config; cat \"$d/ember/settings.json\"")).toBe(READ);
+    // Nothing of Ember's: asked or run as before.
+    for (const cmd of [
+      "for f in *.log; do rm \"$f\"; done", "d=build; rm -rf \"$d\"", "for d in ~/Documents ~/Pictures; do du -sh \"$d\"; done",
+      "ls ~/.config/$x", "rm -rf ~/$x", "for f in a.txt b.txt; do wc -l \"$f\"; done", "x=~/.config; ls \"$x\"",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+  });
+
+  it("refuses Ember's own folder reached through a variable and a pattern, set --, printf -v or a here-string a read gets (commands-remote-v4-4)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "d=~/.config; rm -rf \"$d\"/emb*",
+      "set -- ~/.config/ember; rm -rf \"$1\"",
+      "set -- a ~/.config/ember; shift; rm -rf \"$1\"",
+      "set -- ~/.config/ember; rm -rf \"$@\"",
+      "printf -v d %s ~/.config/ember; rm -rf \"$d\"",
+      "printf -v d '%s/ember' ~/.config; rm -rf \"$d\"",
+      "while read f; do rm -rf \"$f\"; done <<< ~/.config/ember",
+      "while read -r f; do rm -rf \"$f\"; done <<EOF\n/home/ana/.config/ember\nEOF",
+      "read d <<< ~/.config/ember; rm -rf \"$d\"",
+      // A pattern Ember sees only the start of, where it could match one of Ember's folders.
+      "rm -rf ~/.c*/$x",
+    ]) expect(refused(cmd), cmd).toBe(CHANGE);
+    // Nothing of Ember's, or a pattern the quotes turn into a name: asked or run as before.
+    for (const cmd of [
+      "d=build; rm -rf \"$d\"/*.o", "d=~/.config; rm -rf \"$d\"/\"emb*\"", "set -- build dist; rm -rf \"$@\"", "set -e; rm -rf \"$1\"",
+      "while read f; do rm -rf \"$f\"; done <<< build", "printf -v d %s build; rm -rf \"$d\"", "cat ~/.cache/*$x",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+  });
+
   it("keeps the input refusal's words, and lets a read refusal give way to it", () => {
     expect(says("xdotool key y")).toBe(INPUT);
     expect(says("cat ~/.config/ember/settings.json; xdotool key y")).toBe(INPUT);
@@ -560,7 +613,13 @@ describe("the card's words from the classifier (review #214)", () => {
     // As the flow judges a loop: by the commands in it.
     const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.map(f => f.says);
     expect(says("for f in *.log; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
-    expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes each file the loop names and everything in it."]);
+    expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes a and b and everything in them."]);
+    // A list of names is said by its names, so a loop over folders never reads as harmless (commands-remote-c2-3).
+    expect(says("for f in ~/Documents ~/Pictures; do rm -rf \"$f\"; done")).toEqual(["Deletes ~/Documents and ~/Pictures and everything in them."]);
+    expect(says("for f in notes.txt; do rm \"$f\"; done")).toEqual(["Deletes notes.txt."]);
+    expect(says("for f in *.log old/*.txt; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
+    // A variable the loop's body sets again holds what it was set to, not the loop's file (commands-remote-c2-3).
+    expect(says("for f in *.log; do f=~/Documents; rm -rf \"$f\"; done")).toEqual(["Deletes \"$f\" and everything in it."]);
     expect(says("while IFS= read -r l; do rm -rf \"$l\"; done < list.txt")).toEqual(["Deletes each file listed in its input and everything in it."]);
     expect(says("find . -name '*.log' | while read -r f; do rm \"$f\"; done")).toEqual(["Deletes each file listed in its input."]);
     // Anything else stays as written: a variable that isn't the loop's, or more than the variable.
@@ -728,6 +787,91 @@ describe("loops and ifs (commands-remote-2)", () => {
     // A file that isn't a download passes nothing on.
     expect(cls("mv notes.txt y.py").downloads).toEqual([]);
     expect(cls("cat notes.txt > y.py").downloads).toEqual([]);
+  });
+
+  it("marks only the file rsync copies a download to, never the whole folder it lands in (commands-remote-c3-3)", () => {
+    const P = "/home/ana/proj";
+    const cls = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux", ["/tmp/data.csv", "/tmp/vendor"])) as ClassificationExtra;
+    for (const [cmd, as, not] of [
+      ["rsync -a /tmp/data.csv .", `${P}/data.csv`, P], ["rsync -a /tmp/data.csv data/", `${P}/data/data.csv`, `${P}/data`],
+      ["rsync -a /tmp/data.csv ~/proj/", `${P}/data.csv`, P], ["rsync -a /tmp/data.csv ..", "/home/ana/data.csv", "/home/ana"],
+    ]) {
+      expect(cls(cmd).downloads, cmd).toContain(as);
+      expect(cls(cmd).downloads, cmd).not.toContain(not);
+    }
+    // A name that may be a folder counts only until the target says it is one.
+    const into = cls("rsync -a /tmp/data.csv data");
+    expect(into.downloads).toEqual(expect.arrayContaining([`${P}/data`, `${P}/data/data.csv`]));
+    expect(withRealPaths(into, new Map([[`${P}/data`, { exists: true, real: `${P}/data`, dir: true }]])).downloads).not.toContain(`${P}/data`);
+    // A downloaded folder's contents, or what comes from another computer, still mark where they land.
+    expect(cls("rsync -a /tmp/vendor/ lib/").downloads).toContain(`${P}/lib`);
+    expect(cls("rsync -a build-01:/srv/x lib/").downloads).toContain(`${P}/lib`);
+    // Its card names the file it replaces, never the folder (commands-remote-c3-3).
+    expect(cls("rsync -a /tmp/data.csv .").findings.map(f => f.says)).toEqual(["Replaces ~/proj/data.csv if it exists."]);
+    expect(cls("rsync -a /tmp/data.csv data/").findings.map(f => f.says)).toEqual(["Replaces ~/proj/data/data.csv if it exists."]);
+  });
+
+  it("asks before rsync -R, --relative or --files-from writes into a folder, and marks the whole folder for a download (commands-remote-v4-1)", () => {
+    const P = "/home/ana/proj";
+    const cls = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux", [`${P}/sub/x.sh`])) as ClassificationExtra;
+    // Each file lands at its path under the folder (tools/sub/x.sh), never at tools/<name>: no file of its name is asked
+    // about, the whole folder may be written, as cp --parents.
+    for (const [cmd, says] of [
+      ["rsync -aR sub/x.sh tools/", "Replaces files in tools/ if they exist."], ["rsync -a --relative sub/x.sh tools/", "Replaces files in tools/ if they exist."],
+      ["rsync -avR ./sub/x.sh tools", "Replaces files in tools if they exist."], ["rsync -a sub/./x.sh tools/", "Replaces files in tools/ if they exist."],
+      ["rsync -aR a/b/notes.txt dest/", "Replaces files in dest/ if they exist."], ["rsync -a --files-from=list.txt src dest/", "Replaces files in dest/ if they exist."],
+    ]) {
+      const c = cls(cmd);
+      expect(c.findings.map(f => f.says), cmd).toEqual([says]);
+      expect(c.findings.every(f => f.ifExists === undefined && f.inFolder === undefined), cmd).toBe(true);
+    }
+    // A download (or a folder holding one) copied with -R or --files-from marks the folder it lands in.
+    for (const cmd of ["rsync -aR sub/x.sh tools/", "rsync -a --relative sub/x.sh tools/", "rsync -a --files-from=list.txt sub tools/", "rsync -aR sub tools/"]) {
+      expect(cls(cmd).downloads, cmd).toContain(`${P}/tools`);
+    }
+    expect(cls("rsync -aR a/b/notes.txt dest/").downloads).toEqual([]);
+    // Where it lands is judged: Ember's own folder under the one named is refused.
+    for (const cmd of ["rsync -aR ember/settings.json ~/.config/", "rsync -aR ./ember/ ~/.config/"]) expect(cls(cmd).refuse?.rule, cmd).toBe("ember.path");
+    // Without -R the file of its name is still what is replaced (commands-remote-c3-3).
+    expect(cls("rsync -a sub/x.sh tools/").findings.map(f => f.says)).toEqual(["Replaces ~/proj/tools/x.sh if it exists."]);
+    expect(cls("rsync -a sub/x.sh tools/").downloads).toEqual([`${P}/tools/x.sh`]);
+  });
+
+  it("keeps a download a download when PowerShell or cmd renames, copies, moves or links it, so running it asks (commands-remote-c2-2)", () => {
+    const P = "C:\\Users\\ana\\proj";
+    const cls = (cmd: string, shell: ShellId = "powershell") => classifyCommand(cmd, shell, contextOf("win32", [`${P}\\x.py`, `${P}\\x.exe`])) as ClassificationExtra;
+    for (const [cmd, as] of [
+      ["Rename-Item x.exe y.exe", `${P}\\y.exe`], ["Rename-Item -Path x.py -NewName y.py", `${P}\\y.py`], ["Move-Item x.py y.py", `${P}\\y.py`],
+      ["Copy-Item x.py y.py", `${P}\\y.py`], ["mv x.py y.py", `${P}\\y.py`], ["cp x.py y.py", `${P}\\y.py`], ["Copy-Item x.py -Destination tools", `${P}\\tools\\x.py`],
+      ["Copy-Item x.py C:\\Users\\ana\\proj\\tools\\", `${P}\\tools\\x.py`], ["New-Item -ItemType SymbolicLink -Path y.py -Value x.py", `${P}\\y.py`],
+    ]) expect(cls(cmd).downloads, cmd).toContain(as);
+    for (const [cmd, as] of [["ren x.py y.py", `${P}\\y.py`], ["move x.py y.py", `${P}\\y.py`], ["copy x.py y.py", `${P}\\y.py`], ["copy x.py tools", `${P}\\tools\\x.py`], ["mklink y.py x.py", `${P}\\y.py`]]) {
+      expect(cls(cmd, "cmd").downloads, cmd).toContain(as);
+    }
+    // Run in the same command line, it is a download run.
+    expect(cls("Rename-Item x.exe y.exe; .\\y.exe").findings.map(f => f.rule)).toContain("escape.run-downloaded");
+    // A file that isn't a download passes nothing on.
+    expect(cls("Move-Item notes.txt y.py").downloads).toEqual([]);
+    expect(cls("ren notes.txt y.py", "cmd").downloads).toEqual([]);
+  });
+
+  it("keeps a download a download when a pipeline or xargs copies, moves or renames it (commands-remote-v4-5)", () => {
+    const P = "C:\\Users\\ana\\proj";
+    const cls = (cmd: string, downloaded = [`${P}\\x.exe`, `${P}\\tools\\x.exe`]) => classifyCommand(cmd, "powershell", contextOf("win32", downloaded)) as ClassificationExtra;
+    for (const [cmd, as] of [
+      ["Get-ChildItem x.exe | Copy-Item -Destination y.exe", `${P}\\y.exe`], ["Get-Item .\\x.exe | Move-Item -Destination y.exe", `${P}\\y.exe`],
+      ["gci x.exe | cpi -Destination y.exe", `${P}\\y.exe`], ["Get-Item x.exe | Rename-Item -NewName y.exe", `${P}\\y.exe`],
+      // A listed folder's files land in the destination; items Ember can't name may be the download.
+      ["Get-ChildItem tools | Copy-Item -Destination out", `${P}\\out`], ["$items | Copy-Item -Destination y.exe", `${P}\\y.exe`],
+    ]) expect(cls(cmd).downloads, cmd).toContain(as);
+    // Nothing downloaded, or a file that isn't a download: nothing passes on.
+    expect(cls("$items | Copy-Item -Destination y.exe", []).downloads).toEqual([]);
+    expect(cls("Get-ChildItem notes.txt | Copy-Item -Destination y.txt").downloads).toEqual([]);
+    const posix = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)) as ClassificationExtra;
+    for (const cmd of ["ls x.sh | xargs -I{} cp {} y.sh", "cp \"$f\" y.sh", "ls x.sh | xargs -I{} mv {} y.sh"]) {
+      expect(posix(cmd, ["/home/ana/proj/x.sh"]).downloads, cmd).toContain("/home/ana/proj/y.sh");
+      expect(posix(cmd, []).downloads, cmd).toEqual([]);
+    }
   });
 
   it("asks before a tool runs a download it picks up by name: a Makefile, tests, package.json, a module, a preload (commands-remote-c2-2)", () => {

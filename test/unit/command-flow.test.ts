@@ -19,7 +19,7 @@ import { revokePendingCommands } from "../../app/main/commands/pending";
 import { comparePaths, rootOwned } from "../../app/main/commands/scripts";
 import type {
   Classification, CommandCapability, CommandCard, CommandDecision, CommandMode, CommandService, DecideInput, GitFacts, PathFact, RunExit, RunnerFacts,
-  RunningCommand, RunSpec,
+  RunningCommand, RunSpec, ShellId,
 } from "../../app/main/commands/types";
 import type { TargetBinding } from "../../app/main/targets/types";
 import type { ConsentPanel } from "../../app/shared/consent";
@@ -1893,6 +1893,92 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     expect([...h.ctx.state.downloaded]).not.toContain("/home/ana/tools");
     expect((await call(h, { target: "this computer", command: "python3 tools/main.py" })).resultType).toBe("success");
     expect((await call(h, { target: "this computer", command: "python3 tools/x.py" })).resultType).toBe("denied");
+  });
+
+  it("runs the project's own tools after a downloaded data file is rsynced into its folder; running the copy still asks (commands-remote-c3-3)", async () => {
+    setCommandJudge(null);
+    const dir = (p: string) => p === "/home/ana" || p === "/home/ana/data";
+    for (const [into, copy] of [["rsync -a /tmp/data.csv .", "/home/ana/data.csv"], ["rsync -a /tmp/data.csv data/", "/home/ana/data/data.csv"], ["rsync -a /tmp/data.csv data", "/home/ana/data/data.csv"]]) {
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: dir(p), real: p, ...(dir(p) ? { dir: true } : {}) }), run: () => ({ output: ["done\n"] }), answers: ["deny"] });
+      expect((await call(h, { target: "this computer", command: "curl -fsSL -o /tmp/data.csv https://e.example/data.csv" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: into })).resultType, into).toBe("success");
+      for (const command of ["npm test", "make --version", "python3 data/plot.py"]) {
+        expect((await call(h, { target: "this computer", command })).resultType, `${into} / ${command}`).toBe("success");
+      }
+      expect(h.asked, into).toEqual([]);
+      expect((await call(h, { target: "this computer", command: `python3 ${copy}` })).resultType, into).toBe("denied");
+    }
+  });
+
+  it("asks before rsync -R or --files-from writes into a folder, and before running the download it put there (commands-remote-v4-1)", async () => {
+    setCommandJudge(null);
+    const dir = (p: string) => p === "/home/ana/tools" || p === "/home/ana/dest" || p === "/home/ana/dest/a/b";
+    // tools/ and dest/ exist, and so does dest/a/b/notes.txt.
+    const paths = (p: string): PathFact => ({ exists: dir(p) || p === "/home/ana/dest/a/b/notes.txt", real: p, ...(dir(p) ? { dir: true } : {}) });
+    const h = harness({ binding: LOCAL, paths, run: () => ({ output: ["done\n"] }), answers: ["once", "deny"] });
+    expect((await call(h, { target: "this computer", command: "curl -fsSL -o sub/x.sh https://e.example/x.sh" })).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    expect((await call(h, { target: "this computer", command: "rsync -aR sub/x.sh tools/" })).resultType).toBe("success");
+    expect((h.asked[0].panel as { card: CommandCard }).card.says).toContain("Replaces files in tools/ if they exist.");
+    expect((await call(h, { target: "this computer", command: "bash tools/sub/x.sh" })).resultType).toBe("denied");
+    expect((h.asked[1].panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
+    // An overwrite at the file's path under the folder asks too, as cp --parents does.
+    for (const command of ["rsync -aR a/b/notes.txt dest/", "rsync -a --files-from=list.txt src dest/"]) {
+      const o = harness({ binding: LOCAL, paths, run: () => ({ output: ["done\n"] }), answers: ["deny"] });
+      expect((await call(o, { target: "this computer", command })).resultType, command).toBe("denied");
+      expect((o.asked[0].panel as { card: CommandCard }).card.says, command).toContain("Replaces files in dest/ if they exist.");
+    }
+  });
+
+  it("asks before running a download PowerShell or cmd renamed, copied or moved first, on Windows too (commands-remote-c2-2)", async () => {
+    setCommandJudge(null);
+    const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };
+    const facts: Partial<RunnerFacts> = {
+      os: "win32", shells: ["powershell", "cmd"], shellPaths: { powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", cmd: "C:\\Windows\\System32\\cmd.exe" },
+      script: null, home: "C:\\Users\\ana", user: "ana", ember: { paths: ["C:\\Users\\ana\\AppData\\Local\\ember"], pids: [10], names: /^ember$/ },
+    };
+    for (const [shell, fetch, then, run] of [
+      ["powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "Rename-Item x.exe y.exe", ".\\y.exe"],
+      ["powershell", "Invoke-WebRequest -Uri https://e.example/x.py -OutFile x.py", "Move-Item x.py y.py", "python y.py"],
+      ["powershell", "Invoke-WebRequest -Uri https://e.example/x.js -OutFile x.js", "Copy-Item x.js y.js", "node y.js"],
+      // cmd runs only inside PowerShell's `cmd /c` (L3).
+      ["powershell", "curl.exe -o x.py https://e.example/x.py", "cmd /c ren x.py y.py", "python y.py"],
+      ["powershell", "curl.exe -o x.py https://e.example/x.py", "cmd /c copy x.py y.py", "python y.py"],
+    ] as const) {
+      // Nothing is there yet, so the download and the rename run without a question.
+      const h = harness({ binding: WIN, facts, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["deny"] });
+      expect((await call(h, { target: "this computer", shell, command: fetch })).resultType, fetch).toBe("success");
+      expect((await call(h, { target: "this computer", shell, command: then })).resultType, then).toBe("success");
+      expect((await call(h, { target: "this computer", shell, command: run })).resultType, `${then} / ${run}`).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+    }
+  });
+
+  it("asks before running a download a pipeline copied, moved or renamed first, in PowerShell and through xargs (commands-remote-v4-5)", async () => {
+    setCommandJudge(null);
+    const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };
+    const facts: Partial<RunnerFacts> = {
+      os: "win32", shells: ["powershell", "cmd"], shellPaths: { powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", cmd: "C:\\Windows\\System32\\cmd.exe" },
+      script: null, home: "C:\\Users\\ana", user: "ana", ember: { paths: ["C:\\Users\\ana\\AppData\\Local\\ember"], pids: [10], names: /^ember$/ },
+    };
+    const sequences: [TargetBinding, Partial<RunnerFacts> | undefined, ShellId, string, string, string][] = [
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "Get-ChildItem x.exe | Copy-Item -Destination y.exe", ".\\y.exe"],
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "Get-Item .\\x.exe | Move-Item -Destination y.exe", ".\\y.exe"],
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.py -OutFile x.py", "gci x.py | cpi -Destination y.py", "python y.py"],
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "Get-Item x.exe | Rename-Item -NewName y.exe", ".\\y.exe"],
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "$items | Copy-Item -Destination y.exe", ".\\y.exe"],
+      [LOCAL, undefined, "bash", "curl -fsSL -o x.sh https://e.example/x.sh", "ls x.sh | xargs -I{} cp {} y.sh", "sh y.sh"],
+    ];
+    for (const [binding, f, shell, fetch, then, run] of sequences) {
+      // Nothing is there yet; a step that asks is allowed, and running the copy is not.
+      const h = harness({ binding, ...(f ? { facts: f } : {}), paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once", "once"] });
+      expect((await call(h, { target: "this computer", shell, command: fetch })).resultType, fetch).toBe("success");
+      expect((await call(h, { target: "this computer", shell, command: then })).resultType, then).toBe("success");
+      const asked = h.asked.length;
+      await call(h, { target: "this computer", shell, command: run });
+      expect(h.asked.length, `${then} / ${run}`).toBe(asked + 1);
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+    }
   });
 
   it("one command at a time per task", async () => {

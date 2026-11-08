@@ -24,6 +24,11 @@ export interface Arg {
   fetch?: boolean;
   /** PowerShell: this token is a parameter name (`-Path`, without its dash); its value, if attached (`-Path:x`), is v. */
   param?: string;
+  /**
+   * A POSIX word with v null: its text as written pieces and the variables in it (`{ name }`; null for an expansion
+   * that isn't a plain variable), so Ember's own refusal can be judged against values the text gives those variables.
+   */
+  parts?: readonly (string | { name: string | null })[];
 }
 
 /** A literal argument (tests, wrappers that build words). */

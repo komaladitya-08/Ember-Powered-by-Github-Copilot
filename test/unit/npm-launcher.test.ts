@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Writable } from "node:stream";
-import { assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
+import { afterHandover, assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
@@ -273,6 +273,201 @@ describe("when the launcher can't reach the download (install-docs-r2-1)", () =>
     }
   });
 
+  it("says what answered, through which proxy, and what to do when a proxy or server answers with an error, never a bare HTTP status (install-docs-r2-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const tail = `Then run 'ember' again, or download Ember-9.9.9-x86_64.AppImage from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`;
+    // A proxy that can't get to the mirror, answering 502 as a corporate proxy does for a host it can't reach.
+    const proxy = http.createServer((_req, res) => { res.writeHead(502, "Bad Gateway", { "content-type": "text/html" }); res.end("<html>Bad gateway</html>"); });
+    await new Promise<void>(resolve => proxy.listen(0, "127.0.0.1", resolve));
+    const proxyPort = (proxy.address() as AddressInfo).port;
+    // A mirror whose release file is stored elsewhere (as GitHub redirects to its storage host), which is down.
+    const r = release("9.9.9");
+    const store = http.createServer((_req, res) => { res.writeHead(503, "Service Unavailable"); res.end(); });
+    await new Promise<void>(resolve => store.listen(0, "127.0.0.1", resolve));
+    const storePort = (store.address() as AddressInfo).port;
+    const mirror = http.createServer((req, res) => {
+      const url = decodeURIComponent(req.url ?? "");
+      if (url.endsWith(".AppImage")) { res.writeHead(302, { location: `http://127.0.0.1:${storePort}/store${url}` }); res.end(); return; }
+      const body = r.files[url];
+      if (body === undefined) { res.statusCode = 404; res.end(); return; }
+      res.end(body);
+    });
+    await new Promise<void>(resolve => mirror.listen(0, "127.0.0.1", resolve));
+    const mirrorBase = `http://127.0.0.1:${(mirror.address() as AddressInfo).port}`;
+    try {
+      const cache = tempDir();
+      const viaProxy = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { http_proxy: `127.0.0.1:${proxyPort}`, EMBER_NPM_DOWNLOAD_BASE: "http://mirror.invalid", EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+      expect(viaProxy?.message).toBe(`The download of Ember 9.9.9 from the mirror at http://mirror.invalid through the proxy at 127.0.0.1:${proxyPort} failed: the proxy couldn't get an answer from mirror.invalid (502 Bad Gateway). Check http_proxy, which names that proxy, or ask whoever runs it to let this computer reach mirror.invalid. ${tail}`);
+      const redirected = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: mirrorBase, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+      // It names the host that answered, which an allow-list may be missing, not the address it started from.
+      // A server's own failure is its to mend: run again later (install-docs-v4-3).
+      expect(redirected?.message).toBe(`The download of Ember 9.9.9 from the mirror at ${mirrorBase} failed: 127.0.0.1:${storePort} answered 503 Service Unavailable. ${tail.replace("Then run 'ember' again", "Run 'ember' again later")}`);
+      for (const err of [viaProxy, redirected]) expect(err?.message).not.toMatch(/downloading|HTTP/);
+      expect(fs.readdirSync(cache)).toEqual([]);
+    } finally {
+      for (const s of [proxy, store, mirror]) { s.closeAllConnections(); await new Promise<void>(resolve => s.close(() => resolve())); }
+    }
+  });
+
+  // Through a CONNECT tunnel the proxy only passes bytes: an error answer inside it is the host's own (GitHub's storage
+  // host in an outage), so it is never said as the proxy's, nor sent to whoever runs it unless it is a block.
+  it.skipIf(!mirrorCert || process.platform !== "linux")("says the host answered, not the proxy, for an error answer inside an https tunnel, and asks for it to be allowed only when it is blocked (install-docs-v4-3)", async () => {
+    const v = packageVersion(), asset = `Ember-${v}-x86_64.AppImage`;
+    const texts: Record<number, string> = { 403: "Forbidden", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
+    // The mirror answers the status its base names: https://ember-mirror.test/s502/v<v>/SHA256SUMS answers 502.
+    const mirror = https.createServer({ key: mirrorCert!.key, cert: mirrorCert!.cert }, (req, res) => {
+      const status = Number(/^\/s(\d{3})\//.exec(req.url ?? "")?.[1] ?? 404);
+      res.writeHead(status, texts[status] ?? "Not Found");
+      res.end();
+    });
+    await new Promise<void>(resolve => mirror.listen(0, "127.0.0.1", resolve));
+    const mirrorPort = (mirror.address() as AddressInfo).port;
+    const proxy = await proxyServer({ connect: target => target === "ember-mirror.test:443" ? mirrorPort : "403" });
+    // Its own copy: the tunnel test above removes the certificate's folder when it is done.
+    const ca = path.join(tempDir(), "mirror.pem");
+    fs.writeFileSync(ca, mirrorCert!.cert);
+    try {
+      for (const status of [502, 504, 503, 403]) {
+        const base = `https://ember-mirror.test/s${status}`, cache = tempDir();
+        const run = runLauncher(["--npm-install-only"], { HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`, NODE_EXTRA_CA_CERTS: ca, EMBER_NPM_DOWNLOAD_BASE: base, EMBER_NPM_CACHE: cache, EMBER_NPM_QUIET: "1", ...noNpmrc });
+        expect((await run.ended).code, String(status)).toBe(1);
+        const first = `ember-copilot: The download of Ember ${v} from the mirror at ${base} through the proxy at 127.0.0.1:${proxy.port} failed: ember-mirror.test answered ${status} ${texts[status]}.`;
+        const browser = `or download ${asset} from https://github.com/${REPO}/releases/tag/v${v} in your browser.\n`;
+        expect(run.err(), String(status)).toBe(status === 403
+          ? `${first} Check HTTPS_PROXY, which names that proxy, or ask whoever runs it to let this computer reach ember-mirror.test. Then run 'ember' again, ${browser}`
+          : `${first} Run 'ember' again later, ${browser}`);
+        expect(run.err(), String(status)).not.toContain("the proxy couldn't");
+        expect(fs.readdirSync(cache), String(status)).toEqual([]);
+      }
+      // The proxy itself refusing the tunnel is a block: ask for the host to be allowed.
+      const refused = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`, EMBER_NPM_DOWNLOAD_BASE: "https://blocked.test", EMBER_NPM_CACHE: tempDir(), EMBER_NPM_QUIET: "1", ...noNpmrc } }).then(() => null, (e: Error) => e);
+      expect(refused?.message).toBe(`Ember couldn't reach the mirror at https://blocked.test through the proxy at 127.0.0.1:${proxy.port}: the proxy refused to connect to it (403). Check HTTPS_PROXY, which names that proxy, or ask whoever runs it to let this computer reach blocked.test. Then run 'ember' again, or download Ember-9.9.9-x86_64.AppImage from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`);
+    } finally {
+      await proxy.close();
+      mirror.closeAllConnections();
+      await new Promise<void>(resolve => mirror.close(() => resolve()));
+    }
+  }, 30_000);
+
+  it("starts with what to do when the download is cut off part way, not with a \"Then\" after no step (install-docs-r3-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const r = release("9.9.9", 4 * 1024 * 1024);
+    // A quarter of the release file, then the connection drops (a mirror restarting, a network blip).
+    const server = http.createServer((req, res) => {
+      const body = r.files[decodeURIComponent(req.url ?? "")];
+      if (body === undefined) { res.statusCode = 404; res.end(); return; }
+      const buf = Buffer.from(body);
+      res.setHeader("content-length", buf.length);
+      if (!String(req.url).endsWith(".AppImage")) { res.end(buf); return; }
+      res.write(buf.subarray(0, buf.length / 4), () => res.socket?.destroy());
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const cache = tempDir();
+    try {
+      const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: base, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+      expect(err?.message).toBe(`The download of ${r.asset} from the mirror at ${base} stopped: the connection was cut off (ECONNRESET). Run 'ember' again, or download ${r.asset} from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`);
+      expect(fs.readdirSync(cache)).toEqual([]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it("says there isn't room, and where, when the disk or quota fills during the download, instead of blaming the download (install-docs-c3-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const r = release("9.9.9", 3 * 1024 * 1024);
+    const server = await serve(r.files);
+    const real = fs.createWriteStream.bind(fs);
+    try {
+      for (const [code, why] of [["ENOSPC", "the disk is full"], ["EDQUOT", "your disk quota is used up"]]) {
+        const cache = tempDir();
+        // As a full disk answers: the write fails with no file named (Node's write streams name none). Linux's
+        // /dev/full is a real one; elsewhere, and for a quota, a stand-in fails the same way.
+        const spy = vi.spyOn(fs, "createWriteStream").mockImplementation(((file: string) => code === "ENOSPC" && fs.existsSync("/dev/full") && String(file).includes(cache) ? real("/dev/full")
+          : new Writable({ write(_chunk, _enc, done) { done(Object.assign(new Error(`${code}: write failed`), { code, syscall: "write" })); } })) as never);
+        try {
+          const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+          expect(err?.message, code).toBe(`There isn't room in ${cache} for Ember 9.9.9 (3 MB): ${why} (${code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run 'ember' again.`);
+        } finally {
+          spy.mockRestore();
+        }
+        expect(fs.readdirSync(cache), code).toEqual([]);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("says there isn't room, and where, when the disk or quota is already full before the download starts (install-docs-v4-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const port = await closedPort();
+    const realMkdir = fs.mkdirSync, realWrite = fs.writeFileSync;
+    for (const [code, why] of [["ENOSPC", "the disk is full"], ["EDQUOT", "your disk quota is used up"]] as const) {
+      // Where a disk that is already full strikes first: the cache folder, the lock folder, or the lock's owner file.
+      for (const at of ["cache folder", "lock", "owner file"] as const) {
+        const cache = path.join(tempDir(), "cache");
+        const full = () => Object.assign(new Error(`${code}: no space left on device, write`), { code, syscall: "write" });
+        const mkdir = vi.spyOn(fs, "mkdirSync").mockImplementation(((dir: fs.PathLike, opts?: fs.MakeDirectoryOptions) => {
+          if (at === "cache folder" && String(dir) === cache) throw full();
+          if (at === "lock" && String(dir).endsWith("-install-lock")) throw full();
+          return realMkdir(dir, opts);
+        }) as never);
+        const write = vi.spyOn(fs, "writeFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, data: string, opts?: fs.WriteFileOptions) => {
+          if (at === "owner file" && /-install-lock[\\/]owner$/.test(String(file))) throw full();
+          return realWrite(file, data, opts);
+        }) as never);
+        try {
+          const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: `http://127.0.0.1:${port}`, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+          // No size: the download's isn't known yet.
+          expect(err?.message, `${code} at the ${at}`).toBe(`There isn't room in ${cache} for Ember 9.9.9: ${why} (${code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run 'ember' again.`);
+        } finally {
+          mkdir.mockRestore();
+          write.mockRestore();
+        }
+        expect(fs.existsSync(cache) ? fs.readdirSync(cache) : [], `${code} at the ${at}`).toEqual([]);
+      }
+    }
+  });
+
+  // The Windows and macOS zips unpack to about 2.5 times their size, so a disk often fills as they unpack. Here the
+  // Mac's is installed on Linux, whose unpacker is unzip: a stand-in on PATH says what each unpacker says, and fails.
+  it.skipIf(process.platform !== "linux")("says there isn't room, and where, when the disk or quota fills as the zip is unpacked, in place of the unpacker's words (install-docs-v4-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const asset = "Ember-9.9.9-mac-arm64.zip", body = Buffer.alloc(4096, 3);
+    const server = await serve({ [`/v9.9.9/${asset}`]: body, "/v9.9.9/SHA256SUMS": `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
+    const bin = tempDir();
+    fs.writeFileSync(path.join(bin, "unzip"), `#!${process.execPath}
+process.stdout.write(process.env.EMBER_TEST_UNZIP_SAYS);
+process.exitCode = Number(process.env.EMBER_TEST_UNZIP_EXIT);
+`, { mode: 0o755 });
+    vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH ?? ""}`);
+    const room = (code: string, why: string) => (cache: string) => `There isn't room in ${cache} for Ember 9.9.9: ${why} (${code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run 'ember' again.`;
+    const full = room("ENOSPC", "the disk is full"), quota = room("EDQUOT", "your disk quota is used up");
+    const cases: [string, string, number, ((cache: string) => string) | null][] = [
+      ["unzip", "/c/Ember.app/Contents/MacOS/Ember:  write error (disk full?).  Continue? (y/n/^C) \nwarning:  /c/Ember.app/Contents/MacOS/Ember is probably truncated\n", 50, full],
+      ["ditto", "ditto: /c/Ember.app/Contents/Frameworks/Electron Framework.framework/Electron Framework: No space left on device\n", 1, full],
+      ["ditto, over quota", "ditto: /c/Ember.app/Contents/Resources/app.asar: Disc quota exceeded\n", 1, quota],
+      ["tar.exe", "tar.exe: Ember/resources/app.asar: Write failed: No space left on device\ntar.exe: Error exit delayed from previous errors.\n", 1, full],
+      ["Expand-Archive", "Exception calling \"ExtractToFile\" with \"3\" argument(s): \"There is not enough space on the disk.\"\n", 1, full],
+      // Anything else the unpacker says stays its own.
+      ["a broken zip", "  End-of-central-directory signature not found.\n", 9, null],
+    ];
+    try {
+      for (const [who, says, exit, want] of cases) {
+        const cache = tempDir();
+        vi.stubEnv("EMBER_TEST_UNZIP_SAYS", says);
+        vi.stubEnv("EMBER_TEST_UNZIP_EXIT", String(exit));
+        const err = await ensureInstalled({ version: "9.9.9", platform: "darwin", arch: "arm64", env: { ...process.env, EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+        if (want) expect(err?.message, who).toBe(want(cache));
+        else expect(err?.message, who).toMatch(/^unzip -q .* failed \(exit 9\): End-of-central-directory signature not found\.$/);
+        expect(fs.readdirSync(cache), who).toEqual([]);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it("picks the proxy as npm does, and leaves out the hosts NO_PROXY names and this computer (install-docs-r2-1)", () => {
     const gh = "https://github.com/x/releases/download/v1/SHA256SUMS";
     const host = (url: string, env: Record<string, string>, npmrc = {}) => proxyFor(url, env, npmrc)?.url.host ?? null;
@@ -314,7 +509,7 @@ describe("what the launcher's pages say about proxies and interrupted downloads"
   it("say which proxy it uses and what to do when the download can't be reached (install-docs-r2-1)", () => {
     const own = read("packages/npm/README.md").replace(/\s+/g, " ");
     const proxies = own.split("## Proxies and offline computers")[1]?.split("## ")[0] ?? "";
-    for (const w of ["npm's `https-proxy` or `proxy` setting", "`HTTPS_PROXY`", "`NO_PROXY`", "`NODE_EXTRA_CA_CERTS`", "`EMBER_NPM_DOWNLOAD_BASE`", "in your browser"]) expect(proxies, w).toContain(w);
+    for (const w of ["npm's `https-proxy` or `proxy` setting", "`HTTPS_PROXY`", "`NO_PROXY`", "`NODE_EXTRA_CA_CERTS`", "`EMBER_NPM_DOWNLOAD_BASE`", "in your browser", "a proxy or server answers with an error", "set `EMBER_NPM_CACHE` to a folder with room"]) expect(proxies, w).toContain(w);
     expect(read("README.md").replace(/\s+/g, " ")).toContain("Behind a proxy it uses npm's proxy setting or `HTTPS_PROXY`, as npm does.");
     expect(usage("ember")).toContain("Downloads go through npm's https-proxy or proxy setting, else HTTPS_PROXY");
   });
@@ -322,8 +517,9 @@ describe("what the launcher's pages say about proxies and interrupted downloads"
   it("say an interrupted download cleans up after itself, and when a lock is left to the person (install-docs-c2-1)", () => {
     const own = read("packages/npm/README.md").replace(/\s+/g, " ");
     expect(own).not.toContain("Crash recovery is not automatic");
-    expect(own).toContain("Ctrl+C, closing the terminal or stopping the launcher while it downloads ends the download and removes what it had made");
+    expect(own).toContain("Ctrl+C, closing the terminal or stopping the launcher while it downloads or unpacks Ember ends that and removes what it had made, starting nothing");
     expect(own).toContain("takes the lock over and removes the half-made download");
+    expect(own).toContain("A stopped `--npm-reinstall` keeps the copy you had, which `ember` starts.");
   });
 });
 
@@ -405,6 +601,62 @@ describe("an interrupted first download (install-docs-c2-1)", () => {
     } finally {
       await server.close();
     }
+  }, 30_000);
+
+  // The Windows and macOS releases are zips that take seconds to unpack (tar.exe, ditto), and on a Mac clearing the
+  // quarantine flag over Ember.app (xattr) takes a moment more. Here the Mac's is installed on Linux, whose unpacker
+  // is unzip: stand-ins on PATH, `slow` the one that takes 5 s, so a stop lands while it works. Signals are POSIX's.
+  async function stopsWhile(slow: "unzip" | "xattr") {
+    const asset = "Ember-9.9.9-mac-arm64.zip", body = Buffer.alloc(4096, 3);
+    const server = await serve({ [`/v9.9.9/${asset}`]: body, "/v9.9.9/SHA256SUMS": `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
+    const bin = tempDir();
+    fs.writeFileSync(path.join(bin, "unzip"), `#!${process.execPath}
+// unzip -q <zip> -d <dir>: unpacks an Ember.app, saying it has begun and taking 5 s when it is the slow one.
+const fs = require("node:fs"), path = require("node:path");
+const unpack = () => { const d = path.join(process.argv[5], "Ember.app", "Contents", "MacOS"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "Ember"), ""); };
+if (process.env.EMBER_TEST_SLOW === "unzip") { fs.writeFileSync(process.env.EMBER_TEST_UNPACKING, ""); setTimeout(unpack, 5000); } else unpack();
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "xattr"), `#!${process.execPath}
+// xattr -dr com.apple.quarantine <app>: says it has begun and takes 5 s when it is the slow one.
+if (process.env.EMBER_TEST_SLOW === "xattr") { require("node:fs").writeFileSync(process.env.EMBER_TEST_UNPACKING, ""); setTimeout(() => {}, 5000); }
+`, { mode: 0o755 });
+    const driver = path.join(bin, "install.mjs");
+    // As bin/ember.mjs reports what ensureInstalled throws, for a Mac's release.
+    fs.writeFileSync(driver, `import { ensureInstalled } from ${JSON.stringify(new URL("../../packages/npm/lib/launcher.mjs", import.meta.url).href)};
+ensureInstalled({ version: "9.9.9", platform: "darwin", arch: "arm64", env: process.env }).then(r => { process.stdout.write(r.exe + "\\n"); }, err => {
+  process.stderr.write("ember-copilot: " + err.message + "\\n");
+  process.exitCode = typeof err?.exitCode === "number" ? err.exitCode : 1;
+});
+`);
+    try {
+      // Ctrl+C in a terminal reaches the whole group (the unpacker too); a kill or a process manager, the launcher alone.
+      for (const [how, sig, code] of [["Ctrl+C", "SIGINT", 130], ["a kill", "SIGTERM", 143]] as const) {
+        const cache = tempDir(), unpacking = path.join(tempDir(), "unpacking");
+        const env = { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, EMBER_NPM_QUIET: "1", EMBER_TEST_UNPACKING: unpacking, EMBER_TEST_SLOW: slow, ...noNpmrc };
+        const child = spawn(process.execPath, [driver], { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+        let out = "", err = "";
+        child.stdout.on("data", d => { out += String(d); });
+        child.stderr.on("data", d => { err += String(d); });
+        const ended = new Promise<number | null>(resolve => child.once("close", c => resolve(c)));
+        for (let i = 0; i < 400 && !fs.existsSync(unpacking); i++) await new Promise(resolve => setTimeout(resolve, 25));
+        expect(fs.existsSync(unpacking), how).toBe(true);
+        process.kill(how === "Ctrl+C" ? -child.pid! : child.pid!, sig);
+        expect(await ended, how).toBe(code);
+        expect(err, how).toBe("ember-copilot: Stopped before Ember 9.9.9 was installed, and nothing was kept. Run 'ember' again to download it.\n");
+        expect(out, how).toBe("");
+        expect(fs.readdirSync(cache), how).toEqual([]);
+      }
+    } finally {
+      await server.close();
+    }
+  }
+
+  it.skipIf(process.platform !== "linux")("says it stopped, keeps nothing and starts nothing when Ctrl+C or a kill lands while the zip is unpacked (install-docs-r3-1)", async () => {
+    await stopsWhile("unzip");
+  }, 30_000);
+
+  it.skipIf(process.platform !== "linux")("says it stopped, keeps nothing and starts nothing when Ctrl+C or a kill lands while a Mac's quarantine flag is cleared (install-docs-v4-2)", async () => {
+    await stopsWhile("xattr");
   }, 30_000);
 });
 
@@ -623,6 +875,23 @@ describe("updating through npm", () => {
     expect(handedOver("0.1.2", null, "npx ember-copilot")).toBe("Ember was already running, so it took this. If it is older than 0.1.2, quit Ember, then run 'npx ember-copilot' again to start 0.1.2.");
     const own = read("packages/npm/README.md").replace(/\s+/g, " ");
     expect(own).toContain("If an older Ember is still running, the new one hands what you asked over to it instead of starting");
+  });
+
+  it("says plainly on Windows that the Ember running took the request, and hedges only when another version in the cache could be it (install-docs-r3-3)", () => {
+    const cache = "C:\\Users\\k\\AppData\\Local\\ember-npm";
+    // Windows' process list isn't read, so with only this version cached the one running is this one, or one from
+    // outside the cache: running `ember` again for its settings, as the help says, isn't told to quit and update.
+    expect(afterHandover({ version: "0.1.1", platform: "win32", name: "ember", running: null, others: [] })).toBe("Ember was already running, so it took this.");
+    expect(afterHandover({ version: "0.1.1", platform: "win32", name: "ember", running: null, others: [{ version: "0.1.0", dir: `${cache}\\0.1.0` }] })).toBe(handedOver("0.1.1", null, "ember"));
+    // Where ps names the running folder, the version is said; one running from outside the cache may be older.
+    const linux = "/home/k/.cache/ember-npm";
+    const older = [{ version: "0.1.1", dir: `${linux}/0.1.1` }];
+    expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: `${linux}/0.1.1/Ember-0.1.1-x86_64.AppImage\n`, others: older })).toBe(handedOver("0.1.2", "0.1.1", "ember"));
+    expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: "/opt/ember/ember\n", others: [] })).toBe(handedOver("0.1.2", null, "ember"));
+    expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: null, others: [] })).toBe("Ember was already running, so it took this.");
+    // A Mac's open(1) ends at once whatever happens: only a cached older version in ps tells a handover there.
+    expect(afterHandover({ version: "0.1.2", platform: "darwin", name: "ember", running: "", others: [] })).toBe("started Ember 0.1.2");
+    expect(afterHandover({ version: "0.1.2", platform: "darwin", name: "ember", running: `/Users/k/Library/Caches/ember-npm/0.1.1/Ember.app/Contents/MacOS/Ember\n`, others: [{ version: "0.1.1", dir: "/Users/k/Library/Caches/ember-npm/0.1.1" }] })).toBe(handedOver("0.1.2", "0.1.1", "ember"));
   });
 
   it("gives update steps, and uninstall steps in an order that works (install-docs-10)", () => {
