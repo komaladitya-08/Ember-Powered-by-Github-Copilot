@@ -51,7 +51,7 @@ If the download doesn't match `SHA256SUMS`, nothing is installed. On macOS Ember
 for Accessibility and Screen Recording permissions for Ember itself. Its setup check warns that Ember isn't in the
 Applications folder, as the cache isn't: its **Move to Applications** takes Ember out of the cache (the next `ember`
 downloads it again), so for permissions that last across updates install the dmg from the Releases page instead. On Linux the AppImage needs `fusermount` (on RHEL 8
-and its family, `sudo dnf install fuse`); without it, run `APPIMAGE_EXTRACT_AND_RUN=1 ember`. Linux packages (RPMs for EL8) are on the Releases page too.
+and its family, `sudo dnf install fuse`); without it, run `APPIMAGE_EXTRACT_AND_RUN=1 ember`. The RPM for EL8 is on the Releases page too.
 
 ## Launcher options
 

@@ -557,6 +557,28 @@ describe("README.md", () => {
     expect(run).toContain(`**${STEP_TEXT.checks.title}**`);
   });
 
+  it("dates the pickup list no earlier than the product audit, and points to where the audit's rounds are recorded (install-docs-r2-4)", () => {
+    const status = flat(read("STATUS.md"));
+    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const m = /^# Ember status Updated (\d{1,2}) (\w+) (\d{4})\./.exec(status);
+    expect(m).not.toBeNull();
+    const updated = Date.UTC(Number(m![3]), months.indexOf(m![2]), Number(m![1]));
+    // PLAN.md §10 records each round under "Product audit fixes…"; STATUS.md is no older than the first of them.
+    const rounds = [...read("PLAN.md").matchAll(/^### Product audit fixes[^\n(]*\((\d{4})-(\d{2})-(\d{2})\)$/gm)].map(r => Date.UTC(Number(r[1]), Number(r[2]) - 1, Number(r[3])));
+    expect(rounds.length).toBeGreaterThan(0);
+    expect(updated).toBeGreaterThanOrEqual(Math.min(...rounds));
+    expect(status).toContain("PLAN.md §10's **Product audit fixes** entries");
+    expect(status).toContain("each ends with what it left");
+  });
+
+  it("says `npm run package` makes the RPM and the AppImage, as the spec builds one RPM (install-docs-c1-2)", () => {
+    // The spec has no subpackage: the speech models moved into Ember's own RPM in 0.1.1.
+    expect(read("packaging/rpm/ember.spec")).not.toMatch(/^%package\b/m);
+    const claude = flat(read("CLAUDE.md"));
+    expect(claude).toContain("`npm run package` (the RPM and AppImage, on EL8 or in `rockylinux:8`)");
+    for (const doc of ["CLAUDE.md", ".claude/rules/packaging-and-ci.md", "packages/npm/README.md"]) expect(flat(read(doc)), doc).not.toMatch(/\bRPMs\b/);
+  });
+
   it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {
     const page = read("app/renderer/home/index.html").replace(/&amp;/g, "&");
     const headings = new Set([...page.matchAll(/<h[23][^>]*>([^<]+)<\/h[23]>/g)].map(m => m[1].trim()));
