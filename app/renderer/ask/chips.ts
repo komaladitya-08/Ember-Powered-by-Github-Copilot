@@ -60,6 +60,27 @@ export function unavailableLine(word: string | undefined): string | null {
 export const ANSWERS_AGAIN = "I can answer again.";
 
 /**
+ * What the box's live region held while the microphone was open for a request, one slot for each kind of line: what
+ * it said of the window before the first change came (`seesFrom`), why Ember couldn't answer before the first change
+ * came ("" when it could: `cantFrom`), and that the request went over the most that is sent (`over`). Unset: no change.
+ */
+export interface HeldNews { seesFrom?: string; cantFrom?: string; over?: boolean }
+
+/**
+ * What the live region says once the microphone has closed (voice-listening-v5-2): each kind of line as it stands now
+ * (`now`: what the chip says, why Ember can't answer or "", whether the request is still over), only where that
+ * differs from before the hold, the window first, each ending as a sentence; "" for nothing. A line a later one
+ * overtook isn't said: offline and back meanwhile said "Offline: I can't answer yet I'll see: … I can answer again."
+ */
+export function heldNewsLine(held: HeldNews, now: { sees: string; cant: string; over: boolean }, overLine: string): string {
+  const lines: string[] = [];
+  if (held.seesFrom !== undefined && now.sees && now.sees !== held.seesFrom) lines.push(now.sees);
+  if (held.cantFrom !== undefined && now.cant !== held.cantFrom) lines.push(now.cant || ANSWERS_AGAIN);
+  if (held.over && now.over) lines.push(overLine);
+  return lines.map(l => (/[.!?…]$/.test(l) ? l : `${l}.`)).join(" ");
+}
+
+/**
  * What the box's live region says when a context arrives, given what it last said in this opening (`said`): "" when
  * the box opens (cleared, so the late words are news again), the whole sentence once the late update brings it (the
  * field had the keyboard first, so its description isn't read again), null to leave it as it is (said already, or

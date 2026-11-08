@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { notificationBody } from "../../app/main/notification";
 import { ASK_OVER, askCount, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, overLimit, sendKey, textScaleOf } from "../../app/renderer/ask/field";
 import { composerCount } from "../../app/renderer/home/copy";
-import { ANSWERS_AGAIN, liveWords, seesView, unavailableLine } from "../../app/renderer/ask/chips";
+import { ANSWERS_AGAIN, heldNewsLine, liveWords, seesView, unavailableLine } from "../../app/renderer/ask/chips";
 import { targetChip, targetChipParts } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
 import { Perception, openWindowLines, quickContextText, type Seen } from "../../app/main/perception";
@@ -197,6 +197,23 @@ describe("what the ask box says Ember will see", () => {
     const lines = [seesView({ sees: "Text Editor · notes.txt", carries: { selection: true, fieldText: false, windows: 2 } })!, seesView({ sees: null, privateWindow: true })!]
       .flatMap(v => [v.full, v.text]);
     for (const line of lines) expect(line).not.toMatch(/\bEmber\b/);
+  });
+
+  it("says what waited for the microphone as it stands then, each kind once and as a sentence, never a line it overtook (voice-listening-v5-2)", () => {
+    const sees = "I'll see: Text Editor · Notes.txt.", offline = "Offline: I can't answer yet";
+    // Offline and back while it waited: only the window is news ("Offline: I can't answer yet I'll see: … I can answer
+    // again." was said as one sentence, the first line long gone).
+    expect(heldNewsLine({ cantFrom: "", seesFrom: "" }, { sees, cant: "", over: false }, ASK_OVER)).toBe(sees);
+    // Both changed: the window first, then why it can't answer, each ending as a sentence.
+    expect(heldNewsLine({ cantFrom: "", seesFrom: "" }, { sees, cant: offline, over: false }, ASK_OVER)).toBe(`${sees} ${offline}.`);
+    expect(heldNewsLine({ cantFrom: offline }, { sees, cant: "", over: false }, ASK_OVER)).toBe(ANSWERS_AGAIN);
+    expect(heldNewsLine({ cantFrom: "Not connected: I can't answer yet" }, { sees, cant: offline, over: false }, ASK_OVER)).toBe(`${offline}.`);
+    // Changed and changed back: nothing.
+    expect(heldNewsLine({ cantFrom: offline, seesFrom: sees }, { sees, cant: offline, over: false }, ASK_OVER)).toBe("");
+    // Over the most that is sent: said only while the request still is.
+    expect(heldNewsLine({ over: true }, { sees, cant: "", over: true }, ASK_OVER)).toBe(ASK_OVER);
+    expect(heldNewsLine({ over: true }, { sees, cant: "", over: false }, ASK_OVER)).toBe("");
+    expect(heldNewsLine({}, { sees, cant: offline, over: true }, ASK_OVER)).toBe("");
   });
 
   it("keeps the chip's line its full width from the start and gives the late words a live region", () => {

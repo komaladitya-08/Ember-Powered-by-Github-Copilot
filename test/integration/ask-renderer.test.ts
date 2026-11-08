@@ -342,7 +342,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       expect(said).toEqual([]);
       // The conversation ends with the box still open: what it would have said is said then, once.
       await harness("listen", { phase: "ready", detail: "" });
-      const late = "I'll see: Text Editor · Notes.txt. Offline: I can't answer yet";
+      const late = "I'll see: Text Editor · Notes.txt. Offline: I can't answer yet.";
       await expect.poll(() => said, { timeout: 3000 }).toEqual([late]);
       await page.waitForTimeout(1300);
       expect(said).toEqual([late]);
@@ -360,6 +360,51 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       await harness("listen", already);
       await harness("unavailable", "Offline");
       await harness("hidden", undefined);
+      await harness("listen", { phase: "ready", detail: "" });
+      await page.waitForTimeout(1300);
+      expect(said).toEqual([]);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("says only the latest of what waited for the microphone, each as a sentence, never a line it overtook (voice-listening-v5-2)", async () => {
+    // Offline and back while a conversation held the box's lines: once the microphone closed, a screen reader said
+    // "Offline: I can't answer yet I'll see: Text Editor · Notes.txt. I can answer again.", the first line long gone.
+    const page = await pageAt();
+    try {
+      const harness = (fn: string, value: unknown) => page.evaluate(([f, v]) => ((window as unknown as TestWindow).askHarness as unknown as Record<string, (x: unknown) => void>)[f as string](v), [fn, value] as const);
+      const said: string[] = [];
+      await page.exposeFunction("__said", (t: string) => { said.push(t); });
+      await page.evaluate(() => { const r = document.getElementById("sees-live")!; new MutationObserver(() => { if (r.textContent) (window as unknown as { __said(t: string): void }).__said(r.textContent); }).observe(r, { subtree: true, childList: true, characterData: true }); });
+      const already = { phase: "blocked", detail: "Ember is already listening.", reason: "listening" };
+      await harness("context", { opened: true, sees: null, history: [], listenOnce: already });
+      await harness("unavailable", "Offline");
+      await harness("context", { sees: "Text Editor · Notes.txt", history: [], unavailable: "Offline" });
+      await harness("unavailable", null);
+      await harness("listen", { phase: "ready", detail: "" });
+      await expect.poll(() => said, { timeout: 3000 }).toEqual(["I'll see: Text Editor · Notes.txt."]);
+      await page.waitForTimeout(1300);
+      expect(said).toEqual(["I'll see: Text Editor · Notes.txt."]);
+      expect(await page.locator("#unavailable").isVisible()).toBe(false);
+      // Another window, and offline and back, while the microphone is open again: only the window is news by then.
+      said.length = 0;
+      await harness("listen", already);
+      await harness("context", { sees: "Files · Documents", history: [] });
+      await harness("unavailable", "Offline");
+      await harness("unavailable", null);
+      await harness("listen", { phase: "ready", detail: "" });
+      await expect.poll(() => said, { timeout: 3000 }).toEqual(["I'll see: Files · Documents."]);
+      // Back to the first window and offline: both said, each a sentence, the window first.
+      said.length = 0;
+      await harness("listen", already);
+      await harness("unavailable", "Offline");
+      await harness("context", { sees: "Text Editor · Notes.txt", history: [], unavailable: "Offline" });
+      await harness("listen", { phase: "ready", detail: "" });
+      await expect.poll(() => said, { timeout: 3000 }).toEqual(["I'll see: Text Editor · Notes.txt. Offline: I can't answer yet."]);
+      // A window that changed and changed back while it waited is no news.
+      said.length = 0;
+      await harness("listen", already);
+      await harness("context", { sees: "Files · Documents", history: [], unavailable: "Offline" });
+      await harness("context", { sees: "Text Editor · Notes.txt", history: [], unavailable: "Offline" });
       await harness("listen", { phase: "ready", detail: "" });
       await page.waitForTimeout(1300);
       expect(said).toEqual([]);
