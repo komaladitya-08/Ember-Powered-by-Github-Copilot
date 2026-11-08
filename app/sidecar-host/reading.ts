@@ -59,10 +59,10 @@ async function unlessBusy<T>(call: () => Promise<T>): Promise<T | undefined> {
 
 /**
  * How the helper is: the Python sidecar's fields, and from the provider's health why it couldn't start (`detail`,
- * Windows' `languageMode`) and the bridge's DPI awareness (`dpi`, `processDpi`). It starts the provider as any request
- * does, but never fails for it: a start that failed is `toolkitAccessibility: false` with its reason, one still going
- * on is null, so Ember's setup check can say why Windows apps can't be read (Constrained Language mode, an execution
- * policy) instead of getting an error.
+ * `cause` for `ember doctor`, Windows' `languageMode`) and the bridge's DPI awareness (`dpi`, `processDpi`). It starts
+ * the provider as any request does, but never fails for it: a start that failed is `toolkitAccessibility: false` with
+ * its reason, one still going on is null, so Ember's setup check can say why Windows apps can't be read (Constrained
+ * Language mode, an execution policy) instead of getting an error.
  */
 async function status(host: Host): Promise<unknown> {
   await host.begin().catch(() => undefined); // its failure is in health() (a start going on: health's ok is null)
@@ -81,7 +81,7 @@ async function status(host: Host): Promise<unknown> {
     }
   }
   const out: Record<string, unknown> = { version: VERSION, python: `node ${process.versions.node} (${host.provider.kind})`, toolkitAccessibility: accessibility, apps };
-  for (const k of ["detail", "languageMode", "dpi", "processDpi"] as const) if (typeof health[k] === "string" && health[k]) out[k] = health[k];
+  for (const k of ["detail", "cause", "languageMode", "dpi", "processDpi"] as const) if (typeof health[k] === "string" && health[k]) out[k] = health[k];
   return out;
 }
 

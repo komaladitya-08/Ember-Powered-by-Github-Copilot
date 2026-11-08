@@ -157,6 +157,9 @@ describe("ember doctor on Windows", () => {
     expect(byId(doctorChecks(windows({ helper: null })), "accessibility-helper")).toMatchObject({ status: "fail", label: "Accessibility helper", detail: expect.stringMatching(/didn't answer/) });
     expect(byId(doctorChecks(windows({ helper: { toolkitAccessibility: false, detail: "refused by an execution policy", languageMode: "FullLanguage" } })), "accessibility-helper"))
       .toMatchObject({ status: "fail", detail: "Ember's accessibility helper can't read apps: refused by an execution policy (PowerShell FullLanguage).", fix: expect.stringMatching(/PowerShell row/) });
+    // The host's own words (status's cause) are for whoever runs the doctor; the setup check shows only the plain ones (reliability-performance-w5-1).
+    expect(byId(doctorChecks(windows({ helper: { toolkitAccessibility: false, detail: "Windows PowerShell couldn't set it up. If this keeps happening, reinstall Ember.", cause: "Add-Type: error CS1002", languageMode: "FullLanguage" } })), "accessibility-helper")?.detail)
+      .toBe("Ember's accessibility helper can't read apps: Add-Type: error CS1002 (PowerShell FullLanguage).");
     expect(byId(doctorChecks(windows({ helper: { toolkitAccessibility: false } })), "accessibility-helper")?.detail).toBe("Ember's accessibility helper can't read apps.");
     expect(byId(doctorChecks(windows({ helper: { toolkitAccessibility: null } })), "accessibility-helper")?.status).toBe("warn");
     expect(byId(doctorChecks(windows({ helper: { toolkitAccessibility: true, dpi: "PerMonitorV2", processDpi: "SystemAware" } })), "accessibility-helper"))

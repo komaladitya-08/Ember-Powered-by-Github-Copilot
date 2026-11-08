@@ -1698,7 +1698,7 @@ Ember can't work.
 | Operating system | Windows 10 before 22H2 (warns), before 1809 (fails) | Update Windows |
 | Desktop session | Ember runs in a service's session | Sign in to Windows and start Ember from the Start menu |
 | Transparent windows, Mouse and keyboard | Windows' window or input functions didn't load | Reinstall Ember |
-| Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
+| Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's or the compiler's own words, PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
 | Microphone | Windows doesn't let desktop apps use the microphone | **Settings › Privacy & security › Microphone › Let desktop apps access your microphone** (on Windows 10: **Settings › Privacy › Microphone › Allow desktop apps to access your microphone**); in the settings window, the row and the Voice section have **Open Settings** for it |
 | Administrator | Ember runs as administrator | Start it from the Start menu, not with **Run as administrator** |
 | PowerShell | A policy stops Windows PowerShell running the helper | §10.4: **Unblock it**, or ask your administrator |
@@ -1708,9 +1708,11 @@ Ember can't work.
 | Speech models, Speaking | As on Linux; speech runs on sherpa-onnx's native addon (§5, How speech runs) | — |
 
 The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**, and why it didn't
-start when it says, such as Windows PowerShell stopping before it was ready; asked about 10 s after start, 60 s at
-login, again on **Check again**, which waits up to 6 s for it, and in the background when a read finds the helper
-can't work while the row says it does, or works while the row says it doesn't), **Display scaling** (the helper and
+start when it says, in plain words by why: Windows PowerShell stopped before it was ready, couldn't set it up, couldn't
+be found or wasn't allowed to run, or the helper is out of date; PowerShell's own words are only in `ember doctor`'s
+**Accessibility helper** row; asked about 10 s after start, 60 s at login, again on **Check again**, which waits up to
+6 s for it, and in the background when a read finds the helper can't work while the row says it does, or works while
+the row says it doesn't), **Display scaling** (the helper and
 Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
 monitor to the same scale in **Settings › System › Display**, then restart Ember; if it still clicks in the wrong
 place, report it at https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues) and **Keyboard

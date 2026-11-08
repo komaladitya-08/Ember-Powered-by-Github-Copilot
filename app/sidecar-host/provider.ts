@@ -141,14 +141,17 @@ export interface RawNode {
 
 /**
  * How the provider is, as the host's `status` reports it without waiting for a start: `ok` true when it is up, false
- * when its last start failed (`detail` says why, in a phrase that reads after "didn't start: "), null when it hasn't
- * started yet or is starting. Windows adds the bridge's `languageMode` from its fatal line ("ConstrainedLanguage": an
- * administrator's lockdown, which nothing Ember does changes) and the DPI awareness its ready line reported for its UI
- * Automation threads (`dpi`) and for its process (`processDpi`).
+ * when its last start failed (`detail` says why, in plain words that read after "didn't start: ", which the setup check
+ * shows; `cause`, where there is one, in PowerShell's, the compiler's or Node's own words, for `ember doctor` only:
+ * reliability-performance-w5-1), null when it hasn't started yet or is starting. Windows adds the bridge's
+ * `languageMode` from its fatal line ("ConstrainedLanguage": an administrator's lockdown, which nothing Ember does
+ * changes) and the DPI awareness its ready line reported for its UI Automation threads (`dpi`) and for its process
+ * (`processDpi`).
  */
 export interface ProviderHealth {
   ok: boolean | null;
   detail?: string;
+  cause?: string;
   languageMode?: string;
   dpi?: string;
   processDpi?: string;

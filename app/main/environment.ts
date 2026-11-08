@@ -31,7 +31,7 @@ export interface WindowsEnvInputs {
   powershell: "full" | "constrained" | "policy" | "blocked-download" | "missing" | "unknown";
   /** The helper's threads and Ember's process report different DPI awareness (mixed scaling may put clicks off). */
   dpiMixed: boolean;
-  /** Why the helper couldn't read apps (its own words), for "missing". */
+  /** Why the helper couldn't read apps, in the host's plain words (HelperStatus.detail, never its `cause`), for "missing". */
   helperDetail?: string;
   /**
    * "Let desktop apps access your microphone" as Electron's getMediaAccessStatus("microphone") reads it ("denied" when
@@ -370,7 +370,8 @@ function inspectWindows(i: EnvInputs): EnvReport {
         checks.push(screen("warn", "Windows blocked Ember's accessibility helper because it came from the internet.", "unblock-helper"));
         break;
       case "missing":
-        checks.push(screen("warn", w.helperDetail ? `Ember's accessibility helper didn't start: ${w.helperDetail}` : "Ember's accessibility helper didn't start."));
+        // One full stop at the end, whether or not the host's words end with one (reliability-performance-w5-1).
+        checks.push(screen("warn", `Ember's accessibility helper didn't start${w.helperDetail ? `: ${w.helperDetail.replace(/[.\s]+$/, "")}` : ""}.`));
         break;
       case "unknown": break;
     }

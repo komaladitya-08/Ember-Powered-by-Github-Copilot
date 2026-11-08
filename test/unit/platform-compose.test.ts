@@ -223,7 +223,9 @@ describe("toHelperStatus", () => {
   it("keeps the host's status fields of the right type only (another process's answer is data)", () => {
     expect(toHelperStatus({ toolkitAccessibility: true, detail: "PowerShell refused to run the bridge (execution policy)", languageMode: "FullLanguage", dpi: "PerMonitorV2", processDpi: "PerMonitorV2" }))
       .toEqual({ toolkitAccessibility: true, detail: "PowerShell refused to run the bridge (execution policy)", languageMode: "FullLanguage", dpi: "PerMonitorV2", processDpi: "PerMonitorV2" });
-    expect(toHelperStatus({ toolkitAccessibility: "yes", detail: 5, languageMode: null })).toEqual({ toolkitAccessibility: null });
+    expect(toHelperStatus({ toolkitAccessibility: false, detail: "Windows PowerShell stopped before it was ready.", cause: "exit code 3" }))
+      .toEqual({ toolkitAccessibility: false, detail: "Windows PowerShell stopped before it was ready.", cause: "exit code 3" });
+    expect(toHelperStatus({ toolkitAccessibility: "yes", detail: 5, cause: {}, languageMode: null })).toEqual({ toolkitAccessibility: null });
     expect(toHelperStatus({ toolkitAccessibility: false })).toEqual({ toolkitAccessibility: false });
   });
 });

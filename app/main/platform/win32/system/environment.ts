@@ -24,7 +24,7 @@ export interface Win32EnvFacts {
   powershell: PowerShellState;
   /** The helper's threads and its process see different DPI awareness (mixed-DPI risk, R22). */
   dpiMixed: boolean;
-  /** Why the helper couldn't read apps, in the host's words: only for "missing" (reliability-performance-v5-1). */
+  /** Why the helper couldn't read apps, in the host's plain words: only for "missing" (reliability-performance-v5-1, w5-1). */
   helperDetail?: string;
   /** "Let desktop apps access your microphone" (absent when Electron's systemPreferences isn't given). */
   microphone?: MediaAccess;

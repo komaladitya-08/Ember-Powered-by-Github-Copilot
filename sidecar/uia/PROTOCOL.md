@@ -64,8 +64,9 @@ Exactly one of:
 `version` is required and must be the number `1` exactly. The host refuses a bridge whose ready line has a missing,
 non-number, non-integer or different `version` (a stale cached DLL, a half-upgraded install): it writes no request,
 fails every waiting request at once, kills the process, logs `uia.version_mismatch` (expected and got, nothing else),
-says "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember." in status,
-and never starts the bridge again in its life (it can't become compatible), as for a Constrained Language fatal.
+says "it doesn't match this Ember (it is out of date). Reinstall or update Ember." in status (after the setup check's
+"Ember's accessibility helper didn't start: "), and never starts the bridge again in its life (it can't become
+compatible), as for a Constrained Language fatal.
 
 `dpi` is the DPI awareness the bridge's UIA threads run with: `"per-monitor-v2"` (expected), `"per-monitor"`,
 `"system"` or `"unaware"`. Anything but `per-monitor-v2` means bounds may be scaled for some monitors; the host
@@ -84,7 +85,9 @@ The bootstrap couldn't start the bridge (the message is PowerShell's or the comp
 process then exits with code 1. `languageMode` is `$ExecutionContext.SessionState.LanguageMode`: `ConstrainedLanguage`
 means AppLocker, WDAC or `__PSLockdownPolicy` forbids `Add-Type`, which is not something Ember can fix; a Group Policy
 execution policy (AllSigned) fails the same way with the policy's own message. Don't restart in a loop after a fatal
-line.
+line. The message can name .NET exceptions and paths in the user's own folder, so the host's status carries it only as
+`cause` (which `ember doctor` shows); its `detail`, which the setup check shows, is plain words by why the bridge didn't
+start (`START_DETAIL` in app/sidecar-host/providers/uia.ts).
 
 ### Requests and answers
 
