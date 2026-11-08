@@ -157,6 +157,48 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
   });
 
+  // A house's, a home's or an office's own code, a vault's or a safe's after a word like "bank", and a password said in
+  // shorthand: round three's narrowing kept them (memory-i4, safety-privacy-c3-1, memory-1).
+  it.each([
+    ["Remember the code to my house is 4821"], ["my house code is 4821"], ["The user's house code is 4821"], ["the house code: 4821"],
+    ["the code for our house is 4821"], ["the code to get into the office is 4821"], ["my office code is 4821"], ["The user's office code is 4821"],
+    ["the office code is 4821"], ["the house code is 4821"], ["Our house code is 1234"], ["the code for the office is 4821"],
+    ["the bank code for the vault is 4821"], ["the room code for the safe is 4821"], ["My phone's code is 4821"], ["The home code is 4821"],
+    ["HR portal pw Summer2024!"], ["gmail pw Tr0ub4dor&3"], ["Jenkins admin: admin / j3nkins!"], ["The token is 550e8400e29b41d4a716446655440000"],
+    // The phrasings safety-privacy-1's re-rating still found kept.
+    ["The user uses hunter2 as their Netflix password"], ["The user's password everywhere is Tr0ub4dor&3"], ["The user's wifi password, it's BlueSky99"],
+    ["Wifi password — BlueSky99"], ["my Netflix password — hunter2"], ["remember my gmail password, it's Summer2024"], ["my netflix password? it's hunter2"],
+    ["Remember that hunter2 is my password"], ["my bank PIN, 4821"], ["Key box code: 4821"], ["WiFi key BlueSky99"], ["My PUK is 12345678"],
+  ])("refuses %j, a code that opens a home or an office, or a password in shorthand (memory-i4)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+
+  // Ordinary developer sentences and an Indian address, which round three's guard refused (memory-c3-1, memory-r3-3):
+  // Projects' requests and files and task views share this guard.
+  it.each([
+    ["The token is base64-encoded"], ["The token is base64url-encoded before it is sent"], ["The token is SHA256-hashed before storage"],
+    ["The refresh token is RS256-signed"], ["The access token is HS256-signed by the server"], ["// The token is base64-encoded and expires after 1 hour"],
+    ["Each token is utf8-encoded"], ["The session token is UUIDv4-formatted"], ["The token is 32-characters"], ["The token is SHA-256-hashed."],
+    ["Our Android code is 12000 lines long"], ["The Android code is 15000 lines"], ["The iPad code is 2024-ready"],
+    ["PIN code: 560001"], ["PIN Code - 560001"], ["PIN Code: 400 001"], ["Bengaluru, Karnataka, PIN code: 560001"],
+    ["Visit us at 12 MG Road, Bengaluru, PIN code: 560001."], ["Our office PIN code is 560001; add it to the footer"], ["Pincode: 560034"],
+    ["Fix the access code 401 errors"], ["the security code 403 error"], ["Our office ZIP code is 90210"], ["The office cost code is 4821"],
+    ["The house style code 123"], ["The area code for the office is 0113"], ["The office Teams code is 482193"], ["The bank sort code for the account is 12-34-56"],
+    ["The house number is 42"], ["Rent is £500 pw for the flat"], ["The admin is Priya, with Bob as backup"], ["root: /opt/app2/bin"],
+    ["my phone PIN is 6 digits long"], ["Uses Bitwarden as their password manager"], ["Bitwarden is my password manager"],
+    ["The password, it's required at sign-in"], ["My password? It's in 1Password"], ["Enter the PIN, 4 digits"],
+  ])("keeps %j, which names no secret (memory-c3-1, memory-r3-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // Still refused: a PIN said as one, a card's or a device's PIN code, and a token's real run (memory-1, memory-r3-3).
+  it.each([
+    ["My PIN code is 560034"], ["My card PIN code is 482193"], ["PIN code: 4821"], ["The PIN code for my SIM is 123456"], ["Pin code 1234"],
+    ["The token for the API is abc123def456ghi789"], ["The token is Xy7k2Lm9Qp3R-abcde"], ["My Android unlock code is 4821"], ["My laptop code is 1234"],
+  ])("still refuses %j (memory-1, memory-r3-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],

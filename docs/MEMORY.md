@@ -68,11 +68,17 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
 - `guard.ts`: refuses any fact holding a token, key, password, PIN, code, card number, IBAN or social security
   number, however it is said: "the password for the HR portal is…", "VPN password hunter2", "my debit card pin 4821",
   "the door code is 4821", "the code for the front door is 4821", "use hunter2 as the password for…", "login for the
-  router: admin / P@ssw0rd", "…with CVV 123", "my PIN number is 1234", "my phone code is 4821", a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  router: admin / P@ssw0rd", "…with CVV 123", "my PIN number is 1234", "my phone code is 4821", "my house code is
+  4821", "the code to get into the office is 4821", "the bank code for the vault is 4821", "HR portal pw
+  Summer2024!", "my wifi password, it's BlueSky99", "hunter2 is my password", a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value, and a code counts only for
-  something that locks: "the access control code 401", "backup exit code 255" and "our office ZIP code is 90210" are
-  ordinary words (Projects and task views share this guard). Secrets are refused whole, never stored redacted.
+  something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors" and
+  "our office ZIP code is 90210" are ordinary words, as are how a token is made ("the access token is HS256-signed",
+  "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
+  long") and an Indian postcode called a "PIN code" after an address or at the start of a line ("Bengaluru, PIN code:
+  560001"; "my PIN code is 560034" is still refused): memory-c3-1, memory-r3-3 (Projects and task views share this
+  guard). Secrets are refused whole, never stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory

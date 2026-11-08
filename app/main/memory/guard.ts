@@ -32,50 +32,85 @@ const NAMED_NO_VALUE = new RegExp(
   "gi",
 );
 
-/** A value where a secret's would be: anything but a word like "required" (NOT_A_VALUE), quoted or not. */
-const VALUE = String.raw`["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))\S+`;
+/**
+ * A value where a secret's would be: anything but a word like "required" (NOT_A_VALUE) or how long it is ("6 digits
+ * long"), quoted or not.
+ */
+const VALUE = String.raw`["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))(?!\d{1,2}\s+(?:digits?|characters?|chars?|letters?|numbers?|words?)\b)\S+`;
 /**
  * What may stand between a secret's name and "is": a short phrase that says what it is for ("for the HR portal", "at
  * home", "to unlock it"), a preposition and one to four words. A hyphen inside a word ("e-mail") isn't a separator.
  */
 const FOR_WHAT = String.raw`(?:\s+(?:for|to|at|on|of|in|into|with|from)(?:\s+[^\s:=]+){1,4}?)?`;
-/** "is", "'s", "was", "are", "is:", or ":", "=", a spaced "-" or one before a digit ("PIN-4821"). */
-const SAYS = String.raw`(?:\s*[:=]|\s*-(?=\s|\d)|['’]s\s|\s+(?:is|was|are|were)(?:\s*[:=])?\s)\s*`;
+/**
+ * "is", "'s", "was", "are", "is:", or ":", "=", a spaced "-", "–" or "—" or one before a digit ("PIN-4821"), or ", it's"
+ * and "? it's" ("my wifi password, it's BlueSky99": memory-i4).
+ */
+const SAYS = String.raw`(?:\s*[:=]|\s*[-–—](?=\s|\d)|['’]s\s|\s+(?:is|was|are|were)(?:\s*[:=])?\s|\s*[,?]\s*(?:it|that)(?:['’]s|\s+is)\s)\s*`;
 
 /**
  * "my password is…", "PIN: 1234", "the wifi key is…", "the password for the HR portal is…": a secret's name, perhaps
  * what it is for, then its value (not a word like "required").
  */
 const TOLD_SECRET = new RegExp(
-  String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:my|the|a) security question|cvv|cvc|wi-?fi (?:key|password)|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)s?\b${FOR_WHAT}${SAYS}${VALUE}`,
+  String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|puk|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:my|the|a) security question|cvv|cvc|wi-?fi (?:key|password)|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)s?\b${FOR_WHAT}(?:\s+(?:everywhere|anywhere|here|there|now|too|also|always|usually|still|today|currently))?${SAYS}${VALUE}`,
   "i",
 );
 
 /**
- * A password or passcode with its value straight after ("VPN password hunter2", "the password 'Summer2024!'"): only a
- * value with a digit or a symbol in it, so "password manager" and "password reset" are still words.
+ * A password or passcode with its value straight after ("VPN password hunter2", "the password 'Summer2024!'", "HR portal pw
+ * Summer2024!"): only a value with a digit or a symbol in it, so "password manager", "password reset" and "£500 pw for
+ * the flat" are still words.
  */
 const BARE_PASSWORD = new RegExp(
-  String.raw`\b(?:pass(?:word|wd|code)|pwd)s?\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
+  String.raw`\b(?:pass(?:word|wd|code)|pwd|pw|wi-?fi\s+key)s?\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
   "i",
 );
-/** A PIN with four or more digits straight after ("the phone unlock PIN 1379", "PIN number 4821", "PIN no. 4821"). */
-const BARE_PIN = /\bpin(?:\s+(?:code|number|no\.?))?\s+\d{4,12}\b/i;
+/**
+ * An Indian postcode, which is called a "PIN code" ("Bengaluru, PIN code: 560001", "Our office PIN code is 560001", a line
+ * "PIN Code - 560001" in an address): six digits, after an address (a comma or a word for a place earlier in its sentence)
+ * or at the start of a line, and with no word for whose or what PIN it is near ("my", "card", "SIM"): memory-r3-3.
+ */
+const PIN_POSTCODE = /\bpin\s*-?\s*code\s*(?:[:=]|-|\bis\b|\bwas\b)?\s*[1-9]\d{2} ?\d{3}(?![\d-])/gi;
+const ADDRESS_BEFORE = /,|\b(?:office|address|area|city|town|village|district|state|post|postal|located|branch|shop|store|delivery|shipping|billing|campus|road|street|nagar|colony|india)\b/i;
+const WHOSE_PIN = /\b(?:my|your|his|her|their|user['’]s|card|bank|atm|debit|credit|sim|phone|mobile|account|unlock|lock|screen|voicemail|door|alarm|safe|passcode|password|secret|login)\b/i;
+/** `text` with each postcode called a "PIN code" written as "postcode", for the PIN checks only. */
+function withoutPostcodes(text: string): string {
+  return text.replace(PIN_POSTCODE, (m, at: number) => {
+    const clause = text.slice(0, at).split(/[.;!?\n]/).at(-1)!;
+    return !WHOSE_PIN.test(clause.slice(-40)) && (!clause.trim() || ADDRESS_BEFORE.test(clause)) ? "postcode" : m;
+  });
+}
+/**
+ * A PIN with four or more digits straight after ("the phone unlock PIN 1379", "PIN number 4821", "PIN no. 4821", "my bank
+ * PIN, 4821").
+ */
+const BARE_PIN = /\bpin(?:\s+(?:code|number|no\.?))?,?\s+\d{4,12}\b/i;
 /**
  * "My PIN number is 1234", "PIN code: 1234", "the PIN number for my card is 1234", "my passcode number is 123456": the
  * commonest ways to say a PIN (memory-1), with four to twelve digits for its value, so "the LED pin number is 13" stays.
  */
 const PIN_NUMBER = new RegExp(String.raw`\b(?:pin|passcode)\s+(?:code|number|no\.?)(?=[\s:=])${FOR_WHAT}${SAYS}["'“]?\d(?:[-\s]?\d){3,11}\b`, "i");
 /**
- * A phone's, tablet's or laptop's code with its digits ("My phone code is 4821", "the iPad code is 482193"). A phone only
- * as someone's own ("my phone code"), since "the phone code for Leeds is 0113" is the number to dial (memory-1).
+ * How long or how much a number is, after it ("12000 lines", "2024-ready", "32 characters"): never a code's digits.
+ */
+const NOT_DIGITS_OF_A_CODE = String.raw`(?![-–][A-Za-z]|\s+(?:lines?|loc|files?|bytes?|[kmg]b|words?|characters?|chars?|commits?|tests?|stars?|users?|downloads?|percent|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|times?|apps?|screens?|pages?|steps?|pixels?|px)\b)`;
+/**
+ * A phone's, tablet's or laptop's code with its digits ("My phone code is 4821", "My phone's code is 4821", "the iPad code
+ * is 482193"). A phone or an Android only as someone's own ("my phone code") or with a word for its lock, since "the phone
+ * code for Leeds is 0113" is the number to dial and "Our Android code is 12000 lines long" is source code (memory-1,
+ * memory-c3-1).
  */
 const DEVICE_CODE = new RegExp(
-  String.raw`\b(?:(?:my|his|her|their)\s+(?:mobile|cell|cellphone|smartphone|phone)|iphone|ipad|android|tablet|laptop|macbook|kindle)\s+(?:(?:unlock|lock|screen|lock\s+screen|screen\s+lock)\s+)?(?:code|pin|passcode)s?\b${FOR_WHAT}${SAYS}["'“]?\d(?:[-\s]?\d){3,11}\b`,
+  String.raw`\b(?:(?:my|his|her|their)\s+(?:mobile|cell|cellphone|smartphone|phone|android)|android(?=\s+(?:unlock|lock|screen))|iphone|ipad|tablet|laptop|macbook|kindle)(?:['’]s)?\s+(?:(?:unlock|lock|screen|lock\s+screen|screen\s+lock)\s+)?(?:code|pin|passcode)s?\b${FOR_WHAT}${SAYS}["'“]?\d(?:[-\s]?\d){3,11}\b${NOT_DIGITS_OF_A_CODE}`,
   "i",
 );
-/** A run a token could be: letters and digits both, twelve or more, ending where a word does ("abc123def456ghi789"). */
-const TOKEN_RUN = String.raw`(?=[A-Za-z0-9_+/=.-]*\d)(?=[A-Za-z0-9_+/=.-]*[A-Za-z])[A-Za-z0-9_+/=.-]{12,}(?![^\s"'”,;!?)])`;
+/**
+ * A run a token could be: letters and digits both, twelve or more, ending where a word does ("abc123def456ghi789"). Never
+ * a short name and a word joined by a hyphen ("HS256-signed", "base64url-encoded", "SHA-256-hashed", "32-characters"),
+ * which says how a token is made (memory-c3-1).
+ */
+const TOKEN_RUN = String.raw`(?![A-Za-z0-9_+/=.-]{1,11}-[a-z]{3,}\.*(?![^\s"'”,;!?)]))(?=[A-Za-z0-9_+/=.-]*\d)(?=[A-Za-z0-9_+/=.-]*[A-Za-z])[A-Za-z0-9_+/=.-]{12,}(?![^\s"'”,;!?)])`;
 /**
  * "The token for the API is abc123def456ghi789": a token's name, perhaps what it is for, then a run a token could be,
  * so "the access token is short-lived" and "the token count is 4096" stay facts (memory-1).
@@ -83,8 +118,12 @@ const TOKEN_RUN = String.raw`(?=[A-Za-z0-9_+/=.-]*\d)(?=[A-Za-z0-9_+/=.-]*[A-Za-
 const TOLD_TOKEN = new RegExp(String.raw`\btokens?\b${FOR_WHAT}${SAYS}["'“]?${TOKEN_RUN}`, "i");
 /** A card's security code with its digits straight after ("…with CVV 123", "CVC 4821"). */
 const BARE_CVV = /\b(?:cvv2?|cvc2?|csc)\s*(?:code|number)?\s*[:#]?\s*\d{3,4}\b/i;
-/** "Use hunter2 as the password for…": a value said before the secret's name ("…as the PIN pad app" names no PIN). */
-const USED_AS = new RegExp(String.raw`\buse\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))\S+["'”]?\s+as\s+(?:the|my|our|your|a)?\s*(?:pass(?:word|phrase|code)|pin|pw)s?(?=\s*$|[.,;!?]|\s+(?:for|on|at|to|of|in|with)\b)`, "i");
+/**
+ * "Use hunter2 as the password for…", "uses hunter2 as their Netflix password", "hunter2 is my password": a value said
+ * before the secret's name ("…as the PIN pad app" and "Bitwarden is my password manager" name no password).
+ */
+const USED_AS = new RegExp(String.raw`\buses?\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))\S+["'”]?\s+as\s+(?:(?:the|my|our|your|their|his|her|a)\s+)?(?:[^\s.,;!?]+\s+)?(?:pass(?:word|phrase|code)|pin|pw)s?(?=\s*$|[.,;!?]|\s+(?:for|on|at|to|of|in|with)\b)`, "i");
+const VALUE_FIRST = new RegExp(String.raw`(?:^|\s)["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}["'”]?\s+is\s+(?:the|my|our|your|their|his|her)\s+(?:[^\s.,;!?]+\s+)?(?:pass(?:word|phrase|code)|pin|pw)s?(?=\s*$|[.,;!?]|\s+(?:for|on|at|to|of|in|with)\b)`, "i");
 /**
  * A login with its user name and password together ("Login for the router: admin / P@ssw0rd", "credentials for staging
  * are admin and hunter22"): only when the second has a digit or a symbol, so "Login for the wiki is via SSO and Okta"
@@ -92,6 +131,14 @@ const USED_AS = new RegExp(String.raw`\buse\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\
  */
 const LOGIN_PAIR = new RegExp(
   String.raw`\b(?:login|log-in|sign-in|credentials?|creds)\b${FOR_WHAT}${SAYS}["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))\S+\s*(?:/|,|\band\b|\bwith\b)\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
+  "i",
+);
+/**
+ * An admin's or root's user name and password ("Jenkins admin: admin / j3nkins!"): only with a spaced slash between and a
+ * digit or a symbol in the second, so "root: /opt/app2" and "the admin is Priya, with Bob as backup" stay (memory-1).
+ */
+const ADMIN_PAIR = new RegExp(
+  String.raw`\b(?:admin|administrator|root)\b${FOR_WHAT}${SAYS}["'“]?\S+\s+/\s+["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
   "i",
 );
 /** "Wifi: BlueSky99": the network's key, only with a digit or a symbol in it ("Wifi: slow" is a fact). */
@@ -103,11 +150,13 @@ const LOGIN_PASS = /\b(?:user(?:name)?|login)\b[^\n]{0,60}?\bpass\b(?:\s*[:=]\s*
 /**
  * A code or combination for a door, alarm, safe and the like, with digits for its value ("the door code is 4821",
  * "Garage code: 7734", "backup codes are 1234-5678", "the safe combination is 32-18-04"). "The door code changes on
- * Monday" and "the access code for the conference is on the invite" have no digits where the value would be. An office
- * or a house isn't a place that locks on its own ("our office ZIP code is 90210"): its door, alarm or keypad is
- * (memory-r6).
+ * Monday" and "the access code for the conference is on the invite" have no digits where the value would be. A house's,
+ * a home's or an office's own code locks it ("my house code is 4821": memory-i4); with another word between ("our office
+ * ZIP code is 90210", "the house style code 123") only a word for its lock counts (memory-r6).
  */
-const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|lockbox|padlock|vault|flat|apartment`;
+const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|key ?box|lockbox|padlock|vault|flat|apartment|house|home|office`;
+/** Places that only lock, so a code for one is a lock's whatever word comes before it ("the bank code for the vault"). */
+const LOCKS = String.raw`door|front door|back door|side door|gate|garage|alarm|safe|bike lock|locker|keypad|key ?safe|key ?box|lockbox|padlock|vault`;
 /**
  * What may stand between a place and its code: only a word for what opens it ("garage opener code", "building entry
  * code"), never any word, so "the access control code 401", "backup exit code 255" and "a security error code 403" stay
@@ -116,18 +165,22 @@ const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|
 const LOCK_WORDS = String.raw`door|front door|back door|side door|entry|entrance|alarm|keypad|lock|opener|remote|gate|access|unlock|security|key ?safe|lockbox|padlock`;
 const PLACE_CODE = new RegExp(
   // "keycode" is one on its own.
-  String.raw`\b(?:(?:${PLACES})(?:\s+(?:${LOCK_WORDS}))?\s+(?:code|combination|combo|pin)s?|key ?codes?|door ?codes?)\b${FOR_WHAT}(?:${SAYS}|\s+)["'“]?#?\d(?:[-\s]?\d){2,}`,
+  // "The access code 401 errors" and "the security code 403 error" name an HTTP status (memory-r6).
+  String.raw`\b(?:(?:${PLACES})(?:\s+(?:${LOCK_WORDS}))?\s+(?:code|combination|combo|pin)s?|key ?codes?|door ?codes?)\b${FOR_WHAT}(?:${SAYS}|\s+)["'“]?#?\d(?:[-\s]?\d){2,}(?![\d-]|\s*(?:errors?|status|responses?|forbidden|unauthori[sz]ed|http)\b)`,
   "i",
 );
 /** Codes that open nothing, whatever place they are for ("the area code for the building is 0113"): memory-r6. */
 const NOT_A_LOCK = String.raw`area|zip|postal|post|cost|project|status|error|exit|timeout|dial|dialling|dialing|permit|mode|phone|country|tax|product|discount|promo|voucher|coupon|tracking|reference|booking|course|class|style|source|room|department|billing|account|sort|branch|bank|swift|flight|airport|zone|extension|colour|color`;
 /**
  * The code or combination first, then what it opens ("the code for the front door is 4821", "the combination to my bike
- * lock is 1234", "the code to the safe is 32-18-04"), with digits for its value. "The area code for London is 020" names
- * no place that locks, and "the code for the report is in GitHub" has no digits.
+ * lock is 1234", "the code to the safe is 32-18-04", "the code to get into the office is 4821"), with digits for its
+ * value. "The area code for London is 020" names no place that locks, "the area code for the office is 0113" a code that
+ * opens nothing, and "the code for the report is in GitHub" has no digits. A vault, a safe or a door only locks, so its
+ * code is one after any word ("the bank code for the vault is 4821": safety-privacy-c3-1).
  */
 const CODE_FOR_PLACE = new RegExp(
-  String.raw`(?<!\b(?:${NOT_A_LOCK})\s+)\b(?:code|combination|combo|pin|keycode)s?\s+(?:for|to|of|at|on)\s+(?:[^\s:=]+\s+){0,3}?(?:${PLACES})\b${SAYS}["'“]?#?\d(?:[-\s]?\d){2,}`,
+  String.raw`(?:(?<!\b(?:${NOT_A_LOCK})\s+)\b(?:code|combination|combo|pin|keycode)s?\s+(?:for|to|of|at|on)\s+(?:[^\s:=]+\s+){0,3}?(?:${PLACES})`
+  + String.raw`|\b(?:code|combination|combo|pin|keycode)s?\s+(?:for|to|of|at|on)\s+(?:[^\s:=]+\s+){0,3}?(?:${LOCKS}))\b${SAYS}["'“]?#?\d(?:[-\s]?\d){2,}`,
   "i",
 );
 /** A social security number beside its name ("my SSN is 123-45-6789", "social security number 123 45 6789"). */
@@ -172,9 +225,10 @@ export function memoryRefusal(text: string): string | null {
   if (redactSecrets(probe) !== probe) return "it holds a password, token or key";
   // The redactor hides a key only with its END line too: a key's first line alone is still a key's start (audit).
   if (PRIVATE_KEY_START.test(text)) return "it holds a private key";
-  if (TOLD_SECRET.test(text) || BARE_PASSWORD.test(text) || BARE_PIN.test(text) || LOGIN_PASS.test(text) || PLACE_CODE.test(text)
+  const pins = withoutPostcodes(text);
+  if (TOLD_SECRET.test(text) || BARE_PASSWORD.test(text) || BARE_PIN.test(pins) || LOGIN_PASS.test(text) || PLACE_CODE.test(text)
     || CODE_FOR_PLACE.test(text) || BARE_CVV.test(text) || USED_AS.test(text) || LOGIN_PAIR.test(text) || WIFI_KEY.test(text) || SEED_WORDS.test(text)
-    || PIN_NUMBER.test(text) || DEVICE_CODE.test(text) || TOLD_TOKEN.test(text)) {
+    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(text) || TOLD_TOKEN.test(text) || ADMIN_PAIR.test(text) || VALUE_FIRST.test(text)) {
     return "it holds a password, PIN or code";
   }
   for (const m of text.match(CARD) ?? []) {
