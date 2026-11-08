@@ -93,3 +93,14 @@ export function bubbleHere(f: { ember: { x: number; y: number }; on?: number }, 
   if (f.on !== undefined) return f.on === displayId;
   return f.ember.x >= bounds.x && f.ember.x < bounds.x + bounds.width && f.ember.y >= bounds.y && f.ember.y < bounds.y + bounds.height;
 }
+
+/**
+ * The open Ask box for the bubble to keep off (global DIP), from main's word (`box`: state.askBox, null once it closes)
+ * and the question showing (`question`: its answers' ids, "" for none), given what it kept off last (`held`): a bubble
+ * that comes up while the box is open is placed clear of it where it can (companion-c1-1: a question came up under the
+ * field). A question already shown keeps off the box where the box was when it came, so it never moves for the box
+ * stepping aside, growing or closing (nothing near a pending question moves).
+ */
+export function askKeepOff(box: Rect | null, question: string, held: { box: Rect | null; question: string }): { box: Rect | null; question: string } {
+  return question && question === held.question ? held : { box, question };
+}

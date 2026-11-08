@@ -41,7 +41,7 @@ import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
-import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask";
+import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFor } from "./ask";
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
@@ -1168,6 +1168,8 @@ function start(): void {
     keepOff: () => handle?.bounds ?? null,
     // The answer or question Ember shows: the box opens beside it, not on it (companion-1).
     bubble: () => overlay?.bubbleRect() ?? null,
+    // Where the box is while it is open: a bubble that comes up meanwhile keeps off it (companion-c1-1).
+    onBounds: askBox => { if (JSON.stringify(lastState.askBox ?? null) !== JSON.stringify(askBox)) showState({ askBox }); },
     // Clicks only on what it shows, where the window system can say so (Linux's input shape: companion-4).
     shape: (w, rects) => platform.overlay.setInputRegion(w, rects, screen.getDisplayMatching(w.getBounds()).scaleFactor || 1),
     windowId: w => ownId(w),
@@ -2629,6 +2631,8 @@ function start(): void {
   ipcMain.on(OVERLAY.bubble, (event, rect: unknown) => {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
     overlay.setBubble(event.sender, rect);
+    // A question (or "Listening…") that found no room clear of the open Ask box: the box steps aside, once (companion-c1-1).
+    askWindow.bubbleChanged(stepsAsideFor(lastState.bubble));
   });
   ipcMain.on(OVERLAY.motion, (event, on: unknown) => {
     if (overlay?.owns(event.sender) && typeof on === "boolean") overlay.reducedMotionChanged(on);
@@ -2704,7 +2708,7 @@ function start(): void {
     if (isHandle(event.sender)) showMenu();
   });
   ipcMain.on(OVERLAY.handleFit, (event, height: unknown) => {
-    if (handle && isHandle(event.sender) && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); }
+    if (handle && isHandle(event.sender) && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); askWindow.keepClear(); }
   });
 
   settings.onChange((s) => {

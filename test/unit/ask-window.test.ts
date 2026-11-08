@@ -60,7 +60,7 @@ vi.mock("electron", () => {
   };
 });
 
-const { AskWindow, MAC_SETTLE_MS } = await import("../../app/main/ask");
+const { AskWindow, MAC_SETTLE_MS, stepsAsideFor } = await import("../../app/main/ask");
 
 afterEach(() => { made.length = 0; menus.length = 0; vi.useRealTimers(); });
 
@@ -192,6 +192,51 @@ describe("the ask box", () => {
     win.heard.get("agent:ask-shape")!({}, [{ x: 8, y: 8, width: 544, height: 50 }]);
     ask.show({ x: 400, y: 300 });
     expect(shapes).toEqual([]);
+  });
+
+  it("steps aside once for a question that comes up under it while it is open, and tells main where it is (companion-c1-1)", () => {
+    type Box = { x: number; y: number; width: number; height: number };
+    const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+    let bubble: Box | null = null;
+    const told: (Box | null)[] = [];
+    const ask = new AskWindow({ bubble: () => bubble, onBounds: b => told.push(b && { ...b }) });
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    // Opened by Ember near the top with no bubble up: below Ember, centred (and main hears where, for the bubble to keep off).
+    ask.show({ x: 687, y: 113, size: 60 });
+    const opened = { ...win.bounds };
+    expect(opened).toMatchObject({ x: 407, y: 149 });
+    expect(told.at(-1)).toEqual(opened);
+    // A task asks while the box is open, and the overlay found no room clear of it: the question is under the field.
+    bubble = { x: 665, y: 155, width: 366, height: 224 };
+    ask.bubbleChanged("q1:once,q1:always,q1:deny");
+    expect(overlaps(win.bounds, bubble), JSON.stringify(win.bounds)).toBe(false);
+    expect(told.at(-1)).toEqual(win.bounds);
+    // Once for that question: it doesn't dance after a bubble that moves on.
+    const aside = { ...win.bounds };
+    bubble = { ...aside };
+    ask.bubbleChanged("q1:once,q1:always,q1:deny");
+    expect(win.bounds).toEqual(aside);
+    // Other bubbles (an answer, a reminder) keep off the box themselves where they can: the box stays where it is typed in.
+    bubble = { x: 100, y: 155, width: 330, height: 123 };
+    ask.bubbleChanged(null);
+    expect(win.bounds).toEqual(aside);
+    // Closed: main hears that there is nothing to keep off.
+    ask.hide();
+    expect(told.at(-1)).toBeNull();
+    ask.bubbleChanged("q2:once,q2:deny");
+    expect(win.bounds).toEqual(aside);
+  });
+
+  it("steps aside for a question or Listen once's \"Listening…\", never for an answer it can be typed beside (companion-c1-1)", () => {
+    const actions = (...ids: string[]) => ids.map(id => ({ id, label: id }));
+    expect(stepsAsideFor({ visible: true, mood: "attention", actions: actions("q4:once", "q4:always", "q4:deny") })).toBe("q4:once,q4:always,q4:deny");
+    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] })).toBe("listening");
+    // An answer and its own buttons (Stop, Try again), a problem, or nothing up: the bubble keeps off the box itself.
+    expect(stepsAsideFor({ visible: true, mood: "done", actions: actions("ui:retry") })).toBeNull();
+    expect(stepsAsideFor({ visible: true, mood: "thinking", actions: actions("ui:stop") })).toBeNull();
+    expect(stepsAsideFor({ visible: false, mood: "attention", actions: actions("q4:once") })).toBeNull();
   });
 
   it("grows with its field as lines are added or pasted, upward above Ember, and opens one line tall again (review #70)", () => {

@@ -6,6 +6,7 @@
 import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
 import { IPC, listenOnceShown, type AskContext, type ListenOnceStatus } from "../shared/ipc";
+import type { BubbleState } from "../shared/overlay";
 import type { OS } from "../shared/shortcuts";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
@@ -199,6 +200,19 @@ export function openingBounds(near: { x: number; y: number; size?: number } | nu
   return { bounds, up: above(bounds) };
 }
 
+/**
+ * The bubble the open box steps aside for when it comes up under it (companion-c1-1), by what it is: a question (its
+ * answers' ids), which must be read and answered there, or Listen once's "Listening…" (the box's own request). Null for
+ * the others (an answer, a reminder, a task's result), which keep off the box where they can but never move the field
+ * being typed in.
+ */
+export function stepsAsideFor(b: Pick<BubbleState, "visible" | "mood" | "actions">): string | null {
+  if (!b.visible) return null;
+  const answers = b.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id);
+  if (answers.length) return answers.join(",");
+  return b.mood === "listening" ? "listening" : null;
+}
+
 /** What the field's right-click menu may do now (Electron's context-menu editFlags). */
 export interface EditFlags {
   canCut: boolean;
@@ -240,6 +254,10 @@ export class AskWindow {
   private up = true;
   /** Ember as the box last opened by it (its centre and size, global DIP), or null: opened without it. */
   private near: { x: number; y: number; size?: number } | null = null;
+  /** The bubble (stepsAsideFor) the box last stepped aside for in this opening: once for each, so it never dances. */
+  private steppedFor: string | null = null;
+  /** Where main last heard the box is (onBounds), as JSON: said again only when it changed. */
+  private told = "null";
   /** The field's right-click menu is open: the box keeps its place while the menu has the keyboard. */
   private menuUp = false;
   /** The box lost the keyboard while that menu was up and hasn't had it back since. */
@@ -270,12 +288,26 @@ export class AskWindow {
    * `settleMs`: once the box has held the keyboard this long since it was shown, a blur is the user clicking away even
    * inside the handover (OPENING_MS), so it closes the box; unset, every blur in the handover takes the keyboard back
    * (Windows, where Ember's own windows finishing their load or the OS can take it straight back). macOS: MAC_SETTLE_MS.
+   * `onBounds`: where the box is on screen (global DIP) each time it shows or moves, null once it is closed: a bubble
+   * that comes up meanwhile keeps off it (companion-c1-1).
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
     windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
     settleMs?: number; onHide?: () => void; bubble?: () => Box | null; shape?: (w: BrowserWindow, rects: readonly Box[]) => boolean;
+    onBounds?: (b: Box | null) => void;
   } = {}) {}
+
+  /** Tells main where the box is now (null: closed), when that changed. */
+  private tellBounds(): void {
+    if (!this.o.onBounds) return;
+    const win = this.win;
+    const b = win && !win.isDestroyed() && win.isVisible() ? win.getBounds() : null;
+    const key = JSON.stringify(b);
+    if (key === this.told) return;
+    this.told = key;
+    try { this.o.onBounds?.(b && { x: b.x, y: b.y, width: b.width, height: b.height }); } catch { /* the bubble keeps off what it knew */ }
+  }
 
   /** Where the page shows something (window-local DIP), as it last said: none yet, all of the box takes clicks. */
   private shown: Box[] = [];
@@ -404,6 +436,7 @@ export class AskWindow {
     try { this.o.takeFocus?.(this.idOf(win)); } catch { /* the keyboard stays where the window manager put it */ }
     // Said once the box is up: a log line written before it would hold up the keyboard.
     this.o.onReveal?.(this.source);
+    this.tellBounds();
   }
 
   /**
@@ -420,6 +453,7 @@ export class AskWindow {
    */
   show(near: { x: number; y: number; size?: number } | null, context?: AskContext, source = "open"): void {
     this.near = near;
+    this.steppedFor = null;
     this.context = { ...(context ?? this.context), opened: true };
     this.source = source;
     this.wanted = true;
@@ -474,15 +508,39 @@ export class AskWindow {
     // Grown over Ember's bubble (more lines, wrapped suggestions): aside, at the height it grew to, else stacked by it;
     // never across Ember, nor over it.
     const next = clearOfBubble(grownBounds(b, rows, wa, this.up, this.keepOff(), this.scale()), wa, this.bubble(), this.keepOff(), this.near, false);
-    if (next.height !== b.height || next.y !== b.y || next.x !== b.x) this.win.setBounds(next);
+    if (next.height !== b.height || next.y !== b.y || next.x !== b.x) { this.win.setBounds(next); this.tellBounds(); }
   }
 
-  /** Ember's handle changed (the compositor came or went): a box open over the new one moves off it. */
+  /**
+   * Ember's handle changed (the compositor came or went, or the corner card grew for a question: companion-c1-1): a box
+   * open over the new one moves off it.
+   */
   keepClear(): void {
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
     const b = this.win.getBounds();
     const next = clearOf(b, screen.getDisplayMatching(b).workArea, this.keepOff());
-    if (next !== b) this.win.setBounds(next);
+    if (next !== b) { this.win.setBounds(next); this.tellBounds(); }
+  }
+
+  /**
+   * Ember's bubble came up or moved while the box is open (`asideFor`: stepsAsideFor of what it shows). The bubble keeps
+   * off the box where it can (onBounds); where it found no room, a question, or Listen once's "Listening…", under the box
+   * moves the box off it, once for each (companion-c1-1: a question that came while the box was open showed under the
+   * field, and the box never moved). The question itself never moves for the box.
+   */
+  bubbleChanged(asideFor: string | null): void {
+    const win = this.win;
+    if (!asideFor || asideFor === this.steppedFor || !win || win.isDestroyed() || !win.isVisible()) return;
+    const bubble = this.bubble();
+    const b = win.getBounds();
+    if (!bubble || !overlap(b, bubble)) return;
+    const next = clearOfBubble(b, screen.getDisplayMatching(b).workArea, bubble, this.keepOff(), this.near);
+    if (next === b) return;
+    this.steppedFor = asideFor;
+    // It grows away from Ember from here: up when it is above Ember now.
+    this.up = !this.near || next.y + next.height <= this.near.y;
+    win.setBounds(next);
+    this.tellBounds();
   }
 
   private keepOff(): Box | null {
@@ -521,6 +579,7 @@ export class AskWindow {
     // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then
     // looks like the box opening by itself). While hidden it takes no pointer.
     try { this.win.setIgnoreMouseEvents(true); } catch { /* test double */ }
+    this.tellBounds();
     // What was left in the field is selected now, while nothing can be typed in it, so typing replaces it when the box
     // opens again (selected as it opened, it took the letters typed first: review #78).
     if (!this.win.webContents.isLoading()) this.win.webContents.send(IPC.askHidden);

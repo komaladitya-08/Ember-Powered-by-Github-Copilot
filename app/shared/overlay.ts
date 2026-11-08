@@ -166,6 +166,11 @@ export interface EmberState {
   micLearning?: boolean;
   /** Places the bubble keeps off (global DIP), e.g. the settings window while the user works in it. */
   avoid?: Rect[];
+  /**
+   * The Ask box while it is open (global DIP): a bubble that comes up meanwhile keeps off it where it can, but never
+   * hides for it, and a question already shown doesn't move for it (companion-c1-1).
+   */
+  askBox?: Rect | null;
   /** What the handle says when nothing else is going on: "Ready", or why Ember can't answer yet. */
   idle?: string;
   /**
