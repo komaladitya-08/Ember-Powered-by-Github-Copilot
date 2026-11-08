@@ -846,8 +846,11 @@ export class VoiceEngine {
    * enrolment's meanwhile: nothing here feeds it.
    */
   private onlyStops = false;
-  /** A request that trailed off, waiting until `until` for the rest of it (trailsOff); `t0`: when it was heard. */
-  private held: { text: string; audio: Float32Array; withWake: boolean; until: number; t0: number } | null = null;
+  /**
+   * A request that trailed off, waiting until `until` for the rest of it (trailsOff); `t0`: when it was heard; `level`:
+   * its loudness (soundLevel: with the wake phrase, when it was said in the same breath), which the rest must come near.
+   */
+  private held: { text: string; audio: Float32Array; withWake: boolean; until: number; t0: number; level: number } | null = null;
   stopsOnly(on: boolean): void {
     this.onlyStops = on;
     this.pendingWake = null;
@@ -1758,7 +1761,15 @@ export class VoiceEngine {
       // it waiting; a stop said on its own still stops (below), and the half request goes.
       if (!saysSomething(text)) return;
       this.held = null;
-      if (!stopped(text)) {
+      if (!stopped(text) && !this.asLoudAs(clip.audio, held.level * CLOSE_RATIO)) {
+        // Not as loud as the voice that paused (within 6 dB, as a follow-up must come near the wake's): others' talk, a TV.
+        // Their words aren't the user's: the half request goes as it was, and a conversation hears theirs as what was said
+        // next, as before the hold (on the real models they were joined to it in 12 of 18 cases at 12–19 dB under:
+        // voice-listening-c1-2).
+        const listensOn = this.mode.reason === "conversation";
+        this.sendRequest(held.text, held.audio, held.withWake, false, held.t0);
+        if (!listensOn || this.mode.kind !== "listening") return;
+      } else if (!stopped(text)) {
         text = `${held.text.replace(/[\s,.…-]+$/, "")} ${text.replace(/^[A-Z](?![A-Z.])/, c => c.toLowerCase())}`;
         withWake = held.withWake;
         audio = new Float32Array(held.audio.length + clip.audio.length);
@@ -1822,7 +1833,7 @@ export class VoiceEngine {
     }
     if (!held && !cut && !bargeIn && !this.overEmber && !this.overSound && trailsOff(text) && !(this.questionWaiting && isAnswerWord(text))) {
       // "And make the text a.": the speaker paused to think. Held for the rest of it (the window stays open meanwhile).
-      this.held = { text, audio, withWake, until: this.now() + TRAIL_HOLD_MS, t0 };
+      this.held = { text, audio, withWake, until: this.now() + TRAIL_HOLD_MS, t0, level: this.soundLevel(audio) };
       this.mode.until = Math.max(this.mode.until, this.held.until);
       return;
     }
@@ -1866,6 +1877,14 @@ export class VoiceEngine {
     const e = framesOf(audio), half = LOUD_FRAMES >> 1, silent = Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2;
     for (let i = 0; i < e.length; i++) if (soundMedian(e, i - half, i + half + 1, silent) >= energy) return true;
     return false;
+  }
+
+  /** The loudness of `audio`'s loudest 9 frames (of those with sound), as asLoudAs measures it; 0 with none. */
+  private soundLevel(audio: Float32Array): number {
+    const e = framesOf(audio), half = LOUD_FRAMES >> 1, silent = Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2;
+    let out = 0;
+    for (let i = 0; i < e.length; i++) out = Math.max(out, soundMedian(e, i - half, i + half + 1, silent));
+    return out;
   }
 
   /** At most 12 s at a time goes to the recognizer, split where it's quietest (between 6 and 12 s in). */

@@ -211,7 +211,9 @@ reported in every PR that touches it.
    ends on a word no request ends on, "a", "the", "to", "and", "my", "um" and the like, with no "?" or "!"
    (engine.ts `trailsOff`), is held for 0.9 s (`TRAIL_HOLD_MS`) and joined to what follows: "And make the text a" …
    0.7 or 0.9 s … "bit bigger." is now one request where it was "And make the text a." (voice-listening-3). Nothing
-   else waits longer, a stop after the pause still stops, and a cancel drops what was held.)
+   else waits longer, a stop after the pause still stops, and a cancel drops what was held. 2026-11-08: only what comes
+   within 6 dB of the held part's loudness is joined, as a follow-up must come near the wake's: others' talk 12–19 dB
+   under it was joined in 12 of 18 real-model cases and now in none; the half goes as it was (voice-listening-c1-2).)
 
 ### Phase 2: listen like a person
 

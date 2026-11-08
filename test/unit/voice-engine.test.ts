@@ -390,6 +390,30 @@ describe("VoiceEngine", () => {
       expect(events.filter(e => e.type === "stop")).toHaveLength(1);
     });
 
+    it("sends the half request as it was when what follows is others' talk, well under the voice that paused (voice-listening-c1-2)", () => {
+      // The user up close ("And make the text a"), a pause, then a TV or colleague 8 dB under: their words aren't the user's.
+      const close = () => { const f = frame(0, true); f.fill(0.05, 2); return f; };
+      for (const window of ["wake", "follow-up", "manual", "conversation"] as const) {
+        const events = run(fake([...(window === "conversation" ? ["Turn on night light."] : []), "And make the text a.", "Let's meet at the station."]), (e, c) => {
+          if (window === "manual") { c.t = 1000; e.listenOnce(c.t, 8000); }
+          else if (window === "follow-up") e.followUp(8000);
+          else { e.conversation(window === "conversation"); e.feed(frame(1)); }
+          if (window === "conversation") {
+            // A first request opens the conversation.
+            for (let i = 0; i < 10; i++) { c.t += 32; e.feed(close(), c.t); }
+            for (let i = 0; i < 30; i++) { c.t += 32; e.feed(frame(0), c.t); }
+          }
+          for (let i = 0; i < 10; i++) { c.t += 32; e.feed(close(), c.t); }
+          c.t += 32; e.feed(frame(0), c.t); // the VAD ends the first part here
+          for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(0), c.t); }
+          for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(0, true), c.t); }
+          for (let i = 0; i < 40 && e.listening; i++) { c.t += 32; e.feed(frame(0), c.t); }
+        });
+        // (A conversation hears on: there the talk is what was said next, as it was before the hold.)
+        expect(said(events), window).toEqual(window === "conversation" ? ["Turn on night light.", "And make the text a.", "Let's meet at the station."] : ["And make the text a."]);
+      }
+    });
+
     it("never sends the half request after a cancel (the kill switch)", () => {
       const events = run(fake(["Hey Ember, open the."]), (e, c) => {
         e.feed(frame(1));

@@ -548,7 +548,8 @@ beside its progress stops it, as turning listening off does; what was half fetch
 While it listens, the voice line names the microphone it hears through (“Listening for “Ember” through Built-in Audio
 Analog Stereo”): Ember uses the system's default input, so choose another in the system's sound settings.
 Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name; a
-pause to think after a word such as “the” or “and” waits 0.9 s more for the rest.
+pause to think after a word such as “the” or “and” waits 0.9 s more for the rest, said in your voice (a TV's or
+someone else's talk well under it isn't joined to it).
 Ember answers out loud in the default Kitten voice when its native runtime and model are ready, or a local system
 voice otherwise, sentence by sentence as the answer
 arrives. **Speaking speed** in Settings › Voice (`voice.rate`, Slower 0.8 to Faster 1.3, Normal 1; settings keep 0.8
