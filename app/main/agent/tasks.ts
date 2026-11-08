@@ -143,18 +143,23 @@ export interface TaskManagerDeps {
  */
 export interface KeptCard { task: Task; spec?: { goal: string; opts: StartOptions }; log?: ActivityLog; left: number; at: number; whole?: number; away?: boolean }
 
+/** What a card handed to another model service without its Try again adds to its words (handedElsewhere). */
+export const ASK_AGAIN_ELSEWHERE = "The model service has changed: ask me again and I'll try it on the new one.";
+
 /**
  * A finished card handed to a connection on another model service (integrations-v5-1). The conversation isn't resumed
- * there, so nothing it wrote goes there either: Try again starts from the user's own words, as a spoken or typed "try
- * again" carries them (askedWith), never the goal the conversation's model wrote nor what that conversation read on the
- * screen. Without the user's words it offers Close only.
+ * there, so nothing it wrote goes there either: never the goal the conversation's model wrote nor what that conversation
+ * read on the screen. Try again goes on only where the user's words are that task's alone (StartOptions.alone), and
+ * starts from them; a request split into several tasks, a routine's, an answer to Ember's question or a steered task's
+ * words would start all of it again under the card, or say nothing of what it was (integrations-w5-1). Any other card
+ * offers Close only, and says to ask again.
  */
 export function handedElsewhere(c: KeptCard): KeptCard {
   if (!c.spec) return c;
   const opts: StartOptions = { ...c.spec.opts };
   delete opts.screen;
-  if (opts.userWords !== undefined) return { ...c, spec: { goal: opts.userWords, opts } };
-  const rest = { ...c };
+  if (opts.alone && opts.userWords !== undefined) return { ...c, spec: { goal: opts.userWords, opts } };
+  const rest: KeptCard = { ...c, task: { ...c.task, detail: [c.task.detail.trim(), ASK_AGAIN_ELSEWHERE].filter(Boolean).join(" ") } };
   delete rest.spec;
   return rest;
 }
@@ -194,6 +199,12 @@ export interface StartOptions {
   typedOnly?: boolean;
   /** TaskSpec.partWay: an earlier try of it stopped part-way (a retry). */
   partWay?: boolean;
+  /**
+   * `userWords` are this task's alone (integrations-w5-1): its turn's request only (no answer to Ember's question, no
+   * earlier try's words, no routine's steps), in a turn that asked for, steered or stopped no other task (shared()
+   * takes it back), and never steered since. Only then does its card's Try again go on to another model service.
+   */
+  alone?: true;
 }
 
 /** What a task that may be tried again was asked with (TaskManager.askedWith): the user's words, never its goal. */
@@ -605,10 +616,24 @@ export class TaskManager {
       opts: { ...opts, ...words, ...seen, ...yes, ...heard,
         ...provenance },
     };
+    // (Words added in another turn, which may be about other tasks too: they aren't this task's alone, integrations-w5-1.)
+    delete next.opts.alone;
     this.specs.set(id, next);
     if (q) q.spec = { ...q.spec, goal: next.goal, ...words, ...seen, ...yes, ...heard,
       ...provenance };
     return true;
+  }
+
+  /**
+   * Task `id`'s turn asked for, steered or stopped another task too: its words aren't its alone (StartOptions.alone), so
+   * its card's Try again doesn't go on to another model service (integrations-w5-1).
+   */
+  shared(id: string): void {
+    const s = this.specs.get(id);
+    if (!s?.opts.alone) return;
+    const opts = { ...s.opts };
+    delete opts.alone;
+    this.specs.set(id, { goal: s.goal, opts });
   }
 
   /** A finished card the user closed. */

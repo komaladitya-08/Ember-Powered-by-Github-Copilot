@@ -934,6 +934,8 @@ export class AgentHost {
   private handing: { tasks: TaskManager; service: string } | null = null;
   /** Tasks whose cards came from a connection on another model service: the conversation here isn't told of them (integrations-v5-1). */
   private fromElsewhere = new WeakSet<Task>();
+  /** The tasks each turn asked for, steered or stopped: a task's words are its alone only in a turn that touched no other (integrations-w5-1). */
+  private turnTasks = new WeakMap<UserRequest, Set<string>>();
   /** The next stop is the waiting switch's own reconnect (switchWhenQuiet, releaseHeld): its cards are kept. */
   private keepCards = false;
   private status: AgentStatus;
@@ -2102,6 +2104,14 @@ export class AgentHost {
         },
       }) : null;
       const tasks = this.tasks;
+      // Turn `r` asked for, steered or stopped task `id`: once it has touched two, none of its tasks' words is that task's
+      // alone, so their cards' Try again doesn't go on to another model service (StartOptions.alone, integrations-w5-1).
+      const touch = (r: UserRequest | null, id: string) => {
+        if (!r || !tasks) return;
+        const ids = this.turnTasks.get(r) ?? new Set<string>();
+        this.turnTasks.set(r, ids.add(id));
+        if (ids.size > 1) for (const x of ids) tasks.shared(x);
+      };
       // What the conversation's prompt may promise is fixed when it is created and kept for its resumes (§3.15).
       const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
       const memory = this.memoryWanted() ? this.o.memory : undefined;
@@ -2241,7 +2251,11 @@ export class AgentHost {
             ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
             // A "try again" of a task that did part of the work: the new worker is told so, as its card's Try again does.
             ...(said.retried?.partWay ? { partWay: true } : {}),
+            // This turn's request alone (no answer to Ember's question, no earlier try's words, no routine's steps): its card's
+            // Try again may start from it on another model service, unless the turn touches another task (integrations-w5-1).
+            ...(said.words === r.words && !said.agreed?.length ? { alone: true as const } : {}),
           });
+          touch(r, t.id);
           // That task's card goes, as its Try again's does: a press of it can't start a second attempt (tasks-approvals-r2).
           if (said.retried) tasks.dismiss(said.retried.task);
           if (binding) this.taskBindings.set(t.id, binding);
@@ -2280,6 +2294,7 @@ export class AgentHost {
           if (stops !== this.stops || gen !== this.gen) return "The user just stopped everything. Don't start anything now; say you've stopped.";
           if (why) return `Ember can't guide here: ${why} Don't tell the user to follow Ember's pointer; explain the steps in words instead, briefly.`;
           const t = tasks.start(goal, { target, mode: "guide" });
+          touch(read, t.id);
           this.announced.add(t.id);
           // Guides have a limit of their own: this one waits for one before it to end (nothing points yet, so no "follow me").
           if (t.status === "queued") return `Guide ${t.id} is waiting: other guides are still showing the user something, and this one starts when one of them ends. Tell the user that, in a few words; don't tell them to follow Ember's pointer yet.`;
@@ -2291,11 +2306,12 @@ export class AgentHost {
         tasks: tasks ? {
           // (Never a card from a connection on another model service: its title and words are that conversation's, integrations-v5-1.)
           list: () => tasks.list().filter(t => !this.fromElsewhere.has(t)).map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
-          cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
+          cancel: id => { touch(this.turn, id); const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
           // (A change of plan is the user's own words: a routine run this turn doesn't steer a task.)
           steer: (id, text) => {
             if (!this.turn) return Promise.resolve(false);
+            touch(this.turn, id);
             const said = this.userWordsOf(this.turn, { routine: false });
             // Changed by a request Voice Match didn't verify (typed, or another voice's): its short yeses are no longer trusted.
             if (this.turn?.verifiedAt === undefined) this.o.voiceTrust?.end(id, "steered");
@@ -3549,8 +3565,8 @@ export class AgentHost {
    * The finished cards the manager before kept on screen through the reconnect, for this connection's (`takes`: there is
    * one), which lists them at once (tasks-approvals-r4-2, integrations-v5-2); with none to take them, they go now. From
    * another model service (`service`: this connection's) they go on without what the conversation there wrote, as it
-   * isn't resumed here (integrations-v5-1): Try again starts from the user's own words (handedElsewhere), and this
-   * conversation isn't told of them (list_tasks).
+   * isn't resumed here (integrations-v5-1): Try again starts from the user's own words, only where they were that
+   * task's alone (handedElsewhere, integrations-w5-1), and this conversation isn't told of them (list_tasks).
    */
   private handOn(service: string, takes: boolean): KeptCard[] {
     const from = this.handing;
@@ -3560,8 +3576,9 @@ export class AgentHost {
     from.tasks.close(kept.length > 0);
     if (this.tasks === from.tasks) this.tasks = null;
     if (from.service === service) return kept;
-    for (const c of kept) this.fromElsewhere.add(c.task);
-    return kept.map(handedElsewhere);
+    const handed = kept.map(handedElsewhere);
+    for (const c of handed) this.fromElsewhere.add(c.task);
+    return handed;
   }
 
   /** The cards a reconnect was handing on go after all: a sign-out, an account change, or no connection (integrations-v5-2). */

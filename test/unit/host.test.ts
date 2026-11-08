@@ -4,7 +4,7 @@
  * The real runtime is covered by the integration tests.
  */
 
-import { TaskManager } from "../../app/main/agent/tasks";
+import { ASK_AGAIN_ELSEWHERE, TaskManager, type Task } from "../../app/main/agent/tasks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -120,6 +120,7 @@ import { MemoryOwner } from "../../app/main/memory/owner";
 import { MemoryLearning } from "../../app/main/memory/learning";
 import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
+import { RoutineBook, routinesFile } from "../../app/main/agent/routines";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const TOKEN = "gho_" + "t".repeat(36); // not a real token
@@ -4392,7 +4393,7 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     const { host, screen } = makeHost({ hands: hands(), provider: () => now });
     expect(await host.start(null)).toBe("ready");
     const before = conductorSession();
-    const t = host.tasks!.start("turn on night light", { userWords: "turn on night light" });
+    const t = host.tasks!.start("turn on night light", { userWords: "turn on night light", alone: true });
     await vi.waitFor(() => expect(taskSession(t.id)).toBeDefined());
     now = at("b.example");
     expect(host.providerChanged()).toBeNull();
@@ -4418,8 +4419,8 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     let now: ActiveProvider | null = at("a.example");
     const { host, screen } = makeHost({ hands: hands(), provider: () => now });
     expect(await host.start(null)).toBe("ready");
-    const a = host.tasks!.start("turn on night light", { userWords: "turn on night light" });
-    const b = host.tasks!.start("tidy my desktop", { userWords: "tidy my desktop" });
+    const a = host.tasks!.start("turn on night light", { userWords: "turn on night light", alone: true });
+    const b = host.tasks!.start("tidy my desktop", { userWords: "tidy my desktop", alone: true });
     await vi.waitFor(() => expect(taskSession(a.id) && taskSession(b.id)).toBeDefined());
     now = at("b.example");
     expect(host.providerChanged()).toBeNull();
@@ -4441,38 +4442,121 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     await host.stop();
   });
 
-  it("starts a card's Try again on another model service from the user's own words, never the goal or screen text the conversation before wrote, and doesn't list it there (integrations-v5-1)", async () => {
-    let now: ActiveProvider | null = at("local.example");
-    const { host, screen } = makeHost({ hands: hands(), provider: () => now });
+  /**
+   * The user asks (`words`, each a turn of its own after Ember's `between` line), and the conversation's `act` starts its
+   * tasks; then the model service moves from a.example to `to` while they run, and `fail` of them fails: its card as the
+   * switch is made (integrations-w5-1).
+   */
+  const askAndFail = async (o: { words: string[]; between?: string; act: (talk: any) => Promise<void>; fail: (tasks: Task[]) => Task; to: string; routines?: RoutineBook; dir?: string }) => {
+    let now: ActiveProvider | null = at("a.example");
+    const made = makeHost({ hands: hands(), provider: () => now, ...(o.routines ? { routines: o.routines, userData: o.dir } : {}) });
+    if (o.routines) made.settings.update({ routines: { on: true, consent: { version: FEATURE_CONSENT_VERSION.routines, at: "2026-11-08T00:00:00.000Z" } } });
+    const { host, screen } = made;
     expect(await host.start(null)).toBe("ready");
-    // The conductor on the service before wrote the goal from the conversation; the user's own words were short.
+    const talk = conductorSession();
+    for (const [i, w] of o.words.entries()) {
+      await host.ask(w);
+      if (i < o.words.length - 1) { talk.emit("assistant.message", { content: o.between ?? "" }); talk.emit("session.idle", {}); await vi.waitFor(() => expect(host.getTranscript().some(e => e.who === "ember")).toBe(true)); }
+    }
+    await o.act(talk);
+    talk.emit("assistant.message", { content: "On it." });
+    talk.emit("session.idle", {});
+    const all = host.tasks!.list();
+    await vi.waitFor(() => expect(all.every(t => taskSession(t.id)?.sent.length)).toBeTruthy());
+    const failed = o.fail(all);
+    if (o.to !== "a.example") { now = at(o.to); expect(host.providerChanged()).toBeNull(); }
+    for (const t of all) {
+      await tool(taskSession(t.id), "finish_task").handler(t === failed ? { success: false, summary: "The calendar wouldn't open." } : { success: true, summary: "Done." });
+      taskSession(t.id).emit("session.idle", {});
+    }
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { host: o.to } }), { timeout: 3000 });
+    await vi.waitFor(() => expect(cardOf(screen, failed.id)?.status).toBe("failed"));
+    if (o.to !== "a.example") await vi.waitFor(() => expect(conductorSession()).not.toBe(talk), { timeout: 3000 });
+    await new Promise(r => setTimeout(r, 50));
+    return { host, screen, failed };
+  };
+  const startTasks = (...goals: string[]) => async (talk: any) => { for (const goal of goals) expect(await tool(talk, "start_task").handler({ goal })).toMatch(/^Task \S+ started/); };
+
+  it("starts a card's Try again on another model service from the request that asked for it alone, never the goal or screen text the conversation before wrote, and doesn't list it there (integrations-v5-1, integrations-w5-1)", async () => {
+    // The conductor on the service before wrote the goal from the conversation; the user's request was short.
     const goal = "Reply to Dr Smith confirming the biopsy appointment on 12 Nov (results discussed earlier: benign)";
-    const t = host.tasks!.start(goal, { userWords: "do that", screen: "Mail – Inbox – Dr Smith: Biopsy results" });
-    await vi.waitFor(() => expect(taskSession(t.id)).toBeDefined());
-    now = at("cloud.example");
-    expect(host.providerChanged()).toBeNull();
-    await tool(taskSession(t.id), "finish_task").handler({ success: false, summary: "Mail wasn't open for Dr Smith." });
-    taskSession(t.id).emit("session.idle", {});
-    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "cloud.example" } }), { timeout: 3000 });
+    const { host, screen, failed } = await askAndFail({ words: ["Reply to my last email saying yes"], act: startTasks(goal), fail: ([t]) => t, to: "cloud.example" });
     // The card and its Try again stay (tasks-approvals-r4-2), and its title on screen, but the new conversation isn't told of it.
-    await vi.waitFor(() => expect(cardOf(screen, t.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
-    expect(cardOf(screen, t.id)?.title).toContain("Dr Smith");
+    await vi.waitFor(() => expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+    expect(cardOf(screen, failed.id)?.title).toContain("Dr Smith");
     expect(await tool(conductorSession(), "list_tasks").handler({})).toBe("No tasks.");
-    expect(host.retryTask(t.id)).toBe(true);
-    await vi.waitFor(() => expect(taskSessions().length).toBe(2));
+    const n = taskSessions().length;
+    expect(host.retryTask(failed.id)).toBe(true);
+    await vi.waitFor(() => expect(taskSessions().length).toBe(n + 1));
     const retried = taskSessions().at(-1);
     await vi.waitFor(() => expect(retried.sent.length).toBeGreaterThan(0));
     expect(retried.config.provider.baseUrl).toBe("https://cloud.example/v1");
     const sent = [retried.sent.join("\n"), JSON.stringify(retried.config.systemMessage ?? "")].join("\n");
-    for (const word of ["Dr Smith", "biopsy", "benign", "Biopsy results"]) expect(sent).not.toContain(word);
-    expect(retried.sent[0]).toMatch(/^Task: do that\b/);
+    for (const word of ["Dr Smith", "biopsy", "benign"]) expect(sent).not.toContain(word);
+    expect(retried.sent[0]).toMatch(/^Task: Reply to my last email saying yes\b/);
+    await host.stop();
+  });
+
+  for (const to of ["b.example", "a.example"]) it(`retries only the card's own task of a request split into two, ${to === "a.example" ? "on the same model service" : "and on another offers Close only and says to ask again"} (integrations-w5-1)`, async () => {
+    const said = "Reply to Dr Smith saying yes, and put the appointment in my calendar.";
+    const { host, screen, failed } = await askAndFail({
+      words: [said], to, fail: ([, cal]) => cal,
+      act: startTasks("Reply to Dr Smith's email saying yes to the 12 Nov appointment", "Add the 12 Nov appointment with Dr Smith to the calendar"),
+    });
+    if (to === "a.example") {
+      // On the same service Try again is the card's own task, under its own title, as before.
+      await vi.waitFor(() => expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+      const n = taskSessions().length;
+      expect(host.retryTask(failed.id)).toBe(true);
+      await vi.waitFor(() => expect(taskSessions().length).toBe(n + 1));
+      const retried = taskSessions().at(-1);
+      await vi.waitFor(() => expect(retried.sent.length).toBeGreaterThan(0));
+      expect(retried.sent[0]).toMatch(/^Task: Add the 12 Nov appointment with Dr Smith to the calendar\b/);
+      await host.stop();
+      return;
+    }
+    // On another, the request's words would start both halves again (the reply sent twice): Close only, and why.
+    expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Close"]);
+    expect(cardOf(screen, failed.id)?.detail).toBe(`The calendar wouldn't open. ${ASK_AGAIN_ELSEWHERE}`);
+    expect(host.taskActivities().find(e => e.id === failed.id)?.controls?.retry).toBe(false);
+    const n = taskSessions().length;
+    expect(host.retryTask(failed.id)).toBe(false);
+    await new Promise(r => setTimeout(r, 50));
+    expect(taskSessions().length).toBe(n);
+    await host.stop();
+  });
+
+  it("offers Close only on another model service for the task of a routine, whose steps are in the turn's words (integrations-w5-1)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-"));
+    const routines = new RoutineBook({ file: routinesFile(dir) });
+    routines.save("start my day", ["open Mail", "show today's calendar"], "when I say start my day, open Mail and show today's calendar");
+    const { host, screen, failed } = await askAndFail({
+      words: ["start my day"], to: "b.example", routines, dir, fail: ([t]) => t,
+      act: async talk => { expect(await tool(talk, "run_routine").handler({ name: "start my day" })).toContain("show today's calendar"); await startTasks("Show today's calendar")(talk); },
+    });
+    expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Close"]);
+    expect(cardOf(screen, failed.id)?.detail).toContain(ASK_AGAIN_ELSEWHERE);
+    expect(host.retryTask(failed.id)).toBe(false);
+    await host.stop();
+  });
+
+  for (const [first, reply, between, goal] of [
+    ["Check my mail from Dr Smith.", "yes do that", "There's one from Dr Smith about your appointment on 12 Nov. Shall I reply to confirm it?", "Reply to Dr Smith confirming the appointment on 12 Nov"],
+    // A risky reply isn't joined to the words before it, but it still answers Ember's question.
+    ["Tidy my Downloads folder.", "delete them", "I found 3 old installers in Downloads. Shall I delete them?", "Delete the 3 old installers in Downloads"],
+  ]) it(`offers Close only on another model service for a task asked by answering Ember ("${reply}"), whose words don't say what it is (integrations-w5-1)`, async () => {
+    const { host, screen, failed } = await askAndFail({ words: [first, reply], between, act: startTasks(goal), fail: ([t]) => t, to: "b.example" });
+    expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Close"]);
+    expect(cardOf(screen, failed.id)?.title).toBe(goal);
+    expect(cardOf(screen, failed.id)?.detail).toContain(ASK_AGAIN_ELSEWHERE);
+    expect(host.retryTask(failed.id)).toBe(false);
     await host.stop();
   });
 
   /** Two tasks fail while a switch waits for them, and the switch's connect waits for `gate`: the cards on screen as it begins. */
   const failBoth = async (host: AgentHost, gate: Promise<void>, now: (p: ActiveProvider) => void) => {
-    const t = host.tasks!.start("turn on night light", { userWords: "turn on night light" });
-    const u = host.tasks!.start("tidy my desktop", { userWords: "tidy my desktop" });
+    const t = host.tasks!.start("turn on night light", { userWords: "turn on night light", alone: true });
+    const u = host.tasks!.start("tidy my desktop", { userWords: "tidy my desktop", alone: true });
     await vi.waitFor(() => expect(taskSession(t.id) && taskSession(u.id)).toBeDefined());
     now(at("b.example"));
     expect(host.providerChanged()).toBeNull();

@@ -813,21 +813,54 @@ describe("Home's Task activity across a reconnect (tasks-approvals-c2-1)", () =>
     const { handedElsewhere } = await import("../../app/main/agent/tasks");
     const old = manager(() => fakeWorker(async () => ({ success: false, summary: "Mail wasn't open." })));
     const agreed = [{ asked: "Reply now?", answer: "yes" }];
-    const t = old.start("Reply to Dr Smith: the results were benign", { userWords: "do that", agreed, commandWords: "do that", screen: "Dr Smith: Biopsy results", target: { title: "Inbox", pid: 3 } });
+    const said = "Reply to my last email saying yes";
+    const t = old.start("Reply to Dr Smith: the results were benign", { userWords: said, alone: true, agreed, commandWords: said, screen: "Dr Smith: Biopsy results", target: { title: "Inbox", pid: 3 } });
     await vi.waitFor(() => expect(old.get(t.id)?.status).toBe("failed"));
     const [card] = old.keptCards();
     const handed = handedElsewhere(card);
-    expect(handed.spec?.goal).toBe("do that");
-    expect(handed.spec?.opts).toMatchObject({ userWords: "do that", commandWords: "do that", agreed, target: { title: "Inbox", pid: 3 } });
+    expect(handed.spec?.goal).toBe(said);
+    expect(handed.spec?.opts).toMatchObject({ userWords: said, commandWords: said, agreed, target: { title: "Inbox", pid: 3 } });
     expect(handed.spec?.opts.screen).toBeUndefined();
     // The card itself is as it was (its title is shown only here), and the card before isn't changed.
     expect(handed.task).toBe(card.task);
     expect(card.spec?.goal).toContain("benign");
     // Without the user's words there is nothing of theirs to start from: Close only.
     expect(handedElsewhere({ ...card, spec: { goal: "x", opts: {} } }).spec).toBeUndefined();
+    expect(handedElsewhere({ ...card, spec: { goal: "x", opts: { alone: true } } }).spec).toBeUndefined();
     const next = manager(() => fakeWorker(async () => ({ success: true, summary: "" })), { carried: [handed] });
     const retried = next.retry(t.id)!;
-    expect(retried.goal).toBe("do that");
+    expect(retried.goal).toBe(said);
+  });
+
+  it("hands a card whose words weren't its alone to another model service with Close only, saying to ask again (integrations-w5-1)", async () => {
+    const { ASK_AGAIN_ELSEWHERE, handedElsewhere } = await import("../../app/main/agent/tasks");
+    const hold = deferred<void>();
+    const old = manager(() => fakeWorker(async () => { await hold.promise; return { success: false, summary: "The calendar wouldn't open." }; }), { maxRunning: 1 });
+    const said = "Reply to Dr Smith saying yes, and put the appointment in my calendar.";
+    // A request split into two tasks (the host takes back each one's `alone`), and one steered while it waited.
+    const mail = old.start("Reply to Dr Smith saying yes", { userWords: said, alone: true });
+    const cal = old.start("Add the 12 Nov appointment to the calendar", { userWords: said, alone: true });
+    const steered = old.start("Turn on the night light", { userWords: "turn on the night light", alone: true });
+    old.shared(mail.id);
+    old.shared(cal.id);
+    expect(await old.steer(steered.id, "and dim it", "and dim it")).toBe(true);
+    hold.resolve();
+    await vi.waitFor(() => expect([mail, cal, steered].map(t => old.get(t.id)?.status)).toEqual(["failed", "failed", "failed"]));
+    // On the same service each card still offers its own task again.
+    expect([mail, cal, steered].map(t => old.canRetry(t.id))).toEqual([true, true, true]);
+    const cards = old.keptCards();
+    const handed = cards.map(handedElsewhere);
+    for (const h of handed) {
+      expect(h.spec).toBeUndefined();
+      expect(h.task.detail).toBe(`The calendar wouldn't open. ${ASK_AGAIN_ELSEWHERE}`);
+    }
+    // The cards before aren't changed.
+    expect(cards.map(c => c.task.detail)).toEqual(Array(3).fill("The calendar wouldn't open."));
+    const shown: TaskCard[][] = [];
+    const next = manager(() => fakeWorker(async () => ({ success: true, summary: "" })), { carried: handed, setCards: (c: TaskCard[]) => shown.push(c) });
+    expect(shown.at(-1)?.map(c => c.actions?.map(a => a.label))).toEqual([["Close"], ["Close"], ["Close"]]);
+    expect(shown.at(-1)?.[1].detail).toContain(ASK_AGAIN_ELSEWHERE);
+    expect(next.retry(cal.id)).toBeNull();
   });
 
   it("offers no Try again while the next try would wait for a switch of model service (tasks-approvals-c4-1)", async () => {

@@ -1130,10 +1130,14 @@ the address in force and its saved key are kept and come back with the switch (i
   reconnect with the time it had left (`TaskManager.keptCards`), on screen and with a Close that closes it while Ember
   connects (the manager before keeps it until the next one lists it: integrations-v5-2); it goes if the connect fails or
   a sign-out or an account change comes first. Its Try again is held back while the switch waits and while Ember
-  connects (a try then would start on the service before) and offered again once the switch is made. On another service it starts
-  from the user's own words, as a typed "try again" does (`handedElsewhere`): the conversation isn't resumed there, so
-  neither is the goal it wrote nor what it read on the screen, and the new conversation isn't told of the card
-  (integrations-v5-1). "Done" is the runtime's own word for the turn, not
+  connects (a try then would start on the service before) and offered again once the switch is made. On another service
+  the conversation isn't resumed, so neither is the goal it wrote nor what it read on the screen, and the new
+  conversation isn't told of the card (`handedElsewhere`, integrations-v5-1). There Try again is offered only for a task
+  whose request asked for it alone (`StartOptions.alone`: that turn's words only, no answer to Ember's question, no
+  routine's steps, no other task asked for, steered or stopped in that turn, never steered since), and starts from those
+  words; any other card (a request split into several tasks, a routine's task, a "yes do that") offers Close only and
+  says to ask again, since its words would start all of it again or say nothing of what it was (integrations-w5-1).
+  "Done" is the runtime's own word for the turn, not
   the bubble's; after a Stop the turn is over at once. The switch's connect is waited on for at most 15 s, as a
   request waits for any connect: then they go on, and are told Ember is still connecting. Stop, Stop everything and
   quitting drop the held requests and end the switch's wait. A
