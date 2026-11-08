@@ -259,6 +259,26 @@ describe("SpeechStream", () => {
     expect(ms).toBeLessThan(200);
   });
 
+  it("keeps a long table's or code block's streaming cheap too, and says what is after it (voice-speaking-r4)", () => {
+    const row = "| Paris | France. | 2.1 million. |\n";
+    const line = "const value = compute(alpha, beta); // done. Next step. Then more.\n";
+    for (const answer of [
+      `Here are the cities:\n\n| City | Country | People |\n|---|---|---|\n${row.repeat(Math.ceil(12_000 / row.length))}\nThat's all. Anything else?`,
+      `Here is the script.\n\n\`\`\`js\n${line.repeat(Math.ceil(20_000 / line.length))}\`\`\`\n\nRun it. Then tell me.`,
+    ]) {
+      const s = new SpeechStream(Infinity);
+      const said: string[] = [];
+      const t0 = performance.now();
+      for (let i = 0; i < answer.length; i += 4) said.push(...s.push(answer.slice(i, i + 4)));
+      const streamed = said.length;
+      said.push(...s.finish(answer));
+      expect(performance.now() - t0).toBeLessThan(300);
+      expect(said.join(" ")).toBe(spokenText(answer).replace(/\s+/g, " "));
+      // What follows the table or the code is said as it streams, not left to the end.
+      expect(streamed).toBeGreaterThan(2);
+    }
+  });
+
   it("waits for the sentence when the first clause is too short to say alone", () => {
     expect(new SpeechStream().push("Sure, I can open that for you")).toEqual([]);
   });
