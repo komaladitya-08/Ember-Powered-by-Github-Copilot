@@ -48,7 +48,7 @@ import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOf
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
-import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
+import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, stillUnsent } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
@@ -259,7 +259,7 @@ function renderTagline(): void {
   const text = tagline({
     failing, look: 0, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,
-    locked: !!lastAdmin && lastAdmin.error !== null, held: !!lastAdmin?.held, service: agent?.service?.kind, waitingFor: waitingFor(),
+    locked: !!lastAdmin && lastAdmin.error !== null, held: !!lastAdmin?.held, service: agent?.service?.kind, waitingFor: waitingFor(), runtime: runtimeState(agent),
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
   renderStatus();
@@ -274,7 +274,7 @@ function renderStatus(): void {
   const { running, asking: askingTasks } = taskCounts(tasksNow);
   const asking = Math.max(askingTasks, presence?.approval ? 1 : 0);
   const locked = !!lastAdmin && lastAdmin.error !== null;
-  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held, service: agent?.service?.kind, answering: conversationAwaitingReply || conversationTurnNow !== "idle" });
+  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held, service: agent?.service?.kind, answering: conversationAwaitingReply || conversationTurnNow !== "idle", runtime: runtimeState(agent) });
   setText("state-word", s.word);
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
@@ -292,7 +292,7 @@ function renderStatus(): void {
   const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;
   // Locked down, connecting can't help (safety-privacy-4): no Connect button.
   $("p-connect").hidden = !notConnected || locked;
-  setText("p-connect", connectLabel(agent?.service?.kind, !!waitingFor()));
+  setText("p-connect", connectLabel(agent?.service?.kind, !!waitingFor(), runtimeState(agent)));
   $("p-ask").classList.toggle("quiet", notConnected);
   $("p-waiting").hidden = !asking;
   const setup = setupLinkText(failing, toLook, toFix);

@@ -332,14 +332,16 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
   state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task
-  needs you" with **Open approval**, "Not connected",
+  needs you" with **Open approval**, "Not connected", "Reconnecting…" while Ember's own model connection starts again
+  by itself, as the handle and Ask say,
   "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
   you, then two facts (which of listening, memory and commands are on; today's tasks by outcome, in their rows' words (a task
   whose question went unanswered "got no answer in time", never "stopped": tasks-approvals-r3-1), and the steps you
   allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
   takes that place while Ember isn't connected, **Check my provider…** for the user's own provider and **Models &
-  connections…** for the organisation's service (first-run-r1), and nothing does while the organisation's policy locks
-  Ember down)
+  connections…** for the organisation's service (first-run-r1) or whenever Ember's own model connection stopped, which
+  is never the provider's or Copilot's sign-in (accessibility-visual-c1-2), and nothing does while the organisation's
+  policy locks Ember down)
   beside a quiet **Stop everything** and the stop chord. Under them two quiet links, **Write to Ember** (the
   composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
 - **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",

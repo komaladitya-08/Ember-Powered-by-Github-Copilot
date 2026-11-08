@@ -35,6 +35,24 @@ export interface StatusFacts {
    * the conversation answers, as main says (from the Ask box and by voice too: home-c1-1).
    */
   answering?: boolean;
+  /** Ember's own model connection stopped: it reconnects by itself, or it stopped (runtimeState). */
+  runtime?: RuntimeState;
+}
+
+/** Ember's own model connection (its runtime) when it stopped: starting again by itself, or not (it gave up, or can't start). */
+export type RuntimeState = "reconnecting" | "stopped" | null;
+
+/**
+ * Whether the agent's status is Ember's own model connection that stopped, from its reason and words: "reconnecting"
+ * while lost() starts it again (a detail ending "Reconnecting…", as the handle's idleWord and composerRefusal read it;
+ * also when the service stopped answering a request), "stopped" when it gave up or can't start, else null. Never the
+ * provider's or Copilot's sign-in, which are fine then (accessibility-visual-c1-2: the panel said "Not connected" with
+ * "Check my provider…" while the handle and Ask said "Reconnecting…").
+ */
+export function runtimeState(a: { phase?: string | null; reason?: string; detail?: string } | null | undefined): RuntimeState {
+  if (a?.phase !== "error") return null;
+  if ((a.reason === "runtime" || a.reason === "not-answering") && a.detail?.endsWith("Reconnecting…")) return "reconnecting";
+  return a.reason === "runtime" ? "stopped" : null;
 }
 
 /** "1 task", "2 tasks". */
@@ -49,6 +67,7 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
   if (f.locked) return { word: f.held ? "Locked until a restart" : "Locked by your organisation", ring: "error" };
   if (f.failing) return { word: "Needs setting up", ring: "error" };
   if (f.phase === "error" && f.waitingForTasks) return { word: f.service ? "Waiting for the model service" : "Waiting for Copilot", ring: "starting" };
+  if (f.phase === "error" && f.runtime === "reconnecting") return { word: "Reconnecting…", ring: "starting" };
   if (f.phase === "signed-out" || f.phase === "error") return { word: "Not connected", ring: "error" };
   if (f.phase === "starting" || f.phase === null) return { word: "Connecting…", ring: "starting" };
   if (f.asking) return { word: f.asking === 1 ? "A task needs you" : `${f.asking} tasks need you`, ring: "needs" };
@@ -61,8 +80,11 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
  * The status panel's connect button while Ember isn't connected, by the service that isn't (the agent's status kind):
  * Copilot's sign-in, the user's own provider's details, or where the organisation's service says why (first-run-r1).
  * `waiting`: signed out while the user's own provider waits for its card, which is the way on (integrations-r3-1).
+ * `runtime`: Ember's own model connection stopped (runtimeState): where Check again is, never the provider's details or
+ * Copilot's sign-in, which are fine (accessibility-visual-c1-2).
  */
-export function connectLabel(service?: string, waiting = false): string {
+export function connectLabel(service?: string, waiting = false, runtime: RuntimeState = null): string {
+  if (runtime) return "Models & connections…";
   return service === "user" || waiting ? "Check my provider…" : service ? "Models & connections…" : "Connect Copilot…";
 }
 

@@ -433,6 +433,29 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(al) Home's status panel says Ember reconnects when its own model connection stopped under my provider, and once it gave up points to Models & connections, never my provider's details (accessibility-visual-c1-2)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const crashed = { ...SIGNED_OUT, phase: "error", reason: "runtime", detail: "Ember's model connection stopped unexpectedly. Reconnecting…", service };
+    const p = await open({ home: true, provider: { on: true, baseUrl: "https://api.example.com/v1" }, agent: crashed });
+    const text = (id: string) => p.evaluate(i => document.getElementById(i)?.textContent ?? "", id);
+    const connect = () => p.evaluate(() => { const b = document.getElementById("p-connect")!; return { hidden: b.hidden, text: b.textContent }; });
+    // Before: "Not connected", "Ember can't connect to your model provider yet…" and "Check my provider…", while the
+    // handle and the Ask box said "Reconnecting…".
+    await expect.poll(() => text("state-word")).toBe("Reconnecting…");
+    expect(await p.evaluate(() => document.getElementById("ring")?.dataset.ring)).toBe("starting");
+    expect(await text("tagline")).toBe("Ember is beside your cursor. Reconnecting to your model provider…");
+    expect(await connect()).toEqual({ hidden: false, text: "Models & connections…" });
+    // It gave up: not connected, with the way to Check again, still never the provider's details.
+    await emit(p, "onAgentStatus", { ...crashed, detail: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember." });
+    await expect.poll(() => text("state-word")).toBe("Not connected");
+    expect(await text("tagline")).toBe("Ember is beside your cursor. Ember's model connection isn't running: Models & connections says why.");
+    expect(await connect()).toEqual({ hidden: false, text: "Models & connections…" });
+    // The provider itself refusing is still the provider's, as before (first-run-r1).
+    await emit(p, "onAgentStatus", { ...crashed, reason: "models", detail: "Enter the model your provider should use in Ember's settings, under Models & connections." });
+    await expect.poll(() => connect()).toEqual({ hidden: false, text: "Check my provider…" });
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(ae) while my own provider's note waits for a new address with no GitHub sign-in, Models & connections points to the note, not to a GitHub sign-in (integrations-c2-3)", async () => {
     const signedOut = { ...SIGNED_OUT, detail: "Not connected to Copilot: sign in with GitHub below." };
     const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:18409/v1" }, agent: signedOut });

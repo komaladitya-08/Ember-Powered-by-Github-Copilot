@@ -322,6 +322,8 @@ export function tagline(t: {
   service?: string;
   /** Signed out while the user's own provider waits for its card for this host: agreeing is the way on (integrations-r3-1). */
   waitingFor?: string | null;
+  /** Ember's own model connection stopped (status-copy.ts runtimeState): reconnecting by itself, or not (accessibility-visual-c1-2). */
+  runtime?: "reconnecting" | "stopped" | null;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
@@ -331,6 +333,10 @@ export function tagline(t: {
   const where = !t.overlay ? `Ember is in the ${handleCornerText(t.corner)}.` : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
   const service = t.service === "user" ? "your model provider" : t.service ? "the model service" : "Copilot";
   if (t.phase === "error" && t.waitingForTasks) return `${where} ${t.service ? service[0].toUpperCase() + service.slice(1) : "Copilot"} isn't answering: Ember reconnects once the tasks that are running finish.`;
+  // Ember's own model connection stopped: never the provider's fault or Copilot's sign-in (accessibility-visual-c1-2),
+  // in the bubble's words for it ("Copilot isn't running", "My model connection isn't running").
+  if (t.phase === "error" && t.runtime === "reconnecting") return `${where} Reconnecting to ${service}…`;
+  if (t.phase === "error" && t.runtime === "stopped") return `${where} ${t.service ? "Ember's model connection" : "Copilot"} isn't running: Models & connections says why.`;
   if (t.phase === "error" && t.service) return `${where} Ember can't connect to ${service} yet: Models & connections says why.`;
   if (t.phase === "signed-out" && t.waitingFor) return `${where} Agree to use ${t.waitingFor} in Models & connections to start asking.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot to start asking.`;
