@@ -48,7 +48,7 @@ const NAMED_NO_VALUE = new RegExp(
  */
 const KEY_BEFORE_SEP = /(?<![\w$-])(?<![\w$.-]\.)[A-Za-z_$][\w$.-]{0,127}(?=["']?\s{0,40}[:=])/g;
 /** The words in a key's name that say a secret, as the redactor's KEY_VALUE and this guard's own names read them. */
-const SECRET_IN_NAME = /pass(?:word|wd|phrase|code)?|pwd|pw|secret|token|key|credentials?|creds|login|pin|otp|cvv|cvc|puk|wi-?fi/i;
+const SECRET_IN_NAME = /pass(?:word|wd|phrase|code)?|pwd|pw|secret|token|key|credentials?|creds|login|pin|otp|cvv|cvc|puk|psk|wi-?fi/i;
 /** A variable's own words that name a secret, so "accessToken", "creds_v2" and "SECRET_KEY" are variables, not values. */
 const SECRET_PARTS = new Set(["password", "passwords", "passwd", "pwd", "pw", "pass", "passphrase", "passcode", "secret", "secrets", "token",
   "tokens", "key", "keys", "apikey", "cred", "creds", "credential", "credentials", "login", "auth", "pin"]);
@@ -303,20 +303,23 @@ const SAYS_VALUE = String.raw`(?:${SAYS_IS}|${SAYS_IT}(?=\s*["'“]?[^\s"'”]{0
 
 /**
  * "my password is…", "PIN: 1234", "the wifi key is…", "the password for the HR portal is…": a secret's name, perhaps
- * what it is for, then its value (not a word like "required").
+ * what it is for, then its value (not a word like "required"). A Wi-Fi password under the names Windows and routers
+ * give it ("network security key", "WPA2 key", "pre-shared key", "PSK"), which Ember's screen reading already treats as
+ * secret (perception/elements.ts), and a security question's answer however its owner is named ("the answer to the
+ * user's security question is…"): safety-privacy-c4-2, memory-1.
  */
 const TOLD_SECRET = new RegExp(
-  String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|puk|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:my|the|a) security question|cvv|cvc|wi-?fi (?:key|password)|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)s?\b${FOR_WHAT}(?:\s+(?:everywhere|anywhere|here|there|now|too|also|always|usually|still|today|currently))?${SAYS_VALUE}${VALUE}`,
+  String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|puk|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:(?:my|the|a|your|our|their|his|her)\s+)?(?:[a-z]+['’]s\s+)?security question|cvv|cvc|wi-?fi (?:key|password)|network (?:security )?key|wpa[23]? (?:key|passphrase)|pre-?shared key|psk|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)s?\b${FOR_WHAT}(?:\s+(?:everywhere|anywhere|here|there|now|too|also|always|usually|still|today|currently))?${SAYS_VALUE}${VALUE}`,
   "i",
 );
 
 /**
- * A password or passcode with its value straight after ("VPN password hunter2", "the password 'Summer2024!'", "HR portal pw
- * Summer2024!"): only a value with a digit or a symbol in it, so "password manager", "password reset" and "£500 pw for
+ * A password, passcode or passphrase with its value straight after ("VPN password hunter2", "the password 'Summer2024!'",
+ * "HR portal pw Summer2024!", "Wi-Fi BlueSky, passphrase BlueSky99"): only a value with a digit or a symbol in it, so "password manager", "password reset" and "£500 pw for
  * the flat" are still words.
  */
 const BARE_PASSWORD = new RegExp(
-  String.raw`\b(?:pass(?:word|wd|code)|pwd|pw|wi-?fi\s+key)s?\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
+  String.raw`\b(?:pass(?:word|wd|code|phrase)|pwd|pw|wi-?fi\s+key)s?\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
   "i",
 );
 /**
@@ -447,8 +450,11 @@ const ADMIN_PAIR = new RegExp(
 );
 /** "Wifi: BlueSky99": the network's key, only with a digit or a symbol in it ("Wifi: slow" is a fact). */
 const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}/i;
-/** A seed phrase on its own ("seed: abandon ability able about above absent"): six or more lowercase words. */
-const SEED_WORDS = /\bseed\b\s*(?::|=|\bis\b)\s*(?:[a-z]+\s+){5,}[a-z]+/;
+/**
+ * A seed phrase on its own ("seed: abandon ability able about above absent", "Seed: …"): six or more lowercase words, so
+ * "Seed: Use The Fixtures First" is a heading (memory-1).
+ */
+const SEED_WORDS = /\b[Ss]eed\b\s*(?::|=|\bis\b)\s*(?:[a-z]+\s+){5,}[a-z]+/;
 /**
  * "user priya, pass hunter2": "pass" as a password, but only after a user name or login, since it is a common word, and
  * with a digit or a symbol in its value unless a ":" or "=" says it is one ("so we pass our own object" is a verb).
@@ -464,7 +470,9 @@ const LOGIN_PASS = new RegExp(String.raw`\b(?:user(?:name)?|login)\b[^\n]{0,60}?
  * office ZIP code is 90210", "the house style code 123") only a word for its lock counts (memory-r6).
  */
 const OWN_PLACE = String.raw`(?:my|our|your|his|her|their|the|[a-z]+['’]s)\s+(?:house|home|office)`;
-const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|key ?box|lockbox|padlock|vault|flat|apartment|${OWN_PLACE}`;
+// Places let or shared by a code ("the Airbnb code is 4821", "the gym code", "the storage unit code"): memory-1.
+const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|key ?box|lockbox|padlock|vault|flat|apartment|`
+  + String.raw`airbnb|gym|cabin|cottage|chalet|caravan|shed|storage unit|storage locker|mailbox|letterbox|lift|elevator|${OWN_PLACE}`;
 /** Places that only lock, so a code for one is a lock's whatever word comes before it ("the bank code for the vault"). */
 const LOCKS = String.raw`door|front door|back door|side door|gate|garage|alarm|safe|bike lock|locker|keypad|key ?safe|key ?box|lockbox|padlock|vault`;
 /**
@@ -472,7 +480,7 @@ const LOCKS = String.raw`door|front door|back door|side door|gate|garage|alarm|s
  * code"), never any word, so "the access control code 401", "backup exit code 255" and "a security error code 403" stay
  * (memory-r6).
  */
-const LOCK_WORDS = String.raw`door|front door|back door|side door|entry|entrance|alarm|keypad|lock|opener|remote|gate|access|unlock|security|key ?safe|lockbox|padlock`;
+const LOCK_WORDS = String.raw`door|front door|back door|side door|entry|entrance|check-?in|alarm|keypad|lock|opener|remote|gate|access|unlock|security|key ?safe|lockbox|padlock`;
 const PLACE_CODE = new RegExp(
   // "keycode" is one on its own.
   // "The access code 401 errors" and "the security code 403 error" name an HTTP status (memory-r6).

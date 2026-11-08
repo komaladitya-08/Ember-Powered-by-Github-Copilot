@@ -71,7 +71,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   number, however it is said: "the password for the HR portal is…", "VPN password hunter2", "my debit card pin 4821",
   "the door code is 4821", "the code for the front door is 4821", "use hunter2 as the password for…", "login for the
   router: admin / P@ssw0rd", "…with CVV 123", "my PIN number is 1234", "my phone code is 4821", "my house code is
-  4821", "the code to get into the office is 4821", "the bank code for the vault is 4821", "HR portal pw
+  4821", "the code to get into the office is 4821", "the bank code for the vault is 4821", "the Airbnb code is 4821",
+  "the user's network security key is BlueSky99", "the PSK is BlueSky99" (the Wi-Fi names Ember's screen reading treats
+  as secret: safety-privacy-c4-2), "the answer to the user's security question is Fluffy", "HR portal pw
   Summer2024!", "my wifi password, it's BlueSky99", "hunter2 is my password", "the user's Netflix login is hunter2",
   "Netflix credentials: hunter2" (a login said with a digit or a symbol, even a user name such as "my login is
   jsmith42" or a user at a computer whose name has a digit and no port, such as "admin@nas1", since one said that way
