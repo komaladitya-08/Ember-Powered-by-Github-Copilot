@@ -186,15 +186,32 @@ const duration = (_m: string, h: string, m: string) => `${h} ${h === "1" ? "hour
  * its dash is said "to" (it was "5 dollars-10 dollars"). "555-1234", "1-2" and "5-star" keep their hyphen, and so does a
  * spaced hyphen between two amounts, a sum ("$1,500 - $200 for fees" was said as a range: voice-speaking-c3-1).
  */
-const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)(?:-|[ \t]*–[ \t]*)(?=[$£€¥]\d)|((?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=\d{1,2}:\d{2}(?![\d:]))|(\d)[ \t]*–[ \t]*(?=\d)/g;
+// (Not a run of numbers joined by en dashes, a phone number's or an ISBN's: "0800–123–456" was "0800 to 123 to 456".)
+const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)(?:-|[ \t]*–[ \t]*)(?=[$£€¥]\d)|((?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=\d{1,2}:\d{2}(?![\d:]))|(?<!\d[ \t]*–[ \t]*\d*)(\d)[ \t]*–[ \t]*(?=\d+(?!\d|[ \t]*–[ \t]*\d))/g;
 /** A dash between two amounts that an equals sign follows is "minus" ("$2,000 - $1,500 = $500"). */
 const MINUS = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)[ \t]*[-–−][ \t]*(?=[$£€¥]\d[\d,]*(?:\.\d{1,2})?[ \t]*=)/g;
+/**
+ * A spaced hyphen between two amounts of one currency that go up is a range too ("Expect to pay $50 - $100" was cut
+ * there and heard as two prices: voice-speaking-c3-1); one that goes down is a sum, said as written ("$1,500 - $200"),
+ * and so is a run of three ("Prices: $5 - $10 - $15").
+ */
+const SPACED_RANGE = /(?<!-[ \t]+)([$£€¥])(\d[\d,]*(?:\.\d{1,2})?)(?!\d)(?:[ \t]?(k|K|m|M|bn|B|thousand|million|billion|trillion)\b)?[ \t]+-[ \t]+(?=\1(\d[\d,]*(?:\.\d{1,2})?)(?!\d)(?:[ \t]?(k|K|m|M|bn|B|thousand|million|billion|trillion)\b)?(?![ \t]*[-–][ \t]*[$£€¥]?\d))/g;
+/** A range with its currency only before the first amount, going up ("$5-10", "€20–30"): said with it twice. */
+const RANGE_TO = /([$£€¥])(\d[\d,]*(?:\.\d{1,2})?)(?:-|[ \t]*–[ \t]*)(?=(\d[\d,]*(?:\.\d{1,2})?)(?!\d|[ \t]?(?:k|K|m|M|bn|B|thousand|million|billion|trillion)\b|[ \t]*[-–][ \t]*\d|%))/g;
+/** Two times with am or pm after the second ("9am–5pm", "10-11 am", "2 - 3 p.m."): said with "to". */
+const HOURS = /((?<![\w:.,$£€¥])\d{1,2}(?::[0-5]\d)?(?:[ \t]?[ap]\.?m\.?)?)[ \t]*[-–][ \t]*(?=\d{1,2}(?::[0-5]\d)?[ \t]?[ap]\.?m\b)/gi;
+/** What an amount is worth, with its scale ("2.5M"), to tell a range from a sum. */
+const SCALES: Readonly<Record<string, number>> = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, bn: 1e9, b: 1e9, billion: 1e9, trillion: 1e12 };
+const worth = (n: string, scale?: string) => Number(n.replace(/,/g, "")) * (scale ? SCALES[scale.toLowerCase()] : 1);
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
   return text
     .replace(MINUS, "$1 minus ")
+    .replace(SPACED_RANGE, (m: string, _sign: string, low: string, lowScale: string | undefined, high: string, highScale: string | undefined) => (worth(low, lowScale) < worth(high, highScale) ? m.replace(/[ \t]+-[ \t]+$/, " to ") : m))
+    .replace(RANGE_TO, (m: string, sign: string, low: string, high: string) => (worth(low) < worth(high) ? `${sign}${low} to ${sign}` : m))
     .replace(RANGE, (_m, amount: string | undefined, time: string | undefined, digit: string | undefined) => `${amount ?? time ?? digit} to `)
+    .replace(HOURS, "$1 to ")
     .replace(PATH, pathSaid)
     .replace(AMOUNT, money)
     .replace(CLOCK, clock)

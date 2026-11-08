@@ -135,6 +135,24 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["It's $5-$10 a month, or £5 – £8.", "It's 5 dollars to 10 dollars a month, or 5 pounds to 8 pounds."],
   ])("%j is said %j, a sum between amounts never as a range (voice-speaking-c3-1)", (text, said) => expect(spokenText(text)).toBe(said));
 
+  it.each([
+    // A spaced hyphen between two amounts that go up is a range ("$50 - $100" was heard as two prices); one that goes
+    // down, a sum, is said as written.
+    ["Expect to pay $50 - $100 for a new one.", "Expect to pay 50 dollars to 100 dollars for a new one."],
+    ["Prices range from $5 - $10 a month.", "Prices range from 5 dollars to 10 dollars a month."],
+    ["Plans cost £8 - £12.50 per user, and €1,000 - €2,500 a year.", "Plans cost 8 pounds to 12 pounds 50 per user, and 1,000 euros to 2,500 euros a year."],
+    ["You pay $1,500 - $200 for fees, and $5 - $5 is nothing.", "You pay 1,500 dollars - 200 dollars for fees, and 5 dollars - 5 dollars is nothing."],
+    ["Prices: $5 - $10 - $15, and $500k - $1M.", "Prices: 5 dollars - 10 dollars - 15 dollars, and 500 thousand dollars to 1 million dollars."],
+  ])("%j is said %j, a spaced range as a range and a sum as written (voice-speaking-c3-1)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["It's $5-10 a month, or €20–30 a year.", "It's 5 dollars to 10 dollars a month, or 20 euros to 30 euros a year."],
+    ["Open 9am–5pm, and 10-11 am or 2 - 3 p.m. on Sundays.", "Open 9am to 5pm, and 10 to 11 am or 2 to 3 p.m. on Sundays."],
+    // A run of numbers joined by dashes is one number, and "$10-5" or "$5-10k" isn't plainly a range.
+    ["Call 0800–123–456, or see ISBN 978–3–16–148410–0.", "Call 0800–123–456, or see ISBN 978–3–16–148410–0."],
+    ["It was $10-5 off, or $5-10k.", "It was 10 dollars-5 off, or 5 dollars-10k."],
+  ])("%j is said %j, a range with its currency once or its am or pm once with its 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
   it("says nothing for an answer that is only emoji", () => {
     expect(spokenText("🎉🎉")).toBe("");
     expect(spokenText("- 🎉\n- ✅")).toBe("");

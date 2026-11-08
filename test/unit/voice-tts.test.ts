@@ -165,6 +165,24 @@ describe("speechChunks", () => {
     expect(chunks.join(" ")).toBe(text);
   });
 
+  it("never cuts a piece at a dash between two amounts, which was heard as two prices (voice-speaking-c3-1)", () => {
+    const sum = "After the discount, that's $1,500 - $200 for fees, so $1,300 is left for the rest of the trip.";
+    expect(speechChunks(spokenText(sum))).toEqual(["After the discount,", "that's 1,500 dollars - 200 dollars for fees, so 1,300 dollars is left for the rest of the trip."]);
+    expect(speechChunks(spokenText("That's $1,500 - $200 for fees, so $1,300 is left after it."))[0]).toBe("That's 1,500 dollars - 200 dollars for fees,");
+    // Streamed too, also when the dash is the last of what has come: the first clause is never cut at it.
+    const text = "The two quotes you have come to $1,500 - $200 in fees, so the cheaper one is better for you.";
+    for (const delta of [1, 2, 3, 4, 16]) {
+      const s = new SpeechStream();
+      const said: string[] = [];
+      for (let i = 0; i < text.length; i += delta) said.push(...s.push(text.slice(i, i + delta)));
+      said.push(...s.finish(text));
+      expect(said[0], `${delta}`).toBe("The two quotes you have come to 1,500 dollars - 200 dollars in fees,");
+      for (const piece of said.flatMap(speechChunks)) expect(piece, `${delta}`).not.toMatch(/dollars -$/);
+    }
+    // A dash before words is still a place to cut ("…your Downloads folder — and three of them…").
+    expect(new SpeechStream().push("I found five spreadsheets in Downloads — and three of")).toEqual(["I found five spreadsheets in Downloads —"]);
+  });
+
   it("joins a very short piece to the one before it", () => {
     expect(speechChunks("The build finished in twelve seconds. OK. Next?")).toEqual(["The build finished in twelve seconds.", "OK. Next?"]);
   });

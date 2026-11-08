@@ -844,8 +844,9 @@ key" as "the right arrow key", "Press ← or →" as "left arrow or right arrow"
 direction ("the ← and → arrow keys" as "the left and right arrow keys"), in a chord as the other keys are ("Win+←" as
 "Windows key left arrow"), an arrow between two words as "to" (after its own direction too, before any word but "to",
 a preposition and the like: "top right → Settings" as "top right to Settings", "Swipe right → to go back" with "right"
-once), an arrow starting a line as its bullet, a range's dash as "to" ("$5-$10", "10:30–11:00", "5–10"; never a spaced hyphen between
-amounts, a sum, which is "minus" before "=": "$2,000 - $1,500 = $500"), and other emoji and typed
+once), an arrow starting a line as its bullet, a range's dash as "to" ("$5-$10", "$5-10", "$50 - $100", "10:30–11:00", "9am–5pm", "5–10"; a spaced
+hyphen between amounts that go down is a sum, said as written, or "minus" before "=": "$2,000 - $1,500 = $500"; never a
+run of numbers, "0800–123–456"; no piece is cut at a dash between two amounts), and other emoji and typed
 smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
 language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by

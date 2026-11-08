@@ -106,11 +106,18 @@ function sentenceEnds(text: string, from = 0, seen?: (end: number) => void): num
   return ends;
 }
 
+/**
+ * Whether the clause break `m` in `text` is a dash between two numbers or amounts ("50 dollars - 100 dollars", "$1,500 -
+ * $200"): cut there, they were heard as two prices, "fifty dollars." then "One hundred dollars" (voice-speaking-c3-1).
+ */
+const betweenAmounts = (text: string, m: RegExpExecArray) =>
+  /[—–-]/.test(m[0]) && /\d(?:[ \t]?[\p{L}]+)?$/u.test(text.slice(Math.max(0, m.index - 24), m.index)) && /^[$£€¥]?\d/.test(text.slice(m.index + m[0].length, m.index + m[0].length + 2));
+
 /** Cuts `chunk` at its first clause break (", " "; " " — ") between `min` and `max` characters, or returns it whole. */
 function cutAtClause(chunk: string, min: number, max: number): [string, string] | null {
   const re = /[,;:]\s+|\s+[—–-]\s+/g;
   for (let m = re.exec(chunk); m; m = re.exec(chunk)) {
-    if (m.index < min) continue;
+    if (m.index < min || betweenAmounts(chunk, m)) continue;
     if (m.index > max) break;
     const at = m.index + m[0].length;
     return [chunk.slice(0, at).trim(), chunk.slice(at).trim()];
@@ -355,7 +362,9 @@ export class SpeechStream {
   private clauseCut(): number {
     const re = /[,;:]\s+|\s+[—–-]\s+/g;
     for (let m = re.exec(this.raw); m; m = re.exec(this.raw)) {
-      if (m.index < FIRST_MIN) continue;
+      if (m.index < FIRST_MIN || betweenAmounts(this.raw, m)) continue;
+      // (A dash is judged by what comes after it: wait for that.)
+      if (/[—–-]/.test(m[0]) && m.index + m[0].length + 2 > this.raw.length) return 0;
       const before = this.raw.slice(0, m.index);
       const lines = before.trimStart().split("\n");
       if (lines.length > 2) return 0;
