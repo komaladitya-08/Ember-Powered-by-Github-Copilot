@@ -2094,8 +2094,10 @@ function start(): void {
     // A typed "stop" while a task is at work stops everything at once (askEmber): no turn comes for it, and Home's
     // composer says so instead of waiting for a reply (home-c1-1). Also while Ember isn't connected (home-c2-1).
     const stops = agent?.stopsWith(text) === true;
-    // Still starting, offline or reconnecting is said as such: Models & connections can't help with those.
-    const refusal = composerSendRefusal(agent?.getStatus() ?? { phase: "signed-out" }, stops);
+    // Still starting, offline or reconnecting is said as such: Models & connections can't help with those. Signed out
+    // while the user's own provider waits for its note, the host it waits for is named (integrations-r4-3).
+    const status = agent?.getStatus() ?? { phase: "signed-out" as const };
+    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null);
     if (refusal) throw new Error(refusal);
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));

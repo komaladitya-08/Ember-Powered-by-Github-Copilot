@@ -1083,7 +1083,9 @@ the address in force and its saved key are kept and come back with the switch (i
   Nothing else points to Copilot then (integrations-r3-1): a request from the Ask box, by voice or from Home is
   answered "Your provider needs your OK: Agree to use <host> in settings, or turn off “Use my own model provider”,
   then ask me again." (main's `providerWaiting`, `providerWaitingHost`), Home's tagline says "Agree to use <host> in
-  Models & connections to start asking.", the status panel's button is "Check my provider…", and the hint under the
+  Models & connections to start asking.", Home's composer refuses a send with "Agree to use <host> in Models &
+  connections, then send again." (`composerSendRefusal`'s `waiting`, integrations-r4-3), the status panel's button is
+  "Check my provider…", and the hint under the
   group "Ember can't answer until you agree to use <host>." (with a GitHub sign-in it says Ember uses GitHub Copilot
   until then, as it does). Ember's hello at start and at login says "I need your OK for <host> first. Open settings
   (<settings key>) and agree to use it in Models & connections, or turn off “Use my own model provider”." with Open

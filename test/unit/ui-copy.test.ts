@@ -1135,13 +1135,17 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     // Anything else is refused as before, and so is a ready Ember's nothing.
     expect(composerSendRefusal(waiting, false)).toBe("Copilot isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
     expect(composerSendRefusal({ phase: "ready" }, false)).toBeNull();
+    // Signed out while my own provider's note waits for its host: agreeing is the way on, and the host is named (integrations-r4-3).
+    expect(composerSendRefusal({ phase: "signed-out" }, false, "127.0.0.1:18308")).toBe("Agree to use 127.0.0.1:18308 in Models & connections, then send again.");
+    expect(composerSendRefusal({ phase: "signed-out" }, false, null)).toBe("Connect Ember in Models & connections, then send again.");
+    expect(composerSendRefusal({ phase: "starting" }, false, "127.0.0.1:18308")).toBe("Ember is still connecting to Copilot. Your message is still here: send it again in a moment.");
     // main.ts decides the stop before the refusal, after consent and the locked screen.
     const main = readFileSync("app/main/main.ts", "utf8").replace(/\s+/g, " ");
     const at = (s: string) => { const i = main.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
     const consent = at('if (!consented()) throw new Error("Finish setup before sending a request.");');
     const locked = at('if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");');
     const stops = at("const stops = agent?.stopsWith(text) === true;");
-    const refused = at('const refusal = composerSendRefusal(agent?.getStatus() ?? { phase: "signed-out" }, stops);');
+    const refused = at("const refusal = composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null);");
     expect(consent).toBeLessThan(locked);
     expect(locked).toBeLessThan(stops);
     expect(stops).toBeLessThan(refused);
