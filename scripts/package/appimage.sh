@@ -37,8 +37,10 @@ node "$root/scripts/package/icon.mjs" "$root/assets/ember.svg" "$app/ember.png" 
 ln -s ember.png "$app/.DirIcon"
 cat > "$app/AppRun" <<'RUN'
 #!/bin/sh
-# Ember as an AppImage. "Ember.AppImage doctor" (or --doctor) checks this computer.
+# Ember as an AppImage. "Ember.AppImage doctor" (or --doctor) checks this computer; --help lists what it takes.
 here=$(dirname "$(readlink -f "$0")")
+# The AppImage's whole path (the runtime sets APPIMAGE), to name in what it says: its bare file name isn't a command.
+me=${APPIMAGE:-$0}
 platform=--ozone-platform=x11
 sandbox=
 # An AppImage can't carry a setuid sandbox helper. Where user namespaces are off
@@ -55,9 +57,17 @@ if [ "$1" = "doctor" ] || [ "$1" = "--doctor" ]; then
   [ "$(id -u)" = 0 ] && sandbox=--no-sandbox
   exec "$here/ember/ember" --doctor $platform --disable-gpu $sandbox "$@"
 fi
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+  echo "usage: $me [doctor | --show-settings | --ask]"
+  echo "  (nothing)         start Ember (it stays beside your cursor; run it again for its settings)"
+  echo "  doctor            check this computer and explain anything that needs fixing"
+  echo "  --show-settings   start Ember and open its settings"
+  echo "  --ask             open the ask box (starting Ember if it isn't running)"
+  exit 0
+fi
 # Without a display (an ssh session without -X, a text console) Chromium prints only its own error.
 if [ -z "$DISPLAY" ]; then
-  echo "Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run '$(basename "${APPIMAGE:-Ember.AppImage}") doctor'." >&2
+  echo "Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run '$me doctor'." >&2
   exit 1
 fi
 exec "$here/ember/ember" $platform $sandbox "$@"

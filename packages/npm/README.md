@@ -34,7 +34,9 @@ Needs Node.js 18.17 or later. Any arguments are passed on to Ember. `ember docto
 setup check in the terminal: it prints the report and exits with the check's code (on a Mac through `open`, so macOS
 judges Ember's own permissions). A plain `ember` starts Ember and returns after a few seconds; if Ember stops in that
 time (no display, for example), the launcher prints what it said and exits with its code instead of saying it started.
-What Ember prints after that goes to `.<v>-start.log` beside the version folder.
+What Ember prints after that goes to `.<v>-start.log` beside the version folder. On Linux without a display (an ssh
+session without `-X`, a text console), it says to start `ember` inside your desktop session or to run `ember doctor`,
+and downloads nothing. `ember --help` lists what Ember takes, and the launcher's own options.
 
 ## What gets downloaded
 
@@ -58,7 +60,7 @@ and its family, `sudo dnf install fuse`); without it, run `APPIMAGE_EXTRACT_AND_
 | `--npm-install-only` | download and check Ember if needed, print the program's path, and exit |
 | `--npm-reinstall` | download it again even if it is cached |
 | `--npm-where` | print this version's cache folder |
-| `--npm-help` | list these options |
+| `--npm-help` | list these options, and Ember's (also `--help` and `-h`) |
 
 Environment: `EMBER_NPM_CACHE` moves the cache folder, `EMBER_NPM_DOWNLOAD_BASE` points at a mirror of
 `https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases/download`, `EMBER_NPM_QUIET=1` hides the
@@ -80,8 +82,10 @@ copy in `.<version>-<random>/previous`; restore it before retrying offline. Cras
 ## Update
 
 Quit Ember, then run `npm i -g ember-copilot@latest` and start `ember` again (or run `npx ember-copilot@latest`). The
-first start downloads and checks the new version, then removes the older versions from the cache; one that is still
-running, or that another installer is working on, stays until the next update.
+first start downloads and checks the new version, and once the new version has started (it then points **Start Ember
+when I log in** at itself), removes the older versions from the cache; one that is still running, or that another
+installer is working on, stays until the next start. `ember doctor` and `--npm-install-only` remove nothing, since
+they don't start Ember.
 
 ## Uninstall
 
@@ -96,9 +100,12 @@ running, or that another installer is working on, stays until the next update.
    npm rm -g ember-copilot
    ```
 
-4. To remove what Ember keeps as well (its settings, logs, audit log, speech models, Voice Match voiceprint and
+4. On Windows, delete `Ember.lnk` in `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, the Start menu entry Ember
+   adds. On a Mac, remove Ember with **−** from each **System Settings › Privacy & Security** list it is on
+   (Accessibility, Screen Recording, Input Monitoring, Microphone).
+5. To remove what Ember keeps as well (its settings, logs, audit log, speech models, Voice Match voiceprint and
    sign-in), delete its data folder: `~/.config/ember` on Linux, `%LOCALAPPDATA%\ember` on Windows, or
-   `~/Library/Application Support/ember` on macOS.
+   `~/Library/Application Support/ember` on macOS, and on Linux also `~/Ember` (what Ember made on its desk).
 
 ## License
 

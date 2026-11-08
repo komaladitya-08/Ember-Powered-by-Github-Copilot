@@ -4,6 +4,7 @@ export declare function assetFor(platform: string, arch: string, version: string
 export declare function parseSha256Sums(text: string): Map<string, string>;
 export declare function cacheDir(o: { platform: string; env: Record<string, string | undefined>; home: string; version: string }): string;
 export declare function downloadUrl(version: string, file: string, env?: Record<string, string | undefined>): string;
+export declare function releaseSource(env?: Record<string, string | undefined>): string;
 export declare function notReleased(version: string, env?: Record<string, string | undefined>): string;
 export declare function packageVersion(): string;
 export declare function ensureInstalled(o: { version: string; platform?: string; arch?: string; env?: Record<string, string | undefined>; force?: boolean }): Promise<{ dir: string; exe: string; app: string; fresh: boolean }>;
@@ -11,4 +12,7 @@ export declare function launchCommand(platform: string, installed: { exe: string
 export declare function pruneVersions(o: { parent: string; keep: string; platform?: string; running?: () => string }): string[];
 export declare function runMode(args: string[]): { attached: boolean; args: string[] };
 export declare function start(cmd: { file: string; args: string[] }, o: { attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }): Promise<number>;
-export declare function main(argv: string[]): Promise<number>;
+export declare function invokedAs(script: string | undefined, env: Record<string, string | undefined>): string;
+export declare function usage(name: string): string;
+export declare function noDisplay(platform: string, env: Record<string, string | undefined>, name: string): string | null;
+export declare function main(argv: string[], o?: { platform?: string; env?: Record<string, string | undefined>; earlyMs?: number }): Promise<number>;

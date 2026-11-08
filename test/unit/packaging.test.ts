@@ -269,15 +269,15 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
     fs.writeFileSync(path.join(d, "launcher"), script.replace("APP=/opt/ember/ember", `APP=${d}/ember/ember`), { mode: 0o755 });
     return d;
   };
-  const env = (d: string, display?: string) => ({ PATH: `${d}/bin:/usr/bin:/bin`, ...(display ? { DISPLAY: display } : {}) });
+  const env = (d: string, display?: string, more: Record<string, string> = {}) => ({ PATH: `${d}/bin:/usr/bin:/bin`, ...(display ? { DISPLAY: display } : {}), ...more });
   const run = (script: string, args: string[], uid: number, display?: string) => {
     const d = stage(script, uid);
     return execFileSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: env(d, display) }).trim();
   };
   /** As run, but keeps the exit status and stderr. */
-  const attempt = (script: string, args: string[], uid: number, display?: string) => {
+  const attempt = (script: string, args: string[], uid: number, display?: string, more?: Record<string, string>) => {
     const d = stage(script, uid);
-    return spawnSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: env(d, display) });
+    return spawnSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: env(d, display, more) });
   };
   const launcher = fs.readFileSync(path.resolve("packaging/ember"), "utf8");
   const appRun = /<<'RUN'\n([\s\S]*?)\nRUN\n/.exec(fs.readFileSync(path.resolve("scripts/package/appimage.sh"), "utf8"))![1];
@@ -312,15 +312,30 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
     expect(appRun.match(/\/proc\/sys\/[\w/]+/g)?.sort()).toEqual(["/proc/sys/kernel/unprivileged_userns_clone", "/proc/sys/user/max_user_namespaces"]);
   });
   it("say Ember needs the desktop session when there is no display, instead of starting into Chromium's error", () => {
-    for (const [script, doctor] of [[launcher, "ember doctor"], [appRun, "Ember.AppImage doctor"]]) {
+    // The AppImage names itself by its whole path (install-docs-3): its bare file name isn't a command anyone can run.
+    const image = "/home/k/Downloads/Ember-1.2.3-x86_64.AppImage";
+    for (const [script, doctor] of [[launcher, "ember doctor"], [appRun, `${image} doctor`]]) {
       for (const args of [[], ["--show-settings"]]) {
-        const r = attempt(script, args, 1000);
+        const r = attempt(script, args, 1000, undefined, { APPIMAGE: image });
         expect(r.status, `${doctor} ${args.join(" ")}`).toBe(1);
         // The stand-in Ember never ran.
         expect(r.stdout).toBe("");
         expect(r.stderr).toBe(`Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run '${doctor}'.\n`);
       }
       expect(attempt(script, [], 1000, ":0")).toMatchObject({ status: 0, stdout: expect.stringMatching(/--ozone-platform=x11/) });
+    }
+  });
+  it("print their usage for --help or -h instead of starting Ember, as the RPM's ember does (install-docs-3)", () => {
+    const image = "/home/k/Downloads/Ember-1.2.3-x86_64.AppImage";
+    for (const [script, name] of [[launcher, "ember"], [appRun, image]]) {
+      for (const flag of ["--help", "-h"]) {
+        const r = attempt(script, [flag], 1000, ":0", { APPIMAGE: image });
+        expect(r.status, `${name} ${flag}`).toBe(0);
+        // The stand-in Ember, which prints its arguments, never ran.
+        expect(r.stdout).not.toMatch(/--ozone-platform/);
+        expect(r.stdout).toContain(`usage: ${name} [doctor | --show-settings | --ask]`);
+        expect(r.stdout).toContain("check this computer and explain anything that needs fixing");
+      }
     }
   });
 });

@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Writable } from "node:stream";
-import { assetFor, cacheDir, downloadUrl, ensureInstalled, launchCommand, notReleased, packageVersion, parseSha256Sums, pruneVersions, REPO, runMode, start } from "../../packages/npm/lib/launcher.mjs";
+import { assetFor, cacheDir, downloadUrl, ensureInstalled, invokedAs, launchCommand, main, noDisplay, notReleased, packageVersion, parseSha256Sums, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
@@ -112,6 +112,39 @@ describe("a version whose release isn't published", () => {
   });
 });
 
+describe("where the launcher gets Ember from", () => {
+  it("names the mirror it downloads from, not GitHub Releases, when one is set (install-docs-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "");
+    const server = await serve();
+    const said: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: string | Uint8Array) => { said.push(String(chunk)); return true; }) as never);
+    try {
+      const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: tempDir() };
+      await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env }).catch(() => null);
+    } finally {
+      spy.mockRestore();
+      await server.close();
+    }
+    expect(said.join("")).toContain(`ember-copilot: getting Ember 9.9.9 for linux-x64 (Ember-9.9.9-x86_64.AppImage) from the mirror at ${server.base}\n`);
+    expect(said.join("")).not.toContain("GitHub Releases");
+    expect(releaseSource({})).toBe("GitHub Releases");
+    expect(releaseSource({ EMBER_NPM_DOWNLOAD_BASE: "http://mirror.example/r" })).toBe("the mirror at http://mirror.example/r");
+  });
+});
+
+/** What the launcher writes to stdout and stderr while `fn` runs. */
+async function captured<T>(fn: () => Promise<T>): Promise<{ result: T; out: string; err: string }> {
+  let out = "", err = "";
+  const o = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: string | Uint8Array) => { out += String(chunk); return true; }) as never);
+  const e = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: string | Uint8Array) => { err += String(chunk); return true; }) as never);
+  try {
+    return { result: await fn(), out, err };
+  } finally {
+    o.mockRestore();
+    e.mockRestore();
+  }
+}
+
 /** A stand-in Ember: a Node script run with this Node, so the cases run on every OS. */
 function fakeEmber(body: string) {
   const file = path.join(tempDir(), "ember.cjs");
@@ -168,6 +201,43 @@ describe("starting Ember from the launcher", () => {
   });
 });
 
+describe("the launcher's own answers", () => {
+  it("prints its usage for --help or -h, in the name it was run by, and downloads or starts nothing (install-docs-3)", async () => {
+    // Through npm the AppImage, Ember.exe and Ember.app have no --help of their own: Ember would start instead.
+    const text = usage("ember");
+    expect(text).toMatch(/^ember-copilot starts Ember/);
+    expect(text).toContain("usage: ember [doctor | --show-settings | --ask]");
+    for (const w of ["  ember doctor", "  ember --show-settings", "  ember --ask", "--npm-install-only", "--npm-where", "EMBER_NPM_DOWNLOAD_BASE"]) expect(text, w).toContain(w);
+    expect(invokedAs("/usr/local/bin/ember", {})).toBe("ember");
+    expect(invokedAs("/usr/local/bin/ember-copilot", {})).toBe("ember-copilot");
+    expect(invokedAs("C:\\Users\\k\\AppData\\Roaming\\npm\\node_modules\\ember-copilot\\bin\\ember.mjs", {})).toBe("ember");
+    expect(invokedAs("/home/k/.npm/_npx/1a/node_modules/.bin/ember-copilot", { npm_command: "exec" })).toBe("npx ember-copilot");
+    const cache = tempDir();
+    for (const flag of ["--help", "-h", "--npm-help"]) {
+      const r = await captured(() => main([flag], { env: { EMBER_NPM_CACHE: cache, EMBER_NPM_DOWNLOAD_BASE: "http://127.0.0.1:9" } }));
+      expect(r.result, flag).toBe(0);
+      expect(r.out, flag).toContain("usage: ");
+    }
+    expect(fs.readdirSync(cache)).toEqual([]);
+  });
+
+  it("says to start it inside the desktop, or to run its setup check, when Linux has no display, before downloading (install-docs-3)", async () => {
+    // The AppImage's own words name its file in the cache, which an npm user can't run by that name.
+    const said = "Ember needs your desktop session (no display here). Run 'ember' from a terminal inside GNOME, or run 'ember doctor' to check this computer.";
+    expect(noDisplay("linux", {}, "ember")).toBe(said);
+    expect(noDisplay("linux", {}, "npx ember-copilot")).toContain("or run 'npx ember-copilot doctor'");
+    expect(noDisplay("linux", { DISPLAY: ":0" }, "ember")).toBeNull();
+    for (const os of ["win32", "darwin"]) expect(noDisplay(os, {}, "ember"), os).toBeNull();
+    const cache = tempDir();
+    for (const args of [[], ["--ask"]]) {
+      const r = await captured(() => main(args, { platform: "linux", env: { EMBER_NPM_CACHE: cache, EMBER_NPM_DOWNLOAD_BASE: "http://127.0.0.1:9" } }));
+      expect(r.result).toBe(1);
+      expect(r.err).toBe(`ember-copilot: ${said}\n`);
+    }
+    expect(fs.readdirSync(cache)).toEqual([]);
+  });
+});
+
 describe("updating through npm", () => {
   it("keeps only the newest version in the cache once it is installed, leaving what it can't be sure of (install-docs-10)", async () => {
     vi.stubEnv("EMBER_NPM_QUIET", "1");
@@ -202,11 +272,51 @@ describe("updating through npm", () => {
     expect(fs.existsSync(path.join(cache, "0.0.8"))).toBe(true);
   });
 
+  // The stand-in AppImage is a shell script, which this needs to run as the launcher runs the real one.
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("removes an older version only once the new one has started, never for the setup check, so Start at login keeps working (install-docs-10)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const v = packageVersion(), old = "0.0.1";
+    const files: Record<string, string> = {};
+    for (const ver of [old, v]) {
+      const asset = `Ember-${ver}-x86_64.AppImage`;
+      const body = `#!/bin/sh\nif [ "$1" = --doctor ]; then echo "setup check ${ver}"; exit 0; fi\nexec sleep 30\n`;
+      files[`/v${ver}/${asset}`] = body;
+      files[`/v${ver}/SHA256SUMS`] = `${createHash("sha256").update(body).digest("hex")}  ${asset}\n`;
+    }
+    const server = await serve(files);
+    const cache = tempDir();
+    const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, DISPLAY: ":99" };
+    try {
+      await ensureInstalled({ version: old, platform: "linux", arch: "x64", env });
+      // The first command after `npm i -g ember-copilot@latest` is the setup check: it installs the new version, and
+      // the login entry, which only a running Ember moves, still points at the old one, so that one stays.
+      const doctor = await captured(() => main(["doctor"], { platform: "linux", env }));
+      expect(doctor.result).toBe(0);
+      expect(doctor.out).toContain(`setup check ${v}`);
+      expect(fs.existsSync(path.join(cache, v, ".ember-npm-complete"))).toBe(true);
+      expect(fs.existsSync(path.join(cache, old))).toBe(true);
+      expect((await captured(() => main(["--npm-install-only"], { platform: "linux", env }))).result).toBe(0);
+      expect(fs.existsSync(path.join(cache, old))).toBe(true);
+      // The new version started and kept running: now the old one goes.
+      expect((await captured(() => main([], { platform: "linux", env, earlyMs: 300 }))).result).toBe(0);
+      expect(fs.existsSync(path.join(cache, old))).toBe(false);
+      expect(fs.existsSync(path.join(cache, v, `Ember-${v}-x86_64.AppImage`))).toBe(true);
+    } finally {
+      const log = path.join(cache, `.${v}-start.log`);
+      const pid = fs.existsSync(log) ? Number(/^pid (\d+)$/m.exec(fs.readFileSync(log, "utf8"))?.[1]) : 0;
+      if (pid > 0) try { process.kill(pid); } catch { /* already gone */ }
+      await server.close();
+    }
+  });
+
   it("gives update steps, and uninstall steps in an order that works (install-docs-10)", () => {
     const own = read("packages/npm/README.md").replace(/\s+/g, " ");
     const update = own.split("## Update")[1]?.split("## ")[0] ?? "";
     expect(update).toContain("`npm i -g ember-copilot@latest`");
     expect(update).toMatch(/[Qq]uit Ember/);
+    // Older versions go only once the new one has started (it then moves the login entry): not for the setup check.
+    expect(update).toContain("once the new version has started");
+    expect(update).toContain("`ember doctor` and `--npm-install-only` remove nothing");
     const uninstall = own.split("## Uninstall")[1]?.split("## ")[0] ?? "";
     // The cache folder before `npm rm -g`, which takes `ember --npm-where` with it.
     const where = uninstall.indexOf("ember --npm-where"), rm = uninstall.indexOf("npm rm -g ember-copilot");
@@ -215,6 +325,10 @@ describe("updating through npm", () => {
     for (const dir of ["%LOCALAPPDATA%\\ember-npm", "~/Library/Caches/ember-npm", "~/.cache/ember-npm"]) expect(uninstall, dir).toContain(dir);
     expect(uninstall).toContain("**Start Ember when I log in**");
     for (const dir of ["~/.config/ember", "%LOCALAPPDATA%\\ember", "~/Library/Application Support/ember"]) expect(uninstall, dir).toContain(dir);
+    // What a packaged Ember leaves outside both folders, as README's own uninstall steps name it: Windows' Start menu
+    // shortcut (written by every packaged Ember, the npm cache's included), a Mac's permission lists, the desk's folder.
+    expect(read("app/main/platform/win32/system/lifecycle.ts")).toContain('const file = path.win32.join(dir, "Ember.lnk");');
+    for (const w of ["`Ember.lnk` in `%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs`", "**System Settings › Privacy & Security** list it is on", "`~/Ember`"]) expect(uninstall, w).toContain(w);
     // A Mac's setup check warns about any copy outside Applications, the cache's included (environment.ts).
     expect(read("app/main/environment.ts")).toContain("Ember isn't in the Applications folder, so its permissions and login item may not stick.");
     expect(own).toMatch(/setup check warns that Ember isn't in the Applications folder/);

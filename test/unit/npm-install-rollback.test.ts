@@ -46,7 +46,7 @@ function harness(old = true) {
     fs: fake, pathPosix, pathWin32, process: { platform: "linux", arch: "x64", env: {} },
     os: { homedir: () => "/home/fake" }, MARKER: marker, say() {},
     assetFor: () => ({ asset: "Ember.AppImage", exe: "Ember.AppImage", app: "Ember.AppImage", kind: "appimage" }),
-    cacheDir: () => dir, downloadUrl: () => "fake", parseSha256Sums: () => new Map([["Ember.AppImage", "hash"]]),
+    cacheDir: () => dir, downloadUrl: () => "fake", releaseSource: () => "GitHub Releases", parseSha256Sums: () => new Map([["Ember.AppImage", "hash"]]),
     get: async () => ({ text: async () => "sums" }),
     download: async (_url: string, file: string) => { h.downloads++; await h.beforeDownload(); disk.set(file, "new"); return "hash"; },
   });

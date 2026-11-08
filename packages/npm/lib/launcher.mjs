@@ -87,14 +87,21 @@ export function downloadUrl(version, file, env = {}) {
 }
 
 /**
+ * Where the launcher gets Ember from, in what it says: GitHub Releases, or the mirror EMBER_NPM_DOWNLOAD_BASE names.
+ * @param {Record<string, string | undefined>} [env]
+ */
+export function releaseSource(env = {}) {
+  return env.EMBER_NPM_DOWNLOAD_BASE ? `the mirror at ${env.EMBER_NPM_DOWNLOAD_BASE}` : "GitHub Releases";
+}
+
+/**
  * What the launcher says when its version's release isn't there (the release's SHA256SUMS answers 404): the package
  * can reach npm before its release is published, and a mirror can lag behind GitHub.
  * @param {string} version
  * @param {Record<string, string | undefined>} [env]
  */
 export function notReleased(version, env = {}) {
-  const where = env.EMBER_NPM_DOWNLOAD_BASE ? `the mirror at ${env.EMBER_NPM_DOWNLOAD_BASE}` : "GitHub Releases";
-  return `Ember ${version} isn't on ${where} yet, so there is nothing to start. Install a published version from https://github.com/${REPO}/releases instead.`;
+  return `Ember ${version} isn't on ${releaseSource(env)} yet, so there is nothing to start. Install a published version from https://github.com/${REPO}/releases instead.`;
 }
 
 /** The version of this package, which is the version of Ember it starts. */
@@ -205,7 +212,7 @@ export async function ensureInstalled(o) {
       return { dir, exe: at(target.exe), app: at(target.app), fresh: false };
     }
     work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
-    say(`getting Ember ${o.version} for ${platform}-${o.arch ?? process.arch} (${target.asset}) from GitHub Releases`);
+    say(`getting Ember ${o.version} for ${platform}-${o.arch ?? process.arch} (${target.asset}) from ${releaseSource(env)}`);
     const sums = await get(downloadUrl(o.version, "SHA256SUMS", env)).catch(err => {
       throw err?.status === 404 ? new Error(notReleased(o.version, env), { cause: err }) : err;
     });
@@ -409,47 +416,96 @@ export async function start(cmd, o) {
   return ended.code ?? 1;
 }
 
-const HELP = `ember-copilot: starts Ember (https://github.com/${REPO}), downloading it on first run.
+/**
+ * The command the person ran, to name it in what the launcher says: `npx ember-copilot` under npx (which npm runs
+ * with npm_command "exec"), otherwise `ember-copilot` or `ember` as its bin was called (npm's Windows shims run the
+ * script itself, which reads as `ember`).
+ * @param {string | undefined} script process.argv[1]
+ * @param {Record<string, string | undefined>} env
+ */
+export function invokedAs(script, env) {
+  if (env.npm_command === "exec") return "npx ember-copilot";
+  return pathPosix.basename(String(script ?? "").replace(/\\/g, "/")) === "ember-copilot" ? "ember-copilot" : "ember";
+}
 
-usage: ember [Ember's own arguments]
+/**
+ * The launcher's help (`--help`, `-h`, `--npm-help`): Ember's own commands as it passes them on, then its options. It
+ * answers for Ember, whose AppImage, Ember.exe and Ember.app would start rather than print usage.
+ * @param {string} name what the person runs it as (invokedAs)
+ */
+export function usage(name) {
+  const rows = [
+    [name, "start Ember (it stays beside your cursor; run it again for its settings)"],
+    [`${name} doctor`, "check this computer and explain anything that needs fixing"],
+    [`${name} --show-settings`, "start Ember and open its settings"],
+    [`${name} --ask`, "open the ask box (starting Ember if it isn't running)"],
+  ];
+  const width = Math.max(...rows.map(r => r[0].length)) + 2;
+  return `ember-copilot starts Ember (https://github.com/${REPO}), downloading it on first run.
+
+usage: ${name} [doctor | --show-settings | --ask]
+${rows.map(([c, d]) => `  ${c.padEnd(width)}${d}`).join("\n")}
+Other arguments are passed on to Ember.
 
 Launcher options (not passed to Ember):
   --npm-install-only   download and check Ember if needed, print where it is, and exit
   --npm-reinstall      download it again even if it is already in the cache
   --npm-where          print the cache folder for this version and exit
-  --npm-help           this text
+  --npm-help           this text (also --help and -h)
 
 Environment: EMBER_NPM_CACHE (cache folder), EMBER_NPM_DOWNLOAD_BASE (mirror of the releases' download URL),
 EMBER_NPM_QUIET=1 (no progress messages).`;
+}
+
+/**
+ * What to say instead of starting Ember on Linux without a display (an ssh session without -X, a text console), or
+ * null. Ember would only stop as it starts, and the AppImage's own words name its file in the cache, which isn't on
+ * the person's PATH; this names the command they ran.
+ * @param {string} platform
+ * @param {Record<string, string | undefined>} env
+ * @param {string} name what the person runs it as (invokedAs)
+ */
+export function noDisplay(platform, env, name) {
+  if (platform !== "linux" || env.DISPLAY) return null;
+  return `Ember needs your desktop session (no display here). Run '${name}' from a terminal inside GNOME, or run '${name} doctor' to check this computer.`;
+}
 
 /**
  * The `ember` command.
  * @param {string[]} argv the arguments after the script
+ * @param {{ platform?: string; env?: Record<string, string | undefined>; earlyMs?: number }} [o] this computer's, unless a test says otherwise
  * @returns {Promise<number>} the exit code
  */
-export async function main(argv) {
+export async function main(argv, o = {}) {
+  const platform = o.platform ?? process.platform;
+  const env = o.env ?? process.env;
   const own = new Set(["--npm-install-only", "--npm-reinstall", "--npm-where", "--npm-help"]);
   const flags = new Set(argv.filter(a => own.has(a)));
   const args = argv.filter(a => !own.has(a));
   const version = packageVersion();
-  if (flags.has("--npm-help")) { process.stdout.write(`${HELP}\n`); return 0; }
+  const name = invokedAs(process.argv[1], env);
+  if (flags.has("--npm-help") || args.includes("--help") || args.includes("-h")) { process.stdout.write(`${usage(name)}\n`); return 0; }
   if (flags.has("--npm-where")) {
-    process.stdout.write(`${cacheDir({ platform: process.platform, env: process.env, home: os.homedir(), version })}\n`);
+    process.stdout.write(`${cacheDir({ platform, env, home: os.homedir(), version })}\n`);
     return 0;
   }
-  const installed = await ensureInstalled({ version, force: flags.has("--npm-reinstall") });
-  if (installed.fresh) {
-    const p = process.platform === "win32" ? pathWin32 : pathPosix;
-    const removed = pruneVersions({ parent: p.dirname(installed.dir), keep: version });
-    if (removed.length) say(`removed the older ${removed.length === 1 ? "version" : "versions"} ${removed.join(", ")} from the cache`);
-  }
-  if (flags.has("--npm-install-only")) { process.stdout.write(`${installed.exe}\n`); return 0; }
   const mode = runMode(args);
-  const p = process.platform === "win32" ? pathWin32 : pathPosix;
+  // Said before any download: the setup check and an install-only run need no display, and go ahead.
+  const blocked = mode.attached || flags.has("--npm-install-only") ? null : noDisplay(platform, env, name);
+  if (blocked) { process.stderr.write(`ember-copilot: ${blocked}\n`); return 1; }
+  const installed = await ensureInstalled({ version, platform, env, force: flags.has("--npm-reinstall") });
+  if (flags.has("--npm-install-only")) { process.stdout.write(`${installed.exe}\n`); return 0; }
+  const p = platform === "win32" ? pathWin32 : pathPosix;
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
-  if (mode.attached && process.platform === "darwin") return await doctorMac(installed, mode.args, log);
-  const code = await start(launchCommand(process.platform, installed, mode.args), { attached: mode.attached, log });
-  if (!mode.attached && code === 0) say(`started Ember ${version}`);
+  if (mode.attached && platform === "darwin") return await doctorMac(installed, mode.args, log);
+  const code = await start(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs });
+  if (!mode.attached && code === 0) {
+    // Only once this version has started: Ember then points Start Ember when I log in (and Windows' Start menu
+    // shortcut) at itself, which the setup check and an install-only run don't, so until then the older one stays.
+    const removed = pruneVersions({ parent: p.dirname(installed.dir), keep: version, platform });
+    if (removed.length) say(`removed the older ${removed.length === 1 ? "version" : "versions"} ${removed.join(", ")} from the cache`);
+    say(`started Ember ${version}`);
+  }
   return code;
 }
 
