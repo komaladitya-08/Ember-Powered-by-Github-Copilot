@@ -344,7 +344,8 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
     const end = () => { if (chain) out.push(chain.join(" and ")); chain = null; more = 0; };
     const after = carried;
     clauses.forEach(([tokens0, listed0, then0], n) => {
-      const starts = clauseStarts(userWordList(tokens0.join(" ")), n, question, polite);
+      const words0 = userWordList(tokens0.join(" "));
+      const starts = clauseStarts(words0, n, question, polite);
       const leads = asksVerb(starts);
       const before = place;
       place = !leads && onlyPlace(tokens0) ? tokens0 : [];
@@ -394,7 +395,9 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
         if (j > 0 && RELATIVE.has(word(j - 1))) j--;
         cut = j;
       }
-      cut = Math.min(cut, objectEnd(tokens, names, nounish, shape));
+      // Where what the verb acts on starts: after the verb in its own clause, after fillers in a list.
+      const from = leads ? before.length + verbEnd(tokens0, words0, starts, verbs) : Math.max(tokens.indexOf(first ?? ""), 0);
+      cut = Math.min(cut, objectEnd(tokens, names, nounish, shape, from));
       const kept = objectWords(tokens.slice(0, cut), shape).join(" ").replace(/\?+(?=["'”’)\]]*$)/, "");
       chain = [...(chain ?? []), ...(kept.trim() !== "" ? [kept] : [])];
       if (!leads && kept.trim() !== "") more++;
@@ -433,6 +436,20 @@ function stuckThing(tokens: readonly string[], names: (t: string) => boolean): s
   if (!ws.some(x => STUCK.has(x))) return null;
   if (!ws.every(x => STUCK.has(x) || STUCK_WITH.has(x) || OF_THING.has(x) || AFTER_OBJECT.has(x) || FILLERS.has(x))) return null;
   return named[0].replace(/^[("'`“‘[{<]+|[)"'`”’\]}>.,;:!?]+$/gu, "").replace(/['’]s$/u, "");
+}
+
+/** The token after a row's verb in its clause (`words` are the clause's plain words, `starts` requestStarts' places), or 0. */
+function verbEnd(tokens: readonly string[], words: readonly string[], starts: readonly string[][], verbs: readonly string[]): number {
+  for (const s of starts) {
+    for (const v of verbs) {
+      const parts = v.split(" ");
+      if (!parts.every((p, j) => s[j] === p)) continue;
+      const end = words.length - s.length + parts.length;
+      let seen = 0;
+      for (let t = 0; t < tokens.length; t++) if ((seen += userWordList(tokens[t]).length) >= end) return t + 1;
+    }
+  }
+  return 0;
 }
 
 /** Words that may follow "it" when it is all the verb acts on ("kill it now", "restart it again, please", "kill it for me"). */
@@ -509,7 +526,29 @@ const BEFORE_FOLDER = new Set(["the", "my", "our", "your", "this", "that"]);
 const SAYS_WHERE = new Set([
   "that", "which", "that's", "is", "are", "sits", "lives", "it", "it's", "it\u2019s", "its", "they", "they're",
   "they\u2019re", "both", "the", "one", "ones", "was", "were",
+  // "the build folder located in dist" places it as "in dist" does (commands-remote-v5-2).
+  "located", "situated", "stored", "kept", "placed", "saved", "sitting", "living", "residing", "lying",
 ]);
+/** Words for a folder: "of", "for" and "at" after one say which folder it is in ("the build folder of the frontend app"). */
+const FOLDER_WORDS = new Set(["folder", "folders", "directory", "directories", "dir", "dirs"]);
+/** Words after a place said with "of", "for" or "at" that name no folder ("the build folder for me", "build/ at once"). */
+const NOT_A_PLACE_AFTER = new Set([
+  "me", "us", "you", "it", "them", "now", "good", "real", "sure", "ever", "once", "last", "least", "all", "first", "most",
+  "random", "will", "today", "tonight", "tomorrow", "later", "free",
+]);
+
+/**
+ * Whether the word at `k` of these lower-case tokens puts the thing before it in the folder after it (folderNamed): in,
+ * inside, within, under or from; of or for after a folder word; at after a folder word or a path ("the build folder at
+ * docs/", "build/ at docs/": commands-remote-v5-2).
+ */
+function placeWord(tokens: readonly string[], k: number): boolean {
+  const t = tokens[k] ?? "";
+  if (IN_FOLDER.has(t)) return true;
+  const prev = tokens[k - 1] ?? "";
+  const afterFolder = FOLDER_WORDS.has(prev);
+  return ((t === "of" || t === "for") && afterFolder) || (t === "at" && (afterFolder || /[\\/]/.test(prev)));
+}
 /** Words after "in" that say when or how, not which folder ("in a moment", "in the background", "in place"). */
 const NOT_A_FOLDER = new Set([
   "a", "an", "one", "minute", "minutes", "moment", "second", "seconds", "sec", "hour", "hours", "bit", "while",
@@ -560,6 +599,33 @@ const SUBORDINATE_CUT = new Set([
 ]);
 /** Words that start a relative clause after a thing ("the process that 1234 started", "every branch that main has"). */
 const RELATIVE_CUT = new Set(["that", "which", "who", "whom", "whose", "where"]);
+/** Words that stand for something only described ("kill whatever is blocking 1234", "stop what's using nginx"). */
+const FREE_RELATIVE = new Set(["what", "whatever", "whatsoever", "whoever", "whomever", "whichever", "wherever"]);
+/** Words before a participle that make it describe the thing after it, not before it ("the merged branches", "all running jobs"). */
+const BEFORE_HEAD = new Set([
+  "the", "my", "our", "your", "their", "its", "his", "her", "this", "that", "these", "those", "both", "all", "a", "an",
+  "any", "each", "every", "other", "some", "no", "old", "unused", "stale", "temp", "temporary", "untracked", "ignored",
+  "generated", "extra", "new", "current", ...STUCK,
+]);
+/** Words ending like a participle that aren't one, or that name what follows ("the folder named build"). */
+const NOT_PARTICIPLE = new Set([
+  "thing", "things", "nothing", "something", "anything", "everything", "string", "strings", "bring", "during", "morning",
+  "evening", "need", "feed", "seed", "speed", "named", "called", "titled", "labelled", "labeled",
+]);
+
+/**
+ * Whether the word at `k`, right after a word that isn't the verb, starts a description of the thing before it, not a
+ * thing of its own (commands-remote-v5-2): a participle ("the process blocking 1234", "the branches based on main",
+ * "anything touching it"), "off" ("the branches off main") or "next to"; never a word that names one of the step's
+ * things ("delete branch staging"), says where it is ("located in dist") or follows a determiner ("the merged branches").
+ */
+function describes(tokens: readonly string[], k: number, names: (t: string) => boolean): boolean {
+  const ws = userWordList(tokens[k] ?? "");
+  const w = ws[0] ?? "";
+  if (ws.length !== 1 || names(tokens[k]) || BEFORE_HEAD.has(userWordList(tokens[k - 1] ?? "").pop() ?? "")) return false;
+  if (w === "off" || (w === "next" && userWordList(tokens[k + 1] ?? "")[0] === "to")) return true;
+  return /^\p{L}{2,}(ing|ed)$/u.test(w) && !NOT_PARTICIPLE.has(w) && !SAYS_WHERE.has(w);
+}
 /** Words a thing's name may end with ("the build folder", "the nginx service", "1234 and 5678 processes", "build/ too"). */
 const AFTER_NAME = new Set([
   ...OF_THING, ...AFTER_OBJECT, ...FILLERS, "folders", "directories", "dirs", "files", "branches", "stashes", "packages",
@@ -577,7 +643,7 @@ const PLACED = "\u01c2";
  * serves the site", "1234 my editor", "1234 = my editor", "the build logs", "the service nginx forwards to"): there,
  * from the start of that name's phrase.
  */
-function objectEnd(tokens: readonly string[], names: (t: string) => boolean, nounish: (t: string) => boolean, shape: RowShape): number {
+function objectEnd(tokens: readonly string[], names: (t: string) => boolean, nounish: (t: string) => boolean, shape: RowShape, from = 0): number {
   const word = (k: number) => userWordList(tokens[k] ?? "")[0] ?? "";
   const heads = new Set(shape.heads ?? []);
   const kind = (k: number) => AFTER_OBJECT.has(word(k)) || OF_THING.has(word(k)) || heads.has(word(k));
@@ -592,13 +658,19 @@ function objectEnd(tokens: readonly string[], names: (t: string) => boolean, nou
   };
   for (let k = 1; k < tokens.length; k++) {
     if (SUBORDINATE_CUT.has(word(k))) return k;
-    if (RELATIVE_CUT.has(word(k)) && nounish(tokens[k - 1]) && !placesIt(tokens.slice(k))) return k;
+    // Past the verb (at `from`), what a free relative, a relative clause after any word or a participle describes isn't
+    // what the verb acts on: "kill whatever is blocking 1234", "the services that depend on nginx", "the script that
+    // made build/", "the process blocking 1234", "the branches off main" (commands-remote-v5-2).
+    if (k >= from && FREE_RELATIVE.has(word(k))) return k;
+    if (RELATIVE_CUT.has(word(k)) && (nounish(tokens[k - 1]) || k > from) && !placesIt(tokens.slice(k))) return k;
     let i = k - 1;
     while (i >= 0 && kind(i) && !names(tokens[i])) i--;
-    if (i < 0 || !names(tokens[i]) || endsName(tokens[k])) continue;
-    let j = i;
-    while (j > 0 && !RELATIVE.has(word(j - 1)) && nounish(tokens[j - 1])) j--;
-    return j;
+    if (i >= 0 && names(tokens[i]) && !endsName(tokens[k])) {
+      let j = i;
+      while (j > 0 && !RELATIVE.has(word(j - 1)) && nounish(tokens[j - 1])) j--;
+      return j;
+    }
+    if (k > from && describes(tokens, k, names)) return k;
   }
   return tokens.length;
 }
@@ -617,7 +689,9 @@ function objectWords(tokens: readonly string[], shape: RowShape): string[] {
     // "I'd like to delete build/" asks for it.
     const names = (w0 === "of" && OF_WHAT.has(word(k - 1))) || (w0 === "with" && /^(pid|id|name|number|process)$/.test(word(k + 1) === "the" ? word(k + 2) : word(k + 1)))
       || (w0 === "like" && (word(k + 1) === "to" || word(k + 1) === "you"));
-    if (ATTACHED.has(w0) && !keeps.has(w0) && !names) {
+    // "the build folder of the frontend app", "… for the docs": the folder it is in (placeWord).
+    const places = (w0 === "of" || w0 === "for") && FOLDER_WORDS.has(word(k - 1));
+    if (ATTACHED.has(w0) && !keeps.has(w0) && !names && !places) {
       let q = k + 1;
       while (q < tokens.length && !PREPOSITION.has(word(q)) && !RELATIVE_CUT.has(word(q))) q++;
       k = q - 1;
@@ -632,9 +706,10 @@ function objectWords(tokens: readonly string[], shape: RowShape): string[] {
 function placed(tokens: readonly string[], shape: RowShape): string[] {
   const keeps = new Set(shape.places ?? []);
   const out = [...tokens];
+  const lower = out.map(t => userTokens(t)[0] ?? "");
   for (let k = 0; k < out.length; k++) {
     const w0 = userWordList(out[k])[0] ?? "";
-    if (!IN_FOLDER.has(w0) || keeps.has(w0) || userWordList(out[k]).length !== 1) continue;
+    if (!placeWord(lower, k) || keeps.has(w0) || userWordList(out[k]).length !== 1) continue;
     let m = k + 1;
     while (m < out.length && BEFORE_FOLDER.has(userTokens(out[m])[0] ?? "")) m++;
     if (m < out.length && userWordList(out[m]).length > 0) out[m] = out[m].replace(/^([("'`“‘[{<]*)/u, `$1${PLACED}`);
@@ -663,7 +738,7 @@ function folderNamed(idx: number, w: Words): string | null {
   if (owner !== undefined && !PRONOUN.has(owner) && !RELATIVE.has(owner) && !HERE_FOLDER.has(owner)) return owner === "home" ? "~" : owner;
   let k = idx + 1;
   while (AFTER_OBJECT.has(w.tokens[k] ?? "") || SAYS_WHERE.has(w.tokens[k] ?? "")) k++;
-  if (IN_FOLDER.has(w.tokens[k] ?? "")) return folderAfter(k, w);
+  if (placeWord(w.tokens, k)) return folderAfter(k, w);
   // "in dist delete the build folder", "in dist, delete the build folder": a place before the verb (commands-remote-c3-1).
   let s = 0;
   while (FILLERS.has(w.tokens[s] ?? "")) s++;
@@ -672,11 +747,12 @@ function folderNamed(idx: number, w: Words): string | null {
 
 /** The folder after the place word at `k` ("in dist", "inside the frontend folder"), "~" for the home folder, or null. */
 function folderAfter(k: number, w: Words): string | null {
+  const via = w.tokens[k] ?? "";
   k++;
   while (BEFORE_FOLDER.has(w.tokens[k] ?? "")) k++;
   const t = (w.tokens[k] ?? "").replaceAll(PLACED, "");
   if (t === "" || /^\d+(?:[.,:/-]\d+)*[a-z]{0,3}$/i.test(t)) return null;
-  if (NOT_A_FOLDER.has(t) || HERE_FOLDER.has(t)) return null;
+  if (NOT_A_FOLDER.has(t) || HERE_FOLDER.has(t) || (!IN_FOLDER.has(via) && NOT_A_PLACE_AFTER.has(t))) return null;
   if (t === "home" || t === "~") return "~";
   return t;
 }

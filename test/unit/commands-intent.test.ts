@@ -478,6 +478,46 @@ describe("matchIntent: a name that only places, describes or does something else
   });
 
   it.each([
+    // [command, words]: the name is in a participle's phrase, a free relative or a relative clause after any word, or
+    // the folder is placed with of, for or at.
+    ["kill 1234", "kill the process blocking 1234"],
+    ["kill 1234", "kill whatever is blocking 1234"],
+    ["kill 1234", "kill whoever spawned 1234"],
+    ["kill 1234", "kill the process next to 1234"],
+    ["systemctl stop nginx", "stop the services that depend on nginx"],
+    ["systemctl stop nginx", "stop what's using nginx"],
+    ["systemctl stop nginx", "stop everything using nginx"],
+    ["rm -rf build", "delete the script that made build/"],
+    ["rm -rf build", "delete the folder next to build/"],
+    ["git branch -D main", "delete the branches based on main"],
+    ["git branch -D main", "delete the branches off main"],
+    ["git branch -D main", "delete the old-ui branch based on main"],
+    ["rm -rf build", "delete the build folder of the frontend app"],
+    ["rm -rf build", "delete the build folder for the docs"],
+    ["rm -rf build", "delete the build folder at docs/"],
+    ["rm -rf build", "delete build/ at docs/"],
+  ])("asks for `%s` after %j (commands-remote-v5-2)", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    // The thing itself, with a participle or a place that describes it, or a word that only looks like one.
+    ["rm -rf frontend/build", "delete the build folder of the frontend app", "Deleting frontend/build, as you asked."],
+    ["rm -rf docs/build", "delete the build folder for the docs", "Deleting docs/build, as you asked."],
+    ["rm -rf docs/build", "delete the build folder at docs/", "Deleting docs/build, as you asked."],
+    ["rm -rf build", "delete the build folder for me", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder at once", "Deleting build, as you asked."],
+    ["rm -rf build", "delete that build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the folder named build", "Deleting build, as you asked."],
+    ["git branch -D staging", "delete branch staging", "Deleting the branch staging, as you asked."],
+    ["git branch -D feature-x", "delete the merged branch feature-x", "Deleting the branch feature-x, as you asked."],
+    ["pkill node", "kill all running node processes", "Stopping node, as you asked."],
+    ["kill 1234", "kill that process 1234", "Stopping 1234, as you asked."],
+  ])("announces `%s` after %j (commands-remote-v5-2)", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+
+  it.each([
     // What the verb itself acts on, with words that place it, say how or name where it goes.
     ["rm -rf dist/build", "delete the build folder in dist", "Deleting dist/build, as you asked."],
     ["rm -rf dist/build", "in dist delete the build folder", "Deleting dist/build, as you asked."],
