@@ -1057,6 +1057,12 @@ was held with it.
   to nothing (`AgreeGuard`). While the card waits with no GitHub sign-in, nothing is connected, and Models &
   connections says "Not connected: Ember is waiting for you to agree to use <host>." and points to the card or the
   switch, with no "Sign in with GitHub" or "Use my own provider" (`homeConnectionView`'s `own`: integrations-c2-3).
+  Nothing else points to Copilot then (integrations-r3-1): a request from the Ask box, by voice or from Home is
+  answered "Your provider needs your OK: Agree to use <host> in settings, or turn off “Use my own model provider”,
+  then ask me again." (main's `providerWaiting`, `providerWaitingHost`), Home's tagline says "Agree to use <host> in
+  Models & connections to start asking.", the status panel's button is "Check my provider…", and the hint under the
+  group "Ember can't answer until you agree to use <host>." (with a GitHub sign-in it says Ember uses GitHub Copilot
+  until then, as it does).
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
   from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
   no keyring is asked to know it). It goes only to that host: moving the endpoint to another host deletes it, and the

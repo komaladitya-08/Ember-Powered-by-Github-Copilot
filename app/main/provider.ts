@@ -72,6 +72,16 @@ export function userProviderInForce(s: Settings, loaded: LoadedAdminPolicy): Use
 }
 
 /**
+ * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to;
+ * null otherwise. Signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+ */
+export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy): string | null {
+  if (loaded.error !== undefined || !userProviderAllowed(loaded.policy)) return null;
+  const host = endpointHost(s.provider.baseUrl);
+  return s.provider.on && host && !providerAgreed(s.provider) ? host : null;
+}
+
+/**
  * userProviderInForce for the settings file's text as it is on disk (`ember doctor` reads it without the settings
  * store), or null: no file, or one that can't be read.
  */

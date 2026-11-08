@@ -74,6 +74,8 @@ describe("settings window words", () => {
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
     expect(tagline({ ...base, onboarded: false, phase: "signed-out" })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
     expect(tagline({ ...base, phase: "signed-out" })).toBe("Ember is beside your cursor. Connect Copilot to start asking.");
+    // Signed out while my own provider's note waits: agreeing is the way on, not Copilot (integrations-r3-1).
+    expect(tagline({ ...base, phase: "signed-out", waitingFor: "127.0.0.1:18308" })).toBe("Ember is beside your cursor. Agree to use 127.0.0.1:18308 in Models & connections to start asking.");
     expect(tagline({ ...base, phase: "starting" })).toBe("Ember is beside your cursor. Connecting to Copilot…");
     expect(tagline(base)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
     expect(tagline({ ...base, hidden: true })).toMatch(/^Ember is hidden for now\./);
@@ -882,6 +884,8 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerHint({ managed: null, inForce: false, on: false, host: null })).toBe("Use a model service of your own instead of GitHub Copilot: OpenAI, Azure OpenAI, Anthropic, or a model server on this computer such as Ollama or LM Studio.");
     expect(providerHint({ managed: null, inForce: false, on: true, host: null })).toBe("Enter the service's address to use it.");
     expect(providerHint({ managed: null, inForce: false, on: true, host: "models.example.com" })).toBe("Ember uses GitHub Copilot until you agree to use models.example.com.");
+    // With no GitHub sign-in there's no Copilot to use meanwhile (integrations-r3-1).
+    expect(providerHint({ managed: null, inForce: false, on: true, host: "models.example.com", signedOut: true })).toBe("Ember can't answer until you agree to use models.example.com.");
     expect(providerHint({ managed: null, inForce: true, on: true, host: "localhost:11434" })).toBe("Ember sends your requests to localhost:11434 instead of Copilot. A change applies from your next message; tasks already running finish where they started.");
     expect(providerHint({ managed: "organisation", inForce: false, on: false, host: null })).toBe("Managed by your organisation: Ember uses its model service.");
     expect(providerHint({ managed: "off", inForce: false, on: true, host: "x.example.com" })).toBe("Managed by your organisation: Ember uses GitHub Copilot.");

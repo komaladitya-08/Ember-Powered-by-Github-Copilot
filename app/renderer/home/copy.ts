@@ -292,6 +292,8 @@ export function tagline(t: {
   held?: boolean;
   /** The model service the connection uses when it isn't Copilot (the agent's status kind): named instead (integrations-3). */
   service?: string;
+  /** Signed out while the user's own provider waits for its card for this host: agreeing is the way on (integrations-r3-1). */
+  waitingFor?: string | null;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
@@ -302,6 +304,7 @@ export function tagline(t: {
   const service = t.service === "user" ? "your model provider" : t.service ? "the model service" : "Copilot";
   if (t.phase === "error" && t.waitingForTasks) return `${where} ${t.service ? service[0].toUpperCase() + service.slice(1) : "Copilot"} isn't answering: Ember reconnects once the tasks that are running finish.`;
   if (t.phase === "error" && t.service) return `${where} Ember can't connect to ${service} yet: Models & connections says why.`;
+  if (t.phase === "signed-out" && t.waitingFor) return `${where} Agree to use ${t.waitingFor} in Models & connections to start asking.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to ${service}…`;
   // Ready, with setup rows still worth a look: said, so a warning isn't left in a closed fold (review #95).
@@ -441,13 +444,16 @@ export function recipientWords(d: ModelDestination, long = false): string {
   }
 }
 
-/** Under the Model provider group: what the switch does now, or why the organisation decides it. */
-export function providerHint(o: { managed: "organisation" | "off" | null; inForce: boolean; on: boolean; host: string | null }): string {
+/**
+ * Under the Model provider group: what the switch does now, or why the organisation decides it. `signedOut`: no GitHub
+ * sign-in either, so nothing answers until the card is agreed (integrations-r3-1).
+ */
+export function providerHint(o: { managed: "organisation" | "off" | null; inForce: boolean; on: boolean; host: string | null; signedOut?: boolean }): string {
   if (o.managed === "organisation") return "Managed by your organisation: Ember uses its model service.";
   if (o.managed === "off") return "Managed by your organisation: Ember uses GitHub Copilot.";
   if (o.inForce && o.host) return `Ember sends your requests to ${o.host} instead of Copilot. A change applies from your next message; tasks already running finish where they started.`;
   if (o.on && !o.host) return "Enter the service's address to use it.";
-  if (o.on && o.host && !o.inForce) return `Ember uses GitHub Copilot until you agree to use ${o.host}.`;
+  if (o.on && o.host && !o.inForce) return o.signedOut ? `Ember can't answer until you agree to use ${o.host}.` : `Ember uses GitHub Copilot until you agree to use ${o.host}.`;
   return "Use a model service of your own instead of GitHub Copilot: OpenAI, Azure OpenAI, Anthropic, or a model server on this computer such as Ollama or LM Studio.";
 }
 

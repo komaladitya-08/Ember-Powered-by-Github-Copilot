@@ -60,9 +60,10 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
 /**
  * The status panel's connect button while Ember isn't connected, by the service that isn't (the agent's status kind):
  * Copilot's sign-in, the user's own provider's details, or where the organisation's service says why (first-run-r1).
+ * `waiting`: signed out while the user's own provider waits for its card, which is the way on (integrations-r3-1).
  */
-export function connectLabel(service?: string): string {
-  return service === "user" ? "Check my provider…" : service ? "Models & connections…" : "Connect Copilot…";
+export function connectLabel(service?: string, waiting = false): string {
+  return service === "user" || waiting ? "Check my provider…" : service ? "Models & connections…" : "Connect Copilot…";
 }
 
 /**

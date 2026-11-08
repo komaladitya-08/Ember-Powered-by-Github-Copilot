@@ -116,7 +116,7 @@ import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
-import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
 import { recentLimit } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
@@ -3380,6 +3380,8 @@ function start(): void {
       describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
+      // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-r3-1).
+      providerWaiting: () => (fixedProvider ? null : providerWaitingHost(settings.get(), admin)),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
       onTurnStart: turn => {

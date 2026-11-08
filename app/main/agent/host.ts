@@ -337,6 +337,11 @@ export interface HostOptions {
    */
   signedOutWhy?: () => string | null;
   /**
+   * The host whose card the user's own provider waits for (on, allowed and with an address, not agreed to for it), or
+   * null: signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+   */
+  providerWaiting?: () => string | null;
+  /**
    * Can GitHub be reached right now (see gitHubReachable)? Copilot says "not authenticated" both for a
    * sign-in it refuses and for a GitHub it can't reach (a VPN not up yet, a proxy, a captive portal):
    * with this, the sign-in is blamed only when GitHub answers and Copilot still refuses it.
@@ -683,6 +688,11 @@ export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?
 export const STOPPED_EVERYTHING = "Okay, I've stopped everything.";
 /** What the conversation says after another GitHub account signed in and Ember erased the previous one's memory (memory-11). */
 export const ACCOUNT_CHANGED_FORGOT = "You're signed in to another GitHub account now, so I've forgotten the previous account's memory, reminders and routines.";
+
+/** The bubble's title for a request with no GitHub sign-in while the user's own provider waits for its card (integrations-r3-1). */
+export const PROVIDER_WAITING_TITLE = "Your provider needs your OK";
+/** And what to do, by the host the card names ("in settings": Home names its section, problemInHome). */
+export const providerWaitingWhy = (host: string) => `Agree to use ${host} in settings, or turn off “Use my own model provider”, then ask me again.`;
 
 export const NOTICE_TITLE: Record<AgentReason | "signed-out", string> = {
   "signed-out": "I need Copilot first",
@@ -3059,8 +3069,10 @@ export class AgentHost {
     }
     if (!this.conductor?.sessionId || this.status.phase !== "ready") {
       const signedOut = this.status.phase === "signed-out";
-      const why = signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
-      const title = this.status.phase === "starting" ? stillConnectingTitle(this.status.service?.kind) : noticeTitle(signedOut ? "signed-out" : this.status.reason ?? "other", this.status.service?.kind);
+      // Signed out while the user's own provider waits for its card: agreeing is the way on, not Copilot (integrations-r3-1).
+      const waitingFor = signedOut ? this.o.providerWaiting?.() ?? null : null;
+      const why = waitingFor ? providerWaitingWhy(waitingFor) : signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
+      const title = waitingFor ? PROVIDER_WAITING_TITLE : this.status.phase === "starting" ? stillConnectingTitle(this.status.service?.kind) : noticeTitle(signedOut ? "signed-out" : this.status.reason ?? "other", this.status.service?.kind);
       const restart = this.status.reason === "policy" && !!this.o.policyHeld?.();
       // Not signed in: signing in is what to do next (as the greeting says it), not a problem. Settings is offered only
       // where it can help: not while Ember waits for the network or reconnects by itself.

@@ -62,7 +62,9 @@ describe("Home's status panel", () => {
     expect(connectLabel()).toBe("Connect Copilot…");
     expect(connectLabel("user")).toBe("Check my provider…");
     expect(connectLabel("admin")).toBe("Models & connections…");
-    expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("setText(\"p-connect\", connectLabel(agent?.service?.kind));");
+    // Signed out while my own provider's note waits: its details, never Copilot's sign-in (integrations-r3-1).
+    expect(connectLabel(undefined, true)).toBe("Check my provider…");
+    expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("setText(\"p-connect\", connectLabel(agent?.service?.kind, !!waitingFor()));");
   });
 
   it("counts the tasks at work and those waiting from Task activity's list", () => {

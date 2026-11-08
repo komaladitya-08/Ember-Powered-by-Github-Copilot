@@ -11,7 +11,7 @@ import path from "node:path";
 import { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, repairSettings, type Settings } from "../../app/main/settings";
 import {
-  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, providerSummary, testConnection, testRequest, userProviderConfig, userProviderFromFile,
+  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, providerSummary, providerWaitingHost, testConnection, testRequest, userProviderConfig, userProviderFromFile,
   userProviderInForce, type FetchLike,
 } from "../../app/main/provider";
 import { PROVIDER_BAD_REQUEST, PROVIDER_FAILED, registerProviderIpc, type ProviderApi, type ProviderIpcEvent } from "../../app/main/provider-ipc";
@@ -117,6 +117,17 @@ describe("which endpoint is in force", () => {
     // Agreed to for another host: the card asks again before anything goes to this one.
     expect(userProviderInForce(withProvider({ consent: { version: 1, at: "x", host: "other.example.com" } }), NONE)).toBeNull();
     expect(userProviderInForce(SettingsSchema.parse({ provider: { on: true, consent: { version: 1, at: "x", host: "" } } }), NONE)).toBeNull();
+  });
+
+  it("waits for its card while it is on with an address not agreed to, and for nothing otherwise (integrations-r3-1)", () => {
+    expect(providerWaitingHost(withProvider({ consent: { version: 0, at: null, host: "" } }), NONE)).toBe("models.example.com");
+    // Agreed to for another host: it waits for this one's.
+    expect(providerWaitingHost(withProvider({ consent: { version: FEATURE_CONSENT_VERSION.provider, at: null, host: "old.example.com" } }), NONE)).toBe("models.example.com");
+    expect(providerWaitingHost(withProvider(), NONE)).toBeNull();
+    expect(providerWaitingHost(withProvider({ on: false, consent: { version: 0, at: null, host: "" } }), NONE)).toBeNull();
+    expect(providerWaitingHost(withProvider({ baseUrl: "", consent: { version: 0, at: null, host: "" } }), NONE)).toBeNull();
+    expect(providerWaitingHost(withProvider({ consent: { version: 0, at: null, host: "" } }), policy({ features: { userProvider: false } }))).toBeNull();
+    expect(providerWaitingHost(withProvider({ consent: { version: 0, at: null, host: "" } }), parseAdminPolicy("{", "/etc/ember/policy.json"))).toBeNull();
   });
 
   it("gives way to the organisation's own provider, which always wins", () => {

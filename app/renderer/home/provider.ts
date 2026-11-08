@@ -51,6 +51,8 @@ let held: { from: string; fields: Details } | null = null;
 let heldRun = 0;
 /** The host a held edit's check is asking now (its "I agree" waits meanwhile). */
 let checkingFor: string | null = null;
+/** Ember has no GitHub sign-in (the agent's phase): with the card waiting, nothing answers until it is agreed. */
+let signedOut = false;
 
 /** One line under the group: how the last action went (`error`: in red). */
 function say(text: string, error = false): void {
@@ -218,7 +220,7 @@ function draw(): void {
   $("byok-key-form").hidden = (saved && !replacing) || (!keyring && !saved);
   $("byok-no-keyring").hidden = keyring || saved;
   $("byok-no-keyring").textContent = PROVIDER_NO_KEYRING;
-  $("byok-hint").textContent = held ? providerHeldHint(held.from, host) : providerHint({ managed, inForce: !!state?.inForce, on, host });
+  $("byok-hint").textContent = held ? providerHeldHint(held.from, host) : providerHint({ managed, inForce: !!state?.inForce, on, host, signedOut });
   onDestination();
 }
 
@@ -234,6 +236,13 @@ function suggestModels(ids: readonly string[]): void {
  */
 export function providerCard(): { on: boolean; card: string | null } {
   return { on: !!own?.on && !state?.managed, card: cardHost };
+}
+
+/** The agent's phase says whether Ember has a GitHub sign-in: the hint under the group follows it (integrations-r3-1). */
+export function providerSignedOut(now: boolean): void {
+  if (now === signedOut) return;
+  signedOut = now;
+  draw();
 }
 
 /** Told when what the page knows of the provider changes (the words naming where requests go follow it). */

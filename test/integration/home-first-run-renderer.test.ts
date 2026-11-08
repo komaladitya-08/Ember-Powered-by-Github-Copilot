@@ -443,13 +443,18 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     for (const id of ["sign-in", "own-provider", "retry", "switch-account", "provider-details"]) expect(await shown(id), id).toBe(false);
     // The card's I agree is the one prominent button in view.
     expect(await p.locator(".copilot .btn:not(.quiet):visible, #byok .btn:not(.quiet):visible").count()).toBe(1);
-    // Not now puts the note away and turns the switch off: signing in leads again, with the provider beside it.
+    // Nor does the rest of Home point to Copilot: the hint, the tagline and the status panel's button (integrations-r3-1).
+    expect(await p.locator("#byok-hint").innerText()).toBe("Ember can't answer until you agree to use 127.0.0.1:18409.");
+    expect(await p.evaluate(() => document.getElementById("tagline")?.textContent)).toBe("Ember is beside your cursor. Agree to use 127.0.0.1:18409 in Models & connections to start asking.");
+    expect(await p.evaluate(() => document.getElementById("p-connect")?.textContent)).toBe("Check my provider…");
     await p.locator("#byok-no").click();
     await expect.poll(() => shown("byok-consent")).toBe(false);
     await expect.poll(() => shown("sign-in")).toBe(true);
     expect(await p.locator("#agent-text").innerText()).toBe(signedOut.detail);
     expect(await shown("own-provider")).toBe(true);
     expect(await shown("connection-help")).toBe(false);
+    expect(await p.evaluate(() => document.getElementById("tagline")?.textContent)).toBe("Ember is beside your cursor. Connect Copilot to start asking.");
+    expect(await p.evaluate(() => document.getElementById("p-connect")?.textContent)).toBe("Connect Copilot…");
     // Turned on again with no address yet: no note, so signing in leads, and the switch already on isn't offered.
     await p.evaluate(() => { const s = window.__frState.settings as { provider: Record<string, unknown> }; s.provider = { ...s.provider, on: true, baseUrl: "" }; window.__frEmit("onSettingsChanged", s); });
     await expect.poll(() => shown("own-provider")).toBe(false);
