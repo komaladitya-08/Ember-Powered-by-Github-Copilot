@@ -822,8 +822,8 @@ speak, even with no voices installed; a Chinese reply was 7 s of "Chinese letter
 once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English
 list's "1. La La Land." is Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters
 English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
-typed in another language (three different short words of it outside quotes: `requestLanguage`; "play la vie en rose"
-and "what does 'je ne sais pas' mean?" aren't) waits for more of the answer. A reply too short to tell follows that
+typed in another language (three different short words of it outside quotes, and none only English writes:
+`requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer. A reply too short to tell follows that
 request's language unless it has as many English short words ("It means that's life."), and a message that ends before
 a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
 pieces Kitten is still making are done.

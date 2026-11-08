@@ -355,6 +355,9 @@ describe("AnswerLanguage: an answer is said in one language, decided once from e
     expect(english.map(x => x.lang)).toEqual([null, null, null]);
     const netflix = turn([["Opening Netflix."], ["I found Money Heist, the English title of La Casa de Papel.", "Shall I start the first episode?"]], "find la casa de papel on netflix");
     expect(netflix.map(x => x.lang)).toEqual([null, null, null]);
+    // A question in English about a French saying is English, so its preamble is Ember's too.
+    expect(turn([["One moment."], ["It means that's life."]], "what does c'est la vie mean").map(x => x.lang)).toEqual([null, null]);
+    expect(turn([["Un instant."], ["Cela veut dire que je ne sais pas."]], "que veut dire je ne sais pas ?").map(x => x.lang)).toEqual(["fr", "fr"]);
     // A short English preamble doesn't fix a French answer after it to Ember's English voice either.
     const french = turn([["One moment."], ["Voici les trois fichiers que vous avez demandés.", "Le premier est le rapport de ventes."]], "Open the files");
     expect(french.map(x => x.lang)).toEqual([null, "fr", "fr"]);

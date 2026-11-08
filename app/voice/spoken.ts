@@ -355,11 +355,12 @@ const QUOTED = /"[^"\n]*"|“[^”\n]*”|„[^“”\n]*[“”]|«[^»\n]*»|\
 
 /**
  * The language a request was clearly typed in, or null: its words outside quotes need three different short words of
- * it, not two, since a request so often names a song, a film or a saying in lower case ("play la vie en rose", "what
- * does c'est la vie mean?") whose reply is English (voice-speaking-r2-1).
+ * it, not two, and none that only English writes, since a request so often names a song, a film or a saying in lower
+ * case ("play la vie en rose", "what does c'est la vie mean?") whose reply is English (voice-speaking-r2-1).
  */
 export function requestLanguage(request: string): string | null {
-  return languageOf(request, 3);
+  const lang = languageOf(request, 3);
+  return lang && !wordsBesidesNames(request.replace(QUOTED, "$1 ")).some(w => ENGLISH_ONLY.has(w)) ? lang : null;
 }
 
 /** Short words that only English writes, of its commonest: not "a" or "on" (French), "is" or "we" (Dutch), "i" (Italian). */
