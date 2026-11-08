@@ -527,7 +527,7 @@ describe("the card's words from the classifier (review #214)", () => {
     expect(says("git restore .")).toContain("Throws away changes to the current folder.");
     expect(says("cp -r src/* .")).toContain("Replaces files in the current folder if they exist.");
     expect(says("mv build/* .")).toContain("Replaces files in the current folder if they exist.");
-    expect(says("cp ../config.json .")).toContain("Replaces /home/ana/proj/config.json if it exists.");
+    expect(says("cp ../config.json .")).toContain("Replaces ~/proj/config.json if it exists.");
     expect(says("find . -name \"*.log\" -exec rm {} \\;")).toEqual(["Deletes each file it finds.", "Deletes what it finds under the current folder."]);
     for (const cmd of ["find . -name '*.pyc' -delete", "git checkout .", "cp -r src/* .", "find . -name \"*.log\" -exec rm {} \\;", "find .. -delete", "git restore .."]) {
       for (const l of says(cmd)) expect(l, cmd).not.toMatch(/(^|\s)\.\.?(\s|\.?$)|\{\}/);
@@ -538,22 +538,37 @@ describe("the card's words from the classifier (review #214)", () => {
     // A folder's contents copied in (`/tmp/x/.`) are files of the same names, not the folder itself.
     expect(says("cp -r /tmp/x/. .")).toEqual(["Replaces files in the current folder if they exist."]);
     // After a cd in the same command, "the current folder" isn't the one the card says it starts in: it is named.
-    expect(says("cd ~/Documents && git checkout .")).toEqual(["Throws away changes to /home/ana/Documents."]);
-    expect(says("cd ~/Documents && cp -r /tmp/x/* .")).toEqual(["Replaces files in /home/ana/Documents if they exist."]);
+    expect(says("cd ~/Documents && git checkout .")).toEqual(["Throws away changes to ~/Documents."]);
+    expect(says("cd ~/Documents && cp -r /tmp/x/* .")).toEqual(["Replaces files in ~/Documents if they exist."]);
     expect(says("cd /tmp/x && find .. -name '*.log' -delete")).toEqual(["Deletes what it finds under /tmp."]);
     // Where it is still the folder the card starts in, or the one above it, it says so.
     expect(says("cd sub && find .. -name '*.log' -delete")).toEqual(["Deletes what it finds under the current folder."]);
     expect(says("cd ~ && git checkout .")).toEqual(["Throws away changes to the folder above the current one."]);
     // rm * and an unpack after a cd work in the folder it changed to, which is named too (commands-remote-v1).
-    expect(says("cd ~/Documents && rm -rf *")).toEqual(["Deletes everything in /home/ana/Documents."]);
-    expect(says("cd ~/Documents && rm *")).toEqual(["Deletes the files in /home/ana/Documents."]);
-    expect(says("pushd build && rm -rf ./*")).toEqual(["Deletes everything in /home/ana/proj/build."]);
+    expect(says("cd ~/Documents && rm -rf *")).toEqual(["Deletes everything in ~/Documents."]);
+    expect(says("cd ~/Documents && rm *")).toEqual(["Deletes the files in ~/Documents."]);
+    expect(says("pushd build && rm -rf ./*")).toEqual(["Deletes everything in ~/proj/build."]);
     expect(says("cd build && rm -rf ../*")).toEqual(["Deletes everything in the current folder."]);
     expect(says("cd sub && rm -rf ../../*")).toContain("Deletes everything in the folder above the current one.");
-    expect(says("cd ~/Documents && tar xf /tmp/a.tar")).toEqual(["Unpacks /tmp/a.tar over files in /home/ana/Documents."]);
-    expect(says("cd ~/Documents && unzip /tmp/a.zip")).toEqual(["Unpacks /tmp/a.zip over files in /home/ana/Documents."]);
+    expect(says("cd ~/Documents && tar xf /tmp/a.tar")).toEqual(["Unpacks /tmp/a.tar over files in ~/Documents."]);
+    expect(says("cd ~/Documents && unzip /tmp/a.zip")).toEqual(["Unpacks /tmp/a.zip over files in ~/Documents."]);
     expect(says("cd ~/Documents && cd ~/proj && rm -rf *")).toEqual(["Deletes everything in the current folder."]);
     expect(says("cd \"$X\" && rm -rf *")).toContain("Deletes everything in a folder Ember can't name.");
+  });
+
+  it("names a path in the home folder from ~, as the card's header does, and keeps the whole path elsewhere (commands-remote-r2-3)", () => {
+    expect(says("cd ~/Documents && git checkout .")).toEqual(["Throws away changes to ~/Documents."]);
+    expect(says("cp ../config.json .")).toContain("Replaces ~/proj/config.json if it exists.");
+    expect(says("rm -rf ~/Documents/old")).toContain("Deletes ~/Documents/old and everything in it.");
+    expect(says("cd ~/Documents && rm -rf *")).toEqual(["Deletes everything in ~/Documents."]);
+    expect(says("cp -r src /home/anais/x")).toContain("Replaces /home/anais/x if it exists.");
+    expect(says("rm -r /tmp/old")).toContain("Deletes /tmp/old and everything in it.");
+    expect(says("Remove-Item C:\\Users\\ana\\x.txt", "powershell", "win32").join(" ")).toContain("C:\\Users\\ana\\x.txt");
+    // Only the words change: what the card asks about is still the whole path.
+    const f = classifyCommand("mv report.pdf ~/Documents", "bash", contextOf("linux")).findings[0];
+    expect(f.says).toBe("Replaces ~/Documents if it exists.");
+    expect(f.ifExists).toBe("/home/ana/Documents");
+    expect(f.inFolder).toMatchObject({ says: "Replaces ~/Documents/report.pdf if it exists.", ifExists: "/home/ana/Documents/report.pdf" });
   });
 
   it("says what removing packages, crontab -r, a reset to another commit and rm * really do (commands-remote-r1)", () => {

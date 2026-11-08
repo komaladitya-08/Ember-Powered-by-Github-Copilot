@@ -266,7 +266,9 @@ class Classifier {
   add(cls: DangerClass, rule: string, said: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string; inFolder?: { says: string; objects: Obj[]; ifExists: string } } = {}): void {
     const program = o.program ?? this.program;
     const wrappers = this.commands[this.at]?.wrappers ?? [];
-    const says = cardWords(said, o.objects ?? [], wrappers, this.ctx.cwd || null, this.ctx.os);
+    // A POSIX shell's home folder is said as ~, as the card's header says it (commands-remote-r2-3).
+    const home = this.topShell === "bash" || this.topShell === "zsh" || this.topShell === "sh" ? this.ctx.home : null;
+    const says = cardWords(said, o.objects ?? [], wrappers, this.ctx.cwd || null, this.ctx.os, home);
     // "If it exists" is asked of the file the kernel opens: `> sub/../x` overwrites the x beside sub's target.
     const opened = (objs: readonly Obj[], p: string): string => objs.find(ob => ob.abs === p && ob.phys !== undefined)?.phys ?? p;
     const ifExists = o.ifExists === undefined ? undefined : opened(o.objects ?? [], o.ifExists);
@@ -282,7 +284,7 @@ class Classifier {
     if ((o.objects ?? []).some(ob => ob.realDiffers) && !widening.includes("real-path")) widening.push("real-path");
     const f: Finding = { cls, rule, says, program, objects, widening, at: this.at };
     if (ifExists !== undefined) f.ifExists = ifExists;
-    if (o.inFolder) f.inFolder = { says: cardWords(o.inFolder.says, o.inFolder.objects, wrappers, this.ctx.cwd || null, this.ctx.os), objects: shown(o.inFolder.objects), ifExists: opened(o.inFolder.objects, o.inFolder.ifExists) };
+    if (o.inFolder) f.inFolder = { says: cardWords(o.inFolder.says, o.inFolder.objects, wrappers, this.ctx.cwd || null, this.ctx.os, home), objects: shown(o.inFolder.objects), ifExists: opened(o.inFolder.objects, o.inFolder.ifExists) };
     this.findings.push(f);
   }
 
@@ -1939,10 +1941,11 @@ const objsOf = (h: H, list: Arg[], use: PathUse): Obj[] => list.map(a => h.e.use
 /** Objects for the card: as written; an unresolved one by its text. */
 /**
  * A finding's words with each of its objects that is a dot folder said as shownPath says it, wherever it stands as a
- * word of its own ("under .." is "under" and "." and the full stop), and find's `{}` as each file it finds. Only the
- * words change: the objects, their paths and the matching stay as written.
+ * word of its own ("under .." is "under" and "." and the full stop), find's `{}` as each file it finds, and a path in
+ * `home` (a POSIX shell's home folder) from ~ ("~/Documents/report.pdf", commands-remote-r2-3). Only the words change:
+ * the objects, their paths and the matching stay as written.
  */
-function cardWords(says: string, objects: readonly Obj[], wrappers: readonly string[], start: string | null = null, os: OS = "linux"): string {
+function cardWords(says: string, objects: readonly Obj[], wrappers: readonly string[], start: string | null = null, os: OS = "linux", home: string | null = null): string {
   let out = says;
   for (const text of new Set(objects.map(o => o.text))) {
     let shown = shownPath(text);
@@ -1956,6 +1959,11 @@ function cardWords(says: string, objects: readonly Obj[], wrappers: readonly str
   }
   if (objects.some(o => o.text === "{}") && wrappers.some(w => /^find -(exec|execdir|ok|okdir)$/.test(w))) {
     out = out.replace(/(^|[\s(])\{\}(?=[\s,;:)]|\.?$)/g, (_m, pre: string) => `${pre}each file it finds`);
+  }
+  const h = home?.replace(/\/+$/, "") ?? "";
+  if (h.startsWith("/") && h.length > 1) {
+    const esc = h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`(^|[\\s(])${esc}(?=/|[\\s,;:)]|\\.?$)`, "g"), "$1~");
   }
   return out;
 }

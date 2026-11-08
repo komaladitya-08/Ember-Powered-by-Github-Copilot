@@ -59,12 +59,12 @@ describe("decideCommand: the rules in order", () => {
       expect(decide(cmd, { dirs: [docs], exists: { [`${docs}/report.pdf`]: false } }).verdict, cmd).toBe("run");
       const clash = decide(cmd, { dirs: [docs] });
       expect(clash.verdict, cmd).toBe("ask");
-      expect(clash.says, cmd).toContain(`Replaces ${docs}/report.pdf if it exists.`);
-      expect(clash.says, cmd).not.toContain(`Replaces ${docs} if it exists.`);
+      expect(clash.says, cmd).toContain("Replaces ~/Documents/report.pdf if it exists.");
+      expect(clash.says, cmd).not.toContain("Replaces ~/Documents if it exists.");
     }
     // A file there is replaced, and a target that can't say whether it is a folder (WSL) asks as before.
     expect(decide("mv report.pdf notes.pdf").says).toContain("Replaces notes.pdf if it exists.");
-    expect(decide("mv report.pdf ~/Documents").says).toContain(`Replaces ${docs} if it exists.`);
+    expect(decide("mv report.pdf ~/Documents").says).toContain("Replaces ~/Documents if it exists.");
     expect(decide("mv report.pdf ~/Documents", { exists: { [docs]: false } }).verdict).toBe("run");
   });
 
@@ -74,21 +74,21 @@ describe("decideCommand: the rules in order", () => {
     for (const cmd of ["cp --parents src/a.txt ~/backup", "cp --parents src/a.txt ~/backup/", "cp -r --parents src ~/backup", "cp --parents -t ~/backup src/a.txt"]) {
       const d = decide(cmd, { dirs: [backup], exists: { [`${backup}/a.txt`]: false, [`${backup}/src`]: false } });
       expect(d.verdict, cmd).toBe("ask");
-      expect(d.says, cmd).toContainEqual(expect.stringMatching(/^Replaces files in \/home\/ana\/backup\/? if they exist\.$/));
+      expect(d.says, cmd).toContainEqual(expect.stringMatching(/^Replaces files in ~\/backup\/? if they exist\.$/));
     }
     // A Mac's cp copies what is in build/ straight into the folder (BSD cp), so any file there may be replaced.
     const docs = "/Users/ana/Documents";
     for (const cmd of ["cp -R build/ ~/Documents", "cp -r build/ ~/Documents", "cp -a src/ ~/Documents", "cp -R build/ ~/Documents/"]) {
       const d = decide(cmd, { where: "darwin", shell: "zsh", dirs: [docs], exists: { [`${docs}/build`]: false, [`${docs}/src`]: false } });
       expect(d.verdict, cmd).toBe("ask");
-      expect(d.says, cmd).toContainEqual(expect.stringMatching(/^Replaces files in \/Users\/ana\/Documents\/? if they exist\.$/));
+      expect(d.says, cmd).toContainEqual(expect.stringMatching(/^Replaces files in ~\/Documents\/? if they exist\.$/));
     }
     // Without the slash, or with GNU cp (here, or gcp on a Mac), the folder lands as folder/build: only that asks.
     const gone = { [`${docs}/build`]: false };
     expect(decide("cp -R build ~/Documents", { where: "darwin", shell: "zsh", dirs: [docs], exists: gone }).verdict).toBe("run");
     expect(decide("gcp -r build/ ~/Documents", { where: "darwin", shell: "zsh", dirs: [docs], exists: gone }).verdict).toBe("run");
     expect(decide("cp -r build/ ~/Documents", { dirs: ["/home/ana/Documents"], exists: { "/home/ana/Documents/build": false } }).verdict).toBe("run");
-    expect(decide("cp -r build/ ~/Documents", { dirs: ["/home/ana/Documents"] }).says).toContain("Replaces /home/ana/Documents/build if it exists.");
+    expect(decide("cp -r build/ ~/Documents", { dirs: ["/home/ana/Documents"] }).says).toContain("Replaces ~/Documents/build if it exists.");
     // A new folder: BSD cp makes it from build's contents, replacing nothing.
     expect(decide("cp -R build/ ~/site", { where: "darwin", shell: "zsh", exists: { "/Users/ana/site": false } }).verdict).toBe("run");
   });

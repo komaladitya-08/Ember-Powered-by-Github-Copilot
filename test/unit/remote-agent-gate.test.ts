@@ -100,7 +100,7 @@ describe("gate 2 for commands (§3.16)", () => {
       inspect: async paths => paths.map(p => (p === "/home/deploy/Documents" ? { exists: true, real: p, dir: true } : { exists: p.endsWith("/Documents/report.pdf") ? dirFile : true, real: p })),
     }));
     expect((await real(false)).status).toBe("ok");
-    expect(await real(true)).toMatchObject({ status: "needs_confirm", rules: ["posix.mv"], says: expect.arrayContaining(["Replaces /home/deploy/Documents/report.pdf if it exists."]) });
+    expect(await real(true)).toMatchObject({ status: "needs_confirm", rules: ["posix.mv"], says: expect.arrayContaining(["Replaces ~/Documents/report.pdf if it exists."]) });
   });
 
   it("asks, as the PC does, before a Mac here copies a folder's contents into a folder, or cp --parents does, whatever is missing (commands-remote-c2-1)", async () => {
@@ -109,7 +109,7 @@ describe("gate 2 for commands (§3.16)", () => {
       facts: facts({ os, home, shells: [os === "darwin" ? "zsh" : "bash"] }),
       inspect: async paths => paths.map(p => (p.endsWith("/Documents") || p.endsWith("/backup") ? { exists: true, real: p, dir: true } : { exists: !/\/(Documents\/build|backup\/(a\.txt|src))$/.test(p), real: p })),
     }));
-    expect(await real("cp -R build/ /Users/deploy/Documents", "darwin", "/Users/deploy")).toMatchObject({ status: "needs_confirm", rules: ["posix.cp"], says: expect.arrayContaining(["Replaces files in /Users/deploy/Documents if they exist."]) });
+    expect(await real("cp -R build/ /Users/deploy/Documents", "darwin", "/Users/deploy")).toMatchObject({ status: "needs_confirm", rules: ["posix.cp"], says: expect.arrayContaining(["Replaces files in ~/Documents if they exist."]) });
     expect(await real("cp --parents src/a.txt /home/deploy/backup", "linux", "/home/deploy")).toMatchObject({ status: "needs_confirm", rules: ["posix.cp"] });
     // GNU cp puts build at Documents/build, which isn't there.
     expect((await real("cp -r build/ /home/deploy/Documents", "linux", "/home/deploy")).status).toBe("ok");
@@ -233,7 +233,7 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
     // "delete build/" announced `rm -r build`: the script's rm of src isn't what the user named.
     const announced = await at({ verdict: "announce", classes, rules });
     expect(announced).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["in-script:posix.rm"] });
-    expect((announced as { says: string[] }).says).toEqual(["In t.sh: Deletes /home/deploy/src and everything in it."]);
+    expect((announced as { says: string[] }).says).toEqual(["In t.sh: Deletes ~/src and everything in it."]);
     // A yes to the PC's card (which couldn't show the script) doesn't cover it either; a yes to this question does.
     expect((await at({ verdict: "ask", classes, rules, approval: { ageMs: 500 } })).status).toBe("needs_confirm");
     expect(await at({ verdict: "ask", classes, rules: [...rules, "in-script:posix.rm"], approval: { ageMs: 500 } })).toMatchObject({ status: "ok", approved: true });
