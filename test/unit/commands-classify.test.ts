@@ -933,6 +933,26 @@ describe("loops and ifs (commands-remote-2)", () => {
     }
   });
 
+  it("marks a file of unknown name in the folder, never the folder, when a copy Ember can't name lands there (commands-remote-r4-3)", () => {
+    const P = "/home/ana/proj";
+    const posix = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)) as ClassificationExtra;
+    for (const cmd of ["cp \"$SRC\" .", "ls *.txt | xargs -I{} cp {} .", "cp \"$SRC\" ./"]) {
+      const d = posix(cmd, [`${P}/data.csv`]).downloads;
+      expect(d, cmd).toContain(`${P}/\u0000`);
+      expect(d, cmd).not.toContain(P);
+    }
+    // A loop's list Ember sees: only a value that can be a download counts.
+    expect(posix("for f in *.txt; do cp \"$f\" backup/; done", [`${P}/data.csv`]).downloads).toEqual([]);
+    expect(posix("for f in *.txt; do cp \"$f\" backup/; done", [`${P}/notes.txt`]).downloads).toContain(`${P}/backup/\u0000`);
+    expect(posix("for f in ~/Downloads/*; do cp \"$f\" tools/; done", ["/home/ana/Downloads/x.sh"]).downloads).toContain(`${P}/tools/\u0000`);
+    // Running a file from there asks; the folder's own tools don't, unless a download may be one of their files.
+    const ran = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)).findings.map(f => f.rule);
+    expect(ran("bash tools/x.sh", [`${P}/tools/\u0000`])).toContain("escape.run-downloaded");
+    expect(ran("npm test", [`${P}/data.csv`, `${P}/\u0000`])).not.toContain("escape.run-downloaded");
+    expect(ran("make", [`${P}/data.csv`, `${P}/\u0000`])).not.toContain("escape.run-downloaded");
+    expect(ran("make", [`${P}/Makefile.in`, "/tmp/Makefile", `${P}/\u0000`])).toContain("escape.run-downloaded");
+  });
+
   it("asks before a tool runs a download it picks up by name: a Makefile, tests, package.json, a module, a preload (commands-remote-c2-2)", () => {
     const P = "/home/ana/proj";
     const ran = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)).findings.map(f => f.rule);

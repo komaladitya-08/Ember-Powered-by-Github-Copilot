@@ -20,8 +20,8 @@ import {
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
-  holdsSecret, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, physicalForm,
-  resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
+  holdsSecret, inDownload, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, physicalForm,
+  resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, UNNAMED_COPY, windowsContextOf, writeKind, wslUncPath,
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
@@ -855,12 +855,23 @@ class Classifier {
     const mod = sc.path.flavour === "win32" ? win32 : posix;
     const intoFolder = /[\\/]$/.test(dest.text) || /^\.\.?$/.test(dest.text);
     for (const s of sources) {
-      if (!this.isDownloaded(s, sc) && !this.mayBeDownload(s)) continue;
+      if (!this.isDownloaded(s, sc) && !this.mayBeDownload(s, sc)) continue;
       const name = asIs || s.v === null || s.glob ? null : baseName(s.v.replace(/[\\/]+$/, ""), sc.path.flavour);
       const named = name !== null && name !== "." && name !== "..";
       if (named) this.carryDownload(mod.join(dest.abs, name), sc);
-      if (!named || !intoFolder) this.carryDownload(dest.abs, sc, named);
+      if (asIs) this.carryDownload(dest.abs, sc);
+      else if (!named) this.carryUnnamed(dest.abs, intoFolder, sc);
+      else if (!intoFolder) this.carryDownload(dest.abs, sc, true);
     }
+  }
+
+  /**
+   * A copy of a download whose name Ember can't tell, into `dest`: a file of unknown name in that folder, never the
+   * folder itself (commands-remote-r4-3); `dest` itself too while the target doesn't say it is a folder.
+   */
+  carryUnnamed(dest: string, intoFolder: boolean, sc: Scope): void {
+    if (!intoFolder) this.carryDownload(dest, sc, true);
+    this.carryDownload((sc.path.flavour === "win32" ? win32 : posix).join(dest, UNNAMED_COPY), sc);
   }
 
   /**
@@ -870,15 +881,32 @@ class Classifier {
    */
   downloadedProjectFile(folder: string, sc: Scope): boolean {
     const all = [...this.ctx.downloaded, ...this.downloads];
-    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)));
+    const unnamed = (d: string): boolean => baseName(d, sc.path.flavour) === UNNAMED_COPY;
+    // A copy Ember can't name may be one, when a download of this task is one or may be a folder (no extension).
+    const mayBe = all.some(d => !unnamed(d) && (PROJECT_FILE.test(baseName(d, sc.path.flavour)) || !/\.[^.\\/]+$/.test(baseName(d, sc.path.flavour))));
+    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && (unnamed(d) ? mayBe : PROJECT_FILE.test(baseName(d, sc.path.flavour))));
   }
 
   /**
    * Whether a word Ember can't name (`xargs cp {} y.sh`'s input, `cp "$f" y.sh`) may be a download: when this task
    * downloaded anything, it may be (commands-remote-v4-5).
    */
-  mayBeDownload(a: Arg): boolean {
-    return a.v === null && (this.ctx.downloaded.size > 0 || this.downloads.length > 0);
+  mayBeDownload(a: Arg, sc?: Scope): boolean {
+    if (a.v !== null || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
+    // The values the text gives it, when Ember sees them all (`for f in *.txt`): only one that can be a download, or
+    // a folder that holds one, counts (commands-remote-r4-3).
+    if (!sc || !a.parts || sc.path.flavour !== "posix" || !sc.cwd) return true;
+    const forms = this.formsOf(a.parts);
+    if (forms.some(f => f.includes(UNSEEN))) return true;
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd };
+    const all = [...this.ctx.downloaded, ...this.downloads].filter(d => baseName(d, sc.path.flavour) !== UNNAMED_COPY);
+    return forms.some(f => {
+      if (!f.startsWith(PATTERN)) return this.isDownloaded(lit(f), sc) || this.holdsDownload(lit(f), sc);
+      let re: RegExp;
+      try { re = globRegExp(resolveTargetPath(f.slice(1), at), sc.path, true); } catch { return true; /* a pattern the matcher can't read may match anything */ }
+      // The download, or a folder above it that the pattern names (its copy holds the download).
+      return all.some(d => { for (let p = d; p !== posix.dirname(p); p = posix.dirname(p)) if (re.test(p)) return true; return false; });
+    });
   }
 
   /** Whether a folder holds a file this task downloaded (by the name written: what `rsync -R` or --files-from copies). */
@@ -888,22 +916,25 @@ class Classifier {
     return [...this.ctx.downloaded, ...this.downloads].some(d => d !== abs && isUnder(d, abs, sc.path));
   }
 
-  /** Whether a path is a file this task downloaded, or inside a downloaded folder. */
-  isDownloaded(a: Arg, sc: Scope): boolean {
+  /**
+   * Whether a path is a file this task downloaded, or inside a downloaded folder. `unnamed`: a copy Ember couldn't name
+   * counts for every file in its folder (a project tool's words aren't files it runs: commands-remote-r4-3).
+   */
+  isDownloaded(a: Arg, sc: Scope, unnamed = true): boolean {
     if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
-    const all = [...this.ctx.downloaded, ...this.downloads];
+    const all = [...this.ctx.downloaded, ...this.downloads].filter(d => unnamed || baseName(d, sc.path.flavour) !== UNNAMED_COPY);
     // Its real path too (§3.6): a link to a download, or `..` walked through a link (`sh sub/../x`), is the download.
     const phys = this.physical(a.v, "exec", sc);
     const names = [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)].filter((n): n is string => typeof n === "string");
     // Downloaded by an earlier command of this task, or earlier in this same command (`curl -o x … && sh x`).
-    if (all.some(d => names.some(n => isUnder(n, d, sc.path)))) return true;
+    if (all.some(d => names.some(n => inDownload(n, d, sc.path)))) return true;
     // A Windows path in cmd or PowerShell reached from a distro: the distro recorded it under the drive mount.
     if (sc.fromWsl && /^[A-Za-z]:[\\/]/.test(abs) && this.ctx.wsl) {
       const mount = this.ctx.wsl.mountRoot;
       const env = pathEnv({ flavour: "posix", os: "linux", home: null, cwd: null, mountRoot: mount });
       const m = toMount(abs, mount);
-      return all.some(d => isUnder(m, d, env));
+      return all.some(d => inDownload(m, d, env));
     }
     return false;
   }
@@ -2232,7 +2263,7 @@ class Engine extends Classifier {
       if (v === "" || v.startsWith("-")) return false;
       // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
       const f = folderOf(v);
-      return this.isDownloaded({ ...a, v }, sc) || (f !== null && this.downloadedProjectFile(f, sc));
+      return this.isDownloaded({ ...a, v }, sc, false) || (f !== null && this.downloadedProjectFile(f, sc));
     }) || (sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc));
     if (inDownloaded) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   }
@@ -3203,10 +3234,13 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   // folder counts too until the target says it is one.
   if (destObj.abs !== null) {
     for (const s of sources) {
-      if (!h.e.isDownloaded(s, h.sc) && !h.e.mayBeDownload(s)) continue;
+      if (!h.e.isDownloaded(s, h.sc) && !h.e.mayBeDownload(s, h.sc)) continue;
       const obj = asIs ? null : inside(s);
       if (obj?.abs) h.e.carryDownload(obj.abs, h.sc);
-      if (!obj || !intoFolder) h.e.carryDownload(destObj.abs, h.sc, obj !== null);
+      // A source Ember can't name lands as a file of unknown name there, never the whole folder (commands-remote-r4-3).
+      if (asIs) h.e.carryDownload(destObj.abs, h.sc);
+      else if (!obj) h.e.carryUnnamed(destObj.abs, intoFolder, h.sc);
+      else if (!intoFolder) h.e.carryDownload(destObj.abs, h.sc, true);
     }
   }
   if (kind === "ln" && !has(p, "f", "force")) return;

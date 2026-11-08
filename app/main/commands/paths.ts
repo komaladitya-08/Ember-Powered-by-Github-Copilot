@@ -187,6 +187,21 @@ function key(p: string, env: PathEnv, ci = caseless(p, env)): string {
 }
 
 /** `p` is `base` or inside it (both absolute, same flavour). */
+/**
+ * The name a copy of a download is recorded under when Ember can't tell its name (`cp "$f" dir/`, a pattern): a file in
+ * that folder, never the folder itself, so the folder's own tools aren't a download run (commands-remote-r4-3). No file
+ * can have this name.
+ */
+export const UNNAMED_COPY = "\u0000";
+
+/** Whether `p` is (or is inside) the download recorded as `d`: a copy of unknown name stands for what is inside its folder. */
+export function inDownload(p: string, d: string, env: PathEnv): boolean {
+  const s = sep(env);
+  if (!d.endsWith(s + UNNAMED_COPY)) return isUnder(p, d, env);
+  const folder = d.slice(0, -(s.length + UNNAMED_COPY.length));
+  return isUnder(p, folder, env) && !isUnder(folder, p, env);
+}
+
 export function isUnder(p: string, base: string, env: PathEnv): boolean {
   const ci = caseless(p, env) || caseless(base, env);
   const a = key(p, env, ci);

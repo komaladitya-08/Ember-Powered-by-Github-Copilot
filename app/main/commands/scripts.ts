@@ -16,7 +16,7 @@
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
 import { FLOW_WRAPPER, SAYS, SCRIPT_UNSURE, type ClassificationExtra, type ScriptRef } from "./classify";
-import { isUnder, pathEnv, physicalForm, type PathEnv } from "./paths";
+import { inDownload, isUnder, pathEnv, physicalForm, type PathEnv } from "./paths";
 import { OTHER_SHELLS, POSIX_SHELLS } from "./tables";
 import type { Classification, ClassifyContext, Finding, PathFact, RunnerFacts, ShellId } from "./types";
 
@@ -132,7 +132,7 @@ export function rootOwned(p: string, env: PathEnv): boolean {
 export function taskWrote(path: string, written: TaskWrites | null, downloaded: ReadonlySet<string>, env: PathEnv): boolean {
   if (written?.anywhere && !rootOwned(path, env)) return true;
   for (const w of written?.paths ?? []) if (isUnder(path, w, env)) return true;
-  for (const d of downloaded) if (isUnder(path, d, env)) return true;
+  for (const d of downloaded) if (inDownload(path, d, env)) return true;
   return false;
 }
 
