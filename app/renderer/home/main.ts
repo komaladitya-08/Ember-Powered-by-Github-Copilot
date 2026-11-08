@@ -1961,7 +1961,8 @@ void window.ember.updates().then(renderUpdates);
 // ───── Work without asking (app/main/policy/autonomy.ts): on only once the user agrees to its card ─────
 $("autonomy-consent-text").textContent = AUTONOMY_CONSENT_TEXT;
 function applyAutonomySettings(s: Settings): void {
-  ($("autonomy-on") as HTMLInputElement).checked = s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION;
+  // As in force: held locked down after a policy change, the settings still hold it on (safety-privacy-w5-2).
+  ($("autonomy-on") as HTMLInputElement).checked = s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION && !managed.has("autonomy");
   autonomyManaged = managed.has("autonomy");
   $("autonomy-hint").textContent = autonomyHint(autonomyManaged, elevationOf(checksNow));
 }
@@ -2059,13 +2060,13 @@ function syncPrivacyTerms(): void {
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
   // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4); Work without
   // asking and the apps let in without asking are below too (safety-privacy-c4-1); other computers and commands are on
-  // or off as the settings and the policy leave them (safety-privacy-r4-2). Either is in force only where the policy in
-  // force allows it: held locked down after a policy change, the settings still say what the person left on
-  // (safety-privacy-v5-1).
+  // or off as the settings and the policy leave them (safety-privacy-r4-2). Each of screenshots, Work without asking and
+  // the apps is in force only where the policy in force allows it: held locked down after a policy change, the settings
+  // still say what the person left on (safety-privacy-v5-1, safety-privacy-w5-2).
   const s = settings;
   const a = lastAdmin;
   const fold = {
-    screenImages: s?.screenImages !== false,
+    screenImages: s?.screenImages !== false && !managed.has("screenImages"),
     autonomy: !!s && s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION && !managed.has("autonomy"),
     grants: !!s && !confirmEvery && !managed.has("grants") && Object.values(s.grants).includes("act"),
     ...(s && a ? { targets: targetsFoldRest(s, { source: a.error ? "error" : a.source, features: { wsl: a.features?.wsl, ssh: a.features?.ssh }, ...(a.commands ? { commands: a.commands } : {}) }, platform?.os) } : {}),
@@ -2299,7 +2300,7 @@ function renderTrust(s: Settings): void {
 $("screen-images").addEventListener("change", e => { void save({ screenImages: (e.target as HTMLInputElement).checked }); });
 function renderPrivacy(s: Settings): void {
   renderTrust(s);
-  ($("screen-images") as HTMLInputElement).checked = s.screenImages;
+  ($("screen-images") as HTMLInputElement).checked = s.screenImages && !managed.has("screenImages");
   // The copy of the consent says whether screenshots are off (safety-privacy-r4); drawn again only if its words change.
   if (($("privacy-terms-fold") as HTMLDetailsElement).open) syncPrivacyTerms();
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).

@@ -407,8 +407,9 @@ tell it through accessibility. **What Ember
 reads, sends and keeps**, at the top of that pane, is
 first run's "Before Ember starts" again, word for word as it reads now (Search finds it by "data", "screenshot",
 "audit" and the like), but for pointing to the never-look list below and saying when screenshots are off, when Work
-without asking is on (ordinary steps are said instead of asked) or apps were let in without asking (each only while the
-policy in force allows it, so not while Ember holds itself locked down after a policy change), and which of other
+without asking is on (ordinary steps are said instead of asked) or apps were let in without asking (each as the policy
+in force allows it: while Ember holds itself locked down after a policy change, it says screenshots are off and Ember
+asks before acting in an app, and both switches below show off), and which of other
 computers, WSL and commands you turned on or your organisation turned off; while open it follows where requests go and
 those settings, and isn't drawn again for an unrelated change.
 **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80

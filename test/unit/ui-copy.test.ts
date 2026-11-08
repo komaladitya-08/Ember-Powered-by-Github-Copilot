@@ -1332,9 +1332,10 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     expect(page).toContain(`<h3 class="sub">${SCREEN_IMAGES_TEXT.heading}</h3>`);
     expect(page).toContain(`<label class="switch-row"><input type="checkbox" id="screen-images" role="switch" aria-describedby="screen-images-hint"><span>${SCREEN_IMAGES_TEXT.label}</span></label>`);
     expect(page).toContain(`<p class="row-note" id="screen-images-hint">${SCREEN_IMAGES_TEXT.hint}</p>`);
-    // Saved as the user's own switch, shown as applied (the organisation's off wins), and dimmed when it manages it.
+    // Saved as the user's own switch, shown as applied (the organisation's off wins, a held lockdown's too:
+    // safety-privacy-w5-2), and dimmed when it manages it.
     expect(main).toContain(`void save({ screenImages: (e.target as HTMLInputElement).checked });`);
-    expect(main).toContain(`($("screen-images") as HTMLInputElement).checked = s.screenImages;`);
+    expect(main).toContain(`($("screen-images") as HTMLInputElement).checked = s.screenImages && !managed.has("screenImages");`);
     expect(main).toContain(`["screen-images", "screenImages"]`);
   });
 

@@ -647,6 +647,15 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(hand).not.toContain("without asking (below)");
     expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never types passwords\./);
     expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
+    // Screenshots too, as a lockdown read at start says, and the switches under the fold as it says they are
+    // (safety-privacy-w5-2): the settings still hold Send screenshots for tasks and Work without asking on.
+    const eye = await page.locator("#privacy-terms li[data-icon='eye']").innerText();
+    expect(eye).toContain("through the desktop's accessibility service. Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
+    expect(eye).not.toContain("it may take a screenshot");
+    for (const id of ["#screen-images", "#autonomy-on"]) {
+      expect(await page.locator(id).isChecked()).toBe(false);
+      expect(await page.locator(id).isDisabled()).toBe(true);
+    }
     expect(page.errors).toEqual([]);
     await page.close();
   });
