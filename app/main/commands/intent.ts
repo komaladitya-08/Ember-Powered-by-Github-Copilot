@@ -1309,8 +1309,12 @@ export function ruledOut(findings: readonly Finding[], userWords: string): boole
     const forms = new Set(verbs.flatMap(v => v.split(" ").flatMap(verbForms)));
     // Its own things' words: "don't delete src/" rules out `rm -r src`, never `rm -r build` (commands-remote-c1-2).
     const own = new Set(f.objects.flatMap(o => userWordList(o.text)));
-    // "don't delete anything else" rules out only a step the asked-for words don't name (commands-remote-r4-6).
-    const named = f.objects.some(o => o.text !== "" && (nameNamed(o.text, asked.raw) || pathTokenLoose(o, asked) >= 0));
+    // "don't delete anything else" rules out every step the asked-for words don't name whole: each thing it acts on (a
+    // push's remote is only where it goes) and each option that widens it, by its word ("force"; a one-letter one can't
+    // be named), so `kill 1234 5678` after "kill 5678 and nothing else" is ruled out (commands-remote-r4-6, v5-4).
+    const widens = f.widening.filter(x => /^[-+?]/.test(x)).map(x => userWordList(x)[0] ?? "");
+    const named = f.objects.filter(o => o.text !== "" && o.kind !== "remote").every(o => nameNamed(o.text, asked.raw) || pathTokenLoose(o, asked) >= 0)
+      && widens.every(x => x.length > 2 && asked.list.includes(x));
     return parts.some(p => {
       const ws = userWordList(p);
       const kindSaid = hasVerb(ws, verbs) || ws.some(x => flags.includes(x));

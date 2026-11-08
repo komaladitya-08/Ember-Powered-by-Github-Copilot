@@ -308,6 +308,26 @@ describe("decideCommand: the rules in order", () => {
     }
   });
 
+  it("says \"You didn't ask for this.\" after \"and nothing else\" on a step that does the named thing and more (commands-remote-v5-4)", () => {
+    for (const [cmd, words] of [
+      ["kill 1234 5678", "kill 5678 and nothing else"],
+      ["rm -rf build dist", "delete build/ and don't delete anything else"],
+      ["git branch -D feature-x main", "delete the feature-x branch and don't delete any other branch"],
+      ["systemctl stop apache nginx", "stop apache and nothing else"],
+      ["git push --force origin main", "push main and nothing else"],
+      ["git clean -fdx", "clean untracked files and nothing else"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(true);
+    }
+    // All of it named, the force and the remote it goes to included: no line about the words.
+    expect(decide("git push origin main", { words: "push main and nothing else" }).says).not.toContain(LINES.unasked);
+    expect(decide("git push --force origin main", { words: "force push main and nothing else" }).says).not.toContain(LINES.unasked);
+    expect(decide("kill 1234 5678", { words: "kill 1234 and 5678 and nothing else" }).says).not.toContain(LINES.unasked);
+  });
+
   it("says the words ask for that kind of step when they schedule jobs or prune packages in plain words; it still asks (commands-remote-r3-2)", () => {
     for (const [cmd, words] of [
       ["crontab jobs.txt", "schedule the jobs in jobs.txt"],
