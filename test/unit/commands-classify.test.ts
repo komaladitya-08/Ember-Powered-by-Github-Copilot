@@ -161,6 +161,28 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     ]) expect(refused(cmd), cmd).toBeUndefined();
   });
 
+  it("refuses Ember's own folder reached through a variable and a pattern, set --, printf -v or a here-string a read gets (commands-remote-v4-4)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "d=~/.config; rm -rf \"$d\"/emb*",
+      "set -- ~/.config/ember; rm -rf \"$1\"",
+      "set -- a ~/.config/ember; shift; rm -rf \"$1\"",
+      "set -- ~/.config/ember; rm -rf \"$@\"",
+      "printf -v d %s ~/.config/ember; rm -rf \"$d\"",
+      "printf -v d '%s/ember' ~/.config; rm -rf \"$d\"",
+      "while read f; do rm -rf \"$f\"; done <<< ~/.config/ember",
+      "while read -r f; do rm -rf \"$f\"; done <<EOF\n/home/ana/.config/ember\nEOF",
+      "read d <<< ~/.config/ember; rm -rf \"$d\"",
+      // A pattern Ember sees only the start of, where it could match one of Ember's folders.
+      "rm -rf ~/.c*/$x",
+    ]) expect(refused(cmd), cmd).toBe(CHANGE);
+    // Nothing of Ember's, or a pattern the quotes turn into a name: asked or run as before.
+    for (const cmd of [
+      "d=build; rm -rf \"$d\"/*.o", "d=~/.config; rm -rf \"$d\"/\"emb*\"", "set -- build dist; rm -rf \"$@\"", "set -e; rm -rf \"$1\"",
+      "while read f; do rm -rf \"$f\"; done <<< build", "printf -v d %s build; rm -rf \"$d\"", "cat ~/.cache/*$x",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+  });
+
   it("keeps the input refusal's words, and lets a read refusal give way to it", () => {
     expect(says("xdotool key y")).toBe(INPUT);
     expect(says("cat ~/.config/ember/settings.json; xdotool key y")).toBe(INPUT);

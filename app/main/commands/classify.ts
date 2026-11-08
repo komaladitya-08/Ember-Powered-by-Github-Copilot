@@ -57,6 +57,19 @@ export const MAX_SCRIPTS = 16;
 const UNSEEN = "\u0000";
 const PATTERN = "\u0001";
 const MAX_FORMS = 32;
+/** The shell's positional parameters (`$1`…`$9`, `$@`, `$*`), as `set --` gives them values. */
+const POSITIONAL: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"];
+/** What `read` may set from a text: each of its lines, and each word of each line. */
+function textValues(text: string): Arg[] {
+  const out = new Set<string>();
+  for (const line of text.split("\n")) {
+    const l = line.trim();
+    if (l === "") continue;
+    out.add(l);
+    for (const word of l.split(/\s+/)) out.add(word);
+  }
+  return [...out].map(t => lit(t));
+}
 
 /**
  * What classifyCommand returns beyond the contract (an extension in CL's own files; decide.ts reads it, everyone else
@@ -274,6 +287,12 @@ class Classifier {
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
   private varValues = new Map<string, string[]>();
+  /** Words of a variable Ember couldn't resolve, with how they were used: judged again once a loop's input gives it a value. */
+  private unseenUses: { parts: readonly (string | { name: string | null })[]; use: PathUse; sc: Scope }[] = [];
+  /** The text a command was given on stdin by a here-document or here-string (null: Ember can't see all of it), by index. */
+  protected hereAt = new Map<number, string | null>();
+  /** The names each `read` sets, by command index, with its scope: a loop's here-string gives them values (result). */
+  private readSets = new Map<number, { names: string[]; sc: Scope }>();
 
   constructor(readonly ctx: ClassifyContext, readonly topShell: ShellId) {}
 
@@ -453,13 +472,14 @@ class Classifier {
   }
 
   /**
-   * A POSIX variable's value the text sets (`d=…`, `export d=…`, a loop's list, `read d`: unseen), judged at once for
+   * A POSIX variable's value the text sets (`d=…`, `export d=…`, a loop's list, `set --`'s `$1`…, `printf -v d`, `read
+   * d` from a here-string: its lines and words, else unseen), judged at once for
    * any use (one of Ember's paths, or a pattern that can match one, is refused as fallbackScan refuses it) and kept for
    * the words that use the variable later (commands-remote-c3-2). Every value is kept, earlier ones too, so a value
    * set again inside a loop still counts. A name set again no longer says the loop's files on the card.
    */
   setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false): void {
-    if (!/^[A-Za-z_]\w*$/.test(name)) return;
+    if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
@@ -473,7 +493,35 @@ class Classifier {
    * "$d"` after `d=~/.config/ember`, `for f in ~; do rm -rf "$f"; done`): refused as the path itself would be.
    */
   judgeUnseen(a: Arg, use: PathUse, sc: Scope): void {
-    if (a.v === null && a.parts && sc.path.flavour === "posix") for (const form of this.formsOf(a.parts)) this.judgeForm(form, use, sc);
+    if (a.v === null && a.parts && sc.path.flavour === "posix") {
+      for (const form of this.formsOf(a.parts)) this.judgeForm(form, use, sc);
+      this.unseenUses.push({ parts: a.parts, use, sc });
+    }
+  }
+
+  /** The names a `read` sets, for a loop's here-string to give them values (result). */
+  noteRead(names: string[], sc: Scope): void {
+    if (names.length) this.readSets.set(this.at, { names, sc });
+  }
+
+  /**
+   * A `read` in a loop or `if` whose closer gives it a here-string or here-document (`while read f; do rm -rf "$f";
+   * done <<< ~/.config/ember`): its names get that text's lines and words, and the words that used them are judged
+   * again with them, for Ember's own refusal (commands-remote-v4-4).
+   */
+  protected feedReads(): void {
+    for (const [r, closer] of fedReadsByCloser(this.commands, i => this.stdinGiven.has(i))) {
+      const text = this.hereAt.get(closer);
+      const set = this.readSets.get(r);
+      if (typeof text !== "string" || !set) continue;
+      for (const name of set.names) {
+        this.setVar(name, textValues(text), set.sc, true);
+        for (const u of this.unseenUses) {
+          if (!u.parts.some(p => typeof p !== "string" && p.name === name)) continue;
+          for (const form of this.formsOf(u.parts)) this.judgeForm(form, u.use, u.sc);
+        }
+      }
+    }
   }
 
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
@@ -516,7 +564,16 @@ class Classifier {
       else if (tree && holdsEmberPath(abs, sc.path)) this.refuseWith("ember.path", "safety");
       return;
     }
-    if (pattern && /[*?[]/.test(known)) return;
+    if (pattern && /[*?[]/.test(known)) {
+      // A pattern Ember sees only the start of (`rm -rf ~/.c*/$x`): refused when it could match one of Ember's folders,
+      // or (to change or move) one that holds one, whatever follows the part Ember sees (commands-remote-v4-4).
+      if (use === "list" || use === "cd") return;
+      const abs = resolveTargetPath(/\*$/.test(known) ? known : `${known}*`, at);
+      let reaches: boolean;
+      try { reaches = globReaches(abs, use ?? "read", sc.path, true).ember; } catch { reaches = isEmberPath(abs.replace(/[*?[].*$/, ""), sc.path); /* a pattern the matcher can't read: its fixed part decides */ }
+      if (reaches) this.refuseWith("ember.path", kind);
+      return;
+    }
     const slash = known.lastIndexOf("/");
     const dir = resolveTargetPath(slash < 0 ? "." : known.slice(0, slash) || "/", at);
     const stem = known.slice(slash + 1);
@@ -1116,8 +1173,13 @@ const ASSIGNMENT_WORD = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
  * every read as it was.
  */
 export function readsFedByCompound(commands: readonly ParsedCommand[], given: (i: number) => boolean): Set<number> {
-  const none = new Set<number>();
-  const fed = new Set<number>();
+  return new Set(fedReadsByCloser(commands, given).keys());
+}
+
+/** readsFedByCompound's reads, each with the index of the closer (`done`, `fi`) that gives it its input. */
+function fedReadsByCloser(commands: readonly ParsedCommand[], given: (i: number) => boolean): Map<number, number> {
+  const none = new Map<number, number>();
+  const fed = new Map<number, number>();
   const open: { closer: string; reads: number[] }[] = [];
   for (let i = 0; i < commands.length; i++) {
     const c = commands[i];
@@ -1128,7 +1190,7 @@ export function readsFedByCompound(commands: readonly ParsedCommand[], given: (i
     if (c.program !== "fi" && c.program !== "done") continue;
     const top = open.pop();
     if (!top || top.closer !== c.program) return none;
-    if (given(i)) for (const r of top.reads) fed.add(r);
+    if (given(i)) for (const r of top.reads) fed.set(r, i);
     else if (open.length) open[open.length - 1].reads.push(...top.reads);
   }
   return fed;
@@ -1238,6 +1300,7 @@ class Engine extends Classifier {
     if (this.scriptWritten()) {
       this.unclear("unclear.script-written", "It runs a script that this command writes first, so Ember can't read it beforehand.");
     }
+    this.feedReads();
     // A `read` that its loop or `if` gives a file or text to (`while read -r l; …; done < list.txt`) waits for no typing.
     const fed = readsFedByCompound(this.commands, i => this.stdinGiven.has(i));
     if (fed.size) this.findings = this.findings.filter(f => !(f.rule === "unclear.interactive" && f.program === "read" && fed.has(f.at)));
@@ -1466,10 +1529,13 @@ class Engine extends Classifier {
     const cwdSub = w.subs.length === 1 && w.segs.filter(seg => seg.t === "unres" && seg.why === "command substitution").length === 1 && lonePwd(w.subs[0]);
     // The word as pieces, for Ember's own refusal through variables the text sets (commands-remote-c3-2).
     const parts: (string | { name: string | null })[] = [];
+    // Which parts are unquoted text, where `*`, `?` and `[` match names (commands-remote-v4-4).
+    const open: boolean[] = [];
     for (const seg of w.segs) {
       if (seg.t === "lit") {
         v += seg.s;
         parts.push(seg.s);
+        open[parts.length - 1] = !seg.q;
         if (seg.q) pattern += seg.s.replace(/[*?[\]\\]/g, "\\$&");
         else { pattern += seg.s; unquoted += seg.s; }
       } else if (seg.t === "var") {
@@ -1485,10 +1551,25 @@ class Engine extends Classifier {
         // A home Ember doesn't know stays `~` (judged as some user's home, never probed: usePath).
         else if (!sc.home) { v += "~"; parts.push("~"); pattern += "~"; }
         else { v += sc.home; parts.push(sc.home); pattern += sc.home.replace(/[*?[\]\\]/g, "\\$&"); }
+      } else if (seg.t === "unres" && /^\$[1-9@*]$/.test(seg.why)) {
+        // `$1`, `"$@"`: the values `set --` gives them (commands-remote-v4-4).
+        unresolved = true;
+        parts.push({ name: seg.why.slice(1) });
       } else { unresolved = true; parts.push({ name: null }); }
     }
-    const glob = !unresolved && (/[*?]/.test(unquoted) || /\[[^\]]*\]/.test(unquoted));
+    const globs = /[*?]/.test(unquoted) || /\[[^\]]*\]/.test(unquoted);
+    const glob = !unresolved && globs;
     const a: Arg = { v: unresolved ? null : v, raw: w.raw, glob };
+    // A word with a variable that is a pattern as well (`"$d"/emb*`): each form is judged as one, quoted text as itself.
+    if (unresolved && globs) {
+      let marked = false;
+      for (let k = 0; k < parts.length; k++) {
+        const part = parts[k];
+        if (typeof part !== "string") continue;
+        if (!open[k]) parts[k] = part.replace(/[*?[\]\\]/g, "\\$&");
+        else if (!marked && /[*?[]/.test(part)) { parts[k] = PATTERN + part; marked = true; }
+      }
+    }
     if (unresolved) a.parts = parts;
     if (glob) a.pattern = pattern;
     if (fetch || w.proc) a.fetch = fetch;
@@ -1788,6 +1869,7 @@ class Engine extends Classifier {
     }
     this.newCommand(prog, args, sc, s.redirs, s.background, s.pipedFrom);
     if (s.stdin === "file" || s.stdin === "heredoc") this.stdinGiven.add(this.at);
+    if (s.stdin === "heredoc") this.hereAt.set(this.at, s.stdinText ?? null);
     this.noteProgram(prog);
     before?.();
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
@@ -2010,6 +2092,34 @@ class Engine extends Classifier {
     }
     // Setting PATH, PWD and the like by name is an assignment too (`printf -v PATH /tmp/x; ls`, `read PWD <<< …`).
     if (setsRiskyName(key, args)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
+    if (key === "printf") this.printfVar(args, sc);
+  }
+
+  /** `printf -v d %s ~/.config/ember` gives d the text printf makes, as an assignment does (commands-remote-v4-4). */
+  private printfVar(args: readonly Arg[], sc: Scope): void {
+    let k = 0;
+    let name: string | null = null;
+    for (; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === "--") { k++; break; }
+      if (v === null || !v.startsWith("-") || v === "-") break;
+      if (v === "-v") { name = args[k + 1]?.v ?? null; k++; } else if (v.startsWith("-v")) name = v.slice(2);
+    }
+    if (name === null) return;
+    const fmt = args[k];
+    const rest = args.slice(k + 1);
+    if (!fmt) return;
+    // Plain text and `%s` (printf uses the format again while words remain): the text it makes. Otherwise each word
+    // may be what it makes.
+    if (fmt.v !== null && !fmt.glob && !/\\|%(?![s%])/.test(fmt.v) && rest.every(a => a.v !== null && !a.glob)) {
+      const n = (fmt.v.match(/%s/g) ?? []).length;
+      let out = "";
+      let j = 0;
+      do out += fmt.v.replace(/%%|%s/g, m => (m === "%%" ? "%" : rest[j++]?.v ?? "")); while (n > 0 && j < rest.length);
+      this.setVar(name, [lit(out)], sc);
+      return;
+    }
+    this.setVar(name, [fmt, ...rest], sc);
   }
 
   /**
@@ -3535,12 +3645,16 @@ reg(NATIVE, ["read", "mapfile", "readarray"], h => {
   if (h.s.stdin === null && h.key === "read") h.e.unclear("unclear.interactive", SAYS.interactive);
   // The names it sets from each line it reads (`read -r l`; -a, -d, -n, -N, -p, -t, -u, -i take a value).
   if (h.key === "read") {
+    // Text it is given itself (`read d <<< ~/.config/ember`): its lines and words (commands-remote-v4-4).
+    const given = typeof h.s.stdinText === "string" ? textValues(h.s.stdinText) : null;
+    const names: string[] = [];
     for (let k = 0; k < h.args.length; k++) {
       const v = h.args[k].v;
       if (v === null) continue;
       if (/^-[a-zA-Z]+$/.test(v)) { if (/[adnNptui]$/.test(v)) k++; continue; }
-      if (/^[A-Za-z_]\w*$/.test(v)) { h.e.setVar(v, null, h.sc, true); h.e.loopVars.set(v, "read"); }
+      if (/^[A-Za-z_]\w*$/.test(v)) { h.e.setVar(v, given, h.sc, true); h.e.loopVars.set(v, "read"); names.push(v); }
     }
+    h.e.noteRead(names, h.sc);
   }
   // mapfile's callback (-C) is shell text it runs for every line.
   if (h.key !== "read" && h.args.some(a => a.v !== null && /^-[A-Za-z]*C/.test(a.v))) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
@@ -3606,6 +3720,13 @@ reg(NATIVE, ["printenv"], h => {
 });
 reg(NATIVE, ["set"], h => {
   if (h.sc.family === "posix" && h.args.length === 0) h.e.add("secret", "secret.env", SAYS.env);
+  // `set -- a b` gives $1, $2… and "$@" their values, as an assignment does: after a `shift` any of them may be any of
+  // the words (commands-remote-v4-4).
+  if (h.sc.family === "posix") {
+    const dashes = h.args.findIndex(a => a.v === "--");
+    const from = dashes >= 0 ? dashes + 1 : h.args.findIndex((a, k) => a.v === null || (!/^[-+]/.test(a.v) && !/^[-+]o$/.test(h.args[k - 1]?.v ?? "")));
+    if (from >= 0) for (const n of POSITIONAL) h.e.setVar(n, h.args.slice(from), h.sc);
+  }
   if (h.sc.family === "posix" && h.args.some(a => a.v === "-o" || a.v === "+o") && h.args.length === 1) h.e.add("secret", "secret.env", SAYS.env);
   // `set -P` / `set -o physical`: every later `cd` follows links, and `cd link; cd ..` lands beside link's target, not
   // where Ember's lexical folder says.

@@ -356,8 +356,12 @@ keys and click in Ember's windows (`xdotool`, `SendKeys`, `osascript` keystrokes
 it would change Ember's own safety settings, records or programs." ("it would read …" for a command that only reads
 them, such as `cat` or `Get-Content`) or "Ember won't run this: it could press keys or click in Ember's own windows."
 The same goes when a shell loop's list or a variable the command sets names them (`for f in ~/.config/ember/*; do …`,
-`d=~/.config/ember; rm -rf "$d"`), when it names a folder that holds them for a delete or a move (`for f in ~; do rm
--rf "$f"; done`), and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`).
+`d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), and so do `set --` (`"$1"`, `"$@"`),
+`printf -v` and the text a here-string or here-document gives `read` (`while read f; do rm -rf "$f"; done <<<
+~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
+and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`) or a pattern before it
+could match one (`rm -rf ~/.c*/$x`). A value Ember can't see at all (a file `read` reads, a command's output) isn't
+followed: such a command asks, as any delete does.
 
 ### 2.7 What Copilot gets back
 
