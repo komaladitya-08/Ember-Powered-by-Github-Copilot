@@ -186,6 +186,18 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(classifyCommand("xargs rm -rf <<< build", "bash", contextOf("linux")).findings.map(f => f.says)).toEqual(["Deletes build and everything in it."]);
   });
 
+  it("refuses Ember's folder a default names, as the XDG idiom does, while a default elsewhere asks as before (commands-remote-v4-4)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "d=; rm -rf \"${d:-$HOME/.config/ember}\"", "rm -rf \"${XDG_CONFIG_HOME:-$HOME/.config}/ember\"", "rm -rf \"${XDG_CONFIG_HOME:-~/.config}/ember\"",
+      "rm -rf \"${d-~/.config/ember}\"", "rm -rf \"${XDG_CONFIG_HOME:=${HOME}/.config}/ember\"",
+    ]) expect(refused(cmd), cmd).toBe(CHANGE);
+    expect(refused("cat \"${XDG_CONFIG_HOME:-$HOME/.config}/ember/settings.json\"")).toBe(READ);
+    for (const cmd of ["rm -rf \"${BUILD:-build}\"", "rm -rf \"${XDG_CACHE_HOME:-$HOME/.cache}/pip\"", "echo \"${XDG_CONFIG_HOME:-$HOME/.config}/ember\"", "rm -rf \"${d:-$HOMEDIR/x}\""]) {
+      expect(refused(cmd), cmd).toBeUndefined();
+    }
+  });
+
   it("judges a variable set to Ember's folder where a command uses it, so testing or printing it runs (commands-remote-r4-5)", () => {
     const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
     for (const cmd of [

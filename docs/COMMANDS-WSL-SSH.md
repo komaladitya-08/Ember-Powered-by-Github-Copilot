@@ -403,7 +403,8 @@ Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
 of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or a pattern before it could match one
-(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is. A variable is judged where a command uses it, so one that only names Ember's
+(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is, and a default's text counts as a value
+(`"${XDG_CONFIG_HOME:-$HOME/.config}/ember"` is Ember's folder). A variable is judged where a command uses it, so one that only names Ember's
 folder to test or print it on the terminal (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
 input while nothing takes what it prints (`grep -q ember <<< "$p"`, `echo "$p" | wc -c`; never an awk or sed program
 that runs or writes what it reads, such as `awk '{system(…)}'` or `sed '…/e'`, which is refused given Ember's folder,

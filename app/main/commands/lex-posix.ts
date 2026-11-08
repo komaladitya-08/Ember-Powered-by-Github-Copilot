@@ -14,9 +14,10 @@ export type Seg =
   /**
    * An expansion Ember can't resolve (a substitution, `${x:-y}`, `$((…))`, `$1`, `$@`…); `of`: the variable an operator
    * expansion stands for (`${d:?}`, `${d:-x}`, `${d%/}`), for Ember's own refusal; `exact`: a check (`${d:?}`, `${d?}`),
-   * whose text is the value itself, where a cut or a default may give other text (commands-remote-w5-1).
+   * whose text is the value itself, where a cut or a default may give other text (commands-remote-w5-1); `alt`: a
+   * default's text as written (`${d:-$HOME/.config}`), the value it stands for when the variable is unset or empty.
    */
-  | { t: "unres"; why: string; of?: string; exact?: true }
+  | { t: "unres"; why: string; of?: string; exact?: true; alt?: string }
   /** `~` or `~user` at the start of a word (or of an assignment's value). */
   | { t: "tilde"; user: string };
 
@@ -564,6 +565,9 @@ class Parser {
       // An array's elements (`${a[@]}`, `${a[0]}`) stand for the values the text gives it, among others (w5-5).
       const op = /^([A-Za-z_][A-Za-z0-9_]*)(\[(?:[@*]|\d+)\])?(:?[-=?]|%|#|$)/.exec(body);
       const seg: Seg = !op ? { t: "unres", why: "expansion" } : op[3].endsWith("?") && !op[2] ? { t: "unres", why: "expansion", of: op[1], exact: true } : { t: "unres", why: "expansion", of: op[1] };
+      // A default's text (`${XDG_CONFIG_HOME:-$HOME/.config}`) is what it stands for when the variable has no value
+      // (commands-remote-v4-4).
+      if (op && !op[2] && /^:?[-=]$/.test(op[3]) && seg.t === "unres") seg.alt = body.slice(op[0].length);
       return { segs: [seg], subs: [], quoted: false };
     }
     if (n !== undefined && /[A-Za-z_]/.test(n)) {

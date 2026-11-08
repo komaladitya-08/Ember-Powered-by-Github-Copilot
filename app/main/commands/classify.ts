@@ -766,7 +766,8 @@ class Classifier {
     for (const p of parts) {
       const known = typeof p === "string" ? [p] : p.value !== undefined ? [p.value] : (p.name !== null && vars.get(p.name)) || [UNSEEN];
       // A cut or a default: its values, and text Ember can't see (commands-remote-w5-1).
-      const vals = typeof p !== "string" && p.cut && !known.includes(UNSEEN) ? [...known, UNSEEN] : known;
+      const cut = typeof p !== "string" && p.cut && !known.includes(UNSEEN) ? [...known, UNSEEN] : known;
+      const vals = typeof p !== "string" && p.alt !== undefined && !cut.includes(p.alt) ? [...cut, p.alt] : cut;
       const next = out.flatMap(a => vals.map(b => a + b));
       // Too many to judge one by one: what stands there is unseen (judgeForm's rule for an unseen part).
       out = next.length > MAX_FORMS ? out.map(a => a + UNSEEN) : next;
@@ -1934,7 +1935,10 @@ class Engine extends Classifier {
         if (val !== null && seg.exact) { v += val; parts.push(val); pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
         else {
           unresolved = true;
-          parts.push({ name: seg.of, ...(seg.exact ? {} : { cut: true as const }), ...(val !== null ? { value: val } : {}) });
+          // A default's plain text (`${d:-build}`, `${XDG_CONFIG_HOME:-$HOME/.config}`, `${d:-~/x}`) is a value too.
+          const alt = seg.alt === undefined || /[`"'\\]|\$(?!HOME(?!\w)|\{HOME\})/.test(seg.alt) || (/\$|^~/.test(seg.alt) && !sc.home) ? undefined
+            : seg.alt.replace(/^~(?=\/|$)/, sc.home ?? "").replace(/\$(HOME(?!\w)|\{HOME\})/g, sc.home ?? "");
+          parts.push({ name: seg.of, ...(seg.exact ? {} : { cut: true as const }), ...(val !== null ? { value: val } : {}), ...(alt !== undefined ? { alt } : {}) });
         }
       } else { unresolved = true; parts.push({ name: null }); }
     }

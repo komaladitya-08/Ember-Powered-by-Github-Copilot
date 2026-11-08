@@ -28,9 +28,10 @@ export interface Arg {
    * A POSIX word with v null: its text as written pieces and the variables in it (`{ name }`; null for an expansion
    * that isn't a plain variable), so Ember's own refusal can be judged against values the text gives those variables.
    * `cut`: a cut or a default (`${d%x}`, `${d:-x}`) that may be other text than the values; `value`: the value the
-   * scope knows (HOME, PWD) in place of the text's (commands-remote-w5-1, w5-3).
+   * scope knows (HOME, PWD) in place of the text's (commands-remote-w5-1, w5-3); `alt`: a default's text, resolved
+   * (`${XDG_CONFIG_HOME:-$HOME/.config}`: commands-remote-v4-4).
    */
-  parts?: readonly (string | { name: string | null; cut?: true; value?: string })[];
+  parts?: readonly (string | { name: string | null; cut?: true; value?: string; alt?: string })[];
 }
 
 /** A literal argument (tests, wrappers that build words). */
