@@ -405,6 +405,25 @@ describe("AnswerLanguage: an answer is said in one language, decided once from e
     expect(a.take(["ou presque."], true).map(x => x.lang)).toEqual(["fr", "fr"]);
   });
 
+  it.each([
+    ["In English: \"thank you\".", "¿Cómo se dice gracias en inglés, por favor?"],
+    ["Gracias means \"thank you\".", "¿Cómo se dice gracias en inglés, por favor?"],
+    ["Gracias: \"thank you\".", "¿Cómo se dice gracias en inglés, por favor?"],
+    ["\"Break a leg\" means \"good luck\".", "peux-tu me dire ce que veut dire « break a leg » en anglais ?"],
+    ["Literally, \"I don't know\".", "que veut dire je ne sais pas ?"],
+    ["In English: \"I don't know\".", "que veut dire je ne sais pas ?"],
+    ["\"I don't know\", basically.", "que veut dire je ne sais pas ?"],
+  ])("says the English reply %j, which quotes English and has no short word of the request's language, in Ember's voice (voice-speaking-v4-1)", (reply, request) => {
+    expect(said([reply], { request }).map(x => x.lang)).toEqual([null]);
+  });
+
+  it("still says a short reply that quotes English in the request's language where its own words are that language's (voice-speaking-v4-1)", () => {
+    expect(said(["Cela veut dire « I don't know »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual(["fr"]);
+    expect(said(["Ça signifie « I don't know »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual(["fr"]);
+    // Without quotes, a reply with no English short word follows the request, as before.
+    expect(said(["Gracias."], { request: "¿Cómo se dice gracias en inglés, por favor?" }).map(x => x.lang)).toEqual(["es"]);
+  });
+
   /** A turn of several messages: each but the last ends before a tool call (main's onAnswerEnd). */
   const turn = (messages: string[][], request: string) => {
     const a = new AnswerLanguage();

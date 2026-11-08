@@ -312,7 +312,7 @@ const SCRIPTS: readonly [RegExp, string][] = [
  */
 const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   en: new Set("the a an and is are was were to of in on at by or from as do no he she it i you we they my your that this with for not have has what can will if so but all just there here".split(" ")),
-  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces".split(" ")),
+  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela".split(" ")),
   de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird".split(" ")),
   es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le".split(" ")),
   it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle".split(" ")),
@@ -481,13 +481,17 @@ export class AnswerLanguage {
    * language ("It means that's life." to "what does c'est la vie mean?" is English): Kitten can say a name, and an
    * English reply left unsaid, or read by another language's voice, is worse than "Claro." said by Kitten. What the
    * reply quotes isn't counted: "Ça veut dire « I don't know »." is French, and "It's « je ne sais pas »." English
-   * (voice-speaking-r3-2).
+   * (voice-speaking-r3-2). A reply that quotes something follows the request only where its own words have more of that
+   * language's short words than English's: "Literally, \"I don't know\".", "In English: \"thank you\"." and "Gracias
+   * means \"thank you\"." have neither, and are English (voice-speaking-v4-1).
    */
   private followsRequest(): string | null {
     if (!this.asked) return null;
-    const words = wordsBesidesNames(outsideQuotes(this.text));
-    const english = stopwords(words, "en").length;
-    return english && english >= stopwords(words, this.asked).length ? null : this.asked;
+    const own = outsideQuotes(this.text);
+    const words = wordsBesidesNames(own);
+    const english = stopwords(words, "en").length, asked = stopwords(words, this.asked).length;
+    if (own !== this.text) return asked > english ? this.asked : null;
+    return english && english >= asked ? null : this.asked;
   }
 }
 

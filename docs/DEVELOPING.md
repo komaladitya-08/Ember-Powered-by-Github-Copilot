@@ -846,7 +846,8 @@ English seldom writes outside a name, and not clearly English: "your résumé" i
 typed in another language (three different short words of it outside quotes, and none only English writes:
 `requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that
 request's language unless it has as many English short words outside its quotes ("It means that's life.", never "Ça
-veut dire « I don't know »."), and a message that ends before
+veut dire « I don't know »."); one that quotes something follows it only where its own words have more of that
+language's short words than English's ("Literally, "I don't know"." and "In English: "thank you"." are Kitten's), and a message that ends before
 a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
 pieces Kitten is still making are done.
 
