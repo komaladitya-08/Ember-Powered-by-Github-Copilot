@@ -244,6 +244,12 @@ const BARE_ITEM = (body: string) => body.length <= 40 && body.trim().split(/\s+/
  */
 const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}(?::|[ \t]+[–—-])[ \t]+\S/u;
 
+/**
+ * What the lines said so far leave for the next one (spokenText's `leads`): whether the last of them ends with a colon
+ * (or is a blank line after one), whether a colon line led into it, and whether it is blank.
+ */
+export interface Lead { ledIn: boolean; afterLed: boolean; afterBlank: boolean }
+
 /** Whether a line of an answer, as Markdown writes it ("**Step 2:** Choose Privacy"), starts with a label (LABEL). */
 export function labelLine(line: string): boolean {
   return LABEL.test(line.replace(/\*\*|__/g, ""));
@@ -256,29 +262,43 @@ export function labelLine(line: string): boolean {
  * `ledIn`: a line ending with a colon, said already, leads into the first line. `lineStart`: the start of the first
  * line, said already, so an arrow starting what is left of it is no bullet, and a label at its start still counts.
  * `afterLabel`: the line before the first, said already, starts with a label, so a label line first is the next of
- * their list.
+ * their list. `afterLed`: the line before the first, said already, is one a colon line led into; `afterBlank`: it is a
+ * blank line (`ledIn` then says the one before it ends with a colon). `leads` is told what the last whole line leaves
+ * for the line after it, as those three (the same as given when there is none). `goesOn`: the last line goes on past
+ * `text`, so how long it is isn't known yet.
  */
-function endLines(text: string, ledIn = false, lineStart = "", afterLabel = false): string {
+function endLines(text: string, ledIn = false, lineStart = "", afterLabel = false, afterLed = false, afterBlank = false, leads?: (lead: Lead) => void, goesOn = false): string {
   const lines = text.split("\n");
+  // The first line whole, its start said already (without Markdown's bold, as labelLine reads it).
+  const whole = (i: number) => (i === 0 && lineStart ? lineStart.replace(/\*\*|__/g, "") + lines[0] : lines[i]);
   const item = lines.map((l, i) => ITEM.test(l) && !(i === 0 && lineStart && ARROW_BULLET.test(l)));
   // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
-  const bare = lines.map((l, i) => (l.trim() && !item[i] && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
+  // (Each line whole: the rest of one cut inside it, or the start of one said already, may make it longer than a list's.)
+  const bare = lines.map((_l, i) => { const l = whole(i); return l.trim() && !item[i] && !HEADING.test(l) && !(goesOn && i === lines.length - 1) && BARE_ITEM(l.trimEnd()) ? 1 : 0; });
   const run: number[] = [...bare];
   for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
   for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
   // Lines of any length that a line ending with a colon leads into (perhaps after a blank line), each starting with a
   // capital: two or more are a list without its markers too ("Here is the plan:\nStep one is to open it\nStep two is…").
-  const colon = (i: number) => (i < 0 ? ledIn : /:[ \t]*$/.test(lines[i]));
+  // (A stream cut between such lines, before a label line or after a colon line, carries the run on: `afterLed`, `ledIn`.
+  // Without it, "Here's the plan:\n…\nNote: …\nDelete…\nEmpty…" lost its run at "Note:": voice-speaking-v5-1.)
+  const colon = (i: number) => (i < 0 ? ledIn : /:[ \t]*$/.test(whole(i)));
+  // (Past a blank line: a second one, `afterBlank` before the first, ends the run.)
+  const colonPast = (i: number) => (i < 0 ? ledIn && !afterBlank : colon(i));
   const led = lines.map(() => false);
+  const ledBefore = (i: number) => (i < 0 ? afterLed : led[i]);
   for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    led[i] = !!l.trim() && !item[i] && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || colon(i - 1) || (i > 0 && !lines[i - 1].trim() && colon(i - 2)));
+    const l = whole(i);
+    led[i] = !!l.trim() && !item[i] && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (ledBefore(i - 1) || colon(i - 1) || (i > 0 && !whole(i - 1).trim() && colonPast(i - 2)));
   }
+  const last = lines.length - 2;
+  const blank = last >= 0 && !whole(last).trim();
+  leads?.(last < 0 ? { ledIn, afterLed, afterBlank } : { ledIn: blank ? colonPast(last - 1) : colon(last), afterLed: led[last], afterBlank: blank });
   const label = lines.map((l, i) => LABEL.test(i === 0 ? lineStart + l : l));
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
-    const listed = (led[i] && (led[i - 1] || led[i + 1])) || (label[i] && ((i === 0 && afterLabel) || label[i - 1] || label[i + 1]));
+    const listed = (led[i] && (ledBefore(i - 1) || led[i + 1])) || (label[i] && ((i === 0 && afterLabel) || label[i - 1] || label[i + 1]));
     // Before a heading or a label too, as before a list's item: "Keep both copies Option B." was said in one breath.
     const alone = item[i] || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || item[i + 1] || HEADING.test(next) || label[i + 1]));
     return alone ? `${body}.` : line;
@@ -292,9 +312,12 @@ function endLines(text: string, ledIn = false, lineStart = "", afterLabel = fals
  * → Accessibility" is "to Accessibility": voice-speaking-v4-3), and a label at the line's start still makes it a
  * labelled step ("Step 1: Open Settings," said, then "then go to Privacy\nStep 2: …" ends the step before "Step 2":
  * voice-speaking-v4-4). `o.afterLabel`: the line before its first, said already, starts with a label ("Step 1: …"
- * said, then "Step 2: Turn off Location" ends as the step it is: voice-speaking-c4-1).
+ * said, then "Step 2: Turn off Location" ends as the step it is: voice-speaking-c4-1). `o.afterLed`: that line is one a
+ * colon line led into (`o.afterBlank`: it is blank); `o.leads` is told what its own last whole line leaves for the next
+ * piece (Lead); `o.goesOn`: its last line goes on after it. So a run of such lines cut apart ends each of them as the
+ * whole answer does (voice-speaking-v5-1, voice-speaking-v5-2).
  */
-export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string; afterLabel?: boolean } = {}): string {
+export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string; afterLabel?: boolean; afterLed?: boolean; afterBlank?: boolean; leads?: (lead: Lead) => void; goesOn?: boolean } = {}): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
@@ -326,7 +349,7 @@ export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: s
     // "2**8", "_config.yml" or "__init__.py".
     .replace(/(^|[\s(])(?:\*\*?|_(?=\p{L}+(?:[\s,;:!?)]|$)))(?=\p{L})/gu, "$1")
     .replace(/(?<=[\p{L}\p{N}.,!?;:])(?:\*\*?|_)(?=[\s.,!?;:)]|$)/gu, "");
-  const said = endLines(plain, o.ledIn, o.lineStart, o.afterLabel)
+  const said = endLines(plain, o.ledIn, o.lineStart, o.afterLabel, o.afterLed, o.afterBlank, o.leads, o.goesOn)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+→][ \t]+/gm, (m: string, at: number) => (at === 0 && o.lineStart && ARROW_BULLET.test(m) ? m : ""))

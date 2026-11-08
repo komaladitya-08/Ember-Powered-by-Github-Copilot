@@ -4,7 +4,7 @@
  * or fails, a voice that runs locally on the operating system speaks instead. Pure helpers; no model loads here.
  */
 
-import { labelLine, speechMarkupOpen, spokenText } from "./spoken";
+import { type Lead, labelLine, speechMarkupOpen, spokenText } from "./spoken";
 
 /** Persisted preference names; Kitten is the default, with Kokoro as the optional alternative. */
 export type NaturalVoiceModel = "kokoro" | "supertonic" | "kitten";
@@ -220,6 +220,16 @@ export class SpeechStream {
   /** The start of each whole line of `raw` that opens or closes a code block, and of the first line not looked at yet. */
   private fences: number[] = [];
   private fenceScan = 0;
+  /**
+   * What the last whole line said leaves for the line after it (spokenText's Lead): whether it ends with a colon ("Here's
+   * what I'll do:" said on its own, then its steps), whether a colon line led into it and whether it is blank, so the
+   * lines after a cut end as a list's do (voice-speaking-3). They were said in one breath, the steps cut from the line
+   * that leads into them, and so were those after a cut before a label line among them, the colon line's run lost there
+   * (voice-speaking-v5-1).
+   */
+  private lead: Lead = { ledIn: false, afterLed: false, afterBlank: false };
+  /** shortLabelEnds' answer for the end after the last line break, looked at again as each delta comes. */
+  private labelEnd = { said: -1, end: -1, short: false };
 
   /** `maxChars`: the most of an answer said aloud (SPOKEN_MAX); the rest is left to the bubble, which shows it all. */
   constructor(private maxChars = SPOKEN_MAX) {}
@@ -229,9 +239,23 @@ export class SpeechStream {
     this.raw += delta;
     const cut = this.safeCut();
     if (cut <= this.said) return [];
-    const spoken = spokenText(this.raw.slice(this.said, cut), { ledIn: this.ledIn(), lineStart: this.lineStart(), afterLabel: this.afterLabel() });
+    // (Cut inside a line, it goes on after the piece: a sentence's end has a space after it, a clause's no line break.)
+    const goesOn = this.raw[cut - 1] !== "\n" && this.raw[cut] !== "\n";
+    const spoken = this.withLabel(spokenText(this.raw.slice(this.said, cut), { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel(), leads: lead => { this.lead = lead; }, goesOn }));
     this.said = cut;
     return spoken.trim() ? this.budget(spoken) : [];
+  }
+
+  /**
+   * `spoken` with a short label alone on its first line ("Cons:", "Steps:": under CHUNK_MIN) said with the line after it,
+   * once something has been said: the whole answer's pieces join it to the next (speechChunks), but for the answer's
+   * first, and after a full stop or a list's item the stream said "Cons:" on its own (voice-speaking-v5-2).
+   */
+  private withLabel(spoken: string): string {
+    const nl = spoken.indexOf("\n");
+    if (!this.spokenChars || nl < 0) return spoken;
+    const first = spoken.slice(0, nl).trim();
+    return first.endsWith(":") && first.length < CHUNK_MIN ? `${first} ${spoken.slice(nl + 1).trimStart()}` : spoken;
   }
 
   /**
@@ -273,21 +297,12 @@ export class SpeechStream {
     if (!this.said) rest = text;
     else if (text.startsWith(this.raw.slice(0, this.said))) rest = text.slice(this.said);
     else rest = full === undefined ? this.raw.slice(this.said) : "";
-    const spoken = spokenText(rest, { ledIn: this.ledIn(), lineStart: this.lineStart(), afterLabel: this.afterLabel() });
+    const spoken = this.withLabel(spokenText(rest, { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel() }));
     const out = spoken.trim() ? this.budget(spoken) : [];
     const question = this.closingQuestion();
     if (question) out.push(question);
     this.reset();
     return out;
-  }
-
-  /**
-   * Whether what is said next starts on the line after one ending with a colon that was said already ("Here's what I'll
-   * do:" said on its own, then its steps): spokenText ends those lines as a list's (voice-speaking-3). They were said in
-   * one breath, the steps cut from the line that leads into them.
-   */
-  private ledIn(): boolean {
-    return /:[ \t]*\n(?:[ \t]*\n)?[ \t]*$/.test(this.raw.slice(Math.max(0, this.said - SCAN_BACK), this.said));
   }
 
   /**
@@ -323,6 +338,8 @@ export class SpeechStream {
     this.scanFrom = 0;
     this.fences = [];
     this.fenceScan = 0;
+    this.lead = { ledIn: false, afterLed: false, afterBlank: false };
+    this.labelEnd = { said: -1, end: -1, short: false };
   }
 
   /**
@@ -379,6 +396,30 @@ export class SpeechStream {
     return 0;
   }
 
+  /**
+   * Whether `end` is just after a line ending with a colon that ends a piece too short to be said on its own ("Cons:",
+   * "Step 2:": under CHUNK_MIN): the whole answer's pieces say it with the line after it (speechChunks), and cut after it
+   * the stream said it on its own, the step after it alone (voice-speaking-v5-2). The answer's first piece, and one
+   * with the line before it ("Firefox Option A:"), are said on their own in the whole answer too, so they are still cut.
+   */
+  private shortLabelEnds(end: number): boolean {
+    if (this.raw[end - 1] !== "\n") return false;
+    // The last line with words before `end` (a blank line after the label is none of its own).
+    let to = end - 1, from = this.raw.lastIndexOf("\n", to - 1) + 1;
+    while (from > 0 && !this.raw.slice(from, to).trim()) { to = from - 1; from = this.raw.lastIndexOf("\n", to - 1) + 1; }
+    const line = this.raw.slice(from, to).replace(/\*\*|__/g, "").trim();
+    if (!line.endsWith(":") || line.length >= CHUNK_MIN) return false;
+    // (Past twice what is said aloud, it is left to the bubble anyway: 1,000 labels with nothing cut between them cost
+    // 2.5 s, each piece read again whole.)
+    if (this.capped || end - this.said > 2 * this.maxChars) return false;
+    if (this.labelEnd.said !== this.said || this.labelEnd.end !== end) {
+      const chunks = speechChunks(spokenText(this.raw.slice(this.said, end), { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel() }));
+      const last = chunks[chunks.length - 1] ?? "";
+      this.labelEnd = { said: this.said, end, short: last.endsWith(":") && last.length < CHUNK_MIN && (this.spokenChars > 0 || chunks.length > 1) };
+    }
+    return this.labelEnd.short;
+  }
+
   private sentenceCut(): number {
     for (let nl = this.raw.indexOf("\n", this.fenceScan); nl >= 0; nl = this.raw.indexOf("\n", this.fenceScan)) {
       if (FENCE_LINE.test(this.raw.slice(this.fenceScan, nl))) this.fences.push(this.fenceScan);
@@ -391,7 +432,7 @@ export class SpeechStream {
     const settled = (at: number) => at <= lastBreak || (at > lastBreak + 1 && at <= this.raw.length - SCAN_BACK);
     let best = 0, fence = 0, scanned = this.scanFrom;
     for (const end of sentenceEnds(this.raw, Math.max(this.said, this.scanFrom), at => { if (settled(at)) scanned = at; })) {
-      if (end <= this.said) continue;
+      if (end <= this.said || this.shortLabelEnds(end)) continue;
       // Inside a code block: as many fence lines start before it as speechMarkupOpen would count, and an odd number.
       while (fence < this.fences.length && this.fences[fence] < end) fence++;
       if ((fence + (tail >= 0 && tail < end ? 1 : 0)) % 2 !== 0) continue;

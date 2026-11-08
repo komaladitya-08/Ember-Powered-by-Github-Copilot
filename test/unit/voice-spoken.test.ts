@@ -1,7 +1,7 @@
 /** What Ember says out loud for an answer: the words, not the Markdown, code or addresses. */
 
 import { describe, expect, it } from "vitest";
-import { AnswerLanguage, cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
+import { AnswerLanguage, type Lead, cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 import { heardCutInWake } from "../../app/voice/engine";
 import { SpeechStream } from "../../app/voice/tts";
 
@@ -240,6 +240,24 @@ describe("spokenText", () => {
     expect(spokenText("Step 3: Turn off Location")).toBe("Step 3: Turn off Location");
     // A line of other words after a label line is still its paragraph.
     expect(spokenText("They look right to me", { afterLabel: true })).toBe("They look right to me");
+  });
+
+  it("ends a line of a colon line's run said after a cut, the last one too, and says what the last whole line leads into (voice-speaking-v5-1, voice-speaking-v5-2)", () => {
+    expect(spokenText("It costs more and needs a sign-in", { ledIn: true, afterLed: true })).toBe("It costs more and needs a sign-in.");
+    expect(spokenText("It costs more and needs a sign-in", { ledIn: true })).toBe("It costs more and needs a sign-in");
+    expect(spokenText("Note: this can take a few minutes\nDelete the old copies", { afterLed: true })).toBe("Note: this can take a few minutes.\nDelete the old copies.");
+    // A second blank line ends the run.
+    expect(spokenText("\nOpen the file\nSave it", { ledIn: true, afterBlank: true })).toBe("Open the file\nSave it");
+    const leads: Lead[] = [];
+    for (const [piece, o] of [["Here's the plan:\n", {}], ["Back up the folder\n", { ledIn: true }], ["Here's the plan:\n\n", {}], ["No line break", { ledIn: true }]] as const) {
+      spokenText(piece, { ...o, leads: lead => leads.push(lead) });
+    }
+    expect(leads).toEqual([
+      { ledIn: true, afterLed: false, afterBlank: false },
+      { ledIn: false, afterLed: true, afterBlank: false },
+      { ledIn: true, afterLed: false, afterBlank: true },
+      { ledIn: true, afterLed: false, afterBlank: false },
+    ]);
   });
 
   it("ends the lines a colon line leads into when that line was said already, as a stream cuts after it (voice-speaking-3)", () => {

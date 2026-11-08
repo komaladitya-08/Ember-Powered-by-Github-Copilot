@@ -432,6 +432,40 @@ describe("SpeechStream", () => {
     }
   });
 
+  it.each([
+    "Here's the plan:\nBack up the folder to your USB drive\nNote: this can take a few minutes\nDelete the old copies once the backup is done\nEmpty the bin to free up the space",
+    "**To fix the sound:**\nNote: you need to be signed in as an admin\nOpen Sound settings from the Start menu\nChoose your headphones in the list\nPlay a test sound to check",
+    "To fix the sound:\nStep 1: Open Sound settings\nStep 2: Choose your headphones\nCheck that the volume slider is not at zero\nPlay a test sound to check",
+    "**Here's what I'd do:**\nStep 1: Back up the folder\nDelete the old copies once the backup is done\nEmpty the bin to free up the space",
+    "Here's the plan:\n\nBack up the folder to your USB drive\nNote: this can take a few minutes\nDelete the old copies once the backup is done",
+    "Here's the plan:\nBack up the folder. Then copy it to the drive\nNote: this can take a while\nDelete the old copies",
+  ])("says each step of %j apart when streamed, a label line among them, as the whole answer does (voice-speaking-v5-1)", answer => {
+    const whole = speechChunks(spokenText(answer));
+    // Every line ends: none is said in one breath with the line after it.
+    for (const chunk of whole.slice(1)) expect(chunk).toMatch(/\.$/);
+    for (const delta of [1, 4, 16]) expect(streamed(answer, delta).flatMap(speechChunks), `${delta}`).toEqual(whole);
+    // Two blank lines end a colon line's run, streamed or not.
+    const apart = "Done.\nHere's what I found:\n\n\nTo fix the sound:\nYour windows";
+    for (const delta of [1, 4, 16]) expect(streamed(apart, delta).flatMap(speechChunks), `${delta}`).toEqual(speechChunks(spokenText(apart)));
+  });
+
+  it.each([
+    ["Step 1:\nOpen Settings\nStep 2:\nChoose Privacy\nStep 3:\nTurn off Location", ["Step 1:", "Open Settings.", "Step 2: Choose Privacy.", "Step 3: Turn off Location."]],
+    ["Pros:\nIt's faster and uses less memory\nCons:\nIt costs more and needs a sign-in", ["Pros:", "It's faster and uses less memory.", "Cons: It costs more and needs a sign-in."]],
+    ["Option A:\nKeep both copies\nOption B:\nDelete the older one", ["Option A:", "Keep both copies.", "Option B: Delete the older one."]],
+    ["Morning:\nCheck your email\nAfternoon:\nWrite the report", ["Morning:", "Check your email.", "Afternoon: Write the report."]],
+    ["In Windows:\nOpen Settings\nOn a Mac:\nOpen System Settings", ["In Windows:", "Open Settings.", "On a Mac: Open System Settings."]],
+    // After a full stop, a list's item or a blank line too.
+    ["Sure.\nSteps:\nOpen the file\nAdd the totals\nSave it", ["Sure.", "Steps: Open the file.", "Add the totals.", "Save it."]],
+    ["It's faster.\nCons:\nIt costs more.", ["It's faster.", "Cons: It costs more."]],
+    ["Pros:\n- It's faster and uses less memory\n\n**Cons:**\n- It costs more and needs a sign-in", ["Pros:", "It's faster and uses less memory.", "Cons: It costs more and needs a sign-in."]],
+  ])("says each later label of %j with its step when streamed, the last one ended, as the whole answer does (voice-speaking-v5-2)", (answer, chunks) => {
+    expect(speechChunks(spokenText(answer))).toEqual(chunks);
+    for (const delta of [1, 4, 16]) expect(streamed(answer, delta).flatMap(speechChunks), `${delta}`).toEqual(chunks);
+    // The answer's first line is still said as soon as it has come.
+    expect(firstPiece(answer, 1).piece).toBe(chunks[0]);
+  });
+
   const FOUND = "I looked through your Downloads folder, and I found three spreadsheets that you changed this week, all of them from the sales team.";
 
   it.each([
