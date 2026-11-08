@@ -180,7 +180,7 @@ describe("what memory never keeps", () => {
     ["The refresh token is RS256-signed"], ["The access token is HS256-signed by the server"], ["// The token is base64-encoded and expires after 1 hour"],
     ["Each token is utf8-encoded"], ["The session token is UUIDv4-formatted"], ["The token is 32-characters"], ["The token is SHA-256-hashed."],
     ["Our Android code is 12000 lines long"], ["The Android code is 15000 lines"], ["The iPad code is 2024-ready"],
-    ["PIN code: 560001"], ["PIN Code - 560001"], ["PIN Code: 400 001"], ["Bengaluru, Karnataka, PIN code: 560001"],
+    ["Mumbai, PIN code: 560001"], ["12 MG Road\nBengaluru\nPIN Code - 560001"], ["Mumbai PIN Code: 400 001"], ["Bengaluru, Karnataka, PIN code: 560001"],
     ["Visit us at 12 MG Road, Bengaluru, PIN code: 560001."], ["Our office PIN code is 560001; add it to the footer"], ["Pincode: 560034"],
     ["Fix the access code 401 errors"], ["the security code 403 error"], ["Our office ZIP code is 90210"], ["The office cost code is 4821"],
     ["The house style code 123"], ["The area code for the office is 0113"], ["The office Teams code is 482193"], ["The bank sort code for the account is 12-34-56"],
@@ -197,6 +197,22 @@ describe("what memory never keeps", () => {
     ["The token for the API is abc123def456ghi789"], ["The token is Xy7k2Lm9Qp3R-abcde"], ["My Android unlock code is 4821"], ["My laptop code is 1234"],
   ])("still refuses %j (memory-1, memory-r3-3)", text => {
     expect(memoryRefusal(text)).not.toBeNull();
+  });
+
+  // A six-digit PIN code is a postcode only after an address (a road, a city, a state, an office), never after a lock, a
+  // profile or a bare comma, nor on a line with no address before it (memory-v4-5).
+  it.each([
+    ["Garage, PIN code: 482193"], ["The gate, PIN code 482193"], ["For the locker, PIN code 482193"], ["Netflix kids profile, PIN code 482193"],
+    ["PIN code: 482193"], ["Pin code is 482193"], ["PIN code: 560001"], ["PIN Code - 560001"], ["PIN Code: 400 001"], ["Garage door.\nPIN code: 482193"],
+    ["My bank card\nPIN code: 482193"],
+  ])("refuses %j, a PIN with no address before it (memory-v4-5)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+  it.each([
+    ["Bengaluru, PIN code: 560001"], ["Delhi, PIN code 110001"], ["12 MG Road\nBengaluru\nPIN Code - 560001"], ["Address: 4 Park Street, Kolkata.\nPIN code: 700016"],
+    ["Our office PIN code is 560001; add it to the footer"], ["Andheri East, Maharashtra, PIN code: 400069"],
+  ])("keeps %j, an Indian postcode after an address (memory-r3-3, memory-v4-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
   });
 
   // A house, a home or an office locks only as someone's ("my house code", "the office code"), never a post office's, a

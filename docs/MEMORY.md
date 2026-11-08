@@ -80,9 +80,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
   are ordinary words, as are how a token is made ("the access token is HS256-signed",
   "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
-  long") and an Indian postcode called a "PIN code" after an address or at the start of a line ("Bengaluru, PIN code:
-  560001"; "my PIN code is 560034" is still refused): memory-c3-1, memory-r3-3 (Projects and task views share this
-  guard). Secrets are refused whole, never stored redacted.
+  long") and an Indian postcode called a "PIN code" after an address (a road, a place, an Indian city or state) in its
+  sentence or the lines just before it ("Bengaluru, PIN code: 560001"; "my PIN code is 560034", "Garage, PIN code:
+  482193" and a "PIN code: 482193" line with no address before it are still refused): memory-c3-1, memory-r3-3,
+  memory-v4-5 (Projects and task views share this guard). Secrets are refused whole, never stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory

@@ -68,17 +68,33 @@ const BARE_PASSWORD = new RegExp(
 );
 /**
  * An Indian postcode, which is called a "PIN code" ("Bengaluru, PIN code: 560001", "Our office PIN code is 560001", a line
- * "PIN Code - 560001" in an address): six digits, after an address (a comma or a word for a place earlier in its sentence)
- * or at the start of a line, and with no word for whose or what PIN it is near ("my", "card", "SIM"): memory-r3-3.
+ * "PIN Code - 560001" under an address): six digits, after an address earlier in its sentence (a word for a place, a
+ * road, an Indian city or state) or, at the start of a line or a sentence, in the lines just before it, and with no word
+ * for whose or what PIN it is near ("my", "card", "SIM", "garage", "profile"): memory-r3-3. Never after a bare comma
+ * ("Garage, PIN code: 482193") or on a line with no address before it ("PIN code: 482193"): memory-v4-5.
  */
 const PIN_POSTCODE = /\bpin\s*-?\s*code\s*(?:[:=]|-|\bis\b|\bwas\b)?\s*[1-9]\d{2} ?\d{3}(?![\d-])/gi;
-const ADDRESS_BEFORE = /,|\b(?:office|address|area|city|town|village|district|state|post|postal|located|branch|shop|store|delivery|shipping|billing|campus|road|street|nagar|colony|india)\b/i;
-const WHOSE_PIN = /\b(?:my|your|his|her|their|user['’]s|card|bank|atm|debit|credit|sim|phone|mobile|account|unlock|lock|screen|voicemail|door|alarm|safe|passcode|password|secret|login)\b/i;
+/** Indian states, union territories and larger cities, which an address names before its PIN code. */
+const INDIA = String.raw`india|pradesh|assam|bihar|chhattisgarh|goa|gujarat|haryana|jharkhand|karnataka|kerala|maharashtra|manipur|`
+  + String.raw`meghalaya|mizoram|nagaland|odisha|orissa|punjab|rajasthan|sikkim|tamil\s+nadu|telangana|tripura|uttarakhand|bengal|`
+  + String.raw`andaman|nicobar|chandigarh|daman|diu|delhi|jammu|kashmir|ladakh|lakshadweep|puducherry|pondicherry|mumbai|bombay|bengaluru|`
+  + String.raw`bangalore|hyderabad|secunderabad|ahmedabad|chennai|madras|kolkata|calcutta|pune|surat|jaipur|lucknow|kanpur|nagpur|indore|`
+  + String.raw`thane|bhopal|visakhapatnam|vizag|patna|vadodara|baroda|ghaziabad|ludhiana|agra|nashik|noida|gurgaon|gurugram|faridabad|`
+  + String.raw`kochi|cochin|coimbatore|mysuru|mysore|madurai|varanasi|amritsar|ranchi|guwahati|bhubaneswar|thiruvananthapuram|`
+  + String.raw`trivandrum|mangaluru|mangalore|dehradun|jabalpur|raipur|vijayawada|kozhikode|calicut|udaipur|jodhpur|prayagraj|`
+  + String.raw`allahabad|meerut|rajkot|srinagar|aurangabad|andheri|bandra|whitefield|koramangala`;
+const ADDRESS_BEFORE = new RegExp(String.raw`\b(?:office|address|area|city|town|village|district|state|post|postal|located|branch|shop|store|delivery|shipping|billing|campus|road|street|nagar|colony|lane|marg|layout|sector|${INDIA})\b`, "i");
+/** In the lines before a PIN code on its own line: an address's own words only ("12 MG Road", "Bengaluru"). */
+const ADDRESS_LINES = new RegExp(String.raw`\b(?:address|city|town|village|district|state|road|street|nagar|colony|lane|marg|layout|sector|${INDIA})\b`, "i");
+const WHOSE_PIN = /\b(?:my|your|his|her|their|user['’]s|card|bank|atm|debit|credit|sim|phone|mobile|account|unlock|lock|screen|voicemail|door|alarm|safe|passcode|password|secret|login|gate|garage|locker|keypad|vault|padlock|lockbox|wallet|profile|parental|netflix)\b/i;
 /** `text` with each postcode called a "PIN code" written as "postcode", for the PIN checks only. */
 function withoutPostcodes(text: string): string {
   return text.replace(PIN_POSTCODE, (m, at: number) => {
     const clause = text.slice(0, at).split(/[.;!?\n]/).at(-1)!;
-    return !WHOSE_PIN.test(clause.slice(-40)) && (!clause.trim() || ADDRESS_BEFORE.test(clause)) ? "postcode" : m;
+    // At the start of a line or a sentence: the lines just before it say whether it is an address's.
+    const before = clause.trim() ? clause : text.slice(Math.max(0, at - 120), at);
+    const address = clause.trim() ? ADDRESS_BEFORE : ADDRESS_LINES;
+    return !WHOSE_PIN.test(before.slice(-40)) && address.test(before) ? "postcode" : m;
   });
 }
 /**
