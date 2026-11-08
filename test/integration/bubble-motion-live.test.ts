@@ -106,11 +106,12 @@ function chips(): { row: { x: number; y: number; w: number; h: number } | null; 
 }
 /**
  * A question's key hint on each OS, at the narrowest the bubble gets and beside the Ask box, at Default and Larger text:
- * how far its keys reach past the row (px), and for each chord after the first whether the " · " before it shows and
- * whether it shares a line with the chord before it.
+ * how far its keys reach past the glass's inner edge (the bubble's content box, px), how far the step's own text does
+ * (a flex item as wide as its widest chord, so it widened with a hint that ran past and hid it: companion-v4-2), and for
+ * each chord after the first whether the " · " before it shows and whether it shares a line with the chord before it.
  */
-function keyHints(): { name: string; over: number; seps: { shown: boolean; sameLine: boolean }[] }[] {
-  const out: { name: string; over: number; seps: { shown: boolean; sameLine: boolean }[] }[] = [];
+function keyHints(): { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[] {
+  const out: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[] = [];
   const html = document.documentElement;
   const steps: [string, string][] = [["linux", "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"], ["windows", "Win+Alt+Y allow · Win+Alt+N not now"],
     ["mac", "Control+Shift+Command+Y allow · Control+Shift+Command+N not now"], ["mac whole text", "Control+Shift+Command+Y shows the next part · Control+Shift+Command+N not now"]];
@@ -130,6 +131,8 @@ function keyHints(): { name: string; over: number; seps: { shown: boolean; sameL
       // Its own width (0), or narrowed as place() narrows it (useWidth).
       if (width) { b.root.style.width = width + "px"; b.root.style.boxSizing = "border-box"; }
       const text = b.root.querySelector<HTMLElement>(".eb-step-text")!.getBoundingClientRect();
+      const rs = getComputedStyle(b.root);
+      const inner = b.root.getBoundingClientRect().right - parseFloat(rs.paddingRight) - parseFloat(rs.borderRightWidth);
       const reach = Math.max(...[...b.root.querySelectorAll<HTMLElement>(".eb-step kbd, .eb-step .eb-key-word")].map(e => e.getBoundingClientRect().right));
       const chords = [...b.root.querySelectorAll<HTMLElement>(".eb-key")];
       const em = parseFloat(getComputedStyle(b.root.querySelector(".eb-step-text")!).fontSize);
@@ -138,7 +141,7 @@ function keyHints(): { name: string; over: number; seps: { shown: boolean; sameL
         const r = c.getBoundingClientRect(), prev = chords[i].getBoundingClientRect();
         return { shown: r.left >= text.left - 0.5, sameLine: r.top < prev.bottom - 1 };
       });
-      out.push({ name: os + " " + (width ? width + " px" : "at its own width") + " at " + size + " text", over: Math.max(0, reach - text.right), seps });
+      out.push({ name: os + " " + (width ? width + " px" : "at its own width") + " at " + size + " text", over: Math.max(0, reach - inner), textOver: Math.max(0, text.right - inner), seps });
       host.remove();
     }
   }
@@ -182,7 +185,7 @@ app.whenReady().then(async () => {
 type Sample = { scale: string; translate: string; opacity: number };
 type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]> & {
   chips: { row: { x: number; y: number; w: number; h: number } | null; covered: boolean; buttons: number; labelledBy: string };
-  keyHints: { name: string; over: number; seps: { shown: boolean; sameLine: boolean }[] }[];
+  keyHints: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[];
 };
 
 /** How far a sample is from at rest: its scale's distance from 1, its translate in px. */
@@ -258,12 +261,14 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
     expect(c.labelledBy).toMatch(/^eb-suggest-cap-\d+$/);
   });
 
-  it("keeps a question's key hint inside a narrowed bubble on every OS and text size, with no \" · \" ending or starting a line (companion-r3-2, accessibility-visual-r3-2, accessibility-visual-c3-1)", () => {
+  it("keeps a question's key hint inside a narrowed bubble on every OS and text size, with no \" · \" ending or starting a line (companion-r3-2, accessibility-visual-r3-2, accessibility-visual-c3-1, companion-v4-2)", () => {
     const all = result.keyHints;
     expect(all.length).toBe(24);
     for (const k of all) {
-      // A Mac's four keys at 220 px reached 8 px (Default) and 62 px (Larger) past the glass.
+      // A Mac's four keys at 220 px reached 34 px (Default) and 88 px (Larger) past the glass's inner edge, a whole
+      // text's 173 px; measured against the step's own text, which widened with them, it read 0.
       expect(k.over, k.name).toBeLessThan(0.5);
+      expect(k.textOver, k.name).toBeLessThan(0.5);
       // The " · " shows only between two chords on one line: never left at a line's end, nor starting the next.
       for (const sep of k.seps) expect(sep.shown, k.name).toBe(sep.sameLine);
     }
