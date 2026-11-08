@@ -468,6 +468,52 @@ describe("the open Ask box, for a bubble that comes up while it is open (compani
     expect(askKeepOff(opened, askKeepOffKey(question), kept).grew).toBeUndefined();
   });
 
+  it("keeps an answer whose first words came while the box was open clear of the field as it grows into the box and finishes (companion-v5-1)", () => {
+    // As measured live: Ember at the top centre of a 1024 x 768 screen at Larger text, Ask opened during "Thinking…".
+    // "Thinking…" showed before the box opened, so it held off nothing of it; the answer's first words are a new bubble
+    // that comes while the box is open, so it keeps off the box where it is.
+    const thinking = { visible: true, mood: "thinking" as const, title: "Thinking…", streaming: true, actions: [] as { id: string; label: string }[] };
+    const opened = { x: 195, y: 168, width: 728, height: 173 };
+    const before = askKeepOff(null, askKeepOffKey(thinking), none);
+    const streaming = { ...thinking, mood: "idle" as const, title: "Ember" };
+    const held = askKeepOff(opened, askKeepOffKey(streaming), before);
+    expect(held).toEqual({ box: opened, question: askKeepOffKey(streaming) });
+    // Two lines fit beside Ember clear of the box; a third doesn't, and nothing by Ember is clear of the box at that
+    // size: kept off the box without going across it, it went to its usual place under Ember, over the field (36,630
+    // px² as it streamed, 50,490 once it finished, with the key hint over its words).
+    const anchor = { x: 559, y: 135 }, handle = { x: 752, y: 700, width: 260, height: 56 }, screen = { width: 1024, height: 768 };
+    expect(bubbleFit(anchor, { width: 330, height: 82 }, screen, 60, [handle, opened], () => 82)).toEqual({ x: 610, y: 70, width: 330, height: 82 });
+    expect(bubbleFit(anchor, { width: 330, height: 108 }, screen, 60, [handle, opened], () => 108)).toBeNull();
+    const over = { x: 537, y: 155, width: 330, height: 108 };
+    // It grows into the box it keeps off as its words come in: from then on it may go across the box, below it here.
+    const grown = askGrownInto(held, opened, over, askGrows(streaming));
+    expect(grown).toEqual({ box: opened, question: askKeepOffKey(streaming), grew: true });
+    expect(bubbleFit(anchor, { width: 330, height: 108 }, screen, 60, [handle, opened], () => 108, [opened])).toEqual({ x: 537, y: 347, width: 330, height: 108 });
+    // Placed there, it is clear of the box: nothing changes as it streams on (it doesn't dance) ...
+    const below = { x: 537, y: 347, width: 330, height: 134 };
+    expect(askGrownInto(grown, opened, below, askGrows(streaming))).toBe(grown);
+    // ... and it finishes there, whole, with Read all and its hint clear of the field.
+    const finished = { ...streaming, streaming: false, actions: [{ id: "ui:more", label: "Read all" }] };
+    expect(askKeepOff(opened, askKeepOffKey(finished), grown)).toBe(grown);
+    expect(bubbleFit(anchor, { width: 330, height: 277 }, screen, 60, [handle, opened], () => 277, [opened])).toEqual({ x: 537, y: 347, width: 330, height: 277 });
+    expect(askGrownInto(grown, opened, { ...below, height: 277 }, askGrew(finished, below, { ...below, height: 277 }))).toBe(grown);
+    // Already free to go across, growing into the box again changes nothing.
+    expect(askGrownInto(grown, opened, over, true)).toBe(grown);
+    // So does "Listening…" (a wake heard while the box is open) with no room by Ember: above or below the box, not over
+    // its field (900 x 700 at Larger text, Ember near the bottom, it sat on the box at y 509).
+    const listening = { ...thinking, mood: "listening" as const, title: "Listening…" };
+    const heard = askKeepOff(opened, askKeepOffKey(listening), none);
+    expect(askGrownInto(heard, opened, { ...over, height: 50 }, askGrows(listening))).toEqual({ ...heard, grew: true });
+    // One that came while the box was open and doesn't grow (a task's result shown whole) keeps its place as before,
+    // and a question never moves for the box, however it grows.
+    const result = { ...streaming, streaming: false, mood: "done" as const, title: "Tidy up" };
+    const came = askKeepOff(opened, askKeepOffKey(result), none);
+    expect(askGrownInto(came, opened, over, askGrew(result, null, over))).toBe(came);
+    const question = { ...streaming, mood: "attention" as const, actions: [{ id: "q1:once", label: "Allow" }, { id: "q1:deny", label: "Not now" }] };
+    const asked = askKeepOff(opened, askKeepOffKey(question), none);
+    expect(askGrownInto(asked, opened, over, askGrew(question, { ...over, height: 80 }, over))).toBe(asked);
+  });
+
   it("is a place the bubble keeps off where it can, never one it hides from (main sends it apart from the windows)", async () => {
     const { readFileSync } = await import("node:fs");
     const overlayPage = readFileSync("app/renderer/overlay/main.ts", "utf8");

@@ -146,10 +146,13 @@ export function askGrew(b: Pick<BubbleState, "visible" | "streaming" | "actions"
  * growing (`grows`: askGrew) that has grown into the box keeps off the box where it is now from then on, though it held
  * off the box elsewhere, or nowhere (it showed before the box opened; companion-c3-1: an answer still streaming when Ask
  * opened beside it grew under the field, which covered its last lines, its Read all and its hint), and where nothing
- * by Ember is clear of it, may go above or below it (`grew`). Otherwise, `held`.
+ * by Ember is clear of it, may go above or below it (`grew`). So may one that came while the box was open, kept off it
+ * where it is and grows into it all the same (companion-v5-1: an answer whose first words came with the box open, at
+ * Larger text with no room by Ember, finished under the field, 50,490 px² of it). Otherwise, `held`.
  */
 export function askGrownInto(held: AskHeld, box: Rect | null, at: Rect | null, grows: boolean): AskHeld {
   if (!grows || !box || !at || overlap(at, box) === 0) return held;
   const same = held.box && held.box.x === box.x && held.box.y === box.y && held.box.width === box.width && held.box.height === box.height;
-  return same ? held : { box, question: held.question, grew: true };
+  if (same) return held.grew ? held : { ...held, grew: true };
+  return { box, question: held.question, grew: true };
 }

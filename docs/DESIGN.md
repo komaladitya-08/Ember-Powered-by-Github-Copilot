@@ -167,7 +167,9 @@ They share one emotion rig, so switching never changes behaviour.
   clear of it whole (a small screen at Larger text), the box may come against it. An answer that
   grows into the box on its own, as its words come in or as it finishes (its Read all, its hint
   and Ember's suggestions come only then), keeps off it from there, going above or below the box
-  where nothing by Ember is clear of it, so the field never covers its last lines or its Read all.
+  where nothing by Ember is clear of it, so the field never covers its last lines or its Read all;
+  so does one that started while the box was open (Ask opened during "Thinking…"), and anything
+  else still coming in that asks nothing (a step, "Listening…") and finds no room by Ember.
   While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
