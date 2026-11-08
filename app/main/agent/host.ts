@@ -62,7 +62,7 @@ import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autono
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
-import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn } from "../../shared/conversation";
+import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
@@ -284,8 +284,11 @@ export interface HostOptions {
   onAnswerInterrupted?: () => void;
   /** The answer being written, for Home's conversation (see AnswerStream). */
   onAnswerStream?: (e: AnswerStream) => void;
-  /** Whether the conversation is answering a request now changed (AgentHost.conversationTurn), for Home (home-c1-1). */
-  onConversationTurn?: (turn: ConversationTurn) => void;
+  /**
+   * Whether the conversation is answering a request now changed (AgentHost.conversationTurn), for Home (home-c1-1).
+   * `ended`, with "idle": a Stop ended the turn (home-c2-2). An "idle" comes after the lines its turn left (home-r2-1).
+   */
+  onConversationTurn?: (turn: ConversationTurn, ended?: ConversationTurnEnd) => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; endedBy?: StopCause; summary: string; text: string }) => void;
   /** Main's kill switch (KillSwitch.pull with source "typed"): a typed "stop" while a task is at work (stopsNow). */
@@ -913,6 +916,10 @@ export class AgentHost {
   private waitingAsks = 0;
   /** What Home was last told of the conversation's turn (turnChanged). */
   private turnTold: ConversationTurn = "idle";
+  /** The turn's end is told once what came with it has been (turnChanged). */
+  private turnEnding = false;
+  /** How the turn Home was told of ended, when a Stop ended it: told with its "idle" (home-c2-2). */
+  private turnEnd: ConversationTurnEnd | undefined;
   /** A release of the held requests is under way. */
   private releasing = false;
   /** Counts releases and the Stops that end them: a release that finds it moved on does nothing more. */
@@ -2702,12 +2709,34 @@ export class AgentHost {
     return this.presenter.stalledNow ? "slow" : "thinking";
   }
 
-  /** Tells Home when conversationTurn changed (called wherever what it reads may have). */
-  private turnChanged(): void {
+  /**
+   * Tells Home when conversationTurn changed (called wherever what it reads may have). `ended`: a Stop is ending the
+   * turn Home was told of (said first, so the bubble's change as it stops isn't told as "thinking" again). Its end is
+   * told once what Ember does as it ends has been (a microtask later): the reply's or the problem's line, and Stop
+   * everything's word, reach Home first, so Home never says how it went before they come (home-r2-1: a model error's
+   * "idle" came before its Problem line, and Home said no reply was written). An "idle" that is over by then (a request
+   * between two waits) is never told.
+   */
+  private turnChanged(ended?: ConversationTurnEnd): void {
+    if (ended && this.turnTold !== "idle") this.turnEnd = ended;
     const now = this.conversationTurn;
     if (now === this.turnTold) return;
-    this.turnTold = now;
-    this.o.onConversationTurn?.(now);
+    if (now !== "idle") {
+      if (this.turnEnd) return;
+      this.turnTold = now;
+      this.o.onConversationTurn?.(now);
+      return;
+    }
+    if (this.turnEnding) return;
+    this.turnEnding = true;
+    queueMicrotask(() => {
+      this.turnEnding = false;
+      if (this.conversationTurn !== "idle" || this.turnTold === "idle") return;
+      this.turnTold = "idle";
+      const end = this.turnEnd;
+      this.turnEnd = undefined;
+      if (end) this.o.onConversationTurn?.("idle", end); else this.o.onConversationTurn?.("idle");
+    });
   }
 
   /** Tasks running or waiting to run. */
@@ -2780,6 +2809,15 @@ export class AgentHost {
    * while the request still waits, nor over another turn's answer.
    */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}): Promise<boolean> {
+    // A request that waits (for a silent turn's end, or a connection) is answering, for Home, until it is queued or
+    // dropped: never a moment's "idle" between its waits and its turn (home-r2-2: Home took that for its turn's end, and
+    // said no reply was written as the reply came).
+    const waiting = { counted: false };
+    try { return await this.asking(text, context, epoch, how, waiting); } finally { if (waiting.counted) { this.waitingAsks--; this.turnChanged(); } }
+  }
+
+  /** ask() itself. `waiting.counted`: it counts in waitingAsks, from its first wait until it is queued (or ask ends). */
+  private async asking(text: string, context: Parameters<AgentHost["ask"]>[1], epoch: number, how: NonNullable<Parameters<AgentHost["ask"]>[3]>, waiting: { counted: boolean }): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     if (this.stopsNow(text, how)) return true;
     // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
@@ -2857,9 +2895,9 @@ export class AgentHost {
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
     const ending = this.conductor?.ending;
     if (ending) {
-      this.waitingAsks++;
+      if (!waiting.counted) { waiting.counted = true; this.waitingAsks++; }
       this.presenter.userPrompt(text);
-      try { await ending; } finally { this.waitingAsks--; this.turnChanged(); }
+      await ending;
       if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
@@ -2902,9 +2940,9 @@ export class AgentHost {
     }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
     if (this.starting > 0 || this.status.phase === "starting") {
-      this.waitingAsks++;
+      if (!waiting.counted) { waiting.counted = true; this.waitingAsks++; }
       this.presenter.userPrompt(text);
-      try { await Promise.race([this.settled(), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]); } finally { this.waitingAsks--; this.turnChanged(); }
+      await Promise.race([this.settled(), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
       // Stop was pressed while it waited: the request is dropped, not sent once connected.
       if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
@@ -2949,6 +2987,9 @@ export class AgentHost {
     // when this request's turn ends (hintCommands checks then whether commands are off by the user's switch).
     const terminal = terminalRequest(this.sys.os, this.wslOn());
     if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintOwed = true;
+    // Owed its turn from here, no longer waiting; and a Stop before it doesn't end that turn (home-c2-2).
+    if (waiting.counted) { waiting.counted = false; this.waitingAsks--; }
+    this.turnEnd = undefined;
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     this.turnChanged();
@@ -3052,12 +3093,14 @@ export class AgentHost {
    */
   async stopAnswer(o: { speaking?: boolean } = {}): Promise<boolean> {
     const underWay = this.answerOpen || this.presenter.busy || this.held.length > 0 || o.speaking === true;
+    // (Its turn is over from Ember's side at once, whether or not the runtime confirms it: Home says so now, and that
+    // Stop ended it: home-c2-2.)
+    if (underWay) this.turnChanged("stopped");
     this.stops++;
     this.queued = [];
     this.dropHeld();
     if (underWay) this.presenter.stopped();
     this.o.log.info("agent.answer_stopped", { underWay });
-    // (Its turn is over from Ember's side at once, whether or not the runtime confirms it: Home says so now.)
     const aborting = this.conductor?.abort();
     this.turnChanged();
     await aborting;
@@ -3080,6 +3123,7 @@ export class AgentHost {
    * message right after: nothing of the conversation's or a stopped task's replaces it.
    */
   async abortAll(): Promise<void> {
+    this.turnChanged("stopped-everything");
     this.projectRun?.abort();
     this.stops++;
     // Requests still waiting for their turn are dropped with it (the runtime runs none of them), and those held for a

@@ -3412,8 +3412,9 @@ function start(): void {
       },
       // Home's conversation shows the answer as it develops (the same words as the bubble's).
       onAnswerStream: e => broadcast(IPC.conversationStream, e),
-      // And whether the conversation is answering (home-c1-1): its composer's wait ends when the turn does.
-      onConversationTurn: turn => sendToHome(IPC.conversationTurnChanged, turn),
+      // And whether the conversation is answering (home-c1-1): its composer's wait ends when the turn does, and says so
+      // when a Stop ended it (home-c2-2).
+      onConversationTurn: (turn, ended) => sendToHome(IPC.conversationTurnChanged, ended ? { turn, ended } : { turn }),
       onTranscript: (entries, why) => {
         // Forgotten (sign-out, another account): the "Ember learned" lines go with it. A New conversation clears them
         // too, but isn't announced as a forgetting: Home that asked for it resets itself when the request is answered.

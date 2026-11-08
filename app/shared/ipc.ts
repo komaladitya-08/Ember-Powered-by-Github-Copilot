@@ -48,7 +48,7 @@ export interface MemoryView {
   /** memory.json couldn't be read, was set aside, or couldn't be saved this run: Settings › Memory says so (memory-r2). */
   trouble?: MemoryTrouble | null;
 }
-import type { ConversationSent, ConversationTurn, HistoryProblemKind } from "./conversation";
+import type { ConversationSent, ConversationTurn, ConversationTurnChange, HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
@@ -549,7 +549,7 @@ export interface EmberHomeApi {
   conversationSend(text: string): Promise<ConversationSent>;
   /** Whether the conversation is answering a request now, from every way one is asked, and changes to it (home-c1-1). */
   conversationTurn(): Promise<ConversationTurn>;
-  onConversationTurn(fn: (turn: ConversationTurn) => void): () => void;
+  onConversationTurn(fn: (turn: ConversationTurnChange) => void): () => void;
   /** Ends the current response and queued requests; independently running tasks continue. */
   /** Stop response: whether anything was under way to stop (a reply, a queued message, the answer being spoken). */
   conversationStop(): Promise<boolean>;

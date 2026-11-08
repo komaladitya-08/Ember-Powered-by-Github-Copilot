@@ -316,8 +316,11 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
   its reply show; the composer's line, right under its buttons, says "Thinking…" until the reply, "Still waiting for
   Copilot… Stop response ends this reply." while the bubble says so, and, when main says the turn ended with nothing
-  written (it only started a task, ran a step, or was stopped), "Ember didn't write a reply. Task activity shows any
-  task it started."; a typed "stop" that stopped everything says so, and is kept in the conversation with Ember's
+  written (it only started a task or ran a step), "Ember didn't write a reply. Task activity shows any task it
+  started."; main sends a turn's lines (its reply, its Problem line) before its end, so a model error says "Ember
+  couldn't finish this reply…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says
+  with the end when a Stop ended it: "Response stopped. Running tasks continue." for the bubble's Stop too, "Stopped
+  everything, running tasks included." for Stop everything (home-c2-2); a typed "stop" that stopped everything says so, and is kept in the conversation with Ember's
   "Okay, I've stopped everything."; the status panel says "Thinking…" while Ember answers any request, from the Ask
   box and by voice too: main's `conversationTurn`, never a guess, home-c1-1), shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. A long paste is kept whole: from 1,800 characters the composer counts

@@ -9,7 +9,7 @@
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
-import { CONVERSATION_REQUEST_LIMIT, conversationTurnOf, type ConversationTurn, type HistoryProblemKind } from "../../shared/conversation";
+import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
@@ -1059,6 +1059,8 @@ let conversationAwaitingReply = false;
  * The status panel says "Thinking…" while it does, and the composer's wait ends when it stops.
  */
 let conversationTurnNow: ConversationTurn = "idle";
+/** How main says the last turn ended, when a Stop ended it (home-c2-2): its words, not a guess from the lines. */
+let conversationTurnEnded: ConversationTurnEnd | undefined;
 /** The composer's request was taken by main (its send resolved), and main has said it is answering since it was sent. */
 let conversationSendTaken = false;
 let conversationTurnSeen = false;
@@ -1082,14 +1084,18 @@ function endComposerWait(): void {
   let at = -1;
   if (was) for (let i = conversationAll.length - 1; i >= 0 && at < 0; i--) if (conversationAll[i].t === was.t && conversationAll[i].who === was.who && conversationAll[i].text === was.text) at = i;
   const said = conversationAll.slice(at + 1).filter(e => e.who === "ember" || e.who === "problem").at(-1);
-  const words = said?.who === "problem" ? COMPOSER_SAYS.replyFailed : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
+  // A Stop that ended it left no line to read it from (the bubble's own Stop: home-c2-2).
+  const words = conversationTurnEnded === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : conversationTurnEnded === "stopped" ? CONVERSATION_STOPPED
+    : said?.who === "problem" ? COMPOSER_SAYS.replyFailed : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
   keepingComposer(() => { conversationComposeStatus.textContent = words; });
 }
 /** Main's word of the conversation's turn: the status panel, and the composer's line while its request waits. */
 function conversationTurn(value: unknown): void {
-  const turn = conversationTurnOf(value);
-  if (!turn) return;
+  const change = conversationTurnChangeOf(value);
+  if (!change) return;
+  const turn = change.turn;
   conversationTurnNow = turn;
+  conversationTurnEnded = change.ended;
   if (conversationAwaitingReply && turn !== "idle") conversationTurnSeen = true;
   if (conversationAwaitingReply && conversationSendTaken) {
     // Still waiting as the bubble says it (nothing written yet), and back to thinking once it is heard from.

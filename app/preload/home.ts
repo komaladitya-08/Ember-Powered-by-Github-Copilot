@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
-import type { ConversationTurn, HistoryProblemKind } from "../shared/conversation";
+import type { ConversationTurnChange, HistoryProblemKind } from "../shared/conversation";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { TaskEntry } from "../shared/activity";
@@ -92,7 +92,7 @@ const api: EmberHomeApi = {
   conversationStop: () => ipcRenderer.invoke(IPC.conversationStop),
   conversationNew: () => ipcRenderer.invoke(IPC.conversationNew),
   conversationTurn: () => ipcRenderer.invoke(IPC.conversationTurn),
-  onConversationTurn: fn => listen<ConversationTurn>(IPC.conversationTurnChanged, fn),
+  onConversationTurn: fn => listen<ConversationTurnChange>(IPC.conversationTurnChanged, fn),
   onConversation: fn => listen<TranscriptEntry[]>(IPC.conversationChanged, fn),
   onConversationForgotten: fn => listen<unknown>(IPC.conversationForgotten, () => fn()),
   onConversationStream: fn => listen<AnswerStream>(IPC.conversationStream, fn),
