@@ -887,15 +887,18 @@ regression alongside the Electron smoke.
 - It starts the built app with a throwaway data folder, consent and voice on, and silence for a microphone (`--sound`
   plays a tone instead).
 - It prints each process's memory (PSS) and CPU, and each page's main-thread CPU, then the same as JSON.
-- Compare a change against `main` on the same computer: Xvfb has no GPU or compositor.
+- Compare a change against `main` on the same computer: Xvfb has no GPU or compositor. Without a compositor the
+  overlay beside the cursor falls back to the handle card; `--compositor` starts xcompmgr on the display first
+  (EPEL's `xcompmgr` on EL8), so the overlay is measured too, and the run fails if the overlay didn't start.
 - It agrees to the consent version the build asks for (it used to agree to an older one, which kept the microphone
   shut). Awake at rest, listening in silence, with Home open (no sign-in), it measured 758 MB and 11.3 % of one core on
   4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main threads. Most of the
   drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open decisions (docs/ASSISTANT.md).
 - `--max-cpu 16 --max-pss 950` is the budget for a change: past either it says so and exits 1. It sits above those
   figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job
-  runs it with that budget as its last step (the same run here, 2026-11-08: 841 MB and 12.3 % with the machine
-  shared, in 57 s).
+  runs it with that budget as its last step, past the first minute and with the overlay counted (`--compositor
+  --settle 70 --sample 30`; the same run here, 2026-11-08: 842–853 MB and 12.3–14.6 % with the machine shared, against
+  882 MB and 12.2 % without the overlay).
 
 ### Connecting Copilot
 

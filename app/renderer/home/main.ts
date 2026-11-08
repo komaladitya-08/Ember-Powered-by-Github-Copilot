@@ -817,7 +817,8 @@ function frame(now: number): void {
   const drawn: Rig[] = [];
   if (onScreen.has(heroCanvas)) { paint(heroCanvas, heroRig, heroChars[settings?.character ?? "cinder"], dt, 170); drawn.push(heroRig); }
   for (const c of cards) if (onScreen.has(c.canvas)) { paint(c.canvas, c.rig, c.character, dt, 175); drawn.push(c.rig); }
-  const motion = looking || drawn.some(r => r.motion === "brisk") ? 0 : drawn.some(r => r.motion === "gentle") ? 1 : 2;
+  // (An idle glance held is still but not settled: a calm face, drawn on so its eyes come back while Home is behind.)
+  const motion = looking || drawn.some(r => r.motion === "brisk") ? 0 : drawn.some(r => !r.settled) ? 1 : 2;
   looking = false;
   // In a window the user isn't working in (behind another, or minimised: X11 doesn't always say hidden), less often,
   // and a still face not until something changes: the focus coming back (below), the pointer, the window showing (rp-4).

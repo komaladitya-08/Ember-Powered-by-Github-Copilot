@@ -306,13 +306,19 @@ export class Rig {
     // saccades at every frame cost the overlay about a point of a core).
     const glancing = look > 1.5 && this.saccade <= 0;
     if (this.hopY !== 0 || this.gestureAge < 0.8 || this.emoteAge < 0.8 || glancing || face > 1.5) return "brisk";
-    if (this.fidget || this.blinkT >= 0 || look > LOOK_STILL || face > 0.05) return "gentle";
+    // An idle glance holds its look once the eyes are there: nothing moves again until it ends (nextChange). Drawn at
+    // the lively rate for all of its 1.2 s, the overlay drew 2 and the handle 1 of their 13 frames a second for it (rp-4).
+    const fidgeting = !!this.fidget && !(this.fidget.kind === "glance" && look <= LOOK_STILL);
+    if (fidgeting || this.blinkT >= 0 || look > LOOK_STILL || face > 0.05) return "gentle";
     return "still";
   }
 
-  /** No passing motion at all (see `motion`). */
+  /**
+   * No passing motion, and no idle fidget under way (see `motion`): a page may stop drawing. An idle glance held is
+   * still but not settled, so a page that stops for a still face draws its eyes coming back.
+   */
   get settled(): boolean {
-    return this.motion === "still";
+    return this.motion === "still" && !this.fidget;
   }
 
   /**
@@ -326,7 +332,8 @@ export class Rig {
 
   /**
    * Seconds (of the rig's time) until something it has planned starts to move: the next blink, idle fidget, saccade
-   * while the pointer rests, or falling asleep. A page that draws less often at rest wakes for it (restingGap).
+   * while the pointer rests, the end of an idle glance (its eyes come back), or falling asleep. A page that draws less
+   * often at rest wakes for it (restingGap).
    */
   nextChange(): number {
     const soon: number[] = [];
@@ -335,7 +342,10 @@ export class Rig {
       if (!this.fidget && !this.reducedMotion && !this.question) soon.push(this.fidgetIn);
       if (this.sleepAfter) soon.push(this.sleepAfter - this.idleFor);
     }
-    if (this.emotion !== "sleepy" && !this.gazeOverride && !this.question) soon.push(Math.max(2.5 - this.lookTargetAge, this.saccadeIn));
+    // No saccade starts while a glance looks away: its end comes first.
+    const glance = this.fidget?.kind === "glance" ? this.fidget : null;
+    if (glance) soon.push(glance.dur - glance.age);
+    else if (this.emotion !== "sleepy" && !this.gazeOverride && !this.question) soon.push(Math.max(2.5 - this.lookTargetAge, this.saccadeIn));
     return Math.max(0, Math.min(...soon));
   }
 

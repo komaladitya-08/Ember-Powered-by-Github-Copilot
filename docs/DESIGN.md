@@ -47,9 +47,12 @@ They share one emotion rig, so switching never changes behaviour.
     the blinks and the first minute's fidgets drawn at their own rate, the overlay and the handle still draw 11–16
     times a second awake at rest (the pointer moves often enough to keep Ember there). The eyes count as still once
     less than a tenth of a pixel of their travel is left (`LOOK_STILL`), which saves the handle, whose eyes wander
-    because the pointer isn't over it, about a tenth of its drawings (14.7 to 13.6 a second); while Home sits behind the
-    window you are working in, its still faces aren't drawn at all until it takes the focus, the pointer comes over
-    it or something changes (`homeFrameGap`);
+    because the pointer isn't over it, about a tenth of its drawings (14.7 to 13.6 a second). An idle glance holds its
+    look once the eyes are there, so the rest of its 1.2 s is drawn at the resting rate too, waking as it ends for the
+    eyes to come back (39 drawings a glance to 21; the overlay 13.2–14.1 a second to 10.6–11.5, the whole tree 7.6–8.3 %
+    of a core to 6.0–6.8 %); while Home sits behind the window you are working in, its still faces aren't drawn at all
+    until it takes the focus, the pointer comes over it or something changes (`homeFrameGap`; a glance held there is
+    drawn on, so its eyes come back);
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
     something happens (it drew every 110 ms);
   - while a question is up, the idle float stops and the body's springs settle without wobbling;
