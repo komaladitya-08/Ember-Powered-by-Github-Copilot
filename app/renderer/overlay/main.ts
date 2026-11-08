@@ -20,7 +20,7 @@ import { canvasSize, watchPixels } from "../shared/pixels";
 import { LEVEL_STEPS } from "../../shared/level";
 import { TASK_READING_LEASE_MS, TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
-import { STATE_WORD, STOP_ACK_MS, cardLines, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
+import { STOP_ACK_MS, cardLines, cardStateWord, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { ArmClock, TASK_ARM_MS } from "../handle/arm";
 
 /** The bubble's Try again and Stop ignore presses for a moment after they come up, as a task card's buttons do. */
@@ -666,7 +666,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
       setTimeout(() => { delete li.dataset.justDone; }, 700);
     }
     c.li.dataset.status = t.status;
-    if (c.state.textContent !== STATE_WORD[t.status]) c.state.textContent = STATE_WORD[t.status];
+    if (c.state.textContent !== cardStateWord(t)) c.state.textContent = cardStateWord(t);
     const where = whereText(t.where) ?? "";
     if (c.where.textContent !== where) c.where.textContent = where;
     c.where.hidden = !where;

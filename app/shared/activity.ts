@@ -348,3 +348,11 @@ export function activityRows(items: readonly ActivityItem[], max = DETAIL_ROWS):
 export const ROW_WORD: Readonly<Record<ActivityState, string>> = {
   running: "Now: ", done: "Done: ", failed: "Didn't work: ", waiting: "Waiting: ", stopped: "Stopped: ",
 };
+
+/**
+ * ROW_WORD for a row: the last row of a task whose question went unanswered (its words Ember's STATUS_WORDS.unanswered)
+ * says it ended, never "Stopped": nobody stopped it (tasks-approvals-r1).
+ */
+export function rowWord(r: { state: ActivityState; words: string; model?: true }): string {
+  return r.state === "stopped" && !r.model && r.words === STATUS_WORDS.unanswered ? "Ended: " : ROW_WORD[r.state];
+}

@@ -9,7 +9,7 @@
 
 import type { TaskControlAction, TaskEntry } from "../../shared/activity";
 import { PLAN_WORD, type PlanStep } from "../../shared/view";
-import { ROW_WORD } from "../../shared/activity";
+import { rowWord } from "../../shared/activity";
 import { renderView } from "../shared/view-dom";
 import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
 
@@ -74,7 +74,7 @@ function rowItem(taskId: string, r: TimelineRow): HTMLLIElement {
   const sym = el("i", "sym");
   sym.setAttribute("aria-hidden", "true");
   const what = el("span", r.model ? "what model" : "what");
-  what.append(el("span", "sr", ROW_WORD[r.state]));
+  what.append(el("span", "sr", rowWord(r)));
   if (r.model) what.append(el("span", "note-tag", NOTE_TAG), document.createTextNode(" "));
   what.append(document.createTextNode(r.words));
   if (r.asked) what.append(el("span", "asked", r.asked));

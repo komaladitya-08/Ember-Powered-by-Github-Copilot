@@ -207,12 +207,16 @@ export function taskNotice(t: { title: string; status: string; endedBy?: StopCau
   return { title: t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, body: t.summary };
 }
 
-/** One line for the conversation: "Tidy the desktop: done. Moved 3 files." or "Tidy the desktop: stopped." */
-export function taskOutcome(t: Pick<Task, "title" | "status" | "result">): string {
+/**
+ * One line for the conversation (and what Ember says aloud): "Tidy the desktop: done. Moved 3 files." or "Tidy the
+ * desktop: stopped."; one whose question went unanswered says so, as its card does: nobody stopped it (tasks-approvals-r1).
+ */
+export function taskOutcome(t: Pick<Task, "title" | "status" | "result" | "endedBy">): string {
   const summary = t.result?.summary.trim() ?? "";
+  const unanswered = t.status === "cancelled" && t.endedBy === "expired";
   // "Stopped." or "Stopped before it started." says it already.
-  if (t.status === "cancelled" && /^stopped\b/i.test(summary)) return `${t.title}: ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`;
-  return `${t.title}: ${statusWord(t.status)}${summary ? `. ${summary}` : "."}`;
+  if (t.status === "cancelled" && !unanswered && /^stopped\b/i.test(summary)) return `${t.title}: ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`;
+  return `${t.title}: ${unanswered ? STATUS_WORDS.unanswered.toLowerCase() : statusWord(t.status)}${summary ? `. ${summary}` : "."}`;
 }
 
 export class TaskManager {

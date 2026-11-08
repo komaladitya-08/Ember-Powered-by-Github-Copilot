@@ -688,6 +688,32 @@ describe("a task whose question went unanswered while the user was away (tasks-a
     } finally { vi.useRealTimers(); }
   });
 
+  it("says no answer came in time in the conversation, aloud and to screen readers on its card, the handle and Home's last row (tasks-approvals-r1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { tm, cards } = manager(() => fakeWorker(async () => ({ ...EXPIRED, summary: "I didn't delete it." })));
+      const t = tm.start("Clean the build folder", { userWords: "clean the build folder" });
+      await vi.advanceTimersByTimeAsync(10);
+      const { taskOutcome } = await import("../../app/main/agent/tasks");
+      const { STATE_WORD, cardStateWord } = await import("../../app/renderer/overlay/stack");
+      const { timelineRows } = await import("../../app/renderer/home/tasks-copy");
+      const { rowWord, ROW_WORD } = await import("../../app/shared/activity");
+      // The conversation's line, which is also what Ember says aloud (main's onTaskFinished speaks it).
+      expect(taskOutcome(t)).toBe("Clean the build folder: no answer in time. I didn't delete it.");
+      // The overlay's card and the handle's task row read its state first.
+      expect(cardStateWord(cards.at(-1)![0])).toBe("No answer in time: ");
+      // Home's last row of its timeline: it ended, with no answer, and nobody stopped it.
+      const last = timelineRows(tm.activities()[0].activity.items).at(-1)!;
+      expect(`${rowWord(last)}${last.words}`).toBe("Ended: No answer in time");
+      // Everything else reads as before.
+      expect(taskOutcome({ title: "Tidy", status: "cancelled", endedBy: "stop", result: { success: false, summary: "You took the mouse back." } })).toBe("Tidy: stopped. You took the mouse back.");
+      expect(cardStateWord({ status: "stopped" })).toBe(STATE_WORD.stopped);
+      expect(cardStateWord({ status: "done" })).toBe(STATE_WORD.done);
+      expect(rowWord({ state: "stopped", words: "Stopped" })).toBe(ROW_WORD.stopped);
+      expect(rowWord({ state: "done", words: "Read the window" })).toBe(ROW_WORD.done);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("is notified while the user is away, as a task that couldn't finish is, but a task they stopped isn't (tasks-approvals-4)", async () => {
     const { taskNotice } = await import("../../app/main/agent/tasks");
     expect(taskNotice({ title: "Send the report", status: "cancelled", endedBy: "expired", summary: EXPIRED.summary }))

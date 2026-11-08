@@ -7,7 +7,7 @@ import { cardAutonomous, cardRisky, cardTask, cardText } from "./card";
 import { cardClear, cardNeed, linesKept, waitsForRoom, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
-import { STATE_WORD, cardLines } from "../overlay/stack";
+import { cardLines, cardStateWord } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
 import { micBadge } from "../../shared/mic";
 import { presenceOf } from "../../shared/presence";
@@ -289,7 +289,7 @@ api.onState(s => {
   if (task) {
     $("task").dataset.status = task.status;
     // The task row's state in words for screen readers (its symbol says it to the eye), from the cards' one table.
-    $("task-state").textContent = STATE_WORD[task.status];
+    $("task-state").textContent = cardStateWord(task);
     const at = whereText(task.where);
     $("task-title").textContent = at ? `${task.title} (${at})` : task.title;
     // Under it, what it is doing now in Ember's words ("Clicking in Text Editor…"), else what it last said.
