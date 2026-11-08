@@ -30,7 +30,7 @@ import type { AuditLog } from "../policy/audit";
 import type { Settings, SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
-import { MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, browseFailed } from "../../renderer/home/extensions-copy";
+import { MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
@@ -99,12 +99,19 @@ function toolInfo(server: StoredServer, tools: PinnedTool[], review = false): To
   }));
 }
 
+/**
+ * A marketplace the runtime couldn't reach: Node's words, or git's and curl's as the runtime passes them on from its
+ * git clone (integrations-r2: "Couldn't connect to server", "Could not resolve host", a proxy's refusal, TLS inspection).
+ */
+const UNREACHABLE = /ECONN|ENOTFOUND|EAI_AGAIN|network|fetch failed|getaddrinfo|socket hang up|offline|timed? ?out|ETIMEDOUT|could not resolve (host|proxy)|couldn't connect to server|failed to connect to|connection refused|proxy connect|from proxy after connect|ssl certificate problem|certificate verify failed|server certificate verification failed/i;
+const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
 /** A friendly sentence for an error a marketplace operation threw (never the raw text). */
 function why(err: unknown, fallback: string): string {
-  const m = err instanceof Error ? err.message : String(err);
+  const m = errorText(err);
   if (/not found|404|does not exist|no such/i.test(m)) return "Ember couldn't find that marketplace.";
   if (/already/i.test(m)) return "That marketplace is already added.";
-  if (/network|ENOTFOUND|ECONN|timed? ?out|ETIMEDOUT/i.test(m)) return "Ember couldn't reach it. Check your connection and try again.";
+  if (UNREACHABLE.test(m)) return "Ember couldn't reach it. Check your connection and try again.";
   return fallback;
 }
 
@@ -301,7 +308,14 @@ export class ExtensionsService implements ExtensionsApi {
       return { ok: true };
     } catch (err) {
       this.o.log.warn("extensions.marketplace_add_failed", { err });
-      return { ok: false, why: (err as Error)?.message === "not connected" ? "Ember isn't connected to Copilot yet." : why(err, "Ember couldn't add that marketplace.") };
+      if ((err as Error)?.message === "not connected") return { ok: false, why: "Ember isn't connected to Copilot yet." };
+      // Said with the address and what to check (integrations-r2-3): out of reach, or reached but no marketplace came.
+      const m = errorText(err);
+      if (UNREACHABLE.test(m)) return { ok: false, why: addMarketplaceFailed(source.trim(), "offline") };
+      const known = why(err, "");
+      if (known) return { ok: false, why: known };
+      if (/failed to fetch|git clone|unable to access|could not read username|authentication failed/i.test(m)) return { ok: false, why: addMarketplaceFailed(source.trim(), "fetch") };
+      return { ok: false, why: "Ember couldn't add that marketplace." };
     }
   }
 
@@ -359,8 +373,7 @@ export class ExtensionsService implements ExtensionsApi {
         await this.rpc().plugins.marketplaces.browse({ name: marketplace });
       } catch (err) {
         this.o.log.warn("extensions.browse_failed", { err });
-        const offline = /ECONN|ENOTFOUND|EAI_AGAIN|network|fetch failed|getaddrinfo|socket hang up|offline|timed? ?out|ETIMEDOUT/i.test(err instanceof Error ? err.message : String(err));
-        return { ok: false, why: browseFailed(marketplace, offline ? "offline" : "fetch") };
+        return { ok: false, why: browseFailed(marketplace, UNREACHABLE.test(errorText(err)) ? "offline" : "fetch") };
       }
       const root = await this.marketplaceRoot(marketplace);
       if (!root) return { ok: false, why: browseFailed(marketplace, "read") };

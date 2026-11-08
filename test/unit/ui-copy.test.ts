@@ -51,6 +51,14 @@ describe("settings window words", () => {
     // A model provider in force: what was checked is that provider, never a GitHub sign-in (integrations-c1-1).
     expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false } })).toBe("Checked again: Ember still can't connect to 127.0.0.1:18408.");
     expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } })).toBe("");
+    expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "network" } })).toBe("Checked again: Ember still can't connect to 127.0.0.1:18408.");
+  });
+
+  it("says Check again still can't connect only when the provider couldn't be reached, never when only a model or key is missing (integrations-c2-2)", () => {
+    for (const reason of ["models", "sign-in", "no-access", "runtime", "not-answering", "other"]) {
+      expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason } }), reason)
+        .toBe("Checked again: Ember still can't use 127.0.0.1:18408. The line above says why.");
+    }
     expect(retryMessage({ found: true, source: "github-cli" })).toBe("Found your GitHub CLI sign-in; connecting…");
     expect(retryMessage({ found: true, source: "environment" }, true)).toBe("Found a GitHub token in the environment; connected.");
     expect(retryMessage({ found: true, source: "stored" })).toBe("Found Ember's saved sign-in; connecting…");
@@ -1131,6 +1139,16 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     // Nothing in settings helps: the line as it was, and no button.
     expect(conv.problemInHome("Copilot had a problem on its side. Try again in a moment.")).toEqual({ text: "Copilot had a problem on its side. Try again in a moment.", settings: false });
     expect(conv.PROBLEM_SETTINGS).toBe("Models & connections…");
+  });
+
+  it("asks whether my model server on this computer is running, never to wait until I'm online (integrations-r2-2)", () => {
+    for (const host of ["127.0.0.1:11434", "localhost:1234", "[::1]:8080"]) {
+      expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host } }), host)
+        .toBe("Ember can't reach the model server on this computer. Is it running? Your message is still here: send it again once it is.");
+    }
+    // A provider elsewhere, and the organisation's service on this computer, are still out of reach over the network.
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host: "api.example.com" } })).toBe("Ember can't reach your model provider right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "127.0.0.1:11434" } })).toBe("Ember can't reach the model service right now. Your message is still here: send it again once you're online.");
   });
 
   it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {

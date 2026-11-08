@@ -382,6 +382,13 @@ describe("main's extensions channels", () => {
     expect(await t.call(EXTENSIONS_IPC.browse, "m")).toEqual({ ok: false, why });
   });
 
+  it("passes on why a marketplace couldn't be added, with its address and what to check (integrations-r2-3)", async () => {
+    const address = "https://marketplace.example.invalid/a-rather-long-path/for-an-organisation-marketplace/that-goes-on-for-a-while/ember.git";
+    const why = `Ember couldn't reach “${address}”. Check the address and the network, then press Add again.`;
+    const t = setUp(fakeApi({ addMarketplace: async () => ({ ok: false, why }) }));
+    expect(await t.call(EXTENSIONS_IPC.addMarketplace, address)).toEqual({ ok: false, why });
+  });
+
   it("caps a marketplace's list at what a person reads", async () => {
     const t = setUp(fakeApi({ browse: async () => Array.from({ length: ENTRIES_MAX + 50 }, (_, i) => entry({ name: `e${i}` })) }));
     const r = await t.call(EXTENSIONS_IPC.browse, "m") as { ok: true; entries: unknown[] };

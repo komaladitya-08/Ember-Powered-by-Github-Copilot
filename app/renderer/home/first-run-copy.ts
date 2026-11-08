@@ -6,6 +6,8 @@
  * valid; that is always the answer of the real check.
  */
 
+import { onThisComputer } from "../../shared/provider";
+
 /** The ways on from a failed connection ("provider": the user's own provider's details, when it is the one failing). */
 export type FailureAction = "retry" | "switch-account" | "own-provider" | "sign-in" | "provider";
 
@@ -84,21 +86,34 @@ export function failureView(o: { reason?: string; detail?: string; ownOffered: b
   }
 }
 
-/** Which of Home's connection buttons show, which one leads, and the help words under the status line. */
-export interface HomeConnectionView { help: string; show: Record<FailureAction, boolean>; primary: FailureAction | null }
+/**
+ * Which of Home's connection buttons show, which one leads, and the help words under the status line; `line`: the
+ * status line's words instead of main's, where Home knows better why nothing is connected (integrations-c2-3).
+ */
+export interface HomeConnectionView { help: string; show: Record<FailureAction, boolean>; primary: FailureAction | null; line?: string }
 
 /**
  * Home's Models & connections area for a Copilot that isn't connected (FE #3, the same recovery as first run's): the
  * action that leads comes from why it failed (`failureView`), so an account without Copilot is never offered
  * "Sign in with GitHub" first. "Check again" stays for every way of not being connected, as before. `waiting` (Copilot
- * stopped answering with tasks at work) and `signingIn` keep their own buttons and show nothing else.
+ * stopped answering with tasks at work) and `signingIn` keep their own buttons and show nothing else. `own`: the user's
+ * own provider's switch (`on`) and the host whose card is up under Model provider (`card`). While that card waits with
+ * no GitHub sign-in, nothing is connected, but signing in isn't the way on: the line and help say what is, with no
+ * button (the card's I agree is the one), and the switch that is on is never offered as a way on (integrations-c2-3).
  */
-export function homeConnectionView(o: { phase: string; reason?: string; detail?: string; ownOffered: boolean; signingIn: boolean; waiting: boolean; service?: string }): HomeConnectionView {
+export function homeConnectionView(o: { phase: string; reason?: string; detail?: string; ownOffered: boolean; signingIn: boolean; waiting: boolean; service?: string; own?: { on: boolean; card: string | null } }): HomeConnectionView {
   const none: Record<FailureAction, boolean> = { retry: false, "switch-account": false, "own-provider": false, "sign-in": false, provider: false };
   const notConnected = o.phase === "signed-out" || o.phase === "error";
   if (!notConnected || o.signingIn) return { help: "", show: none, primary: null };
   if (o.waiting) return { help: "", show: { ...none, retry: true }, primary: null };
-  const v = failureView({ reason: o.phase === "signed-out" ? "sign-in" : o.reason, detail: o.detail, ownOffered: o.ownOffered, service: o.phase === "error" ? o.service : undefined });
+  if (o.phase === "signed-out" && o.own?.on && o.own.card) {
+    return {
+      line: `Not connected: Ember is waiting for you to agree to use ${o.own.card}.`,
+      help: "Agree in the note under Model provider below, or turn off “Use my own model provider” to use GitHub Copilot instead.",
+      show: none, primary: null,
+    };
+  }
+  const v = failureView({ reason: o.phase === "signed-out" ? "sign-in" : o.reason, detail: o.detail, ownOffered: o.ownOffered && !o.own?.on, service: o.phase === "error" ? o.service : undefined });
   const show = { ...none, retry: true };
   for (const a of [v.primary, ...v.others]) if (a !== "continue") show[a] = true;
   return { help: v.help, show, primary: v.primary === "continue" ? null : v.primary };
@@ -136,11 +151,32 @@ export function providerInUse(host: string): { title: string; lead: string } {
   return { title: "Your own model provider's details", lead: `I'm using the model provider you set up (${host}) instead of GitHub Copilot. You can change its details here.` };
 }
 
-/** That step's status line, from the connection's (`phase`, and main's `detail` when it failed). */
+/**
+ * That step's status line, from the connection's (`phase`, and main's `detail` when it failed). Ready, a server on this
+ * computer was asked at the start and is "Connected"; a host elsewhere wasn't, so it is only "Using", as Home's status
+ * says (integrations-r3, integrations-r2-6).
+ */
 export function providerInUseLine(o: { host: string; phase: string | null; detail?: string }): { line: string; tone: "" | "ok" | "error" } {
-  if (o.phase === "ready") return { line: `Connected to your own provider (${o.host}).`, tone: "ok" };
+  if (o.phase === "ready") return { line: `${onThisComputer(o.host) ? "Connected to" : "Using"} your own provider (${o.host}).`, tone: "ok" };
   if (o.phase === "error") return { line: o.detail ?? "", tone: "error" };
   return { line: `Connecting to your own provider (${o.host})…`, tone: "" };
+}
+
+/**
+ * A check of new details for a provider in use that failed (first-run-r2-1): what failed, and that the details in use
+ * are still the ones Ember uses, since nothing was saved before they answered.
+ */
+export function providerKeptLine(line: string, host: string): string {
+  return `${line} Nothing has changed: I'm still using ${host}.`;
+}
+
+/**
+ * The field a failed provider check names, to take the focus (first-run-r2-1): the address when nothing answered
+ * there (`cause`) or the trouble is anything but the key, the key when the key is what failed.
+ */
+export function providerFailField(r: { why: string; cause?: string }): "address" | "key" {
+  if (r.cause) return "address";
+  return /\bkey(ring)?\b/i.test(r.why) ? "key" : "address";
 }
 
 /** What the provider check found, as a status line (the real answer only; `why` is main's sentence). */

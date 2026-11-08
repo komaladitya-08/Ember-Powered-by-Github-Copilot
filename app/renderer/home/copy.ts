@@ -254,7 +254,12 @@ const SOURCE_TEXT: Record<string, string> = {
  */
 export function retryMessage(r: RetryResult, connected = false): string {
   // A model provider in force: Check again connected to it again. Ready, the status line says so; never a GitHub sign-in (integrations-c1-1).
-  if (r.provider) return r.provider.ready ? "" : `Checked again: Ember still can't connect to ${r.provider.host}.`;
+  // Not ready, "can't connect" only when it couldn't be reached: a missing model or a refused key is the status line's to say (integrations-c2-2).
+  if (r.provider) {
+    if (r.provider.ready) return "";
+    return !r.provider.reason || r.provider.reason === "network" ? `Checked again: Ember still can't connect to ${r.provider.host}.`
+      : `Checked again: Ember still can't use ${r.provider.host}. The line above says why.`;
+  }
   if (!r.found) return r.hint || "No GitHub sign-in found on this computer. Run “gh auth login” in a terminal, then press Check again.";
   const what = SOURCE_TEXT[r.source ?? ""] ?? "a GitHub sign-in";
   return `Found ${what}; ${connected ? "connected." : "connecting…"}`;

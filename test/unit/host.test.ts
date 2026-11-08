@@ -1465,6 +1465,27 @@ describe("a runtime that dies or hangs", () => {
     await host.stop();
   });
 
+  it("says it stopped reconnecting to my model connection, never Copilot, once it gives up under my own provider (reliability-performance-c2-3, integrations-v1)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    const { host, screen } = makeHost({ healthMs: 1000, provider: () => own });
+    await host.start(null);
+    sim.ping = async () => { if (crashes < 5) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(crashes).toBe(5);
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.getStatus().detail).toBe("Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.");
+    // The line and the bubble that said "My model connection … I'm reconnecting" say Ember stopped trying.
+    const problems = host.getTranscript().filter(e => e.who === "problem").map(e => e.text);
+    expect(problems.at(-1)).toBe("My model connection stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.");
+    expect(problems.join("\n")).not.toMatch(/reconnecting; ask me again|Copilot/);
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "error", thought: "My model connection keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    await host.stop();
+  });
+
   it("five crashes in ten minutes: Ember stops trying", async () => {
     vi.useFakeTimers();
     sim.ping = async () => { throw new Error("Connection is disposed."); };
@@ -4988,8 +5009,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
         { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));
       return run;
     };
+    /** What Sign out told Projects to forget (integrations-c2-1: from the handler, never from the status after it). */
+    let projectForgot: string[] = [];
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
+      forgetProject: (what: string) => { projectForgot.push(what); },
     });
 
     it("Sign out deletes conversation.json although the switch is off by then", async () => {
@@ -5001,7 +5025,9 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(true);
       k.flag.on = false; // the setting turned off, the listener not yet run
+      projectForgot = [];
       await signOutHandler(k.host)();
+      expect(projectForgot).toEqual(["all"]);
       expect(fs.existsSync(k.file)).toBe(false);
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(false);

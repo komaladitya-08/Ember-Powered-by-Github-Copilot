@@ -173,7 +173,9 @@ describe("the sign-in step", () => {
   it("names the user's own provider once Ember uses it, never Copilot, and Back from the checks returns to it (first-run-1)", () => {
     const service = { kind: "user", host: "api.example.com" };
     const ready = signInView({ phase: "ready", signingIn: false, managedProvider: false, service });
-    expect(ready).toMatchObject({ line: "Connected to your own provider (api.example.com).", tone: "ok", primary: "continue" });
+    // A host elsewhere wasn't contacted at the start: in use, never "Connected", as Home says (integrations-r2-6).
+    expect(ready).toMatchObject({ line: "Using your own provider (api.example.com).", tone: "ok", primary: "continue" });
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "127.0.0.1:11434" } }).line).toBe("Connected to your own provider (127.0.0.1:11434).");
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, service }).line).toBe("Connecting to your own provider (api.example.com)…");
     const text = signInText({ managed: false, own: "api.example.com" });
     expect(text.title).toBe("Your own model provider");

@@ -12,7 +12,7 @@ import path from "node:path";
 import type { Logger } from "../../app/main/logger";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- a pretend SDK */
-const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[], refuse: null as null | { errorType: string; statusCode: number; message: string } }));
+const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[], refuse: null as null | { errorType: string; statusCode?: number; message: string }, pingFails: false }));
 vi.mock("@github/copilot-sdk", async importOriginal => {
   const real = await importOriginal<typeof import("@github/copilot-sdk")>();
   class FakeClient {
@@ -24,7 +24,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async listModels() { return [{ id: "copilot-model", name: "Copilot model", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return []; }
     async deleteSession() { /* nothing */ }
-    ping() { return Promise.resolve({}); }
+    ping() { return sim.pingFails ? Promise.reject(new Error("Connection is disposed.")) : Promise.resolve({}); }
     async createSession(cfg: any) {
       sim.sessions.push(cfg);
       const own: ((e: any) => void)[] = [];
@@ -40,7 +40,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, idleWord, noticeTitle, reconnectWords, stillConnectingTitle } from "../../app/main/agent/host";
+import { AgentHost, CUT_OFF, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, idleWord, noticeTitle, reconnectWords, runtimeWords, stillConnectingTitle } from "../../app/main/agent/host";
+import { GAVE_UP, LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, lostWords, problemTitle } from "../../app/main/agent/presenter";
 import type { BubbleState, EmberState } from "../../app/shared/overlay";
 import { SettingsStore } from "../../app/main/settings";
 import { providerDown, type ActiveProvider, type TestResult } from "../../app/main/provider";
@@ -233,6 +234,55 @@ describe("AgentHost with the user's own model provider", () => {
     expect(reconnectWords(true).noAnswerDetail).toBe("The model service didn't answer in time. Reconnecting…");
   });
 
+  it("names Ember's model connection, never Copilot, when the runtime stops or runs out of file watchers under a provider (integrations-v1)", () => {
+    // Copilot's words are as they were.
+    expect(runtimeWords(false)).toEqual({
+      stopped: "Copilot stopped unexpectedly. Reconnecting…",
+      keepsStopping: "Copilot keeps stopping. Press Check again to retry, or restart Ember.",
+      cutOff: CUT_OFF, cutOffStalled: "Copilot didn't answer; the task didn't finish.",
+      noWatchers: "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.",
+      noWatchersWhy: "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.",
+    });
+    expect(lostWords(false)).toEqual({ reconnecting: LOST_RECONNECTING, reconnected: LOST_RECONNECTED, gaveUp: LOST_GAVE_UP, gaveUpBubble: GAVE_UP });
+    expect(runtimeWords("user")).toEqual({
+      stopped: "Ember's model connection stopped unexpectedly. Reconnecting…",
+      keepsStopping: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.",
+      cutOff: "Ember's model connection stopped unexpectedly; the task didn't finish.",
+      cutOffStalled: "Your model provider didn't answer; the task didn't finish.",
+      noWatchers: "I can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.",
+      noWatchersWhy: "Ember's model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.",
+    });
+    expect(runtimeWords(true).cutOffStalled).toBe("The model service didn't answer; the task didn't finish.");
+    for (const service of ["user", true] as const) {
+      expect(lostWords(service)).toEqual({
+        reconnecting: "My model connection stopped unexpectedly. I'm reconnecting; ask me again in a moment.",
+        reconnected: "My model connection stopped unexpectedly. I'm connected again: send it again.",
+        gaveUp: "My model connection stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.",
+        gaveUpBubble: "My model connection keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.",
+      });
+      const words = [...Object.values(runtimeWords(service)), ...Object.values(lostWords(service))];
+      for (const w of words) expect(w, w).not.toMatch(/Copilot/);
+      // The bubble's title names it too.
+      expect(problemTitle(lostWords(service).reconnecting, service)).toBe("My model connection stopped");
+      expect(problemTitle(runtimeWords(service).noWatchers, service)).toBe("I can't work right now");
+    }
+    expect(problemTitle(LOST_RECONNECTING)).toBe("Copilot stopped");
+  });
+
+  it("says Ember's model connection stopped, never Copilot, when the runtime dies under my own provider (integrations-v1)", async () => {
+    sim.clients = []; sim.sessions = []; sim.listeners = [];
+    const { host, statuses } = makeHost(() => OWN, undefined, { healthMs: 40 });
+    try {
+      expect(await host.start(null)).toBe("ready");
+      sim.pingFails = true;
+      expect(await until(() => statuses.some(s => JSON.parse(s).detail === "Ember's model connection stopped unexpectedly. Reconnecting…"), 3000)).toBe(true);
+      expect(statuses.join("\n")).not.toContain("Copilot stopped");
+    } finally {
+      sim.pingFails = false;
+      await host.stop();
+    }
+  });
+
   it("tells memory it waits for the own provider, never for a GitHub account, when the provider can't connect (integrations-r5)", async () => {
     sim.clients = []; sim.sessions = [];
     const why: string[] = [];
@@ -285,6 +335,33 @@ describe("AgentHost with the user's own model provider", () => {
     // Copilot's own words stay as they were.
     expect(idleWord({ phase: "error", reason: "network" })).toBe("Offline");
     expect(idleWord({ phase: "error", reason: "network", service: { kind: "admin", host: "x" } })).toBe("Offline");
+  });
+
+  it("leaves Ready when a project request on its provider fails and nothing answers there, as a turn does (integrations-r2-5)", async () => {
+    sim.clients = []; sim.sessions = []; sim.listeners = [];
+    let answer: TestResult = { ok: true, host: "127.0.0.1:18109", models: 1 };
+    let probes = 0;
+    const { host } = makeHost(() => LOCAL, async () => { probes++; return answer; });
+    expect(await host.start(null)).toBe("ready");
+    probes = 0;
+    try {
+      // The service answered (a status code): its refusal says why, and nothing is asked.
+      sim.refuse = { errorType: "rate_limit", statusCode: 429, message: "Rate limit reached" };
+      await expect(host.runProject("Review this.", new AbortController())).rejects.toThrow("The model service's usage limit was reached for now. Try again a bit later.");
+      await new Promise(r => setTimeout(r, 20));
+      expect(probes).toBe(0);
+      expect(host.getStatus().phase).toBe("ready");
+      // Nothing answered: the server is asked, and Models & connections, the handle and the hero leave Ready for why.
+      answer = REFUSED;
+      sim.refuse = { errorType: "query", message: "Failed native model HTTP request: error sending request for url (http://127.0.0.1:18109/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 111)" };
+      await expect(host.runProject("Review this.", new AbortController())).rejects.toThrow("I can't reach the model server on this computer. Is it running? Start it, then ask again.");
+      expect(await until(() => host.getStatus().phase === "error", 2000)).toBe(true);
+      expect(probes).toBe(1);
+      expect(host.getStatus()).toMatchObject({ reason: "network", detail: "Ember can't reach the model server on this computer (127.0.0.1:18109). Start it, and Ember will connect in a moment." });
+    } finally {
+      sim.refuse = null;
+      await host.stop();
+    }
   });
 
   it("says why the provider refused a project request instead of \"Try again\" (integrations-5)", async () => {

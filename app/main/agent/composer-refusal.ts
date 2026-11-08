@@ -6,6 +6,7 @@
  * still there (Home keeps the draft when a send is refused).
  */
 import type { AgentStatus } from "./host";
+import { onThisComputer } from "../../shared/provider";
 
 /**
  * The refusal for a status whose phase isn't "ready". `detail`: the status' own words; one that ends "Reconnecting…"
@@ -21,7 +22,10 @@ export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waiti
   // Copilot stopped and Ember starts it again by itself (reliability-performance-v2); "keeps stopping" waits for Check again.
   if (s.reason === "runtime" && s.detail?.endsWith("Reconnecting…")) return `Ember is reconnecting to ${it}. Your message is still here: send it again in a moment.`;
   switch (s.reason) {
-    case "network": return `Ember can't reach ${it} right now. Your message is still here: send it again once you're online.`;
+    case "network":
+      // The user's own model server on this computer (Ollama, LM Studio) is most likely not running, not offline (integrations-r2-2).
+      if (s.service?.kind === "user" && onThisComputer(s.service.host)) return "Ember can't reach the model server on this computer. Is it running? Your message is still here: send it again once it is.";
+      return `Ember can't reach ${it} right now. Your message is still here: send it again once you're online.`;
     case "not-answering": return `Ember is reconnecting to ${it}. Your message is still here: send it again in a moment.`;
     case "policy": return "Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.";
     default: return `Ember can't connect to ${it} yet: Models & connections says why. Your message is still here.`;

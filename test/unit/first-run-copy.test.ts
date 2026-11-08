@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerInUseLine, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 
@@ -139,9 +139,49 @@ describe("Home's connection buttons by why Copilot isn't connected (FE #3)", () 
     expect(v.primary).toBe("sign-in");
     expect(v.show).toEqual({ "sign-in": true, "own-provider": true, "switch-account": false, retry: true, provider: false });
   });
+  it("says my own provider waits for its note instead of leading with a GitHub sign-in, and never offers the provider that is already on (integrations-c2-3)", () => {
+    const none = { "sign-in": false, "own-provider": false, "switch-account": false, retry: false, provider: false };
+    const v = homeConnectionView({ ...base, phase: "signed-out", detail: "Not connected to Copilot: sign in with GitHub below.", own: { on: true, card: "127.0.0.1:18409" } });
+    expect(v).toEqual({
+      line: "Not connected: Ember is waiting for you to agree to use 127.0.0.1:18409.",
+      help: "Agree in the note under Model provider below, or turn off “Use my own model provider” to use GitHub Copilot instead.",
+      show: none, primary: null,
+    });
+    // The note put away with Not now: signing in leads again, but the switch that is on isn't offered as a way on.
+    const declined = homeConnectionView({ ...base, phase: "signed-out", own: { on: true, card: null } });
+    expect(declined.primary).toBe("sign-in");
+    expect(declined.show).toEqual({ ...none, "sign-in": true, retry: true });
+    expect(declined.line).toBeUndefined();
+    // A failed Copilot sign-in while the switch is on and its note waits: the failure still leads.
+    expect(homeConnectionView({ ...base, reason: "sign-in", own: { on: true, card: "127.0.0.1:18409" } }).show).toEqual({ ...none, "sign-in": true, retry: true });
+    expect(homeConnectionView({ ...base, phase: "signed-out", own: { on: false, card: null } }).show["own-provider"]).toBe(true);
+  });
   it("shows nothing while signing in, and only Reconnect while waiting for tasks", () => {
     expect(homeConnectionView({ ...base, signingIn: true }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: false, provider: false });
     expect(homeConnectionView({ ...base, waiting: true, reason: "network" }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: true, provider: false });
     expect(homeConnectionView({ ...base, phase: "ready" }).show.retry).toBe(false);
+  });
+});
+
+describe("first run: the provider in use, as Home says it", () => {
+  it("says a server on this computer is connected, but a host elsewhere only in use, since nothing contacted it at the start (integrations-r2-6)", () => {
+    expect(providerInUseLine({ host: "127.0.0.1:11434", phase: "ready" })).toEqual({ line: "Connected to your own provider (127.0.0.1:11434).", tone: "ok" });
+    expect(providerInUseLine({ host: "localhost:1234", phase: "ready" })).toEqual({ line: "Connected to your own provider (localhost:1234).", tone: "ok" });
+    expect(providerInUseLine({ host: "api.example.com", phase: "ready" })).toEqual({ line: "Using your own provider (api.example.com).", tone: "ok" });
+    expect(providerInUseLine({ host: "api.example.com", phase: "starting" })).toEqual({ line: "Connecting to your own provider (api.example.com)…", tone: "" });
+  });
+});
+
+describe("first run: a failed check of new details for a provider in use (first-run-r2-1)", () => {
+  it("says the details in use are still the ones used, after what failed", () => {
+    expect(providerKeptLine("Ember can't reach 127.0.0.1:18397. Check the address and the network.", "127.0.0.1:18300")).toBe("Ember can't reach 127.0.0.1:18397. Check the address and the network. Nothing has changed: I'm still using 127.0.0.1:18300.");
+  });
+  it("hands the focus to the field the failure names: the address when nothing answered, the key when the key failed", () => {
+    expect(providerFailField({ why: "Ember can't reach b.example. Check the address and the network.", cause: "unreachable" })).toBe("address");
+    expect(providerFailField({ why: "b.example didn't answer within 10 seconds.", cause: "timeout" })).toBe("address");
+    expect(providerFailField({ why: "b.example answered, but has no model list at that address. Check the endpoint and the provider." })).toBe("address");
+    expect(providerFailField({ why: "b.example didn't accept the API key. Check it, or replace it." })).toBe("key");
+    expect(providerFailField({ why: "b.example needs an API key." })).toBe("key");
+    expect(providerFailField({ why: "Ember can't keep the key safely here: this computer has no keyring for passwords." })).toBe("key");
   });
 });

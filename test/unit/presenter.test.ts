@@ -172,6 +172,21 @@ describe("friendlyError", () => {
     expect(friendlyError("ECONNREFUSED 127.0.0.1:54013")).toMatch(/can't reach Copilot/);
     expect(friendlyError("Something odd {\"x\":1}")).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Ctrl+Alt+E).");
   });
+
+  it("says a model service it couldn't reach through a proxy or a name that didn't resolve is out of reach, never that it reported a problem (integrations-r2-1)", async () => {
+    const { friendlyError } = await import("../../app/main/agent/presenter");
+    // The Copilot runtime's native client's own words, after its retries.
+    const lead = "Failed to get response from the AI model; retried 5 times (total retry wait time: 23.00 seconds) Last error: Failed native model HTTP request: error sending request for url";
+    const tunnel = `${lead} (https://models.example.invalid/v1/chat/completions): client error (Connect): tunnel error: unsuccessful`;
+    const dns = `${lead} (https://api.example.com/v1/chat/completions): client error (Connect): dns error: failed to lookup address information: Name or service not known`;
+    const refused = `${lead} (http://127.0.0.1:11434/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 111)`;
+    for (const raw of [tunnel, dns, refused]) {
+      expect(friendlyError(raw, "query", { provider: "user" }), raw).toBe("I can't reach your model service right now. Check the network, then ask again.");
+      expect(friendlyError(raw, "query", { provider: true }), raw).toBe("I can't reach your organisation's model service right now. Check the network, then ask again.");
+      expect(friendlyError(raw, "query", { provider: false }), raw).toBe("I can't reach Copilot right now. Check the network, then ask again.");
+    }
+    expect(friendlyError(refused, "query", { provider: "user", local: true })).toBe("I can't reach the model server on this computer. Is it running? Start it, then ask again.");
+  });
 });
 
 describe("Presenter: review round 2", () => {
@@ -1298,6 +1313,9 @@ describe("a wait for Copilot says so and can be stopped (UI audit #4)", () => {
     expect(taskStoppedWords(false, "not-started")).toBe("Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
     expect(taskStoppedWords("user", "silent")).toBe("Your model provider didn't answer, so I stopped this task. You can ask me again in a moment.");
     expect(taskStoppedWords(true, "not-started")).toBe("The model service isn't answering, so I stopped this task. You can ask me again in a moment.");
+    // Out of file watchers: Copilot's words as they were, and under a provider never Copilot (integrations-v1).
+    expect(taskStoppedWords(false, "watchers")).toBe("Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.");
+    for (const p of ["user", true] as const) expect(taskStoppedWords(p, "watchers")).toBe("I can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.");
     expect(new Presenter(() => undefined, undefined, undefined, undefined, undefined, "user").taskStopped("silent")).toBe(taskStoppedWords("user", "silent"));
   });
 

@@ -260,11 +260,25 @@ describe("Home's provider channels", () => {
     }
     expect(await call(PROVIDER_IPC.removeKey, HOME, "x")).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
     expect(await call(PROVIDER_IPC.test, HOME, { url: "https://evil.example.com" })).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    // A draft of typed details (first-run-r2-1): its kind, address and agreed host, a key at most, and nothing else.
+    const draft = { type: "openai", baseUrl: "https://b.example/v1", host: "b.example" };
+    for (const bad of [{ ...draft, type: "other" }, { ...draft, host: "B EXAMPLE" }, { ...draft, baseUrl: "x".repeat(3000) }, { ...draft, key: "" }, { ...draft, key: "k".repeat(9000) }, { ...draft, on: true }, [draft, draft]]) {
+      expect(await call(PROVIDER_IPC.test, HOME, ...(Array.isArray(bad) ? bad : [bad]))).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    }
     expect(await call(PROVIDER_IPC.state, HOME, 1)).toBeNull();
     expect(calls).toEqual([]);
     expect(await call(PROVIDER_IPC.saveKey, HOME, KEY)).toEqual({ ok: true });
     expect(await call(PROVIDER_IPC.removeKey, HOME)).toEqual({ ok: true });
     expect(calls).toEqual(["save", "remove"]);
+  });
+
+  it("passes a draft of typed details to the check, and none when there is none (first-run-r2-1)", async () => {
+    const seen: unknown[] = [];
+    const { call } = wire({ test: async d => { seen.push(d); return { ok: true, host: "b.example", models: 1 }; } });
+    const draft = { type: "anthropic", baseUrl: "https://b.example/v1", host: "b.example", key: KEY };
+    expect(await call(PROVIDER_IPC.test, HOME, draft)).toEqual({ ok: true, host: "b.example", models: 1 });
+    expect(await call(PROVIDER_IPC.test, HOME)).toEqual({ ok: true, host: "b.example", models: 1 });
+    expect(seen).toEqual([draft, undefined]);
   });
 
   it("never sends the key back, and never logs it, even when saving it fails", async () => {
@@ -287,9 +301,14 @@ describe("Check again", () => {
     expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } });
     expect(github).not.toHaveBeenCalled();
     expect(reconnect).toHaveBeenCalledTimes(2);
+    // Not ready: why, from the status, so Home says "can't connect" only when nothing answered (integrations-c2-2).
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github, reason: () => "models" })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "models" } });
+    reconnect.mockResolvedValueOnce("ready");
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github, reason: () => undefined })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } });
+    reconnect.mockClear();
     // GitHub Copilot in force: a GitHub sign-in is what it looks for.
     expect(await checkAgain(null, { reconnect, github })).toEqual({ found: false, source: null, hint: "No GitHub sign-in found on this computer." });
-    expect(reconnect).toHaveBeenCalledTimes(2);
+    expect(reconnect).not.toHaveBeenCalled();
   });
 });
 

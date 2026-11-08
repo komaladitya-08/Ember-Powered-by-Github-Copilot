@@ -106,8 +106,10 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return CONVERSATION_TOO_LONG;
   if (/context.?(length|limit|window)/i.test(m)) return CONVERSATION_TOO_LONG;
   if (/too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
-  // The runtime's own connection went away ("Pending response rejected since connection got disposed").
-  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) {
+  // The runtime's own connection went away ("Pending response rejected since connection got disposed"). Its native
+  // client says "error sending request … client error (Connect): tunnel error / dns error …" for a proxy that refused
+  // the tunnel or a name that didn't resolve (integrations-r2-1).
+  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected|error sending request|client error \(connect\)|dns error|tunnel error|failed to lookup address/i.test(m)) {
     // The user's own model server on this computer (`local`): it is most likely not running, not the network (integrations-1).
     return mine && ctx.local ? "I can't reach the model server on this computer. Is it running? Start it, then ask again." : `I can't reach ${service} right now. Check the network, then ask again.`;
   }
@@ -175,8 +177,9 @@ export function problemTitle(said: string, provider: ServiceKind = false): strin
   if (/too much for me/i.test(said)) return "Too much at once";
   if (/can't reach|\bnetwork\b/i.test(said)) return provider ? "I can't reach the model service" : "I can't reach Copilot";
   if (/isn't answering|didn't answer|not answering/i.test(said)) return provider === "user" ? "Your model provider isn't answering" : provider ? "The model service isn't answering" : "Copilot isn't answering";
-  if (/stopped unexpectedly/i.test(said)) return "Copilot stopped";
-  if (/file watchers/i.test(said)) return "Copilot can't work right now";
+  // Ember's Copilot runtime, named "my model connection" while it serves another model service (integrations-v1).
+  if (/stopped unexpectedly/i.test(said)) return provider ? "My model connection stopped" : "Copilot stopped";
+  if (/file watchers/i.test(said)) return provider ? "I can't work right now" : "Copilot can't work right now";
   return `${service} had a problem`;
 }
 
@@ -618,8 +621,12 @@ export function keysLanding(turn: ConversationTurn, route: "access:ask" | "acces
 /** The model service in use, as a sentence starts with it. */
 const serviceName = (provider: ServiceKind) => (provider === "user" ? "Your model provider" : provider ? "The model service" : "Copilot");
 
-/** What a task stopped for its model service's silence says (worker.ts TurnWatch), for the service in use (integrations-v1). */
-export function taskStoppedWords(provider: ServiceKind, why: "silent" | "not-started"): string {
+/**
+ * What a task stopped for its model service's silence says (worker.ts TurnWatch), for the service in use (integrations-v1),
+ * and with the file watchers used up, Copilot's runtime as "I" under another service.
+ */
+export function taskStoppedWords(provider: ServiceKind, why: "silent" | "not-started" | "watchers"): string {
+  if (why === "watchers") return `${provider ? "I" : "Copilot"} can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.`;
   return `${serviceName(provider)} ${why === "silent" ? "didn't answer" : "isn't answering"}, so I stopped this task. You can ask me again in a moment.`;
 }
 
@@ -654,6 +661,22 @@ export const LOST_RECONNECTED = "Copilot stopped unexpectedly. I'm connected aga
 export const LOST_GAVE_UP = "Copilot stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.";
 /** The same in the bubble, whose Open settings leads to Check again. */
 export const GAVE_UP = "Copilot keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.";
+/** What Ember says while the runtime is lost, once it is back, and once Ember gave up (lostWords). */
+export interface LostWords { reconnecting: string; reconnected: string; gaveUp: string; gaveUpBubble: string }
+/**
+ * LOST_RECONNECTING, LOST_RECONNECTED, LOST_GAVE_UP and GAVE_UP for the model service in use (integrations-v1): Copilot's
+ * as they are, and under the user's own provider or the organisation's service the runtime is "my model connection"
+ * (noticeTitle's name for it then), never Copilot, which the person isn't using.
+ */
+export function lostWords(service: ServiceKind): LostWords {
+  if (service === false) return { reconnecting: LOST_RECONNECTING, reconnected: LOST_RECONNECTED, gaveUp: LOST_GAVE_UP, gaveUpBubble: GAVE_UP };
+  return {
+    reconnecting: "My model connection stopped unexpectedly. I'm reconnecting; ask me again in a moment.",
+    reconnected: "My model connection stopped unexpectedly. I'm connected again: send it again.",
+    gaveUp: "My model connection stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.",
+    gaveUpBubble: "My model connection keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.",
+  };
+}
 /** The same bubble once Copilot is connected again (reconnected), with Try again (rp-6), or without a request to offer. */
 export const RECONNECTED_RETRY = "I'm connected again. Try again?";
 export const RECONNECTED = "I'm connected again. Ask me again.";
@@ -780,7 +803,7 @@ export class Presenter {
   }
 
   /** What a task stopped for its model service's silence says, for the service in use now (integrations-v1). */
-  taskStopped(why: "silent" | "not-started"): string {
+  taskStopped(why: "silent" | "not-started" | "watchers"): string {
     return taskStoppedWords(this.provider, why);
   }
 
@@ -1123,13 +1146,14 @@ export class Presenter {
   }
 
   /**
-   * Ember stopped reconnecting (Copilot kept stopping): a bubble still saying `text` (that it is reconnecting) says so,
-   * with the way to Check again instead of a Try again that would only be refused (reliability-performance-c2-3).
+   * Ember stopped reconnecting (Copilot kept stopping): a bubble still saying `text` (that it is reconnecting) says `said`
+   * (GAVE_UP, or lostWords' gaveUpBubble for the service it named), with the way to Check again instead of a Try again
+   * that would only be refused (reliability-performance-c2-3).
    */
-  gaveUp(text: string): void {
+  gaveUp(text: string, said: string = GAVE_UP): void {
     const b = this.state.bubble;
     if (!b.visible || b.mood !== "error" || b.thought !== forBubble(text) || this.busy) return;
-    this.apply({ bubble: { ...b, thought: GAVE_UP, actions: [{ id: "ui:settings", label: "Open settings" }] } });
+    this.apply({ bubble: { ...b, thought: said, actions: [{ id: "ui:settings", label: "Open settings" }] } });
   }
 
   /**

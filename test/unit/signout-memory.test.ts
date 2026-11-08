@@ -15,14 +15,18 @@ it("disconnects and clears credentials even when memory erasure fails, while rej
   const agent = { forgetConversation: vi.fn(async () => { throw failure; }), start: vi.fn(async () => "signed-out") };
   const tokens = { clear: vi.fn() }, keeper = { use: vi.fn() }, providers = { forget: vi.fn() }, refusedTokens = { clear: vi.fn() };
   const resetAnswerSpeech = vi.fn();
+  const forgetProject = vi.fn();
   let run!: () => Promise<void>;
-  const install = new Function("ipcMain", "IPC", "guard", "agent", "tokens", "keeper", "providers", "refusedTokens", "resetAnswerSpeech", `
+  const install = new Function("ipcMain", "IPC", "guard", "agent", "tokens", "keeper", "providers", "refusedTokens", "resetAnswerSpeech", "forgetProject", `
     let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "fake", askHistory = ["fake"];
     ${main.slice(start, end)}
     return () => ({ signOuts, accountErasures, currentToken, askHistory });
   `);
-  const state = install({ handle: (_channel: string, handler: () => Promise<void>) => { run = handler; } }, { signOut: "sign-out" }, (fn: unknown) => fn, agent, tokens, keeper, providers, refusedTokens, resetAnswerSpeech);
+  const state = install({ handle: (_channel: string, handler: () => Promise<void>) => { run = handler; } }, { signOut: "sign-out" }, (fn: unknown) => fn, agent, tokens, keeper, providers, refusedTokens, resetAnswerSpeech, forgetProject);
   await expect(run()).rejects.toBe(failure);
+  // Projects' work goes at once, before anything that can fail (integrations-c2-1).
+  expect(forgetProject).toHaveBeenCalledWith("all");
+  expect(forgetProject.mock.invocationCallOrder[0]).toBeLessThan(agent.forgetConversation.mock.invocationCallOrder[0]);
   expect(tokens.clear).toHaveBeenCalledOnce(); expect(keeper.use).toHaveBeenCalledWith(null);
   expect(providers.forget).toHaveBeenCalledOnce(); expect(refusedTokens.clear).toHaveBeenCalledOnce();
   expect(agent.start).toHaveBeenCalledWith(null);

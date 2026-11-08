@@ -128,9 +128,10 @@ runtime. It does not change the app's consent or speaking settings.
 
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
-  lines, the full text under **Read the full text**) and **Agree and continue**, or **Not now**, which keeps Ember off
+  lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
+  provider while it is in force, or the organisation's model service) and **Agree and continue**, or **Not now**, which keeps Ember off
   and offers **Quit Ember** (a press on either within half a second of its appearing is dropped, so a double click
-  agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on and only **Use GitHub Copilot instead** switches it off; or **Skip for now**); the setup check shows only
+  agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off, and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
   setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
@@ -302,8 +303,11 @@ runtime. It does not change the app's consent or speaking settings.
     rather than nothing); a plugin from Copilot's own says it is listed in a marketplace built into Copilot, never
     one "you added" (`FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
     from the address the user added. A list Ember couldn't fetch or read says so (`browseFailed`: "Ember couldn't
-    reach “<name>”. Check the network, then press Browse again.") with **Browse again**, never "This marketplace lists
-    nothing yet.", which is only for a catalogue that really lists nothing. While Ember isn't connected (signed out, connecting), the runtime can list none:
+    reach “<name>”. Check the network, then press Browse again." when git couldn't reach it, a proxy refused or TLS
+    inspection got in the way) with **Browse again**, never "This marketplace lists nothing yet.", which is only for a
+    catalogue that really lists nothing. A marketplace that couldn't be added says why with its address
+    (`addMarketplaceFailed`): out of reach ("Check the address and the network, then press Add again."), or reached but
+    no marketplace came ("Check that it's a marketplace repository you can open, then press Add again."). While Ember isn't connected (signed out, connecting), the runtime can list none:
     the section says "Marketplaces appear once Ember is connected to Copilot or your model provider.", holds **Add**
     with that reason, says **Ready once Ember connects** for what was added, and reads them again once it connects.
   - **Connectors** lists GitHub's catalog. **Connect** opens GitHub's consent page in the system browser (main opens
@@ -1004,10 +1008,16 @@ or without a key. A line under it says why it waits (its `aria-describedby`), an
 address just entered, the status line says "Read the note above: Ember sends nothing to <host> until you agree."
 (focus has moved on to the next field by then), and once agreed "Agreed. Ember now sends your requests to <host>.". It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
 headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever address the service named.
+First run's provider step, opened for a provider already in use, checks edited details before any of them replaces the
+details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
+card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
+kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
+answers; then the details, the key and the card's yes are saved as usual.
 
 - **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
-  main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn there
-  fails without an answer from it (no status code). Where nothing answers (`providerDown`: refused, timed out or
+  main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn or a
+  project request there fails without an answer from it (no status code; Projects keeps the request's own reason in
+  view as Ember leaves Ready: integrations-r2-5). Where nothing answers (`providerDown`: refused, timed out or
   unreachable), Ember leaves Ready for that reason: the status says "Ember can't reach the model server on this computer
   (127.0.0.1:11434). Start it, and Ember will connect in a moment.", the handle "Can't connect", and the next request
   says why at once instead of waiting about 24 s. The failed request's own bubble (and a project request's line) asks
@@ -1028,7 +1038,9 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees
-  to nothing (`AgreeGuard`).
+  to nothing (`AgreeGuard`). While the card waits with no GitHub sign-in, nothing is connected, and Models &
+  connections says "Not connected: Ember is waiting for you to agree to use <host>." and points to the card or the
+  switch, with no "Sign in with GitHub" or "Use my own provider" (`homeConnectionView`'s `own`: integrations-c2-3).
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
   from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
   no keyring is asked to know it). It goes only to that host: moving the endpoint to another host deletes it, and the
@@ -1047,9 +1059,13 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
   title names the provider ("No model set for your provider", "I'm still connecting to your model provider").
+  Ember's Copilot runtime, which still carries the requests, is "Ember's model connection" then ("My model connection
+  stopped unexpectedly. I'm reconnecting…", "Ember's model connection keeps stopping…", a task cut off by it, and
+  the file watchers running out: `runtimeWords`, `lostWords`), never Copilot.
   **Check again** connects to the provider (or the organisation's service) again and never looks for or names a GitHub
-  sign-in (`checkAgain`, app/main/provider.ts): connected, the status line says so; not, it says "Checked again: Ember
-  still can't connect to <host>.", which goes once the provider connects.
+  sign-in (`checkAgain`, app/main/provider.ts): connected, the status line says so; out of reach, it says "Checked
+  again: Ember still can't connect to <host>."; reached but still unusable (no model named, a refused key), "Checked
+  again: Ember still can't use <host>. The line above says why."; either goes once the provider connects.
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
   started with. A request asked while a turn or a task is still under way on the service before is held, with a bubble
   saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are
@@ -2146,10 +2162,11 @@ page crashing still end it, and closing the window clears the answer and an unap
 them).
 
 While Ember reconnects or can't connect for now (the runtime restarted, a model or the provider changed, the model
-service out of reach), Projects keeps the chosen files, the request being typed, the answer and its unapplied diff,
+service out of reach, or, with no GitHub sign-in, your own provider turned off or waiting for its card for a new
+address), Projects keeps the chosen files, the request being typed, the answer and its unapplied diff,
 says "Ember isn't connected right now. Your work here stays, and you can send once it connects.", and only sending,
 applying and the command wait (`projectAfterStatus`, app/main/agent/project.ts). A request under way then stops and
-says the connection dropped. Sign-out, another account and the organisation's lockdown clear it all. Once another
+says the connection dropped. Sign out, another account and the organisation's lockdown clear it all. Once another
 model service, address, key or GitHub account is in force, the previous request and answer stay in view but are no
 longer offered as context, so an answer from one service is never sent to another.
 

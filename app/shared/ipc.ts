@@ -23,9 +23,10 @@ export interface ProjectSelection { names: string[]; sizes?: (number | null)[]; 
 export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; canContinue: boolean } | { error: string };
 /**
  * What Check again found: a GitHub sign-in (`found`, its `source`, or a `hint` on how to get one), or, with a model
- * provider in force (the user's own or the organisation's), that it connected to it again or not (integrations-c1-1).
+ * provider in force (the user's own or the organisation's), that it connected to it again or not (integrations-c1-1),
+ * and when not, the status's `reason` (integrations-c2-2: "network" is the only one that means it couldn't be reached).
  */
-export interface RetryResult { found: boolean; source: string | null; hint?: string; provider?: { host: string; ready: boolean } }
+export interface RetryResult { found: boolean; source: string | null; hint?: string; provider?: { host: string; ready: boolean; reason?: string } }
 export type ProjectWorkspaceAction = { action: "list" } | { action: "save" | "open" | "forget"; name: string };
 export interface ProjectWorkspaceReply {
   names?: string[];
@@ -715,7 +716,10 @@ export const PROVIDER_IPC = {
    * record (settingsFromHome drops it).
    */
   agree: "provider:agree",
-  /** One small request to the endpoint in settings (its model list), with the saved key: ProviderTest. */
+  /**
+   * One small request to the endpoint in settings (its model list), with the saved key: ProviderTest. With a
+   * ProviderDraft, the same request to details typed but not saved, which it saves nothing of (first-run-r2-1).
+   */
   test: "provider:test",
 } as const;
 
@@ -741,8 +745,19 @@ export interface ProviderState {
 export type ProviderDone = { ok: true } | { ok: false; why: string };
 
 /** "Test connection": the service answered (`models`: how many it lists, when it says), or why not in one sentence. */
-/** `ids`: the models it names, as suggestions for the model fields (at most 50, each a MODEL_ID). */
-export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string };
+/**
+ * `ids`: the models it names, as suggestions for the model fields (at most 50, each a MODEL_ID). `cause`: nothing
+ * answered at all (main's TestResult), so the address or the network is what to check.
+ */
+export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" };
+
+/**
+ * Details typed for the user's own provider but not saved, checked before they replace the details in use (first run's
+ * provider step for a provider already in use: first-run-r2-1). `host` is the one the card named when the user agreed
+ * with the same press: main sends nothing unless the address names exactly that host. `key`: one just typed, sent only
+ * to that host and kept nowhere; without it, the saved key goes only if it was entered for that very host.
+ */
+export interface ProviderDraft { type: "openai" | "azure" | "anthropic"; baseUrl: string; key?: string; host: string }
 
 /** The settings window's provider API (`window.emberProvider`, app/preload/home.ts). */
 export interface EmberProviderApi {
@@ -753,5 +768,6 @@ export interface EmberProviderApi {
   removeKey(): Promise<ProviderDone>;
   /** Records the yes to the card for `host` (the endpoint's host in settings now), and turns the provider on. */
   agree(host: string): Promise<ProviderDone>;
-  test(): Promise<ProviderTest>;
+  /** The endpoint in settings, or `draft`'s details without saving any of them (first-run-r2-1). */
+  test(draft?: ProviderDraft): Promise<ProviderTest>;
 }

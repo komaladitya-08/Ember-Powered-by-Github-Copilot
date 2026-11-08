@@ -35,8 +35,8 @@ import {
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
-import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
-import { modelDestination, privacyFoldWords, recipientWords } from "./copy";
+import { onProviderDestination, ownProvider, providerCard, providerSettings, startProvider } from "./provider";
+import { modelDestination, privacyFoldWords, recipientWords, type ModelDestination } from "./copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
@@ -208,7 +208,7 @@ function applySettings(s: Settings): void {
   renderStatus();
 }
 // First run, one step at a time: it borrows the character and the cards until Start, and its fixes reach the setup check.
-const welcome = startWelcome({ save, buddy: heroCanvas, cards: $("cards"), checksChanged: env => renderChecks(env), arrived: () => { if (!calm) { heroRig.setEmotion("happy"); drawSoon(); } } });
+const welcome = startWelcome({ save, buddy: heroCanvas, cards: $("cards"), checksChanged: env => renderChecks(env), arrived: () => { if (!calm) { heroRig.setEmotion("happy"); drawSoon(); } }, destination: () => destinationNow() });
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
 $("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });
@@ -553,7 +553,7 @@ let lastAdmin: Status["admin"] | null = null;
 function renderRecipient(): void {
   const a = lastAdmin;
   if (!a) return;
-  const d = modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
+  const d = destinationNow();
   const service = document.querySelector<HTMLElement>("#w-full #model-service");
   // The locked-down line replaces the sentence (and this span) altogether.
   if (service && d.kind !== "none") service.textContent = recipientWords(d, true);
@@ -564,8 +564,22 @@ function renderRecipient(): void {
   // Agreeing to "sent to …" needs the recipient named: unknown, "I agree" waits (aria-disabled keeps it focusable).
   const yes = $("consent-yes");
   if (d.kind === "unknown") yes.setAttribute("aria-disabled", "true"); else yes.removeAttribute("aria-disabled");
+  // First run's consent says it in short, from the same answer (first-run-r2-2).
+  welcome.recipient();
 }
-onProviderDestination(renderRecipient);
+/** Where requests go now (copy.ts modelDestination); not known before the first policy, so never worded as Copilot. */
+function destinationNow(): ModelDestination {
+  const a = lastAdmin;
+  if (!a) return { kind: "unknown" };
+  return modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
+}
+// The provider's card coming or going changes what the status panel says while nothing is connected (integrations-c2-3).
+let cardDrawn = "";
+onProviderDestination(() => {
+  renderRecipient();
+  const card = JSON.stringify(providerCard());
+  if (card !== cardDrawn) { cardDrawn = card; if (agent) renderAgent(agent); }
+});
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
@@ -853,12 +867,13 @@ function renderAgent(a: AgentStatus | null): void {
   // What leads depends on why Copilot isn't connected (FE #3): an account without Copilot is not asked to sign in again.
   const a2 = lastAdmin;
   const view = homeConnectionView({
-    phase: a.phase, reason: a.reason, detail: a.detail, signingIn, waiting, service: a.service?.kind,
+    phase: a.phase, reason: a.reason, detail: a.detail, signingIn, waiting, service: a.service?.kind, own: providerCard(),
     ownOffered: ownProviderOffer({
       bridge: !!window.emberProvider, managedProvider: !!a2?.provider, locked: !!a2 && a2.error !== null,
       userProviderOff: a2?.features.userProvider === false,
     }).offered,
   });
+  if (view.line) $("agent-text").textContent = view.line;
   $("sign-in").hidden = !view.show["sign-in"] || waiting;
   // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
   $("sign-in").textContent = signInLabel(a.signInWith);

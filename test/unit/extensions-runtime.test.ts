@@ -522,6 +522,50 @@ describe("ExtensionsService", () => {
     expect(await new ExtensionsService(market(async () => ({ plugins: [] }))).browse("local-market")).toEqual([]);
   });
 
+  /** The runtime's refusal when git couldn't clone a marketplace, as it passes git's own words on (integrations-r2). */
+  const gitFailed = (call: string, lead: string, fatal: string) => new Error(`Request plugins.marketplaces.${call} failed with message: ${lead}: Command failed: git clone --depth 1 --progress https://github.com/github/awesome-copilot.git /tmp/x/copilot/.cache/copilot/marketplaces/github-awesome-copilot\nCloning into '/tmp/x/copilot/.cache/copilot/marketplaces/github-awesome-copilot'...\nfatal: ${fatal}\n`);
+  const UNREACHED = [
+    "unable to access 'https://github.com/github/awesome-copilot.git/': Failed to connect to 127.0.0.1 port 9 after 0 ms: Couldn't connect to server",
+    "unable to access 'https://github.com/github/awesome-copilot.git/': Could not resolve host: github.com",
+    "unable to access 'https://github.com/github/awesome-copilot.git/': Could not resolve proxy: proxy.corp.example",
+    "unable to access 'https://github.com/github/awesome-copilot.git/': Received HTTP code 403 from proxy after CONNECT",
+    "unable to access 'https://github.com/github/awesome-copilot.git/': SSL certificate problem: unable to get local issuer certificate",
+  ];
+
+  it("points to the network when git couldn't reach a marketplace's list, as the runtime really says it (integrations-r2)", async () => {
+    const market = (browse: () => Promise<unknown>) => deps({
+      client: () => ({ rpc: { plugins: { marketplaces: { list: async () => ({ marketplaces: [{ name: "awesome-copilot", source: "GitHub: github/awesome-copilot" }] }), browse } } } }) as never,
+    });
+    for (const fatal of UNREACHED) {
+      expect(await new ExtensionsService(market(async () => { throw gitFailed("browse", "Failed to fetch GitHub marketplace github/awesome-copilot", fatal); })).browse("awesome-copilot"), fatal)
+        .toEqual({ ok: false, why: "Ember couldn't reach “awesome-copilot”. Check the network, then press Browse again." });
+    }
+    // Reached, but GitHub refused the clone: not the network.
+    expect(await new ExtensionsService(market(async () => { throw gitFailed("browse", "Failed to fetch GitHub marketplace github/awesome-copilot", "unable to access 'https://github.com/github/awesome-copilot.git/': The requested URL returned error: 500"); })).browse("awesome-copilot"))
+      .toEqual({ ok: false, why: "Ember couldn't fetch “awesome-copilot”'s list. Press Browse again in a moment." });
+  });
+
+  it("says why a marketplace couldn't be added and what to check, never only that it couldn't (integrations-r2-3)", async () => {
+    const adding = (add: () => Promise<unknown>) => new ExtensionsService(deps({
+      client: () => ({ rpc: { plugins: { marketplaces: { list: async () => ({ marketplaces: [] }), add } } } }) as never,
+    }));
+    const lead = "Failed to fetch git marketplace from the provided URL. Please verify that the URL and reference are correct. Details";
+    for (const fatal of UNREACHED) {
+      expect(await adding(async () => { throw gitFailed("add", lead, fatal); }).addMarketplace(" https://marketplace.example.invalid/ember.git "), fatal)
+        .toEqual({ ok: false, why: "Ember couldn't reach “https://marketplace.example.invalid/ember.git”. Check the address and the network, then press Add again." });
+    }
+    // Reached, but it wouldn't give a marketplace: a private repository, or not a marketplace at all.
+    expect(await adding(async () => { throw gitFailed("add", lead, "could not read Username for 'https://github.com': terminal prompts disabled"); }).addMarketplace("octo/private-tools"))
+      .toEqual({ ok: false, why: "Ember couldn't fetch a marketplace from “octo/private-tools”. Check that it's a marketplace repository you can open, then press Add again." });
+    // Said as before: one it couldn't find, one already added, and anything else.
+    expect(await adding(async () => { throw gitFailed("add", lead, "repository 'https://github.com/octo/nothing.git/' not found"); }).addMarketplace("octo/nothing"))
+      .toEqual({ ok: false, why: "Ember couldn't find that marketplace." });
+    expect(await adding(async () => { throw new Error("Marketplace octo-tools is already added"); }).addMarketplace("octo/tools"))
+      .toEqual({ ok: false, why: "That marketplace is already added." });
+    expect(await adding(async () => { throw new Error("Internal error"); }).addMarketplace("octo/tools"))
+      .toEqual({ ok: false, why: "Ember couldn't add that marketplace." });
+  });
+
   it("shows every discovered tool before a second agreement permits any use", async () => {
     const s = new ExtensionsService(deps());
     await s.install("local-market", "fake");

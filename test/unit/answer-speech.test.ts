@@ -42,6 +42,7 @@ function wiring() {
     let signOuts = 0, currentToken = null, askHistory = [], learnedLines = [];
     const signInAbort = { abort() {} }, keeper = { use() {} }, tokens = { clear() {} }, providers = { forget() {} }, refusedTokens = new Set();
     const conversationNow = (entries = []) => entries;
+    const forgetProject = () => {};
     ${speech}
     ${signOut}
     return {
