@@ -812,13 +812,17 @@ last part, an address without "https://" by its host, "~75%" as "about 75%", "#4
 "Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", and other emoji and typed smileys not at
 all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
-language, not counting names such as "La Vie en Rose" or "Los Angeles": `speechLanguage`) is said by a local system
-voice for that language, or not at all when there is none, which isn't reported as Ember failing to speak, even with no
-voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided once, from its first 60
-letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English list's "1. La La Land." is
-Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters English seldom writes) or
-any piece after a request typed in another language waits for more of the answer, a reply too short to tell follows the
-request's language, and words for the system voice wait until the pieces Kitten is still making are done.
+language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by
+a local system voice for that language, or not at all when there is none, which isn't reported as Ember failing to
+speak, even with no voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided
+once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English
+list's "1. La La Land." is Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters
+English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
+typed in another language (three different short words of it outside quotes: `requestLanguage`; "play la vie en rose"
+and "what does 'je ne sais pas' mean?" aren't) waits for more of the answer. A reply too short to tell follows that
+request's language unless it has as many English short words ("It means that's life."), and a message that ends before
+a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
+pieces Kitten is still making are done.
 
 **When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
 lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,

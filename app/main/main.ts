@@ -1118,10 +1118,13 @@ function start(): void {
     if (speechSilenced(!!voice?.speaking, allowed)) { cancelAck(); voice?.hush(); }
     return allowed;
   };
-  /** `end`: the message is complete, so nothing of it waits any longer to tell its language. */
-  const sayStreamed = (chunks: string[], end = false) => {
+  /**
+   * `end`: the message is complete, so nothing of it waits any longer to tell its language; `more`: it ended before a
+   * tool call, so a short one decides nothing for the messages after it (voice-speaking-r2-1).
+   */
+  const sayStreamed = (chunks: string[], end = false, more = false) => {
     if (answerInterrupted || confirmer?.waiting || !silenceIfOff()) return;
-    for (const { text: chunk, lang } of answerLanguage.take(chunks, end)) {
+    for (const { text: chunk, lang } of answerLanguage.take(chunks, end, more)) {
       const c = afterAck(chunk, ackSaid);
       ackSaid = null;
       if (!c.trim()) continue;
@@ -3386,7 +3389,7 @@ function start(): void {
       onAnswerInterrupted: resetAnswerSpeech,
       onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
       // An answer whose voice Stop speaking silenced is still the answer, unsaid (voice-speaking-c1-1).
-      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
+      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true, true); },
       onAnswer: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
