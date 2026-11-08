@@ -6,6 +6,8 @@
  * valid; that is always the answer of the real check.
  */
 
+import { onThisComputer } from "../../shared/provider";
+
 /** The ways on from a failed connection ("provider": the user's own provider's details, when it is the one failing). */
 export type FailureAction = "retry" | "switch-account" | "own-provider" | "sign-in" | "provider";
 
@@ -149,9 +151,13 @@ export function providerInUse(host: string): { title: string; lead: string } {
   return { title: "Your own model provider's details", lead: `I'm using the model provider you set up (${host}) instead of GitHub Copilot. You can change its details here.` };
 }
 
-/** That step's status line, from the connection's (`phase`, and main's `detail` when it failed). */
+/**
+ * That step's status line, from the connection's (`phase`, and main's `detail` when it failed). Ready, a server on this
+ * computer was asked at the start and is "Connected"; a host elsewhere wasn't, so it is only "Using", as Home's status
+ * says (integrations-r3, integrations-r2-6).
+ */
 export function providerInUseLine(o: { host: string; phase: string | null; detail?: string }): { line: string; tone: "" | "ok" | "error" } {
-  if (o.phase === "ready") return { line: `Connected to your own provider (${o.host}).`, tone: "ok" };
+  if (o.phase === "ready") return { line: `${onThisComputer(o.host) ? "Connected to" : "Using"} your own provider (${o.host}).`, tone: "ok" };
   if (o.phase === "error") return { line: o.detail ?? "", tone: "error" };
   return { line: `Connecting to your own provider (${o.host})…`, tone: "" };
 }

@@ -8,6 +8,7 @@
 
 import { CONSENT_VERSION } from "../../shared/consent";
 import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attention";
+import { onThisComputer } from "../../shared/provider";
 
 /** The essential first-run route; character and memory personalisation remain optional detours. */
 export const WELCOME_STEPS = ["hello", "consent", "sign-in", "checks", "try", "done"] as const;
@@ -213,7 +214,9 @@ export function signInView(o: { phase: string | null; reason?: string; login?: s
   const none = { cancel: false, skip: false, retry: false };
   const own = o.service?.kind === "user" ? `your own provider (${o.service.host})` : o.service?.kind === "test" ? o.service.host : null;
   if (o.phase === "ready") {
-    const who = o.managedProvider ? "Connected to your organisation's model service." : own ? `Connected to ${own}.` : o.login ? `Signed in as ${o.login}.` : "Connected to Copilot.";
+    // The user's own provider elsewhere wasn't contacted at the start: "Using", as Home says (integrations-r2-6).
+    const near = o.service?.kind !== "user" || onThisComputer(o.service.host);
+    const who = o.managedProvider ? "Connected to your organisation's model service." : own ? `${near ? "Connected to" : "Using"} ${own}.` : o.login ? `Signed in as ${o.login}.` : "Connected to Copilot.";
     return { ...none, line: who, tone: "ok", primary: "continue", why: "" };
   }
   // Signing in can't help: the policy holds Ember back, so the way on is Continue (the line says why).

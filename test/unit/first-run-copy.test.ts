@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerInUseLine, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 
@@ -160,6 +160,15 @@ describe("Home's connection buttons by why Copilot isn't connected (FE #3)", () 
     expect(homeConnectionView({ ...base, signingIn: true }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: false, provider: false });
     expect(homeConnectionView({ ...base, waiting: true, reason: "network" }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: true, provider: false });
     expect(homeConnectionView({ ...base, phase: "ready" }).show.retry).toBe(false);
+  });
+});
+
+describe("first run: the provider in use, as Home says it", () => {
+  it("says a server on this computer is connected, but a host elsewhere only in use, since nothing contacted it at the start (integrations-r2-6)", () => {
+    expect(providerInUseLine({ host: "127.0.0.1:11434", phase: "ready" })).toEqual({ line: "Connected to your own provider (127.0.0.1:11434).", tone: "ok" });
+    expect(providerInUseLine({ host: "localhost:1234", phase: "ready" })).toEqual({ line: "Connected to your own provider (localhost:1234).", tone: "ok" });
+    expect(providerInUseLine({ host: "api.example.com", phase: "ready" })).toEqual({ line: "Using your own provider (api.example.com).", tone: "ok" });
+    expect(providerInUseLine({ host: "api.example.com", phase: "starting" })).toEqual({ line: "Connecting to your own provider (api.example.com)…", tone: "" });
   });
 });
 

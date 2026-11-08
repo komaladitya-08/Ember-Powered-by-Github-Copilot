@@ -207,7 +207,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // provider as in use, never as a form still to agree to (first-run-c1-2).
     await p.locator("#w-back").click();
     expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
-    expect(await p.locator("#w-p-result").innerText()).toBe("Connected to your own provider (api.example.com).");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Using your own provider (api.example.com).");
     expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
     await next(p).click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
@@ -544,7 +544,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
   it("(n) reopened with the user's own provider in force, the sign-in step names it and Back from the checks returns to it (first-run-1)", async () => {
     const service = { kind: "user", host: "api.example.com" };
     const p = await open({ agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }), provider: { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1" } });
-    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe("Connected to your own provider (api.example.com).");
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe("Using your own provider (api.example.com).");
     expect(await p.locator("#w-title").innerText()).toBe("Your own model provider");
     expect(await p.locator("#w-lead").innerText()).toContain("api.example.com");
     for (const id of ["#w-title", "#w-lead", "#w-signin-line"]) expect(await p.locator(id).innerText(), id).not.toContain("Copilot");
@@ -569,7 +569,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // In use: connected, nothing to agree to again, Continue goes on without a check.
     expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
     expect(await p.locator("#w-lead").innerText()).toBe("I'm using the model provider you set up (api.example.com) instead of GitHub Copilot. You can change its details here.");
-    expect(await p.locator("#w-p-result").innerText()).toBe("Connected to your own provider (api.example.com).");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Using your own provider (api.example.com).");
     expect(await p.locator("#w-p-consent").innerText()).not.toMatch(/Back takes you|Turn this off/);
     expect(await next(p).innerText()).toBe("Continue");
     expect(await next(p).getAttribute("aria-disabled")).toBeNull();
@@ -599,7 +599,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
     await p.locator("#w-back").click();
     expect(await p.inputValue("#w-p-conductor")).toBe("gpt-4.1");
-    expect(await p.locator("#w-p-result").innerText()).toBe("Connected to your own provider (api.example.com).");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Using your own provider (api.example.com).");
     // The one way back to Copilot from here says so, and switches it off.
     await p.locator("#w-alt").click();
     await expect.poll(() => calls(p)).toContain(off);
