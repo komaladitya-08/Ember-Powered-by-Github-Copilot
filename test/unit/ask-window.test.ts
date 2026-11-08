@@ -285,8 +285,24 @@ describe("the ask box", () => {
     expect(askSuggestions({ ...s, bubble: IDLE_BUBBLE }, items, false)).toEqual(["Remind me in an hour"]);
     expect(askSuggestions({ ...s, bubble: { ...answer, thought: "Night light is on." } }, items, false)).toEqual(["Remind me in an hour"]);
     expect(askSuggestions({ bubble: answer, suggest: null }, items, false)).toEqual(["Remind me in an hour"]);
-    // An answer's own buttons (Read all, Try again) are no question.
-    expect(askSuggestions({ ...s, bubble: { ...answer, actions: [{ id: "ui:more", label: "Read all" }] } }, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+    // An answer's own buttons (Try again) are no question.
+    expect(askSuggestions({ ...s, bubble: { ...answer, actions: [{ id: "ui:retry", label: "Try again" }] } }, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+  });
+
+  it("offers nothing that agrees to an answer cut short under Read all, whose offer the bubble doesn't show, until it is opened in full (companion-c5-2)", () => {
+    // A 70-word answer ending in "Want me to add a world clock?", cut at six lines: the bubble showed "…Tokyo is nine
+    // hours ahead of" and Read all, and the box offered "Yes, please" and "No, thanks" in Tab order all the same.
+    const thought = "Tokyo is nine hours ahead of London, so it is evening there. ".repeat(6) + "Want me to add a world clock?";
+    const cut = { ...IDLE_BUBBLE, visible: true, thought, step: "Or press Ctrl+Alt+E and go to Conversation.", actions: [{ id: "ui:more", label: "Read all" }] };
+    const s = { bubble: cut, suggest: { thought, items: ["Yes, please", "No, thanks", "Remind me in an hour"] } };
+    const items = [{ text: "Yes, please", follows: true }, { text: "No, thanks", follows: true }, { text: "Remind me in an hour" }];
+    // Only the one that stands on its own.
+    expect(askSuggestions(s, items, false)).toEqual(["Remind me in an hour"]);
+    // Read all: the whole answer, its offer with it, shows, and so do the chips that answer it.
+    const full = { ...cut, step: null, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    expect(askSuggestions({ ...s, bubble: full }, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+    // An answer short enough to show whole offers them as before.
+    expect(askSuggestions({ ...s, bubble: { ...cut, step: null, actions: [] } }, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
   });
 
   it("opens with room for an answer's follow-ups while the answer still comes in, so they land where the keyboard reaches them (accessibility-visual-c4-1)", async () => {

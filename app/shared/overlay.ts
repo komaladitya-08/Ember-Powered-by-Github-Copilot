@@ -212,12 +212,14 @@ export function suggestionsShown(s: Pick<EmberState, "bubble" | "suggest">): str
  * none while a question is up (`questionUp`: the Confirmer waits, or answers show on the bubble), which "Yes, please"
  * would only seem to answer (companion-r2-1); and those that follow the answer they were made for (`follows`: "Yes,
  * please" to its offer, "Close it", "Read it out") only while that answer shows, so a chip never agrees to an offer that
- * has left the screen (companion-c2-2). The others (a request said twice, the time of day's) stand on their own.
+ * has left the screen (companion-c2-2), nor to one the bubble cuts short under Read all, until it is opened in full
+ * (companion-c5-2: its last line, the offer, didn't show). The others (a request said twice, the time of day's) stand on
+ * their own.
  */
 export function askSuggestions(s: Pick<EmberState, "bubble" | "suggest">, items: readonly { text: string; follows?: boolean }[], questionUp: boolean): string[] {
   const b = s.bubble;
   if (questionUp || (b.visible && b.actions.some(a => !a.id.startsWith("ui:")))) return [];
-  const answerShown = !!s.suggest && b.visible && b.thought === s.suggest.thought;
+  const answerShown = !!s.suggest && b.visible && b.thought === s.suggest.thought && !b.actions.some(a => a.id === "ui:more");
   return items.filter(i => !i.follows || answerShown).map(i => i.text).slice(0, 3);
 }
 

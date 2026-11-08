@@ -434,7 +434,8 @@ next one" after a task on one item, "Read it out" after an unspoken answer, "Wha
 request said twice this session, and by time of day otherwise. Nothing risky, but one built from the user's own risky
 request just now ("Send it to Priya" after a request to send). Shown under the answer in the bubble (only under the
 answer they were made for, never with a question or buttons up) and in the Ask box (only while the field is empty,
-never while a question is up, those that answer or follow the answer only while it shows: `askSuggestions`, and
+never while a question is up, those that answer or follow the answer only while it shows, and not while the bubble
+cuts it short under Read all: `askSuggestions`, and
 only in a box that opened with some, in no more rows than it opened with, so its field never moves),
 captioned "Ember suggests". A click sends them as the user's choice of Ember's words (`suggested`): the usual policy
 applies, and they never count as the user's own words for a command (no announce-with-Stop: host.ts
