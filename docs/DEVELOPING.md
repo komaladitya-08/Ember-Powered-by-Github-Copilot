@@ -854,8 +854,12 @@ regression alongside the Electron smoke.
   plays a tone instead).
 - It prints each process's memory (PSS) and CPU, and each page's main-thread CPU, then the same as JSON.
 - Compare a change against `main` on the same computer: Xvfb has no GPU or compositor.
-- On 4 vCPUs at 2.1 GHz it measured 741 MB and 35 % of one core. The setup page was open (no sign-in) and cost 10.6 %;
-  the speech process cost 1.1 % in silence.
+- It agrees to the consent version the build asks for (it used to agree to an older one, which kept the microphone
+  shut). Awake at rest, listening in silence, with Home open (no sign-in), it measured 758 MB and 11.3 % of one core on
+  4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main threads. Most of the
+  drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open decisions (docs/ASSISTANT.md).
+- `--max-cpu 16 --max-pss 950` is the budget for a change: past either it says so and exits 1. It sits above those
+  figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's.
 
 ### Connecting Copilot
 

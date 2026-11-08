@@ -42,8 +42,10 @@ They share one emotion rig, so switching never changes behaviour.
     that stops without saying so never leaves the mouth moving; the system's voice gives no level, so
     the mouth keeps its syllable flap;
   - awake and Ready with nothing passing, only the breath and the idle float move, under a third of a pixel a
-    step: the overlay, the handle and Home's hero draw it about 6 times a second (`restingGap`, `RESTING_FRAME_MS`),
-    waking in time for the next blink or fidget, where they drew 15–24 times a second; while Home sits behind the
+    step: between blinks and fidgets the overlay, the handle and Home's hero draw it about 6 times a second
+    (`restingGap`, `RESTING_FRAME_MS`), waking in time for the next one, where they drew 15–24 times a second. With
+    the blinks and the first minute's fidgets drawn at their own rate, the overlay and the handle still draw 11–16
+    times a second awake at rest (the pointer moves often enough to keep Ember there); while Home sits behind the
     window you are working in, its still faces aren't drawn at all until it takes the focus, the pointer comes over
     it or something changes (`homeFrameGap`);
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
