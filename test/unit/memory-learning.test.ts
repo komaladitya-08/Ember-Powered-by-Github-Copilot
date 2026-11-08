@@ -801,6 +801,39 @@ describe("“forget that”, the instruction check and the conversation's line",
     }
   });
 
+  it("answers a forget request about Ember's own memories in code, whatever capitalised word follows, and leaves a photo app's to the conversation (memory-v5-5)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of [
+      "Delete your memories about Priya from Acme", "Erase your memory of my trip to Paris in June", "Clear your memories of me from Monday",
+      "Forget your memories of Priya on Slack", "Delete Ember's memories of my ex in Paris", "Clear my memories of Priya in Ember",
+    ]) {
+      expect(memoryAsk(text), text).toBe("forget");
+      expect(off.l.intent(text, { own: true }), text).toBe(FORGET_OFF);
+    }
+    for (const text of ["Delete my memories of Paris in Photos", "Delete my memories of the trip on Facebook", "Clear my memories of Rome from Google Photos"]) {
+      expect(memoryAsk(text), text).toBeNull();
+    }
+  });
+
+  it("leaves “May Day”, “June Sprint” and a tool's updates to the conversation with no note, beside “May Smith” and “Sam drives” (memory-v5-6)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of ["Forget May Day", "Forget June Sprint", "Forget August Release", "Forget April Fools", "Forget August Bank"]) {
+      expect(memoryAsk(text), text).toBeNull();
+      expect(off.l.rememberNote(text), text).toBeNull();
+    }
+    expect(memoryAsk("Forget May Smith")).toBe("forget");
+    for (const text of [
+      "Remember Chrome updates", "Remember Python decorators", "Remember Git commits", "Remember Docker volumes", "Remember Slack notifications",
+      "Remember Monday standups",
+    ]) {
+      expect(memoryAsk(text), text).toBeNull();
+      expect(off.l.rememberNote(text), text).toBeNull();
+    }
+    for (const text of ["Remember Sam drives", "Remember Priya leads"]) {
+      expect(off.l.rememberNote(text)?.text, text).toBe("Memory is off, so I won't keep this after Ember closes.");
+    }
+  });
+
   it("opens Settings › Memory at its list from Open Memory after a forget request with more in it, and at its note after a remember (memory-r3-4)", () => {
     const off = learning({ inForce: () => false });
     const forget = off.l.rememberNote("Forget my address and open Firefox")!;

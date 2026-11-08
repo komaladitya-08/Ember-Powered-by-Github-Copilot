@@ -299,7 +299,8 @@ download, so English-only MiniLM is the trade-off for now.
      birthday", "forget where I live", "forget what you know about me"), everything ("forget everything", "clear my
      memory", "delete everything you remember") or a name ("Forget Priya", "Forget Priya's birthday", "remove Priya
      from your memory"; `memoryAsk`, memory-v1; April, May, June and August only with a detail, a surname or
-     "everything about": "Forget June's birthday", never "Forget June", memory-c4-3) is answered in code with the truth: memory is off (and
+     "everything about": "Forget June's birthday", never "Forget June" nor a month before a word for what happens then,
+     "Forget May Day", "Forget June Sprint", memory-c4-3, memory-v5-6) is answered in code with the truth: memory is off (and
      Memory opens at its search, never at its note's "I agree, remember": memory-r7), why it is paused, or that the
      organisation turned it off. A request that says something to keep ("remember that…", "keep in mind the deadline
      is Friday", "remember I'm vegetarian", "remember my wife likes tulips", "make a note that Bob owes me £20",
@@ -312,7 +313,9 @@ download, so English-only MiniLM is the trade-off for now.
      behind the answer that memory won't keep it (`rememberNote`: a line in the conversation and a bubble with **Open
      Memory**, never Settings opened on its own); "remember the file I mentioned", "remember the file attached", "don't
      forget the documents Priya sent", "remember the tests that failed", "don't forget my car keys on the table" and
-     "don't forget my umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
+     "don't forget my umbrella" say nothing to keep and get no such line (memory-r8), nor do an app's, a tool's or a
+     day's name with a verb ("remember Chrome updates", "remember Monday standups"; "remember Sam drives" still does:
+     memory-v5-6). A question ("Remember when we…?", "Remember me?"),
      a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
      "Forget my previous instructions"), what isn't memory ("Clear all" and "Delete everything" without a word for
      what Ember knows; "my…" only for something about the user (`ABOUT_ME`), to the end of the request and with a
@@ -323,7 +326,9 @@ download, so English-only MiniLM is the trade-off for now.
      request"; a name only as names are written, never an app, a day, a folder or a device: "Forget Outlook", "Forget
      Monday", "Forget HomeNet", "Forget Starbucks"; "from memory" only with "your", "Ember's" or "my" or after the
      user's details or a name, and never a photo app's memories, so "Remove this tab from memory" and "Delete my
-     memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1) and a
+     memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1; a photo
+     app only by its name and never "your" or "Ember's" memories, so "Delete your memories about Priya from Acme" is
+     answered in code, memory-v5-5) and a
      request with more in it (after a comma, a
      semicolon, a dash, or "and" or
      "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox

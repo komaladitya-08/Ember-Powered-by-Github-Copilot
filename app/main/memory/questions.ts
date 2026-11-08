@@ -219,8 +219,9 @@ function statesSomething(rest: string): boolean {
     const w = words[v]!;
     const next = words[v + 1];
     const ed = (x = "") => /^\p{Ll}{2,}ed$/u.test(x) || PAST.has(x);
-    // "Remember Sam drives": a name and its verb, the request's last word (memory-r3-2).
-    const named = v === 1 && words.length === 2 && /^\p{Lu}\p{Ll}+$/u.test(words[0]!);
+    // "Remember Sam drives": a name and its verb, the request's last word (memory-r3-2), never an app's, a tool's or a
+    // day's ("Remember Chrome updates", "Remember Monday standups": memory-v5-6).
+    const named = v === 1 && words.length === 2 && /^\p{Lu}\p{Ll}+$/u.test(words[0]!) && isName(words[0]!);
     // "the issues users reported": who did what to the thing named, a description (memory-r8).
     if (v + 2 === words.length && /^\p{Ll}+s$/u.test(w) && !MODAL.test(w) && ed(next)) return false;
     // "my car keys on the table": a plural before a place, not a verb.
@@ -320,8 +321,12 @@ const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:(?:forget|don'?t\s+remember|d
   + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+${MY_DETAIL}(?:\s+(?:and|&)\s+${MY_DETAIL})*\s+from\s+(?:memory|memories)${END})`, "i");
 /** "Remove Priya from memory": a name, as FORGET_NAME takes one (memory-c4-1). */
 const FORGET_FROM = new RegExp(String.raw`${LEAD}(?:remove|delete|erase|drop|clear|wipe)\s+(\S+(?:\s+\S+)?)\s+from\s+(?:memory|memories)${END}`, "i");
-/** A photo app's or a social site's memories ("my memories of Paris in Photos", "…on Facebook"): never Ember's (memory-c4-1). */
-const APP_MEMORIES = /\bmemor(?:y|ies)\s+(?:of|about)\s+.*\s(?:in|on|from)\s+\p{Lu}/u;
+/**
+ * A photo app's or a social site's memories ("my memories of Paris in Photos", "…on Facebook"): never Ember's
+ * (memory-c4-1). Only by that app's name, never a place, a company or a month after "in", "on" or "from", and never
+ * "your" or "Ember's" memories ("Delete your memories about Priya from Acme" is Ember's: memory-v5-5).
+ */
+const APP_MEMORIES = /(?<!\b(?:[Yy]our|[Ee]mber['’]s)\s+)\bmemor(?:y|ies)\s+(?:of|about)\s+.*\s(?:in|on|from)\s+(?:the\s+)?(?:(?:Google|Apple|Amazon)\s+)?(?:Photos|iCloud|Facebook|Instagram|Snapchat|Flickr|OneDrive|Gallery|Timehop)\b/u;
 /**
  * "Forget Priya", "forget Priya Shah", "forget Priya's birthday", "forget everything about Priya": a name, capitalised as
  * names are, never a word of the conversation ("Forget It", "Forget The last part"): memory-v1. Never an app, a day, a
@@ -340,7 +345,7 @@ const NOT_SOMEONE = new Set([
   "calendar", "notes", "photos", "music", "maps", "messages", "reminders", "contacts", "python", "java", "docker", "linux", "ubuntu",
   "windows", "fedora", "steam", "netflix", "amazon", "facebook", "twitter", "reddit", "google", "copilot", "gimp", "inkscape", "blender",
   "dropbox", "drive", "sheets", "docs", "evernote", "todoist", "kubernetes", "terraform", "postgres", "mysql", "redis", "nginx", "figma",
-  "gitlab", "bitbucket", "jupyter", "eduroam", "starbucks",
+  "gitlab", "bitbucket", "jupyter", "eduroam", "starbucks", "git", "github",
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february", "march", "april", "may", "june",
   "july", "august", "september", "october", "november", "december", "today", "tomorrow", "yesterday", "tonight", "weekend", "christmas",
   "downloads", "documents", "desktop", "pictures", "videos", "home", "trash",
@@ -350,13 +355,22 @@ const NOT_SOMEONE = new Set([
 ].map(fold));
 /** Months that are given names too ("June's birthday", "May Smith"). */
 const NAMED_MONTHS = new Set(["april", "may", "june", "august"]);
+/** Capitalised words after a month that name what happens then, never a surname ("May Day", "June Sprint"): memory-v5-6. */
+const MONTH_THINGS = new Set(["day", "days", "sprint", "sprints", "release", "releases", "bank", "holiday", "holidays", "fools", "fool",
+  "meeting", "meetings", "review", "reviews", "report", "reports", "budget", "deadline", "launch", "update", "updates", "payroll", "rent",
+  "invoice", "invoices", "sale", "sales", "plan", "plans", "schedule", "trip", "party", "event", "events", "quarter", "close", "newsletter",
+  "issue", "edition", "numbers", "figures", "results", "targets", "goals", "demo", "retro", "offsite", "conference", "bills", "bill", "exams",
+  "exam", "term", "break", "recap", "roadmap", "rollout", "sync", "standup", "deploy", "deployment", "milestone", "cycle", "batch", "cohort",
+  "intake", "vacation", "festival", "fair", "summit", "hackathon", "payday", "rota", "calendar", "challenge", "retreat", "showers", "wedding"]);
 /**
  * Whether `words` ("Priya", "Priya Shah") are a name Ember may keep facts about. April, May, June and August are names
- * with a surname, or as `named` (a detail or "everything about" after them), never alone ("Forget June"): memory-c4-3.
+ * with a surname, or as `named` (a detail or "everything about" after them), never alone ("Forget June"): memory-c4-3;
+ * nor before a word for what happens then ("Forget May Day", "Forget June Sprint"): memory-v5-6.
  */
 function isName(words: string, named = false): boolean {
   const ws = words.split(/\s+/);
-  const month = (w: string, i: number) => NAMED_MONTHS.has(fold(w)) && (named || (i === 0 && ws.length > 1 && !NAMED_MONTHS.has(fold(ws[1]!))));
+  const month = (w: string, i: number) => NAMED_MONTHS.has(fold(w))
+    && (named || (i === 0 && ws.length > 1 && !NAMED_MONTHS.has(fold(ws[1]!)) && !MONTH_THINGS.has(fold(ws[1]!))));
   return ws.every((w, i) => NAME_WORD.test(w) && !NOT_A_NAME.test(w) && (!NOT_SOMEONE.has(fold(w)) || month(w, i)))
     && (!NOT_SOMEONE.has(fold(words)) || (ws.length === 1 && month(ws[0]!, 0)));
 }
