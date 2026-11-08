@@ -205,7 +205,7 @@ describe("what memory never keeps", () => {
     ["The login for the NAS is Tr0ub4dor&3"], ["Credentials for the NAS are Tr0ub4dor&3"], ["The router creds: P@ssw0rd"],
     ["my gmail login was hunter22."], ["The VPN credentials are 'blue-sky-99' for now"], ["The user's work login is j5m1th!\nTheir desk is on floor 3"],
   ])("refuses %j, a login said as its password (safety-privacy-1)", text => {
-    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+    expect(memoryRefusal(text)).toBe("a login said that way may be its password");
   });
 
   // A login's user name, address, protocol or when it happened, and credentials in code: still facts (safety-privacy-1).
@@ -218,6 +218,26 @@ describe("what memory never keeps", () => {
     ["The credentials are base64"], ["credentials are sha256"],
   ])("keeps %j, which names no password (safety-privacy-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // A user at a computer named by its address or as localhost, a handle, a host with its port and a variable in code
+  // name no password: refused, they blocked a README in Projects and an SSH question (safety-privacy-v4-1).
+  it.each([
+    ["The admin login is admin@localhost."], ["The SSH login for the build box is deploy@10.0.0.5."],
+    ["My SSH login is pi@192.168.1.20, why does the deploy step fail?"], ["The user's SSH login for their Raspberry Pi is pi@192.168.1.20"],
+    ["The NAS login is admin@192.168.1.10"], ["The login is root@127.0.0.1:2222"], ["The user's GitHub login is @octocat"],
+    ["Login is localhost:8080"], ["The login is nas.local:5000"], ["credentials: process.env.AWS_CREDS_V2,"],
+  ])("keeps %j, a user at a computer or a handle (safety-privacy-v4-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // Still refused: a password with an at sign in it, and a user name with a digit, which said as a login is as often its
+  // password; the model is told that, not that the user name is a password (safety-privacy-v4-1).
+  it.each([
+    ["The login is P@ssw0rd"], ["The login is P@ss-w0rd!"], ["The login is Tr0ub@dor-3"], ["The router login is @dmin123"], ["The login is p@ss.word1"],
+    ["The login is admin@nas1"], ["The user's GitHub login is octocat2"], ["The user's Minecraft login is Steve123"],
+  ])("still refuses %j as a login that may be its password (safety-privacy-v4-1)", text => {
+    expect(memoryRefusal(text)).toBe("a login said that way may be its password");
   });
 
   // A six-digit PIN code is a postcode only after an address (a road, a city, a state, an office), never after a lock, a

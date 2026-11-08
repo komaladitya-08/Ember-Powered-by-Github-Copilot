@@ -168,10 +168,16 @@ const LOGIN_PAIR = new RegExp(
  * "was" ("login: user1" in a file names a user), and the value where what is said ends, so a user name, an email or web
  * address, a variable ("credentials: ${{ secrets.DEPLOY_KEY }}"), a protocol or an encoding ("the login is OAuth2", "the
  * credentials are base64"), a time, a date or a year ("Last login was 10:30", "the login is 10am-6pm"), a status ("Login
- * is 404ing") and how it is made ("the credentials are AES-256 encrypted", "the login is 2FA-protected") stay facts.
+ * is 404ing") and how it is made ("the credentials are AES-256 encrypted", "the login is 2FA-protected") stay facts. So do
+ * a user at a computer named by its address or as localhost ("deploy@10.0.0.5", "admin@localhost"), a handle with no digit
+ * ("@octocat"), a host with its port ("localhost:8080") and an environment variable in code ("process.env.AWS_CREDS_V2"):
+ * safety-privacy-v4-1. A user at a computer named otherwise ("admin@nas1") is written as a password often is ("P@ss-w0rd",
+ * "Tr0ub@dor-3"), so it is refused, as a user name with a digit is (fail closed).
  */
 const AUTH_SCHEME = String.raw`oauth|saml|fido|ntlm|ntlmv|kerberos|krb|ldaps?|openid|oidc|u2f|webauthn|totp|hotp|2fa|mfa|sso|pkce|tls|ssl|base|sha|md5|aes|rsa|hmac|utf|jwt|x509`;
 const LOGIN_VALUE = String.raw`["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))(?![^\s@"'”]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:[\s.,;!?"'”]|$))`
+  + String.raw`(?![a-z_][\w.-]*@(?:\d{1,3}(?:\.\d{1,3}){3}|localhost)(?::\d{1,5})?(?:[\s.,;!?)"'”]|$))(?!@[a-z_][a-z_.-]*(?:[\s.,;!?)"'”]|$))`
+  + String.raw`(?!(?:localhost|(?:[a-z0-9-]+\.)+[a-z]{2,}):\d{1,5}(?:[\s.,;!?)"'”]|$))(?!(?:process\.env|import\.meta\.env|os\.environ|env)[.[])`
   + String.raw`(?![a-z][a-z0-9+.-]*:\/\/|www\.)(?![$%{])(?!(?:${AUTH_SCHEME})\d*(?:[\s.,;!?"'”]|$))(?!(?:19|20)\d\d(?:[\s.,;!?"'”]|$))`
   + String.raw`(?!\d{1,4}(?:[-/:.]\d{1,4})+(?:am|pm)?(?:[\s.,;!?"'”]|$))(?!\d{1,2}(?::\d\d)?\s?(?:am|pm)\b)(?!\d+(?:ing|ed|s)\b)(?![^\s"'”]{1,11}-[a-z]{3,}(?:[\s.,;!?"'”]|$))`
   + String.raw`(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}["'”]?(?=\s*(?:$|\n)|[.,;!?)]|\s+[-–—]|\s+(?:and|but|so|for|on|at|to|in|with|from|which|if|or)\b)`;
@@ -277,9 +283,12 @@ export function memoryRefusal(text: string): string | null {
   const pins = withoutPostcodes(text);
   if (TOLD_SECRET.test(text) || BARE_PASSWORD.test(text) || BARE_PIN.test(pins) || LOGIN_PASS.test(text) || PLACE_CODE.test(text)
     || CODE_FOR_PLACE.test(text) || BARE_CVV.test(text) || USED_AS.test(text) || LOGIN_PAIR.test(text) || WIFI_KEY.test(text) || SEED_WORDS.test(text)
-    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(text) || TOLD_TOKEN.test(text) || ADMIN_PAIR.test(text) || VALUE_FIRST.test(text) || TOLD_LOGIN.test(text)) {
+    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(text) || TOLD_TOKEN.test(text) || ADMIN_PAIR.test(text) || VALUE_FIRST.test(text)) {
     return "it holds a password, PIN or code";
   }
+  // Said as a login's one value, it may be the user name ("my login is jsmith42"): the model is told it may be the
+  // password, never that it is one (safety-privacy-v4-1).
+  if (TOLD_LOGIN.test(text)) return "a login said that way may be its password";
   for (const m of text.match(CARD) ?? []) {
     const digits = m.replace(/\D/g, "");
     if (digits.length >= 13 && luhn(digits)) return "it holds a card number";

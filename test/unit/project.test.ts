@@ -90,6 +90,14 @@ it("sends a wiring note, a security guide and a request about a board's pins, wh
   await expect(prompt([pin])).rejects.toThrow("contain a password");
 });
 
+it("sends a README and a request that name a user at a computer, which hold no password (safety-privacy-v4-1)", async () => {
+  const readme = await file("README.md", "# Deploy\n\nThe admin login is admin@localhost.\nThe SSH login for the build box is deploy@10.0.0.5.\n");
+  const result = await projectPrompt([readme], "review", "My SSH login is pi@192.168.1.20, why does the deploy step fail?", new AbortController().signal, privateDir);
+  expect(result).toContain("deploy@10.0.0.5");
+  const nas = await file("nas.txt", "The NAS login is Tr0ub4dor&3.");
+  await expect(prompt([nas])).rejects.toThrow("contain a password");
+});
+
 const diffAnswer = (diff: string) =>"A change to review.\n\n" + ["```diff", diff, "```"].join("\n");
 const diff = (name: string, hunks: string) => `--- a/${name}\n+++ b/${name}\n${hunks}`;
 
