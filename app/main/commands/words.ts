@@ -75,6 +75,8 @@ export interface Opt {
   name: string;
   /** Its value, when it takes one (null: unresolved). */
   value?: string | null;
+  /** An unresolved value attached to it (`--arg-file="$d/x"`): its pieces, as Arg.parts (commands-remote-w5-6). */
+  parts?: Arg["parts"];
   /** The index of the argument it came from. */
   at: number;
 }
@@ -123,6 +125,11 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       if (spec.stopAtOperand) restAt = k + 1;
       break;
     }
+    // Before a command, a word Ember can't see all of that starts as an option with its value attached
+    // (`--arg-file="$d/x"`, `-a"$d/x"`) is that option, its value unseen, so the command after it is still found and
+    // the value judged by its pieces (commands-remote-w5-6).
+    const attached = v === null && spec.stopAtOperand && !a.param ? attachedOption(a, spec) : null;
+    if (attached) { opts.push(...attached.map(o => ({ ...o, at: k }))); continue; }
     if (v === null || !v.startsWith("-") || v === "-") {
       if (spec.stopAtOperand) {
         restAt = k;
@@ -162,6 +169,30 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
     }
   }
   return { opts, operands, restAt, missingValue };
+}
+
+/**
+ * The options a word Ember can't see all of stands for when its written start is an option whose value is attached
+ * (`--arg-file="$d/x"`, `-a"$d/x"`, `-0a"$d"`), the value's pieces kept; null when it isn't one (`-$x`, `--$x`, `-r$x`).
+ */
+function attachedOption(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
+  const parts = a.parts ?? [];
+  let n = 0;
+  let lead = "";
+  for (; n < parts.length && typeof parts[n] === "string"; n++) lead += parts[n] as string;
+  const rest = parts.slice(n);
+  if (rest.length === 0) return null;
+  const long = /^--([A-Za-z][A-Za-z0-9-]*)=/.exec(lead);
+  if (long) return [{ name: `--${long[1]}`, value: null, parts: [lead.slice(long[0].length), ...rest] }];
+  if (!/^-[A-Za-z0-9]/.test(lead) || lead.startsWith("--")) return null;
+  const takes = `${spec.shortValue ?? ""}${spec.shortOptional ?? ""}${spec.shortNumeric ?? ""}`;
+  const out: Omit<Opt, "at">[] = [];
+  for (let j = 1; j < lead.length; j++) {
+    const c = lead[j];
+    if (takes.includes(c)) return [...out, { name: `-${c}`, value: null, parts: [lead.slice(j + 1), ...rest] }];
+    out.push({ name: `-${c}` });
+  }
+  return null;
 }
 
 /** Whether a parsed line has a short option (`"r"`) or a long one (`"recursive"`, also when abbreviated to 3+ letters). */

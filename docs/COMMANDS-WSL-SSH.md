@@ -369,7 +369,7 @@ of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or 
 folder to test or print it (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
 input while nothing takes what it prints (`grep -q ember <<< "$p"`, `wc -c <<< "$p"`), runs, unless it is exported to a
 program (`export p`, `set -a`) or a program gets it some other way: as its own name (`"$p/bin/ember"`), through a
-wrapper's option (`xargs -a "$p/settings.json"`), on its input (`xargs rm -rf <<< "$p"`, `read -r f <<< "$p"; rm -rf
+wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.json"`), on its input (`xargs rm -rf <<< "$p"`, `read -r f <<< "$p"; rm -rf
 "$f"`, `mapfile -t a <<< "$p"; rm -rf "${a[@]}"`) or through `${p:?}`, `${p:-…}` or `${p%/}`. Handed to a program that
 may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
 does.

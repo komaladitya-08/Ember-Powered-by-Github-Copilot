@@ -2861,7 +2861,8 @@ function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Recor
       const w = args[o.at]?.v ?? "";
       const next = args[o.at + 1];
       const apart = next !== undefined && next.v === v && (w === o.name || (!w.startsWith("--") && w.endsWith(o.name.slice(1))));
-      const a: Arg = apart ? next : v === null ? { v: null, raw: "?", glob: false } : lit(v);
+      // A value attached to it that Ember can't see all of (`--arg-file="$d/x"`) keeps its pieces (commands-remote-w5-6).
+      const a: Arg = apart ? next : v === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(v);
       if (a.v === null && askUnseen) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog || "the program"} gets.`);
       const obj = h.e.usePath(a, use === "into" ? "write" : use, h.sc);
       if (use === "into" && obj.abs !== null) h.e.judgeInside(obj.abs, "write", h.sc, obj.text);

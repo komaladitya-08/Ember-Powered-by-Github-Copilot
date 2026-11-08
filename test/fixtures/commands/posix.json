@@ -15693,6 +15693,20 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "d=~/.config/ember; xargs --arg-file=\"$d/settings.json\" echo",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "d=~/.config/ember; xargs -a\"$d/settings.json\" echo",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }

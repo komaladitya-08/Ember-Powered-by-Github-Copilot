@@ -224,6 +224,27 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(classifyCommand("f=notes.txt; xargs -a \"$f\" echo", "bash", contextOf("linux")).findings).toEqual([]);
   });
 
+  it("refuses Ember's folder through a variable in a wrapper's option written with its value attached, as when it is apart (commands-remote-w5-6)", () => {
+    const decided = (cmd: string) => classifyCommand(`d=~/.config/ember; ${cmd}`, "bash", contextOf("linux"));
+    for (const [cmd, apart] of [
+      ["xargs --arg-file=\"$d/settings.json\" echo", "xargs --arg-file \"$d/settings.json\" echo"], ["xargs -a\"$d/settings.json\" echo", "xargs -a \"$d/settings.json\" echo"],
+      ["xargs -0a\"$d/settings.json\" echo", "xargs -0 -a \"$d/settings.json\" echo"], ["uv run --cache-dir=\"$d\" x", "uv run --cache-dir \"$d\" x"],
+      ["uv run --directory=\"$d\" x", "uv run --directory \"$d\" x"], ["parallel --wd=\"$d\" echo ::: a", "parallel --wd \"$d\" echo ::: a"],
+    ] as const) {
+      const cls = decided(cmd);
+      expect(cls.refuse?.rule, cmd).toBe("ember.path");
+      expect(cls.refuse?.says, cmd).toBe(decided(apart).refuse?.says);
+      expect(cls.findings.map(f => f.rule), cmd).not.toContain("unclear.program");
+    }
+    // Another value is the file it reads, and the command after it is still the one named.
+    const other = classifyCommand("f=notes.txt; xargs --arg-file=\"$f\" echo", "bash", contextOf("linux"));
+    expect(other.refuse?.rule).toBeUndefined();
+    expect(other.findings.map(f => f.rule)).not.toContain("unclear.program");
+    expect(classifyCommand("f=list.txt; xargs -a\"$f\" rm -rf", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("posix.rm");
+    // A word whose option Ember can't tell is still the command it may be.
+    expect(classifyCommand("xargs -$X echo", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("unclear.program");
+  });
+
   it("runs a text filter that only reads a variable set to Ember's folder on its input, and refuses a program that acts on it (commands-remote-w5-4)", () => {
     const refused = (cmd: string) => withoutReadFlow(classifyCommand(`d=~/.config/ember; ${cmd}`, "bash", contextOf("linux")), "bash").refuse?.says;
     for (const cmd of [
