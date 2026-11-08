@@ -45,7 +45,9 @@ They share one emotion rig, so switching never changes behaviour.
     step: between blinks and fidgets the overlay, the handle and Home's hero draw it about 6 times a second
     (`restingGap`, `RESTING_FRAME_MS`), waking in time for the next one, where they drew 15–24 times a second. With
     the blinks and the first minute's fidgets drawn at their own rate, the overlay and the handle still draw 11–16
-    times a second awake at rest (the pointer moves often enough to keep Ember there); while Home sits behind the
+    times a second awake at rest (the pointer moves often enough to keep Ember there). The eyes count as still once
+    less than a tenth of a pixel of their travel is left (`LOOK_STILL`), which saves the handle, whose eyes wander
+    because the pointer isn't over it, about a tenth of its drawings (14.7 to 13.6 a second); while Home sits behind the
     window you are working in, its still faces aren't drawn at all until it takes the focus, the pointer comes over
     it or something changes (`homeFrameGap`);
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until

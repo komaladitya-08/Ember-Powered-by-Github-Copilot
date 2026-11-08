@@ -90,10 +90,11 @@ export const COMPOSER_SAYS = {
 /**
  * A Problem line as Home shows it (home-7): Home is Ember's settings, so where the line sends the user to "Ember's
  * settings (Ctrl+Alt+E)" it names the section that helps, Models & connections, and `settings` says the row offers a
- * way there (PROBLEM_SETTINGS). Its words are Ember's own (friendlyError, the connection's notices), never a model's.
+ * way there (PROBLEM_SETTINGS), as it does where the line names that section itself (LOST_GAVE_UP's Check again:
+ * reliability-performance-r3-2). Its words are Ember's own (friendlyError, the connection's notices), never a model's.
  */
 export function problemInHome(text: string): { text: string; settings: boolean } {
-  const settings = /\bsettings\b/i.test(text);
+  const settings = /\bsettings\b|\bModels & connections\b/i.test(text);
   return { text: text.replace(/\bOpen settings\b/g, "Open Models & connections").replace(/\bin (?:Ember's )?settings(?: \([^)]*\))?/g, "in Models & connections"), settings };
 }
 /** A Problem line's way to Models & connections, in Home (as the status panel's own button says it). */

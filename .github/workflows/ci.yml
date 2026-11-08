@@ -166,6 +166,9 @@ jobs:
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_PROJECT_TEST=1 EMBER_CONVERSATION_LIVE=1 EMBER_ATSPI_TEST=1 EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1 \
             dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts test/integration/action-link.test.ts test/integration/keybuffer-live.test.ts test/integration/overlay-shape-live.test.ts test/integration/handle-menu-live.test.ts test/integration/handle-card-whole-live.test.ts test/integration/bubble-motion-live.test.ts test/integration/project-live.test.ts test/integration/conversation-history-live.test.ts test/integration/approval-ui-live.test.ts test/integration/task-controls-live.test.ts test/integration/run-marker-live.test.ts
+      # The budget docs/DEVELOPING.md records: it fails only on a large regression, never on noise (rp-4).
+      - name: What Ember costs awake at rest, against its budget (16 % of one core, 950 MB)
+        run: sudo -u ci env "PATH=$PATH" HOME=/home/ci dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs --max-cpu 16 --max-pss 950
 
   package:
     name: Package (RPM, AppImage) and install on rockylinux:8

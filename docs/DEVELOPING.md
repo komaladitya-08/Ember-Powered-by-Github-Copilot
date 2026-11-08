@@ -808,7 +808,7 @@ request that fits none of these (or isn't in English) gets no acknowledgement: a
 (app/main/acknowledge.ts).
 
 A streamed answer is spoken from its first clause once that has at least 18 characters and 4 words ("I can't do that
-one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
+one,"), on the answer's first line only. Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
 character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
 field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
@@ -821,14 +821,21 @@ characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of spee
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
 it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into
 a list, three or more short lines in a row that each start with a capital (a list without its markers), two or more
-such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…") and a
+such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…", also
+after a blank line, and when that line was said on its own as the answer streamed), two or more lines in a row that
+each start with a short label and its colon ("Step 1: Open Settings", "**Option A:** Keep it", also when a streamed
+step was cut at its comma: "Step 1: Open Settings,", then "then go to Privacy.") and a
 paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
-its number ("2. Choose Privacy", never "Open Settings 2."), and a streamed list is said as each item's line ends, not
-after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
+its number ("2. Choose Privacy", never "Open Settings 2."), a line ending with a colon ends its piece, so a label is
+never cut from its step ("To do this:", then "Step 1: Open Settings…"), and a streamed list is said as each item's line
+ends, not after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
 last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
 "Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
-key" as "the right arrow key"), a range's dash as "to" ("$5-$10", "10:30–11:00", "5–10"), and other emoji and typed
+key" as "the right arrow key", "Press ← or →" as "left arrow or right arrow") or, before the word "arrow", by its
+direction ("the ← and → arrow keys" as "the left and right arrow keys"), an arrow between two words as "to", an arrow
+starting a line as its bullet, a range's dash as "to" ("$5-$10", "10:30–11:00", "5–10"; never a spaced hyphen between
+amounts, a sum, which is "minus" before "=": "$2,000 - $1,500 = $500"), and other emoji and typed
 smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
 language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by
@@ -838,8 +845,10 @@ once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kep
 list's "1. La La Land." is Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters
 English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
 typed in another language (three different short words of it outside quotes, and none only English writes:
-`requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer. A reply too short to tell follows that
-request's language unless it has as many English short words ("It means that's life."), and a message that ends before
+`requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that
+request's language unless it has as many English short words outside its quotes ("It means that's life.", never "Ça
+veut dire « I don't know »."); one that quotes something follows it only where its own words have more of that
+language's short words than English's ("Literally, "I don't know"." and "In English: "thank you"." are Kitten's), and a message that ends before
 a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
 pieces Kitten is still making are done.
 
@@ -882,7 +891,9 @@ regression alongside the Electron smoke.
   4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main threads. Most of the
   drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open decisions (docs/ASSISTANT.md).
 - `--max-cpu 16 --max-pss 950` is the budget for a change: past either it says so and exits 1. It sits above those
-  figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's.
+  figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job
+  runs it with that budget as its last step (the same run here, 2026-11-08: 841 MB and 12.3 % with the machine
+  shared, in 57 s).
 
 ### Connecting Copilot
 
@@ -1465,7 +1476,7 @@ borrowed mouse.
 | `AllSigned` or `Restricted`, or scripts turned off | Says "Your organisation allows only signed PowerShell scripts…". The helper isn't signed (PLAN.md §9), so an administrator has to allow it |
 | `RemoteSigned`, and the helper's files carry the Mark-of-the-Web (a zip downloaded by a browser and extracted by Explorer) | Says "Windows blocked Ember's accessibility helper because it came from the internet" and offers **Unblock it**, which removes the `Zone.Identifier` stream from exactly `ember_uia.ps1` and `ember_uia.cs` (what `Unblock-File` does), only when the user presses it. The host starts the bridge again on its next request |
 | Constrained Language Mode (AppLocker, WDAC, `__PSLockdownPolicy`) | Says "Windows PowerShell is restricted on this computer…". `Add-Type` can't run, and the host doesn't try again until Ember restarts |
-| Any other failed start | The host tries again after 5 s, 30 s and 2 min, then every 10 min |
+| Any other failed start | The host tries again after 5 s, 30 s and 2 min, then every 10 min. A bridge that stopped before it was ready once (an antivirus scan, a crash) is said as a stop that may pass; twice in a row, Ember says its helper isn't working and points to the setup check until a start works |
 
 For an endpoint-protection or application-control allow-list, the setup check's **Helper command line** row prints the
 exact command line, the script's path, and the compiled DLL's path and SHA-256. When Group Policy turns on PowerShell

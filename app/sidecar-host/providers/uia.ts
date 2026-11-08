@@ -553,13 +553,17 @@ export class UiaProvider implements AxProvider {
 
   /**
    * Why a bridge that exited before its ready line couldn't start: PowerShell refused the script for an execution
-   * policy when it wrote no line at all and its stderr says so (PROTOCOL.md); anything else is an ordinary failure.
+   * policy when it wrote no line at all and its stderr says so (PROTOCOL.md); anything else is an ordinary failure. The
+   * first is said as a stop, which may pass (an antivirus scan, a crash); one after a start that failed already, with
+   * none ready since, as a bridge that can't start (helperCantRun: the setup check, never "try again in a moment" for
+   * good: reliability-performance-i3). `this.failures` doesn't count this one yet.
    */
   private exitBeforeReady(b: Bridge, how: string): [string, Omit<StartFailure, "at" | "why">] {
     if (b.lines === 0 && POLICY_REFUSAL.test(b.stderr)) {
       return [`the accessibility bridge could not start: ${POLICY_DETAIL}`, { kind: "policy", detail: POLICY_DETAIL, marked: this.marked() }];
     }
-    return [`the accessibility bridge stopped (${how})`, { kind: "other", detail: `Windows PowerShell stopped before the bridge was ready (${how})` }];
+    const why = this.failures > 0 ? `the accessibility bridge could not start (it stopped before it was ready again: ${how})` : `the accessibility bridge stopped (${how})`;
+    return [why, { kind: "other", detail: `Windows PowerShell stopped before the bridge was ready (${how})` }];
   }
 
   /** Keeps the ready line's DPI awareness, and says once when the threads' and the process's differ (R22). */

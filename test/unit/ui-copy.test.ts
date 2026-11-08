@@ -25,6 +25,7 @@ import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
+import { lostWords } from "../../app/main/agent/presenter";
 import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerCardShown, providerConsentText, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
@@ -1139,6 +1140,15 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     // Nothing in settings helps: the line as it was, and no button.
     expect(conv.problemInHome("Copilot had a problem on its side. Try again in a moment.")).toEqual({ text: "Copilot had a problem on its side. Try again in a moment.", settings: false });
     expect(conv.PROBLEM_SETTINGS).toBe("Models & connections…");
+  });
+
+  it("offers Models & connections… on the line that says Ember stopped reconnecting, whose Check again is there (reliability-performance-r3-2)", () => {
+    for (const w of [lostWords(false), lostWords("user")]) {
+      expect(conv.problemInHome(w.gaveUp)).toEqual({ text: w.gaveUp, settings: true });
+      // Reconnecting by itself, or connected again: nothing in Models & connections helps.
+      expect(conv.problemInHome(w.reconnecting).settings).toBe(false);
+      expect(conv.problemInHome(w.reconnected).settings).toBe(false);
+    }
   });
 
   it("asks whether my model server on this computer is running, never to wait until I'm online (integrations-r2-2)", () => {

@@ -448,6 +448,57 @@ describe("restingGap: how often a face at rest is drawn (rp-4)", () => {
     return { perSecond: draws / (until / 1000), blinks, seconds: rig.update(0).t - t0 };
   }
 
+  it("counts the eyes as still once what is left of their travel is well under a pixel, not for a quarter of a second more (rp-4)", () => {
+    seeded(13);
+    const rig = resting();
+    // A moment with nothing planned for a while (no blink, fidget or saccade due), then the eyes jump a long way.
+    for (let i = 0; i < 1200 && !(rig.motion === "still" && rig.nextChange() > 1.5); i++) { rig.lookAt(0.3, 0.2); rig.update(1 / 60); }
+    expect(rig.nextChange()).toBeGreaterThan(1.5);
+    let t = 0, at: { x: number; y: number } | null = null, stillAfter = 0;
+    for (; t < 1.2; t += 1 / 60) {
+      rig.lookAt(-0.7, -0.4);
+      const pose = rig.update(1 / 60);
+      if (!at && t > 0.05 && rig.motion === "still") { at = pose.look; stillAfter = t; }
+    }
+    const end = rig.update(0).look;
+    expect(at).not.toBeNull();
+    // Before, the soft spring's last crawl kept it "gentle" (drawn at the lively rate) until about 0.42 s.
+    expect(stillAfter).toBeLessThan(0.34);
+    // What it still moves then: under a fiftieth of a look unit, a tenth of a pixel at Ember's size.
+    expect(Math.hypot(end.x - at!.x, end.y - at!.y)).toBeLessThan(0.02);
+  });
+
+  /**
+   * The handle's drawing at awake rest past the first minute, as handle/main.ts paces it (brisk at once, gentle every
+   * 33 ms, a still face restingGap's), never seeing the pointer (it isn't over the handle).
+   */
+  function handleAtRest() {
+    seeded(5);
+    const rig = new Rig();
+    let draws = 0, blinks = 0, wasShut = false, last = 0, planned = 0, at = 0;
+    while (at < 160_000) {
+      const now = Math.ceil(at / (1000 / 60)) * (1000 / 60);
+      const dt = frameSeconds(now - last, planned);
+      last = now;
+      const shut = rig.update(dt).face.open < 0.6 * NEUTRAL.open;
+      if (now >= 70_000) { draws++; if (shut && !wasShut) blinks++; }
+      wasShut = shut;
+      const m = rig.motion;
+      const gap = m === "brisk" ? 0 : m === "gentle" ? 33 : restingGap(rig, 66);
+      planned = gap > 66 ? gap : 0;
+      at = now + gap + 1;
+    }
+    return { perSecond: draws / 90, blinks };
+  }
+
+  it("a simulated handle that can't see the pointer draws its idle glances' last crawl less often, and keeps blinking (rp-4)", () => {
+    const now = handleAtRest();
+    // 13.0 a second before (the live handle drew 13.2-15.4); 11.5 now.
+    expect(now.perSecond).toBeLessThan(12);
+    // A blink every 2.5-5 s: at least 18 in the 90 s, each drawn shut.
+    expect(now.blinks).toBeGreaterThanOrEqual(18);
+  });
+
   it("a simulated overlay at awake rest draws at most 13 times a second, not 19, and misses no blink (rp-4)", () => {
     const every = overlayAtRest("every"), before = overlayAtRest("before"), now = overlayAtRest("now");
     expect(before.perSecond).toBeGreaterThan(18);

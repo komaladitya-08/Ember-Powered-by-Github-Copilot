@@ -156,6 +156,13 @@ const MAX_DRAW_DT = 1 / 20;
  * the overlay and the handle redrew 18-24 times a second for that, 11-15 % of a core with no GPU.
  */
 export const RESTING_FRAME_MS = 160;
+/**
+ * The eyes' speed (look units a second) under which they count as still (`Rig.motion`). Following the soft spring, what
+ * is left of their travel then is under a fiftieth of a look unit, a tenth of a pixel at Ember's size; at 0.05 the
+ * last crawl after each idle saccade was drawn at the lively rate for about 0.2 s more, and the handle, which never
+ * sees the pointer at rest (it isn't over it), drew 13-15 times a second for that (rp-4).
+ */
+const LOOK_STILL = 0.25;
 
 /**
  * How long a page may wait before drawing `rig` again, where it would otherwise wait `otherwise` ms (its own resting
@@ -299,7 +306,7 @@ export class Rig {
     // saccades at every frame cost the overlay about a point of a core).
     const glancing = look > 1.5 && this.saccade <= 0;
     if (this.hopY !== 0 || this.gestureAge < 0.8 || this.emoteAge < 0.8 || glancing || face > 1.5) return "brisk";
-    if (this.fidget || this.blinkT >= 0 || look > 0.05 || face > 0.05) return "gentle";
+    if (this.fidget || this.blinkT >= 0 || look > LOOK_STILL || face > 0.05) return "gentle";
     return "still";
   }
 

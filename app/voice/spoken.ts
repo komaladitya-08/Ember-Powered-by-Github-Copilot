@@ -76,6 +76,28 @@ const KEY_SAID: Readonly<Record<string, string>> = {
   ctrl: "Control", win: "Windows key", cmd: "Command", opt: "Option", esc: "Escape", del: "Delete", return: "Enter",
   pgup: "Page Up", pgdn: "Page Down",
 };
+/** Only an arrow's direction, before the word "arrow": "the ↑ arrow key" was "the up arrow arrow key" (voice-speaking-r3-1). */
+const DIRECTION: Readonly<Record<string, string>> = { "←": "left", "→": "right", "↑": "up", "↓": "down" };
+/** An arrow, a list of them ("← and →", "←/→", "↑↓"), or a spaced "->": said as arrowSaid decides. */
+const ARROWS = /[←→↑↓](?:(?:[ \t]*,?[ \t]+(?:and|or)[ \t]+|[ \t]*[,/][ \t]*|[ \t]*)[←→↑↓])*|(?<=[ \t])->(?=[ \t])/gi;
+
+/**
+ * An arrow (or a list of them) said for the ear (voice-speaking-2): before the word "arrow" by its direction ("the ← and
+ * → arrow keys" is "the left and right arrow keys"); one between two words as "to" ("Documents → Archive", "Back→Next"),
+ * unless it names a key: after "the" or "press", before "key", or before "to" ("Click Next → to go on" was "Next to to");
+ * any other by its name ("Press ← or → to move" was "left arrow or to to move").
+ */
+function arrowSaid(run: string, at: number, all: string): string {
+  const before = all.slice(Math.max(0, at - 8), at), after = all.slice(at + run.length, at + run.length + 12);
+  const each = (say: Readonly<Record<string, string>>) => run.replace("->", "→").replace(/[ \t]*\/[ \t]*/g, " or ").replace(/[←→↑↓](?=[←→↑↓])/g, "$& ").replace(/[←→↑↓]/g, a => say[a]);
+  // (A lower-case "a" only: "A → B → C" names no key.)
+  // (A lower-case "to" only, and never "to-do": "Microsoft 365 → To Do" names an app, not a key.)
+  const key = /\b(?:the|an|press|hit|tap|use|hold)[ \t]+$/i.test(before) || /\ba[ \t]+$/.test(before) || /^[ \t]+(?:keys?|buttons?|icons?|symbols?|signs?)\b/i.test(after) || /^[ \t]+to\b(?!-)/.test(after);
+  const between = /[\p{L}\p{N} \t]$/u.test(before) && /^[\p{L}\p{N} \t]/u.test(after);
+  const said = /^[ \t]+arrows?\b/i.test(after) ? each(DIRECTION) : (run === "→" || run === "->") && !key && between ? "to" : each(ARROW);
+  // Never joined to the word beside it ("Back→Next", "5→10").
+  return `${/[\p{L}\p{N}]$/u.test(before) ? " " : ""}${said}${/^[\p{L}\p{N}]/u.test(after) ? " " : ""}`;
+}
 
 /**
  * A pictograph (an emoji, a flag) with its skin tone, variation and the ones joined to it ("👨‍👩‍👧"): read aloud, Kitten says
@@ -153,14 +175,18 @@ const duration = (_m: string, h: string, m: string) => `${h} ${h === "1" ? "hour
 
 /**
  * A range between two amounts or two clock times ("$5-$10", "10:30–11:00"), or two numbers with an en dash ("5–10"):
- * its dash is said "to" (it was "5 dollars-10 dollars"). "555-1234", "1-2" and "5-star" keep their hyphen.
+ * its dash is said "to" (it was "5 dollars-10 dollars"). "555-1234", "1-2" and "5-star" keep their hyphen, and so does a
+ * spaced hyphen between two amounts, a sum ("$1,500 - $200 for fees" was said as a range: voice-speaking-c3-1).
  */
-const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?|(?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=[$£€¥]\d|\d{1,2}:\d{2}(?![\d:]))|(\d)[ \t]*–[ \t]*(?=\d)/g;
+const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)(?:-|[ \t]*–[ \t]*)(?=[$£€¥]\d)|((?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=\d{1,2}:\d{2}(?![\d:]))|(\d)[ \t]*–[ \t]*(?=\d)/g;
+/** A dash between two amounts that an equals sign follows is "minus" ("$2,000 - $1,500 = $500"). */
+const MINUS = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)[ \t]*[-–−][ \t]*(?=[$£€¥]\d[\d,]*(?:\.\d{1,2})?[ \t]*=)/g;
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
   return text
-    .replace(RANGE, (_m, from: string | undefined, digit: string | undefined) => `${from ?? digit} to `)
+    .replace(MINUS, "$1 minus ")
+    .replace(RANGE, (_m, amount: string | undefined, time: string | undefined, digit: string | undefined) => `${amount ?? time ?? digit} to `)
     .replace(PATH, pathSaid)
     .replace(AMOUNT, money)
     .replace(CLOCK, clock)
@@ -170,8 +196,13 @@ function sayable(text: string): string {
     .replace(/(?<![\w&#])#(\d+)\b/g, "number $1");
 }
 
-/** A list's item or a heading, as Markdown writes them; and a line that is a rule between parts. */
-const ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S/;
+/**
+ * A list's item (or a line an arrow starts, as a bullet: voice-speaking-r3-1) or a heading, as Markdown writes them; and
+ * a line that is a rule between parts.
+ */
+const ITEM = /^[ \t]*(?:[-*+→]|\d{1,9}[.)])[ \t]+\S/;
+/** An arrow starting a line, which ITEM takes for its bullet. */
+const ARROW_BULLET = /^[ \t]*→/;
 const HEADING = /^[ \t]{0,3}#{1,6}[ \t]+\S/;
 const RULE = /^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
 /** A line that ends as a sentence does already, or with a pause (a colon, a comma). */
@@ -181,36 +212,54 @@ const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
  * without its markers. A line wrapped inside a paragraph goes on in lower case ("folder and found").
  */
 const BARE_ITEM = (body: string) => body.length <= 40 && body.trim().split(/\s+/).length <= 4 && /^[ \t]*[\p{Lu}\p{N}]/u.test(body);
+/**
+ * A line that starts with a short label and its colon ("Step 1: Open Settings", "Option A: Keep it"): two or more in a
+ * row are a list's items, so a label is never said at the end of the step before it (voice-speaking-c3-2).
+ */
+const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}:[ \t]+\S/u;
 
 /**
  * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
  * own, so the voice pauses between them: "Firefox Files Terminal Mail" in one breath was heard as one name
  * (voice-speaking-3). A line wrapped inside a paragraph is left as it is, and so is what is only shown in the bubble.
+ * `ledIn`: a line ending with a colon, said already, leads into the first line. `lineStart`: the start of the first
+ * line, said already, so an arrow starting what is left of it is no bullet, and a label at its start still counts.
  */
-function endLines(text: string): string {
+function endLines(text: string, ledIn = false, lineStart = ""): string {
   const lines = text.split("\n");
+  const item = lines.map((l, i) => ITEM.test(l) && !(i === 0 && lineStart && ARROW_BULLET.test(l)));
   // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
-  const bare = lines.map(l => (l.trim() && !ITEM.test(l) && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
+  const bare = lines.map((l, i) => (l.trim() && !item[i] && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
   const run: number[] = [...bare];
   for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
   for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
-  // Lines of any length that a line ending with a colon leads into, each starting with a capital: two or more are a list
-  // without its markers too ("Here is the plan:\nStep one is to open it\nStep two is…").
+  // Lines of any length that a line ending with a colon leads into (perhaps after a blank line), each starting with a
+  // capital: two or more are a list without its markers too ("Here is the plan:\nStep one is to open it\nStep two is…").
+  const colon = (i: number) => (i < 0 ? ledIn : /:[ \t]*$/.test(lines[i]));
   const led = lines.map(() => false);
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
-    led[i] = !!l.trim() && !ITEM.test(l) && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || /:[ \t]*$/.test(lines[i - 1]));
+    led[i] = !!l.trim() && !item[i] && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || colon(i - 1) || (i > 0 && !lines[i - 1].trim() && colon(i - 2)));
   }
+  const label = lines.map((l, i) => LABEL.test(i === 0 ? lineStart + l : l));
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
-    const listed = led[i] && (led[i - 1] || led[i + 1]);
-    const alone = ITEM.test(body) || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || ITEM.test(next)));
+    const listed = (led[i] && (led[i - 1] || led[i + 1])) || (label[i] && (label[i - 1] || label[i + 1]));
+    const alone = item[i] || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || item[i + 1]));
     return alone ? `${body}.` : line;
   }).join("\n");
 }
 
-export function spokenText(markdown: string): string {
+/**
+ * What Ember says for `markdown`. `o.ledIn`: its first line follows a line ending with a colon that was said already, as
+ * a streamed answer is cut just after "Here's what I'll do:" (voice-speaking-3). `o.lineStart`: the start of its first
+ * line, said already, as a long first sentence is cut inside its line: an arrow starting the rest is no bullet ("
+ * → Accessibility" is "to Accessibility": voice-speaking-v4-3), and a label at the line's start still makes it a
+ * labelled step ("Step 1: Open Settings," said, then "then go to Privacy\nStep 2: …" ends the step before "Step 2":
+ * voice-speaking-v4-4).
+ */
+export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string } = {}): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
@@ -242,21 +291,19 @@ export function spokenText(markdown: string): string {
     // "2**8", "_config.yml" or "__init__.py".
     .replace(/(^|[\s(])(?:\*\*?|_(?=\p{L}+(?:[\s,;:!?)]|$)))(?=\p{L})/gu, "$1")
     .replace(/(?<=[\p{L}\p{N}.,!?;:])(?:\*\*?|_)(?=[\s.,!?;:)]|$)/gu, "");
-  const said = endLines(plain)
+  const said = endLines(plain, o.ledIn, o.lineStart)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
-    .replace(/^[ \t]*[-*+][ \t]+/gm, "")
+    .replace(/^[ \t]*[-*+→][ \t]+/gm, (m: string, at: number) => (at === 0 && o.lineStart && ARROW_BULLET.test(m) ? m : ""))
     .replace(/^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
     // Key chords as said ("Ctrl+Shift+T" is "Control Shift T", not "C T R L plus…"), and a path through menus or
     // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".
     .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
     .replace(/\s*›\s*(?=\S)/g, ", then ")
-    // An arrow named as a key or a symbol ("the → key", "the ← and → keys") by its name, one between two words
-    // ("Documents → Archive", "Back→Next") as "to", and any other by its name (voice-speaking-2).
-    .replace(/\b(the|a|an)([ \t]+)([←→↑↓])|([←→↑↓])(?=[ \t]+(?:keys?|arrows?|buttons?|icons?|symbols?|signs?)\b)/gi, (_m, det: string | undefined, space: string | undefined, named: string | undefined, before: string | undefined) => `${det ? `${det}${space}` : ""}${ARROW[named ?? before ?? ""]}`)
-    .replace(/\s+(?:→|->)\s+/g, " to ")
-    .replace(/(?<=\p{L})→(?=\p{L})/gu, " to ")
-    .replace(/[←→↑↓]+/g, run => [...run].map(a => ARROW[a]).join(" "))
+    // Arrows as arrowSaid says them (voice-speaking-2), one after its own direction once ("up ↑" was "up up arrow"),
+    // but not one between two directions or sides ("from right → left" is "right to left": voice-speaking-v4-2).
+    .replace(/\b(up|down|left|right)[ \t]*([←→↑↓])(?![←→↑↓]|(?<=→)[ \t]*(?:up|down|left|right|top|bottom|centre|center|middle)\b)/gi, (m, word: string, a: string) => (DIRECTION[a] === word.toLowerCase() ? word : m))
+    .replace(ARROWS, arrowSaid)
     // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
     .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ");
   return sayable(said).replace(/\n{2,}/g, "\n").trim();
@@ -275,7 +322,7 @@ const SCRIPTS: readonly [RegExp, string][] = [
  */
 const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   en: new Set("the a an and is are was were to of in on at by or from as do no he she it i you we they my your that this with for not have has what can will if so but all just there here".split(" ")),
-  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces".split(" ")),
+  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela".split(" ")),
   de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird".split(" ")),
   es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le".split(" ")),
   it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle".split(" ")),
@@ -327,8 +374,7 @@ export function speechLanguage(text: string): string | null {
  * pas ».") is English (voice-speaking-r2-1).
  */
 function languageOf(quoting: string, minDifferent: number): string | null {
-  const unquoted = quoting.replace(QUOTED, "$1 ");
-  const text = /\p{L}/u.test(unquoted) ? unquoted : quoting;
+  const text = outsideQuotes(quoting);
   const letters = text.match(/\p{L}/gu) ?? [];
   if (!letters.length) return null;
   for (const [script, lang] of SCRIPTS) {
@@ -352,6 +398,11 @@ const stopwords = (words: readonly string[], lang: string): string[] => words.fi
 
 /** Words in quotes ("what does 'no sé' mean?"): quoting another language doesn't make a request or a reply that language. */
 const QUOTED = /"[^"\n]*"|“[^”\n]*”|„[^“”\n]*[“”]|«[^»\n]*»|\u2018[^\u2019\n]*\u2019|(^|[\s(])'[^'\n]*'(?=[\s.,;:!?)]|$)/g;
+/** `text` less what it quotes, or all of it when it is all quotes. */
+function outsideQuotes(text: string): string {
+  const unquoted = text.replace(QUOTED, "$1 ");
+  return /\p{L}/u.test(unquoted) ? unquoted : text;
+}
 
 /**
  * The language a request was clearly typed in, or null: its words outside quotes need three different short words of
@@ -393,7 +444,8 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
  * (voice-speaking-r1), and a French reply's "Bien sûr !" was said by Kitten with English sounds (voice-speaking-11).
  * Until DECIDE_LETTERS letters have come, English-looking pieces are said at once; a piece that may be in another
  * language waits for more of the answer, as does every piece when the request was clearly typed in another language
- * (requestLanguage), unless it is clearly English. A message that ends shorter is judged by itself, or by the request's
+ * (requestLanguage), unless its words outside quotes are clearly English ("Ça veut dire « I don't know what you have »"
+ * isn't: voice-speaking-r3-2). A message that ends shorter is judged by itself, or by the request's
  * language when it can't be told and has fewer English words than that language's. A message before a tool call that
  * ends shorter decides nothing for the messages after it (voice-speaking-r2-1: "Sure, one moment." had fixed a whole
  * turn to the request's language).
@@ -427,7 +479,7 @@ export class AnswerLanguage {
       else if (end) {
         lang = found ?? this.followsRequest();
         if (!more) this.lang = lang;
-      } else if (found || (this.asked && !englishClearly(this.text)) || mayBeAnother(this.text)) return [];
+      } else if (found || (this.asked && !englishClearly(outsideQuotes(this.text))) || mayBeAnother(this.text)) return [];
     }
     const out = this.held.map(text => ({ text, lang: lang ?? null }));
     this.held = [];
@@ -437,13 +489,19 @@ export class AnswerLanguage {
   /**
    * The request's language for a reply too short to tell, unless the reply has as many English words as words of that
    * language ("It means that's life." to "what does c'est la vie mean?" is English): Kitten can say a name, and an
-   * English reply left unsaid, or read by another language's voice, is worse than "Claro." said by Kitten.
+   * English reply left unsaid, or read by another language's voice, is worse than "Claro." said by Kitten. What the
+   * reply quotes isn't counted: "Ça veut dire « I don't know »." is French, and "It's « je ne sais pas »." English
+   * (voice-speaking-r3-2). A reply that quotes something follows the request only where its own words have more of that
+   * language's short words than English's: "Literally, \"I don't know\".", "In English: \"thank you\"." and "Gracias
+   * means \"thank you\"." have neither, and are English (voice-speaking-v4-1).
    */
   private followsRequest(): string | null {
     if (!this.asked) return null;
-    const words = wordsBesidesNames(this.text);
-    const english = stopwords(words, "en").length;
-    return english && english >= stopwords(words, this.asked).length ? null : this.asked;
+    const own = outsideQuotes(this.text);
+    const words = wordsBesidesNames(own);
+    const english = stopwords(words, "en").length, asked = stopwords(words, this.asked).length;
+    if (own !== this.text) return asked > english ? this.asked : null;
+    return english && english >= asked ? null : this.asked;
   }
 }
 

@@ -1135,14 +1135,15 @@ export class Presenter {
 
   /**
    * Copilot is connected again after the problem that said `text` (host.ts lost: "I'm reconnecting; ask me again in a
-   * moment."): a bubble still saying so says it is back now, keeping its Try again and the time it had (rp-6: it said it
-   * was reconnecting for about 10 s after it had, with no button). Anything else on screen is left alone.
+   * moment.", or that it had stopped reconnecting: GAVE_UP): a bubble still saying so says it is back now, keeping its Try
+   * again and the time it had (rp-6: it said it was reconnecting for about 10 s after it had, with no button), and not
+   * the Open settings that no longer helps (reliability-performance-r3-2). Anything else on screen is left alone.
    */
   reconnected(text: string): void {
     const b = this.state.bubble;
     if (!b.visible || b.mood !== "error" || b.thought !== forBubble(text) || this.busy) return;
     const again = b.actions.some(a => a.id === TRY_AGAIN.id);
-    this.apply({ bubble: { ...b, mood: "idle", title: "Connected again", thought: again ? RECONNECTED_RETRY : RECONNECTED } });
+    this.apply({ bubble: { ...b, mood: "idle", title: "Connected again", thought: again ? RECONNECTED_RETRY : RECONNECTED, actions: b.actions.filter(a => a.id === TRY_AGAIN.id) } });
   }
 
   /**

@@ -70,6 +70,48 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["Read pages 5–10, from 2020–2024.", "Read pages 5 to 10, from 2020 to 2024."],
   ])("%j is said %j, an arrow by its name and a range with its 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
+  it.each([
+    ["Press the ↑ arrow key.", "Press the up arrow key."],
+    ["Use the ← and → arrow keys to move.", "Use the left and right arrow keys to move."],
+    ["Use the ↑ and ↓ arrow keys, or the ←/→ arrows.", "Use the up and down arrow keys, or the left or right arrows."],
+    ["Click the ↓ arrow next to the name.", "Click the down arrow next to the name."],
+    ["Press the ↓ arrow, then the → arrow.", "Press the down arrow, then the right arrow."],
+    ["Sales are up ↑ this month.", "Sales are up this month."],
+    // An arrow at the start of a line is its bullet, and never joins one line to the next with a "to".
+    ["→ Open the file\n→ Save it", "Open the file.\nSave it."],
+  ])("%j is said %j, an arrow before the word 'arrow' by its direction alone (voice-speaking-r3-1)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["Press ← or → to move.", "Press left arrow or right arrow to move."],
+    ["Click Next → to continue.", "Click Next right arrow to continue."],
+    ["Press → twice, then Enter.", "Press right arrow twice, then Enter."],
+    ["Go Settings → Privacy → Camera.", "Go Settings to Privacy to Camera."],
+    ["Pages 5→10, then Back →Next, and A → B → C.", "Pages 5 to 10, then Back to Next, and A to B to C."],
+    ["Press Shift+→, or →.", "Press Shift+right arrow, or right arrow."],
+  ])("%j is said %j, an arrow in a list or named as a key never as 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["Move it from right → left.", "Move it from right to left."],
+    ["Swipe from the right → left edge.", "Swipe from the right to left edge."],
+    ["Drag the window from top-right → bottom-left.", "Drag the window from top-right to bottom-left."],
+    ["Text direction: right → left", "Text direction: right to left"],
+    // A capitalised "To" names something ("To Do"), so the arrow before it is "to" as between any two words.
+    ["Open Microsoft 365 → To Do.", "Open Microsoft 365 to To Do."],
+    ["Open Microsoft 365 → To-do list.", "Open Microsoft 365 to To-do list."],
+    // As before: an arrow after its own direction, before any other word, is said once; before "to", it names a key.
+    ["Swipe right → to go back, or turn right → at the end.", "Swipe right to go back, or turn right at the end."],
+    ["Click Next → to continue.", "Click Next right arrow to continue."],
+  ])("%j is said %j, an arrow between two directions or before a name with its 'to' (voice-speaking-v4-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    // A spaced hyphen between two amounts is a sum, not a range: a range was heard where the bubble shows a subtraction.
+    ["That's $1,500 - $200 for fees, so $1,300 is left.", "That's 1,500 dollars - 200 dollars for fees, so 1,300 dollars is left."],
+    ["Your balance is $2,000 - $1,500 = $500.", "Your balance is 2,000 dollars minus 1,500 dollars = 500 dollars."],
+    ["It's £40 – £10 = £30 with the voucher.", "It's 40 pounds minus 10 pounds = 30 pounds with the voucher."],
+    // Written as a range, with no spaces around its hyphen or with an en dash, it is still one.
+    ["It's $5-$10 a month, or £5 – £8.", "It's 5 dollars to 10 dollars a month, or 5 pounds to 8 pounds."],
+  ])("%j is said %j, a sum between amounts never as a range (voice-speaking-c3-1)", (text, said) => expect(spokenText(text)).toBe(said));
+
   it("says nothing for an answer that is only emoji", () => {
     expect(spokenText("🎉🎉")).toBe("");
     expect(spokenText("- 🎉\n- ✅")).toBe("");
@@ -126,9 +168,28 @@ describe("spokenText", () => {
     // on in lower case, isn't.
     ["Here is the plan:\nStep one is to open the file you sent\nStep two is to save it as a copy in Documents\nStep three is to close it", "Here is the plan:\nStep one is to open the file you sent.\nStep two is to save it as a copy in Documents.\nStep three is to close it."],
     ["Here's what it says:\nThe meeting moved to Friday and the room changed", "Here's what it says:\nThe meeting moved to Friday and the room changed"],
+    ["Here is the plan:\n\nStep one is to open the file you sent\nStep two is to close it", "Here is the plan:\nStep one is to open the file you sent.\nStep two is to close it."],
     ["Here is the plan:\nOpen the file you sent me and\nsave a copy of it in Documents", "Here is the plan:\nOpen the file you sent me and\nsave a copy of it in Documents"],
     ["I opened the report you sent and\nFound the totals at the bottom of it\nAll of them add up", "I opened the report you sent and\nFound the totals at the bottom of it\nAll of them add up"],
   ])("ends the lines of %j so they are said apart (voice-speaking-3)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  // Two or more lines in a row that each start with a short label and its colon are a list's items too, so a label is
+  // never said at the end of the step before it ("Open Settings Step 2."); one such line, or a wrapped one, isn't.
+  it.each([
+    ["**Step 1:** Open Settings\n**Step 2:** Choose Privacy\n**Step 3:** Turn off Location", "Step 1: Open Settings.\nStep 2: Choose Privacy.\nStep 3: Turn off Location."],
+    ["Step 1: Open Settings and go to Privacy\nStep 2: Turn off Location for every app", "Step 1: Open Settings and go to Privacy.\nStep 2: Turn off Location for every app."],
+    ["**Option A:** Keep the file as it is\n**Option B:** Save a copy in Documents", "Option A: Keep the file as it is.\nOption B: Save a copy in Documents."],
+    ["Note: the file is locked by Excel\nwhile it is open.", "Note: the file is locked by Excel\nwhile it is open."],
+    ["Tip: press Control S to save it\nI can do that for you if you like", "Tip: press Control S to save it\nI can do that for you if you like"],
+  ])("ends the labelled lines of %j so they are said apart (voice-speaking-c3-2)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  it("ends the lines a colon line leads into when that line was said already, as a stream cuts after it (voice-speaking-3)", () => {
+    const steps = "Open the spreadsheet you sent me this morning\nAdd up the totals for each month\nSave it as a new file in Documents";
+    expect(spokenText(steps, { ledIn: true })).toBe("Open the spreadsheet you sent me this morning.\nAdd up the totals for each month.\nSave it as a new file in Documents.");
+    expect(spokenText(steps)).toBe(steps);
+    // A line that goes on in lower case is still a wrapped one.
+    expect(spokenText("Open the file you sent me and\nsave a copy of it in Documents", { ledIn: true })).toBe("Open the file you sent me and\nsave a copy of it in Documents");
+  });
 
   // Stars and underscores that aren't emphasis are said as they are shown: a marker with a space on its inner side is
   // none (CommonMark's flanking rule), and neither is "__" inside a file name (review #258).
@@ -341,6 +402,39 @@ describe("AnswerLanguage: an answer is said in one language, decided once from e
     expect(said(["It means I don't know."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual([null]);
     // Quoted words aren't the request's language.
     expect(said(["Claro."], { request: "What does \"no sé lo que es\" mean?" }).map(x => x.lang)).toEqual([null]);
+  });
+
+  it("weighs a short reply's own words, not the English it quotes, against a request clearly in another language (voice-speaking-r3-2)", () => {
+    expect(said(["Ça veut dire « I don't know »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual(["fr"]);
+    expect(said(["Ça veut dire « I don't know what you have »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual(["fr"]);
+    expect(said(["Se dice \"thank you\"."], { request: "¿Cómo se dice gracias en inglés, por favor?" }).map(x => x.lang)).toEqual(["es"]);
+    // A reply whose own words are English stays in Ember's voice, whatever it quotes.
+    expect(said(["It's « je ne sais pas »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual([null]);
+    expect(said(["It means that's life."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual([null]);
+    // While the reply streams, the English it quotes doesn't make it clearly English either.
+    const a = new AnswerLanguage();
+    a.reset("que veut dire je ne sais pas ?");
+    expect(a.take(["Ça veut dire « I don't know what you have »,"])).toEqual([]);
+    expect(a.take(["ou presque."], true).map(x => x.lang)).toEqual(["fr", "fr"]);
+  });
+
+  it.each([
+    ["In English: \"thank you\".", "¿Cómo se dice gracias en inglés, por favor?"],
+    ["Gracias means \"thank you\".", "¿Cómo se dice gracias en inglés, por favor?"],
+    ["Gracias: \"thank you\".", "¿Cómo se dice gracias en inglés, por favor?"],
+    ["\"Break a leg\" means \"good luck\".", "peux-tu me dire ce que veut dire « break a leg » en anglais ?"],
+    ["Literally, \"I don't know\".", "que veut dire je ne sais pas ?"],
+    ["In English: \"I don't know\".", "que veut dire je ne sais pas ?"],
+    ["\"I don't know\", basically.", "que veut dire je ne sais pas ?"],
+  ])("says the English reply %j, which quotes English and has no short word of the request's language, in Ember's voice (voice-speaking-v4-1)", (reply, request) => {
+    expect(said([reply], { request }).map(x => x.lang)).toEqual([null]);
+  });
+
+  it("still says a short reply that quotes English in the request's language where its own words are that language's (voice-speaking-v4-1)", () => {
+    expect(said(["Cela veut dire « I don't know »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual(["fr"]);
+    expect(said(["Ça signifie « I don't know »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual(["fr"]);
+    // Without quotes, a reply with no English short word follows the request, as before.
+    expect(said(["Gracias."], { request: "¿Cómo se dice gracias en inglés, por favor?" }).map(x => x.lang)).toEqual(["es"]);
   });
 
   /** A turn of several messages: each but the last ends before a tool call (main's onAnswerEnd). */
