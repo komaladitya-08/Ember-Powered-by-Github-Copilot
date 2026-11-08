@@ -76,7 +76,7 @@ const CONVERSATION_TOO_LONG = "That's more than the model can take in at once: t
  * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E"); null while another app holds
  * it: the sentence names none (cross-review X5).
  */
-export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: ServiceKind; settingsKey?: string | null } = {}): string {
+export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: ServiceKind; settingsKey?: string | null; local?: boolean } = {}): string {
   const key = ctx.settingsKey === undefined ? SHORTCUTS.linux.settings.label : ctx.settingsKey;
   /** "in settings (Ctrl+Alt+E)", or where to go without a shortcut. */
   const inSettings = (own: boolean) => (key ? `in ${own ? "Ember's " : ""}settings (${key})` : "in Ember's settings");
@@ -106,7 +106,10 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (/context.?(length|limit|window)/i.test(m)) return CONVERSATION_TOO_LONG;
   if (/too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
   // The runtime's own connection went away ("Pending response rejected since connection got disposed").
-  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
+  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) {
+    // The user's own model server on this computer (`local`): it is most likely not running, not the network (integrations-1).
+    return mine && ctx.local ? "I can't reach the model server on this computer. Is it running? Start it, then ask again." : `I can't reach ${service} right now. Check the network, then ask again.`;
+  }
   if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${mine ? "Your model service" : ctx.provider ? "Your organisation's model service" : "Copilot"} had a problem on its side. Try again in a moment.`;
   // A request that timed out (not the network's ETIMEDOUT, which is above).
   if (/timed? ?out|timeout|took too long/i.test(m)) return `${ctx.provider ? "The model service" : "Copilot"} took too long to answer. Try again in a moment.`;
@@ -413,6 +416,8 @@ export interface PresenterOptions {
    * that needs more than the bubble's six lines at that size offers Read all (cross-review X2). Asked at each answer.
    */
   textScale?: () => number;
+  /** The user's own model service runs on this computer: one it can't reach is asked about as not running (integrations-1). */
+  serviceOnThisComputer?: () => boolean;
 }
 
 /**
@@ -696,6 +701,7 @@ export class Presenter {
   private readonly now: () => number;
   private readonly readTime: () => number;
   private readonly textScale: () => number;
+  private readonly onThisComputer: () => boolean;
 
   /** Which model service is in use now (see the constructor's `service`). */
   private get provider(): ServiceKind {
@@ -741,6 +747,7 @@ export class Presenter {
     this.now = opts.now ?? Date.now;
     this.readTime = opts.readTime ?? (() => 1);
     this.textScale = opts.textScale ?? (() => 1);
+    this.onThisComputer = opts.serviceOnThisComputer ?? (() => false);
   }
 
   /** The settings shortcut Ember holds now, or null (taken, or the check failed: naming one that may not work is worse). */
@@ -1449,7 +1456,7 @@ export class Presenter {
         this.answering = false;
         this.produced = true;
         const said = friendlyError(String(d.message ?? ""), typeof d.errorType === "string" ? d.errorType : undefined,
-          { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider, settingsKey: this.settingsKey });
+          { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider, settingsKey: this.settingsKey, local: this.onThisComputer() });
         // "Open settings" where settings can fix it (a sign-in, the model, access), never for the network or a hiccup.
         this.apply({
           emotion: "sad", talking: false,

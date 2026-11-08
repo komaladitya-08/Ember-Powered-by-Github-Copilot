@@ -356,6 +356,11 @@ describe("errors with the user's own provider", () => {
     expect(friendlyError("HTTP 502 bad gateway", undefined, { provider: "user" })).toBe("Your model service had a problem on its side. Try again in a moment.");
     expect(friendlyError("fetch failed ECONNREFUSED", undefined, { provider: "user" })).toBe("I can't reach your model service right now. Check the network, then ask again.");
     expect(problemTitle("I can't reach your model service right now.", "user")).toBe("I can't reach the model service");
+    // A model server on this computer: is it running, not the network (integrations-1).
+    const local = "I can't reach the model server on this computer. Is it running? Start it, then ask again.";
+    expect(friendlyError("connect ECONNREFUSED 127.0.0.1:11434", undefined, { provider: "user", local: true })).toBe(local);
+    expect(problemTitle(local, "user")).toBe("I can't reach the model service");
+    expect(friendlyError("connect ECONNREFUSED 10.0.0.5:443", undefined, { provider: true, local: true })).toBe("I can't reach your organisation's model service right now. Check the network, then ask again.");
     // The organisation's wording is unchanged.
     expect(friendlyError("401 Unauthorized", undefined, { provider: true })).toBe("Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.");
   });

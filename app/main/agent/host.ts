@@ -1020,7 +1020,14 @@ export class AgentHost {
     return {
       shortcuts: this.sys.shortcuts, ...(o.readTime ? { readTime: o.readTime } : {}), ...(o.textScale ? { textScale: o.textScale } : {}),
       ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}), ...(o.stopKey ? { stopKey: o.stopKey } : {}),
+      serviceOnThisComputer: () => this.ownServiceHere(),
     };
+  }
+
+  /** The user's own model service in use runs on this computer (Ollama, LM Studio): unreachable, it is asked about as not running. */
+  private ownServiceHere(): boolean {
+    const p = this.active ?? this.providerNow();
+    return p?.kind === "user" && !keyNeeded(p.config.baseUrl);
   }
 
   constructor(private o: HostOptions) {
@@ -2857,7 +2864,7 @@ export class AgentHost {
       let failure: ProjectModelFailure | null = null;
       const answer = await this.projectModel(PROJECT_SYSTEM, prompt, run.signal, f => { failure = f; });
       if (answer === null && failure && !run.signal.aborted) {
-        throw new ProjectModelError(projectFailureText(failure, { provider: this.projectService, settingsKey: this.o.settingsKey ? this.o.settingsKey() : this.sys.shortcuts?.settings.label }));
+        throw new ProjectModelError(projectFailureText(failure, { provider: this.projectService, settingsKey: this.o.settingsKey ? this.o.settingsKey() : this.sys.shortcuts?.settings.label, local: this.ownServiceHere() }));
       }
       return answer;
     } finally {

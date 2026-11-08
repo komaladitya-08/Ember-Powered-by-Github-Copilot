@@ -17,6 +17,7 @@ import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
 import { NO_CAPS, emberSystemMessage } from "./persona";
 import { friendlyError, noAnswer, notAnswering, type Presenter, type ServiceKind } from "./presenter";
+import { keyNeeded } from "../../shared/provider";
 import type { Logger } from "../logger";
 import type { ConversationContext } from "../../shared/ipc";
 import { CHARACTERS, type SettingsStore } from "../settings";
@@ -1056,7 +1057,7 @@ export class Conductor {
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);
       this.deps.log.warn("conductor.send_failed", { err, replaced: this.session !== session });
-      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: this.deps.service ?? !!this.deps.provider, settingsKey: this.settingsKey() }));
+      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: this.deps.service ?? !!this.deps.provider, settingsKey: this.settingsKey(), local: this.deps.service === "user" && !!this.deps.provider && !keyNeeded(this.deps.provider.baseUrl) }));
       throw new ConnectionLost(msg);
     }
   }

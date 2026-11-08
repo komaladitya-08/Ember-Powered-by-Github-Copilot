@@ -49,14 +49,14 @@ export function projectStopped(connectionLost: boolean): string {
  * (friendlyError: a refused key, a usage limit, a model that isn't there, the service down), and words of its own where
  * a project differs, a request over the model's limit (the files, not the conversation) and the two-minute wait.
  */
-export function projectFailureText(f: ProjectModelFailure | null, ctx: { provider?: ServiceKind; settingsKey?: string | null } = {}): string {
+export function projectFailureText(f: ProjectModelFailure | null, ctx: { provider?: ServiceKind; settingsKey?: string | null; local?: boolean } = {}): string {
   if (!f) return PROJECT_MODEL_FAILED;
   if (f.timedOut) return "The model took more than two minutes over it. Try fewer or smaller files, or a shorter request.";
   const m = `${f.errorType ?? ""} ${f.message}`;
   if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens|context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) {
     return "The selected files and request are more than the model can take in at once. Choose fewer or smaller files.";
   }
-  return friendlyError(f.message, f.errorType, { statusCode: f.statusCode, provider: ctx.provider, settingsKey: ctx.settingsKey });
+  return friendlyError(f.message, f.errorType, { statusCode: f.statusCode, provider: ctx.provider, settingsKey: ctx.settingsKey, local: ctx.local });
 }
 
 export const projectRequest = z.object({

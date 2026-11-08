@@ -165,6 +165,7 @@ it("words a project's own failures for the files, the wait and the unknown (inte
   expect(projectFailureText({ message: "prompt token count of 140000 exceeds the limit of 128000" })).toBe("The selected files and request are more than the model can take in at once. Choose fewer or smaller files.");
   expect(projectFailureText({ message: "one-shot timed out", timedOut: true })).toBe("The model took more than two minutes over it. Try fewer or smaller files, or a shorter request.");
   expect(projectFailureText({ message: "fetch failed ECONNREFUSED" }, { provider: "user" })).toBe("I can't reach your model service right now. Check the network, then ask again.");
+  expect(projectFailureText({ message: "fetch failed ECONNREFUSED" }, { provider: "user", local: true })).toBe("I can't reach the model server on this computer. Is it running? Start it, then ask again.");
   expect(projectFailureText(null)).toBe(PROJECT_MODEL_FAILED);
 });
 

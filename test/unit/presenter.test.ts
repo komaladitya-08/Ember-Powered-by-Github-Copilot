@@ -84,6 +84,17 @@ describe("Presenter", () => {
   });
 });
 
+describe("Presenter with the user's own model server on this computer", () => {
+  it("asks whether the server is running when it can't be reached, not to check the network (integrations-1)", () => {
+    const states: Partial<EmberState>[] = [];
+    vi.useFakeTimers();
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", undefined, undefined, () => "user", { serviceOnThisComputer: () => true });
+    p.userPrompt("x");
+    p.event({ type: "session.error", data: { message: "Failed to connect: connect ECONNREFUSED 127.0.0.1:11434" } });
+    expect(states.at(-1)).toMatchObject({ bubble: { mood: "error", thought: "I can't reach the model server on this computer. Is it running? Start it, then ask again." } });
+  });
+});
+
 describe("Presenter gestures and guiding", () => {
   it("plays a gesture for each kind of tool", () => {
     const { p, last } = setup();
