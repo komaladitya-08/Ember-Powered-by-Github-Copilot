@@ -1327,11 +1327,19 @@ export function nearestRate(rate: number): number {
   return SPEAK_RATES.reduce((best, r) => (Math.abs(r.rate - rate) < Math.abs(best - rate) ? r.rate : best), 1);
 }
 
-/** What Hear Ember's status line says: which voice spoke, or why none did (voice-speaking-7). */
+/** Hear Ember's status line until the sample is heard: no voice is named before one speaks (voice-speaking-r3). */
+export const HEAR_WAITING = "Getting Ember's voice ready…";
+
+/**
+ * What Hear Ember's status line says: which voice spoke, or why none did (voice-speaking-7); "" when something else
+ * Ember said cut the sample off.
+ */
 export function hearEmberLine(r: HearResult): string {
   if (r.spoke) return `Ember spoke in ${r.voice === "system" ? "this computer's system voice" : NATURAL_CHOICES[r.voice].name}.`;
   if (r.why === "managed") return "Your organisation has turned speaking off.";
   if (r.why === "locked") return "Ember doesn't speak while the screen is locked.";
+  if (r.why === "silent") return "Ember couldn't speak just now. The setup check says why.";
+  if (r.why === "stopped") return "";
   return "Ember isn't speaking out loud now. Choose Always above to hear it.";
 }
 

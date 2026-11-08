@@ -1807,6 +1807,39 @@ describe("speech models", () => {
       expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Night Light is on.", append: true });
     });
 
+    it("tells Hear Ember which voice it was heard in only once the sample starts, and when none spoke it (voice-speaking-r3)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true, native: true });
+      let heard: unknown = "waiting";
+      void v.sample("This is how I sound.").then(r => { heard = r; });
+      await vi.advanceTimersByTimeAsync(2000);
+      // Kitten is still loading: nothing has been heard, so nothing is named yet.
+      expect(heard).toBe("waiting");
+      electron.procs[0].emit("message", { type: "ready", loadMs: 1800, rate: 22_050, voice: kitten() });
+      electron.procs[0].emit("message", { type: "audio", id: 1, samples: new Float32Array(4), rate: 22_050, remaining: "" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(heard).toBe("waiting");
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      speaking(speech, true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(heard).toBe("kitten");
+      // Kitten too slow, and no voice at all: the line says none spoke, not that Kitten did.
+      const slow = service(true, { neuralVoice: true, native: true });
+      let none: unknown = "waiting";
+      void slow.v.sample("This is how I sound.").then(r => { none = r; });
+      electron.procs.at(-1)!.emit("message", { type: "error", message: "too slow here: 0.81 of real time", reason: "slow" });
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(none).toBe("waiting");
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(none).toBeNull();
+      // Cut off by other speech before it started: neither named nor failed.
+      let cut: unknown = "waiting";
+      void v.sample("This is how I sound.").then(r => { cut = r; });
+      v.speak("Your reminder is due.");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cut).toBe("stopped");
+    });
+
     it("says Kitten stopped working when it fails after it spoke, and brings it back on Try again (voice-speaking-6)", async () => {
       const { v } = service(true, { neuralVoice: true, native: true });
       v.speak("Night Light is on.");

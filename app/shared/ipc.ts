@@ -269,7 +269,11 @@ export type ClearHearingStatus =
   | { state: "failed"; detail: string };
 
 /** What Hear Ember did: which voice spoke, or why none did (speaking off, the organisation's policy, the screen lock). */
-export type HearResult = { spoke: true; voice: "kitten" | "kokoro" | "supertonic" | "system" } | { spoke: false; why: "off" | "managed" | "locked" };
+/**
+ * What Hear Ember found: the voice the sample was heard in, once it started, or why none was: "silent" when no voice
+ * spoke it, "stopped" when something else Ember said cut it off first (voice-speaking-r3).
+ */
+export type HearResult = { spoke: true; voice: "kitten" | "kokoro" | "supertonic" | "system" } | { spoke: false; why: "off" | "managed" | "locked" | "silent" | "stopped" };
 
 export type NaturalVoiceStatus = (
   | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }

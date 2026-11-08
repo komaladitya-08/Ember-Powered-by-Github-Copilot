@@ -554,8 +554,9 @@ Ember answers out loud in the default Kitten voice when its native runtime and m
 voice otherwise, sentence by sentence as the answer
 arrives. **Speaking speed** in Settings › Voice (`voice.rate`, Slower 0.8 to Faster 1.3, Normal 1; settings keep 0.8
 to 1.4) sets how fast it speaks, in its own voice and the system's, and **Hear Ember** says one fixed sentence the way
-replies are said and which voice said it (not with **Never**, while the screen is locked or when the organisation has
-turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
+replies are said and, once it is heard, which voice said it ("Getting Ember's voice ready…" until then, and "Ember
+couldn't speak just now" when no voice spoke it within 12 s; not with **Never**, while the screen is locked or when the
+organisation has turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
 the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
 “Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
 stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),

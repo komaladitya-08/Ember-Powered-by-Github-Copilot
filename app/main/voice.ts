@@ -37,6 +37,11 @@ const STALL_MS = 30_000;
 const SPEECH_START_MS = 3000;
 /** The same while Ember's own voice is still loading (its first reply: 1–2.5 s to load, then its first sentence; ms). */
 const VOICE_START_MS = 8000;
+/**
+ * How long Hear Ember waits for its sample to be heard before saying no voice spoke it: Ember's voice loading, or the
+ * system voice's own 8 s check of an utterance that never starts (mic/main.ts), with a little to spare (ms).
+ */
+const SAMPLE_WAIT_MS = 12_000;
 /** One synthesis failure retires this engine, keeping recovery and subsequent streamed sentences in order. */
 const VOICE_FAILURES = 1;
 /** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks; ms). */
@@ -267,6 +272,8 @@ export class VoiceService {
    * those are done, so they are never said ahead of them (voice-speaking-r1). A hush drops them.
    */
   private afterVoice: { send: PageSend; request: SpeakRequest }[] = [];
+  /** Hear Ember's sample waiting to be heard, in the speech generation it was said in (voice-speaking-r3). */
+  private sampleWait: { generation: number; done: (heard: NaturalVoiceModel | "system" | "stopped" | null) => void } | null = null;
   /** Enrolment (Voice Match) is under way in the voice process, and how far it got (said if it is cut short). */
   private enrolling = false;
   private enrolGot = { got: 0, of: 0 };
@@ -336,6 +343,7 @@ export class VoiceService {
     });
     ipcMain.on(VOICE.speech, (e, ok: unknown) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
+      if (ok !== true) this.sampleWait?.done(null);
       this.o.onSpeech?.(ok === true);
     });
     ipcMain.on(VOICE.played, (e, p: SpeechPlayed) => {
@@ -364,6 +372,8 @@ export class VoiceService {
         this.o.log.info("voice.hush_ack", { page: measure.page, ms: Math.round(performance.now() - measure.at) });
       }
       if (on && !this.saidSpeaking) this.awaitingSpeechStart = false;
+      // Hear Ember's sample is heard now: in the voice speaking it (Kitten's, or the system's after it failed).
+      if (on && this.sampleWait?.generation === generation) this.sampleWait.done(this.nextVoice);
       this.speakingPage = !on ? null : this.mic && e.sender === this.mic.webContents ? "mic" : "speaker";
       // (Repeated every 20 s while it lasts: the voice process is told each time, the log only when it changes.)
       if (!!on !== this.saidSpeaking) { this.saidSpeaking = !!on; this.o.log.info("voice.self_speaking", { on: !!on, listening: !!this.proc }); this.o.onSelfSpeaking?.(!!on); }
@@ -861,6 +871,30 @@ export class VoiceService {
     this.voiceProcess().postMessage({ type: "say", id, text, ...this.speedField });
   }
 
+  /**
+   * Hear Ember's sample (Settings › Voice), said as a reply is: the voice it was heard in once it starts, "stopped" when
+   * something else Ember said cut it off first, or null when no voice spoke it within SAMPLE_WAIT_MS or the page said
+   * speech failed. Named only once heard: a guess before Kitten loaded named a voice that might never speak (voice-speaking-r3).
+   */
+  sample(text: string): Promise<NaturalVoiceModel | "system" | "stopped" | null> {
+    this.speak(text);
+    const generation = this.speechGeneration;
+    return new Promise(resolve => {
+      const wait = {
+        generation,
+        done: (heard: NaturalVoiceModel | "system" | "stopped" | null) => {
+          clearTimeout(timer);
+          if (this.sampleWait === wait) this.sampleWait = null;
+          resolve(heard);
+        },
+      };
+      const timer = setTimeout(() => wait.done(null), SAMPLE_WAIT_MS);
+      timer.unref?.();
+      this.sampleWait?.done("stopped");
+      this.sampleWait = wait;
+    });
+  }
+
   /** The speaking speed setting changed: replies from now on are said at it. */
   setRate(rate: number): void {
     this.rate = Number.isFinite(rate) && rate >= 0.8 && rate <= 1.4 ? rate : 1;
@@ -1024,6 +1058,7 @@ export class VoiceService {
     this.afterVoice = [];
     this.idleVoice();
     const generation = ++this.speechGeneration;
+    this.sampleWait?.done("stopped");
     const hushPage = (wc: Electron.WebContents) => { this.pageGenerations.set(wc, generation); wc.send(VOICE.hush, generation); };
     if (this.mic && !this.mic.isDestroyed()) hushPage(this.mic.webContents);
     // A page still loading receives the current hush once ready; old queued sends check their captured generation.

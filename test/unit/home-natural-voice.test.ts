@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { effectiveVoiceModel, NATURAL_CHOICES, naturalModelHint, naturalUseLabel } from "../../app/renderer/home/natural-copy";
-import { NATURAL_HINT, SPEAK_RATES, hearEmberLine, naturalVoiceView } from "../../app/renderer/home/copy";
+import { HEAR_WAITING, NATURAL_HINT, SPEAK_RATES, hearEmberLine, naturalVoiceView } from "../../app/renderer/home/copy";
 
 describe("the default voice choice", () => {
   it("uses Kitten for new and former baseline preferences and preserves only explicitly enabled Kokoro", () => {
@@ -98,6 +98,15 @@ describe("Hear Ember and the speaking speed (voice-speaking-7)", () => {
     expect(hearEmberLine({ spoke: false, why: "off" })).toBe("Ember isn't speaking out loud now. Choose Always above to hear it.");
     expect(hearEmberLine({ spoke: false, why: "managed" })).toBe("Your organisation has turned speaking off.");
     expect(hearEmberLine({ spoke: false, why: "locked" })).toBe("Ember doesn't speak while the screen is locked.");
+  });
+
+  it("names no voice until the sample is heard, and says so when none spoke it (voice-speaking-r3)", () => {
+    expect(HEAR_WAITING).toBe("Getting Ember's voice ready…");
+    expect(hearEmberLine({ spoke: false, why: "silent" })).toBe("Ember couldn't speak just now. The setup check says why.");
+    // Cut off by something else Ember said: the line goes.
+    expect(hearEmberLine({ spoke: false, why: "stopped" })).toBe("");
+    const main = fs.readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8");
+    expect(main).toContain("show(HEAR_WAITING);");
   });
 
   it("offers five speeds, as made in the middle, within what settings keep", () => {

@@ -10,7 +10,7 @@ import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
@@ -2338,9 +2338,14 @@ $("speak-rate").addEventListener("change", e => {
 function renderHear(s: Settings | null = settings): void {
   ($("voice-hear") as HTMLButtonElement).disabled = managed.has("speak") || !s || speakChoice(s) === "never";
 }
+/** Each click's own answer: an older sample's late one never overwrites a newer one's line. */
+let hearClicks = 0;
 $("voice-hear").addEventListener("click", () => {
   const line = $("voice-hear-status");
-  const show = (text: string) => { line.textContent = text; line.hidden = false; };
+  const click = ++hearClicks;
+  const show = (text: string) => { if (click !== hearClicks) return; line.textContent = text; line.hidden = !text; };
+  // Main answers once the sample is heard (Kitten may take 2 s to load first): until then no voice is named.
+  show(HEAR_WAITING);
   window.ember.hearEmber().then(r => show(hearEmberLine(r)), () => show("Couldn't play the sample. Try again."));
 });
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });

@@ -2191,15 +2191,14 @@ function start(): void {
   ipcMain.handle(IPC.voiceNaturalRetry, guard(() => voice?.retryNaturalVoice()));
   /**
    * Hear Ember (Settings › Voice; it takes no arguments): one fixed sentence, as replies are said, only where Ember may
-   * speak now, and which voice said it (voice-speaking-7).
+   * speak now (voice-speaking-7), and which voice said it once it was heard, never a guess before (voice-speaking-r3).
    */
-  const hearEmber = (): HearResult => {
+  const hearEmber = async (): Promise<HearResult> => {
     if (policy.features.speak === false) return { spoke: false, why: "managed" };
     if (screenLock?.locked) return { spoke: false, why: "locked" };
     if (!voice || !maySpeak()) return { spoke: false, why: "off" };
-    const said = voice.nextVoice;
-    voice.speak(HEAR_SAMPLE);
-    return { spoke: true, voice: said };
+    const heard = await voice.sample(HEAR_SAMPLE);
+    return heard === "stopped" ? { spoke: false, why: "stopped" } : heard ? { spoke: true, voice: heard } : { spoke: false, why: "silent" };
   };
   ipcMain.handle(IPC.voiceHear, guard(() => hearEmber()));
   const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay, approval: confirmer?.waiting ?? false });
