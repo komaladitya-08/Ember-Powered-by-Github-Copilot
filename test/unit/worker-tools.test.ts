@@ -1853,6 +1853,28 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     expect((await call("click", { id: 1 })).resultType).toBe("success");
   });
 
+  it("never asks about a step it would then refuse: the refusal comes before the question (safety-privacy-3)", async () => {
+    let prompt: boolean | "unchecked" = false;
+    const acted: string[] = [];
+    // No grant for gedit: its first step asks.
+    const { call, asked, audit } = makeWorker({ grants: {}, promptOpen: () => prompt, onAction: () => { acted.push("click"); return { ok: true, after: null }; } });
+    await call("perceive_window", {});
+    for (const now of [true, "unchecked"] as const) {
+      prompt = now;
+      expect((await call("click", { id: 1 })).resultType).toBe("denied");
+      expect(asked).toEqual([]);
+      expect(acted).toEqual([]);
+    }
+    // The record says it refused, never that it asked.
+    expect(audit.filter(e => e.event === "decision").map(e => e.verdict)).toEqual(["deny", "deny"]);
+    expect(audit.some(e => e.event === "confirm")).toBe(false);
+    // Once the prompt has gone, the step is asked about as before, and goes ahead.
+    prompt = false;
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    expect(asked).toHaveLength(1);
+    expect(acted).toEqual(["click"]);
+  });
+
   it("lists no window's title, and reads none, until it's done", async () => {
     const { call } = makeWorker({ promptOpen: () => true });
     expect(await call("list_windows", {})).toMatchObject({ resultType: "denied", textResultForLlm: expect.not.stringMatching(/notes\.txt|gedit/) });
