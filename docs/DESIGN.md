@@ -340,7 +340,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   its reply show; the composer's line, right under its buttons, says "Thinking…" until the reply, "Still waiting for
   Copilot… Stop response ends this reply." while the bubble says so (for a request from the Ask box or by voice too,
   where the settings key lands on Stop response, until the wait ends: home-r2-3, but never over a note about the draft
-  being written, such as Edit's caution that sending again may repeat actions or the over-limit note: home-c3-1), and, when main says the turn ended with nothing
+  being written, such as Edit's caution that sending again may repeat actions or the over-limit note: home-c3-1), "Ember
+  will send this to the new model service once what it's doing now has finished. Stop response cancels it." while it
+  is held for a switch of model service (main's "held" turn, with the status word "Switching model service…":
+  home-r4-4), and, when main says the turn ended with nothing
   written (it only started a task or ran a step), "Ember didn't write a reply. Task activity shows any task it
   started."; main sends a turn's lines (its reply, its Problem line) before its end, so a model error says "Ember
   couldn't finish this reply…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says
@@ -402,7 +405,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**. An edit of
   the provider in force to another host waits in the fields until its card is agreed and it answers: the hint says the
   host in force still answers, the card's quiet button is “Keep using <host>”, and a failed check says “Nothing has
-  changed” (integrations-c3-1). A
+  changed” (integrations-c3-1); a host that answers with no model list there is adopted and says it is asked for the
+  model as typed (integrations-r4-2). A
   disclosure inside a group (Projects' patch, command and saved workspaces) has the folds' chevron (`details.disclose`),
   a lone button (Refresh list, Choose command folder…) keeps its own size in a row of actions, and an empty status line
   takes no row: every status line in Home stays on the page while it says nothing, as a box of nothing out of the flow,
@@ -507,7 +511,7 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   provider's details”, its connection's status, the card without a last sentence about going back, and Continue with
   no new check); Back leaves it on, an edit is checked as typed before it replaces anything (one that fails, or is left
   while it is checked, changes nothing: “Nothing has changed: I'm still using <host>.”, in first run's voice throughout, with the focus on
-  the field the failure names and “Keep using <host>” under it to put back the details in use and go on: first-run-c3-1), and only “Use GitHub Copilot instead” switches it off (first-run-r2-1). Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). It is in use only while it is on: after “Use GitHub Copilot instead” its step opens again as one to set up, and a check there that fails switches it off again (first-run-r3-1). That press draws Copilot's sign-in at once, connecting, so the title the focus lands on is Copilot's before main's status follows; a switch-off that couldn't be saved shows the provider still in use, under the notice that says so (first-run-c3-2). While Ember is busy (a turn or a task under way) the step says “I'll switch to Copilot once I've finished what I'm doing.” with Continue open and no sign-in yet, and the try step's Ask “Once I'm connected, you can ask me something.”; main switches as soon as it is done, and the step then offers “Sign in with GitHub” (first-run-v4-1). A service with nothing to sign in to that isn't connected yet (the user's own, the
+  the field the failure names and “Keep using <host>” under it to put back the details in use and go on: first-run-c3-1), and only “Use GitHub Copilot instead” switches it off (first-run-r2-1). Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). It is in use only while it is on: after “Use GitHub Copilot instead” its step opens again as one to set up, and a check there that fails switches it off again (first-run-r3-1). That press draws Copilot's sign-in at once, connecting, so the title the focus lands on is Copilot's before main's status follows; a switch-off that couldn't be saved shows the provider still in use, under the notice that says so (first-run-c3-2). While Ember is busy (a turn or a task under way) the step says “I'll switch to Copilot once I've finished what I'm doing.” with Continue open, “Use my own provider” still offered (first-run-r4-1) and no sign-in yet, and the try step's Ask “Once I'm connected, you can ask me something.”; main switches as soon as it is done, and the step then offers “Sign in with GitHub” (first-run-v4-1): a focus on Continue as it turns into the sign-in goes to the title, and the line says “I've switched to Copilot. Sign in with GitHub to go on, or skip for now.”, so a press meant for Continue starts nothing (first-run-c4-1). A service with nothing to sign in to that isn't connected yet (the user's own, the
   organisation's) is named on **Your Ember** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay

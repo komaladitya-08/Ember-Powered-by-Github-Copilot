@@ -22,6 +22,7 @@ declare global {
     __ixEmit: (name: string, value: unknown) => void;
     __ixExtChanged: () => void;
     __ixProjectFails: string[];
+    __ixProjectAnswers: unknown[];
   }
 }
 
@@ -73,6 +74,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
     window.__ixBrowseFails = [];
     window.__ixBrowsed = [];
     window.__ixProjectFails = [];
+    window.__ixProjectAnswers = [];
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     window.__ixEmit = (name, value) => { for (const fn of subs[name] ?? []) fn(value); };
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin });
@@ -86,6 +88,8 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
       if (name === "projectPick") return async () => ({ names: ["greeting.ts"], sizes: [46], changed: true });
       if (name === "projectRun") return async () => {
         const error = window.__ixProjectFails.shift();
+        const answered = window.__ixProjectAnswers.shift();
+        if (answered) return answered;
         return error ? { error } : { answer: "```diff\n-hi\n+hello\n```", patch: { name: "greeting.ts", diff: "-hi\n+hello" }, canContinue: true };
       };
       // What is kept here, saved or removed, as main does it with nothing sent (integrations-r3-2).
@@ -270,6 +274,32 @@ describe.skipIf(gate)("Home's Projects, as Ember's connection changes (2026-11-0
     // A reconnect with no failure before it says only that sending waits.
     await page.evaluate(st => window.__ixEmit("onAgentStatus", st), down);
     await expect.poll(() => page.locator("#project-status").innerText()).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
+    await page.close();
+  });
+});
+
+describe.skipIf(gate)("Home's Projects, as a draft's patch or answer looks like it holds a secret (2026-11-07 product audit)", () => {
+  it("says which file and line keep Apply away and that the answer won't go with the next send, never that the diff couldn't be verified (integrations-c4-1, integrations-r4-1)", async () => {
+    const page = await open("project");
+    await page.locator("#project-pick").click();
+    await expect.poll(() => page.locator("#project-files").innerText()).toContain("greeting.ts");
+    await page.locator("#project-mode").selectOption("patch");
+    // Main's refusal of a chosen file names it and its line, so the person removes only that one.
+    const named = "greeting.ts appears to contain a password, token or key on line 3. Remove that file or the value, then send again.";
+    await page.evaluate(w => { window.__ixProjectFails.push(w); }, named);
+    await page.locator("#project-question").fill("Read the key from the environment.");
+    await page.locator("#project-send").click();
+    await expect.poll(() => page.locator("#project-status").innerText()).toBe(named);
+    // The model's diff applies exactly, but the patched file looks like it holds a key: no Apply, and why.
+    await page.evaluate(() => { window.__ixProjectAnswers.push({ answer: "```diff\n-hi\n+hello\n```", withheld: { name: "greeting.ts", line: 2 }, canContinue: false }); });
+    await page.locator("#project-send").click();
+    await expect.poll(() => page.locator("#project-status").innerText())
+      .toBe("Draft ready. Ember won't offer to apply it: line 2 of the patched greeting.ts appears to contain a password, token or key. Ember won't include this answer on the next send either.");
+    expect(await page.locator("#project-patch").isVisible()).toBe(false);
+    expect(await page.locator("#project-previous-control").isVisible()).toBe(false);
+    expect(await page.locator("#project-answer").isVisible()).toBe(true);
+    await evidence(page, "project-withheld");
+    expect((page as Page & { errors: string[] }).errors).toEqual([]);
     await page.close();
   });
 });

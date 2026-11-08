@@ -122,7 +122,7 @@ async function open(seed: Seed = {}): Promise<Page> {
             window.__frEmit("onSettingsChanged", copy(window.__frState.settings));
             return Promise.resolve({ ok: true });
           }
-          if (slowAgree) return (defer("agree") as Promise<unknown>).then(r => { window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return r; }) as never; window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return Promise.resolve({ ok: true }); },
+          if (slowAgree) return (defer("agree") as Promise<unknown>).then(r => { window.__frState.settings.provider = { ...window.__frState.settings.provider, ...move, on: true }; return r; }) as never; window.__frState.settings.provider = { ...window.__frState.settings.provider, ...move, on: true }; return Promise.resolve({ ok: true }); },
         // A draft of typed details (first-run-r2-1) is told apart by its host, and whether a key came with it (never the key).
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
@@ -831,7 +831,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((await calls(d)).filter(x => x.startsWith("agree:") || x === "saveKey")).toEqual([]);
     expect(await d.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
 
-    // Details that answer replace the old ones: saved, the key, then the card's yes for the new host.
+    // Details that answer replace the old ones: written with the card's yes for the new host in one change, so the
+    // provider in use never leaves force for Copilot between (first-run-r4-3), then the key for it.
     const e = await inUse();
     await e.fill("#w-p-url", "https://api2.example.com/v1");
     await e.fill("#w-p-key", "sk-good-not-real");
@@ -839,7 +840,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => calls(e)).toContain("test-draft:api2.example.com+key");
     await settle(e, "test", { ok: true, host: "api2.example.com", models: 2 });
     await expect.poll(() => e.locator("#w-p-result").innerText()).toBe("Connected to api2.example.com. It lists 2 models.");
-    expect(await changed(e)).toEqual([`save:${JSON.stringify({ provider: { type: "openai", baseUrl: "https://api2.example.com/v1", conductor: "gpt-4.1", worker: null } })}`, "saveKey", "agree:api2.example.com"]);
+    expect(await changed(e)).toEqual(["agree:api2.example.com", "saveKey"]);
+    expect(await calls(e)).toContain(`move:${JSON.stringify({ type: "openai", baseUrl: "https://api2.example.com/v1", conductor: "gpt-4.1", worker: null })}`);
     expect(await kept(e)).toEqual({ on: true, baseUrl: "https://api2.example.com/v1" });
     expect(await calls(e)).not.toContain(off);
 
@@ -966,6 +968,32 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     for (const page of [p, q]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
+  it("(al) Home adopts an edit of my provider in use to a host that answers but lists no models, saying it asks for the model as typed; one that refuses the key changes nothing (integrations-r4-2)", async () => {
+    const using = "127.0.0.1:18308";
+    const service = { kind: "user", host: using };
+    const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
+    const provider = () => p.evaluate(() => window.__frState.settings.provider as { baseUrl: string; consent: { host: string } });
+    await p.locator("#byok-url").fill("http://127.0.0.1:18309/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    // A key it refuses: nothing has changed.
+    await p.locator("#byok-yes").click();
+    await expect.poll(() => calls(p)).toContain("test-draft:127.0.0.1:18309");
+    await settle(p, "test", { ok: false, why: "127.0.0.1:18309 needs an API key." });
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`127.0.0.1:18309 needs an API key. Nothing has changed: Ember still uses ${using}.`);
+    expect((await calls(p)).filter(c => c.startsWith("agree:"))).toEqual([]);
+    // It answers, with no model list there: adopted with the yes, in one change, saying what Ember asks it for.
+    await p.locator("#byok-yes").click();
+    await expect.poll(async () => (await calls(p)).filter(c => c === "test-draft:127.0.0.1:18309").length).toBe(2);
+    await settle(p, "test", { ok: false, why: "127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" }, 1);
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. 127.0.0.1:18309 answered but lists no models, so Ember asks it for mock-model as typed.");
+    expect(await calls(p)).toContain("agree:127.0.0.1:18309");
+    expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v1", consent: { host: "127.0.0.1:18309" } });
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
   it("(ai) “Use GitHub Copilot instead” while I'm busy says I'll switch once I've finished, keeps Continue, and offers Copilot's sign-in once the switch is made (first-run-v4-1)", async () => {
     const service = { kind: "user", host: "api.example.com" };
     const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
@@ -999,6 +1027,38 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#w-back").click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
     expect(await next(p).innerText()).toBe("Sign in with GitHub");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(ak) while the switch waits, the sign-in step still offers my own provider, and once the switch is made under my focus on Continue, Enter starts no sign-in and the line says what changed (first-run-r4-1, first-run-c4-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const own = readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service });
+    const p = await open({ provider, providerState: { inForce: true, host: "api.example.com", agreed: true, keySaved: true }, agent: own });
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    await p.locator("#w-alt").click();
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...own, switchPending: true });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe("I'll switch to Copilot once I've finished what I'm doing.");
+    // The lead's "No Copilot? You can use your own model provider instead." has its button while the switch waits.
+    expect(await p.locator("#w-lead").innerText()).toContain("No Copilot? You can use your own model provider instead.");
+    await expect.poll(() => p.getByRole("button", { name: "Use my own provider" }).isVisible()).toBe(true);
+    const shot = async (name: string) => { if (process.env.EMBER_UI_EVIDENCE) { fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true }); await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `${name}.png`), fullPage: true }); } };
+    await shot("switch-waits-own-offer");
+    // My focus is on Continue when the work ends: Ember connects to Copilot, and finds no sign-in.
+    await next(p).focus();
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "starting", detail: "Connecting to Copilot…" });
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => next(p).innerText()).toBe("Sign in with GitHub");
+    // The press meant for Continue lands on the title, and the status line says what changed.
+    expect(await p.evaluate(() => document.activeElement?.id)).toBe("w-title");
+    expect(await p.locator("#w-signin-line").innerText()).toBe("I've switched to Copilot. Sign in with GitHub to go on, or skip for now.");
+    await shot("switch-made-sign-in");
+    await p.keyboard.press("Enter");
+    await p.waitForTimeout(200);
+    expect(await calls(p)).not.toContain("signIn");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 

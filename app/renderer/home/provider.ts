@@ -13,7 +13,7 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
-import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedText, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, providerHint, providerTestText, providerTestWaits } from "./copy";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, providerHint, providerTestText, providerTestWaits } from "./copy";
 import { providerFailField, providerKeepLabel } from "./first-run-copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -134,7 +134,10 @@ async function adopt(host: string): Promise<void> {
   // Put away or readdressed meanwhile: this check says nothing about what the fields hold now.
   if (run !== heldRun || !held || !own) return;
   checkingFor = null;
-  if (!tried.ok) {
+  // An answer with no model list there (a gateway that answers chat only) is still an answer: adopted as typed, as the
+  // first agreement to a host is (integrations-r4-2). Nothing answering, a refused key or another error changes nothing.
+  const unlisted = !tried.ok && "cause" in tried && tried.cause === "no-list";
+  if (!tried.ok && !unlisted) {
     draw();
     say(providerHeldKept(held.from, tried.why), true);
     input(providerFailField(tried) === "key" ? "byok-key" : "byok-url").focus();
@@ -155,8 +158,8 @@ async function adopt(host: string): Promise<void> {
     if (!k.ok) { say(k.why, true); void reread(); return; }
     keyField.value = "";
   }
-  say(providerAgreedText(host));
-  if (tried.ids) suggestModels(tried.ids);
+  say(unlisted ? providerAgreedUnlisted(host, now.conductor ?? null) : providerAgreedText(host));
+  if (tried.ok && tried.ids) suggestModels(tried.ids);
   input("byok-url").focus();
   void reread();
 }

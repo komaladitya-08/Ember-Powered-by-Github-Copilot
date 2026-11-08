@@ -174,7 +174,8 @@ runtime. It does not change the app's consent or speaking settings.
     (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
     asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
     filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, through a
-    reconnect (a finished task's row then offers nothing to press, its card having gone), and gone at quit, sign-out
+    reconnect (a finished task's row then offers nothing to press, its card having gone, except after a switch of model
+    service that waited for the tasks: their cards go on), and gone at quit, sign-out
     or an account change; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most
     twice a second, only to the settings window.
   - Once Ember is set up, starting it on Linux, Windows or macOS (the app menu entry, `ember`, the Start menu, Ember.app
@@ -1029,7 +1030,9 @@ First run's provider step, opened for a provider already in use, checks edited d
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
 card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
 kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
-answers; then the details, the key and the card's yes are saved as usual.
+answers; then the details are written with the card's yes for their host in one change (`agree(host, move)`, as Home's
+held edit is), so the provider in use never leaves force for Copilot between, and a typed key is saved after
+(first-run-r4-3).
 Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
 held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
 answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
@@ -1040,6 +1043,11 @@ the new host waits in its field. "I agree" checks the held details with the same
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
 names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
 main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
+A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
+chat only do: the test's `cause: "no-list"`, which the start probe doesn't count as down either) is adopted the same
+way, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
+(integrations-r4-2); one that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
+answers with another error changes nothing.
 An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so
@@ -1075,7 +1083,9 @@ the address in force and its saved key are kept and come back with the switch (i
   Nothing else points to Copilot then (integrations-r3-1): a request from the Ask box, by voice or from Home is
   answered "Your provider needs your OK: Agree to use <host> in settings, or turn off “Use my own model provider”,
   then ask me again." (main's `providerWaiting`, `providerWaitingHost`), Home's tagline says "Agree to use <host> in
-  Models & connections to start asking.", the status panel's button is "Check my provider…", and the hint under the
+  Models & connections to start asking.", Home's composer refuses a send with "Agree to use <host> in Models &
+  connections, then send again." (`composerSendRefusal`'s `waiting`, integrations-r4-3), the status panel's button is
+  "Check my provider…", and the hint under the
   group "Ember can't answer until you agree to use <host>." (with a GitHub sign-in it says Ember uses GitHub Copilot
   until then, as it does). Ember's hello at start and at login says "I need your OK for <host> first. Open settings
   (<settings key>) and agree to use it in Models & connections, or turn off “Use my own model provider”." with Open
@@ -1107,12 +1117,27 @@ the address in force and its saved key are kept and come back with the switch (i
   again: Ember still can't use <host>. The line above says why."; either goes once the provider connects.
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
   started with. While a turn or a task is under way, Ember's status says the switch waits (`switchPending`; first
-  run's sign-in step: "I'll switch to Copilot once I've finished what I'm doing.", with Continue open), and Ember
+  run's sign-in step: "I'll switch to Copilot once I've finished what I'm doing.", with Continue open and **Use my own
+  provider** still offered; once the switch is made and Continue has become its sign-in, a focus on it moves to the
+  title and the line says "I've switched to Copilot. Sign in with GitHub to go on, or skip for now.": first-run-r4-1,
+  first-run-c4-1), and Ember
   reconnects to the new service as soon as they are done (the turn's end, a Stop, the last task's end), not at the
   next request. A request asked while a turn or a task is still under way on the service before is held, with a bubble
-  saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are
+  saying so ("Switching model service", up for as long as anything is held; Home's composer and status word say it waits
+  for the switch, never "Thinking…": the `held` turn, home-r4-4), and sent to the new one once they are
   done, in the order asked (one asked during the switch goes behind them); it never goes to the one before, and no new
-  task starts on it (a queued one ends saying the service changed). "Done" is the runtime's own word for the turn, not
+  task starts on it (a queued one ends saying the service changed). A finished task's card stays through the switch's
+  reconnect with the time it had left (`TaskManager.keptCards`), on screen and with a Close that closes it while Ember
+  connects (the manager before keeps it until the next one lists it: integrations-v5-2); it goes if the connect fails or
+  a sign-out or an account change comes first. Its Try again is held back while the switch waits and while Ember
+  connects (a try then would start on the service before) and offered again once the switch is made. On another service
+  the conversation isn't resumed, so neither is the goal it wrote nor what it read on the screen, and the new
+  conversation isn't told of the card (`handedElsewhere`, integrations-v5-1). There Try again is offered only for a task
+  whose request asked for it alone (`StartOptions.alone`: that turn's words only, no answer to Ember's question, no
+  routine's steps, no other task asked for, steered or stopped in that turn, never steered since), and starts from those
+  words; any other card (a request split into several tasks, a routine's task, a "yes do that") offers Close only and
+  says to ask again, since its words would start all of it again or say nothing of what it was (integrations-w5-1).
+  "Done" is the runtime's own word for the turn, not
   the bubble's; after a Stop the turn is over at once. The switch's connect is waited on for at most 15 s, as a
   request waits for any connect: then they go on, and are told Ember is still connecting. Stop, Stop everything and
   quitting drop the held requests and end the switch's wait. A
@@ -2193,6 +2218,13 @@ newline, Ember shows the diff in **Review changes before applying**. Check it, c
 confirm the destination. If the source has changed since you sent it, draft the patch again. Ember keeps
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
 unsupported diff formats remain available as text.
+
+Files, requests, patched files and an answer kept as the next send's context go through memory's secret guard
+(`memoryRefusal`, docs/MEMORY.md), which passes over code for a secret-named key's value. A chosen file that still
+looks like it holds a password, token or key is named with its line (`secretLine`, `projectSecretFiles`): every such
+file at once, so the person removes only those. An exact patch whose patched file looks like it holds one isn't
+offered, and the status says which line (`readProjectPatch`'s `withheld`), never that the diff couldn't be verified; an
+answer that looks like it holds one isn't offered as context, and the status says so (`projectAnswerText`).
 
 A request the model service refuses or can't finish says why in the conversation's words (`projectFailureText`): a
 refused key points at the key in settings, a usage limit says to try later, files over the model's limit say to choose

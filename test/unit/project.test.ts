@@ -2,9 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM, secretLine } from "../../app/main/agent/project";
 import { readFileSync } from "node:fs";
-import { applyProjectPatch, draftProjectPatch } from "../../app/main/agent/project-patch";
+import { applyProjectPatch, draftProjectPatch, readProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
 import { copilotOneShot, type OneShotFailure } from "../../app/main/agent/one-shot";
 import type { Logger } from "../../app/main/logger";
@@ -97,6 +97,116 @@ it("sends a README and a request that name a user at a computer, which hold no p
   expect(result).toContain("deploy@10.0.0.5");
   const nas = await file("nas.txt", "The NAS login is Tr0ub4dor&3.");
   await expect(prompt([nas])).rejects.toThrow("contain a password");
+});
+
+it("sends auth, credentials and model-client code that names a token or a password with code for its value (memory-r4-1, memory-r4-2)", async () => {
+  const auth = await file("auth.ts", "/** Checks a session for the request. */\nexport function verify(token: string): boolean {\n  return token.length > 0;\n}\nexport const apiKey = process.env.OPENAI_API_KEY;\n");
+  const login = await file("login.py", "class Login:\n    def __init__(self, user: str, password: str) -> None:\n        self.user = user\n        self.password = password\n");
+  const client = await file("client.py", 'response = client.chat.completions.create(model="gpt-4o", max_tokens=256)\ntokens = text.split()\n');
+  const aws = await file("aws.py", "import boto3\n\nsession = boto3.Session()\ncredentials = boto3.Session().get_credentials()\nprint(credentials.access_key is not None)\n");
+  const deploy = await file("deploy.ts", "export async function main(argv: string[]): Promise<void> {\n  const creds = loadCreds(argv[2]);\n  await deploy(creds);\n}\n");
+  // Google's Drive quickstart, whose "creds.refresh_token:" and "as token:" end their lines with code on the next.
+  const quickstart = await file("quickstart.py", [
+    "def main():", "  creds = None", '  if os.path.exists("token.json"):', '    creds = Credentials.from_authorized_user_file("token.json", SCOPES)',
+    "  if not creds or not creds.valid:", "    if creds and creds.expired and creds.refresh_token:", "      creds.refresh(Request())", "    else:",
+    '      flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)', "      creds = flow.run_local_server(port=0)",
+    '    with open("token.json", "w") as token:', "      token.write(creds.to_json())", "",
+  ].join("\n"));
+  const result = await projectPrompt([auth, login, client, aws, deploy, quickstart], "review", "Why is const creds = loadCreds(argv[2]) undefined?", new AbortController().signal, privateDir);
+  for (const line of ["verify(token: string)", "self.password = password", "max_tokens=256", "get_credentials()", "loadCreds(argv[2])", "creds.refresh(Request())"]) expect(result).toContain(line);
+  const literal = await file("config.ts", 'export const password = "Summer2024!";\n');
+  await expect(prompt([literal])).rejects.toThrow("contain a password");
+  const fallback = await file("db.py", 'password = os.getenv("DB_PASSWORD", "changeme")\n');
+  await expect(prompt([fallback])).rejects.toThrow("contain a password");
+});
+
+it("refuses a setup script that exports a password and a request that gives one after “its” (memory-v5-1, memory-v5-2)", async () => {
+  const setup = await file("setup.sh", "#!/bin/sh\nexport DB_USER=app\nexport DB_PASSWORD=correcthorsebatterystaple\n./start\n");
+  await expect(projectPrompt([setup], "review", "Why does start fail?", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
+  const db = await file("db.py", "import os\n");
+  await expect(projectPrompt([db], "review", "Connecting fails, the db password: its Tr0ub4dor&3", new AbortController().signal, privateDir)).rejects.toThrow("Remove passwords");
+  const gh = await file("gh-env.sh", "#!/bin/sh\nexport GITHUB_TOKEN=$(gh auth token)\n");
+  expect(await projectPrompt([gh], "review", "Why does the token come back empty?", new AbortController().signal, privateDir)).toContain("$(gh auth token)");
+});
+
+it("sends a call's last keyword argument, a shell function's arguments, a switch and a password's state, beside an exported password (memory-w5-1, memory-w5-3)", async () => {
+  const files = await Promise.all([
+    file("db.py", "import psycopg2\n\n\ndef connect(host, user, password):\n    return psycopg2.connect(\n        host=host, user=user, password=password\n    )\n"),
+    file("client.py", "from openai import OpenAI\n\n\ndef make_client(api_key):\n    return OpenAI(\n        api_key=api_key\n    )\n"),
+    file("login.sh", "#!/bin/bash\nlogin() {\n  local user=$1\n  local password=$2\n  curl -u \"$user:$password\" https://example.com/login\n}\n"),
+    file("deploy.sh", "#!/bin/sh\ndeploy() {\n  token=$1\n  curl -H \"Authorization: Bearer $token\" https://example.com/deploy\n}\nTOKEN=$token ./deploy\n"),
+    file("transport.py", "def channel(cert, key, client_cert_source):\n    if client_cert_source:\n        cert, key = client_cert_source()\n        return grpc.ssl_channel_credentials(\n            certificate_chain=cert, private_key=key\n        )\n"),
+    file("lexer_types.py", "class Lexer:\n    def __init__(self,\n                 text=None,\n                 oldToken=None):\n        self.text = text\n"),
+    file("config.sh", "#!/bin/sh\nPASSWORD_REQUIRED=true\nUSE_TOKEN=false\n"),
+    file("README.md", "# Auth service\n\nPasswords are hashed.\n\nLogin\n\nThe password is masked.\n"),
+  ]);
+  const result = (await projectPrompt(files.slice(0, 4), "review", "Review this.", new AbortController().signal, privateDir))
+    + await projectPrompt(files.slice(4), "review", "Review this.", new AbortController().signal, privateDir);
+  for (const line of ["password=password", "api_key=api_key", "local password=$2", "oldToken=None):", "USE_TOKEN=false", "Passwords are hashed."]) expect(result).toContain(line);
+  const setup = await file("setup.sh", "#!/bin/sh\nsetup() {\n  export DB_PASSWORD=changeme\n}\n");
+  await expect(projectPrompt([setup], "review", "Why does start fail?", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
+});
+
+it("sends an object's last property, a multi-line signature, a Python block's body and an f-string's placeholder, beside a password in an object (memory-w5-2)", async () => {
+  const files = await Promise.all([
+    file("fetch.js", "if (!auth && (parsedURL.username || parsedURL.password)) {\n  const urlUsername = decodeURIComponentSafe(parsedURL.username);\n  const urlPassword = decodeURIComponentSafe(parsedURL.password);\n  auth = {\n    username: urlUsername,\n    password: urlPassword\n  };\n}\n"),
+    file("api.js", "export function makeClient(user, password) {\n  return new Client({\n    user: user,\n    password: password\n  });\n}\n"),
+    file("session.ts", "export function session(user: string, accessToken: string) {\n  return {\n    user,\n    token: accessToken\n  };\n}\n"),
+    file("ec.py", "def sign(\n    backend: Backend, private_key: _EllipticCurvePrivateKey, data: bytes\n) -> bytes:\n    return backend.sign(private_key, data)\n"),
+    file("lex.py", "def first(tokens):\n    if not tokens:\n        return \"\"\n    return tokens[0]\n\n\ndef pairs(tokens):\n    for token in tokens:\n        yield token.kind, token.value\n"),
+    file("refresh.py", "try:\n    refresh()\nexcept Exception as e:\n    raise AuthError(\n        f\"Failed to refresh token: {e}\"\n    )\n"),
+    file("lexer_types.py", "class Token:\n    def __init__(self,\n                 text=None,\n                 oldToken=None):\n        self.text = text\n"),
+  ]);
+  const result = (await projectPrompt(files.slice(0, 4), "review", "Review this.", new AbortController().signal, privateDir))
+    + await projectPrompt(files.slice(4), "review", "Review this.", new AbortController().signal, privateDir);
+  for (const line of ["password: urlPassword", "token: accessToken", "private_key: _EllipticCurvePrivateKey", "if not tokens:", "{e}", "class Token:"]) expect(result).toContain(line);
+  const literal = await file("config.js", "const auth = {\n  user: \"app\",\n  password: hunter2\n};\n");
+  await expect(projectPrompt([literal], "review", "Review this.", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
+});
+
+it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {
+  const app = await file("app.py", "print(1)\n");
+  for (const q of ["Why don't the user scripts pass linting?", "How do I make user uploads pass scanning?", "Do the user queries pass sanitisation?"]) {
+    expect(await projectPrompt([app], "review", q, new AbortController().signal, privateDir)).toContain(q);
+  }
+  await expect(projectPrompt([app], "review", "Log in as username bob pass hunter", new AbortController().signal, privateDir)).rejects.toThrow("Remove passwords");
+  const paths = await file("paths.py", "from pathlib import Path\n\n\ndef out(tmp_path):\n    root = tmp_path / \"out1\"\n    return root\n");
+  const settings = await file("settings.py", "BASE_DIR = Path(__file__).resolve().parent\nroot = BASE_DIR / \"static2\"\n");
+  expect(await projectPrompt([paths, settings], "review", "Review this.", new AbortController().signal, privateDir)).toContain("root = BASE_DIR / ");
+  const literal = await file("notes.txt", "Admin = admin / hunter2!\n");
+  await expect(projectPrompt([literal], "review", "Review this.", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
+});
+
+it("offers a reviewed patch whose new line sets max_tokens or reads a key from the environment (memory-r4-2, integrations-c4-1)", async () => {
+  const source = await file("client.ts", "export const options = {\n  temperature: 0.2,\n};\n");
+  const snapshots: ProjectSource[] = [];
+  await projectPrompt([source], "patch", "Add a max_tokens limit and read the key from the environment.", new AbortController().signal, privateDir, snapshots);
+  const change = diff("client.ts", "@@ -1,3 +1,5 @@\n export const options = {\n   temperature: 0.2,\n+  max_tokens: 1024,\n+  apiKey: process.env.OPENAI_API_KEY,\n };");
+  expect(draftProjectPatch(diffAnswer(change), snapshots)?.diff).toBe(change);
+  const literal = diff("client.ts", "@@ -1,3 +1,4 @@\n export const options = {\n   temperature: 0.2,\n+  apiKey: \"Tr0ub4dor&3xyz\",\n };");
+  expect(draftProjectPatch(diffAnswer(literal), snapshots)).toBeNull();
+});
+
+it("names each chosen file that looks like it holds a secret, with its line, so I remove only that file (integrations-r4-1)", async () => {
+  const greeting = await file("greeting.ts", "export const greet = (name: string) => `Hello ${name}`;\n");
+  const api = await file("api.ts", "export async function call() {\n  const res = await fetch(URL);\n  const password = \"Summer2024!\";\n  return res;\n}\n");
+  await expect(prompt([greeting, api])).rejects.toThrow(new Error("api.ts appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const config = await file("config.ts", "// Settings\nexport const token = \"ghp_" + "a1".repeat(18) + "\";\n");
+  await expect(prompt([api, greeting, config])).rejects.toThrow(new Error("api.ts (line 3) and config.ts (line 2) appear to contain a password, token or key. Remove those files or the values, then send again."));
+  // The line is the first one the guard refuses with all the lines above it; nothing at all is a file with none.
+  expect(secretLine("a\nb\npassword = \"Summer2024!\"\nc\n")).toBe(3);
+  expect(secretLine("export const greet = 1;\n")).toBeNull();
+});
+
+it("says it won't offer to apply a patch whose new line looks like a secret, with the patched file's line, unlike a diff that doesn't apply (integrations-c4-1)", async () => {
+  const source = await file("client.ts", "export const options = {\n  temperature: 0.2,\n};\n");
+  const snapshots: ProjectSource[] = [];
+  await projectPrompt([source], "patch", "Read the key from the environment.", new AbortController().signal, privateDir, snapshots);
+  const literal = diff("client.ts", "@@ -1,3 +1,4 @@\n export const options = {\n   temperature: 0.2,\n+  apiKey: \"Tr0ub4dor&3xyz\",\n };");
+  expect(readProjectPatch(diffAnswer(literal), snapshots)).toEqual({ withheld: true, name: "client.ts", line: 3 });
+  const stale = diff("client.ts", "@@ -1,3 +1,4 @@\n export const settings = {\n   temperature: 0.2,\n+  max_tokens: 1024,\n };");
+  expect(readProjectPatch(diffAnswer(stale), snapshots)).toBeNull();
+  expect(readProjectPatch(diffAnswer(diff("client.ts", "@@ -1,3 +1,4 @@\n export const options = {\n   temperature: 0.2,\n+  max_tokens: 1024,\n };")), snapshots)).toMatchObject({ source: { name: "client.ts" } });
 });
 
 const diffAnswer = (diff: string) =>"A change to review.\n\n" + ["```diff", diff, "```"].join("\n");

@@ -20,7 +20,8 @@ export interface ReminderRow { id: string; text: string; at: number; created: nu
 export interface ReminderChange { expected: Omit<ReminderRow, "kept">; replacement: { text: string; at: number } | null }
 export type ProjectMode = "review" | "plan" | "patch";
 export interface ProjectSelection { names: string[]; sizes?: (number | null)[]; changed?: boolean; error?: string }
-export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; canContinue: boolean } | { error: string };
+/** `withheld`: an exact patch not offered, as its patched file looks like it holds a secret at that line (integrations-c4-1). */
+export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; withheld?: { name: string; line: number | null }; canContinue: boolean } | { error: string };
 /**
  * What Check again found: a GitHub sign-in (`found`, its `source`, or a `hint` on how to get one), or, with a model
  * provider in force (the user's own or the organisation's), that it connected to it again or not (integrations-c1-1),
@@ -753,7 +754,7 @@ export type ProviderDone = { ok: true } | { ok: false; why: string };
  * `ids`: the models it names, as suggestions for the model fields (at most 50, each a MODEL_ID). `cause`: nothing
  * answered at all (main's TestResult), so the address or the network is what to check.
  */
-export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" };
+export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
 /**
  * Details typed for the user's own provider but not saved, checked before they replace the details in use (first run's

@@ -10,12 +10,15 @@ import { onThisComputer } from "../../shared/provider";
 
 /**
  * The refusal for a status whose phase isn't "ready". `detail`: the status' own words; one that ends "Reconnecting…"
- * (host.ts lost, after the runtime stopped) means Ember is reconnecting by itself, whatever the reason.
+ * (host.ts lost, after the runtime stopped) means Ember is reconnecting by itself, whatever the reason. `waiting`: the
+ * host whose note the user's own provider waits for (provider.ts providerWaitingHost), while signed out: agreeing to it
+ * is the way on, as the tagline, the hint and the start hello say (integrations-r4-3).
  */
-export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }): string {
+export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, waiting: string | null = null): string {
   const it = s.service?.kind === "user" ? "your model provider" : s.service ? "the model service" : "Copilot";
   const It = it[0].toUpperCase() + it.slice(1);
   if (s.phase === "starting") return `Ember is still connecting to ${it}. Your message is still here: send it again in a moment.`;
+  if (s.phase === "signed-out" && waiting) return `Agree to use ${waiting} in Models & connections, then send again.`;
   if (s.phase !== "error") return "Connect Ember in Models & connections, then send again.";
   // (Reconnecting now would stop the tasks at work: it waits for them, as Home's tagline says.)
   if (s.waitingForTasks) return `${It} isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.`;
@@ -37,6 +40,6 @@ export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waiti
  * at once (AgentHost.stopsWith), which goes whatever the connection is doing, as the Ask box's and voice's do (home-c2-1:
  * waiting for the running tasks before it reconnects, Home refused the very stop that would end them).
  */
-export function composerSendRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, stops: boolean): string | null {
-  return stops || s.phase === "ready" ? null : composerRefusal(s);
+export function composerSendRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, stops: boolean, waiting: string | null = null): string | null {
+  return stops || s.phase === "ready" ? null : composerRefusal(s, waiting);
 }

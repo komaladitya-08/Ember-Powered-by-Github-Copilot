@@ -35,6 +35,8 @@ export interface StatusFacts {
    * the conversation answers, as main says (from the Ask box and by voice too: home-c1-1).
    */
   answering?: boolean;
+  /** What was asked waits, unsent, for a switch of model service (main's "held" turn: home-r4-4). */
+  switching?: boolean;
 }
 
 /** "1 task", "2 tasks". */
@@ -53,6 +55,7 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
   if (f.phase === "starting" || f.phase === null) return { word: "Connecting…", ring: "starting" };
   if (f.asking) return { word: f.asking === 1 ? "A task needs you" : `${f.asking} tasks need you`, ring: "needs" };
   if (f.running) return { word: `Working on ${count(f.running, "task")}`, ring: "acting" };
+  if (f.answering && f.switching) return { word: "Switching model service…", ring: "starting" };
   if (f.answering) return { word: "Thinking…", ring: "acting" };
   return { word: "Ready", ring: "ready" };
 }

@@ -127,6 +127,41 @@ export interface TaskManagerDeps {
    * this one's own, so Home's "Kept until you quit Ember" holds (tasks-approvals-c2-1).
    */
   earlier?: () => TaskEntry[];
+  /**
+   * Whether Try again waits now: a switch of model service waits for the work under way, and a task started meanwhile
+   * would be refused at once for it. A failed card offers Try again again once this is false (tasks-approvals-c4-1).
+   */
+  retryWaits?: () => boolean;
+  /** The finished cards the manager before this one kept (TaskManager.keptCards, handed on by a reconnect: tasks-approvals-r4-2). */
+  carried?: readonly KeptCard[];
+}
+
+/**
+ * A finished task's card handed to the next manager across a reconnect (tasks-approvals-r4-2): the task, what it was
+ * asked with (so Try again still can), what it did, and the time its card had `left` at `at` (`whole`: one kept to be
+ * read; `away`: waiting for a user who is away).
+ */
+export interface KeptCard { task: Task; spec?: { goal: string; opts: StartOptions }; log?: ActivityLog; left: number; at: number; whole?: number; away?: boolean }
+
+/** What a card handed to another model service without its Try again adds to its words (handedElsewhere). */
+export const ASK_AGAIN_ELSEWHERE = "The model service has changed: ask me again and I'll try it on the new one.";
+
+/**
+ * A finished card handed to a connection on another model service (integrations-v5-1). The conversation isn't resumed
+ * there, so nothing it wrote goes there either: never the goal the conversation's model wrote nor what that conversation
+ * read on the screen. Try again goes on only where the user's words are that task's alone (StartOptions.alone), and
+ * starts from them; a request split into several tasks, a routine's, an answer to Ember's question or a steered task's
+ * words would start all of it again under the card, or say nothing of what it was (integrations-w5-1). Any other card
+ * offers Close only, and says to ask again.
+ */
+export function handedElsewhere(c: KeptCard): KeptCard {
+  if (!c.spec) return c;
+  const opts: StartOptions = { ...c.spec.opts };
+  delete opts.screen;
+  if (opts.alone && opts.userWords !== undefined) return { ...c, spec: { goal: opts.userWords, opts } };
+  const rest: KeptCard = { ...c, task: { ...c.task, detail: [c.task.detail.trim(), ASK_AGAIN_ELSEWHERE].filter(Boolean).join(" ") } };
+  delete rest.spec;
+  return rest;
 }
 
 /** Longest task title (its card shows two lines of it). */
@@ -164,6 +199,12 @@ export interface StartOptions {
   typedOnly?: boolean;
   /** TaskSpec.partWay: an earlier try of it stopped part-way (a retry). */
   partWay?: boolean;
+  /**
+   * `userWords` are this task's alone (integrations-w5-1): its turn's request only (no answer to Ember's question, no
+   * earlier try's words, no routine's steps), in a turn that asked for, steered or stopped no other task (shared()
+   * takes it back), and never steered since. Only then does its card's Try again go on to another model service.
+   */
+  alone?: true;
 }
 
 /** What a task that may be tried again was asked with (TaskManager.askedWith): the user's words, never its goal. */
@@ -244,7 +285,55 @@ export class TaskManager {
   private expiry = new Map<string, { remaining: number; since: number; timer: ReturnType<typeof setTimeout> | null; whole?: number; away?: boolean }>();
   private readers = new Map<string, Map<number, ReturnType<typeof setTimeout>>>();
 
-  constructor(private d: TaskManagerDeps) {}
+  constructor(private d: TaskManagerDeps) {
+    for (const c of d.carried ?? []) this.adopt(c);
+    // The cards handed on are still on screen (integrations-v5-2): this manager's list takes their place at once.
+    if (d.carried?.length) this.publish();
+  }
+
+  /**
+   * A card the manager before this one kept goes on here with the time it had left, its Try again, Close and view
+   * (tasks-approvals-r4-2); one whose time ran out meanwhile goes (one waiting for a user who is away waits on).
+   */
+  private adopt(c: KeptCard): void {
+    // (A reconnect that took longer than the card's whole time, a user away included, doesn't bring it back.)
+    const elapsed = Date.now() - c.at;
+    const left = c.away ? c.left : c.left - elapsed;
+    if (this.tasks.has(c.task.id)) return;
+    // (Its view, left on screen for this manager, goes with it: integrations-v5-2.)
+    if (left <= 0 || elapsed > Math.max(c.left, c.whole ?? 0)) { this.dropView(c.task); return; }
+    const id = c.task.id;
+    this.tasks.set(id, c.task);
+    if (c.spec) this.specs.set(id, c.spec);
+    if (c.log) this.logs.set(id, { log: c.log, task: c.task });
+    this.expiry.set(id, { remaining: left, since: Date.now(), timer: null, ...(c.whole !== undefined ? { whole: c.whole } : {}), ...(c.away ? { away: true } : {}) });
+    this.expireLater(id);
+    if (c.task.view) {
+      try { this.d.onView?.(id, c.task.view); } catch (err) { this.d.log.warn("task.view_failed", { id, err }); }
+    }
+  }
+
+  /**
+   * The finished tasks' cards, to hand to the next manager when Ember reconnects (a switch of model service made as the
+   * last task ended, a model changed): their Try again, Close and View result go on there with the time each had left,
+   * instead of going with this manager (tasks-approvals-r4-2). Tasks still at work aren't among them.
+   */
+  keptCards(): KeptCard[] {
+    if (this.closed) return [];
+    const at = Date.now();
+    return [...this.tasks.values()].filter(t => t.status !== "running" && t.status !== "queued").map(t => {
+      const e = this.expiry.get(t.id);
+      const left = !e ? 0 : e.timer ? Math.max(0, e.remaining - (at - e.since)) : e.remaining;
+      const spec = this.specs.get(t.id);
+      const log = this.logs.get(t.id)?.log;
+      return { task: t, left, at, ...(spec ? { spec } : {}), ...(log ? { log } : {}), ...(e?.whole !== undefined ? { whole: e.whole } : {}), ...(e?.away ? { away: true } : {}) };
+    });
+  }
+
+  /** The cards again: what they offer changed outside this manager (a switch of model service began or was undone). */
+  refresh(): void {
+    this.publish();
+  }
 
   /** A card stays while its visible details, pointer, or keyboard are reading it. Each renderer holds a short lease. */
   reading(id: string, reader: number, on: boolean): void {
@@ -376,9 +465,10 @@ export class TaskManager {
         activity,
       };
     });
-    // Those kept from before a reconnect come after, within ACTIVITY_KEPT ended tasks with no card (tasks-approvals-c2-1).
+    // Those kept from before a reconnect come after, within ACTIVITY_KEPT ended tasks with no card (tasks-approvals-c2-1);
+    // a card handed on with them is listed once, as this manager's (tasks-approvals-r4-2).
     const room = Math.max(0, ACTIVITY_KEPT - own.filter(e => !this.tasks.has(e.id)).length);
-    return [...own, ...(this.d.earlier?.() ?? []).slice(0, room)];
+    return [...own, ...(this.d.earlier?.() ?? []).filter(e => !this.logs.has(e.id) && !this.tasks.has(e.id)).slice(0, room)];
   }
 
   /**
@@ -399,7 +489,14 @@ export class TaskManager {
 
   canRetry(id: string): boolean {
     const t = this.tasks.get(id);
-    return !!t && this.specs.has(id) && retryable(t) && !this.cutOff && !this.closed && this.actionsAllowed();
+    return !!t && this.specs.has(id) && retryable(t) && !this.closed && this.retryOpen();
+  }
+
+  /** Try again may be offered: not cut off, acting allowed, and no switch of model service waiting (tasks-approvals-c4-1). */
+  private retryOpen(): boolean {
+    let waits: boolean;
+    try { waits = this.d.retryWaits?.() === true; } catch { waits = true; /* can't tell: no button that might do nothing */ }
+    return !this.cutOff && !waits && this.actionsAllowed();
   }
 
   openWindow(id: string): boolean {
@@ -519,10 +616,24 @@ export class TaskManager {
       opts: { ...opts, ...words, ...seen, ...yes, ...heard,
         ...provenance },
     };
+    // (Words added in another turn, which may be about other tasks too: they aren't this task's alone, integrations-w5-1.)
+    delete next.opts.alone;
     this.specs.set(id, next);
     if (q) q.spec = { ...q.spec, goal: next.goal, ...words, ...seen, ...yes, ...heard,
       ...provenance };
     return true;
+  }
+
+  /**
+   * Task `id`'s turn asked for, steered or stopped another task too: its words aren't its alone (StartOptions.alone), so
+   * its card's Try again doesn't go on to another model service (integrations-w5-1).
+   */
+  shared(id: string): void {
+    const s = this.specs.get(id);
+    if (!s?.opts.alone) return;
+    const opts = { ...s.opts };
+    delete opts.alone;
+    this.specs.set(id, { goal: s.goal, opts });
   }
 
   /** A finished card the user closed. */
@@ -545,10 +656,15 @@ export class TaskManager {
     try { this.d.onView?.(task.id, null); } catch (err) { this.d.log.warn("task.view_failed", { id: task.id, err }); }
   }
 
-  /** Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). */
-  close(): void {
+  /**
+   * Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). `keep`:
+   * the next manager was handed them (keptCards) and lists them at once, so they and their views stay on screen
+   * meanwhile, never gone while Ember reconnects (integrations-v5-2).
+   */
+  close(keep = false): void {
     this.closed = true;
     for (const id of new Set([...this.expiry.keys(), ...this.readers.keys()])) this.forgetCardTime(id);
+    if (keep) return;
     for (const t of this.tasks.values()) this.dropView(t);
     this.d.setCards([]);
   }
@@ -762,7 +878,7 @@ export class TaskManager {
         detail: stopping ? TASK_STOPPING : t.detail,
         actions: t.status === "running" || t.status === "queued"
           ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
-          : retryable(t) && this.specs.has(t.id) && !this.cutOff && this.actionsAllowed()
+          : retryable(t) && this.specs.has(t.id) && this.retryOpen()
             ? [{ id: `task:${t.id}:retry`, label: "Try again" }, { id: `task:${t.id}:dismiss`, label: "Close" }]
             : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
         ...(t.where ? { where: t.where } : {}),

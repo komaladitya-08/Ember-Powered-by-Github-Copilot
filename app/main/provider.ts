@@ -584,7 +584,12 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
  * isn't running), "timeout", or "unreachable" (any other network failure). Absent for an answer that refused the
  * request, a certificate or a redirect: something is there.
  */
-export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" };
+/**
+ * What a test of the endpoint found. `cause`, for a failure: nothing answered (refused, timed out, unreachable: the
+ * provider is down), or it answered but has no model list at that address (`no-list`: 404, 405 or 501 on GET /models,
+ * as some gateways that answer chat only do), which a held edit's check takes as an answer (integrations-r4-2).
+ */
+export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
 /** The most model ids the test passes on for the model fields' suggestions. */
 export const TEST_IDS_MAX = 50;
@@ -620,7 +625,7 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
   try {
     const res = await fetch(url, { method: "GET", headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
     if (res.status === 401 || res.status === 403) return { ok: false, why: key ? `${host} didn't accept the API key. Check it, or replace it.` : `${host} needs an API key.` };
-    if (res.status === 404) return { ok: false, why: `${host} answered, but has no model list at that address. Check the endpoint and the provider.` };
+    if (res.status === 404 || res.status === 405 || res.status === 501) return { ok: false, why: `${host} answered, but has no model list at that address. Check the endpoint and the provider.`, cause: "no-list" };
     if (!res.ok) return { ok: false, why: friendlyError(`HTTP ${res.status}`, undefined, { statusCode: res.status, provider: "user", settingsKey: null }) };
     let models: number | null = null;
     let ids: string[] = [];
@@ -649,7 +654,7 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
  * the model server (Ollama, LM Studio) isn't running. Each says Ember tries again: the host does (retryLater).
  */
 export function providerDown(r: TestResult, host: string, local: boolean): string | null {
-  if (r.ok || !r.cause) return null;
+  if (r.ok || !r.cause || r.cause === "no-list") return null;
   if (r.cause === "timeout") return `${r.why} Ember will try again in a moment.`;
   if (local) return `Ember can't reach the model server on this computer (${host}). Start it, and Ember will connect in a moment.`;
   return `Ember can't reach ${host}. Check the address and the network: Ember will try again in a moment.`;

@@ -150,19 +150,41 @@ const SAID = String.raw`(?!\s+(?:even\s+|ever\s+|just\s+)?(?:said|say|told|asked
  * or "don't forget to…" (reminders), "remember when, what, how…" or "remember me" (questions about what Ember knows),
  * nor "make a note in…" (a note in an app).
  */
-const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|make\s+a\s+(?:mental\s+)?note\s+(?:that|of)\b)\s*(?!to\b|when\b|what\b|how\b|who\b|where\b|which\b|whether\b|if\b|me\b)(\S.*)$`, "is");
-/** "Remember," or "keep in mind," with a pause after it. */
-const REMEMBER_PAUSE = new RegExp(String.raw`^(${LEAD.slice(1)}(?:remember|keep\s+in\s+mind|don'?t\s+forget|do\s+not\s+forget))\s*,\s*`, "i");
+const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|keep\s+(?:this|that)\s+in\s+mind|make\s+a\s+(?:mental\s+)?note(?:\s+(?:that|of)\b|(?=\s*:))`
+  // "Add to your memory that I'm vegetarian" (memory-r3-2).
+  + String.raw`|(?:add|save|put|store|write|keep)\s+(?:to|in|into)\s+(?:(?:your|ember['’]s)\s+)?memory(?:\s+that)?\b)\s*(?!to\b|when\b|what\b|how\b|who\b|where\b|which\b|whether\b|if\b|me\b)(\S.*)$`, "is");
+/** "Remember," "keep in mind," or "remember -" with a pause after it. */
+const REMEMBER_PAUSE = new RegExp(String.raw`^(${LEAD.slice(1)}(?:remember|keep\s+in\s+mind|don'?t\s+forget|do\s+not\s+forget))\s*(?:,|\s[-–—]+)\s*`, "i");
+/**
+ * What may come before "remember" and leave it a request to keep something (memory-r3-2): "okay", "so", "always", "in
+ * future", "I want you to", "I'd like you to" ("Always remember that I'm vegetarian", "In future, remember…").
+ */
+const REMEMBER_LEAD = new RegExp(String.raw`^((?:(?:hey\s+)?ember[,.!]?\s+)?)(?:(?:ok(?:ay)?|so|and|also|now|right|alright|well|oh)\b[,.!]?\s+)*`
+  + String.raw`(?:(?:always|in\s+(?:the\s+)?future|from\s+now\s+on|going\s+forward|for\s+(?:the\s+)?future)\b,?\s+)?(?:i\s+(?:want|need)\s+you\s+to\s+|i(?:['’]d|\s+would)\s+like\s+you\s+to\s+)?`
+  + String.raw`(?=(?:please\s+)?(?:remember|keep\s+(?:in|this|that)\b|don'?t\s+forget|do\s+not\s+forget|make\s+a\s+(?:mental\s+)?note|add\s+to\b)\b)`, "i");
+/**
+ * "Remember that", "keep this in mind", "add that to your memory", "save it to memory": a request to keep what was just
+ * said, which names nothing more (memory-r3-2). Never "save that to the memory card".
+ */
+const KEEP_THAT = new RegExp(String.raw`${LEAD}(?:(?:remember|memori[sz]e)\s+(?:this|that|it)|keep\s+(?:this|that|it)\s+in\s+mind`
+  + String.raw`|(?:add|save|put|store|keep|commit|write)\s+(?:this|that|it)\s+(?:to|in|into)\s+(?:(?:your|ember['’]s)\s+)?(?:long[-\s]term\s+)?memory)`
+  + String.raw`(?:\s+(?:please|for\s+me|for\s+later|too|as\s+well))?$`, "i");
 /**
  * What follows "remember…" says something to keep: "that…", "I'm vegetarian", "my wife's birthday is 12 March", "the
  * deadline is Friday". "Remember the file I mentioned", "don't forget my umbrella" and "remember this" refer to
  * something, or ask for a reminder: Ember adds no "I won't keep this" after them (memory-r8).
  */
-const STATES = /^(?:that\b|i\b|i['’]|we\b|we['’])|\b(?:is|are|was|were|am|isn['’]t|aren['’]t|wasn['’]t|has|have)\b|\b(?:it|that|there|he|she|they|what|who|this|here)['’]s\b|['’](?:re|m|ve)\b/i;
+const STATES = /^(?:that\b|i\b|i['’]|we\b|we['’]|(?:they|you)\s+[a-z])|\b(?:is|are|was|were|am|isn['’]t|aren['’]t|wasn['’]t|has|have)\b|\b(?:it|that|there|he|she|they|what|who|this|here)['’]s\b|['’](?:re|m|ve)\b/i;
 /** Words that open a noun phrase ("the file", "my umbrella"): the word straight after one names a thing. */
 const DETERMINER = /^(?:the|my|our|your|his|her|their|this|that|these|those|a|an|some|its)$/i;
 /** Who does something: after a thing named ("the file I mentioned", "the time we went") they describe that thing. */
-const PRONOUN = /^(?:i|you|we|he|she|they)$/i;
+const PRONOUN = /^(?:i|you|we|he|she|they|it)$/i;
+/** Words that start a description of a thing named ("the tests that failed", "the client who called"): memory-r8. */
+const RELATIVE = /^(?:that|which|who|whom|whose)$/i;
+/** Participles that describe a thing named after it, not what happened ("the file attached", "the documents enclosed"). */
+const DESCRIBES = /^(?:attached|enclosed|included|mentioned|listed|linked|shared|selected|highlighted|provided|uploaded|quoted|cited|shown|given|requested|specified|described|referenced)$/i;
+/** Things people ask not to forget, whose "-s" is a plural, not a verb, before a place ("my car keys on the table"). */
+const THINGS = /^(?:keys|glasses|sunglasses|shoes|boots|books|papers|documents|docs|notes|tickets|passports|bags|clothes|things|files|gloves|headphones|earbuds|pills|meds|medications|vitamins|chargers|cables|cards|photos|snacks|lunches|groceries)$/i;
 /** What may stand before a number that only says when or where ("my meeting at 3"). */
 const PREPOSITION = /^(?:at|on|in|by|for|from|to|of|with|about|until|till|after|before|around|near|under|over)$/i;
 /** Past forms without "-ed" ("the standup got moved", "Priya left Globex"). */
@@ -195,12 +217,25 @@ function statesSomething(rest: string): boolean {
   const from = DETERMINER.test(words[0] ?? "") ? 2 : 1;
   for (let v = from; v < words.length; v++) {
     const w = words[v]!;
-    const verb = /^\p{Ll}/u.test(w) && (MODAL.test(w) || PAST.has(w) || /^\p{Ll}{2,}ed$/u.test(w) || (/^\p{Ll}+[^siu'’]s$/u.test(w) && v + 1 < words.length));
+    const next = words[v + 1];
+    const ed = (x = "") => /^\p{Ll}{2,}ed$/u.test(x) || PAST.has(x);
+    // "Remember Sam drives": a name and its verb, the request's last word (memory-r3-2), never an app's, a tool's or a
+    // day's ("Remember Chrome updates", "Remember Monday standups": memory-v5-6), but a month's that names someone
+    // before their verb ("Remember June drives": memory-w5-6).
+    const named = v === 1 && words.length === 2 && /^\p{Lu}\p{Ll}+$/u.test(words[0]!) && isName(words[0]!, true);
+    // "the issues users reported": who did what to the thing named, a description (memory-r8).
+    if (v + 2 === words.length && /^\p{Ll}+s$/u.test(w) && !MODAL.test(w) && ed(next)) return false;
+    // "my car keys on the table": a plural before a place, not a verb.
+    const plural = THINGS.test(w) && (next === undefined || PREPOSITION.test(next));
+    const verb = /^\p{Ll}/u.test(w) && (MODAL.test(w) || ed(w) || (/^\p{Ll}+[^siu'’]s$/u.test(w) && (next !== undefined || named) && !plural));
     const value = /^[£$€]?\d/u.test(w) && !PREPOSITION.test(words[v - 1]!) && !DETERMINER.test(words[v - 1]!);
     if (!verb && !value) continue;
+    // "the file attached", "the documents enclosed": a thing described (memory-r8).
+    if (DESCRIBES.test(w) && (next === undefined || PREPOSITION.test(next))) return false;
     const between = words.slice(from, v);
-    // "the file I mentioned", "the tab I had open", "the documents Priya sent": a thing described, not a fact.
-    return !between.some(x => PRONOUN.test(x)) && !(v === words.length - 1 && between.some(x => /^\p{Lu}/u.test(x)));
+    // "the file I mentioned", "the tab I had open", "the documents Priya sent", "the tests that failed": a thing
+    // described, not a fact.
+    return !between.some(x => PRONOUN.test(x) || RELATIVE.test(x)) && !(v === words.length - 1 && between.some(x => /^\p{Lu}/u.test(x)));
   }
   return false;
 }
@@ -216,10 +251,12 @@ const NOT_A_VERB = /^(?:and|or|but|then|too|also|please|today|tomorrow|tonight|y
 function manySay(words: readonly string[]): boolean {
   const head = DETERMINER.test(words[0] ?? "") ? 1 : 0;
   const pair = /^and$/i.test(words[head + 1] ?? "") && /^(?:i|we)$/i.test(words[head + 2] ?? "") && (head === 1 || /^\p{Lu}\p{Ll}+$/u.test(words[0] ?? ""));
-  const many = pair || (head === 1 && (/^\p{Ll}{2,}[^siu'’]s$/u.test(words[1] ?? "") || PLURAL.test(words[1] ?? "")));
+  // "my in-laws visit in May", "people call me Ram" (memory-r3-2).
+  const many = pair || (head === 1 && (/^\p{Ll}[\p{Ll}-]+[^siu'’]s$/u.test(words[1] ?? "") || PLURAL.test(words[1] ?? ""))) || (head === 0 && PLURAL.test(words[0] ?? ""));
   const at = pair ? head + 3 : head + 1;
   const w = words[at] ?? "";
-  return many && at + 1 < words.length && /^\p{Ll}+$/u.test(w) && !/ing$/.test(w)
+  // A plural's verb never ends in one "s": "the issues users reported" is a description (memory-r8).
+  return many && at + 1 < words.length && /^\p{Ll}+$/u.test(w) && !/ing$/.test(w) && !/[^s]s$/.test(w)
     && ![PREPOSITION, DETERMINER, PRONOUN, NOT_A_VERB].some(list => list.test(w));
 }
 /**
@@ -279,14 +316,24 @@ const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:(?:forget|don'?t\s+remember|d
   // everything you saved", which may be a task's files).
   + String.raw`|forget\s+(?:everything|all)(?:\s+${YOU_KEPT})?\s*$`
   + String.raw`|(?:erase|delete|clear|wipe)\s+(?:everything|all)\s+(?:(?:that\s+)?you(?:['’]ve|\s+have)?\s+)?(?:know|knew|learned|learnt|remember)\s*$`
-  // "Remove Priya from your memory", "remove my address from memory".
-  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+(?:\S+\s+){1,4}?from\s+(?:(?:your|ember['’]s|my)\s+)?(?:memory|memories)\b)`, "i");
+  // "Remove Priya from your memory", "remove my address from memory": "from memory" alone only after the user's own
+  // details or a name (FORGET_FROM), never "remove this tab from memory" (memory-c4-1).
+  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+(?:\S+\s+){1,4}?from\s+(?:your|ember['’]s|my)\s+(?:memory|memories)\b`
+  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+${MY_DETAIL}(?:\s+(?:and|&)\s+${MY_DETAIL})*\s+from\s+(?:memory|memories)${END})`, "i");
+/** "Remove Priya from memory": a name, as FORGET_NAME takes one (memory-c4-1). */
+const FORGET_FROM = new RegExp(String.raw`${LEAD}(?:remove|delete|erase|drop|clear|wipe)\s+(\S+(?:\s+\S+)?)\s+from\s+(?:memory|memories)${END}`, "i");
+/**
+ * A photo app's or a social site's memories ("my memories of Paris in Photos", "…in Microsoft Photos", "…on
+ * Pinterest"): a capitalised word after "in", "on" or "from", never Ember (memory-c4-1, memory-w5-6), and never "your"
+ * or "Ember's" memories ("Delete your memories about Priya from Acme" is Ember's: memory-v5-5).
+ */
+const APP_MEMORIES = /(?<!\b(?:[Yy]our|[Ee]mber['’]s)\s+)\bmemor(?:y|ies)\s+(?:of|about)\s+.*\s(?:in|on|from)\s+(?:the\s+)?(?!Ember\b)\p{Lu}/u;
 /**
  * "Forget Priya", "forget Priya Shah", "forget Priya's birthday", "forget everything about Priya": a name, capitalised as
  * names are, never a word of the conversation ("Forget It", "Forget The last part"): memory-v1. Never an app, a day, a
  * folder, a device or a network ("Forget Outlook", "Forget Monday", "Forget AirPods", "Forget HomeNet"): memory-r3-1.
  */
-const FORGET_NAME = new RegExp(String.raw`${LEAD}forget\s+(?:(?:everything|all)\s+(?:${YOU_KEPT}\s+)?about\s+)?(\S+(?:\s+\S+)?)$`, "i");
+const FORGET_NAME = new RegExp(String.raw`${LEAD}forget\s+((?:everything|all)\s+(?:${YOU_KEPT}\s+)?about\s+)?(\S+(?:\s+\S+)?)$`, "i");
 const FORGET_NAMES_DETAIL = new RegExp(String.raw`${LEAD}(?:forget|unlearn)\s+(\S+(?:\s+\S+)?)['’]s\s+${ABOUT_ME}$`, "i");
 const NOT_A_NAME = /^(?:it|that|this|the|a|an|about|what|where|when|who|how|my|our|your|everything|all|me|i|we|to|them|him|her|those|these|instead)$/i;
 /** A word of a name as people write one: "Priya", "Jean-Luc", "O'Brien". Never "HomeNet", "AirPods" or "iPhone". */
@@ -298,7 +345,8 @@ const NOT_SOMEONE = new Set([
   "discord", "telegram", "signal", "notion", "trello", "asana", "gmail", "thunderbird", "terminal", "settings", "files", "finder", "mail",
   "calendar", "notes", "photos", "music", "maps", "messages", "reminders", "contacts", "python", "java", "docker", "linux", "ubuntu",
   "windows", "fedora", "steam", "netflix", "amazon", "facebook", "twitter", "reddit", "google", "copilot", "gimp", "inkscape", "blender",
-  "dropbox", "drive", "sheets", "docs", "evernote", "todoist",
+  "dropbox", "drive", "sheets", "docs", "evernote", "todoist", "kubernetes", "terraform", "postgres", "mysql", "redis", "nginx", "figma",
+  "gitlab", "bitbucket", "jupyter", "eduroam", "starbucks", "git", "github",
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february", "march", "april", "may", "june",
   "july", "august", "september", "october", "november", "december", "today", "tomorrow", "yesterday", "tonight", "weekend", "christmas",
   "downloads", "documents", "desktop", "pictures", "videos", "home", "trash",
@@ -306,9 +354,27 @@ const NOT_SOMEONE = new Set([
   "phone", "pixel", "galaxy", "watch", "monitor", "display", "network", "hotspot", "router", "ethernet", "vpn", "connection", "device",
   "mac", "macbook", "laptop", "computer", "tablet", "kindle", "echo", "alexa", "siri", "chromecast", "roku", "xbox", "playstation",
 ].map(fold));
-/** Whether `words` ("Priya", "Priya Shah") are a name Ember may keep facts about. */
-const isName = (words: string) => words.split(/\s+/).every(w => NAME_WORD.test(w) && !NOT_A_NAME.test(w) && !NOT_SOMEONE.has(fold(w)))
-  && !NOT_SOMEONE.has(fold(words));
+/** Months that are given names too ("June's birthday", "May Smith"). */
+const NAMED_MONTHS = new Set(["april", "may", "june", "august"]);
+/** Capitalised words after a month that name what happens then, never a surname ("May Day", "June Sprint"): memory-v5-6. */
+const MONTH_THINGS = new Set(["day", "days", "sprint", "sprints", "release", "releases", "bank", "holiday", "holidays", "fools", "fool",
+  "meeting", "meetings", "review", "reviews", "report", "reports", "budget", "deadline", "launch", "update", "updates", "payroll", "rent",
+  "invoice", "invoices", "sale", "sales", "plan", "plans", "schedule", "trip", "party", "event", "events", "quarter", "close", "newsletter",
+  "issue", "edition", "numbers", "figures", "results", "targets", "goals", "demo", "retro", "offsite", "conference", "bills", "bill", "exams",
+  "exam", "term", "break", "recap", "roadmap", "rollout", "sync", "standup", "deploy", "deployment", "milestone", "cycle", "batch", "cohort",
+  "intake", "vacation", "festival", "fair", "summit", "hackathon", "payday", "rota", "calendar", "challenge", "retreat", "showers", "wedding"]);
+/**
+ * Whether `words` ("Priya", "Priya Shah") are a name Ember may keep facts about. April, May, June and August are names
+ * with a surname, or as `named` (a detail or "everything about" after them), never alone ("Forget June"): memory-c4-3;
+ * nor before a word for what happens then ("Forget May Day", "Forget June Sprint"): memory-v5-6.
+ */
+function isName(words: string, named = false): boolean {
+  const ws = words.split(/\s+/);
+  const month = (w: string, i: number) => NAMED_MONTHS.has(fold(w))
+    && (named || (i === 0 && ws.length > 1 && !NAMED_MONTHS.has(fold(ws[1]!)) && !MONTH_THINGS.has(fold(ws[1]!))));
+  return ws.every((w, i) => NAME_WORD.test(w) && !NOT_A_NAME.test(w) && (!NOT_SOMEONE.has(fold(w)) || month(w, i)))
+    && (!NOT_SOMEONE.has(fold(words)) || (ws.length === 1 && month(ws[0]!, 0)));
+}
 /** More than the one request: another sentence, or more after a comma, a semicolon or a dash (the conversation takes those). */
 const MORE = /[.!?]\s+\S|[,;]\s*\S|\s[-–—]+\s*\S/;
 /**
@@ -325,22 +391,31 @@ const AND_MORE = /\s(?:and|then|&)\s+(?:(?:then|also|instead|just|please)\s+)*(?
  * keeps it until Ember closes, and Ember says after the answer that memory won't (`rememberNote`).
  */
 export function memoryAsk(text: string): "remember" | "forget" | null {
-  // "Remember, I'm vegetarian": the comma a pause after the verb, not more after the request (memory-r3-2).
-  const t = text.trim().replace(REMEMBER_PAUSE, "$1 ");
+  // "Remember, I'm vegetarian": the comma a pause after the verb, not more after the request; "In future, remember…":
+  // what came before it is no more either (memory-r3-2).
+  const t = text.trim().replace(REMEMBER_LEAD, "$1").replace(REMEMBER_PAUSE, "$1 ");
   // (After "Ember," or "Hey Ember." the request starts: that comma is no more.)
   const body = t.replace(/^(?:hey\s+)?ember[,.!]?\s+/i, "").replace(/[.!?]+$/, "");
   if (MORE.test(body) || AND_MORE.test(body)) return null;
   // Asked as a question, unless it is a request put politely ("Can you remember that I'm vegetarian?").
   if (/\?$/.test(t) && !POLITE.test(t)) return null;
+  if (KEEP_THAT.test(t.replace(/[.!?]+$/, ""))) return "remember";
   const kept = REMEMBER_ASK.exec(t.replace(/[.!?]+$/, ""));
-  if (kept) return statesSomething(kept[1]!.trim()) ? "remember" : null;
+  // "Make a note: I prefer email": what follows the colon (memory-r3-2).
+  if (kept) return statesSomething(kept[1]!.trim().replace(/^:\s*/, "")) ? "remember" : null;
   return forgets(t.replace(/[.!]+$/, "")) ? "forget" : null;
 }
 
 /** Whether `t` (no more in it) asks Ember to forget something about the user, everything, or a name. */
 function forgets(t: string): boolean {
+  if (APP_MEMORIES.test(t)) return false;
   if (FORGET_ASK.test(t)) return true;
-  return [FORGET_NAME.exec(t), FORGET_NAMES_DETAIL.exec(t)].some(name => !!name && isName(name[1]!));
+  const name = FORGET_NAME.exec(t);
+  if (name && isName(name[2]!, !!name[1])) return true;
+  const detail = FORGET_NAMES_DETAIL.exec(t);
+  if (detail && isName(detail[1]!, true)) return true;
+  const from = FORGET_FROM.exec(t);
+  return !!from && isName(from[1]!);
 }
 
 /**
@@ -355,6 +430,9 @@ export function forgetsWithMore(text: string): boolean {
   return !new RegExp(String.raw`${LEAD}forget\s+(?:everything|all)$`, "i").test(first) && forgets(first);
 }
 
+/** A statement, then a request to keep it ("…, remember that", "…. Remember that", "… - don't forget"). */
+const REMEMBER_AFTER = /^(.*?\S)[.!]?\s*(?:[,;.!]|\s[-–—]+)\s*(?:(?:and|so|please|but|just)\s+)?(?:remember|keep\s+(?:this|that|it)\s+in\s+mind|don'?t\s+forget|do\s+not\s+forget)(?:\s+(?:this|that|it))?(?:\s+(?:please|ok(?:ay)?|for\s+me|for\s+later|too))?[.!]*$/is;
+
 /** Filler after a comma, which says nothing to keep ("Remember the tab I had open, please"). */
 const FILLER = /^(?:please|thanks|thank\s+you|ok|okay|right|alright|yeah|yes|now|too|as\s+well|for\s+me|for\s+later)$/i;
 
@@ -366,6 +444,9 @@ const FILLER = /^(?:please|thanks|thank\s+you|ok|okay|right|alright|yeah|yes|now
 export function remembersWithMore(text: string): boolean {
   const t = text.trim().replace(/[.!]+$/, "");
   if (memoryAsk(t) !== null || (/\?$/.test(t) && !POLITE.test(t))) return false;
+  // "I'm vegetarian, remember that", "My wife's birthday is 12 March, don't forget" (memory-r3-2).
+  const after = REMEMBER_AFTER.exec(t);
+  if (after) return statesSomething(after[1]!) && !looksLikeRequest(after[1]!);
   // "My wife and I prefer…" is one subject, not more after the request (memory-v4-4).
   const first = t.split(/[.!?]\s|[,;]|\s[-–—]+\s|\s(?:and|then|&)\s(?!(?:i|we)\s)/i)[0]!.trim();
   if (memoryAsk(first) === "remember") return true;

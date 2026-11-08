@@ -57,6 +57,8 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
  * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it.
  */
 export const COMPOSER_THINKING = "Thinking… Ember's reply will appear above.";
+/** The same while it waits, unsent, for a switch of model service that waits for the work under way (main's "held" turn: home-r4-4). */
+export const COMPOSER_HELD = "Ember will send this to the new model service once what it's doing now has finished. Stop response cancels it.";
 export function composerStillWaiting(service?: string): string {
   return `Still waiting for ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}… Stop response ends this reply.`;
 }
@@ -524,6 +526,9 @@ export const providerHeldKey = (to: string | null) => (to ? `Ember saves this ke
 export const providerCardShown = (host: string) => `Read the note above: Ember sends nothing to ${host} until you agree.`;
 /** Said once the card is agreed to, in place of the line above (integrations-r4). */
 export const providerAgreedText = (host: string) => `Agreed. Ember now sends your requests to ${host}.`;
+/** Said instead when a held edit's new host answered but lists no models there, so it is used as typed (integrations-r4-2). */
+export const providerAgreedUnlisted = (host: string, model: string | null) =>
+  `Agreed. ${host} answered but lists no models, so Ember asks it for ${model ?? "the models"} as typed.`;
 
 /** Why Test connection waits, beside it (its aria-describedby), or null when it can be pressed or the organisation set it. */
 export function providerTestWaits(o: { host: string | null; agreed: boolean; managed: boolean }): string | null {

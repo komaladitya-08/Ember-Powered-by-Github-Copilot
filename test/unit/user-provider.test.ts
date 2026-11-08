@@ -361,7 +361,10 @@ describe("Test connection", () => {
   it("says in one sentence why it failed, never with the service's raw text or the key", async () => {
     expect(await testConnection(settings(), STORED, answer(401))).toEqual({ ok: false, why: "models.example.com didn't accept the API key. Check it, or replace it." });
     expect(await testConnection(settings(), null, answer(403))).toEqual({ ok: false, why: "models.example.com needs an API key." });
-    expect(await testConnection(settings(), STORED, answer(404))).toEqual({ ok: false, why: "models.example.com answered, but has no model list at that address. Check the endpoint and the provider." });
+    // Answered, with no model list there (some gateways answer chat only): said as a cause too, which a held edit adopts (integrations-r4-2).
+    for (const status of [404, 405, 501]) {
+      expect(await testConnection(settings(), STORED, answer(status))).toEqual({ ok: false, why: "models.example.com answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" });
+    }
     expect(await testConnection(settings(), STORED, answer(503))).toEqual({ ok: false, why: "Your model service had a problem on its side. Try again in a moment." });
     const thrown = vi.fn<FetchLike>(async () => { throw Object.assign(new TypeError(`fetch failed for ${KEY}`), { cause: { code: "ECONNREFUSED" } }); });
     const r = await testConnection(settings(), STORED, thrown);

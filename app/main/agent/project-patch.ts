@@ -2,15 +2,26 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
-import { ProjectInputError, type ProjectSource } from "./project";
+import { ProjectInputError, secretLine, type ProjectSource } from "./project";
 import { memoryRefusal } from "../memory/guard";
 
 export interface ProjectPatch { source: ProjectSource; diff: string; output: string }
+/** A diff that applies exactly but whose patched file looks like it holds a secret, at `line`: never offered (integrations-c4-1). */
+export interface WithheldPatch { withheld: true; name: string; line: number | null }
 
 const RANGE = /^@@ -(\d{1,6})(?:,(\d{1,6}))? \+(\d{1,6})(?:,(\d{1,6}))? @@$/;
 
 /** Only exact unified hunks for one selected file qualify for the Apply button. */
 export function draftProjectPatch(answer: string, sources: ProjectSource[]): ProjectPatch | null {
+  const read = readProjectPatch(answer, sources);
+  return read && "diff" in read ? read : null;
+}
+
+/**
+ * The answer's patch, as draftProjectPatch, or why an exact one isn't offered: its patched file looks like it holds a
+ * secret (`withheld`, with the line), so Projects says so rather than that the diff couldn't be verified (integrations-c4-1).
+ */
+export function readProjectPatch(answer: string, sources: ProjectSource[]): ProjectPatch | WithheldPatch | null {
   if (answer.length > 24_000 || /[\p{Cf}\p{Cc}]/u.test(answer.replace(/[\n\r\t]/g, ""))) return null;
   const blocks = [...answer.replace(/\r\n/g, "\n").matchAll(/(?:^|\n)\x60\x60\x60diff\n([\s\S]*?)\n\x60\x60\x60(?=\n|$)/g)];
   if (blocks.length !== 1) return null;
@@ -53,7 +64,8 @@ export function draftProjectPatch(answer: string, sources: ProjectSource[]): Pro
   }
   result.push(...original.slice(cursor));
   const output = result.length ? result.join(eol) + eol : "";
-  if (output === source.text || Buffer.byteLength(output) > 24 * 1024 || memoryRefusal(output)) return null;
+  if (output === source.text || Buffer.byteLength(output) > 24 * 1024) return null;
+  if (memoryRefusal(output)) return { withheld: true, name: source.name, line: secretLine(output) };
   return { source, diff, output };
 }
 

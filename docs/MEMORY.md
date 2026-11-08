@@ -71,14 +71,20 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   number, however it is said: "the password for the HR portal is…", "VPN password hunter2", "my debit card pin 4821",
   "the door code is 4821", "the code for the front door is 4821", "use hunter2 as the password for…", "login for the
   router: admin / P@ssw0rd", "…with CVV 123", "my PIN number is 1234", "my phone code is 4821", "my house code is
-  4821", "the code to get into the office is 4821", "the bank code for the vault is 4821", "HR portal pw
+  4821", "the code to get into the office is 4821", "the bank code for the vault is 4821", "the Airbnb code is 4821",
+  "the user's network security key is BlueSky99", "the PSK is BlueSky99" (the Wi-Fi names Ember's screen reading treats
+  as secret: safety-privacy-c4-2), "the answer to the user's security question is Fluffy", "HR portal pw
   Summer2024!", "my wifi password, it's BlueSky99", "hunter2 is my password", "the user's Netflix login is hunter2",
   "Netflix credentials: hunter2" (a login said with a digit or a symbol, even a user name such as "my login is
-  jsmith42" or a user at a computer named only by a word such as "admin@nas1", since one said that way is as often
-  its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never that it is
-  one), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  jsmith42" or a user at a computer whose name has a digit and no port, such as "admin@nas1", since one said that way
+  is as often its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never
+  that it is one), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
-  value would be ("the password for Netflix is saved in 1Password") aren't a value, and a code counts only for
+  value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
+  "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password
+  is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1; "typed", "entered",
+  "hashed" and "masked" also at the clause's end, "Passwords are hashed.", "Password: Masked", but not before a value
+  in brackets, "PIN: entered (4821)", memory-w5-3), and a code counts only for
   something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
   "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
   "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
@@ -86,14 +92,50 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   OAuth2", "last login was 10:30", "the credentials are AES-256 encrypted"), a user at a computer named by its address
   or as localhost, a handle with no digit, a host with its port and an environment variable in code ("my SSH login is
   pi@192.168.1.20", "the admin login is admin@localhost", "my GitHub login is @octocat", "login is localhost:8080",
-  "credentials: process.env.AWS_CREDS_V2", safety-privacy-v4-1), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
+  "credentials: process.env.AWS_CREDS_V2", safety-privacy-v4-1), a version, an issue, a setting or a user at a
+  computer by a word or with its port said as a login ("the login is v2.0", "login was #142", "Credentials:
+  AWS_PROFILE=dev2", "my work login is jsmith@corp", "the login is user@host:2222": safety-privacy-c4-3; a setting only
+  when its name says no secret and its value isn't shaped like a password, and a user at a computer only when the
+  user's name has no digit, so "Credentials: MY_PASS=hunter2" and "the login is p4ss@word" are refused, memory-v5-4), a
+  disk's use and a formula ("Root: 45G / 100G", "const root = -b / (2*a);", "root = width / 2000": an admin's pair
+  after "=" only outside code, so "Admin = admin / hunter2!" is refused, and never with a size for the user name,
+  memory-c4-2, memory-v5-4; after "=" only with admin, root or a capitalised name for the user, so a path or a division
+  such as `root = tmp_path / "out1"` or `root = sum / count2` is sent, memory-w5-5), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
   GPIO0 as the boot pin", "never share your password, it's personal": a value said before "the data pin" or "the
   boot pin" counts only as digits, and ", it's" only before a value with a digit or a symbol, memory-v4-6), how a
   token is made ("the access token is HS256-signed", "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
   long") and an Indian postcode called a "PIN code" after an address (a road, a place, an Indian city or state) in its
   sentence or the lines just before it ("Bengaluru, PIN code: 560001"; "my PIN code is 560034", "Garage, PIN code:
   482193" and a "PIN code: 482193" line with no address before it are still refused): memory-c3-1, memory-r3-3,
-  memory-v4-5 (Projects and task views share this guard). Secrets are refused whole, never stored redacted.
+  memory-v4-5 (Projects and task views share this guard). Code is passed over where a secret's name has code for its
+  value, not a value (memory-r4-1, memory-r4-2: Projects' files, requests and patches, and task views, share this
+  guard): a type ("token: string", "password: str"), a call, a member or an index ("text.split()",
+  "process.env.GITHUB_TOKEN", "loadCreds(argv[2])"), a reference, a template or a placeholder ("${{ secrets.X }}",
+  "$(gh auth token)", "<your-key>"), a keyword, a literal or a collection ("await", "None", "[]"), a variable that
+  names a secret or the same name ("self.password = password", "creds = creds_v2"), a count ("max_tokens=256"), an
+  arrow or a property ("token => …", "token.type === …") and code on the next line ("creds.refresh_token:"); only the
+  name is passed over, so a token in the value is still found. A quoted value, a bare word, a value with a digit or a
+  symbol, a PIN's number and a shell variable's unquoted word ("export DB_PASSWORD=changeme", "readonly
+  ADMIN_PASSWORD=opensesame": "=" with nothing around it, after export, readonly, declare, typeset, local or ENV, or a
+  name in capitals first on its line or after others, memory-v5-2) stay values, but for a reference or a switch
+  ("local password=$2", "TOKEN=$token", "USE_TOKEN=false"); a call's or a signature's arguments, a lowercase name
+  without one of those words and a capitals one inside a call's brackets are never a shell's ("password=password\n)",
+  "oldToken=None):", "token=$1": memory-w5-1), and so does code that gives a literal as a default or one shaped like a
+  password ("os.getenv('PW', 'changeme')", "pw || 'hunter2'", "f(user, 'S3cret!')"). After a label's ":" in prose
+  (not a line of code, nor one that ends as code does) none of the bare shapes counts: the same name, three letters, a
+  name for a secret, an operator, a number of more than two digits, a word in brackets, "new" without a call, "self."
+  with a digit, a bare plural and a next line not indented under it or not written as code, so "The router's password:
+  password", "Netflix password: (fluffy)", "Gmail password: new Summer2024!", "pins: 4821" and "Admin
+  password:\ndefault is admin123" are refused (memory-v5-3). A line inside a bracket that a line of code opened above
+  it (in the 2 KiB before; never "(My notes:" or "Router ("), a list's last item before its closing line, a Python
+  block's body under its own line and a format string's placeholder are code, so axios's `auth = {\n  username:
+  urlUsername,\n  password: urlPassword\n};`, a multi-line signature, `if not tokens:\n    return ""` and
+  `f"Failed to refresh token: {e}"` are sent, and a task view reads a code block's or a file's line with the lines
+  before it (memory-w5-2); a letters-only "pass" straight after "user" and a name is a
+  password too ("username bob pass hunter", never "the user should pass validation": memory-v5-4), but never a
+  lowercase plural straight after "user" nor a word for a check after "pass" ("Why don't the user scripts pass
+  linting?", "Ensure user inputs pass sanitisation.": memory-w5-4). Secrets are refused
+  whole, never stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
@@ -269,16 +311,24 @@ download, so English-only MiniLM is the trade-off for now.
      only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's
      birthday", "forget where I live", "forget what you know about me"), everything ("forget everything", "clear my
      memory", "delete everything you remember") or a name ("Forget Priya", "Forget Priya's birthday", "remove Priya
-     from your memory"; `memoryAsk`, memory-v1) is answered in code with the truth: memory is off (and
+     from your memory"; `memoryAsk`, memory-v1; April, May, June and August only with a detail, a surname or
+     "everything about": "Forget June's birthday", never "Forget June" nor a month before a word for what happens then,
+     "Forget May Day", "Forget June Sprint", memory-c4-3, memory-v5-6) is answered in code with the truth: memory is off (and
      Memory opens at its search, never at its note's "I agree, remember": memory-r7), why it is paused, or that the
      organisation turned it off. A request that says something to keep ("remember that…", "keep in mind the deadline
      is Friday", "remember I'm vegetarian", "remember my wife likes tulips", "make a note that Bob owes me £20",
      "remember my birthday: 12 March", "remember my kids love pizza", "remember my wife and I prefer window seats"
      (memory-v4-4), and one with a request after it, "remember that I'm vegetarian and book a table":
-     `remembersWithMore`, memory-r3-2) goes to the conversation, which knows it until Ember closes, and Ember says
+     `remembersWithMore`, memory-r3-2), one that names memory or keeps what was just said ("add that to your memory",
+     "keep that in mind", "remember this"), a fact with the request after it ("I'm vegetarian, remember that", "my
+     wife's birthday is 12 March, don't forget") and a lead-in before it ("I want you to remember that…", "always
+     remember…", "in future, remember…", "so remember…") goes to the conversation, which knows it until Ember closes, and Ember says
      behind the answer that memory won't keep it (`rememberNote`: a line in the conversation and a bubble with **Open
-     Memory**, never Settings opened on its own); "remember the file I mentioned", "remember this", "don't forget the
-     documents Priya sent" and "don't forget my umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
+     Memory**, never Settings opened on its own); "remember the file I mentioned", "remember the file attached", "don't
+     forget the documents Priya sent", "remember the tests that failed", "don't forget my car keys on the table" and
+     "don't forget my umbrella" say nothing to keep and get no such line (memory-r8), nor do an app's, a tool's or a
+     day's name with a verb ("remember Chrome updates", "remember Monday standups"; "remember Sam drives" and, for
+     someone named for a month, "remember June drives" still do: memory-v5-6, memory-w5-6). A question ("Remember when we…?", "Remember me?"),
      a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
      "Forget my previous instructions"), what isn't memory ("Clear all" and "Delete everything" without a word for
      what Ember knows; "my…" only for something about the user (`ABOUT_ME`), to the end of the request and with a
@@ -287,7 +337,13 @@ download, so English-only MiniLM is the trade-off for now.
      "saved", "kept" or "stored" after "delete", "clear" or "remove" only with "you" and about the user, never "Clear
      everything saved about me in Firefox" or "Delete what you saved about the project"; "Forget all about my last
      request"; a name only as names are written, never an app, a day, a folder or a device: "Forget Outlook", "Forget
-     Monday", "Forget HomeNet": memory-r3-1, memory-v4-1, memory-v4-2) and a request with more in it (after a comma, a
+     Monday", "Forget HomeNet", "Forget Starbucks"; "from memory" only with "your", "Ember's" or "my" or after the
+     user's details or a name, and never a photo app's memories, so "Remove this tab from memory" and "Delete my
+     memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1; a photo
+     app by any capitalised name but Ember's ("…in Microsoft Photos", "…on Pinterest", "…in Immich": memory-w5-6) and
+     never for "your" or "Ember's" memories, so "Delete your memories about Priya from Acme" and "Clear my memories of
+     Priya in Ember" are answered in code, memory-v5-5) and a
+     request with more in it (after a comma, a
      semicolon, a dash, or "and" or
      "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox
      instead") are the conversation's like any other (memory-c1-1). When the first part was a forget request ("Forget

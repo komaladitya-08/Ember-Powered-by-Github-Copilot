@@ -70,7 +70,7 @@ import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversa
 import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
-import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
+import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/project-patch";
 import { ProjectWorkspaceStore, workspaceAction, type ProjectExchange } from "./agent/project-workspaces";
 import { memoryRefusal } from "./memory/guard";
 import { correctMemoryRequest } from "./memory/correction";
@@ -2094,8 +2094,10 @@ function start(): void {
     // A typed "stop" while a task is at work stops everything at once (askEmber): no turn comes for it, and Home's
     // composer says so instead of waiting for a reply (home-c1-1). Also while Ember isn't connected (home-c2-1).
     const stops = agent?.stopsWith(text) === true;
-    // Still starting, offline or reconnecting is said as such: Models & connections can't help with those.
-    const refusal = composerSendRefusal(agent?.getStatus() ?? { phase: "signed-out" }, stops);
+    // Still starting, offline or reconnecting is said as such: Models & connections can't help with those. Signed out
+    // while the user's own provider waits for its note, the host it waits for is named (integrations-r4-3).
+    const status = agent?.getStatus() ?? { phase: "signed-out" as const };
+    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null);
     if (refusal) throw new Error(refusal);
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
@@ -2390,7 +2392,8 @@ function start(): void {
       const answer = await host.runProject(prompt, run);
       if (run.signal.aborted || !projectContinues()) return { error: projectStopped(lost()) };
       if (!answer) return { error: lost() ? projectStopped(true) : PROJECT_MODEL_FAILED };
-      projectPatch = mode === "patch" ? draftProjectPatch(answer, sources) : null;
+      const read = mode === "patch" ? readProjectPatch(answer, sources) : null;
+      projectPatch = read && "diff" in read ? read : null;
       const shown = answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer;
       projectExchange = memoryRefusal(answer) ? null : { mode, question, answer: shown };
       projectExchangeScope = host.projectWorkspaceScope();
@@ -2398,6 +2401,7 @@ function start(): void {
       return {
         answer: shown, canContinue: projectExchange !== null,
         ...(projectPatch ? { patch: { name: projectPatch.source.name, diff: projectPatch.diff } } : {}),
+        ...(read && "withheld" in read ? { withheld: { name: read.name, line: read.line } } : {}),
       };
     } catch (err) {
       // The model service's refusal says what to do about it (integrations-5); a file that couldn't be read says which.
