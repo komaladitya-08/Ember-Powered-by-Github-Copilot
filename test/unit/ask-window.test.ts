@@ -268,7 +268,10 @@ describe("the ask box", () => {
     expect(sent.filter(([ch]) => ch === "agent:ask-context").at(-1)?.[1]).toMatchObject({ unavailable: "Not connected", opened: true });
     // Main tells it on every change of Copilot's status, in the handle's word.
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync("app/main/main.ts", "utf8")).toMatch(/onStatus: status => \{[\s\S]{0,1200}askWindow\.setUnavailable\(unansweredWord\(status\) \?\? undefined\);\n\s+\},/);
+    // Inside the handler's own body, however long the rest of it grows (it ends at its closing "},").
+    const main = readFileSync("app/main/main.ts", "utf8");
+    const handler = main.slice(main.indexOf("onStatus: status => {"));
+    expect(handler.slice(0, handler.indexOf("\n      },"))).toMatch(/askWindow\.setUnavailable\(unansweredWord\(status\) \?\? undefined\);$/);
   });
 
   it("grows with its field as lines are added or pasted, upward above Ember, and opens one line tall again (review #70)", () => {
