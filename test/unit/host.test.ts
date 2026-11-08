@@ -234,6 +234,17 @@ describe("connecting and signing in", () => {
     await vi.waitFor(() => expect(told).toEqual(["thinking", "idle"]));
     await host.stop();
   });
+  it("never tells Home the conversation stopped answering while a spoken request cuts in on a reply (home-r2-2)", async () => {
+    const told: string[] = [];
+    const { host } = makeHost({ onConversationTurn: t => { told.push(t); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    expect(await host.ask("Actually, tomorrow's", null, undefined, { spoken: true, replaces: true })).toBe(true);
+    expect(conductorSession().sent.at(-1)).toMatch(/Actually, tomorrow's/);
+    await Promise.resolve();
+    expect(told).toEqual(["thinking"]);
+    await host.stop();
+  });
   it("tells Home a request that waited for a reconnect in vain ended only after its Problem line (home-r2-2)", async () => {
     let generation = 1;
     const told: string[] = [];

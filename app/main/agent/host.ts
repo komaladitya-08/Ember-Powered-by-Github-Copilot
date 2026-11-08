@@ -2823,6 +2823,8 @@ export class AgentHost {
     // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
     const cutIn = how.replaces === true && (this.conductor?.turnOpen ?? false);
     if (cutIn) {
+      // (Answering all along, for Home, while the reply it cuts in on ends: home-r2-2.)
+      if (!waiting.counted) { waiting.counted = true; this.waitingAsks++; }
       this.queued = [];
       try { await this.conductor?.replaceTurn(); } catch (err) { this.o.log.warn("agent.replace_turn_failed", { err }); }
       if (epoch !== this.stopEpoch) return false;
