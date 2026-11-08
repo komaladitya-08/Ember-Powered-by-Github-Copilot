@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONVERSATION_SHOWN, conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, stillUnsent, type GivenBack } from "../../app/renderer/home/conversation-view";
+import { CONVERSATION_SHOWN, conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "../../app/renderer/home/conversation-view";
 import { pushLater } from "../../app/main/push-later";
 import { askedWhere } from "../../app/renderer/home/tasks-copy";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT, conversationRequest, retainedConversationText } from "../../app/shared/conversation";
@@ -183,6 +183,26 @@ describe("Home's conversation", () => {
     // Given back by a second Stop, above those still there: all of them, in the field's order.
     const later = givenBackAbove(fill(two, `Order lunch\n\n${edited}`), ["Open Files"], `Open Files\n\nOrder lunch\n\n${edited}`);
     expect(givenBackKept(later)).toEqual({ text: "Open Files\n\nOrder lunch", messages: 2, changed: false });
+  });
+
+  it("keeps the words a Stop gave back above the request a second Edit puts there, as I left them and still given back (home-w5-3)", () => {
+    const two = givenAbove(["Order lunch", "Tell Sam I'm late"], edited);
+    const again = givenBackOver(two, "Open Files")!;
+    expect(again).toEqual({ given: ["Order lunch", "Tell Sam I'm late"], ends: [11, 30], field: "Order lunch\n\nTell Sam I'm late\n\nOpen Files" });
+    expect(givenBackKept(again)).toEqual({ text: "Order lunch\n\nTell Sam I'm late", messages: 2, changed: false });
+    // What is typed into the new request is still its own; a change to the words, theirs.
+    expect(givenBackKept(type(again, again.field.length, " and Files")).text).toBe("Order lunch\n\nTell Sam I'm late");
+    expect(givenBackKept(type(again, 6, "pizza", 11))).toEqual({ text: "Order pizza\n\nTell Sam I'm late", messages: 2, changed: true });
+    // One deleted before the second Edit, or both: only those left come along, and are counted.
+    const one = givenBackOver(fill(two, `Tell Sam I'm late\n\n${edited}`), "Open Files")!;
+    expect(one.field).toBe("Tell Sam I'm late\n\nOpen Files");
+    expect(givenBackKept(one)).toEqual({ text: "Tell Sam I'm late", messages: 1, changed: false });
+    expect(givenBackKept(givenBackOver(type(two, 0, "", 13), "Open Files")!)).toEqual({ text: "Tell Sam I'm late", messages: 1, changed: false });
+    expect(givenBackOver(fill(two, edited), "Open Files")).toBeNull();
+    // A later Stop gives more back above them: all of them, the request still under them.
+    const later = givenBackAbove(again, ["Book the meeting room for Friday"], `${given}\n\n${again.field}`);
+    expect(givenBackKept(later)).toEqual({ text: `${given}\n\nOrder lunch\n\nTell Sam I'm late`, messages: 3, changed: false });
+    expect(later.field.slice(later.ends.at(-1)).trim()).toBe("Open Files");
   });
 
   it("never keeps the request I edited for Cancel edit where I changed both it and the words above it (home-w5-4)", () => {

@@ -140,6 +140,15 @@ export function composerEditCancelled(messages: number, draft: boolean, over = f
   const said = draft ? `Your previous draft is restored, below the ${what}.` : `The ${what} ${many ? "are" : "is"} back here${over ? "." : " to edit or send again."}`;
   return `Edit cancelled. ${said}${tooLong}`;
 }
+/**
+ * Edit on another earlier request while `messages` a Stop gave back are above the one being edited (home-w5-3): Edit's
+ * caution, and that they stay above it; together over the limit (`over`), to send them one at a time, as the line
+ * that gave them back says it (the request put there was sent before, so it fits by itself).
+ */
+export function composerEditAgain(messages: number, over = false): string {
+  const which = messages > 1 ? `The ${messages} messages that weren't sent stay` : "The message that wasn't sent stays";
+  return `Review this as a new request, then choose Send. ${which} above it.${over ? ` ${GIVEN_BACK_OVER}` : ""} Sending again may repeat actions; nothing is sent by choosing Edit.`;
+}
 /** Whether the composer's line says what is in it is over the limit: once it fits, the line goes (home-5, home-c4-2). */
 export function composerSaysOver(line: string): boolean {
   return line === COMPOSER_OVER || line.includes(GIVEN_BACK_OVER) || line.includes(GIVEN_BACK_SHORTEN);

@@ -1250,6 +1250,46 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("keeps the words a Stop gave back above my edit through a second Edit, and Cancel edit still names them and their length (home-w5-3)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }, { t: at(2), who: "you", text: "Open Files" }, { t: at(3), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      const editSecond = () => page.locator("#conversation li.you").nth(1).getByRole("button", { name: /^Edit your message/ }).click();
+      // Edit on another request: the message stays above it, still the message that wasn't sent.
+      await waitEditStop(page, "Book the meeting room for Friday", "Tell Sam");
+      await editSecond();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nOpen Files");
+      expect(await line.innerText()).toBe("Review this as a new request, then choose Send. The message that wasn't sent stays above it. Sending again may repeat actions; nothing is sent by choosing Edit.");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+      // Over the limit with the request a second Edit puts under it, and then with the draft: said each time.
+      await field.fill("");
+      await waitEditStop(page, "b".repeat(1990), "Tell Sam now");
+      await editSecond();
+      expect(await field.inputValue()).toBe(`${"b".repeat(1990)}\n\nOpen Files`);
+      expect(await line.innerText()).toBe("Review this as a new request, then choose Send. The message that wasn't sent stays above it. Together they're over 2,000 characters: send them one at a time. Sending again may repeat actions; nothing is sent by choosing Edit.");
+      await cancel.click();
+      expect(await field.inputValue()).toBe(`${"b".repeat(1990)}\n\nTell Sam now`);
+      expect(await page.locator("#conversation-count").innerText()).toBe("2,004 of 2,000 characters, 4 too many.");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent. Together they're over 2,000 characters: send them one at a time.");
+      // Corrected before the second Edit: the correction comes along, and Cancel edit says it stays with it.
+      await field.fill("");
+      await waitEditStop(page, "Order lunch", "");
+      await typeAt(page, "Order lunch".length, " for two");
+      await editSecond();
+      expect(await field.inputValue()).toBe("Order lunch for two\n\nOpen Files");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Order lunch for two");
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, to edit or send again.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("never leaves the request I edited in the composer after Cancel edit, though I changed it and the words above it (home-w5-4)", async () => {
     const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
     const { page, errors } = await home(seed);

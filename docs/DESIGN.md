@@ -369,7 +369,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   Cancel edit keeps the words as the person left them (corrected, none once deleted: home-v5-1), followed through each
   change in the field, so a word typed into the request being edited, or a fresh request under an emptied one, is
   never kept with them, a deleted message never comes back and only those left are counted (home-w5-1, home-w5-2), and
-  that request never stays (home-w5-4), above the draft from before Edit (home-r4-1);
+  that request never stays (home-w5-4), above the draft from before Edit (home-r4-1); Edit on another request keeps
+  them above it, as left and still words given back ("…The message that wasn't sent stays above it…"), so Cancel edit
+  still names them and says when they're over 2,000 characters with that draft (home-w5-3);
   together over 2,000 characters, the line says to send them one at a time, never to send again (home-c4-2), but to
   shorten what was being written or edited where that alone is over (home-v5-3); one whose line came (Ember answered it itself, or it went to
   the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's

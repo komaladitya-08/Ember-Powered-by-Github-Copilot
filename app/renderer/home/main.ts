@@ -50,10 +50,10 @@ import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
 import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
-import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, stillUnsent, type GivenBack } from "./conversation-view";
+import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
-import { composerEditCancelled, composerLineFits } from "./copy";
+import { composerEditAgain, composerEditCancelled, composerLineFits } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -1285,16 +1285,14 @@ function conversationRow(e: Entry): HTMLLIElement {
     edit.addEventListener("click", () => {
       // Editing has no IPC side effect: Send is a new, deliberate typed request, never a tool/voice/suggestion replay.
       if (conversationDraftBeforeEdit === null) conversationDraftBeforeEdit = conversationMessage.value;
-      else if (conversationEditGivenBack) {
-        // Words a Stop gave back above the earlier edit stay, as the person left them, with the draft from before it (home-v5-1).
-        const kept = givenBackKept(followGivenBack() ?? conversationEditGivenBack).text;
-        if (kept) conversationDraftBeforeEdit = conversationDraftBeforeEdit.trim() ? `${kept}\n\n${conversationDraftBeforeEdit}` : kept;
-      }
-      conversationEditGivenBack = null;
+      // Words a Stop gave back above an earlier edit stay above this request, as the person left them, still words given
+      // back: Cancel edit counts them, names them and judges them with that draft, never folded into it (home-w5-3).
+      const given = followGivenBack();
+      conversationEditGivenBack = given && givenBackOver(given, e.text);
       $("conversation-cancel-edit").hidden = false;
-      conversationMessage.value = e.text;
+      conversationMessage.value = conversationEditGivenBack?.field ?? e.text;
       syncComposerCount(true);
-      conversationComposeStatus.textContent = CONVERSATION_EDIT;
+      conversationComposeStatus.textContent = conversationEditGivenBack ? composerEditAgain(givenBackKept(conversationEditGivenBack).messages, conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT) : CONVERSATION_EDIT;
       conversationMessage.focus();
     });
     actions.append(edit);

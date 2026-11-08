@@ -76,9 +76,10 @@ export function stillUnsent<T extends { text: string }>(unsent: readonly T[], ad
 
 /**
  * Words a Stop gave back above a request being edited (home-r4-1), followed through the person's changes to the
- * composer's field (home-w5-1): `given`, each message as it came, in the field's order; `ends`, where each of them ends
- * in `field`, the field as last seen. What is between one end and the next is that message as the person left it
- * (blank once they deleted it), and what is after the last end is the request being edited.
+ * composer's field (home-w5-1): `given`, each message as it came, in the field's order, to tell whether the person
+ * changed any; `ends`, where each of them ends in `field`, the field as last seen (after a second Edit, each of those
+ * still there: home-w5-3). What is between one end and the next is that message as the person left it (blank once
+ * they deleted it), and what is after the last end is the request being edited.
  */
 export interface GivenBack { given: string[]; ends: number[]; field: string }
 
@@ -135,6 +136,19 @@ export function givenBackAbove(g: GivenBack | null, words: readonly string[], fi
   if (!g) return { given: [...words], ends, field };
   const by = field.length - g.field.length;
   return { given: [...words, ...g.given], ends: [...ends, ...g.ends.map(e => e + by)], field };
+}
+
+/**
+ * `g` with `request` in place of the request under it: Edit on another earlier request while they are above the one
+ * being edited (home-w5-3). The messages still there stay above it as the person left them, still words given back, so
+ * Cancel edit counts and names them and judges them with the draft from before Edit; null when none is left.
+ */
+export function givenBackOver(g: GivenBack, request: string): GivenBack | null {
+  const top = g.field.slice(0, g.ends.at(-1));
+  const text = top.trim(), lead = top.length - top.trimStart().length;
+  if (!text) return null;
+  const ends = g.ends.filter((end, i) => g.field.slice(i ? g.ends[i - 1] : 0, end).trim()).map(end => Math.min(Math.max(end - lead, 0), text.length));
+  return { given: g.given, ends, field: `${text}\n\n${request}` };
 }
 
 /**

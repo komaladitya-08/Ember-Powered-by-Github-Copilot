@@ -1239,6 +1239,15 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     }
   });
 
+  it("says a second Edit keeps the messages a Stop gave back above it, and when they're over the limit with it (home-w5-3)", () => {
+    expect(conv.composerEditAgain(1)).toBe("Review this as a new request, then choose Send. The message that wasn't sent stays above it. Sending again may repeat actions; nothing is sent by choosing Edit.");
+    expect(conv.composerEditAgain(2, true)).toBe("Review this as a new request, then choose Send. The 2 messages that weren't sent stay above it. Together they're over 2,000 characters: send them one at a time. Sending again may repeat actions; nothing is sent by choosing Edit.");
+    // A note about the draft: another request's wait leaves it be; once what is there fits, Edit's caution stays.
+    for (const line of [conv.composerEditAgain(1), conv.composerEditAgain(2, true)]) expect(conv.composerLineYields(line), line).toBe(false);
+    expect(conv.composerLineFits(conv.composerEditAgain(2, true), true)).toBe(conv.CONVERSATION_EDIT);
+    expect(conv.composerLineFits(conv.composerEditAgain(1), true)).toBeNull();
+  });
+
   it("never says the request I edited stayed after Cancel edit, since it never does (home-w5-4)", () => {
     for (const messages of [0, 1, 2]) for (const draft of [false, true]) for (const over of [false, true]) for (const changed of [false, true]) {
       const line = conv.composerEditCancelled(messages, draft, over, { changed });
