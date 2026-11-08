@@ -15,7 +15,7 @@ import { isSecurityWindow as linuxSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
-import { scaleBounds, type AxNode, type AxWindow, type Bounds, type FocusBefore, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
+import { helperCantRun, scaleBounds, type AxNode, type AxWindow, type Bounds, type FocusBefore, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
 import { coveringRects, elementScales, isPopupOf, matchFrame, OVERLAY_TITLE, samePopups, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { OS, PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
@@ -109,9 +109,10 @@ export interface Seen {
   ember?: boolean;
   /**
    * A password prompt the desktop's shell draws is open (promptOpen): nothing was read, anywhere (safety-privacy-3).
-   * "unchecked": the shell couldn't be asked whether one is (fail closed, safety-privacy-r1), so nothing was read either.
+   * "unchecked": the shell couldn't be asked whether one is (fail closed, safety-privacy-r1), so nothing was read either;
+   * "helper": nor could it be, because the accessibility helper can't work here at all (promptOpen).
    */
-  authPrompt?: true | "unchecked";
+  authPrompt?: true | "unchecked" | "helper";
 }
 
 export interface Perceived extends Seen {
@@ -420,8 +421,8 @@ export class Perception {
     // Nothing is read while a password prompt of the shell's is open, or the shell can't say (safety-privacy-3, -r1).
     const stop = await this.promptNow();
     if (stop) {
-      return `Ember read nothing: ${stop.why}. Don't describe the screen; ${stop.open === "unchecked"
-        ? "tell the user Ember can't look just now and they can ask again in a moment."
+      return `Ember read nothing: ${stop.why}. Don't describe the screen; ${stop.open === "helper" ? HELPER_DOWN_TELL
+        : stop.open === "unchecked" ? "tell the user Ember can't look just now and they can ask again in a moment."
         : "tell the user Ember looks away until it's done."}`;
     }
     let seen: Seen;
@@ -429,6 +430,9 @@ export class Perception {
       seen = await this.focused();
     } catch (err) {
       this.o.log.warn("perception.describe_failed", { err });
+      // A helper that can't read any app here (macOS without the Accessibility permission, whose prompt check the window
+      // server's list answers) says where the fix is, never that it didn't answer (reliability-performance-c2-2).
+      if (helperCantRun(err)) return `Ember read nothing: ${HELPER_DOWN}. Don't describe the screen; ${HELPER_DOWN_TELL}`;
       return "Ember could not read the screen right now (the accessibility service did not answer).";
     }
     // (Nothing more is listed for a private window.)
@@ -465,7 +469,8 @@ export class Perception {
     const stop = await this.promptNow();
     if (stop) {
       return { window: null, x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1, authPrompt: stop.open,
-        text: `Ember read nothing: ${stop.why}. ${stop.open === "unchecked" ? "Wait a moment and look again" : "That's for the user only: wait"}, or finish the task saying what's left.`, capture: null };
+        text: `Ember read nothing: ${stop.why}. ${stop.open === "helper" ? HELPER_DOWN_STEP
+          : `${stop.open === "unchecked" ? "Wait a moment and look again" : "That's for the user only: wait"}, or finish the task saying what's left.`}`, capture: null };
     }
     // One fresh look at the window stack serves the scale, what covers the window, and the private windows.
     const stack = opts.image ? this.stackNow() : undefined;
@@ -494,7 +499,7 @@ export class Perception {
     if (this.platformDialog()) return noShot(this.platformDialogWords());
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
-    if (shell.unchecked) return noShot(this.words.shellUnchecked);
+    if (shell.unchecked) return noShot(shell.helper ? HELPER_DOWN : this.words.shellUnchecked);
     if (shell.dialog) return noShot(SYSTEM_DIALOG);
     if (shell.overview) return noShot(this.words.overviewOpen);
     const windowScope = opts.scope === "window" && !!(seen.window || seen.x11Window);
@@ -730,16 +735,18 @@ export class Perception {
   /**
    * GNOME Shell's dialogs and notifications now. A shell too busy to be looked through, or a check that fails (the
    * helper timed out, queued behind a slow read of another task's, or the registry errored), counts as a dialog Ember
-   * couldn't check for (`unchecked`: fail closed, safety-privacy-r1). Without GNOME Shell the helper answers with an
-   * empty, complete list.
+   * couldn't check for (`unchecked`: fail closed, safety-privacy-r1). So does a helper that can't work here at all
+   * (helperCantRun: the Python bindings missing, the helper unable to start), which `helper` says, so nobody is told to
+   * try again in a moment (reliability-performance-r2-1). Without GNOME Shell the helper answers with an empty, complete
+   * list.
    */
-  private async shellOverlays(): Promise<ReturnType<typeof shellCovers>> {
+  private async shellOverlays(): Promise<ReturnType<typeof shellCovers> & { helper?: true }> {
     try {
       const r = await this.o.sidecar.shellOverlays();
       return shellCovers(r.overlays, r.complete !== false);
     } catch (err) {
       this.o.log.warn("perception.shell_check_failed", { err });
-      return shellCovers([], false);
+      return { ...shellCovers([], false), ...(helperCantRun(err) ? { helper: true as const } : {}) };
     }
   }
 
@@ -747,16 +754,19 @@ export class Perception {
    * Is a password prompt the desktop's shell draws itself on screen, or may one be (GNOME Shell's polkit and keyring
    * dialogs, which no X11 window shows; Windows' and macOS's credential and consent prompts, as the accessibility host
    * lists them)? True when one is; "unchecked" when the shell couldn't be looked through or asked (fail closed: it counts
-   * as open, but nobody is told a prompt is there, safety-privacy-c1-2); false otherwise. A notification doesn't count.
-   * While one is, or may be, Ember reads and sends nothing and takes no step (CLAUDE.md "Never"; safety-privacy-3).
+   * as open, but nobody is told a prompt is there, safety-privacy-c1-2); "helper" when it couldn't be asked because the
+   * accessibility helper can't work here at all (counted as open too, said as the helper and the setup check:
+   * reliability-performance-r2-1); false otherwise. A notification doesn't count. While one is, or may be, Ember reads
+   * and sends nothing and takes no step (CLAUDE.md "Never"; safety-privacy-3).
    */
-  async promptOpen(): Promise<boolean | "unchecked"> {
+  async promptOpen(): Promise<boolean | "unchecked" | "helper"> {
     return (await this.promptNow())?.open ?? false;
   }
 
   /** What stops reading now (promptOpen), with why in the screenshot check's words, or null when nothing does. */
-  private async promptNow(): Promise<{ open: true | "unchecked"; why: string } | null> {
+  private async promptNow(): Promise<{ open: true | "unchecked" | "helper"; why: string } | null> {
     const shell = await this.shellOverlays();
+    if (shell.helper) return { open: "helper", why: HELPER_DOWN };
     return shell.unchecked ? { open: "unchecked", why: this.words.shellUnchecked } : shell.dialog ? { open: true, why: SYSTEM_DIALOG } : null;
   }
 
@@ -896,6 +906,14 @@ export class Perception {
 }
 
 const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's done";
+/**
+ * Why nothing was read when the accessibility helper can't work here at all (helperCantRun), on every OS: the setup
+ * check says what's wrong (reliability-performance-r2-1).
+ */
+export const HELPER_DOWN = "Ember's accessibility helper isn't working, so Ember can't read apps or tell whether a password prompt is open";
+/** What the conversation then tells the user (describe), and what a task does (perceive). */
+const HELPER_DOWN_TELL = "tell the user Ember can't read their apps until that's fixed, and that the setup check in Ember's settings (Setup & about) says what's wrong.";
+const HELPER_DOWN_STEP = "Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.";
 /** The request's context while a shell's password prompt is (or may be) open (promptOpen): why, and nothing read. */
 const promptContext = (why: string): QuickContext => ({ target: {}, text: `<context untrusted="true">Ember read nothing: ${why}.</context>` });
 /** Why there is no screenshot when the OS refuses the screen and its words don't say more (macOS's do). */

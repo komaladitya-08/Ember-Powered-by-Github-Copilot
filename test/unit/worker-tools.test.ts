@@ -10,6 +10,7 @@ import type { ActionResult, AxNode } from "../../app/main/perception/sidecar";
 import { TaskManager } from "../../app/main/agent/tasks";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
+import { Perception } from "../../app/main/perception";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -75,7 +76,7 @@ function makeWorker(o: {
   /** The task's goal (the conductor's words, default "make it bold") and the user's own words for it (TaskSpec.userWords). */
   goal?: string; userWords?: string;
   /** A password prompt the desktop's shell draws (GNOME Shell's polkit dialog) is open now (Perception.promptOpen). */
-  promptOpen?: () => boolean | "unchecked";
+  promptOpen?: () => boolean | "unchecked" | "helper";
   /** Is a system dialog open, as the borrow asks before it takes the keyboard (default: none). */
   systemDialogOpen?: () => boolean;
   /** Home's "Send screenshots for tasks" as settings say it now (default: on). */
@@ -1942,6 +1943,83 @@ describe("a tool that throws (tasks-approvals-8)", () => {
     expect(r.textResultForLlm).toBe(String.raw`That step didn't work: "the window \u003cwent> away". Call perceive_window and try again, or finish the task saying what's left.`);
     // The next call still runs.
     expect((await call("report_progress", { text: "Trying again" })).resultType).toBe("success");
+  });
+
+  it.each([
+    "accessibility helper did not answer read_window in 5000 ms",
+    "accessibility helper was restarted (an earlier request took too long)",
+    "accessibility helper stopped",
+  ])("tells the model to try again, never that the helper is broken, when a read only timed out or the helper was restarted under it: %s (safety-privacy-c2-1)", async message => {
+    const { call } = throwing(new Error(message));
+    const r = await call("perceive_window", {});
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toMatch(/^That step didn't work: .+\. Call perceive_window and try again, or finish the task saying what's left\.$/);
+    expect(r.textResultForLlm).not.toMatch(/isn't working|setup check/);
+  });
+});
+
+describe("a task when the accessibility helper can't run at all", () => {
+  const HELPER_DOWN = "Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.";
+  /**
+   * A worker over the real Perception, whose helper answers every request with `message` (`shellAnswers`: but the
+   * prompt check, which the window server's list answers, as macOS's does without the Accessibility permission).
+   */
+  function helperAnswering(message: string, shellAnswers = false) {
+    const made = makeWorker({ launches: { name: "Untitled Document 1", app: "gedit" } });
+    const refuse = async () => { throw new Error(message); };
+    const shellOverlays = shellAnswers ? async () => ({ overlays: [], complete: true }) : refuse;
+    const sidecar = { listWindows: refuse, readWindow: refuse, atPoint: refuse, secretFields: refuse, markSecret: refuse, shellOverlays, readElement: refuse, scaleElements: () => undefined };
+    const perception = new Perception({ sidecar: sidecar as never, x11: null, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }), log: quiet });
+    (made.w as unknown as { d: WorkerDeps }).d.perception = perception;
+    return made;
+  }
+
+  it.each([
+    "python3-pyatspi is not installed",
+    "accessibility helper could not run (spawn python3 ENOENT)",
+    "the accessibility bridge could not start (Add-Type failed: CS0246)",
+  ])("refuses every look and step, opening an app included, with the setup check's words, never “look again”: %s (reliability-performance-r2-1, tasks-approvals-r5, safety-privacy-r5)", async message => {
+    const { call, audit } = helperAnswering(message);
+    for (const [tool, args] of [["perceive_window", {}], ["list_windows", {}], ["open_app", { name: "gedit" }]] as const) {
+      const r = await call(tool, args);
+      expect(r.resultType, tool).toBe("denied");
+      expect(r.textResultForLlm, tool).toBe(HELPER_DOWN);
+    }
+    // Refused and audited as the helper, never as a password prompt Ember couldn't check for; nothing was done.
+    const reasons = audit.filter(e => e.event === "decision" && e.verdict === "deny").map(e => e.reason);
+    expect(reasons).toEqual(["Ember's accessibility helper isn't working", "Ember's accessibility helper isn't working", "Ember's accessibility helper isn't working"]);
+    expect(audit.some(e => e.event === "action")).toBe(false);
+  });
+
+  it("opens an app, and says where the setup check is for every read, on macOS before the Accessibility permission is given (reliability-performance-c2-2)", async () => {
+    const { call, audit } = helperAnswering("Ember needs the Accessibility permission (System Settings › Privacy & Security › Accessibility).", true);
+    expect(await call("open_app", { name: "gedit" })).toMatchObject({ resultType: "success",
+      textResultForLlm: "Started gedit, but Ember's accessibility helper isn't working, so Ember can't work in its window. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong." });
+    expect(audit).toContainEqual(expect.objectContaining({ event: "action", kind: "open_app", ok: true }));
+    for (const tool of ["perceive_window", "list_windows"]) {
+      const r = await call(tool, {});
+      expect(r.resultType, tool).toBe("failure");
+      expect(r.textResultForLlm, tool).toBe(HELPER_DOWN);
+    }
+  });
+
+  it("still says it can't tell and to look again when the helper only timed out (safety-privacy-c2-1)", async () => {
+    const { call, audit } = helperAnswering("accessibility helper did not answer shell_overlays in 5000 ms");
+    const r = await call("perceive_window", {});
+    expect(r).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/^Ember can't tell right now whether a password prompt is open.+Wait a moment and look again/) });
+    expect(audit).toContainEqual(expect.objectContaining({ event: "decision", verdict: "deny", reason: "Ember couldn't tell whether a password prompt was open" }));
+  });
+
+  it("borrows nothing, and says why in the helper's terms, when the shell check can't run (reliability-performance-r2-1)", async () => {
+    const input: string[] = [];
+    let helper = false;
+    const made = makeWorker({ promptOpen: () => (helper ? "helper" : false), systemDialogOpen: () => helper, states: () => ["enabled", "focused"], onInput: k => { input.push(k); } });
+    await made.call("perceive_window", {});
+    helper = true;
+    const r = await made.call("press_keys", { keys: "ctrl+b" });
+    expect(r).toMatchObject({ resultType: "denied", textResultForLlm: HELPER_DOWN });
+    expect(input).toEqual([]);
+    expect(made.audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "keys", verdict: "deny", reason: "Ember's accessibility helper isn't working" }));
   });
 });
 
