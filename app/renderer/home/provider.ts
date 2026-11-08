@@ -188,7 +188,10 @@ function draw(): void {
   // The host the card names, remembered: "I agree" is for it, whatever the field says by the time it is clicked.
   cardHost = asking ? host : null;
   agreeGuard.drawn(cardHost);
-  if (asking) $("byok-consent-text").textContent = providerConsentText(host);
+  // A held edit's card: its quiet button keeps the provider in use, and the switch would turn that off too (with no
+  // GitHub sign-in, to nothing), so no sentence about going back to Copilot, as first run's step for a provider in use
+  // (integrations-v4-1).
+  if (asking) $("byok-consent-text").textContent = providerConsentText(host, held ? "in-use" : "home");
   // A held edit's quiet button keeps the provider in force, never turns it off; its "I agree" waits for its check.
   const no = held ? providerKeepLabel(held.from) : "Not now";
   if ($("byok-no").textContent !== no) $("byok-no").textContent = no;
@@ -293,10 +296,10 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     const on = (e.target as HTMLInputElement).checked;
     declinedFor = null;
     say("");
-    // Off with an edit held: nothing is in force to keep, so what was typed is saved with the switch.
-    const fields = held?.fields;
-    if (held) { held = null; heldRun++; checkingFor = null; }
-    void change({ ...fields, on });
+    // Off with an edit held: the edit is put away unsaved, as Keep using does, and only the switch is saved, so the
+    // address in use and its key stay for when it is turned on again (integrations-v4-1).
+    if (held) { held = null; heldRun++; checkingFor = null; input("byok-key").value = ""; }
+    void change({ on });
     if (on && own && endpointHost(own.baseUrl) && !agreedFor(own, endpointHost(own.baseUrl))) queueMicrotask(() => $("byok-yes").focus());
   });
   // The host is taken as "I agree" is pressed: pressing blurs the address field, whose save can redraw the card for

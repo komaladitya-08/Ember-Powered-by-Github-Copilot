@@ -1027,8 +1027,10 @@ the new host waits in its field. "I agree" checks the held details with the same
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
 names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
 main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
-An edit back to the host in force, or of the same host, is saved at once as before; turning the switch off saves what
-was held with it.
+An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
+sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
+provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so
+the address in force and its saved key are kept and come back with the switch (integrations-v4-1).
 
 - **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
   main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn or a

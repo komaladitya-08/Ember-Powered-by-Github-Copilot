@@ -571,6 +571,39 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
+  it("(ak) turning my provider off while an edit of it is held keeps the one in use, its address and its key, and its note never says turning off goes back to Copilot (integrations-v4-1)", async () => {
+    const using = "127.0.0.1:18308";
+    const service = { kind: "user", host: using };
+    const p = await open({ home: true, liveState: true, providerState: { keySaved: true }, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
+    await expect.poll(() => p.locator("#byok-key-saved").isVisible()).toBe(true);
+    const saves = async () => (await calls(p)).filter(c => c.startsWith("save:"));
+    const provider = () => p.evaluate(() => window.__frState.settings.provider as { on: boolean; baseUrl: string; consent: { host: string } });
+    // An edit to another host is held: its note says what goes there, and nothing about turning the switch off, which
+    // keeps the provider in use (as first run's step for it does).
+    await p.locator("#byok-url").fill("http://127.0.0.1:18309/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    expect(await p.locator("#byok-consent-text").innerText()).toMatch(/goes only to 127\.0\.0\.1:18309\.$/);
+    expect(await p.locator("#byok-consent-text").innerText()).not.toMatch(/Copilot\.$|Turn this off/);
+    expect(await p.locator("#byok-no").innerText()).toBe(`Keep using ${using}`);
+    await p.locator("#byok-key").fill("sk-typed-for-the-new-host");
+    // Off: only the switch is saved; the address in use and its key stay, and nothing goes to the new host.
+    await p.locator("#byok-on").click();
+    await expect.poll(saves).toEqual([`save:${JSON.stringify({ provider: { on: false } })}`]);
+    expect(await provider()).toMatchObject({ on: false, baseUrl: `http://${using}/v1`, consent: { host: using } });
+    expect(await p.evaluate(() => window.emberProvider!.state().then(s => s.keySaved))).toBe(true);
+    expect((await calls(p)).filter(c => c.startsWith("test-draft:") || c.startsWith("agree:") || c === "saveKey")).toEqual([]);
+    // On again: the provider that was in use, as it was, with no note to agree to again and its key still saved.
+    await p.locator("#byok-on").click();
+    await expect.poll(() => p.locator("#byok-hint").innerText()).toBe(`Ember sends your requests to ${using} instead of Copilot. A change applies from your next message; tasks already running finish where they started.`);
+    expect(await p.locator("#byok-consent").isVisible()).toBe(false);
+    expect(await p.locator("#byok-url").inputValue()).toBe(`http://${using}/v1`);
+    expect(await p.locator("#byok-key-saved").isVisible()).toBe(true);
+    expect(await p.locator("#byok-key").inputValue()).toBe("");
+    expect(await saves()).toEqual([`save:${JSON.stringify({ provider: { on: false } })}`, `save:${JSON.stringify({ provider: { on: true } })}`]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
   it("(x) Test connection names the provider's models and offers them in both model fields (integrations-9)", async () => {
     const consent = { version: 1, at: "2026-11-07T12:00:00Z", host: "127.0.0.1:11434" };
     const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:11434/v1", consent } });
