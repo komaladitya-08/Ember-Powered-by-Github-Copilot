@@ -311,26 +311,29 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
   let stuck: string | null = null;
   for (const sentence of sentencesOf(raw)) {
     const question = /\?["'”’)\]]*\s*$/.test(sentence);
-    // Clauses as written: [tokens, whether a list joined it to the clause before ("," "and" "or" "plus")].
-    const clauses: [string[], boolean][] = [];
+    // Clauses as written: [tokens, whether a list joined it to the clause before ("," "and" "or" "plus"), whether
+    // "then" did].
+    const clauses: [string[], boolean, boolean][] = [];
     const pieces = sentence.split(/([,:;]\s+|\s+[-–—]\s+)/);
     let list = false;
+    let then = false;
     for (let p = 0; p < pieces.length; p++) {
       // A colon after the verb's clause lists what it acts on ("delete these folders: build/ and dist/").
-      if (p % 2 === 1) { list = /^[,:]/.test(pieces[p]); continue; }
+      if (p % 2 === 1) { list = /^[,:]/.test(pieces[p]); then = false; continue; }
       let cur: string[] = [];
       for (const t of pieces[p].split(/\s+/).filter(x => x !== "")) {
         const ws = userWordList(t);
         if (ws.some(x => JOINERS.has(x))) {
-          if (cur.length) clauses.push([cur, list]);
+          if (cur.length) clauses.push([cur, list, then]);
           cur = [];
           // "stop apache, then nginx" lists nginx for the same verb, as "and" does (commands-remote-r4-4).
           list = ws.length === 1 && ["and", "or", "plus", "then"].includes(ws[0]);
+          then = ws.length === 1 && ws[0] === "then";
           continue;
         }
         cur.push(t);
       }
-      if (cur.length) clauses.push([cur, list]);
+      if (cur.length) clauses.push([cur, list, then]);
     }
     const polite: SentenceState = { first: false };
     let chain: string[] | null = null;
@@ -340,7 +343,7 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
     let place: string[] = [];
     const end = () => { if (chain) out.push(chain.join(" and ")); chain = null; more = 0; };
     const after = carried;
-    clauses.forEach(([tokens0, listed0], n) => {
+    clauses.forEach(([tokens0, listed0, then0], n) => {
       const starts = clauseStarts(userWordList(tokens0.join(" ")), n, question, polite);
       const leads = asksVerb(starts);
       const before = place;
@@ -366,6 +369,11 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
         const at = tokens.findIndex(t => thing(t));
         const lead = userWordList(tokens.slice(0, Math.max(at, 0)).join(" "));
         if (at > 0 && lead.some((x, k) => !(LISTS_MORE.has(x) || OF_THING.has(x) || AFTER_OBJECT.has(x) || FILLERS.has(x) || (x === "of" && OF_WHAT.has(lead[k - 1] ?? ""))))) { end(); return; }
+        // "stop apache, then nginx back up" brings nginx back: after "then" a thing goes on the list only with nothing
+        // after it but fillers ("then nginx too"), and after any list a particle ("and nginx back up", "on 80") says
+        // another verb's (commands-remote-v5-6).
+        const rest = at < 0 ? [] : userWordList(tokens.slice(at + 1).join(" "));
+        if (then0 ? !rest.every(x => THEN_AFTER.has(x) || (shape.heads ?? []).includes(x)) : rest.some(x => PARTICLE.has(x))) { end(); return; }
       }
       if (!leads && !(chain && listed && first !== undefined && nounish(first))) { end(); return; }
       if (leads) end();
@@ -398,6 +406,11 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
   }
   return out;
 }
+
+/** Words a thing listed after "then" may have after it and still be the verb's ("then nginx too", "then the dist folder"). */
+const THEN_AFTER = new Set([...FILLERS, "too", "also", "as", "well", "folder", "folders", "directory", "directories", "dir", "file", "files", "branch", "service", "process", "package", "image"]);
+/** Words after a listed thing that make it another verb's ("and nginx back up", "then nginx on 80"). */
+const PARTICLE = new Set(["up", "down", "back", "on", "off", "out", "over"]);
 
 /** Words that say a program or a service is hung ("1234 is hung", "nginx is stuck", "the nginx service seems frozen"). */
 const STUCK = new Set([

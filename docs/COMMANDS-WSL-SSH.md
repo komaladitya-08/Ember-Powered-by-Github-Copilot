@@ -308,7 +308,7 @@ backup of the build folder", "the branches merged into main", "the children of 1
 build logs". "delete build/, dist/ and the cache folder" covers all three, and so do the same verb
 said again ("delete build/ and delete dist/", "delete build/. Delete dist/ too.") and a list after a colon ("delete
 these folders: build/ and dist/"), a thing after "then" or a sentence that only adds one ("stop apache, then nginx",
-"stop apache. nginx too."), and "it" for the one thing you just said is hung ("1234 is hung, kill it", "nginx is
+"stop apache. nginx too."; "then nginx back up" or "and nginx on 80" asks, since that is another verb's), and "it" for the one thing you just said is hung ("1234 is hung, kill it", "nginx is
 stuck, restart it"), when "it" is all the verb acts on ("kill whatever is blocking it" asks), but never another verb ("stop apache and restart nginx" doesn't cover restarting
 apache). A pull request you numbered anywhere in your words keeps `gh pr merge` without a number asking ("look at pull
 request 45. merge the pr"), since that merges the current branch's; "check pr 45, then merge the pr" covers

@@ -622,6 +622,8 @@ describe("matchIntent: plain chains and a hung thing referred back to (commands-
     ["kill 1234", "1234 is frozen. kill it", "Stopping 1234, as you asked."],
     ["systemctl restart nginx", "nginx is stuck, restart it", "Restarting nginx, as you asked."],
     ["systemctl restart nginx", "the nginx service seems hung, please restart it", "Restarting nginx, as you asked."],
+    ["systemctl stop nginx", "stop apache, then nginx please", "Stopping nginx, as you asked."],
+    ["rm -rf build dist", "delete build/, then the dist folder", "Deleting build and dist, as you asked."],
   ])("announces `%s` after %j", (cmd, words, said) => {
     expect(announce(cmd, words)).toBe(said);
   });
@@ -638,6 +640,18 @@ describe("matchIntent: plain chains and a hung thing referred back to (commands-
     ["systemctl restart nginx", "nginx is fine, restart it"],
     ["kill 1234", "1234 is hung, kill 5678 and leave it"],
   ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    // A thing after "then" with more than fillers after it, or a particle after any listed thing, is another verb's.
+    ["systemctl stop nginx", "stop apache, then nginx back up"],
+    ["systemctl stop nginx", "stop apache, then nginx up"],
+    ["systemctl stop nginx", "stop apache, then nginx on 80"],
+    ["systemctl stop nginx", "stop apache and nginx back up"],
+    ["kill 1234", "kill apache, then 1234 back up"],
+    ["rm -rf build", "delete dist/, then build/ back up"],
+  ])("asks for `%s` after %j, which brings it back (commands-remote-v5-6)", (cmd, words) => {
     expect(announce(cmd, words)).toBeNull();
   });
 
