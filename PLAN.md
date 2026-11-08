@@ -1300,20 +1300,20 @@ reliability's, and the repairs fixed 35 of them and one partly. UI changes were 
 Xvfb, and the listening and speaking changes on the real models.
 
 **Regressions.** All of round three's regressions are fixed but one, tasks-approvals-c3-1 (a failed task that only
-looked, sending a picture of the window, is retried as one that "stopped part-way"), in an area with no package. The
-P2s: while memory is off or paused, a forget is answered in code only when it names what Ember knows, the user's own
-details or a person, so "Clear all", "Delete everything", an app, a day, a device, a network and what an app saved reach
-the conversation (memory-r3-1, with -c1-1 and -v1); "I won't keep this" follows any fact stated, a label and its value,
-"Make a note that…" and a remember with a request after it (memory-r3-2); the token rule no longer refuses how a token
-is made, and no guard verdict changed across 357,056 lines of the repository's own text outside the guard's own examples
-(memory-c3-1); after "Use GitHub Copilot instead" the provider step counts as in use only while the settings have the
-provider on, so a failed check switches it off (first-run-r3-1); an answer still streaming keeps off the Ask box once it
-grows into it (companion-c3-1: 22,776 px² of overlap before, 0 in six setups after); and once python3-pyatspi is
-installed while Ember runs, the sidecar loads its private links, so its actions can't hang a GTK app in a modal dialog
-(reliability-performance-r3-1). The P3s: lock codes kept and an Indian PIN code refused (safety-privacy-c3-1,
-memory-r3-3), Open Memory landing on the note (memory-r3-4), WSL and rsync marking a whole folder downloaded
-(commands-remote-r3-1, -c3-3), "You didn't ask for this." lost where the words ruled out a step's force or kind (-c1-2),
-the Ask field moving 48 px and the key hint's stray " · " and overflow (companion-r3-1, -r3-2,
+looked, sending a picture of the window, is retried as one that "stopped part-way"), in an area with no package (fixed
+in the fifth round, below). The P2s: while memory is off or paused, a forget is answered in code only when it names what
+Ember knows, the user's own details or a person, so "Clear all", "Delete everything", an app, a day, a device, a network
+and what an app saved reach the conversation (memory-r3-1, with -c1-1 and -v1); "I won't keep this" follows any fact
+stated, a label and its value, "Make a note that…" and a remember with a request after it (memory-r3-2); the token rule
+no longer refuses how a token is made, and no guard verdict changed across 357,056 lines of the repository's own text
+outside the guard's own examples (memory-c3-1); after "Use GitHub Copilot instead" the provider step counts as in use
+only while the settings have the provider on, so a failed check switches it off (first-run-r3-1); an answer still
+streaming keeps off the Ask box once it grows into it (companion-c3-1: 22,776 px² of overlap before, 0 in six setups
+after); and once python3-pyatspi is installed while Ember runs, the sidecar loads its private links, so its actions
+can't hang a GTK app in a modal dialog (reliability-performance-r3-1). The P3s: lock codes kept and an Indian PIN code
+refused (safety-privacy-c3-1, memory-r3-3), Open Memory landing on the note (memory-r3-4), WSL and rsync marking a whole
+folder downloaded (commands-remote-r3-1, -c3-3), "You didn't ask for this." lost where the words ruled out a step's
+force or kind (-c1-2), the Ask field moving 48 px and the key hint's stray " · " and overflow (companion-r3-1, -r3-2,
 accessibility-visual-r3-2, -c3-1), first run's "I'm connected to" and a failed edit with no way on (first-run-r3-2,
 -c3-1), Home's Models & connections… beside "ask your administrator" and a stalled request overwriting Edit's caution
 (home-r3-2, -c3-1), the npm launcher's raw unpacker error on Ctrl+C, its "Then" with no step, its hedged Windows
@@ -1477,57 +1477,61 @@ core and 420–600 MB with listening off, and 12.3 % and 841 MB with listening a
 3 % and 400 MB (rp-4); a Listen once request begun in its first second and still being said at 12 s isn't sent
 (voice-listening-r2-1, -1); a press that finds Ember already listening isn't announced, so that the window it opened
 doesn't hear it (voice-listening-v4-2); phone numbers, fractions, "$5-10", a "$5 - $10" range said as written, and
-en-dash runs such as "0800–123–456" said with "to" (voice-speaking-2); and how far Kitten may say short foreign replies
-(voice-speaking-11). Skipped (32): owner decisions: memory's predicate names (memory-4) and which memories shaped an
-answer (memory-10), auditing each request's context (safety-privacy-6), the route after re-agreeing (safety-privacy-8,
-first-run-4, M8.8), the provider card's wording (first-run-10, integrations-2, -13), probing a remote provider at each
-start (integrations-1), browsing marketplaces before the extensions card (integrations-i2), npm.yml's tag run without
-publish credentials, the prerelease title and a sooner update retry (install-docs-2, -4, -11), Stop speaking on the
-bubble and a notice when the voice changes (voice-speaking-5, -6), and room talk that begins after Listen once's first
-second, which only a voiceprint could tell from the user's (voice-listening-c1-1, ruled out by the owner decision of
-2026-11-05); larger work: memory's unsaved state (memory-r2), an Undo for a forgotten learnt word (memory-7), Try again
-on Home's Problem row, which needs its own IPC route under the presenter's retry rule (home-7,
-reliability-performance-c1-1, whose composer line "Ember couldn't finish this reply…" where no reply began is left too),
-actions on Home's crash notice (reliability-performance-r2-2), an unknown state for a hung pyatspi import (rp-1) and a
-microphone chooser (voice-listening-v2); native hardware: whether a spoken memory request takes focus from the app in
-use (memory-r7), names forgotten as typos behind split DNS or on a Mac (commands-remote-6), the Ask box's clear margins
-(companion-4) and a cut-in that waits for the piece being made (voice-speaking-10); design: 800×600 at Larger text
-(companion-1, -c1-1) and, at 1366×768 Larger, an answer that comes or grows while the box is open going to the side
-strip (companion-c2-4); and integrations-r2-3's quoted address, left on purpose, and the integrator note
-integrations-i3. The other half of install-docs-4, folding 0.1.1's older dated sections into its feature sections, is
-still to do in CHANGELOG.md. Not worked, in the two areas with no package: tasks-approvals-c3-1 (above), "What did I
-miss?" opening with "One task finished." for a task that didn't finish (-r3-2), a queued task stopped before it began
-reading "Took 3s" (-r3-3), a step a password prompt or a helper that isn't working refused reading "Stopped: Tried to
-open an app" (-r3-4), an unanswered question's row and the model's task result still saying "stopped" (the rest of -r1),
-and Home's status panel saying "Not connected" with Check my provider… after the runtime crashes under the user's own
-provider (accessibility-visual-c1-2). Found on the way: memory-off "Forget everything I told you", "Forget what I told
-you about Priya" and nouns outside `ABOUT_ME` ("Forget my car") reach the conversation with no note, "Don't forget the
-car keys in the drawer" gets a spurious one, "Remember my office code is 4410" is refused on purpose, beside round
-three's pinned "my office code is 4821", and "the token for the model is …" before a model's name is refused; fill_cells
-on Ember's desk is refused while the prompt is open or unchecked, though desk input that doesn't ask isn't checked,
-"deploy@build-01" is refused because its shape can't be told from a password's, and a batch refused for one cell's
-formula records the other cells' allows first; PowerShell's `foreach` and cmd's `for` don't feed Ember's own refusal, a
-download through `dd`, `git mv`, a copied folder that holds one, a glob source or `case … esac` isn't followed, "in dist
-delete the build folder" still announces `rm -rf build`, an unseen name under the folder that holds Ember's is refused
-rather than asked, `cp --parents ember/settings.json ~/.config/` asks rather than refuses, "nginx is stuck, restart it"
-asks, and a `while read` card says "Ember can't tell exactly what this does." three times; the launcher's raw words for
-a corrupt zip and a redirect loop, and a stop dropped during its last renames; first run's no-keyring sentence said
-twice, an adopt of new details that isn't atomic (a key that fails to save leaves the provider unagreed), Agree not held
-while the recipient is unknown, a quit during a save-first check, the key placeholder set once per visit, and Home's
-status line and Models & connections not showing `switchPending`; a held edit to a host with no model list can't be
-adopted without the switch off and on, Home's composer line while the note waits is still generic, `friendlyError` says
-"your model service" for the provider, first run's in-use edit still saves in two steps, and the switch's hint doesn't
-say that turning it off during a held edit drops the new address; the bubble's "Ember says…" and Home's task lines can
-still be read into an open conversation, Listen once's ready line quotes "Hey Ember", and its line flickers for about 70
-ms after a heard request; a streaming answer that moved clear of the box stays moved after the box closes, and one chip
-sits centred in a held two-row capsule; the bubble's `settingsHelps` still offers Open settings on the administrator's
-line, Home matches a sent message to its line by its words, and a Stop within milliseconds of Send gives nothing back,
-nor does one for a message that starts waiting for a reconnect just as an earlier Ask-box turn ends; the new footprint
-step hasn't run in CI yet (its PSS headroom is about 13 %), and CI on 5edcf08 failed el8's smoke and staging on a GitHub
-504; a "•" bullet, arrow-bullet lines that aren't cut as they stream, "right arrow" at the end of a piece cut just after
-an arrow, and a French–Spanish tie decided by `STOPWORDS`' order; and tests that flake under load (npm-launcher's
-install-docs-2 once, first run's renderer journeys (r), (t), (y) and (q3) at vitest's 5 s default, home-r1's
-precondition).
+en-dash runs such as "0800–123–456" said with "to" (voice-speaking-2; the last three fixed in the fifth round, below);
+and how far Kitten may say short foreign replies (voice-speaking-11). Skipped (32): owner decisions: memory's predicate
+names (memory-4) and which memories shaped an answer (memory-10), auditing each request's context (safety-privacy-6),
+the route after re-agreeing (safety-privacy-8, first-run-4, M8.8), the provider card's wording (first-run-10,
+integrations-2, -13), probing a remote provider at each start (integrations-1), browsing marketplaces before the
+extensions card (integrations-i2), npm.yml's tag run without publish credentials, the prerelease title and a sooner
+update retry (install-docs-2, -4, -11), Stop speaking on the bubble and a notice when the voice changes
+(voice-speaking-5, -6), and room talk that begins after Listen once's first second, which only a voiceprint could tell
+from the user's (voice-listening-c1-1, ruled out by the owner decision of 2026-11-05); larger work: memory's unsaved
+state (memory-r2), an Undo for a forgotten learnt word (memory-7), Try again on Home's Problem row, which needs its own
+IPC route under the presenter's retry rule (home-7, reliability-performance-c1-1, whose composer line "Ember couldn't
+finish this reply…" where no reply began is left too; that line fixed in the fifth round, below), actions on Home's
+crash notice (reliability-performance-r2-2), an unknown state for a hung pyatspi import (rp-1) and a microphone chooser
+(voice-listening-v2); native hardware: whether a spoken memory request takes focus from the app in use (memory-r7),
+names forgotten as typos behind split DNS or on a Mac (commands-remote-6), the Ask box's clear margins (companion-4) and
+a cut-in that waits for the piece being made (voice-speaking-10); design: 800×600 at Larger text (companion-1, -c1-1)
+and, at 1366×768 Larger, an answer that comes or grows while the box is open going to the side strip (companion-c2-4);
+and integrations-r2-3's quoted address, left on purpose, and the integrator note integrations-i3. The other half of
+install-docs-4, folding 0.1.1's older dated sections into its feature sections, is still to do in CHANGELOG.md. Not
+worked, in the two areas with no package: tasks-approvals-c3-1 (above), "What did I miss?" opening with "One task
+finished." for a task that didn't finish (-r3-2), a queued task stopped before it began reading "Took 3s" (-r3-3), a
+step a password prompt or a helper that isn't working refused reading "Stopped: Tried to open an app" (-r3-4), an
+unanswered question's row and the model's task result still saying "stopped" (the rest of -r1), and Home's status panel
+saying "Not connected" with Check my provider… after the runtime crashes under the user's own provider
+(accessibility-visual-c1-2), all fixed in the fifth round, below. Found on the way: memory-off "Forget everything I told
+you", "Forget what I told you about Priya" and nouns outside `ABOUT_ME` ("Forget my car") reach the conversation with no
+note, "Don't forget the car keys in the drawer" gets a spurious one (none since the fifth round), "Remember my office
+code is 4410" is refused on purpose, beside round three's pinned "my office code is 4821", and "the token for the model
+is …" before a model's name is refused; fill_cells on Ember's desk is refused while the prompt is open or unchecked,
+though desk input that doesn't ask isn't checked, "deploy@build-01" is refused because its shape can't be told from a
+password's, and a batch refused for one cell's formula records the other cells' allows first; PowerShell's `foreach` and
+cmd's `for` don't feed Ember's own refusal, a download through `dd` (followed since the fifth round), `git mv`, a copied
+folder that holds one, a glob source or `case … esac` isn't followed, "in dist delete the build folder" still announces
+`rm -rf build` (it asks since the fifth round), an unseen name under the folder that holds Ember's is refused rather
+than asked, `cp --parents ember/settings.json ~/.config/` asks rather than refuses, "nginx is stuck, restart it" asks
+(it is announced since the fifth round), and a `while read` card says "Ember can't tell exactly what this does." three
+times; the launcher's raw words for a corrupt zip and a redirect loop, and a stop dropped during its last renames; first
+run's no-keyring sentence said twice, an adopt of new details that isn't atomic (a key that fails to save leaves the
+provider unagreed), Agree not held while the recipient is unknown, a quit during a save-first check, the key placeholder
+set once per visit (all but the hold and the quit fixed in the fifth round, below), and Home's status line and Models &
+connections not showing `switchPending`; a held edit to a host with no model list can't be adopted without the switch
+off and on, Home's composer line while the note waits is still generic (both fixed in the fifth round, below),
+`friendlyError` says "your model service" for the provider, first run's in-use edit still saves in two steps (fixed in
+the fifth round), and the switch's hint doesn't say that turning it off during a held edit drops the new address; the
+bubble's "Ember says…" and Home's task lines can still be read into an open conversation, Listen once's ready line
+quotes "Hey Ember" (Home's task lines and the ready line fixed in the fifth round, below), and its line flickers for
+about 70 ms after a heard request; a streaming answer that moved clear of the box stays moved after the box closes, and
+one chip sits centred in a held two-row capsule; the bubble's `settingsHelps` still offers Open settings on the
+administrator's line, Home matches a sent message to its line by its words, and a Stop within milliseconds of Send gives
+nothing back, nor does one for a message that starts waiting for a reconnect just as an earlier Ask-box turn ends; the
+new footprint step hasn't run in CI yet (its PSS headroom is about 13 %), and CI on 5edcf08 failed el8's smoke and
+staging on a GitHub 504; a "•" bullet, arrow-bullet lines that aren't cut as they stream, "right arrow" at the end of a
+piece cut just after an arrow (fixed in the fifth round), and a French–Spanish tie decided by `STOPWORDS`' order; and
+tests that flake under load (npm-launcher's install-docs-2 once, first run's renderer journeys (r), (t), (y) and (q3) at
+vitest's 5 s default (the first three given 20 s in the fifth round), home-r1's precondition).
 
 **Native validation and owner decisions.** Still to check natively: on RHEL 8.4 GNOME 3.32, the cost of the GNOME Shell
 walk now also run before each announced step and each batch question, how often it answers unchecked, the late-install
@@ -1546,6 +1550,376 @@ local owner under a provider; whether the password-prompt check should cover Emb
 and whether `describe_screen` should still send every open window's title; whether Home's conversation should show a
 line for a request a Stop ended before anything came; literal for-lists, the venv activate read-through and keep words
 blocking announcements, and whether an unseen name under Ember's parent folder should ask; whether a held edit to a host
-with no model list may be adopted; `RESTING_FRAME_MS`, the fidgets' pace and whether still faces stop drawing, before
-docs/ASSISTANT.md's target is restated; a least-overlap Ask box placement, whether a moved streaming answer moves back,
-and whether chips that come late may grow the box; and a listening earcon (§6).
+with no model list may be adopted (Home's is, since the fifth round, below); `RESTING_FRAME_MS`, the fidgets' pace and
+whether still faces stop drawing, before docs/ASSISTANT.md's target is restated; a least-overlap Ask box placement,
+whether a moved streaming answer moves back, and whether chips that come late may grow the box; and a listening earcon
+(§6).
+
+### Product audit fixes, fifth round (2026-11-08)
+
+After round four each area was rated again at 7139e64 in the same way, by a re-rater and an adversarial challenger
+working apart. Their scores out of 10 (re-rater, then challenger) were: commands, WSL and SSH 7.7 and 6.6; listening 8.3
+and 8.0; memory 8.4 and 8.1; reliability and platform 8.6 and 8.3; the companion and Ask 8.8 and 8.7; models, providers,
+extensions and projects 8.9 and 8.7; safety and privacy 9.0 and 8.9; first run and setup 9.0 and 9.0; Home 9.1 and 9.0;
+tasks and approvals 9.1 and 9.0; install, docs and developer experience 9.2 and 9.0; speaking 9.2 and 9.0; and
+accessibility and copy 9.3 and 9.2. Commands fell: the re-rater found that `rsync --mkpath` hid both its paths, so it
+overwrote any file with no question, Ember's settings included, and the challenger that `xargs -l` ran any command
+unasked and that `docker` or `podman run -P` swallowed the next option, so `--privileged`, `-v /:/host` or Ember's
+folder mounted into a container ran with no question (three P1s, all from option tables that listed a switch as taking a
+value), and that a dangerous step the words made conditional or put off ("delete src/ only after I confirm", "tomorrow")
+was announced "as you asked" (P2). The other findings were partly round four's own doing and partly older gaps: the
+guard's login rule refused code that loads credentials and its older key-value check any file naming a token or a
+password, which is what Projects meets (memory-r4-1, -r4-2, P2); memory's words answered "Remove this tab from memory"
+in code (memory-c4-1); a screen reader said Hear me more clearly's line, Task activity and Ask's "Ember will see:
+<window>" into an open microphone, and Voice Match teaching with a screen reader learnt the screen reader's voice
+(voice-listening-c4-1, -r4-2, -i5, -r4-1, P2); a finished answer's last growth still landed under the Ask box
+(companion-c3-1, P2); the waiting switch of model service closed finished task cards; and a typed "stop" stayed in
+Home's composer as a draft. What was left made 141 items: 4 P1, 18 P2 and 109 P3 (eleven of them integrator notes, one a
+P1 and four P2s), and ten with nothing left to do; 25 were regressions round four had brought in, and one earlier
+finding had regressed with them (memory-r8).
+
+Every area had a package this round, commands two: the classifier's parsing, Ember's own paths and downloads first
+(commands-remote-i5a), then how the user's words are matched to a command (-i5b). The integrator gave items reported in
+two areas to the package whose code they shared: memory's guard took Projects' over-refusals and the guard phrasings
+reported under safety and privacy (memory-i5); integrations took the model-service switch's regressions in tasks, first
+run and Home (integrations-i5); listening took the Ask box's screen reader line while the microphone is open
+(voice-listening-i5); the companion took Ask's late follow-up chips reported under accessibility (companion-i5); and
+safety took the held Work without asking decision reported under both its area and tasks (safety-privacy-i5). The 14
+packages were worked one after another in six lanes: P (commands, both packages), Q (memory, then integrations), R
+(safety and privacy, then tasks and approvals), S (listening, then speaking), T (the companion, accessibility, then
+Home) and U (reliability and platform, install and docs, then first run). Each fix came with a test seen failing first;
+an adversarial regression reviewer then read each package's fix commits and a repair agent fixed what it found (the
+findings numbered -v5-N), and, new this round, a second reviewer read the repair agent's commits and a second repair
+agent fixed what it found (-w5-N). The lanes merged at 73554c2, Q first and then R, P, S, T and U: 117 commits. The
+packages reported 144 items, routing notes and five items carried from round four's first-run notes included: 85 fixed,
+12 partly and 47 skipped, of which companion-r4-1 and safety-privacy-c4-2 and -c4-3 were fixed in the packages that
+owned them and four were notes with nothing to do. The first reviewers found 40 problems in round five's fixes, all but
+accessibility's finding some, and the second reviewers 36 in the repairs, none in tasks and approvals' or the
+companion's; the repairs fixed all 76. UI changes were checked in real renders and live under Xvfb against the mock
+model, and the listening and speaking changes on the real models.
+
+**Regressions.** All 25 of round four's regressions are fixed, one of them partly, each as told under its lane below.
+The P2 was memory's: its login rule refused `credentials = boto3.Session().get_credentials()` and `const creds =
+loadCreds(argv[2]);` (memory-r4-1). The P3s: a copy Ember can't name marked its whole destination, a variable set to
+Ember's folder was refused where it was only tested or printed, and plain chains such as "stop apache, then nginx"
+stopped announcing (commands-remote-r4-3, -r4-5, -r4-4); memory's words took a browser tab's or a photo app's memories
+for memory requests, its admin pair refused a disk's use, months were taken as names and versions and settings said as
+logins were refused (memory-c4-1 to -c4-3, safety-privacy-c4-3); a held Work without asking decision was written as
+"Without asking" after a refused step (safety-privacy-r4-1, tasks-approvals-r4-1); the waiting switch of model service
+closed finished task cards, and first run offered the user's own provider with no button while it waited and turned the
+focused Continue into Sign in with GitHub unannounced (tasks-approvals-r4-2, first-run-r4-1, -c4-1); Home's held edit
+couldn't adopt a host that lists no models (integrations-r4-2); first run's own voice came only after a failed edit
+(first-run-r4-2); a typed "stop" was kept as a draft and given-back messages over the limit together weren't said to be
+(home-r4-2, -c4-2); Settings' doubt line woke Ember (voice-listening-r4-3); answers opening with a line break or a short
+line, and labelled steps, started speaking late, and a short Spanish or French reply quoting a file went to the English
+voice (voice-speaking-r4-1, -c4-1, -c4-2); the Today count's words didn't read as a clause, and follow-ups that came
+into an open Ask box couldn't be reached (accessibility-visual-r4-1; -c4-1, partly); and the launcher's tunnelled 502
+and 504 didn't name the proxy and CLAUDE.md's gate missed two of CI's checks (install-docs-r4-1, -r4-3). Round three's
+last regression, tasks-approvals-c3-1, and the regressed memory-r8 are fixed too.
+
+**Commands (lane P, M12).** The classifier: every option table in commands/classify.ts and tables.ts was checked against
+its tool's manual, and `parseOpts` gained attached-only values (`shortOptional`, `longOptional`: xargs' `-l`, cp's
+`--backup` and `--update`) and number-only ones (`shortNumeric`: make's `-j`); docker and podman run list every value
+option, and cp, mv or install with no destination and a container run with no image ask. A probe of 832
+switch-before-operand pairs went from 141 that ran, lost a rule or lost a refusal to none, pinned by a table-driven test
+(commands-remote-r4-1, -r4-2, -c4-1 to -c4-3, -i5a). A value that names a file is judged where its row consumes it
+(`optionFiles`: a read, a write, a folder written into or the folder the command runs in; -v5-1, -v5-3, -v5-5). On
+Windows PowerShell variables are followed for Ember's own refusal (-c3-2), and robocopy and dd carry a download's mark,
+robocopy under each file's own name (-c2-2, -v5-6). A variable set to Ember's folder is judged where a command uses it:
+testing or printing it runs, and a wrapper's option (its value apart or attached), a here-string or here-document,
+mapfile, xargs, the program word or an export hands it on and is refused, saying "would change" or "would read" by what
+the command does (-r4-5, -v5-2, -w5-4 to -w5-6; -v4-4 partly). Only `${d:?}` stands for the exact value: a cut or a
+default is its values plus a part Ember can't see, and `${HOME:?}` and `${PWD:?}` are the scope's folders (-w5-1,
+-w5-3). Text filters on an allow-list run when they only read such a variable and nothing takes their output (-w5-4). A
+copy Ember can't name marks a file of unknown name in its folder, never the folder (`UNNAMED_COPY`; -r4-3, -v4-5).
+make's `-j` counts only a processor-count substitution, an arithmetic expansion or a variable, and the values the text
+gives that variable are judged as targets (`Classifier.knownForms`; -v5-4, -w5-2). The words
+(app/main/commands/intent.ts, §2 "Commands"): only the 4-second announcement changed, and only towards asking. A step
+the words hold back is never announced: a condition, a later time, asking to be asked or shown first, or a how-to before
+it, read per row so another step's time or condition doesn't count (`LATER_TOO`, `HELD_FIRST`, `ownSteps`; -c4-4). An
+announcement needs a thing in the verb's own phrase, never one after "of", "for", "into" or "by", in a relative clause
+or a participle's phrase, or in a reason; "of", "for" and "at" after a folder word place the path as "in" does; and "it"
+stands for the hung thing only as the verb's direct object (`objectEnd`, `placeWord`, `referBack`; -c3-1, -r3-x1). Plain
+chains announce again (-r4-4); "You didn't ask for this." follows a "not" said with the verb, and "… and nothing else"
+rules out a step unless every object and widening flag is named (-c1-2, -r4-6); and announcements say home paths from ~,
+as cards do (-r4-7). Of the words package's reviewer's 140 hold-back phrasings, two still announce ("before Friday",
+"before the release").
+
+**Memory and integrations (lane Q).** The secret guard (guard.ts) passes over a secret-named key whose ":" or "=" is
+followed by code (`withoutCodeKeys()`: a type, a call, a member, a reference, a placeholder, a count and the like),
+judged by the code around it (a bracket opened above it, a list's last item, a Python block's body, a format string's
+placeholder), and only its name, so a token in the value is still found; quoted, bare, digit or symbol values, a PIN's
+number, literal and getenv defaults and prose that only looks like code are still refused (memory-r4-1, -r4-2, -i5).
+Measured on the guard alone, refused node_modules files went from 295 to 50 of 2,756 and Ember's own sources from 170 to
+86, with no refuse→keep across 271 secret phrasings; after both repairs, 20 files across scans of 14,752 and 40,000 were
+sent again, none newly refused, at an unchanged cost per key. The login and admin rules keep a version, an issue, a
+setting, a user at a computer given with its port or both named in words ("jsmith@corp"; "admin@nas1" is still refused),
+a disk's use and a formula (safety-privacy-c4-3, memory-c4-2, -v5-4), and the guard refuses Wi-Fi passwords under their
+router and Windows names, unlisted places' lock codes, a capitalised seed phrase and a security answer
+(safety-privacy-c4-2, memory-1, partly). Projects' file check, patch check, follow-up context and task views share it
+(task views with each line's lines before it, `withLinesBefore`). `memoryAsk` and the remember note cover explicit
+requests that name memory, a fact with "remember that" after it and lead-ins before "remember" (memory-r3-2), never a
+thing only described (-r8), "from memory" without "your", "Ember's" or "my", or a photo app's memories (-c4-1); April,
+May, June and August are names only before a detail, a surname or "everything about" (-c4-3). Integrations: Projects
+names every chosen file that looks like it holds a secret, with its line (`secretLine`, `projectSecretFiles`), and says
+when the guard, not the diff, withholds a patch or keeps an answer from the next send (`readProjectPatch`'s `withheld`,
+`projectAnswerText`; integrations-r4-1, -c4-1). The waiting switch's reconnect hands finished cards to the next
+TaskManager (`keptCards`), keeps them closable while it connects and drops them if the connect fails, there is no
+sign-in or the account changes; Try again waits for the switch (`retryWaits`), on another service starts from the user's
+own words only (`handedElsewhere`), and only for a task its turn asked for alone (`StartOptions.alone`, otherwise Close
+and `ASK_AGAIN_ELSEWHERE`; tasks-approvals-r4-2, -c4-1). First run keeps "Use my own provider" while the switch waits,
+says "I've switched to Copilot…" and moves the focus to the title when Continue becomes the sign-in, and adopts an
+in-use edit with `agree(host, move)` in one change (first-run-r4-1, -c4-1, -r4-3). A new `held` ConversationTurn has
+Home's composer and status say the message waits for the switch (`COMPOSER_HELD`, "Switching model service…";
+home-r4-4). Home's held edit adopts a host whose GET /models answers 404, 405 or 501 (`cause: "no-list"`), saying it
+asks for the model as typed (integrations-r4-2), and the composer names the host the note waits for (-r4-3).
+
+**Safety and tasks (lane R).** The worker drops a held Work without asking decision at the start of every tool call
+(`runTool`), so a step that a password prompt, a pinentry with the keyboard, the borrow's dialog check or a desk
+take-over refused is never written into What Ember did as "Without asking" by the next call's entry
+(safety-privacy-r4-1, tasks-approvals-r4-1; the rest of safety-privacy-3 stays the owner's). Apps & privacy's copy of
+"Before Ember starts" follows the settings and the policy in force: its approval line says when Work without asking is
+on and when apps were let in without asking, counted only where their keys aren't managed, and its other computers and
+commands line (`targetsFoldRest`) says what is on, what is off and what the organisation turned off
+(safety-privacy-r4-2, -c4-1, -v5-1). While Ember holds itself locked down after a policy change (`heldUntilRestart`),
+main's policy watch sends an open settings window what is in force (`IPC.adminChanged`, built by `homeAdmin()` as every
+status read's is), and Home redraws the notice, the fold, the switches the policy manages, first run, Computers and
+Commands, and Extensions, with screenshots and Work without asking shown off; a status read already on its way can't
+bring the old policy back (-w5-1, -w5-2). First run's text and `CONSENT_VERSION` are unchanged. Tasks: a task that only
+looked, picture included, retries clean (`LOOKS_ONLY`; tasks-approvals-c3-1); "What did I miss?" opens with how many
+tasks ended (-r3-2); a task stopped while in line has no clock (`TaskEntry.unstarted`; -r3-3); prompt, helper and
+keyboard refusals send a refused activity in Ember's own words (-r3-4), kept in order (a step refused once its question
+was answered goes after the answer), folded by reason (`refusedWords`: "Not allowed 6 times: …", which Home's row opens
+to list) and, for the borrow's window-system refusal, cut to its cause (`causeOf`) so the card's 120-character cut never
+breaks it (-v5-1 to -v5-3); and an unanswered task is audited `endedBy: "expired"`, tagged "No answer", read "Ended:" on
+its question's row and not called stopped in the next turn's task_results (-r1).
+
+**Listening and speaking (lane S).** The class of bug: a screen reader saying a live region's change through the
+speakers into an open microphone. Hear me more clearly's line and the Speak note are said through their own held lines
+(renderer/shared/held-live.ts `heldLive`) only once they have held for 1 s, only when their words change and never while
+Home's `micHeld` says the microphone is opening or open, and main no longer passes through "Starting…" on each voice
+process's ready (voice-listening-c4-1, with -c2-1's and -c3-1's residue). Task activity holds a task's change of state
+until the microphone closes, then says each once (tasks.ts `holdTaskNews`), and the connection line is written only when
+its words change (-r4-2). Ask's live region holds what it would say while its Listen once is open and then says only
+what changed, one slot per kind, each as a sentence (`opensMic`, `heldNewsLine`; -i5, -v5-2). Lines a screen reader is
+told are worded without Ember's name, and Ask speaks in the first person ("I'll see: …"): read by the test-only voice
+into an idle wake microphone on the real models, the old wordings woke Ember in 5 to 20 of every 20 placements (13 of 40
+for Settings' doubt line, 20 of 20 for "Ember will see: <window>…", which sent the window's title), and the new ones in
+none (-r4-3, -c4-2, -i5). A failed speech download's words (`downloadHelp` in app/main/voice.ts), which named Ember and
+woke it in 10 of 12 placements, say what went wrong with the download or the site and never hand back a raw error; none
+woke Ember in 40 placements (-v5-1, -w5-1, -w5-2). While a screen reader runs, Voice Match teaching takes nothing begun
+within 1.5 s of a prompt showing (`READER_LEAD_MS`) or in a prompt's own words (`PROMPT_WORDS`), and asks again where a
+phrase ran on from the reading (`over`): the owner's held-out clips now score 0.82–0.88 and the screen reader's
+0.42–0.46, where they scored 0.56–0.75 and 0.69–0.83 (-r4-1). Speaking, all text normalisation in app/voice/spoken.ts
+and tts.ts: labelled steps and colon lead-ins are said as they stream, carrying what a piece's last line leaves for the
+next (spokenText's `Lead`) and cutting at a short label's line, so each label is said with its step
+(voice-speaking-c4-1, -v5-1, -v5-2, -w5-1); the last line of a piece is judged by as much of it as has arrived
+(`lineEnd`; -w5-2); an answer opening with a line break or a short first line starts at its first clause again (-r4-1);
+the line before a heading or a label ends (-r4-2); a menu path from a window's corner keeps its "to", before a quoted or
+bracketed name too (-v4-2, -v5-3); arrow keys in chords are said as keys (-c4-3); spaced price ranges are said as
+ranges, decided by the amounts' order so that sums stay sums, and never cut into two pieces (-c3-1); "$5-10", "9am–5pm"
+and runs of numbers are said right and no streamed piece ends with "right arrow" (-2, partly); and short Spanish and
+French replies that quote a file follow the request's language (-c4-2). Live with Kitten, five labelled steps start at
+1.9 s (3.9–4.0 s before) and a colon lead-in at 0.5 s (2.3 s); after the second repair each step plays as its label's
+line arrives, with gaps under 0.1 s instead of 1.1 s, and a bold heading over labels sounds after 0.36 s instead of 1.38
+s.
+
+**The companion, accessibility and Home (lane T).** A streamed answer's switch to its finished layout counts as growth
+(`askGrew`), and an answer that grew into the open Ask box, or whose first words came while the box was open, may go
+above or below it where nothing by Ember is clear (bubbleFit's `across`, `askGrownInto`): the live stream probe ends at
+0 px² of overlap in eleven setups (companion-c3-1, -v5-1). The box steps aside again for a question grown taller under
+its field (-c4-1). A box opened beside an answer still coming in keeps an out-of-sight row for its follow-ups
+(`askSuggestionsComing`), only while "Suggest what I might say next" is on and only where the tallest finished answer
+still has a place by Ember clear of the box (`answerRoom`, `ANSWER_MAX_HEIGHT` pinned by a live measurement), so on
+tight screens they still wait for the next opening (companion-i5, accessibility-visual-c4-1 and -i5, all partly;
+companion-v5-2); accessibility checked by keyboard and the accessibility tree that they land as buttons of the "Ember
+suggests" group, in Tab order, and pinned that in the Ask journey. Accessibility: the Today line reads "2 got no answer
+in time" (accessibility-visual-r4-1); the no-compositor card's whole-text key hint keeps each chord's keycaps together
+(`.key-caps`) and wraps its words under them, measured by its text at every text size (-c3-1); and Home's status panel
+reads the agent's runtime state (`runtimeState`): "Reconnecting…" while Ember's own model connection starts again, with
+Models & connections… as its button, never the provider's details or Copilot's sign-in (-c1-2). Home: a typed "stop" is
+no longer taken for a draft, and each Stop is said once under Send (home-r4-2, -r4-3); Cancel edit follows the words a
+Stop gave back through each change in the composer (conversation-view.ts `GivenBack`, `givenBackFollow`,
+`givenBackKept`), so a correction stays, a deleted message stays deleted, the request being edited never stays and a
+second Edit keeps them above the new request (`composerEditAgain`; -r4-1, -v5-1, -w5-1 to -w5-4); and given-back
+messages together over 2,000 characters are said to go one at a time, or the part under them to be shortened where it is
+over by itself, with Edit's caution back once the field fits (`composerLineFits`; -c4-2, -v5-2, -v5-3). Each was checked
+live against the re-raters' probes under Xvfb, at 760×640 with 420×420 dark looked at.
+
+**Reliability, install and first run (lane U).** For rp-4, partly, an idle glance whose eyes have arrived is drawn at
+the resting rate and wakes as it ends (rig.ts `nextChange`, `settled`): awake at rest with the pointer still, under Xvfb
+with xcompmgr and listening off, the overlay went from 13.2–14.1 to 10.6–11.5 drawings a second and the whole tree from
+7.6–8.3 % to 6.0–6.8 % of a core. CI's el8 footprint step now starts EPEL's xcompmgr (`footprint.mjs --compositor`), so
+the overlay is counted, and samples past the first minute against the same 16 % and 950 MB (842–853 MB and 12.3–14.6 %
+here). The start-up dialog says data-folder errors in plain words (`startupProblem`; reliability-performance-r4-1). On
+Windows (M11) a `HelperWatch` asks the sidecar host's status again on Check again and when reads disagree with the setup
+row (-c4-1, -i3), and the Screen reading row gives the host's plain reason by kind (uia.ts `START_DETAIL`), with
+PowerShell's, the compiler's or Node's own words kept apart as `cause` for `ember doctor` (-v5-1, -w5-1); macOS's row
+reads the Accessibility permission itself, so it asks the host's status only once after start, as before (-v5-2). Home
+says "Ember couldn't answer this request…" when no reply began (-c1-1, its second half). Install and docs: after a
+Windows handover with only this version cached, the npm launcher still names an older Ember from the zip
+(install-docs-r3-3); a tunnelled 502 or 504 names the host and the proxy and adds asking whoever runs it, and one
+answered to the CONNECT reads "couldn't get an answer from" (-r4-1); the start log's pid line is best-effort, so a disk
+that filled since the install no longer fails a start (-r4-2: exit 0 after 3.1 s on a 2 MB tmpfs); an unwritable cache
+gets `cantWrite()`'s sentence, a refused spawn `cantRun()`'s (fapolicyd, antivirus, a noexec disk), a bad SHA256SUMS
+`notChecked()`'s, and a failed reinstall says the copy was kept (-c4-1, -v5-1); a start log that can't be made where the
+user can't write is left out, an old one of another user's is made again, and otherwise a private temporary log
+(0700/0600) keeps what Ember said as it stopped, so a kept copy really starts (-v5-2, -w5-1 to -w5-4); the launcher's
+start tests run on CI's Apple silicon runner; and CLAUDE.md's gate lists the checks job's `npm pack --dry-run` and el8's
+footprint budget, pinned against ci.yml (-r4-3). First run (M8.8): main's connection and check sentences are said in
+first run's own voice on every visit, what they call Ember's included (first-run-copy.ts `inMyVoice`; first-run-r4-2,
+-v5-1, -v5-2); under the user's own provider or the organisation's service, a cut-off task's outcome is in Ember's own
+voice (host.ts `runtimeWords`' `cutOff`; -w5-1); the sign-in step says Try again, not main's "press Check again", where
+it shows no Check again, adding Try again where nothing on it does main's check (`signInWays`, `pressOnStep`; -w5-2);
+and the key placeholder follows the address typed, the no-keyring reason is a short sentence of its own, and three older
+slow journeys got 20 s timeouts.
+
+**Caught before merging.** Commands' first reviewer found file options of zstd, brotli, node, uv, poetry, pip, tar,
+parallel and sudo still unjudged, a variable set to Ember's folder still reaching a program through a wrapper's option,
+a here-string, an expansion, the program word or an export, `make -j $(nproc)` asking again, `grep --ignore` and `lsd
+-t` hiding the file after them, and robocopy marking its whole destination (commands-remote-v5-1 to -v5-6); its second,
+that a cut or a default of a variable stood for its whole value, so a download copied under a name cut from its URL ran
+with no question (P1), that `${HOME:?}` resolved to nothing, that `T=deploy; make -j "$T"` built deploy unasked, that a
+here-string refusal caught text filters that only read it and called a delete a read, and that an attached option value
+Ember couldn't see became the command (-w5-1 to -w5-6). The words package's reviewers found "it", relative clauses,
+participles, places after "of", "for" or "at", lists after "then", "… and nothing else" and more hold-back phrasings
+still letting steps announce, then six regressions of those repairs, among them "the contents of X" and "for pid N" read
+as the object of a reversed copy or of a kill of another process, and "say if it worked" no longer announced. Memory's
+found the code-aware guard keeping a password after "its" or "never", a shell script's export, prose that only looks
+like code, a user name with a digit before "@", a setting named for a secret, an admin's pair and "user X pass Y", and
+photo apps' memories and months taken again, then the tightening refusing ordinary code once more (a call's last keyword
+argument, a shell function's arguments, an object's last property, a Python block's body, an f-string's placeholder) and
+"Passwords are hashed." (memory-v5-1 to -v5-6, -w5-1 to -w5-6). Integrations' found kept cards carrying the old
+conversation's goal and screen text to another service and vanishing during the reconnect, then Try again starting a
+split request's whole words again (integrations-v5-1, -v5-2, -w5-1); safety's, the fold saying Work without asking was
+on during a held lockdown, then an open window never told (safety-privacy-v5-1, -w5-1, -w5-2); tasks', refusal rows
+ahead of the answer they followed, unfolded, and the borrow's reason cut at 120 characters (tasks-approvals-v5-1 to
+-v5-3). Listening's found the download lines still naming Ember and Ask's held lines joined unpunctuated, then the
+download lines blaming this computer and handing back raw errors with the data folder's path; speaking's, a colon line's
+steps lost across a cut, a bare label cut from its step and an arrow after "right" before a quoted name, then a label
+holding back the step before it for 1.1 s (voice-listening-v5-1, -v5-2, -w5-1, -w5-2; voice-speaking-v5-1 to -v5-3,
+-w5-1, -w5-2). The companion's found an answer begun while the box was open still finishing under the field (50,490 px²
+at 1024×768 Larger) and a blank row with suggestions off (companion-v5-1, -v5-2); Home's, Cancel edit working from a
+stale copy and the wrong line for an over-long draft, then the given-back words told from the request by guesswork
+(home-v5-1 to -v5-3, -w5-1 to -w5-4). Reliability's found the Windows row without the host's reason and macOS asking the
+host's status at every perception cycle, then PowerShell's and .NET's own words in the row
+(reliability-performance-v5-1, -v5-2, -w5-1); install's, a refused spawn said as an unwritable cache and a start log
+that kept a kept copy from starting, then what Ember said lost with the log and the start tests failing on CI's Apple
+silicon Mac (install-docs-v5-1, -v5-2, -w5-1 to -w5-4); first run's, lines mixing "I" with "Ember's", then a cut-off
+task still said of Ember and "press Check again" naming a button the step lacks (first-run-v5-1, -v5-2, -w5-1, -w5-2).
+
+**Merges.** Lanes Q, R, P and S merged cleanly. At 4ae47eb (lane T) design-system.md's screen reader bullets kept lane
+S's rules for the open microphone and added lane T's sentence on an event main tells twice to the throttling bullet;
+status-copy.ts's `StatusFacts` kept lane Q's `switching` and lane T's `runtime`, which `statusWord` reads in separate
+branches; and Home's main.ts kept lane S's `holdTaskNews` (the merge commit says lane R's), lane Q's `COMPOSER_HELD` and
+lane T's `runtimeState` and composer edit imports, with `statusWord` given both fields. At 73554c2 (lane U) Home's
+`endComposerWait` kept lane U's `problemSaid()` for a Problem line with lane T's record of the words a Stop told, and
+welcome.ts's sign-in line writes lane Q's "I've switched to Copilot" line once, through lane U's `signInWays`, which
+names only a button the step shows.
+
+**Consent and departures.** No consent version changed (`CONSENT_VERSION` 7, `FEATURE_CONSENT_VERSION` as round one left
+it): no package bumped one, and what is read, sent and kept is unchanged; Apps & privacy's fold follows the settings and
+the policy without touching first run's text. No departure from §2: every package's notes say so, and no change reaches
+a §2 decision. Several changes only tighten rules that stood: a dangerous command the words hold back, or whose object
+they only place or describe, asks instead of being announced (§2 "Commands"); Ember's own files reached through more
+forms of variables, wrappers' options and PowerShell variables are refused; downloads stay marked through robocopy, dd
+and a cut of their URL; switches no longer hide what a command acts on; and a task's Try again on another model service
+sends only the user's own words. Two loosen a refusal that was wrong, each against a pinned look-alike set: code that
+names a secret with code for its value is sent, and a command that only tests or prints a variable set to Ember's
+folder, or a text filter that only reads it, runs.
+
+**Left.** Partly fixed (12): Ember's folder through sh -c's "$0" and "$1", `${d:-…}` and `: ${d:=…}`, a cd that may fail
+before a pattern, and `find … -exec rm` still ask rather than refuse (commands-remote-v4-4); the guard still keeps "The
+Wi-Fi is BlueSky99", "Netflix: hunter2!" and "The alarm is 4821" (memory-1), and "Forget Jenkins" is still taken for a
+person, so it doesn't reach the conversation (memory-c1-1); X11 authentication windows still stop only borrows, the
+owner's call (safety-privacy-3); "3/4", "555-1234" and a spaced "$5 - 10" are said as written (voice-speaking-2), and
+how far Kitten may say short foreign replies is the owner's (-11); follow-ups that come into an Ask box opened on a
+tight screen wait for its next opening (companion-i5, accessibility-visual-c4-1, -i5); a Stop with Home closed still
+loses a waiting message (home-r3-1, with home-c4-1); awake rest is still about twice docs/ASSISTANT.md's 3 % and 400 MB,
+and 13.6 % of a core with the pointer moving (rp-4); and Try again on Home's own Problem row
+(reliability-performance-c1-1's first half). Skipped (47): owner decisions: memory's predicate names (memory-4), which
+memories shaped an answer (memory-10), an unlisted Indian place's PIN code (memory-r3-3) and "Forget everything I told
+you" (the rest of memory-v1), probing a remote provider at each start (integrations-1), the provider card's wording and
+its consent bump (integrations-2, -13, first-run-10), browsing marketplaces before the extensions card
+(integrations-i2), auditing context reads (safety-privacy-6), the route after re-agreeing (safety-privacy-8,
+first-run-4, M8.8), describe_screen's window titles (safety-privacy-r2), Stop speaking on the bubble and a notice when
+the voice changes (voice-speaking-5, -6), room talk begun after Listen once's first second (voice-listening-c1-1, ruled
+out by the owner decision of 2026-11-05) and the doubt cut at 12 seconds with its earcon (-1, -r2-1), npm.yml's tag run
+without publish credentials, the prerelease title and a sooner update retry (install-docs-2, -4, -11), and, at 1366×768
+Larger, the side strip before the place above or below the box (companion-c2-4); larger work: memory's unsaved state
+(memory-r2), Undo for a learnt word (memory-7), Try again on Home's Problem row (home-7), Home's draft and waiting
+messages kept across its close (home-c4-1), actions on Home's crash notice (reliability-performance-r2-2), an unknown
+state for a hung pyatspi import (rp-1), a microphone chooser (voice-listening-v2), holding first run's Agree while the
+recipient is unknown and switching off a provider left unchecked by a quit (first run's carried items); native hardware:
+commands-remote-6, the Ask box's clear margins (companion-4), a cut-in that waits for the piece being made
+(voice-speaking-10) and a Mac's open(1) handover (install-docs-c2-3); design: 800×600 at Larger text (companion-1,
+-c1-1); on purpose: a press that finds Ember already listening isn't announced (voice-listening-v4-2); and notes and
+items another package owned (companion-r4-1, safety-privacy-1, -v4-1, -c4-2, -c4-3, integrations-i3,
+accessibility-visual-i3, home-i4, first-run-i5), of which safety-privacy-1 and -v4-1 stay partly open in memory-1
+("Netflix: hunter2", "Login is localhost:3000/login" refused). The other half of install-docs-4, folding 0.1.1's older
+dated sections into its feature sections, is still to do in CHANGELOG.md.
+
+**Found on the way.** Commands: a copy to a destination Ember can't name asks at the copy but doesn't mark the later
+run; PowerShell's `foreach` and cmd's variables don't feed Ember's own refusal; `echo "$d" | xargs rm -rf` and the XDG
+idiom `rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/ember"` ask where they should be refused; `make -j$(nproc)` with the
+value attached asks; chroot's new root and a few tools' output options aren't judged; `find ~ -name '*.pyc' -delete` is
+refused whatever the pattern, and so are `cat <<< "$d" | wc -l` and a here-document that only prints such a variable;
+robocopy's `/MOV` and `/MOVE` get `/MIR`'s card line; and quoted or noted steps ("TODO: delete src/"), "on" before a
+folder ("the build folder on the desktop" covers `./build`), "the parent process with pid 1234" and "… and I'll say if
+it's ok" still announce. Memory: fail-closed residue ("token = element", "PSK is enabled on the router"), misses
+("DB_PASS=Tr0ub4dor&3", `"pin": "4821"`, `const password = myPass1;`, a code said with "'s" such as "The gym's code is
+4821", and, since this round's login rule, "user james pass hunter"), a remember note still missing after "Note that I
+prefer email" and "Remember Priya out Friday", still given after "Remember the issues users reported last week" and,
+since this round, missing after "Remember that my wife likes tulips and buy some, remember", and a 1 MB line of 100,000
+secret-named keys taking about 19 s in `memoryRefusal` (unreachable through Projects' 24 KiB a file). Integrations:
+first run's in-use edit still refuses a host with no model list, and `friendlyError` says "your model service" for the
+user's own provider; Projects' refusal of a request doesn't say which words tripped the guard, and prose-shaped code in
+one ("Fix the bug where token: undefined is logged") is still refused; and a card from a typed "try again" offers only
+Close on another service. Safety: during a held lockdown the other managed switches (voice, speaking, memory, updates,
+routines) are still drawn from the settings; the fold's approval line still says Ember asks before acting in an app
+while "Don't ask before working in an app I asked for help with" is on, and under a lockdown that stops every action;
+and with nothing turned on under a policy that turns off some commands, its other computers line repeats its heading
+("Other computers and commands: other computers and commands on this computer are off…"). Tasks: a question that ran out
+of time still reads "Stopped:" on the step it held, and perceive's never-look refusal sends no refused activity.
+Listening: CI's voice job doesn't prepare the test-only voice, so the real-model Voice Match case skips there, and the
+natural voice's status line, Task activity's lines for a task's own Stop and Show app, the setup check's Speaking row
+and Voice Match's lines aren't held or reworded yet; a failed download's line in Hear me more clearly can end with "try
+again" twice, a Windows EPERM that outlasts the rename wait still reads "permission denied", and the microphone's own
+error names are still shown as they come. Speaking: three or more short bare lines cut apart at a label are said in one
+breath when streamed; bare option names between long lines ("Option A", "Option B") run together; and a "→" after
+"right" before "the" or "a" loses its "to" ("top right → the gear icon"), while an ASCII "->" after its direction is
+said "right right arrow". The companion: Ask opened while Ember is still flying to the cursor can leave Ember under the
+box, and a box that opens with suggestions grows once just after it opens. Accessibility: under Copilot a not-answering
+status whose detail doesn't end in "Reconnecting…" still reads "Not connected". Home: a later Stop can say again that a
+message is back after the field was emptied, and Cancel edit can't tell a message brought back with Ctrl+Z from the
+request and splits a request pasted over everything at its first blank line. Reliability: on Windows a spawn error Node
+throws synchronously (EPERM or UNKNOWN when AppLocker blocks powershell.exe) leaves no Screen reading row and no
+back-off, Check again during a bridge restart slower than 6 s shows the old row until the next read, and a helper on
+another protocol version still names the version numbers in the row. Install: the launcher's redirect-loop error and a
+corrupt zip's output aren't plain sentences yet, `ember doctor` on a Mac still gives Node's own words for a cache it
+can't write in, and on Windows the temporary start log of an Ember that keeps running may be left in %TEMP%. First run:
+the bubble's `firstPerson` leaves "Ember will try again in a moment.", a key saved for the old host still counts as
+saved for a new address, main's hint for a GitHub sign-in it can't find still says to press Sign in with GitHub on a
+sign-in step that shows only Try again, and the provider step after a passing check can still say "press Check again".
+Tests that flake under load: first run's first-run-6 and first-run-v2 journeys and the launcher's install-docs-v4-2
+signal test.
+
+**Native validation and owner decisions.** Still to check natively: rsync 3.2.3 or later's `--mkpath` in a WSL distro or
+over SSH, podman run on RHEL 8, and robocopy, dd and the PowerShell variable refusals on a real Windows PC with
+PowerShell 5.1 and 7; commands-remote-6 with an sshd, a VPN-only name and a Mac; GNOME 3.32 with platform-python 3.6 for
+the held decision's refusals; whether Orca, NVDA and VoiceOver read the corner card's and the bubble's live regions into
+a conversation, real screen readers' timing while Voice Match is taught (1.5 s) and how often a phrase must be said
+again, each Stop's line said once, the kept follow-up row read as absent while empty, and the corner card's wrapped key
+hint in a real no-compositor session (GNOME Classic, MATE without compositing); how the label pieces, "to" ranges and
+"Windows key left arrow" sound with Kitten on the RHEL 8 target, and real foreign system voices; `answerRoom` under RHEL
+8's GNOME top bar at 1024×768 Larger; a Windows bridge failing after 10 s and recovering, and whether Windows reports a
+blocked Ember.exe or a reopened start log as EPERM; corporate HTTPS-inspecting proxies inside the tunnel; and the first
+CI runs of el8's footprint step under xcompmgr and of the launcher's start tests on macos-15. For the owner, beside the
+lists above: how far a copy Ember can't name counts as a download; whether "if that's okay" or "when you can" hold a
+step back, whether a quoted or noted step is a request, and whether deadlines ("before Friday") should ask; whether bare
+"Clear memory", "Reset memory" and "Empty memory" stay memory erases; whether a retry on another service keeps the
+window title it was asked in; the names "Ember's model connection" and "my model connection", and "2 unanswered" for the
+Today count; Home's Enter-to-send and the 640 px corner card for any question; a least-overlap Ask box placement and the
+order of the side strip and the place above or below the box; `RESTING_FRAME_MS`, the pace of fidgets and glances and
+whether still faces stop drawing, before docs/ASSISTANT.md's budget and CI's 16 % and 950 MB are restated; and a
+listening earcon (§6).
