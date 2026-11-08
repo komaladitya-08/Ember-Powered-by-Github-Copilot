@@ -2334,7 +2334,8 @@ node:http and node:https, not fetch, through the proxy npm would use (`proxyFor(
 from `npm_config_*` or the `.npmrc` files, then `HTTPS_PROXY` or `HTTP_PROXY`, never for `NO_PROXY`'s hosts or this
 computer; https by a CONNECT tunnel), and a network failure, or an error status from a proxy or server, is one
 sentence naming the host that answered and the next steps (`cantReach()`), never Node's "fetch failed" or a bare HTTP
-status; a full disk or quota (`ENOSPC`, `EDQUOT`, or the unpacker's words for them, `roomSaid()`), from making the
+status (inside a tunnel a status is the host's own, so only a 403 or 451 there, or a refused CONNECT, sends the person
+to whoever runs the proxy, and a server's 5xx says to run it again later); a full disk or quota (`ENOSPC`, `EDQUOT`, or the unpacker's words for them, `roomSaid()`), from making the
 cache folder and the lock to writing the marker, names the cache folder and, once known, the download's size instead
 (`noRoom()`).
 `ember doctor` and `ember --doctor`

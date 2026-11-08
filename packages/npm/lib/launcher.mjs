@@ -314,7 +314,7 @@ function request(url, proxy, signal) {
         parts.push(socket);
         quiet(socket);
         if (res.statusCode !== 200) {
-          fail(Object.assign(new Error(`the proxy answered ${res.statusCode}`), { code: "EMBER_PROXY_REFUSED", status: res.statusCode }));
+          fail(Object.assign(new Error(`the proxy answered ${res.statusCode}`), { code: "EMBER_PROXY_REFUSED", status: res.statusCode, host: u.host }));
           return;
         }
         send(https, { host, port, path: `${u.pathname}${u.search}`, createConnection: () => tls.connect({ socket, host, servername }) });
@@ -355,10 +355,12 @@ function cantReach(err, o) {
   const cert = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|ERR_TLS/.test(code);
   const answered = code === "EMBER_HTTP";
   const status = answered ? `${err.status}${err.statusText ? ` ${err.statusText}` : ""}` : "";
+  // A proxy's Bad Gateway and Gateway Timeout are its own when it forwards a plain http request: it couldn't get to
+  // that host. Inside an https tunnel it only passes bytes, so the answer is the host's (install-docs-v4-3).
+  const gateway = answered && o.proxy && !err.tunnelled && (err.status === 502 || err.status === 504);
   const why = code === "EMBER_PROXY_REFUSED"
     ? err.status === 407 ? "the proxy asked for a user name and password (407)" : `the proxy refused to connect to it (${err.status})`
-    // A proxy's Bad Gateway and Gateway Timeout are its own: it couldn't get to that host.
-    : answered && o.proxy && (err.status === 502 || err.status === 504) ? `the proxy couldn't get an answer from ${err.host} (${status})`
+    : gateway ? `the proxy couldn't get an answer from ${err.host} (${status})`
     : answered ? `${err.host} answered ${status}`
     : cert ? `the certificate it showed isn't one this computer trusts (${code})`
     : WHY[code] ? `${WHY[code]} (${code})`
@@ -367,16 +369,21 @@ function cantReach(err, o) {
     : answered ? `The download of Ember ${o.version} from ${where}${via} failed: ${why}.`
     : `Ember couldn't reach ${where}${via}: ${why}.`;
   const secure = !o.env.EMBER_NPM_DOWNLOAD_BASE || /^https:/i.test(o.env.EMBER_NPM_DOWNLOAD_BASE);
+  // The host that answered or was refused, which an organisation's allow-list may be missing (GitHub's storage host,
+  // after its redirect): not for an answer inside an https tunnel, the host's own, unless it is a block (one from a
+  // proxy that inspects HTTPS).
+  const ask = o.proxy && (code === "EMBER_PROXY_REFUSED" || (answered && (!err.tunnelled || err.status === 403 || err.status === 451)));
   const next = code === "EMBER_PROXY_REFUSED" && err.status === 407 && o.proxy
     ? `Put your user name and password in ${o.proxy.setting} (http://name:password@${o.proxy.url.host}).`
     : cert ? "Behind a proxy that inspects HTTPS, set NODE_EXTRA_CA_CERTS to your organisation's certificate file."
-    // The host that answered, which an organisation's allow-list may be missing (GitHub's storage host, after its redirect).
-    : answered && o.proxy ? `Check ${o.proxy.setting}, which names that proxy, or ask whoever runs it to let this computer reach ${err.host}.`
-    : o.proxy ? `Check ${o.proxy.setting}, which names that proxy.`
+    : ask ? `Check ${o.proxy.setting}, which names that proxy, or ask whoever runs it to let this computer reach ${err.host}.`
+    : o.proxy && !answered ? `Check ${o.proxy.setting}, which names that proxy.`
     : o.midway || answered ? ""
     : `If this computer reaches the internet through a proxy, set ${secure ? "HTTPS_PROXY" : "HTTP_PROXY"} (or npm's ${secure ? "https-proxy" : "proxy"} setting) to it.`;
   const mirror = o.env.EMBER_NPM_DOWNLOAD_BASE ? "" : ", or set EMBER_NPM_DOWNLOAD_BASE to your organisation's mirror";
-  const again = `un '${o.name}' again, or download ${o.asset} from https://github.com/${REPO}/releases/tag/v${o.version} in your browser${mirror}.`;
+  // A server's own failure (5xx) is its to mend: run again later.
+  const later = answered && !gateway && err.status >= 500 ? " later" : "";
+  const again = `un '${o.name}' again${later}, or download ${o.asset} from https://github.com/${REPO}/releases/tag/v${o.version} in your browser${mirror}.`;
   // "Then" only after a step to take first.
   return next ? `${first} ${next} Then r${again}` : `${first} R${again}`;
 }
@@ -414,7 +421,9 @@ async function get(url, o) {
       res.resume();
       // Named by the host that answered (after a redirect, not the one asked first), its status text kept printable.
       const statusText = String(res.statusMessage ?? "").replace(/[^\x20-\x7e]/g, "").trim().slice(0, 60);
-      throw Object.assign(new Error(cantReach({ code: "EMBER_HTTP", status, statusText, host: new URL(at).host }, { ...o, proxy })), { status });
+      // Inside an https tunnel (through a proxy), the answer is the host's own, not the proxy's (install-docs-v4-3).
+      const tunnelled = proxy !== null && new URL(at).protocol === "https:";
+      throw Object.assign(new Error(cantReach({ code: "EMBER_HTTP", status, statusText, host: new URL(at).host, tunnelled }, { ...o, proxy })), { status });
     }
     const body = res;
     return {
