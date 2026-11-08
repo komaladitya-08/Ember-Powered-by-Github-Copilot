@@ -107,11 +107,26 @@ describe("what a timed-out question says to do next (tasks-approvals-r1)", () =>
     const c = new Confirmer(s => shown.push(s), { armMs: 0, gapMs: 0, timeoutMs: 20 });
     await c.ask(Q);
     expect(shown.at(-1)!.bubble).toMatchObject({ thought: EXPIRED_TASK_THOUGHT, step: EXPIRED_TASK_STEP });
-    expect(EXPIRED_TASK_STEP).toBe("To review it, choose Try again on its card, or say or type “try again”.");
+    expect(EXPIRED_TASK_STEP).toBe("If I can't finish without it, choose Try again on its card. Otherwise, say or type the request again.");
     expect(EXPIRED_TASK_THOUGHT).toBe("Time ran out, so nothing was approved and I haven't done it.");
     const { task: _task, ...untasked } = Q;
     await c.ask(untasked);
     expect(shown.at(-1)!.bubble).toMatchObject({ thought: EXPIRED_THOUGHT, step: EXPIRED_STEP });
     expect(EXPIRED_STEP).toBe("To review it, say or type the request again.");
+  });
+
+  it("promises Try again only for a task that can't finish without the answer, since one that finishes the rest offers Close alone (tasks-approvals-c2-2)", async () => {
+    const { EXPIRED_TASK_STEP } = await import("../../app/main/agent/confirm");
+    const { TaskManager } = await import("../../app/main/agent/tasks");
+    const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as never;
+    const cards: { actions?: { label: string }[] }[][] = [];
+    // The question went unanswered (the note is up), then the worker finished the rest and said it was done.
+    const tm = new TaskManager({ log: quiet, currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0,
+      makeWorker: () => ({ run: async () => ({ success: true, summary: "I tidied the build folder, but didn't delete the old one: my question timed out." }), dispose: async () => undefined, sessionId: "s" }) as never });
+    tm.start("Tidy the build folder", { userWords: "tidy the build folder" });
+    await vi.waitFor(() => expect(cards.at(-1)?.[0]?.actions?.map(a => a.label)).toEqual(["Close"]));
+    // So the note says when the card offers Try again, and what to do otherwise; never that it does.
+    expect(EXPIRED_TASK_STEP).toMatch(/^If I can't finish without it, choose Try again on its card\. Otherwise, say or type the request again\.$/);
+    expect(EXPIRED_TASK_STEP).not.toMatch(/^To review it, choose Try again/);
   });
 });

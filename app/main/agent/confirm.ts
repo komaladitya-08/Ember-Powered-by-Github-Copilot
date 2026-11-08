@@ -112,11 +112,11 @@ export const EXPIRED_MS = 10_000;
 export const EXPIRED_STEP = "To review it, say or type the request again.";
 export const EXPIRED_THOUGHT = "Time ran out, so nothing was approved and I haven't done it. Ask me again if you'd like to review it.";
 /**
- * The same for a task's question: the task ends with Try again on its card (and in Home), and a "try again" said or
- * typed then asks for it again in the user's words, so the note points there rather than at the whole request
- * (tasks-approvals-r1).
+ * The same for a task's question, said before the task ends: one that can't finish without the answer ends with Try
+ * again on its card (and in Home) (tasks-approvals-r1), but one that finishes the rest ends done, with Close alone, so the
+ * note says which (tasks-approvals-c2-2).
  */
-export const EXPIRED_TASK_STEP = "To review it, choose Try again on its card, or say or type “try again”.";
+export const EXPIRED_TASK_STEP = "If I can't finish without it, choose Try again on its card. Otherwise, say or type the request again.";
 export const EXPIRED_TASK_THOUGHT = "Time ran out, so nothing was approved and I haven't done it.";
 
 /**

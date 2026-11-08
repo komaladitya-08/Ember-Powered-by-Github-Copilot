@@ -187,16 +187,7 @@ export class AxDarwinProvider implements AxProvider {
 
   async start(): Promise<void> {
     if (this.stopped) throw new Error("the accessibility provider was stopped");
-    if (!this.opened) {
-      this.opened = true;
-      this.api = this.o.open();
-    }
-    if (!this.api) {
-      const why = this.o.openError?.();
-      this.failure = `the macOS accessibility API couldn't be loaded${why instanceof Error ? ` (${why.message})` : ""}`;
-      throw new ProviderError("failed", this.failure);
-    }
-    if (!this.api.trusted()) {
+    if (!this.loaded().trusted()) {
       this.failure = "macOS hasn't given Ember the Accessibility permission";
       if (!this.untrustedNoted) {
         this.untrustedNoted = true;
@@ -206,6 +197,53 @@ export class AxDarwinProvider implements AxProvider {
     }
     this.failure = null;
     this.started = true;
+  }
+
+  /** The AX API, loaded once; one that can't be loaded throws, saying why (status's detail too). */
+  private loaded(): AxApi {
+    if (this.stopped) throw new ProviderError("failed", "the accessibility provider was stopped");
+    if (!this.opened) {
+      this.opened = true;
+      this.api = this.o.open();
+    }
+    if (!this.api) {
+      const why = this.o.openError?.();
+      this.failure = `the macOS accessibility API couldn't be loaded${why instanceof Error ? ` (${why.message})` : ""}`;
+      throw new ProviderError("failed", this.failure);
+    }
+    return this.api;
+  }
+
+  /**
+   * The system's own windows (systemOverlays), front to back, from the window server's list alone: no AX call, so no
+   * Accessibility permission is needed and none of them is asked anything (reliability-performance-c2-2). The same
+   * windows topWindows lists for them. null: the list couldn't be read.
+   */
+  async systemWindows(): Promise<RawWindow[] | null> {
+    const api = this.loaded();
+    try {
+      const entries = api.onScreenWindows().filter(isVisible);
+      const byPid = new Map<number, AxWindowEntry[]>();
+      for (const e of entries) {
+        const list = byPid.get(e.pid);
+        if (list) list.push(e);
+        else byPid.set(e.pid, [e]);
+      }
+      let displays: Rect[] | null = null;
+      const out: AxWindowEntry[] = [];
+      const subrole = new Map<number, string>();
+      for (const list of byPid.values()) {
+        const system = systemOverlays(list, (displays ??= api.displays()));
+        if (!system) continue;
+        for (const e of system.entries) subrole.set(e.id, system.subrole);
+        out.push(...system.entries);
+      }
+      const z = new Map(entries.map((e, i) => [e.id, i]));
+      return out.sort((a, b) => z.get(a.id)! - z.get(b.id)!).map(e => listedOnly(e, { platformSubrole: subrole.get(e.id)! }));
+    } catch {
+      this.note("ax.system_windows_failed");
+      return null;
+    }
   }
 
   async accessibility(): Promise<boolean | null> {

@@ -42,8 +42,10 @@ They share one emotion rig, so switching never changes behaviour.
     that stops without saying so never leaves the mouth moving; the system's voice gives no level, so
     the mouth keeps its syllable flap;
   - awake and Ready with nothing passing, only the breath and the idle float move, under a third of a pixel a
-    step: the overlay, the handle and Home's hero draw it about 6 times a second (`restingGap`, `RESTING_FRAME_MS`),
-    waking in time for the next blink or fidget, where they drew 15–24 times a second; while Home sits behind the
+    step: between blinks and fidgets the overlay, the handle and Home's hero draw it about 6 times a second
+    (`restingGap`, `RESTING_FRAME_MS`), waking in time for the next one, where they drew 15–24 times a second. With
+    the blinks and the first minute's fidgets drawn at their own rate, the overlay and the handle still draw 11–16
+    times a second awake at rest (the pointer moves often enough to keep Ember there); while Home sits behind the
     window you are working in, its still faces aren't drawn at all until it takes the focus, the pointer comes over
     it or something changes (`homeFrameGap`);
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
@@ -226,10 +228,11 @@ Ember is two places at once, each for one kind of work.
 
   The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
   Retrying, Done, Didn't finish, Stopped, and No answer in time for a task whose question ran out of time, which the
-  user didn't stop) and `app/main/agent/activity.ts`, which builds a task's activity from its
+  user didn't stop: so its card, the handle's task row and the conversation's line say so, and its last row reads
+  "Ended: No answer in time" to a screen reader) and `app/main/agent/activity.ts`, which builds a task's activity from its
   worker's tool calls and Ember's own signals: never the model's arguments, its reasoning or screen text. A running
   task's symbol is a ring round a lit dot, which never reads as a spinner. A card with a view or a failure stays a
-  minute, and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
+  minute (and waits while the user is away), and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
   compositor, the corner card's task row has two lines: the title, and the live line under it.
 - **The cursor** (the character beside the pointer, and its bubble) is the assistant with you. It holds:
   - the conversation: what you asked, and the answer;

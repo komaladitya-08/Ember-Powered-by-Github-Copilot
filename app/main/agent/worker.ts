@@ -30,6 +30,7 @@ import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
+import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { isRiskyLabel } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
@@ -245,21 +246,20 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /**
- * The helper's own answers that it can't read any app (tasks-approvals-8): its Python bindings missing
- * (ember_atspi.py), no session bus, or macOS not having given Ember the Accessibility permission (ax-darwin-read.ts).
- * A step can't work again until the user fixes that, so the model is never told to try again.
+ * A step that can't be done because the accessibility helper can't work here at all (helperCantRun: its Python
+ * bindings missing, macOS not having given Ember the Accessibility permission, the helper unable to start;
+ * tasks-approvals-8). It can't work again until the user fixes that, so the model is never told to try again.
  */
-const HELPER_CANT_READ = /accessibility (helper|bridge)|python3-pyatspi is not installed|^no session bus$|\bAccessibility permission\b/i;
+const HELPER_DOWN = "Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.";
 
 /**
- * A tool's result when its handler threw: the accessibility helper's failures as what the user can do about them (the
- * setup check says what's wrong), anything else quoted as untrusted words (an error may carry screen text).
+ * A tool's result when its handler threw: the accessibility helper's answers that it can't work here as what the user
+ * can do about them (the setup check says what's wrong), anything else, a helper that only timed out or was restarted
+ * included (safety-privacy-c2-1), quoted as untrusted words (an error may carry screen text).
  */
 function toolFailure(err: unknown): ToolResultObject {
   const msg = err instanceof Error ? err.message : String(err);
-  if (HELPER_CANT_READ.test(msg)) {
-    return fail("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
-  }
+  if (helperCantRun(msg)) return fail(HELPER_DOWN);
   return fail(`That step didn't work: ${q(msg, 200)}. Call perceive_window and try again, or finish the task saying what's left.`);
 }
 
@@ -282,8 +282,12 @@ const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen.
 const PROMPT_UNCHECKED = "Ember can't tell right now whether a password prompt is open on the user's screen (the desktop didn't answer in time), so nothing was read or done. Wait a moment and look again, or finish the task saying what's left.";
 /** What a look that asked for a picture says when the user turned Send screenshots for tasks off during the task. */
 const NO_PICTURES = "(No screenshot: the user turned off sending screenshots for tasks; work from the elements.)";
-/** The audit's reason for each (What Ember did shows it). */
-const PROMPT_REASON = { open: "an authentication prompt is open", unchecked: "Ember couldn't tell whether a password prompt was open" } as const;
+/** The audit's reason for each (What Ember did shows it): a helper that can't work here is no prompt (reliability-performance-r2-1). */
+const PROMPT_REASON = { open: "an authentication prompt is open", unchecked: "Ember couldn't tell whether a password prompt was open", helper: "Ember's accessibility helper isn't working" } as const;
+/** The refusal for a step while promptOpen says one is open, may be, or can't be asked (the helper can't work here). */
+const PROMPT_REFUSAL = { open: AUTH_PROMPT_OPEN, unchecked: PROMPT_UNCHECKED, helper: HELPER_DOWN } as const;
+/** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
+const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
 const POSES_AS_ANNOUNCEMENT = new RegExp([
   String.raw`without\s+(asking|checking|permission|approval|confirm\w*|a\s+question)`, String.raw`as\s+you\s+(let|allow\w*|permit\w*)`,
@@ -1647,7 +1651,10 @@ export class Worker {
             await apps.launch(app);
             for (let i = 0; i < 40 && !this.isOver; i++) {
               await new Promise(r => setTimeout(r, 250));
-              const wins = await this.perception.windows().catch(() => []);
+              // A helper that can't read here (macOS before the Accessibility permission) won't list it in 10 s either.
+              let cantRead = false;
+              const wins = await this.perception.windows().catch((err: unknown) => { cantRead = helperCantRun(err); return []; });
+              if (cantRead) return `Started ${shownApp}, but ${HELPER_DOWN.replace("this step couldn't be done", "Ember can't work in its window")}`;
               const w = wins.find(x => !before.has(key(x)) && (ours(x) || x.name.toLowerCase().includes(app.name.toLowerCase())))
                 ?? (i >= 8 ? wins.find(ours) : undefined);
               if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${shownApp}; now working in its window ${q(w.name, 100)}. Call perceive_window.`; }
@@ -2308,9 +2315,9 @@ export class Worker {
     if (this.isOver) return STOPPED();
     // The shell's own password prompt is open: nothing was read (safety-privacy-3). The task may wait and look again.
     if (p.authPrompt) {
-      const unchecked = p.authPrompt === "unchecked";
-      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: unchecked ? PROMPT_REASON.unchecked : PROMPT_REASON.open });
-      return denied(unchecked ? PROMPT_UNCHECKED : AUTH_PROMPT_OPEN);
+      const key = promptKey(p.authPrompt);
+      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: PROMPT_REASON[key] });
+      return denied(PROMPT_REFUSAL[key]);
     }
     if (p.blocked) {
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
@@ -4103,11 +4110,12 @@ export class Worker {
     if (dialog) {
       // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
       const why = dialog === "unchecked" ? null : await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
-      // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2).
-      const unchecked = dialog === "unchecked" || (!why && await this.promptUnchecked());
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? (unchecked ? PROMPT_REASON.unchecked : "a system dialog is open") });
+      // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2), and a helper that
+      // can't work here as the helper (reliability-performance-r2-1).
+      const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
+      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open") });
       return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
-        : unchecked ? PROMPT_UNCHECKED
+        : unchecked ? PROMPT_REFUSAL[unchecked]
           : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
     const check = () => {
@@ -4441,16 +4449,17 @@ export class Worker {
    * dialogs, which no X11 window shows): no step is taken until it's done, by accessibility as with the borrowed mouse
    * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that can't be made, or fails, refuses too
    * (fail closed, safety-privacy-r1), in words that say Ember can't tell rather than that a prompt is open
-   * (safety-privacy-c1-2); a screen whose perception has no such check (another computer's) goes on as before.
+   * (safety-privacy-c1-2), or, when the helper can't work here at all, that it isn't working and where the setup check
+   * is (reliability-performance-r2-1); a screen whose perception has no such check (another computer's) goes on as before.
    */
   private async promptRefusal(kind: ActionKind, element?: Focus): Promise<ToolResultObject | null> {
     if (!this.perception.promptOpen) return null;
     const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const);
     if (this.isOver) return STOPPED();
     if (!open) return null;
-    const unchecked = open === "unchecked";
-    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: unchecked ? PROMPT_REASON.unchecked : PROMPT_REASON.open });
-    return denied(unchecked ? PROMPT_UNCHECKED : AUTH_PROMPT_OPEN);
+    const key = promptKey(open);
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: PROMPT_REASON[key] });
+    return denied(PROMPT_REFUSAL[key]);
   }
 
   /**
@@ -4466,10 +4475,14 @@ export class Worker {
     }
   }
 
-  /** Is the system dialog the borrow saw only a shell Ember couldn't ask (promptOpen "unchecked")? Words only: it refuses either way. */
-  private async promptUnchecked(): Promise<boolean> {
+  /**
+   * Is the system dialog the borrow saw only a shell Ember couldn't ask (promptOpen "unchecked"), or one the helper can't
+   * ask at all ("helper")? Words only: it refuses either way.
+   */
+  private async promptUnchecked(): Promise<false | "unchecked" | "helper"> {
     if (!this.perception.promptOpen) return false;
-    return (await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const)) === "unchecked";
+    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const);
+    return open === "unchecked" || open === "helper" ? open : false;
   }
 
   /**

@@ -209,6 +209,14 @@ export interface AxProvider {
   health(): ProviderHealth;
   /** The top-level windows, front to back where the platform says. */
   topWindows(): Promise<RawWindow[]>;
+  /**
+   * (Optional.) The system's own windows shell_overlays reports (credential and consent prompts, the lock screen,
+   * Mission Control), from the window server's list alone and without start(): macOS lists them without the
+   * Accessibility permission, so the prompt check still runs before it is given (reliability-performance-c2-2). null:
+   * the list couldn't be read. Throws as start() does when the platform's API can't be loaded at all. Absent (UI
+   * Automation): shell_overlays starts the provider and looks through every top-level window.
+   */
+  systemWindows?(): Promise<RawWindow[] | null>;
   snapshot(window: Handle, o: SnapshotOptions): Promise<Snapshot>;
   /** The element as it is now (null: gone). */
   element(h: Handle): Promise<RawNode | null>;

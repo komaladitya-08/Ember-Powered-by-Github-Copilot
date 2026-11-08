@@ -9,7 +9,7 @@
  * (remote-capture.ts). Every position is the remote's own: the PC never flies to it. Plain Node (sharp loads lazily, PC only).
  */
 
-import { describeText, openWindowsBlock, perceivedText, quickContextText, type OpenWindow, type Perceived, type QuickContext, type Seen, type WindowTarget } from "../perception";
+import { HELPER_DOWN, describeText, openWindowsBlock, perceivedText, quickContextText, type OpenWindow, type Perceived, type QuickContext, type Seen, type WindowTarget } from "../perception";
 import { insideSecrets, isNeverLook, secretIds, withheldIds } from "../perception/elements";
 import { isSecurityWindow } from "../policy/policy";
 import { PLATFORM_WORDS } from "../../shared/words";
@@ -61,6 +61,7 @@ function knownNoShot(os: OS): ReadonlySet<string> {
     "a password prompt is open, so Ember looks away until it's done",
     "a system dialog is open, so Ember looks away until it's done",
     words.shellUnchecked,
+    HELPER_DOWN,
     words.overviewOpen,
     "Ember couldn't find the window on screen, so it can't tell what covers it",
     "the window is covered by other windows",

@@ -286,11 +286,18 @@ async function markSecret(host: Host, params: Record<string, unknown>): Promise<
 }
 
 async function shellOverlaysMethod(host: Host): Promise<unknown> {
+  // The windows couldn't be listed: a credential prompt may be up unseen, so no picture is taken (fail closed).
+  const unchecked = { overlays: [], complete: false };
+  if (host.provider.systemWindows) {
+    // macOS: from the window server's list alone, with or without the Accessibility permission (host.ts calls this
+    // without starting the provider: reliability-performance-c2-2). An AX API that can't be loaded at all throws.
+    const system = await host.provider.systemWindows();
+    return system ? { overlays: shellOverlays(system, host.vocabulary), complete: true } : unchecked;
+  }
   try {
     return { overlays: shellOverlays(await host.windows(), host.vocabulary), complete: true };
   } catch {
-    // The windows couldn't be listed: a credential prompt may be up unseen, so no picture is taken (fail closed).
-    return { overlays: [], complete: false };
+    return unchecked;
   }
 }
 

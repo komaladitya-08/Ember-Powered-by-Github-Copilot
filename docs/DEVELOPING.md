@@ -172,9 +172,10 @@ runtime. It does not change the app's consent or speaking settings.
     (steps of one kind folded, each listed when opened), its questions with how they were answered, and how it ended
     (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
     asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
-    filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, and gone at
-    quit; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most twice a second,
-    only to the settings window.
+    filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, through a
+    reconnect (a finished task's row then offers nothing to press, its card having gone), and gone at quit, sign-out
+    or an account change; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most
+    twice a second, only to the settings window.
   - Once Ember is set up, starting it on Linux, Windows or macOS (the app menu entry, `ember`, the Start menu, Ember.app
     from the Dock or Finder) only greets you, unless a setup row needs you (`startView`'s `setupNeeded`): then settings
     opens. Starting it again while it runs, the
@@ -369,14 +370,16 @@ for them. Each task card has **Stop**, says what Ember is doing now in its own w
 under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
 what went wrong). So does the card of a task whose question ran out of time while you were away: it says so ("No
 answer in time", on the card and in Home's Task activity, where its **Try again** is too), offers **Try again**, the
-bubble's note points to it, and a notification says Ember couldn't finish it; **Stop everything** clears both kinds of
-card at once; "What did I miss?" says the question wasn't answered
+bubble's note says the card offers it if Ember can't finish without the answer (otherwise, to say or type the request
+again), and a notification says Ember couldn't finish it. While you are away (idle for 30 s, or
+Ember hidden) neither kind of card goes, nor one showing a result: each waits, and has its whole time again once you
+are back. **Stop everything** clears both kinds of card at once; "What did I miss?" says the question wasn't answered
 in time, never "you stopped it". More time multiplies the lifetime by ten; expanded Details, hover or keyboard focus pauses expiry,
 with at least five seconds to move on after the last reader leaves. Its **Try again** starts the latest accepted request again, retaining any changed instructions,
 restrictions and the original computer and window, and asking every question again. Saying or typing “try again” right
 after such a task (or “can you try again?”, “yes” to its “Want me to try again?”, or “try again” after asking why it
-didn't work) asks for it again in your words then, as the button does: its card goes, and a try that did part of the
-work is told so. A change the worker could not accept
+didn't work) asks for it again in your words then, as the button does, within ten minutes or while its card still
+offers **Try again**: its card goes, and a try that did part of the work is told so. A change the worker could not accept
 does not replace that retry request. Conversation requests are dispatched in order even when memory recall finishes out
 of order; each turn keeps its own words, screen context and voice provenance. An unmatched runtime message cannot start
 or steer a task. If an app can't be operated through accessibility, Ember asks to **borrow
@@ -384,8 +387,8 @@ your mouse**: it waits until you're still, moves the pointer visibly, and puts i
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
 take screenshots or press keys; while GNOME Shell's own prompt is up (or Ember can't tell, because the shell is too busy
-or didn't answer), it also sends no window's text or titles with your request and takes no step in any app, until the
-prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
+or didn't answer, or because the accessibility helper isn't working: then Ember says so and points to the setup check),
+it also sends no window's text or titles with your request and takes no step in any app, until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
 **Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
@@ -507,7 +510,9 @@ it builds on:
   (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
   Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
-  `generation`; the host reconnects between turns (the conversation resumed), as memory does.
+  `generation`; the host reconnects between turns (the conversation resumed), as memory does. The kill switch moves
+  it only when the conversation had extension tools loaded or a server launched, so a stop with none installed or
+  with extensions off reconnects nothing.
 - **The kill switch** part `extensions` refuses every call from sessions loaded before it, drops their questions and
   ends every server the launcher recorded.
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
@@ -856,8 +861,12 @@ regression alongside the Electron smoke.
   plays a tone instead).
 - It prints each process's memory (PSS) and CPU, and each page's main-thread CPU, then the same as JSON.
 - Compare a change against `main` on the same computer: Xvfb has no GPU or compositor.
-- On 4 vCPUs at 2.1 GHz it measured 741 MB and 35 % of one core. The setup page was open (no sign-in) and cost 10.6 %;
-  the speech process cost 1.1 % in silence.
+- It agrees to the consent version the build asks for (it used to agree to an older one, which kept the microphone
+  shut). Awake at rest, listening in silence, with Home open (no sign-in), it measured 758 MB and 11.3 % of one core on
+  4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main threads. Most of the
+  drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open decisions (docs/ASSISTANT.md).
+- `--max-cpu 16 --max-pss 950` is the budget for a change: past either it says so and exits 1. It sits above those
+  figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's.
 
 ### Connecting Copilot
 
@@ -1291,7 +1300,7 @@ On Linux (Windows: §10.9, macOS: §11.8):
 | Home says "Ember closed unexpectedly last time" | Ember's main process ended without quitting (a crash, `kill -9`, the computer losing power): the log says `app.previous_run_ended` with when that run started, and its last lines are what it was doing. Logging out isn't this: on Linux the X server ending under Ember is the session ending, logged as `app.session_end` with `"source":"display-gone"`, and the next login says nothing. That run's conversation is deleted at this start, as after any crash. If it keeps happening, report it with `ember.log` (see "Sharing a log") |
 | Ember is slow, or uses a lot of the processor | Awake with nothing happening, Ember's processes together use about 7–10 % of one core on a computer with no GPU (Xvfb with a compositor, listening off), most of it drawing the character in the overlay and the handle (Home open in front adds about 3 %; behind other windows it draws nothing); listening for “Hey Ember” adds about 5 % more. After 3 minutes with the pointer still Ember dozes and draws nothing: about 2 %, or 6 % while listening. `node scripts/perf/footprint.mjs` (a development build, Linux) measures each process and page (docs/ASSISTANT.md phase 0). In `ember.log` (`EMBER_LOG_LEVEL=debug` for more), a line that repeats many times a minute points to the part at fault: `sidecar.revive_backoff` the accessibility helper, `agent.runtime_lost` the Copilot runtime, `window.renderer_gone` or `app.child_process_gone` one of Ember's windows or its GPU process |
 | Sharing a log | **Setup & about › About this build** lists the log file with **Copy** and **Show in Files** (Finder, File Explorer). Attach `ember.log`, and `ember.log.1` too if the problem was a while ago (each is rotated at 5 MB). It says what Ember did and what failed, with app names and error messages; it isn't meant to hold what you typed or said, window titles or keys (tokens are taken out), but read it before you share it |
-| Ember says it can't read the screen | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Apps started before it was turned on must be restarted |
+| Ember says it can't read the screen, or that its accessibility helper isn't working | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Bindings installed while Ember runs are used within a couple of seconds, without restarting it; apps started before accessibility was turned on must be restarted |
 | "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to |
 
 ## 10. Windows

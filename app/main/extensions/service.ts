@@ -581,12 +581,16 @@ export class ExtensionsService implements ExtensionsApi {
     return {
       name: "extensions",
       stop: () => {
+        // Only a conversation that loaded extension tools (or launched a server) needs them again: with none, or with
+        // extensions off (the switch reloaded it already), a reconnect would only cost the next request a resume and
+        // Home its Task activity (tasks-approvals-c2-1).
+        const loaded = this.active() && (this.leases.size > 0 || (this.session?.tools.size ?? 0) > 0);
         this.epoch++;
         this.stopAsks.abort();
         this.stopAsks = new AbortController();
         this.stopServers();
         // The next conversation starts the servers again (between turns, after a new request).
-        this.gen++;
+        if (loaded) this.gen++;
       },
     };
   }

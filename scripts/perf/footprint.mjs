@@ -3,8 +3,10 @@
 // memory (PSS from /proc: shared pages counted fairly, unlike RSS or working set) and CPU, and each page's main-thread
 // CPU through DevTools. Prints a table and the same as JSON, to compare a change against main on the same computer.
 // Linux only (it reads /proc); run it under a display and a session bus, as CI's el8 job runs Ember:
-//   dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs [--settle 35] [--sample 20] [--sound]
-// --sound feeds Chromium's fake microphone tone instead of silence (speech detection never rests). Needs `npm run build`
+//   dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs [--settle 35] [--sample 20] [--sound] [--max-cpu 14] [--max-pss 1100]
+// --sound feeds Chromium's fake microphone tone instead of silence (speech detection never rests). --max-cpu (% of one
+// core) and --max-pss (MB) are the budget: past either, it says so and exits 1 (docs/DEVELOPING.md records the figures).
+// The sample is of Ember awake at rest (it dozes after 3 minutes with the pointer still). Needs `npm run build`
 // and the speech models from `node scripts/voice/prepare.mjs`. Not counted: the Copilot runtime (no sign-in) and the
 // speech process for Ember's voice (it starts with the first reply). On Xvfb there is no GPU and no compositor, so the
 // GPU process composites in software and the overlay falls back to the handle card: compare like with like.
@@ -19,6 +21,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const args = process.argv.slice(2);
 const opt = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? Number(args[i + 1]) : dflt; };
 const settle = opt("--settle", 35), sample = opt("--sample", 20), sound = args.includes("--sound");
+const maxCpu = opt("--max-cpu", Infinity), maxPss = opt("--max-pss", Infinity);
+// The consent this build asks for: an older one opens the returning user's card in Home and keeps the microphone shut,
+// which is not Ember at rest (it was 6 after CONSENT_VERSION went to 7, so listening wasn't measured).
+const consentVersion = Number(/export const CONSENT_VERSION = (\d+);/.exec(fs.readFileSync(path.join(root, "app/shared/consent.ts"), "utf8"))?.[1]);
+if (!consentVersion) { console.error("Can't read CONSENT_VERSION from app/shared/consent.ts."); process.exit(2); }
 const models = path.join(root, ".cache/voice/models");
 if (!fs.existsSync(path.join(root, "dist/app/main.cjs"))) { console.error("Run `npm run build` first."); process.exit(2); }
 if (!fs.existsSync(models)) { console.error("Run `node scripts/voice/prepare.mjs` first (the speech models)."); process.exit(2); }
@@ -28,7 +35,7 @@ const userData = path.join(tmp, "data");
 fs.mkdirSync(userData, { mode: 0o700 });
 fs.symlinkSync(models, path.join(userData, "models"));
 fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-  version: 1, onboarded: true, consent: { version: 6, at: new Date().toISOString() }, voice: { consent: true }, wakeWord: true,
+  version: 1, onboarded: true, consent: { version: consentVersion, at: new Date().toISOString() }, voice: { consent: true }, wakeWord: true,
 }));
 // Two minutes of 16 kHz silence: speech detection rests, as it does in a quiet room.
 const silence = path.join(tmp, "silence.wav");
@@ -116,6 +123,8 @@ try {
   console.log(`${String(total.pssMb).padStart(7)} MB ${String(total.cpu).padStart(5)} %  total\n\nPages (main thread):`);
   for (const p of perPage) console.log(`${String(p.cpu).padStart(5)} %  ${p.page} (${p.title})`);
   console.log("\n" + JSON.stringify({ os: `${os.type()} ${os.release()}`, cpus: os.cpus().length, cpu: os.cpus()[0]?.model, sound, settle, sample, total, rows, pages: perPage }));
+  const over = [...(total.cpu > maxCpu ? [`${total.cpu} % of a core, over ${maxCpu} %`] : []), ...(total.pssMb > maxPss ? [`${total.pssMb} MB, over ${maxPss} MB`] : [])];
+  if (over.length) { console.error(`\nOver budget: ${over.join("; ")}.`); process.exitCode = 1; }
 } finally {
   app.kill("SIGTERM");
   await wait(1500);

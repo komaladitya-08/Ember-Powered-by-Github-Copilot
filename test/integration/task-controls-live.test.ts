@@ -94,6 +94,8 @@ it.skipIf(process.env.EMBER_TASK_CONTROLS_TEST !== "1")("offers Try again in Hom
     expect(await row.locator(".task-meta").textContent()).toMatch(/^No answer in time · /);
     await row.locator("summary").first().click();
     expect(await row.locator(".timeline li").last().textContent()).toMatch(/No answer in time/);
+    // And to a screen reader it ended, never "Stopped: No answer in time" (tasks-approvals-r1).
+    expect(await row.locator(".timeline li").last().locator(".what .sr").first().textContent()).toBe("Ended: ");
     const retry = row.getByRole("button", { name: "Try again: Send the report", exact: true });
     expect(await retry.isEnabled()).toBe(true);
     await retry.click();

@@ -615,6 +615,10 @@ export const STOPPED_ANSWER = "Okay, I've stopped.";
 export const LOST_RECONNECTING = "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.";
 /** The conversation's line for that problem once Copilot is connected again (host.ts: reliability-performance-c1-1). */
 export const LOST_RECONNECTED = "Copilot stopped unexpectedly. I'm connected again: send it again.";
+/** The conversation's line for it once Ember gave up, Copilot having stopped too often (host.ts: reliability-performance-c2-3). */
+export const LOST_GAVE_UP = "Copilot stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.";
+/** The same in the bubble, whose Open settings leads to Check again. */
+export const GAVE_UP = "Copilot keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.";
 /** The same bubble once Copilot is connected again (reconnected), with Try again (rp-6), or without a request to offer. */
 export const RECONNECTED_RETRY = "I'm connected again. Try again?";
 export const RECONNECTED = "I'm connected again. Ask me again.";
@@ -1055,6 +1059,16 @@ export class Presenter {
     if (!b.visible || b.mood !== "error" || b.thought !== forBubble(text) || this.busy) return;
     const again = b.actions.some(a => a.id === TRY_AGAIN.id);
     this.apply({ bubble: { ...b, mood: "idle", title: "Connected again", thought: again ? RECONNECTED_RETRY : RECONNECTED } });
+  }
+
+  /**
+   * Ember stopped reconnecting (Copilot kept stopping): a bubble still saying `text` (that it is reconnecting) says so,
+   * with the way to Check again instead of a Try again that would only be refused (reliability-performance-c2-3).
+   */
+  gaveUp(text: string): void {
+    const b = this.state.bubble;
+    if (!b.visible || b.mood !== "error" || b.thought !== forBubble(text) || this.busy) return;
+    this.apply({ bubble: { ...b, thought: GAVE_UP, actions: [{ id: "ui:settings", label: "Open settings" }] } });
   }
 
   /**

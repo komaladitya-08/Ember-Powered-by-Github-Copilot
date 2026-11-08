@@ -163,8 +163,9 @@ reported in every PR that touches it.
 ### Phase 0: measure it every time
 
 - `scripts/perf/footprint.mjs` launches the built app headless with a temporary data folder, voice on and silence
-  fed in. It prints PSS and CPU per process, and per page through DevTools, as this plan's numbers were taken. It
-  also writes JSON for CI's `el8` job to keep as an artifact. It fails only on a large regression, never on noise.
+  fed in. It prints PSS and CPU per process, and per page through DevTools, as this plan's numbers were taken, then the
+  same as JSON. With `--max-cpu` and `--max-pss` (docs/DEVELOPING.md records the figures) it fails only on a large
+  regression, never on noise. CI doesn't run it yet.
 - `voice.latency` logs transcription time and the steps from transcript arrival to the first speaking report. `voice.hush_ack`
   logs how long the speaking renderer took to acknowledge cancellation. The logs contain no words (CLAUDE.md privacy).
   See the [timing fields in the development guide](DEVELOPING.md#how-speech-runs-native-synthesis-native-or-webassembly-listening).

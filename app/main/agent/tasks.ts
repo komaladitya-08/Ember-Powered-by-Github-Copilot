@@ -117,6 +117,16 @@ export interface TaskManagerDeps {
   taskWindow?: (task: Task, focus: boolean) => boolean;
   /** How long a failed card stays before it goes on its own (longer, so it can be read and closed). */
   failureCardMs?: number;
+  /**
+   * The user isn't looking (idle, or Ember hidden: main's userAway). A card kept to be read (a failure's, an unanswered
+   * question's, a view's) waits for them, and has its whole time again once they are back (tasks-approvals-4).
+   */
+  userAway?: () => boolean;
+  /**
+   * Task activity kept from the managers before this one (TaskManager.history, handed on by a reconnect): listed after
+   * this one's own, so Home's "Kept until you quit Ember" holds (tasks-approvals-c2-1).
+   */
+  earlier?: () => TaskEntry[];
 }
 
 /** Longest task title (its card shows two lines of it). */
@@ -136,6 +146,9 @@ export const titleOf = (goal: string) => {
 
 /** Finished tasks whose activity is kept (in memory only, until Ember quits) for Home's "Task activity". */
 const ACTIVITY_KEPT = 20;
+
+/** How often a card waiting for a user who is away looks for them again (a cheap unref'd timer, only while one waits). */
+const AWAY_POLL_MS = 5000;
 
 /** How a task was asked for (TaskManager.start's options). */
 export interface StartOptions {
@@ -194,12 +207,16 @@ export function taskNotice(t: { title: string; status: string; endedBy?: StopCau
   return { title: t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, body: t.summary };
 }
 
-/** One line for the conversation: "Tidy the desktop: done. Moved 3 files." or "Tidy the desktop: stopped." */
-export function taskOutcome(t: Pick<Task, "title" | "status" | "result">): string {
+/**
+ * One line for the conversation (and what Ember says aloud): "Tidy the desktop: done. Moved 3 files." or "Tidy the
+ * desktop: stopped."; one whose question went unanswered says so, as its card does: nobody stopped it (tasks-approvals-r1).
+ */
+export function taskOutcome(t: Pick<Task, "title" | "status" | "result" | "endedBy">): string {
   const summary = t.result?.summary.trim() ?? "";
+  const unanswered = t.status === "cancelled" && t.endedBy === "expired";
   // "Stopped." or "Stopped before it started." says it already.
-  if (t.status === "cancelled" && /^stopped\b/i.test(summary)) return `${t.title}: ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`;
-  return `${t.title}: ${statusWord(t.status)}${summary ? `. ${summary}` : "."}`;
+  if (t.status === "cancelled" && !unanswered && /^stopped\b/i.test(summary)) return `${t.title}: ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`;
+  return `${t.title}: ${unanswered ? STATUS_WORDS.unanswered.toLowerCase() : statusWord(t.status)}${summary ? `. ${summary}` : "."}`;
 }
 
 export class TaskManager {
@@ -223,7 +240,8 @@ export class TaskManager {
   /** What each task was asked with, so a failed one can be tried again from its card. */
   private specs = new Map<string, { goal: string; opts: StartOptions }>();
 
-  private expiry = new Map<string, { remaining: number; since: number; timer: ReturnType<typeof setTimeout> | null }>();
+  /** Each finished card's countdown; `whole`: a card kept to be read, which waits while the user is away (`away`). */
+  private expiry = new Map<string, { remaining: number; since: number; timer: ReturnType<typeof setTimeout> | null; whole?: number; away?: boolean }>();
   private readers = new Map<string, Map<number, ReturnType<typeof setTimeout>>>();
 
   constructor(private d: TaskManagerDeps) {}
@@ -253,6 +271,11 @@ export class TaskManager {
     }
   }
 
+  /** The user isn't looking now (TaskManagerDeps.userAway); can't tell: they are there, so nothing waits for ever. */
+  private userAway(): boolean {
+    try { return this.d.userAway?.() === true; } catch { return false; }
+  }
+
   private readScale(): number {
     const n = this.d.readTime?.() ?? 1;
     return Number.isFinite(n) ? Math.max(1, Math.min(4, n)) : 1;
@@ -271,6 +294,16 @@ export class TaskManager {
     if (!expiry || expiry.timer || this.readers.get(id)?.size || this.closed) return;
     expiry.since = Date.now();
     expiry.timer = setTimeout(() => {
+      // A card kept to be read, and nobody there: it waits for them, then has its whole time once they are back
+      // (tasks-approvals-4: an unanswered question's Try again was gone a minute after it expired, whoever was there).
+      const away = expiry.whole !== undefined && this.userAway();
+      if (away || expiry.away) {
+        expiry.timer = null;
+        expiry.remaining = away ? AWAY_POLL_MS : expiry.whole!;
+        expiry.away = away;
+        this.expireLater(id);
+        return;
+      }
       const task = this.tasks.get(id);
       this.forgetCardTime(id);
       if (!task || task.status === "running" || task.status === "queued") return;
@@ -326,7 +359,7 @@ export class TaskManager {
     // A task still in line (or one whose worker couldn't be made) has no log yet: listed with an empty one, so Home
     // counts every task of the session (the status panel's "earlier" count is the audit's tasks less these).
     const unlogged = [...this.tasks.values()].filter(t => !this.logs.has(t.id)).map(t => [t.id, { log: new ActivityLog(t.started), task: t }] as const);
-    return [...unlogged.reverse(), ...[...this.logs].reverse()].map(([id, { log, task: t }]) => {
+    const own = [...unlogged.reverse(), ...[...this.logs].reverse()].map(([id, { log, task: t }]): TaskEntry => {
       const activity = log.get();
       if (t.finished !== null && activity.endedAt === undefined) activity.endedAt = t.finished;
       const status: TaskEntry["status"] = t.status === "cancelled" ? "stopped" : t.status === "running" && activity.asking ? "waiting" : t.status;
@@ -343,6 +376,19 @@ export class TaskManager {
         activity,
       };
     });
+    // Those kept from before a reconnect come after, within ACTIVITY_KEPT ended tasks with no card (tasks-approvals-c2-1).
+    const room = Math.max(0, ACTIVITY_KEPT - own.filter(e => !this.tasks.has(e.id)).length);
+    return [...own, ...(this.d.earlier?.() ?? []).slice(0, room)];
+  }
+
+  /**
+   * The ended tasks' activity, this manager's and what it was handed (`earlier`), newest first, at most ACTIVITY_KEPT,
+   * with nothing to press (their cards go with this manager): what the next one lists after a reconnect
+   * (tasks-approvals-c2-1).
+   */
+  history(): TaskEntry[] {
+    return this.activities().filter(e => e.status === "done" || e.status === "failed" || e.status === "stopped")
+      .slice(0, ACTIVITY_KEPT).map(e => ({ ...e, controls: { stop: false, retry: false, window: false } }));
   }
 
   /** A live task can be stopped once, even while another task is asking a question. */
@@ -668,8 +714,10 @@ export class TaskManager {
     this.publish();
     // Open/hovered/focused cards pause their countdown; More time applies to every result, including failures/views.
     // (A question that went unanswered stays as long: the user was away, and comes back to read it.)
-    const duration = status === "failed" || task.endedBy === "expired" || task.view ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000;
-    this.expiry.set(task.id, { remaining: duration * this.readScale(), since: Date.now(), timer: null });
+    const kept = status === "failed" || task.endedBy === "expired" || !!task.view;
+    const duration = kept ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000;
+    // (And waits for a user who is away: userAway.)
+    this.expiry.set(task.id, { remaining: duration * this.readScale(), since: Date.now(), timer: null, ...(kept ? { whole: duration * this.readScale() } : {}) });
     this.expireLater(task.id);
     this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
     this.d.onFinished?.(task);

@@ -15,7 +15,7 @@ import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import { BubbleOwner, LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import { providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
@@ -365,6 +365,8 @@ export interface HostOptions {
   /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
   taskBase?: { audit: AuditLog; confirmer: Confirmer };
   taskWindow?: (task: Task, focus: boolean) => boolean;
+  /** The user isn't looking (idle, or Ember hidden): a card kept to be read waits for them (TaskManagerDeps.userAway). */
+  userAway?: () => boolean;
   /** Ember's own pids now (app.getAppMetrics() and its helpers'), for commands on this computer (D4.5, live). */
   emberPids?: () => number[];
   /** A task announced a command the user asked for (D4.4): main speaks it when replies are spoken. */
@@ -698,13 +700,17 @@ export function stillConnectingTitle(service?: ActiveProvider["kind"]): string {
  * What Ember's handle says when nothing else is going on: a few words (the pill is narrow). The user's own provider
  * unreached is "Can't connect", not "Offline": a model server on this computer that isn't running (integrations-1).
  */
-export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks"> & { service?: AgentStatus["service"] }): string {
+export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks"> & { service?: AgentStatus["service"]; detail?: string }): string {
   if (s.phase === "ready") return "Ready";
   if (s.phase === "starting") return "Connecting…";
   if (s.phase === "signed-out") return "Not connected";
   if (s.waitingForTasks) return "Waiting for tasks";
   // Another model service in use is never called Copilot (accessibility-visual-c1-2: the Ask box said "Copilot problem").
   const kind = s.service?.kind;
+  // The Copilot runtime stopped and Ember starts it again by itself (lost(): a detail ending "Reconnecting…", as
+  // composerRefusal reads it); given up, or unable to start, it is the runtime's problem, never the provider's
+  // (reliability-performance-c2-3: "Provider problem" sent people to check a provider that was fine).
+  if (s.reason === "runtime") return s.detail?.endsWith("Reconnecting…") ? "Reconnecting…" : kind ? "Connection problem" : "Copilot problem";
   switch (s.reason) {
     case "network": return kind === "user" ? "Can't connect" : "Offline";
     case "sign-in": return kind ? "Access refused" : "Sign-in refused";
@@ -871,6 +877,13 @@ export class AgentHost {
   }
   conductor: Conductor | null = null;
   tasks: TaskManager | null = null;
+  /**
+   * Home's Task activity from the TaskManagers before this one (TaskManager.history): a reconnect hands it on, so it is
+   * kept until Ember quits, as Home says; sign-out and an account change drop it (tasks-approvals-c2-1).
+   */
+  private earlierTasks: TaskEntry[] = [];
+  /** The manager whose tasks were forgotten with the conversation (sign-out): its history isn't handed on. */
+  private tasksForgotten: TaskManager | null = null;
   private status: AgentStatus;
   /** Bumped by every start() and stop(): an older start gives up at its next step. */
   private gen = 0;
@@ -1550,7 +1563,8 @@ export class AgentHost {
    * nearest line before it, Ember's lines aside and at most two short questions of the user's own about what happened
    * ("why didn't it work?", naming nothing risky), is of a task that may be tried again (it failed, or its question went
    * unanswered: never one the user said "Not now" to or stopped); or `r` agrees ("yes please") to that task's own offer
-   * to try again ("Want me to try again?") with nothing asked since. All within ten minutes, and the request is the user's own
+   * to try again ("Want me to try again?") with nothing asked since. All within ten minutes, or for as long as that task's
+   * card still offers Try again (one kept while the user was away: tasks-approvals-4), and the request is the user's own
    * (not heard where Ember can't tell them from its speakers, not a suggestion). Those are the words that task was asked
    * with, and what they agreed to, as its card's Try again carries them: never its goal, which the model wrote. A
    * request of the user's own in between ends the search.
@@ -1561,9 +1575,11 @@ export class AgentHost {
     const retry = retryRequest(r.words);
     const now = Date.parse(log[at].t);
     let k = at - 1;
+    let old = false;
     for (let asked = 0; k >= 0; k--) {
       const e = log[k];
-      if (this.restored.has(e) || now - Date.parse(e.t) > 10 * 60_000) return null;
+      if (this.restored.has(e)) return null;
+      if (now - Date.parse(e.t) > 10 * 60_000) old = true;
       if (e.who === "ember") continue;
       const t = e.text.trim();
       const why = e.who === "you" && t.length <= 80 && (ASKS_WHAT_HAPPENED.test(t) || retryRequest(t)) && !isRiskyLabel(t, this.sys.os);
@@ -1572,7 +1588,7 @@ export class AgentHost {
     }
     const line = log[k];
     const words = line?.who === "task" ? this.retryWords.get(line) : undefined;
-    if (!words) return null;
+    if (!words || (old && !this.tasks?.canRetry(words.task))) return null;
     if (retry) return words;
     // Its offer is the last question before the yes: only Ember's lines that ask nothing lie between.
     const offer = log.slice(k + 1, at).every(e => e.who === "ember" && !asks(e.text)) ? questionOf(this.results.get(line) ?? "") : "";
@@ -1658,13 +1674,18 @@ export class AgentHost {
    * (reliability-performance-c1-1: Home kept "ask me again in a moment" for good, under its own "Connected.").
    */
   private problemReconnected(): void {
-    const said = retainedConversationText(LOST_RECONNECTING).text;
+    this.problemNow(LOST_RECONNECTING, LOST_RECONNECTED);
+  }
+
+  /** The conversation's latest problem line that says `was` says `text` instead, in Home and the saved copy. */
+  private problemNow(was: string, text: string): void {
+    const said = retainedConversationText(was).text;
     const at = this.transcript.findLastIndex(e => e.who === "problem" && e.text === said);
     if (at < 0) return;
-    const was = this.transcript[at];
-    const now = { ...was, ...retainedConversationText(LOST_RECONNECTED) };
+    const old = this.transcript[at];
+    const now = { ...old, ...retainedConversationText(text) };
     this.transcript[at] = now;
-    if (this.unsaved.has(was)) this.unsaved.add(now);
+    if (this.unsaved.has(old)) this.unsaved.add(now);
     this.o.onTranscript?.(this.getTranscript());
     this.saveHistory();
   }
@@ -1886,6 +1907,7 @@ export class AgentHost {
         log: this.o.log.child("tasks"),
         ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
         ...(this.o.taskWindow ? { taskWindow: this.o.taskWindow } : {}),
+        ...(this.o.userAway ? { userAway: this.o.userAway } : {}),
         currentWindow: hands?.currentWindow ?? (() => null),
         setCards: cards => this.o.setState({ tasks: cards }),
         onView: (id, view) => this.o.showView?.(id, view),
@@ -1941,6 +1963,7 @@ export class AgentHost {
         },
         provider: kindOf(provider),
         actionsAllowed: () => this.actionsAllowed(),
+        earlier: () => this.earlierTasks,
         makeWorker: (spec, progress, update, activity) => {
           // The model service changed since this connection started: no task starts on the one before (a queued task, or
           // one a turn already under way asked for). Tasks running now finish where they started.
@@ -2382,6 +2405,12 @@ export class AgentHost {
       const recent = this.crashes.filter(t => Date.now() - t < 10 * 60_000);
       if (recent.length >= 5) {
         this.setStatus({ phase: "error", reason: "runtime", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." });
+        // What said Ember was reconnecting says it has stopped trying (reliability-performance-c2-3).
+        if (this.reconnectingShown) {
+          this.reconnectingShown = false;
+          this.presenter.gaveUp(LOST_RECONNECTING);
+          this.problemNow(LOST_RECONNECTING, LOST_GAVE_UP);
+        }
         void this.halt(false);
         return;
       }
@@ -3152,10 +3181,10 @@ export class AgentHost {
 
   /**
    * What each kept task did and is doing, newest first (TaskManager.activities): Home's "Task activity" reads it. In
-   * memory only; empty while no TaskManager runs.
+   * memory only; while no TaskManager runs (reconnecting), what the ones before it kept (tasks-approvals-c2-1).
    */
   taskActivities(): TaskEntry[] {
-    return this.tasks?.activities() ?? [];
+    return this.tasks?.activities() ?? this.earlierTasks;
   }
 
   /**
@@ -3229,8 +3258,11 @@ export class AgentHost {
       this.githubLogin = undefined;
       this.githubAccountId = null;
       this.accountUnresolved = false;
-      // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
+      // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it,
+      // and Home's Task activity doesn't keep them (tasks-approvals-c2-1).
       this.tasks?.takeReports();
+      this.earlierTasks = [];
+      this.tasksForgotten = this.tasks;
       this.finishedLately = [];
       this.carried = [];
       this.transcript.length = 0;
@@ -3321,8 +3353,9 @@ export class AgentHost {
     this.o.onTranscript?.([]);
     // What Ember remembered was about the account before, its person: none of it carries over.
     const erased = eraseKept && this.forgetKept();
-    // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one.
+    // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one, nor Task activity.
     this.finishedLately = [];
+    this.earlierTasks = [];
     this.o.onAccountChanged?.();
     // Never without a word: the new account's conversation starts by saying what went (memory-11).
     if (erased) this.remember("ember", ACCOUNT_CHANGED_FORGOT);
@@ -3390,6 +3423,10 @@ export class AgentHost {
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     // A reconnect resumes the conversation: its next turn hears how these tasks ended. Quitting forgets it all.
     this.carried = forget ? [] : [...this.carried, ...(this.tasks?.takeReports().map(report) ?? [])];
+    // What they did stays in Home's Task activity until Ember quits (tasks-approvals-c2-1), not after a sign-out.
+    if (forget) this.earlierTasks = [];
+    else if (this.tasks && this.tasks !== this.tasksForgotten) this.earlierTasks = this.tasks.history();
+    this.tasksForgotten = null;
     // The cards go with their manager: a failed card's Close would reach nobody after a restart.
     this.tasks?.close();
     this.tasks = null;

@@ -602,6 +602,33 @@ describe("a task whose question went unanswered while the user was away (tasks-a
     } finally { vi.useRealTimers(); }
   });
 
+  it("keeps its card and Try again for as long as the user is away, and its whole time once they are back (tasks-approvals-4)", async () => {
+    vi.useFakeTimers();
+    try {
+      let away = true;
+      const { tm } = manager(() => fakeWorker(async () => EXPIRED), { failureCardMs: 20_000, userAway: () => away });
+      const t = tm.start("Send the Q3 report to Priya", { userWords: "send the Q3 report to Priya" });
+      await vi.advanceTimersByTimeAsync(10);
+      // Three minutes away (the question's two, and one more): still there, with Try again on its card and in Home.
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(tm.canRetry(t.id)).toBe(true);
+      expect(tm.activities()[0]).toMatchObject({ id: t.id, unanswered: true, controls: { retry: true } });
+      expect(tm.askedWith(t.id)).toMatchObject({ userWords: "send the Q3 report to Priya" });
+      // Back: the card has its whole time from then, then goes as it would have.
+      away = false;
+      await vi.advanceTimersByTimeAsync(19_000);
+      expect(tm.get(t.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(6_100);
+      expect(tm.get(t.id)).toBeUndefined();
+      // A task that finished waits for nobody: its short card goes on time.
+      away = true;
+      const done = manager(() => fakeWorker(async () => ({ success: true, summary: "Sent." })), { userAway: () => away });
+      const d = done.tm.start("Send it");
+      await vi.advanceTimersByTimeAsync(200);
+      expect(done.tm.get(d.id)).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("offers no Try again after “Not now”, a Stop or the mouse taken back: those were the user's own choice (tasks-approvals-4)", async () => {
     vi.useFakeTimers();
     try {
@@ -661,6 +688,32 @@ describe("a task whose question went unanswered while the user was away (tasks-a
     } finally { vi.useRealTimers(); }
   });
 
+  it("says no answer came in time in the conversation, aloud and to screen readers on its card, the handle and Home's last row (tasks-approvals-r1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { tm, cards } = manager(() => fakeWorker(async () => ({ ...EXPIRED, summary: "I didn't delete it." })));
+      const t = tm.start("Clean the build folder", { userWords: "clean the build folder" });
+      await vi.advanceTimersByTimeAsync(10);
+      const { taskOutcome } = await import("../../app/main/agent/tasks");
+      const { STATE_WORD, cardStateWord } = await import("../../app/renderer/overlay/stack");
+      const { timelineRows } = await import("../../app/renderer/home/tasks-copy");
+      const { rowWord, ROW_WORD } = await import("../../app/shared/activity");
+      // The conversation's line, which is also what Ember says aloud (main's onTaskFinished speaks it).
+      expect(taskOutcome(t)).toBe("Clean the build folder: no answer in time. I didn't delete it.");
+      // The overlay's card and the handle's task row read its state first.
+      expect(cardStateWord(cards.at(-1)![0])).toBe("No answer in time: ");
+      // Home's last row of its timeline: it ended, with no answer, and nobody stopped it.
+      const last = timelineRows(tm.activities()[0].activity.items).at(-1)!;
+      expect(`${rowWord(last)}${last.words}`).toBe("Ended: No answer in time");
+      // Everything else reads as before.
+      expect(taskOutcome({ title: "Tidy", status: "cancelled", endedBy: "stop", result: { success: false, summary: "You took the mouse back." } })).toBe("Tidy: stopped. You took the mouse back.");
+      expect(cardStateWord({ status: "stopped" })).toBe(STATE_WORD.stopped);
+      expect(cardStateWord({ status: "done" })).toBe(STATE_WORD.done);
+      expect(rowWord({ state: "stopped", words: "Stopped" })).toBe(ROW_WORD.stopped);
+      expect(rowWord({ state: "done", words: "Read the window" })).toBe(ROW_WORD.done);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("is notified while the user is away, as a task that couldn't finish is, but a task they stopped isn't (tasks-approvals-4)", async () => {
     const { taskNotice } = await import("../../app/main/agent/tasks");
     expect(taskNotice({ title: "Send the report", status: "cancelled", endedBy: "expired", summary: EXPIRED.summary }))
@@ -670,6 +723,36 @@ describe("a task whose question went unanswered while the user was away (tasks-a
     for (const endedBy of ["declined", "took-over", "stop", undefined] as const) {
       expect(taskNotice({ title: "Send the report", status: "cancelled", ...(endedBy ? { endedBy } : {}), summary: "Stopped." })).toBeNull();
     }
+  });
+});
+
+describe("Home's Task activity across a reconnect (tasks-approvals-c2-1)", () => {
+  const manager = (makeWorker: ConstructorParameters<typeof TaskManager>[0]["makeWorker"], extra = {}) =>
+    new TaskManager({ log: quiet, makeWorker, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0, cardMs: 10, ...extra });
+
+  it("lists what the manager before it kept after its own, with nothing to press, and never more than 20 ended tasks", async () => {
+    vi.useFakeTimers();
+    try {
+      const old = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke." })));
+      const failed = old.start("Rename the report", { userWords: "rename the report" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(old.activities()[0]?.controls?.retry).toBe(true);
+      const kept = old.history();
+      old.close();
+      // Its card went with the old manager: the row stays, saying what happened, but offers no Try again.
+      expect(kept).toEqual([expect.objectContaining({ id: failed.id, status: "failed", summary: "It broke.", controls: { stop: false, retry: false, window: false } })]);
+      const next = manager(() => fakeWorker(async () => ({ success: true, summary: "Done." })), { earlier: () => kept });
+      const done = next.start("Tidy the desktop");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(next.activities().map(e => e.id)).toEqual([done.id, failed.id]);
+      // Handed on again at the next reconnect, newest first, within the 20 kept.
+      for (let i = 0; i < 25; i++) next.start(`task ${i}`);
+      await vi.advanceTimersByTimeAsync(100);
+      const again = next.history();
+      expect(again).toHaveLength(20);
+      expect(again.map(e => e.id)).not.toContain(failed.id);
+      expect(again[0].title).toBe("task 24");
+    } finally { vi.useRealTimers(); }
   });
 });
 
