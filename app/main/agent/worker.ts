@@ -3434,6 +3434,12 @@ export class Worker {
     const asks = judged.find(j => j.d.verdict !== "allow");
     const alone = judged.some(j => j.d.aligned === false) || jobs.some(j => reachesOut(j.text));
     const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
+    // No question, and no announcement, while the shell's own password prompt is open (or Ember can't tell): the borrow
+    // would refuse the batch once the user answered, as for one step (authorize; safety-privacy-3).
+    if (!no && !alone && (asks || judged.some(j => j.d.autonomy && j.d.announce))) {
+      const prompt = await this.promptRefusal("cursor_text", { role: "table cell", name: jobs.map(j => j.cell).join(", ") });
+      if (prompt) return prompt;
+    }
     for (const [i, { req, d }] of judged.entries()) {
       const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
       this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...batch });
@@ -4400,9 +4406,11 @@ export class Worker {
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted
       && this.allowedApps.has(req.app.toLowerCase());
     // No question while the shell's own password prompt is open (or Ember can't tell): the step would only be refused
-    // once the user answered (safety-privacy-3). Looked at here only for a step that asks, since a walk of the shell costs
-    // up to a second on the target; the look right before acting (act, system) still keeps the rule for every step.
-    if (decision.verdict === "confirm" && !sessionAllowed) {
+    // once the user answered (safety-privacy-3). Nor an announcement that Ember goes ahead without asking, recorded as
+    // such, of a step the look before acting then refuses. Looked at here only for a step that asks or is announced, since
+    // a walk of the shell costs up to a second on the target; the look right before acting (act, system) still keeps the
+    // rule for every step.
+    if ((decision.verdict === "confirm" && !sessionAllowed) || (decision.autonomy && decision.announce)) {
       const prompt = await this.promptRefusal(req.kind, req.element);
       if (prompt) return prompt;
     }

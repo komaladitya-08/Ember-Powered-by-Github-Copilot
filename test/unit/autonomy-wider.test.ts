@@ -56,7 +56,7 @@ const notepad = (r: Partial<ActionRequest>): ActionRequest => ({ taskId: "t1", k
  * by paste), an "OK" in a dialog, and (`extra`) whatever else the screen shows. The confirmer answers `answer`
  * ("deny" for questions matching `denyIf`) and records every question.
  */
-function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; answer?: string; denyIf?: RegExp; goal?: string; read?: { truncated?: "nodes" | null; busy?: boolean }; noAreaFocus?: boolean } = {}) {
+function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; answer?: string; denyIf?: RegExp; goal?: string; read?: { truncated?: "nodes" | null; busy?: boolean }; noAreaFocus?: boolean; prompt?: () => boolean | "unchecked" | "helper" } = {}) {
   const st = { asked: [] as string[], audit: [] as Record<string, unknown>[], activity: [] as Record<string, unknown>[], keys: [] as string[], borrows: 0 };
   const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "list.txt - Notepad", states: [], bounds: FRAME };
   const area: AxNode = { id: 2, parent: 1, depth: 1, role: "text", name: "Text editor", text: "", states: ["enabled", "sensitive", "editable", "focusable", ...(o.noAreaFocus ? [] : ["focused"]), "multi line"], bounds: { x: 10, y: 60, width: 700, height: 400 } };
@@ -75,7 +75,8 @@ function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; an
   const scopes = o.scopes === undefined ? ALL() : o.scopes;
   const w = new Worker({
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
-    perception: { perceive: async () => ({ ...seen(), text: "<screen>", capture: null }), read: async () => seen(), windows: async () => [window], systemDialogOpen: async () => false } as never,
+    perception: { perceive: async () => ({ ...seen(), text: "<screen>", capture: null }), read: async () => seen(), windows: async () => [window], systemDialogOpen: async () => !!o.prompt?.(),
+      ...(o.prompt ? { promptOpen: async () => o.prompt!() } : {}) } as never,
     sidecar: {
       readElement: async (id: number) => { const n = nodes().find(x => x.id === id); return n ? { role: n.role, name: n.name, states: n.states, bounds: n.bounds, ...(n.text !== undefined ? { text: n.text } : {}) } : null; },
       setText: async () => { throw new Error("background_unavailable: this app takes no text this way"); },
@@ -820,6 +821,31 @@ describe("the worker's reads of a dialog from a read that was cut short or busy 
       expect(w.focusDialog, `focusDialog ${JSON.stringify(read)}`).toBeDefined();
       expect(w.focusDialog?.controls, `focusDialog ${JSON.stringify(read)}`).toBeUndefined();
     }
+  });
+});
+
+describe("working without asking while the desktop's own password prompt is open (safety-privacy-3)", () => {
+  it.each([[true], ["unchecked"], ["helper"]] as const)("announces nothing it would then refuse, and records only the refusal (promptOpen %j)", async now => {
+    let prompt: boolean | "unchecked" | "helper" = false;
+    const h = notepadWorker({ prompt: () => prompt });
+    await h.call("perceive_window", {});
+    prompt = now;
+    expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("denied");
+    expect(await h.authorizeCells([{ cell: "B5", text: "4" }, { cell: "B6", text: "5" }])).toMatchObject({ resultType: "denied" });
+    expect(h.st.asked).toEqual([]);
+    expect(h.st.borrows).toBe(0);
+    expect(h.st.activity.some(e => e.type === "announce")).toBe(false);
+    // What Ember did never says it went ahead without asking: only the refusals are recorded.
+    expect(h.st.audit.some(e => e.autonomy === true)).toBe(false);
+    expect(h.st.audit.filter(e => e.event === "decision").map(e => e.verdict)).toEqual(["deny", "deny"]);
+    // Once it has gone, the same steps go ahead and are announced, as before.
+    prompt = false;
+    expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("success");
+    expect(await h.authorizeCells([{ cell: "B5", text: "4" }, { cell: "B6", text: "5" }])).toBeNull();
+    expect(h.st.asked).toEqual([]);
+    const said = h.st.activity.filter(e => e.type === "announce").map(e => e.text);
+    expect(said).toContain(`Using your keyboard to type 9 characters in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
+    expect(said.at(-1)).toBe(`Using your keyboard to fill 2 cells in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
   });
 });
 

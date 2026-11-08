@@ -1887,6 +1887,31 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     expect(acted).toEqual(["click"]);
   });
 
+  it("never asks about filling cells it would then refuse, while one is open, may be or can't be checked (safety-privacy-3)", async () => {
+    let prompt: boolean | "unchecked" | "helper" = false;
+    // No grant for gedit: fill_cells' one question would be asked; the borrow would refuse it once the user said yes.
+    const { w, call, asked, audit } = makeWorker({ grants: {}, promptOpen: () => prompt, systemDialogOpen: () => !!prompt });
+    await call("perceive_window", {});
+    const fill = () => (w as unknown as { authorizeCells(jobs: unknown[]): Promise<{ resultType: string; textResultForLlm: string } | null> })
+      .authorizeCells([{ cell: "B5", text: "42", place: { col: 1, row: 5 }, seenKey: "B5", expected: undefined, listed: undefined }]);
+    const said = { open: /^An authentication prompt is open/, unchecked: /^Ember can't tell right now whether a password prompt is open/, helper: /^Ember's accessibility helper isn't working/ };
+    for (const [now, words] of [[true, said.open], ["unchecked", said.unchecked], ["helper", said.helper]] as const) {
+      prompt = now;
+      expect(await fill()).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(words) });
+    }
+    expect(asked).toEqual([]);
+    // The record says it refused, never that it asked.
+    expect(audit.filter(e => e.event === "decision").map(e => [e.kind, e.verdict, e.reason])).toEqual([
+      ["cursor_text", "deny", "an authentication prompt is open"], ["cursor_text", "deny", "Ember couldn't tell whether a password prompt was open"],
+      ["cursor_text", "deny", "Ember's accessibility helper isn't working"],
+    ]);
+    expect(audit.some(e => e.event === "confirm")).toBe(false);
+    // Once the prompt has gone, the batch is asked about as before.
+    prompt = false;
+    expect(await fill()).toBeNull();
+    expect(asked).toEqual(["Borrow your keyboard to fill 1 cell in gedit: B5 “42”?"]);
+  });
+
   it("lists no window's title, and reads none, until it's done", async () => {
     const { call } = makeWorker({ promptOpen: () => true });
     expect(await call("list_windows", {})).toMatchObject({ resultType: "denied", textResultForLlm: expect.not.stringMatching(/notes\.txt|gedit/) });
