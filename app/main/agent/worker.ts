@@ -2365,6 +2365,8 @@ export class Worker {
       this.audit({ event: "read", task: this.spec.id, kind: "screenshot", app: p.window.app, ok: true, bytes: p.capture.data.length, ...(this.place ? { onDesk: true } : {}) });
       if (this.isOver) return STOPPED();
       result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
+      // Its card says a picture went, not only that it read the window.
+      this.activity({ type: "picture" });
     }
     return result;
   }

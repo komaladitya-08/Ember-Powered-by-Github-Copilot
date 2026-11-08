@@ -216,6 +216,17 @@ describe("a screenshot a task sends (safety-privacy-6)", () => {
     expect(h.audit.filter(e => e.event === "read")).toHaveLength(1);
   });
 
+  it("tells the task's card each picture it sent, after recording it, and never for a read of the text alone", async () => {
+    const h = makeWorker({ capture: jpeg });
+    await h.call("perceive_window", { image: true });
+    await h.call("perceive_window", {});
+    expect(h.activity.filter(e => e.type === "picture")).toEqual([{ type: "picture" }]);
+    // Turned off, a look sends none, and the card hears of none.
+    const off = makeWorker({ capture: jpeg, screenImages: () => false });
+    await off.call("perceive_window", { image: true });
+    expect(off.activity.some(e => e.type === "picture")).toBe(false);
+  });
+
   it("sends no more pictures once Send screenshots for tasks is turned off, though the task began with it on (safety-privacy-c1-1)", async () => {
     let on = true;
     const h = makeWorker({ capture: jpeg, screenImages: () => on });
