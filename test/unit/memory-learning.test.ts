@@ -644,6 +644,33 @@ describe("“forget that”, the instruction check and the conversation's line",
     expect(off.opened).not.toHaveBeenCalled();
   });
 
+  it("lets a browser's or a task's “clear everything saved about…”, “forget all about my last request” and “forget my wife's AirPods” reach the conversation while memory is off (memory-v4-1, memory-v4-2)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of [
+      // A browser's privacy, a task on a customer or a project, and a "never mind" (memory-v4-1).
+      "Clear everything saved about me in Firefox", "Delete everything stored about me in Chrome", "Delete everything saved about the customer",
+      "Remove everything saved about this project", "Delete what you saved about the project", "Forget everything saved about me in Firefox",
+      "Forget all about my last request", "Forget everything about my previous question", "Forget everything about my email to Bob",
+      "Forget all about my meeting",
+      // Someone else's device, an app's things and a browser's data after "my…" (memory-v4-2).
+      "Forget my wife's AirPods", "Forget my dad's iPhone", "Forget my company's Wi-Fi", "Forget my partner's phone", "Forget my manager's email",
+      "Forget my details for this site", "Forget my data in Chrome", "Forget my birthday party", "Forget my job application",
+    ]) {
+      expect(memoryAsk(text), text).toBeNull();
+      expect(off.l.intent(text, { own: true }), text).toBeNull();
+      expect(off.l.rememberNote(text), text).toBeNull();
+    }
+    expect(off.opened).not.toHaveBeenCalled();
+    // Still Ember's memory, answered in code: what Ember knows or saved about the user, and their own details.
+    for (const text of [
+      "Delete everything you've saved about me", "Delete what you know about the project", "Forget everything you saved about the project",
+      "Forget all about my wife", "Forget everything about my wife's birthday", "Forget my wife's birthday", "Forget my dad's phone number",
+      "Forget my manager is Priya", "Forget everything about us", "Forget my phone number and my address", "Could you forget my wife's birthday?",
+    ]) {
+      expect(memoryAsk(text), text).toBe("forget");
+    }
+  });
+
   it("adds “I won't keep this” only after a request that says something to keep, never after “remember the file I mentioned” (memory-r8)", () => {
     const off = learning({ inForce: () => false });
     for (const text of [

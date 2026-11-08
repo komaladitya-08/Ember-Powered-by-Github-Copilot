@@ -267,10 +267,14 @@ download, so English-only MiniLM is the trade-off for now.
      documents Priya sent" and "don't forget my umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
      a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
      "Forget my previous instructions"), what isn't memory ("Clear all" and "Delete everything" without a word for
-     what Ember knows; "my…" only for something about the user (`ABOUT_ME`), never a device, a network or an app's
-     things: "Forget my home Wi-Fi network", "Forget my AirPods", "Forget my reminder"; a name only as names are
-     written, never an app, a day, a folder or a device: "Forget Outlook", "Forget Monday", "Forget HomeNet":
-     memory-r3-1) and a request with more in it (after a comma, a semicolon, a dash, or "and" or
+     what Ember knows; "my…" only for something about the user (`ABOUT_ME`), to the end of the request and with a
+     possessive only before another such word, never a device, a network or an app's things: "Forget my home Wi-Fi
+     network", "Forget my AirPods", "Forget my reminder", "Forget my wife's AirPods", "Forget my data in Chrome";
+     "saved", "kept" or "stored" after "delete", "clear" or "remove" only with "you" and about the user, never "Clear
+     everything saved about me in Firefox" or "Delete what you saved about the project"; "Forget all about my last
+     request"; a name only as names are written, never an app, a day, a folder or a device: "Forget Outlook", "Forget
+     Monday", "Forget HomeNet": memory-r3-1, memory-v4-1, memory-v4-2) and a request with more in it (after a comma, a
+     semicolon, a dash, or "and" or
      "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox
      instead") are the conversation's like any other (memory-c1-1). When the first part was a forget request ("Forget
      my address and open Firefox"), Ember says behind the answer that memory can't change what's saved (`forgetNote`),

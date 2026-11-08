@@ -216,8 +216,21 @@ const ABOUT_ME = String.raw`(?:(?:full|first|last|middle|maiden|old|new|current|
   + String.raw`fianc[eé]e?|kids?|children|child|sons?|daughters?|baby|family|mum|mom|mother|dad|father|parents?|sisters?|brothers?|siblings?|`
   + String.raw`grand(?:ma|pa|mother|father|parents?)|friends?|pets?|dog|cat|preferences?|favou?rites?|favou?rite\s+\S+|likes|dislikes|allerg(?:y|ies)|diet|`
   + String.raw`hobb(?:y|ies)|interests|habits|details|personal\s+details|info|information|data|personal\s+data|profile|health|medications?|anniversary)\b`;
+/**
+ * "My address", "my wife's birthday", "my phone number and my address", "my manager is Priya": ABOUT_ME's words to the
+ * end, a possessive only before another of them, never "my wife's AirPods", "my manager's email", "my data in Chrome"
+ * or "my birthday party" (memory-v4-2).
+ */
+const MY_DETAIL = String.raw`(?:my|our)\s+(?:${ABOUT_ME}['’]s?\s+(?!e-?mail\s*$))?${ABOUT_ME}`;
+/** The end of a forget request: "please" or a polite "?" at most. */
+const END = String.raw`(?:\s+please)?\s*\??$`;
+const ABOUT_MY = String.raw`${MY_DETAIL}(?:\s+(?:and|&)\s+${MY_DETAIL})*(?:\s+(?:is|are|was|were)\b.*)?${END}`;
+/** "You", "you've", "that you have": who keeps it, before what Ember knows (KNOWS) or saved (SAVED). */
+const YOU = String.raw`(?:that\s+)?you(?:['’]ve|\s+have|['’]d|\s+had)?\s+`;
+const KNOWS = String.raw`know|knew|learned|learnt|remember|remembered`;
+const SAVED = String.raw`saved|kept|stored|noted`;
 /** What Ember keeps about someone, after "everything you know about…": "me", "us", "my wife", "Priya". */
-const YOU_KEPT = String.raw`(?:(?:that\s+)?you(?:['’]ve|\s+have|['’]d|\s+had)?\s+)?(?:know|knew|learned|learnt|remember|remembered|saved|kept|stored|noted)`;
+const YOU_KEPT = String.raw`(?:${YOU})?(?:${KNOWS}|${SAVED})`;
 /**
  * "Forget that I…", "forget my address", "forget where I live", "forget everything about me", "forget what you know
  * about me", "clear my memory", "don't remember that Priya is my manager": the user asking Ember to stop knowing
@@ -227,15 +240,19 @@ const YOU_KEPT = String.raw`(?:(?:that\s+)?you(?:['’]ve|\s+have|['’]d|\s+had
  */
 const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:(?:forget|don'?t\s+remember|do\s+not\s+remember|stop\s+remembering|unlearn)\s+(?:`
   // "…that I work at Globex", "…I'm vegetarian", "…my wife's birthday" (never "…I said that", "…my last message", "…my AirPods").
-  + String.raw`(?:(?:the\s+fact\s+)?that\s+)?(?:i\b${SAID}|i['’](?:m|ve|d)\b|(?:my|our)\s+${ABOUT_ME}|we\b${SAID})`
+  + String.raw`(?:(?:the\s+fact\s+)?that\s+)?(?:i\b${SAID}|i['’](?:m|ve|d)\b|${ABOUT_MY}|we\b${SAID})`
   // "…where I live", "…who my manager is", "…what I like" (never "…what I said", "…where I put it").
   + String.raw`|(?:where|what|who|when|how)\s+(?:my\b|i['’]m\b|i\s+(?:live|work|am|do|like|love|hate|prefer|eat|drink|study|come|grew|was\s+born|take|use|stay)\b)`
   // "…that Priya is my manager", "…that the office is in Leeds": a statement, never "…that email" or "…that file".
   + String.raw`|that\s+(?:\S+\s+){1,3}?(?:is|are|was|were|has|have|works|lives|likes|leads|uses|prefers)\b`
-  // "…everything about me", "…all you know about me", "…things about my wife", "…me".
-  + String.raw`|(?:everything|all|things|stuff|anything)\s+(?:${YOU_KEPT}\s+)?about\s+(?:me|us|my\s+\S+)\b|me\b)`
-  // "Forget what you know about Python", "delete everything you've learned about me" (memory-v1).
-  + String.raw`|(?:forget|erase|delete|clear|wipe|remove)\s+(?:everything|all|anything|what|whatever)\s+${YOU_KEPT}\s+about\s+\S`
+  // "…everything about me", "…all you know about me", "…things about my wife", "…me" (never "…all about my last request"
+  // or "…everything saved about me in Firefox": memory-v4-1).
+  + String.raw`|(?:everything|all|things|stuff|anything)\s+(?:${YOU_KEPT}\s+)?about\s+(?:(?:me|us)${END}|${ABOUT_MY})|me\b)`
+  // "Forget what you know about Python", "delete everything you've learned about me" (memory-v1), "delete everything
+  // you've saved about me"; never without "you", nor "delete what you saved about the project", which may be a task's
+  // files, a customer's or a browser's (memory-v4-1).
+  + String.raw`|forget\s+(?:everything|all|anything|what|whatever)\s+${YOU}(?:${KNOWS}|${SAVED})\s+about\s+\S`
+  + String.raw`|(?:erase|delete|clear|wipe|remove)\s+(?:everything|all|anything|what|whatever)\s+${YOU}(?:(?:${KNOWS})\s+about\s+\S|(?:${SAVED})\s+about\s+(?:me|us)${END})`
   // "Erase your memory", "clear my memory", "delete all my memories", "reset memory" (never "…your memory cache").
   + String.raw`|(?:forget|erase|delete|clear|wipe|reset|empty)\s+(?:all\s+(?:of\s+)?)?(?:(?:your|ember['’]s|my)\s+)?(?:memory|memories)(?:\s+(?:of|about)\s+\S.*)?$`
   // "Forget everything", "…everything you know", "delete everything you remember" (never "…everything I said", nor "delete
