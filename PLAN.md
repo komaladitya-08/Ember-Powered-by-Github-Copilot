@@ -1503,20 +1503,20 @@ unanswered question's row and the model's task result still saying "stopped" (th
 saying "Not connected" with Check my provider… after the runtime crashes under the user's own provider
 (accessibility-visual-c1-2), all fixed in the fifth round, below. Found on the way: memory-off "Forget everything I told
 you", "Forget what I told you about Priya" and nouns outside `ABOUT_ME` ("Forget my car") reach the conversation with no
-note, "Don't forget the car keys in the drawer" gets a spurious one, "Remember my office code is 4410" is refused on
-purpose, beside round three's pinned "my office code is 4821", and "the token for the model is …" before a model's name
-is refused; fill_cells on Ember's desk is refused while the prompt is open or unchecked, though desk input that doesn't
-ask isn't checked, "deploy@build-01" is refused because its shape can't be told from a password's, and a batch refused
-for one cell's formula records the other cells' allows first; PowerShell's `foreach` and cmd's `for` don't feed Ember's
-own refusal, a download through `dd` (followed since the fifth round), `git mv`, a copied folder that holds one, a glob
-source or `case … esac` isn't followed, "in dist delete the build folder" still announces `rm -rf build` (it asks since
-the fifth round), an unseen name under the folder that holds Ember's is refused rather than asked,
-`cp --parents ember/settings.json ~/.config/` asks rather than refuses, "nginx is stuck, restart it" asks (it is
-announced since the fifth round), and a `while read` card says "Ember can't tell exactly what this does." three times;
-the launcher's raw words for a corrupt zip and a redirect loop, and a stop dropped during its last renames; first run's
-no-keyring sentence said twice, an adopt of new details that isn't atomic (a key that fails to save leaves the provider
-unagreed), Agree not held while the recipient is unknown, a quit during a save-first check, the key placeholder set once
-per visit (all but the hold and the quit fixed in the fifth round, below), and Home's status line and Models &
+note, "Don't forget the car keys in the drawer" gets a spurious one (none since the fifth round), "Remember my office
+code is 4410" is refused on purpose, beside round three's pinned "my office code is 4821", and "the token for the model
+is …" before a model's name is refused; fill_cells on Ember's desk is refused while the prompt is open or unchecked,
+though desk input that doesn't ask isn't checked, "deploy@build-01" is refused because its shape can't be told from a
+password's, and a batch refused for one cell's formula records the other cells' allows first; PowerShell's `foreach` and
+cmd's `for` don't feed Ember's own refusal, a download through `dd` (followed since the fifth round), `git mv`, a copied
+folder that holds one, a glob source or `case … esac` isn't followed, "in dist delete the build folder" still announces
+`rm -rf build` (it asks since the fifth round), an unseen name under the folder that holds Ember's is refused rather
+than asked, `cp --parents ember/settings.json ~/.config/` asks rather than refuses, "nginx is stuck, restart it" asks
+(it is announced since the fifth round), and a `while read` card says "Ember can't tell exactly what this does." three
+times; the launcher's raw words for a corrupt zip and a redirect loop, and a stop dropped during its last renames; first
+run's no-keyring sentence said twice, an adopt of new details that isn't atomic (a key that fails to save leaves the
+provider unagreed), Agree not held while the recipient is unknown, a quit during a save-first check, the key placeholder
+set once per visit (all but the hold and the quit fixed in the fifth round, below), and Home's status line and Models &
 connections not showing `switchPending`; a held edit to a host with no model list can't be adopted without the switch
 off and on, Home's composer line while the note waits is still generic (both fixed in the fifth round, below),
 `friendlyError` says "your model service" for the provider, first run's in-use edit still saves in two steps (fixed in
@@ -1863,25 +1863,46 @@ dated sections into its feature sections, is still to do in CHANGELOG.md.
 run; PowerShell's `foreach` and cmd's variables don't feed Ember's own refusal; `echo "$d" | xargs rm -rf` and the XDG
 idiom `rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/ember"` ask where they should be refused; `make -j$(nproc)` with the
 value attached asks; chroot's new root and a few tools' output options aren't judged; `find ~ -name '*.pyc' -delete` is
-refused whatever the pattern; and quoted or noted steps ("TODO: delete src/") still announce. Memory: fail-closed
-residue ("token = element", "PSK is enabled on the router"), misses ("DB_PASS=Tr0ub4dor&3", `"pin": "4821"`), and a 1 MB
-line of 100,000 secret-named keys taking about 19 s in `memoryRefusal` (unreachable through Projects' 24 KiB a file).
-Integrations: first run's in-use edit still refuses a host with no model list, and `friendlyError` says "your model
-service" for the user's own provider. Safety: during a held lockdown the other managed switches (voice, speaking,
-memory, updates, routines) are still drawn from the settings. Tasks: a question that ran out of time still reads
-"Stopped:" on the step it held, and perceive's never-look refusal sends no refused activity. Listening: CI's voice job
-doesn't prepare the test-only voice, so the real-model Voice Match case skips there, and the natural voice's status
-line, the setup check's Speaking row and Voice Match's lines aren't held or reworded yet. Speaking: three or more short
-bare lines cut apart at a label are said in one breath when streamed. The companion: Ask opened while Ember is still
-flying to the cursor can leave Ember under the box. Accessibility: under Copilot a not-answering status whose detail
-doesn't end in "Reconnecting…" still reads "Not connected". Reliability: on Windows a spawn error Node throws
-synchronously (EPERM or UNKNOWN when AppLocker blocks powershell.exe) leaves no Screen reading row and no back-off.
-Install: the launcher's redirect-loop error and a corrupt zip's output aren't plain sentences yet, and a read-only
-shared cache an administrator filled can't start Ember for others. First run: the bubble's `firstPerson` leaves "Ember
-will try again in a moment.", a key saved for the old host still counts as saved for a new address, main's hint for a
-GitHub sign-in it can't find still says to press Sign in with GitHub on a sign-in step that shows only Try again, and
-the provider step after a passing check can still say "press Check again". Tests that flake under load: first run's
-first-run-6 and first-run-v2 journeys and the launcher's install-docs-v4-2 signal test.
+refused whatever the pattern, and so are `cat <<< "$d" | wc -l` and a here-document that only prints such a variable;
+robocopy's `/MOV` and `/MOVE` get `/MIR`'s card line; and quoted or noted steps ("TODO: delete src/"), "on" before a
+folder ("the build folder on the desktop" covers `./build`), "the parent process with pid 1234" and "… and I'll say if
+it's ok" still announce. Memory: fail-closed residue ("token = element", "PSK is enabled on the router"), misses
+("DB_PASS=Tr0ub4dor&3", `"pin": "4821"`, `const password = myPass1;`, a code said with "'s" such as "The gym's code is
+4821", and, since this round's login rule, "user james pass hunter"), a remember note still missing after "Note that I
+prefer email" and "Remember Priya out Friday", still given after "Remember the issues users reported last week" and,
+since this round, missing after "Remember that my wife likes tulips and buy some, remember", and a 1 MB line of 100,000
+secret-named keys taking about 19 s in `memoryRefusal` (unreachable through Projects' 24 KiB a file). Integrations:
+first run's in-use edit still refuses a host with no model list, and `friendlyError` says "your model service" for the
+user's own provider; Projects' refusal of a request doesn't say which words tripped the guard, and prose-shaped code in
+one ("Fix the bug where token: undefined is logged") is still refused; and a card from a typed "try again" offers only
+Close on another service. Safety: during a held lockdown the other managed switches (voice, speaking, memory, updates,
+routines) are still drawn from the settings; the fold's approval line still says Ember asks before acting in an app
+while "Don't ask before working in an app I asked for help with" is on, and under a lockdown that stops every action;
+and with nothing turned on under a policy that turns off some commands, its other computers line repeats its heading
+("Other computers and commands: other computers and commands on this computer are off…"). Tasks: a question that ran out
+of time still reads "Stopped:" on the step it held, and perceive's never-look refusal sends no refused activity.
+Listening: CI's voice job doesn't prepare the test-only voice, so the real-model Voice Match case skips there, and the
+natural voice's status line, Task activity's lines for a task's own Stop and Show app, the setup check's Speaking row
+and Voice Match's lines aren't held or reworded yet; a failed download's line in Hear me more clearly can end with "try
+again" twice, a Windows EPERM that outlasts the rename wait still reads "permission denied", and the microphone's own
+error names are still shown as they come. Speaking: three or more short bare lines cut apart at a label are said in one
+breath when streamed; bare option names between long lines ("Option A", "Option B") run together; and a "→" after
+"right" before "the" or "a" loses its "to" ("top right → the gear icon"), while an ASCII "->" after its direction is
+said "right right arrow". The companion: Ask opened while Ember is still flying to the cursor can leave Ember under the
+box, and a box that opens with suggestions grows once just after it opens. Accessibility: under Copilot a not-answering
+status whose detail doesn't end in "Reconnecting…" still reads "Not connected". Home: a later Stop can say again that a
+message is back after the field was emptied, and Cancel edit can't tell a message brought back with Ctrl+Z from the
+request and splits a request pasted over everything at its first blank line. Reliability: on Windows a spawn error Node
+throws synchronously (EPERM or UNKNOWN when AppLocker blocks powershell.exe) leaves no Screen reading row and no
+back-off, Check again during a bridge restart slower than 6 s shows the old row until the next read, and a helper on
+another protocol version still names the version numbers in the row. Install: the launcher's redirect-loop error and a
+corrupt zip's output aren't plain sentences yet, `ember doctor` on a Mac still gives Node's own words for a cache it
+can't write in, and on Windows the temporary start log of an Ember that keeps running may be left in %TEMP%. First run:
+the bubble's `firstPerson` leaves "Ember will try again in a moment.", a key saved for the old host still counts as
+saved for a new address, main's hint for a GitHub sign-in it can't find still says to press Sign in with GitHub on a
+sign-in step that shows only Try again, and the provider step after a passing check can still say "press Check again".
+Tests that flake under load: first run's first-run-6 and first-run-v2 journeys and the launcher's install-docs-v4-2
+signal test.
 
 **Native validation and owner decisions.** Still to check natively: rsync 3.2.3 or later's `--mkpath` in a WSL distro or
 over SSH, podman run on RHEL 8, and robocopy, dd and the PowerShell variable refusals on a real Windows PC with
@@ -1900,5 +1921,5 @@ step back, whether a quoted or noted step is a request, and whether deadlines ("
 window title it was asked in; the names "Ember's model connection" and "my model connection", and "2 unanswered" for the
 Today count; Home's Enter-to-send and the 640 px corner card for any question; a least-overlap Ask box placement and the
 order of the side strip and the place above or below the box; `RESTING_FRAME_MS`, the pace of fidgets and glances and
-whether still faces stop drawing, before docs/ASSISTANT.md's budget and CI's 16 % and 950 MB are restated; starting
-Ember from a read-only shared cache without its start log; and a listening earcon (§6).
+whether still faces stop drawing, before docs/ASSISTANT.md's budget and CI's 16 % and 950 MB are restated; and a
+listening earcon (§6).

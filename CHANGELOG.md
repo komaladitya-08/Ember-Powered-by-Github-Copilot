@@ -39,10 +39,9 @@ the automated tests don't stand in for them.
 - **`features.screenImages: false`** now also shows the new **Send screenshots for tasks** switch off and managed, as
   well as keeping screenshots from the model. Ember 0.1.0 knows this key, so a policy with it doesn't lock 0.1.0 down.
 - **A policy change shows at once in an open settings window.** Ember still stops everything and holds itself locked
-  down until it is restarted, and the window now says so straight away, with **Send screenshots for tasks** and **Work
-  without asking** shown off, instead of showing the earlier policy until it is reopened. Apps & privacy's “What Ember
-  reads, sends and keeps” also says what your policy turned off: other computers, WSL, and commands on each kind of
-  computer.
+  down until it is restarted, and the window now says so straight away instead of showing the earlier policy until it is
+  reopened: **Send screenshots for tasks** and **Work without asking** show off, and Apps & privacy's “What Ember reads,
+  sends and keeps” and Commands follow the policy in force.
 - **The npm launcher downloads through the proxy npm uses:** npm's `https-proxy` or `proxy` setting (from npm's
   environment or its `.npmrc` files), else `HTTPS_PROXY` (`HTTP_PROXY` for an `http://` mirror), never for the hosts in
   `NO_PROXY` or npm's `noproxy`. It takes an `http://` or `https://` proxy, not a SOCKS one. Behind a proxy that
@@ -309,7 +308,7 @@ the automated tests don't stand in for them.
   request from the Ask box or your voice, though never in place of Edit's caution that sending again may repeat actions
   or the count that says your message is too long; and the settings shortcut opens Home at Stop response, so Enter stops
   that reply. Home's wait ends with Ember's turn, also for the first message after Stop everything or a reconnect, and
-  says how it ended: “Reply received.”, “Ember couldn't finish this reply…” after a model error cut a reply short,
+  says once how it ended: “Reply received.”, “Ember couldn't finish this reply…” after a model error cut a reply short,
   “Ember couldn't answer this request…” when it failed before any reply began, “Response stopped. Running tasks
   continue.” after **Stop response** or the bubble's Stop, “Stopped everything, running tasks included.” after Stop
   everything, or, when Ember wrote no reply, that Task activity shows any task it started. **Stop response** with
@@ -473,7 +472,7 @@ the automated tests don't stand in for them.
   what I'll do:”. Labelled steps (“**Step 1:** Open Settings”) are said one at a time, each label at the start of its
   step, and each as it arrives, not once the whole answer is in; a short label on a line of its own (“Cons:”, “Step 2:”,
   “On a Mac:”) is said with its step, and a line ending with a colon (“To fix the sound:”) at once. The line before a
-  heading or a labelled option ends with a pause, so “Option B” is never said at the end of the line before it.
+  heading or a labelled option (“Option B: …”) ends with a pause, so the two aren't said as one.
 - **Money, times and paths are said as people say them.** “$12.50” is “12 dollars 50”, “14:00” is “14 hundred”, “~75%”
   is “about 75%”, “2h 15m” is “2 hours 15 minutes”, a file is “report.pdf in Documents”, “github.com/foo/bar” is
   “github.com”, “I ❤️ Paris” is “I love Paris”, and other emoji aren't read out as “party popper”. “Press the → key” is
@@ -580,12 +579,10 @@ the automated tests don't stand in for them.
   are off, and under your organisation's lockdown says nothing Ember hears is sent anywhere, Listen once included. It
   follows your settings and your organisation's policy: with Work without asking on, it says Ember tells you what it's
   doing for ordinary steps instead of asking, it says when you let apps in without asking, and its line on other
-  computers and commands says which you turned on and what your organisation turned off. When your organisation changes
-  its policy while the settings window is open, the window says at once that Ember is locked down until you restart it,
-  and this text, Commands and the **Send screenshots for tasks** and **Work without asking** switches show what is in
-  force then (both off), not what was on before. It keeps naming where your requests go after you change a setting with
-  it open, and isn't redrawn under a screen reader for a setting that doesn't change it. Removing an app from Never look
-  at or from the Always list says what changed.
+  computers and commands says which you turned on and what your organisation turned off (other computers, WSL or
+  commands on each kind of computer), also straight after a policy change (see For administrators). It keeps naming
+  where your requests go after you change a setting with it open, and isn't redrawn under a screen reader for a setting
+  that doesn't change it. Removing an app from Never look at or from the Always list says what changed.
 - **More keys are hidden** from command output and logs: OpenAI, Anthropic, Stripe, Hugging Face and GitLab keys.
 - **With Ask only about dangerous commands on,** Copilot's words about a command no longer reach the system journal
   (`journalctl -t ember-audit`), only their size.
@@ -662,15 +659,17 @@ the automated tests don't stand in for them.
   through a PowerShell variable (`$d = "$env:LOCALAPPDATA\ember"; Remove-Item -Recurse $d`, or `Join-Path`). A command
   that only tests or prints such a variable (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or gives it to a text filter
   that only reads it (`grep -q ember <<< "$d"`), runs, and a refusal says whether Ember's files would be read or
-  changed. A value it can't see at all, such as what `read` takes from a file, still asks.
+  changed. A value it can't see at all, such as what `read` takes from a file, still asks, and so do a few forms it
+  doesn't follow yet (`echo "$d" | xargs rm -rf`, `rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/ember"`).
 - **A flag doesn't hide what a command does.** Ember reads the options of the tools it knows as their manuals give them,
   so a switch doesn't take the file or the command after it for its own: `rsync --mkpath`, `shred -u`, `xargs -l`,
   `docker` and `podman run -P`, `cp --update`, `--reflink` and `--backup`, `install -b`, `redis-cli -c`, `make -j
   install`, `mvn -X deploy`, `grep --color` on a key file and many more ask, or are refused on Ember's own files, as
-  they are without the flag. A file or folder an option names is judged as that file (`zstd -o`, `brotli -o`, node's
-  `--redirect-warnings` and `--report-dir`, uv's and poetry's `--cache-dir`, `file -f`, `tar --listed-incremental`,
-  `parallel --wd`, `sudo -R`), and `make -j $(nproc)` and `make -j "$JOBS"` run without a question, while `T=deploy;
-  make -j "$T"` asks as `make deploy` does.
+  they are without the flag, and `cp`, `mv` or `install` with no destination, or a container run with no image, asks. A
+  file or folder an option names is judged as that file (`zstd -o`, `brotli -o`, node's `--redirect-warnings` and
+  `--report-dir`, uv's and poetry's `--cache-dir`, `file -f`, `tar --listed-incremental`, `parallel --wd`, `sudo -R`),
+  and `make -j $(nproc)` and `make -j "$JOBS"` run without a question, while `T=deploy; make -j "$T"` asks as
+  `make deploy` does.
 - **Ember runs a Python virtual environment's programs by path** (`.venv/bin/python -m pytest`) instead of sourcing
   `activate`, which asked every time.
 - **Every command the bubble tags “Risky step” gets the caution edge and a plain Allow** on its card, not only
@@ -729,11 +728,11 @@ the automated tests don't stand in for them.
   the service in force from then on, and a request you make meanwhile waits for it: Home says so under Send (“Ember will
   send this to the new model service once what it's doing now has finished. Stop response cancels it.”), with “Switching
   model service…” in its status panel, never “Thinking…”. A finished task's card stays through the switch it waited for,
-  with its result, **Try again** and **Close**, and its Try again waits for the switch. On the new service, Try again
-  starts from your own words, never the goal or the screen text from the conversation before, and only for a task your
-  request asked for alone; for one that came from a request split into several tasks, a routine or a reply such as “yes
-  do that”, the card offers Close and says “The model service has changed: ask me again and I'll try it on the new
-  one.”, so finished work isn't done twice.
+  with its result, **Try again** and **Close** (unless the new connection fails or you sign out first), and its Try
+  again waits for the switch. On the new service, Try again starts from your own words, never the goal or the screen
+  text from the conversation before, and only for a task your request asked for alone; for one that came from a request
+  split into several tasks, a routine or a reply such as “yes do that”, the card offers Close and says “The model
+  service has changed: ask me again and I'll try it on the new one.”, so finished work isn't done twice.
 - **Your extensions ask you to agree again, once.** A plugin from Copilot's built-in marketplace shows that
   marketplace as “Built into Copilot”, with no Remove that did nothing, and its card no longer says you added the
   marketplace. Because the card changed, no extension runs until you agree again.
@@ -755,22 +754,23 @@ the automated tests don't stand in for them.
   portal is…”, “My password's…”, “VPN password hunter2”, shorthand such as “HR portal pw Summer2024!” or “hunter2 is my
   password”, “use … as the password”, a login with its password or said as one (“The user's Netflix login is hunter2”,
   “Netflix credentials: hunter2”), a PIN (“My PIN number is 1234”, “PIN code is 1234”, “Garage, PIN code: 482193”), a
-  phone's code (“My phone code is 4821”), a house's, an office's, a door's or an alarm's code (“my house code is 4821”,
-  “the code for the front door is…”), a vault's, a safe's or a key box's, an Airbnb's, a gym's, a shed's or a storage
-  unit's, a Wi-Fi password said as its network security key, WPA2 key, pre-shared key or PSK, the answer to a security
-  question, a CVV, a recovery or seed phrase, a social security number or an IBAN, nor a password written as a value in
-  code or a script (`password = "Summer2024!"`, `PASSWORD=hunter2`, `export DB_PASSWORD=changeme`). Codes that lock
-  nothing are kept (“the access control code 401”, “backup exit code 255”, “our office ZIP code is 90210”, “Branch
-  office code: 4410”), and so are an Indian address's PIN code (“Bengaluru, PIN code: 560001”), how a token is made
-  (“The access token is HS256-signed”), a password's state (“Passwords are hashed.”), a version, an issue number or a
-  setting said as a login (“The login is v2.0”, “Credentials: AWS_PROFILE=dev2”), a disk's use (“Root: 45G / 100G”), a
-  login that names a user at an IP address or localhost, a user at a computer both named in words or given with its
-  port, a handle or a host with its port (“pi@192.168.1.20”, “jsmith@corp”, “@octocat”, “localhost:8080”) and code that
-  names a token, a password or credentials with code for its value (`verify(token: string)`, `max_tokens=256`,
+  phone code (“My phone code is 4821”), a house, office, door or alarm code (“my house code is 4821”, “the code for the
+  front door is…”), a vault, safe or key box code, an Airbnb, gym, shed or storage unit code, a Wi-Fi password said as
+  its network security key, WPA2 key, pre-shared key or PSK, the answer to a security question, a CVV, a recovery or
+  seed phrase, a social security number or an IBAN, nor a password written as a value in code or a script
+  (`password = "Summer2024!"`, `PASSWORD=hunter2`, `export DB_PASSWORD=changeme`). Codes that lock nothing are kept
+  (“the access control code 401”, “backup exit code 255”, “our office ZIP code is 90210”, “Branch office code: 4410”),
+  and so are an Indian address's PIN code (“Bengaluru, PIN code: 560001”), how a token is made (“The access token is
+  HS256-signed”), a password's state (“Passwords are hashed.”), a version, an issue number or a setting said as a login
+  (“The login is v2.0”, “Credentials: AWS_PROFILE=dev2”), a disk's use (“Root: 45G / 100G”), a login that names a user
+  at an IP address or localhost, a user at a computer both named in words or given with its port, a handle or a host
+  with its port (“pi@192.168.1.20”, “jsmith@corp”, “@octocat”, “localhost:8080”) and code that names a token, a password
+  or credentials with code for its value (`verify(token: string)`, `max_tokens=256`,
   `const token = process.env.GITHUB_TOKEN;`, `credentials = boto3.Session().get_credentials()`), so Projects requests
   and files, a reviewed patch and task views that hold them aren't refused. A user name with a digit said as a login
   (“my login is jsmith42”), or a user at a computer whose name has a digit (“admin@nas1”), is refused, as it may be the
-  password, and some shorthand still gets past it (“Netflix: hunter2”), so keep passwords out of what you tell Ember.
+  password. Some shorthand, and a code said with “'s” (“Netflix: hunter2”, “The gym's code is 4821”), still get past it,
+  so keep passwords out of what you tell Ember.
 - **Memory says why it is paused.** While Ember connects, uses your own model provider or can't reach GitHub,
   Settings › Memory says so instead of suggesting Forget everything, Home says “Memory paused”, and Tell Ember about
   you no longer fails with “Try again”. While your own provider can't connect, memory says it waits for that, not for
@@ -905,9 +905,9 @@ the automated tests don't stand in for them.
   `ember --npm-reinstall` says the copy you had is kept and that `ember` starts it. When this computer won't let Ember
   start (a security policy such as fapolicyd, antivirus, or a disk that doesn't let programs run), `ember` and
   `ember doctor` say so and what to do, not “spawn EACCES”. On a disk that has filled since Ember was installed, `ember`
-  still starts Ember and gives the terminal back, and when Ember stops as it starts, `ember` prints what it said, also
-  where its old start log belongs to another user (after `sudo -E ember`), or, where it can't keep even a private copy
-  of that, says to run `ember doctor` to see it.
+  still starts Ember and gives the terminal back, and if Ember stops as it starts, what it said is printed even where its
+  old start log belongs to another user (after `sudo -E ember`); where `ember` can't keep even a private copy of that, it
+  says to run `ember doctor` to see it.
 - **Clicking the notice that a new version is out opens Updates** in Ember's settings, and the update check keeps to
   once a day, also when you restart Ember; a newer version it found still shows after a restart and after a later look
   fails, with **See what's new…**. Under “Ember X is out.”, Updates says how to update your kind of install (the RPM,
