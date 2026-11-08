@@ -181,7 +181,8 @@ const IS_AFTER = /^(?:my|our|the|a|an|his|her|their|your|not|off|on|in|at|out|aw
 
 /**
  * Whether what follows "remember…" says something to keep (memory-r3-2): a statement with a verb after who or what it is
- * about ("my wife likes tulips", "Priya leads the platform team", "the standup moved to 4 pm", "Priya's my manager"), a
+ * about ("my wife likes tulips", "Priya leads the platform team", "the standup moved to 4 pm", "Priya's my manager", "my
+ * kids love pizza": memory-v4-4), a
  * label and its value ("my birthday: 12 March", "my phone number 07700 900123"), or STATES's words. Never what only points
  * at something: "the file I mentioned", "the documents Priya sent", "my keys", "my meeting at 3" (memory-r8).
  */
@@ -189,6 +190,7 @@ function statesSomething(rest: string): boolean {
   if (STATES.test(rest) || /\p{L}\s*:\s*\S/u.test(rest)) return true;
   const words = rest.split(/\s+/).map(w => w.replace(/^[^\p{L}\p{N}£$€]+|[^\p{L}\p{N}'’]+$/gu, "")).filter(Boolean);
   if (words.some((w, i) => /^\p{Lu}.*['’]s$/u.test(w) && IS_AFTER.test(words[i + 1] ?? ""))) return true;
+  if (manySay(words)) return true;
   // A noun phrase's first word after its determiner is the thing itself ("my keys", "the steps"), never its verb.
   const from = DETERMINER.test(words[0] ?? "") ? 2 : 1;
   for (let v = from; v < words.length; v++) {
@@ -201,6 +203,24 @@ function statesSomething(rest: string): boolean {
     return !between.some(x => PRONOUN.test(x)) && !(v === words.length - 1 && between.some(x => /^\p{Lu}/u.test(x)));
   }
   return false;
+}
+/** Plurals without "-s" ("my children love it"). */
+const PLURAL = /^(?:children|grandchildren|people|men|women|folks)$/i;
+/** Words after a plural that aren't its verb ("my keys tomorrow morning"). */
+const NOT_A_VERB = /^(?:and|or|but|then|too|also|please|today|tomorrow|tonight|yesterday|next|last|this|every|each)$/i;
+/**
+ * Whether `words` say what more than one does (memory-v4-4): "my kids love pizza", "our clients always want a summary",
+ * "my wife and I prefer window seats", "Priya and I lead the team", a verb in its plain form with more words after it.
+ * Never "my keys tomorrow morning", "my glasses case", "the steps you did" or "the time Priya and I went to Paris".
+ */
+function manySay(words: readonly string[]): boolean {
+  const head = DETERMINER.test(words[0] ?? "") ? 1 : 0;
+  const pair = /^and$/i.test(words[head + 1] ?? "") && /^(?:i|we)$/i.test(words[head + 2] ?? "") && (head === 1 || /^\p{Lu}\p{Ll}+$/u.test(words[0] ?? ""));
+  const many = pair || (head === 1 && (/^\p{Ll}{2,}[^siu'’]s$/u.test(words[1] ?? "") || PLURAL.test(words[1] ?? "")));
+  const at = pair ? head + 3 : head + 1;
+  const w = words[at] ?? "";
+  return many && at + 1 < words.length && /^\p{Ll}+$/u.test(w) && !/ing$/.test(w)
+    && ![PREPOSITION, DETERMINER, PRONOUN, NOT_A_VERB].some(list => list.test(w));
 }
 /**
  * What someone tells Ember about themselves after "my" or "our": "my address", "my wife's birthday", "my favourite
@@ -346,7 +366,8 @@ const FILLER = /^(?:please|thanks|thank\s+you|ok|okay|right|alright|yeah|yes|now
 export function remembersWithMore(text: string): boolean {
   const t = text.trim().replace(/[.!]+$/, "");
   if (memoryAsk(t) !== null || (/\?$/.test(t) && !POLITE.test(t))) return false;
-  const first = t.split(/[.!?]\s|[,;]|\s[-–—]+\s|\s(?:and|then|&)\s/i)[0]!.trim();
+  // "My wife and I prefer…" is one subject, not more after the request (memory-v4-4).
+  const first = t.split(/[.!?]\s|[,;]|\s[-–—]+\s|\s(?:and|then|&)\s(?!(?:i|we)\s)/i)[0]!.trim();
   if (memoryAsk(first) === "remember") return true;
   const sep = /^\s*(?:,|\s[-–—]+\s)\s*(.+)$/.exec(t.slice(first.length));
   const value = sep?.[1]!.trim() ?? "";

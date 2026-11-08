@@ -260,8 +260,9 @@ download, so English-only MiniLM is the trade-off for now.
      Memory opens at its search, never at its note's "I agree, remember": memory-r7), why it is paused, or that the
      organisation turned it off. A request that says something to keep ("remember that…", "keep in mind the deadline
      is Friday", "remember I'm vegetarian", "remember my wife likes tulips", "make a note that Bob owes me £20",
-     "remember my birthday: 12 March", and one with a request after it, "remember that I'm vegetarian and book a
-     table": `remembersWithMore`, memory-r3-2) goes to the conversation, which knows it until Ember closes, and Ember says
+     "remember my birthday: 12 March", "remember my kids love pizza", "remember my wife and I prefer window seats"
+     (memory-v4-4), and one with a request after it, "remember that I'm vegetarian and book a table":
+     `remembersWithMore`, memory-r3-2) goes to the conversation, which knows it until Ember closes, and Ember says
      behind the answer that memory won't keep it (`rememberNote`: a line in the conversation and a bubble with **Open
      Memory**, never Settings opened on its own); "remember the file I mentioned", "remember this", "don't forget the
      documents Priya sent" and "don't forget my umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),

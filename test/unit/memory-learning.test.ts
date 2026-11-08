@@ -713,6 +713,26 @@ describe("“forget that”, the instruction check and the conversation's line",
     expect(off.opened).not.toHaveBeenCalled();
   });
 
+  it("adds “I won't keep this” after a fact about more than one, “my kids love pizza”, “my wife and I prefer window seats” (memory-v4-4)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of [
+      "Remember my kids love pizza", "Remember my parents live in Leeds", "Remember my clients prefer email", "Don't forget my parents visit on Sunday",
+      "Make a note that my kids eat at 6", "Remember my wife and I prefer window seats", "Remember Priya and I lead the platform team",
+      "Remember my children go to St Mary's", "Keep in mind our clients always want a summary",
+      "Remember my wife and I prefer window seats, and book them", "Remember my kids love pizza and order two",
+    ]) {
+      expect(off.l.intent(text, { own: true }), text).toBeNull();
+      expect(off.l.rememberNote(text)?.text, text).toBe("Memory is off, so I won't keep this after Ember closes.");
+    }
+    // What only points at things: still no note.
+    for (const text of [
+      "Don't forget the documents Priya sent", "Remember the steps you just did", "Don't forget my keys tomorrow morning", "Remember my kids' names",
+      "Don't forget my glasses case", "Remember the time Priya and I went to Paris", "Remember my wife and I", "Remember my parents' anniversary next week",
+    ]) {
+      expect(off.l.rememberNote(text), text).toBeNull();
+    }
+  });
+
   it("opens Settings › Memory at its list from Open Memory after a forget request with more in it, and at its note after a remember (memory-r3-4)", () => {
     const off = learning({ inForce: () => false });
     const forget = off.l.rememberNote("Forget my address and open Firefox")!;
