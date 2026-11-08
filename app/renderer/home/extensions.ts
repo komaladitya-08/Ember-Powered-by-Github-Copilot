@@ -9,6 +9,7 @@
 import type { ExtensionsState, Status, EmberExtensionsApi } from "../../shared/ipc";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
+import type { SettingsPatch } from "../../main/settings";
 import { marketplaceSource } from "../../shared/extensions-input";
 import {
   BROWSE_AGAIN, BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, MARKETPLACES_NOT_CONNECTED, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
@@ -461,7 +462,8 @@ function setSectionOn(on: boolean): void {
   if (!e) return;
   extSettings = { ...e, on };
   draw();
-  window.ember.updateSettings({ extensions: { ...e, on } }).catch((err: unknown) => {
+  // Only the switch: main keeps the card's record as it is (withOwnExtensions, integrations-i1).
+  window.ember.updateSettings({ extensions: { on } } as SettingsPatch).catch((err: unknown) => {
     extSettings = e;
     say(extensionsError(err));
     draw();

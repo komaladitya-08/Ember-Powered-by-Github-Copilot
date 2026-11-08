@@ -14,7 +14,8 @@ import { ExtensionsService, withoutUserinfo, type ExtensionsDeps } from "../../a
 import { copyPlugin, ExtensionStore } from "../../app/main/extensions/store";
 import { admittedExtensionTools, hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "../../app/main/agent/session-config";
 import { AdminPolicySchema, applyAdminPolicy, lockedDown, managedKeys } from "../../app/main/admin";
-import { DEFAULT_SETTINGS, type Settings } from "../../app/main/settings";
+import { DEFAULT_SETTINGS, withOwnExtensions, type Settings } from "../../app/main/settings";
+import { settingsFromHome } from "../../app/main/windows";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { CopilotSession } from "@github/copilot-sdk";
 import crypto from "node:crypto";
@@ -299,6 +300,20 @@ describe("the administrator's switch for extensions", () => {
   it("starts with extensions off and unagreed", () => {
     expect(DEFAULT_SETTINGS.extensions).toEqual({ on: false, consent: { version: 0, at: null } });
     expect(FEATURE_CONSENT_VERSION.extensions).toBe(3);
+  });
+
+  it("is agreed to only through its card, never with Home's general settings changes (integrations-i1)", () => {
+    const agreed = { version: FEATURE_CONSENT_VERSION.extensions, at: "2026-11-07T12:00:00Z" };
+    const sent = { size: 64, extensions: { on: true, consent: agreed } } as never;
+    const { patch, dropped } = settingsFromHome(sent);
+    expect(dropped).toEqual(["extensions.consent"]);
+    expect(patch).toEqual({ size: 64, extensions: { on: true } });
+    // Merged into the user's own: their record stays as it is, agreed or not, and the switch still turns.
+    const unagreed = DEFAULT_SETTINGS.extensions;
+    expect(withOwnExtensions(sent, unagreed).extensions).toEqual({ on: true, consent: unagreed.consent });
+    expect(withOwnExtensions(patch, { on: true, consent: agreed }).extensions).toEqual({ on: true, consent: agreed });
+    expect(withOwnExtensions({ extensions: { on: false } } as never, { on: true, consent: agreed }).extensions).toEqual({ on: false, consent: agreed });
+    expect(withOwnExtensions({ size: 64 }, unagreed)).toEqual({ size: 64 });
   });
 });
 

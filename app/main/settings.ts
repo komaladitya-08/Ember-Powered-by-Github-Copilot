@@ -351,6 +351,17 @@ export function withOwnProvider(patch: SettingsPatch, own: Settings["provider"])
   return { ...patch, provider: { ...own, ...picked, consent: own.consent } as Settings["provider"] };
 }
 
+/**
+ * Home's change to the extensions switch, merged into the user's own: their card's record (`consent`) is always the
+ * one already kept, so a settings change can turn extensions on or off but never agree to them (integrations-i1).
+ */
+export function withOwnExtensions(patch: SettingsPatch, own: Settings["extensions"]): SettingsPatch {
+  const e = (patch as { extensions?: unknown }).extensions;
+  if (!e || typeof e !== "object" || Array.isArray(e)) return patch;
+  const on = (e as { on?: unknown }).on;
+  return { ...patch, extensions: { ...own, ...(typeof on === "boolean" ? { on } : {}), consent: own.consent } };
+}
+
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
 
 export { CONSENT_VERSION };

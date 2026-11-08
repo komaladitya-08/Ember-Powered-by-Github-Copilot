@@ -291,7 +291,7 @@ describe.skipIf(gate)("Home's Extensions, as the person sets them up (2026-11-07
     expect(await page.getByRole("switch", { name: "Use Notes" }).isChecked()).toBe(true);
     await sw.click();
     await expect.poll(() => page.locator("#ext-on-hint").innerText()).toBe("Off: Ember uses no extension's tools and runs nothing you added. What you added stays here.");
-    expect(await calls(page)).toEqual([`save:${JSON.stringify({ extensions: { on: false, consent: agreed } })}`]);
+    expect(await calls(page)).toEqual([`save:${JSON.stringify({ extensions: { on: false } })}`]);
     expect(await page.locator("#ext-installed li").first().locator(".ext-status").innerText()).toBe("Off: extensions are off");
     await evidence(page, "ext-off");
     await page.close();

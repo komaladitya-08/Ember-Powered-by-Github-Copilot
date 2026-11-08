@@ -272,7 +272,9 @@ runtime. It does not change the app's consent or speaking settings.
   and only here.
   - **Use extensions** (shown once extensions are agreed to: the first add's card turns them on) turns them off as a
     whole (`settings.extensions.on`): every server stops, no session gets their tools, and each item says **Off:
-    extensions are off** while what was added stays listed. An item's own switch shows off until it is agreed to.
+    extensions are off** while what was added stays listed. An item's own switch shows off until it is agreed to. The
+    agreement is recorded only by the card's yes (main's `agree`): Home's general settings changes can't carry it
+    (`settingsFromHome` drops `extensions.consent`, and `withOwnExtensions` keeps the record already there).
   - **Added** lists each item with its status in words beside a dot, a switch to turn it off, its tools (each badged
     **Read-only**, **Can change things** or **Changed**), and **Remove** (a connector: **Disconnect**). A tool whose
     name, description, schema or annotations changed since the user agreed shows **Changed since you agreed** with
@@ -968,7 +970,7 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
   only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again. The
   yes is recorded only by main (`PROVIDER_IPC.agree`, for the host the endpoint in settings names); Home's general
-  settings changes can't carry it (`settingsFromHome` drops `provider.consent`), and they merge into the user's own
+  settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and they merge into the user's own
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees
