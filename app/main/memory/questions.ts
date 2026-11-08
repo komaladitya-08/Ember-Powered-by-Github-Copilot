@@ -289,6 +289,20 @@ const SAVED = String.raw`saved|kept|stored|noted`;
 /** What Ember keeps about someone, after "everything you know about…": "me", "us", "my wife", "Priya". */
 const YOU_KEPT = String.raw`(?:${YOU})?(?:${KNOWS}|${SAVED})`;
 /**
+ * What only Ember's memory holds, so a bare "from memory" after it can only be Ember's ("Delete everything from memory",
+ * "Remove that from memory", "Remove what I told you from memory", "Remove that I'm vegetarian from memory", "Remove
+ * where I live from memory", "Delete my email from memory", "Remove all my details from memory"): memory-c5-1. Never
+ * "it" or a thing named ("Remove the tab from memory", "Clear Firefox from memory"), which may be a computer's memory
+ * (memory-c4-1).
+ */
+const ONLY_EMBERS = String.raw`(?:that|this|everything|all(?:\s+of\s+(?:that|this))?|(?:everything|all|anything)\s+about\s+(?:me|us)`
+  + String.raw`|all\s+(?:of\s+)?(?:my|our)\s+(?:personal\s+)?(?:details|info|information|data)`
+  + String.raw`|(?:everything|all|anything|what|whatever)\s+${YOU}(?:${KNOWS}|${SAVED})(?:\s+about\s+(?:me|us))?`
+  + String.raw`|(?:what|whatever|everything|all)\s+(?:i|we)(?:['’]ve|\s+have)?\s+(?:said|told\s+you|wrote|written|mentioned|shared)`
+  + String.raw`|(?:the\s+fact\s+)?(?:that\s+)?(?:i['’](?:m|ve|d)|i\s+(?:am|live|work|like|love|hate|prefer|have|use|eat|drink))\b.*`
+  + String.raw`|(?:where|what|who|when|how)\s+(?:my\b|i['’]m\b|i\s+(?:live|work|am|do|like|love|hate|prefer|eat|drink|study|come|grew|was\s+born|take|use|stay)\b).*`
+  + String.raw`|(?:my|our)\s+e-?mail)`;
+/**
  * "Forget that I…", "forget my address", "forget where I live", "forget everything about me", "forget what you know
  * about me", "clear my memory", "don't remember that Priya is my manager": the user asking Ember to stop knowing
  * something about them, or to empty its memory, and nothing else. Never "forget the…", "forget what I said" or "forget
@@ -319,7 +333,8 @@ const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:(?:forget|don'?t\s+remember|d
   // "Remove Priya from your memory", "remove my address from memory": "from memory" alone only after the user's own
   // details or a name (FORGET_FROM), never "remove this tab from memory" (memory-c4-1).
   + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+(?:\S+\s+){1,4}?from\s+(?:your|ember['’]s|my)\s+(?:memory|memories)\b`
-  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+${MY_DETAIL}(?:\s+(?:and|&)\s+${MY_DETAIL})*\s+from\s+(?:memory|memories)${END})`, "i");
+  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+${MY_DETAIL}(?:\s+(?:and|&)\s+${MY_DETAIL})*\s+from\s+(?:memory|memories)${END}`
+  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+${ONLY_EMBERS}\s+from\s+(?:memory|memories)${END})`, "i");
 /** "Remove Priya from memory": a name, as FORGET_NAME takes one (memory-c4-1). */
 const FORGET_FROM = new RegExp(String.raw`${LEAD}(?:remove|delete|erase|drop|clear|wipe)\s+(\S+(?:\s+\S+)?)\s+from\s+(?:memory|memories)${END}`, "i");
 /**
@@ -335,6 +350,8 @@ const APP_MEMORIES = /(?<!\b(?:[Yy]our|[Ee]mber['’]s)\s+)\bmemor(?:y|ies)\s+(?
  */
 const FORGET_NAME = new RegExp(String.raw`${LEAD}forget\s+((?:everything|all)\s+(?:${YOU_KEPT}\s+)?about\s+)?(\S+(?:\s+\S+)?)$`, "i");
 const FORGET_NAMES_DETAIL = new RegExp(String.raw`${LEAD}(?:forget|unlearn)\s+(\S+(?:\s+\S+)?)['’]s\s+${ABOUT_ME}$`, "i");
+/** "Erase Priya's birthday from memory": a name's detail, as FORGET_NAMES_DETAIL takes one (memory-c5-1). */
+const FORGET_NAMED_FROM = new RegExp(String.raw`${LEAD}(?:remove|delete|erase|drop|clear|wipe)\s+(\S+(?:\s+\S+)?)['’]s\s+${ABOUT_ME}\s+from\s+(?:memory|memories)${END}`, "i");
 const NOT_A_NAME = /^(?:it|that|this|the|a|an|about|what|where|when|who|how|my|our|your|everything|all|me|i|we|to|them|him|her|those|these|instead)$/i;
 /** A word of a name as people write one: "Priya", "Jean-Luc", "O'Brien". Never "HomeNet", "AirPods" or "iPhone". */
 const NAME_WORD = /^(?:\p{Lu}\p{Ll}+(?:-\p{Lu}\p{Ll}+)?|\p{Lu}['’]\p{Lu}\p{Ll}+)$/u;
@@ -346,7 +363,8 @@ const NOT_SOMEONE = new Set([
   "calendar", "notes", "photos", "music", "maps", "messages", "reminders", "contacts", "python", "java", "docker", "linux", "ubuntu",
   "windows", "fedora", "steam", "netflix", "amazon", "facebook", "twitter", "reddit", "google", "copilot", "gimp", "inkscape", "blender",
   "dropbox", "drive", "sheets", "docs", "evernote", "todoist", "kubernetes", "terraform", "postgres", "mysql", "redis", "nginx", "figma",
-  "gitlab", "bitbucket", "jupyter", "eduroam", "starbucks", "git", "github",
+  "gitlab", "bitbucket", "jupyter", "eduroam", "starbucks", "git", "github", "photoshop", "illustrator", "node", "nodejs", "deno", "opera", "brave",
+  "vivaldi", "chromium", "ember",
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february", "march", "april", "may", "june",
   "july", "august", "september", "october", "november", "december", "today", "tomorrow", "yesterday", "tonight", "weekend", "christmas",
   "downloads", "documents", "desktop", "pictures", "videos", "home", "trash",
@@ -412,7 +430,7 @@ function forgets(t: string): boolean {
   if (FORGET_ASK.test(t)) return true;
   const name = FORGET_NAME.exec(t);
   if (name && isName(name[2]!, !!name[1])) return true;
-  const detail = FORGET_NAMES_DETAIL.exec(t);
+  const detail = FORGET_NAMES_DETAIL.exec(t) ?? FORGET_NAMED_FROM.exec(t);
   if (detail && isName(detail[1]!, true)) return true;
   const from = FORGET_FROM.exec(t);
   return !!from && isName(from[1]!);
@@ -433,6 +451,15 @@ export function forgetsWithMore(text: string): boolean {
 /** A statement, then a request to keep it ("…, remember that", "…. Remember that", "… - don't forget"). */
 const REMEMBER_AFTER = /^(.*?\S)[.!]?\s*(?:[,;.!]|\s[-–—]+)\s*(?:(?:and|so|please|but|just)\s+)?(?:remember|keep\s+(?:this|that|it)\s+in\s+mind|don'?t\s+forget|do\s+not\s+forget)(?:\s+(?:this|that|it))?(?:\s+(?:please|ok(?:ay)?|for\s+me|for\s+later|too))?[.!]*$/is;
 
+/**
+ * A bare "…, remember" at the end, with nothing before or after it: the "remember?" tag, typed or said, that recalls
+ * what was shared ("We talked about this yesterday, remember", "You said it would rain, remember"). A request to keep
+ * a fact only after one about the user now ("I'm vegetarian, remember", "My wife's birthday is 12 March, remember"):
+ * memory-c5-2.
+ */
+const BARE_TAG = /(?:[,;.!]|\s[-–—]+)\s*remember[.!]*$/i;
+const ABOUT_ME_NOW = /^(?:i['’]m|i\s+am|i\s+(?:prefer|like|love|hate|have|need|want|use|work|live|eat|drink|don['’]t|do\s+not|can['’]t|cannot|never|always|usually)|my|our|we['’]re|we\s+(?:are|prefer|have|like|use|live|work))\b/i;
+
 /** Filler after a comma, which says nothing to keep ("Remember the tab I had open, please"). */
 const FILLER = /^(?:please|thanks|thank\s+you|ok|okay|right|alright|yeah|yes|now|too|as\s+well|for\s+me|for\s+later)$/i;
 
@@ -446,7 +473,7 @@ export function remembersWithMore(text: string): boolean {
   if (memoryAsk(t) !== null || (/\?$/.test(t) && !POLITE.test(t))) return false;
   // "I'm vegetarian, remember that", "My wife's birthday is 12 March, don't forget" (memory-r3-2).
   const after = REMEMBER_AFTER.exec(t);
-  if (after) return statesSomething(after[1]!) && !looksLikeRequest(after[1]!);
+  if (after) return statesSomething(after[1]!) && !looksLikeRequest(after[1]!) && (!BARE_TAG.test(t) || ABOUT_ME_NOW.test(after[1]!.trim()));
   // "My wife and I prefer…" is one subject, not more after the request (memory-v4-4).
   const first = t.split(/[.!?]\s|[,;]|\s[-–—]+\s|\s(?:and|then|&)\s(?!(?:i|we)\s)/i)[0]!.trim();
   if (memoryAsk(first) === "remember") return true;

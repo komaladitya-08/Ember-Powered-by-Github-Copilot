@@ -345,7 +345,9 @@ download, so English-only MiniLM is the trade-off for now.
      forget the documents Priya sent", "remember the tests that failed", "don't forget my car keys on the table" and
      "don't forget my umbrella" say nothing to keep and get no such line (memory-r8), nor do an app's, a tool's or a
      day's name with a verb ("remember Chrome updates", "remember Monday standups"; "remember Sam drives" and, for
-     someone named for a month, "remember June drives" still do: memory-v5-6, memory-w5-6). A question ("Remember when we…?", "Remember me?"),
+     someone named for a month, "remember June drives" still do: memory-v5-6, memory-w5-6), nor does a bare ", remember"
+     tag that recalls what was shared ("We talked about this yesterday, remember", "You said it would rain, remember"):
+     only one after a fact about the user now does ("I'm vegetarian, remember", memory-c5-2). A question ("Remember when we…?", "Remember me?"),
      a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
      "Forget my previous instructions"), what isn't memory ("Clear all" and "Delete everything" without a word for
      what Ember knows; "my…" only for something about the user (`ABOUT_ME`), to the end of the request and with a
@@ -354,9 +356,12 @@ download, so English-only MiniLM is the trade-off for now.
      "saved", "kept" or "stored" after "delete", "clear" or "remove" only with "you" and about the user, never "Clear
      everything saved about me in Firefox" or "Delete what you saved about the project"; "Forget all about my last
      request"; a name only as names are written, never an app, a day, a folder or a device: "Forget Outlook", "Forget
-     Monday", "Forget HomeNet", "Forget Starbucks"; "from memory" only with "your", "Ember's" or "my" or after the
-     user's details or a name, and never a photo app's memories, so "Remove this tab from memory" and "Delete my
-     memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1; a photo
+     Monday", "Forget HomeNet", "Forget Starbucks", "Forget Ember", "Remove Photoshop from memory"; "from memory" only
+     with "your", "Ember's" or "my", after the user's details or a name, or after what only Ember's memory holds
+     ("Delete everything from memory", "Remove that from memory", "Remove what I told you from memory", "Delete my email
+     from memory", "Erase Priya's birthday from memory", "Remove where I live from memory": memory-c5-1), never "it" or
+     a thing named, and never a photo app's memories, so "Remove this tab from memory", "Remove it from memory" and
+     "Delete my memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1; a photo
      app by any capitalised name but Ember's ("…in Microsoft Photos", "…on Pinterest", "…in Immich": memory-w5-6) and
      never for "your" or "Ember's" memories, so "Delete your memories about Priya from Acme" and "Clear my memories of
      Priya in Ember" are answered in code, memory-v5-5) and a
