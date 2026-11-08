@@ -138,8 +138,8 @@ export function todayCounts(entries: readonly ActivityEntry[], now = new Date())
 
 /**
  * Today, from the same tasks Task activity lists, so the panel and the list below it always agree: how many need the
- * user, are at work, are done, didn't finish, stopped or stopped with no answer in time (a question nobody answered,
- * in its row's words: tasks-approvals-r3-1), and the steps the user allowed ("1 needs you · 1 done · 1 didn't finish ·
+ * user, are at work, are done, didn't finish, stopped or got no answer in time (a question nobody answered, in its
+ * row's words: tasks-approvals-r3-1), and the steps the user allowed ("1 needs you · 1 done · 1 didn't finish ·
  * 1 approval"). Tasks of earlier runs today are only in the audit (`audit`): counted as "earlier" when the audit has
  * more than this run's list. Only the tasks begun today count.
  */
@@ -156,7 +156,8 @@ export function todaySummary(tasks: readonly Pick<TaskEntry, "status" | "activit
     by(["done"]) ? `${by(["done"])} done` : "",
     by(["failed"]) ? `${by(["failed"])} didn't finish` : "",
     by(["stopped"]) ? `${by(["stopped"])} stopped` : "",
-    unanswered ? `${unanswered} ${STATUS_WORDS.unanswered.toLowerCase()}` : "",
+    // A count reads as a clause, as its neighbours do, in the row's own words ("2 got no answer in time"): accessibility-visual-r4-1.
+    unanswered ? `${unanswered} got ${STATUS_WORDS.unanswered.toLowerCase()}` : "",
     earlier ? `${count(earlier, "earlier task")}` : "",
     approvals ? count(approvals, "approval") : "",
   ].filter(Boolean);

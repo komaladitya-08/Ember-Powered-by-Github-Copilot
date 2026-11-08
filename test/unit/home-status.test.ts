@@ -81,10 +81,11 @@ describe("Home's status panel", () => {
     expect(todaySummary([], { tasks: 0, approvals: 0 }, NOW)).toBe("No tasks yet");
   });
 
-  it("never counts a task whose question went unanswered as one I stopped, as its row says (tasks-approvals-r3-1)", () => {
+  it("never counts a task whose question went unanswered as one I stopped, as its row says, in a count that reads as one (tasks-approvals-r3-1, accessibility-visual-r4-1)", () => {
     const unanswered: TaskEntry = { ...task("stopped"), unanswered: true };
-    expect(todaySummary([unanswered], { tasks: 0, approvals: 0 }, NOW)).toBe("1 no answer in time");
-    expect(todaySummary([unanswered, task("stopped"), { ...unanswered, id: "again" }], { tasks: 0, approvals: 0 }, NOW)).toBe("1 stopped · 2 no answer in time");
+    expect(todaySummary([unanswered], { tasks: 0, approvals: 0 }, NOW)).toBe("1 got no answer in time");
+    expect(todaySummary([unanswered, task("stopped"), { ...unanswered, id: "again" }], { tasks: 0, approvals: 0 }, NOW)).toBe("1 stopped · 2 got no answer in time");
+    expect(todaySummary([task("done", { approvals: 1 }), unanswered, { ...unanswered, id: "again" }], { tasks: 0, approvals: 0 }, NOW)).toBe("1 done · 2 got no answer in time · 1 approval");
   });
 
   it("counts today's tasks and approvals in the audit", () => {
