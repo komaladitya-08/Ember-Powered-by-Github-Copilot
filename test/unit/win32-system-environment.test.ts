@@ -9,6 +9,8 @@
 
 import { describe, expect, it } from "vitest";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
+import { inspectEnvironment } from "../../app/main/environment";
+import { HelperWatch } from "../../app/main/helper-watch";
 import type { HelperStatus } from "../../app/main/platform/types";
 import { sessionKind, win32Environment, windowsBuild, WIN32_FIX_IDS } from "../../app/main/platform/win32/system/environment";
 import {
@@ -189,6 +191,22 @@ describe("the Windows environment inputs", () => {
 
   it("reports a service session", () => {
     expect(make({ session: 0 }).e.environment({ windows: undefined }).windows.session).toBe("service");
+  });
+
+  it("puts the host's reason in the Screen reading row once the watch hears the helper can't start, so the setup check says what's wrong (reliability-performance-v5-1)", async () => {
+    const { e } = make();
+    let kept: HelperStatus | null | undefined = helper();
+    const answers: HelperStatus[] = [{ toolkitAccessibility: false, detail: "Windows PowerShell stopped before the bridge was ready (exit code 3)" }];
+    const watch = new HelperWatch({ ask: async () => { kept = answers.shift() ?? kept; }, row: () => kept, waitMs: 1000 });
+    const row = () => inspectEnvironment(e.environment({ windows: undefined, helper: kept })).checks.find(c => c.id === "accessibility");
+    await watch.again();
+    expect(row()).toMatchObject({ status: "warn", detail: "Ember's accessibility helper didn't start: Windows PowerShell stopped before the bridge was ready (exit code 3)" });
+    // Only "missing" carries it: under Constrained Language Mode the row says why in its own words.
+    kept = { toolkitAccessibility: false, detail: "Add-Type failed", languageMode: "ConstrainedLanguage" };
+    expect(e.environment({ windows: undefined, helper: kept }).windows.helperDetail).toBeUndefined();
+    // Without a reason it still says the helper didn't start.
+    expect(inspectEnvironment(e.environment({ windows: undefined, helper: { toolkitAccessibility: false } })).checks.find(c => c.id === "accessibility")?.detail)
+      .toBe("Ember's accessibility helper didn't start.");
   });
 
   it("offers the microphone settings and Unblock it, with their labels", async () => {
