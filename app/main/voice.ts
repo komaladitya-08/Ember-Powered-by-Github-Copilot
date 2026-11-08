@@ -1716,6 +1716,16 @@ export function listenOnceInSettings(s: ListenOnceStatus): ListenOnceStatus {
   return s;
 }
 
+/**
+ * Whether a question up holds Listen once back for a control (Ask's, or Home's): it does, but never that control's own
+ * Listen once under way (`own`: the voice's status, given only while the request being heard is that control's), whose
+ * Cancel listening stays (companion-r1: a question that came mid-request turned it into a dimmed Listen once that took
+ * no press, while the microphone still listened).
+ */
+export function questionHoldsListen(question: boolean, own: ListenOnceStatus | undefined): boolean {
+  return question && !(own?.phase === "starting" || own?.phase === "listening" || own?.phase === "checking");
+}
+
 /** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */
 export function downloadHelp(message: string, bytes = VOICE_MODELS_BYTES): string {
   if (/ERR_CERT_|certificate|self.signed|issuer|SSL|TLS/i.test(message)) {

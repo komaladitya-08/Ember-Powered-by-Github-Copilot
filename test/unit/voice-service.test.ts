@@ -43,7 +43,7 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { VoiceService, listenOnceInSettings, type VoiceOptions } from "../../app/main/voice";
+import { VoiceService, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
@@ -304,7 +304,23 @@ describe("VoiceService", () => {
     expect(main).not.toMatch(/Wait for Ember['’]s answer to finish\./);
     expect(main).toContain(`const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;`);
     expect(main).toMatch(/listenOnceStatus\(source\)\.phase === "ready"\) \{\s*\/\/[^\n]*\n\s*if \(agent\?\.answerOpen\) agent\.interruptAnswer\(\);/);
-    expect(main).toContain(`if (confirmer?.waiting) return blocked("Answer Ember's question first.");`);
+    expect(main).toContain(`if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return blocked("Answer Ember's question first.");`);
+  });
+
+  it("keeps Cancel listening for a Listen once under way when a task asks a question, and holds back a new one (companion-r1)", async () => {
+    // Pressed in Ask, then a question came before the request was said: the microphone still listens, so its control
+    // still says Cancel listening (it turned into a dimmed Listen once that took no press).
+    for (const phase of ["starting", "listening", "checking"] as const) expect(questionHoldsListen(true, { phase, detail: "" }), phase).toBe(false);
+    // Nothing under way from that control (or the other control's, which isn't passed): a question holds it back.
+    expect(questionHoldsListen(true, undefined)).toBe(true);
+    expect(questionHoldsListen(true, { phase: "ready", detail: "" })).toBe(true);
+    expect(questionHoldsListen(true, { phase: "blocked", detail: "The microphone is muted." })).toBe(true);
+    expect(questionHoldsListen(false, undefined)).toBe(false);
+    // Main asks the voice only for the control whose listen it is, before the question holds it back.
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    const at = (t: string) => main.indexOf(t);
+    expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeGreaterThan(0);
+    expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeLessThan(at("if (questionHoldsListen("));
   });
 
   it("says which microphone it hears through while it captures, and nothing once it doesn't (voice-listening-v2)", async () => {

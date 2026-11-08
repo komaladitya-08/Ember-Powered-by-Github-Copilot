@@ -45,7 +45,7 @@ import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFo
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { VoiceService, electronDownloader, listenOnceInSettings, voicePermissions } from "./voice";
+import { VoiceService, electronDownloader, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { capiChoice, type BackendChoice } from "../voice/runtime";
@@ -1455,7 +1455,8 @@ function start(): void {
     if (screenLock?.locked) return blocked("The screen is locked.");
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
-    if (confirmer?.waiting) return blocked("Answer Ember's question first.");
+    // A question holds it back, but not this control's own Listen once under way: its Cancel listening stays (companion-r1).
+    if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return blocked("Answer Ember's question first.");
     const now = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
     // An answer on its way: Listen once stops it first, as a wake does (requestListenOnce; voice-listening-7).
     const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;
