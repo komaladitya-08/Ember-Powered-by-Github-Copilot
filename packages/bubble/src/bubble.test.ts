@@ -439,11 +439,24 @@ describe("the bubble's hierarchy (UI audit #9)", () => {
 
   it("keeps each chord on one line with its word, also in a bubble narrowed beside the Ask box, as the corner card does (companion-r2-4)", () => {
     // Narrowed to 273 px beside the open box at Larger text, the hint broke inside a chord ("Ctrl Alt" / "N not now").
-    expect(BUBBLE_CSS).toContain(".eb-step .eb-key { white-space: nowrap; }");
+    // A chord breaks under its keycaps only where it alone is wider than the row (companion-r3-2: a Mac's four keys ran
+    // past the glass at 220 px); bubble-motion-live.test.ts measures it on every OS and text size.
+    expect(BUBBLE_CSS).toContain(".eb-step .eb-key { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; box-sizing: border-box; min-width: 0; max-width: 100%; padding-left: 1em; white-space: nowrap; }");
     // __dirname, as the source pins below: a file URL's pathname is "/D:/a/…" on Windows, which no file has.
     const src = fs.readFileSync(path.join(__dirname, "bubble.ts"), "utf8");
     const step = src.slice(src.indexOf("  setStep(text: string | null): void {"), src.indexOf("  setWhole("));
     expect(step).toMatch(/className: "eb-key" \}\);\n\s+chord\.append\(\.\.\.caps, word\);/);
+  });
+
+  it("draws the \" · \" between two chords only where they share a line, never ending or starting one (accessibility-visual-r3-2)", () => {
+    // Each chord's own, in the room before it; the list starts that room left of the row, where it is clipped.
+    expect(BUBBLE_CSS).toContain(".eb-step .eb-keys { display: flex; flex-wrap: wrap; margin-left: -1em; clip-path: inset(-4px -4px -4px 1em); }");
+    expect(BUBBLE_CSS).toContain(".eb-step .eb-key::before { content: \"·\"; position: absolute; left: 0; top: 0; width: 1em; text-align: center; }");
+    // No " · " text between the chords any more (it was left at the first line's end).
+    const src = fs.readFileSync(path.join(__dirname, "bubble.ts"), "utf8");
+    const step = src.slice(src.indexOf("  setStep(text: string | null): void {"), src.indexOf("  setWhole("));
+    expect(step).not.toContain('createTextNode(" · ")');
+    expect(step).toContain('className: "eb-keys"');
   });
 
   it("keeps a question's keys as keycaps under a note before them, on a line of its own (tasks-approvals-6)", () => {
