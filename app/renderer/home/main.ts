@@ -1131,13 +1131,15 @@ function conversationRow(e: Entry): HTMLLIElement {
     const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
     copy.setAttribute("aria-label", `Copy ${e.who === "you" ? "your message" : "Ember's answer"} from ${when}`);
     copy.addEventListener("click", () => {
-      copy.disabled = true;
+      // Answered by main: aria-disabled, not disabled, which drops the keyboard focus to the page (home-c1-3).
+      if (copy.getAttribute("aria-disabled") === "true") return;
+      copy.setAttribute("aria-disabled", "true");
       // Said on the button, where the eye is, for 2 s (as About's Copy does), and in the status line for screen readers.
       const said = (label: string) => { copy.textContent = label; setTimeout(() => { copy.textContent = "Copy"; }, 2000); };
       void window.ember.copyText(e.text).then(() => { said("Copied"); conversationComposeStatus.textContent = COMPOSER_SAYS.copied; }, () => {
         said("Couldn't copy");
         conversationComposeStatus.textContent = COMPOSER_SAYS.copyFailed;
-      }).finally(() => { copy.disabled = false; });
+      }).finally(() => { copy.removeAttribute("aria-disabled"); });
     });
     actions.append(copy);
   }
@@ -1216,7 +1218,10 @@ function renderConversation(raw: Entry[]): void {
   streamRowEl?.remove();
   restoredEnd.remove();
   const searching = !!conversationSearch.value.trim();
-  const shown = conversationShown(entries, conversationAllShown || searching);
+  // A message holding the keyboard focus (its Copy, its Edit) stays, and those after it, while the focus does (home-c1-2).
+  const focus = document.activeElement;
+  const holding = focus && focus !== list ? shownConversation[[...list.children].findIndex(li => li.contains(focus))] : undefined;
+  const shown = conversationShown(entries, conversationAllShown || searching, holding);
   const { drop, add } = conversationChange(shownConversation, shown);
   for (let i = 0; i < drop; i++) list.firstElementChild?.remove();
   list.append(...add.map(conversationRow));
@@ -1296,9 +1301,9 @@ const resetConversationView = () => {
   $("conversation-cancel-edit").hidden = true;
   newConfirm.hidden = true;
   const send = $("conversation-send") as HTMLButtonElement;
-  send.disabled = false;
+  send.removeAttribute("aria-disabled");
   send.textContent = "Send";
-  ($("conversation-stop") as HTMLButtonElement).disabled = false;
+  $("conversation-stop").removeAttribute("aria-disabled");
   conversationSendTaken = conversationTurnSeen = false;
   renderConversation([]);
 };
@@ -1345,16 +1350,18 @@ conversationSearch.addEventListener("input", () => renderConversation(conversati
 $("conversation-compose").addEventListener("submit", event => {
   event.preventDefault();
   const send = $("conversation-send") as HTMLButtonElement;
-  if (send.disabled) return;
+  // While a send is answered (aria-disabled: a disabled Send pressed from the keyboard dropped its focus, home-c1-3).
+  if (send.getAttribute("aria-disabled") === "true") return;
   const text = conversationMessage.value;
   if (!text.trim() || text.length > CONVERSATION_REQUEST_LIMIT) {
     conversationComposeStatus.textContent = text.trim() ? COMPOSER_OVER : COMPOSER_SAYS.empty;
     conversationMessage.focus();
     return;
   }
-  // A search left typed in would hide this request and its reply while the status says the reply came (home-4).
-  if (conversationSearch.value) { conversationSearch.value = ""; renderConversation(conversationAll); }
-  send.disabled = true;
+  // A search left typed in would hide this request and its reply while the status says the reply came (home-4). The
+  // messages it hid come back above the composer: it is kept in view with them (home-r1).
+  if (conversationSearch.value) keepingComposer(() => { conversationSearch.value = ""; renderConversation(conversationAll); });
+  send.setAttribute("aria-disabled", "true");
   send.textContent = "Sending…";
   // Only main's word of this request's turn ends the wait: not a turn under way before it (home-c1-1).
   conversationSendTaken = false;
@@ -1386,7 +1393,7 @@ $("conversation-compose").addEventListener("submit", event => {
     if (generation !== conversationGeneration) return;
     awaitingReply(false);
     conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed;
-  }).finally(() => { if (generation === conversationGeneration) { send.disabled = false; send.textContent = "Send"; } });
+  }).finally(() => { if (generation === conversationGeneration) { send.removeAttribute("aria-disabled"); send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
   conversationMessage.value = conversationDraftBeforeEdit ?? "";
@@ -1421,16 +1428,18 @@ conversationMessage.addEventListener("keydown", event => {
   }
 });
 $("conversation-stop").addEventListener("click", () => {
-  const stop = $("conversation-stop") as HTMLButtonElement;
+  const stop = $("conversation-stop");
   const generation = conversationGeneration;
-  stop.disabled = true;
+  // Pressed again while main answers: nothing more (aria-disabled keeps the keyboard focus here: home-c1-3).
+  if (stop.getAttribute("aria-disabled") === "true") return;
+  stop.setAttribute("aria-disabled", "true");
   void window.ember.conversationStop().then(stopped => {
     if (generation !== conversationGeneration) return;
     awaitingReply(false);
     // (An older main answers nothing: as before, taken as stopped.)
     conversationComposeStatus.textContent = stopped === false ? CONVERSATION_NOTHING_TO_STOP : CONVERSATION_STOPPED;
   }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = COMPOSER_SAYS.stopFailed; })
-    .finally(() => { if (generation === conversationGeneration) stop.disabled = false; });
+    .finally(() => { if (generation === conversationGeneration) stop.removeAttribute("aria-disabled"); });
 });
 
 // ───── Memory (docs/MEMORY.md): kept between runs, only once the user turns it on and agrees to its note ─────

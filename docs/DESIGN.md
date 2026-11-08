@@ -314,7 +314,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   (**Keep my recent conversation**) show their day beside their time, and a quiet line under the last of them says
   they are for reading and Ember starts afresh below. Edit only fills the composer; a fresh Send is required. Home sends
   no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer, its
-  buttons and the line under them in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. **Read the last
+  buttons and the line under them in view (also as a search cleared by Send brings the hidden messages back); nothing
+  scrolls for someone reading elsewhere, or who scrolled away from it. A message whose Copy or Edit has the keyboard
+  focus stays on the page, with those after it, while newer ones come, and Send, Stop response and Copy keep the focus
+  while main answers them (`aria-disabled`, never `disabled`, which drops it to the page). **Read the last
   answer** and a long answer's **Open conversation** open it at the newest answer, focused, from its top (once the
   messages have come, when Home opens for it). Stop response cancels
   the current answer (or says there was nothing to stop, and the bubble keeps what it showed); Stop everything also

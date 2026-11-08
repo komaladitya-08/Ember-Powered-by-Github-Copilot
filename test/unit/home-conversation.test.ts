@@ -51,6 +51,17 @@ describe("Home's conversation", () => {
     expect(earlierLabel(39)).toBe("Show 39 earlier messages");
   });
 
+  it("keeps showing a message that holds the keyboard focus, and those after it, as newer ones come (home-c1-2)", () => {
+    // Its Copy focused on the oldest shown: two more messages come, and it stays (with every one after it).
+    expect(conversationShown(range(0, 8), false, msg(2))).toEqual(range(2, 8));
+    // Among the latest few anyway: the latest few, as always.
+    expect(conversationShown(range(0, 8), false, msg(5))).toEqual(range(2, 8));
+    expect(conversationShown(range(0, 10), false, msg(7))).toEqual(range(4, 10));
+    // Gone from the conversation (main's 60 entries moved past it), or every message shown: as before.
+    expect(conversationShown(range(5, 15), false, msg(1))).toEqual(range(9, 15));
+    expect(conversationShown(range(0, 8), true, msg(2))).toEqual(range(0, 8));
+  });
+
   it("adds a new message in place and takes the oldest shown off the top, also once main's 60 entries are full", () => {
     // A growing conversation: nothing goes, the new one is added.
     expect(conversationChange(range(0, 10), range(0, 11))).toEqual({ drop: 0, add: [msg(10)] });

@@ -19,7 +19,7 @@ declare global {
       resolveInitial(): void;
     };
     /** The journeys' preload (home() below): what Home asked main for, and main's events. */
-    __home: { sent: string[]; stops: number; news: number; copied: string[]; stopResult: boolean; sendResult: string | undefined; emit(name: string, value: unknown): void };
+    __home: { sent: string[]; stops: number; news: number; copied: string[]; stopResult: boolean; sendResult: string | undefined; hold: boolean; release(): void; emit(name: string, value: unknown): void };
   }
 }
 
@@ -246,14 +246,17 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     await page.addInitScript(entries => {
       const listeners: Record<string, Set<(value: unknown) => void>> = {};
       const emit = (name: string, value: unknown) => { for (const listener of listeners[name] ?? []) listener(value); };
-      const h = window.__home = { sent: [] as string[], stops: 0, news: 0, copied: [] as string[], stopResult: true, sendResult: undefined as string | undefined, emit };
+      // `hold`: Stop response and Copy wait for release() before main answers them.
+      let held: (() => void)[] = [];
+      const wait = () => h.hold ? new Promise<void>(resolve => { held.push(resolve); }) : Promise.resolve();
+      const h = window.__home = { sent: [] as string[], stops: 0, news: 0, copied: [] as string[], stopResult: true, sendResult: undefined as string | undefined, hold: false, release: () => { for (const r of held) r(); held = []; }, emit };
       window.ember = new Proxy({}, { get: (_target, name: string) => {
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= new Set()).add(fn); return () => { listeners[name]?.delete(fn); }; };
         if (name === "conversation") return async () => entries;
-        if (name === "conversationSend") return async (text: string) => { h.sent.push(text); return h.sendResult; };
-        if (name === "conversationStop") return async () => { h.stops++; return h.stopResult; };
+        if (name === "conversationSend") return async (text: string) => { h.sent.push(text); await wait(); return h.sendResult; };
+        if (name === "conversationStop") return async () => { h.stops++; await wait(); return h.stopResult; };
         if (name === "conversationNew") return async () => { h.news++; emit("onConversation", []); };
-        if (name === "copyText") return async (text: string) => { h.copied.push(text); };
+        if (name === "copyText") return async (text: string) => { h.copied.push(text); await wait(); };
         if (name === "reminders") return async () => [];
         if (name === "historyProblem") return async () => null;
         return () => new Promise(() => undefined);
@@ -379,6 +382,88 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       expect(await page.locator("#conversation-search-status").innerText()).toBe("");
       expect(await page.locator("#conversation > li:visible p").allInnerTexts()).toEqual([seed[0].text, seed[1].text, "Thanks, now open my calendar", expect.stringMatching(/^word0 word1/)]);
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps the composer, its Send and the new exchange in view after sending with a search left typed in, at 760×640 (home-r1)", async () => {
+    const seed = exchange(12);
+    const { page, errors } = await home(seed);
+    try {
+      await page.locator("#conversation-search").fill("number 10");
+      await expect.poll(() => page.locator("#conversation > li:visible").count()).toBe(1);
+      await page.locator("#conversation-message").click();
+      await page.keyboard.type("And the one after?");
+      expect((await rect(page, "#conversation-send")).bottom).toBeLessThanOrEqual(640);
+      await page.keyboard.press("Control+Enter");
+      await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual(["And the one after?"]);
+      expect(await page.locator("#conversation-search").inputValue()).toBe("");
+      await reply(page, seed, "And the one after?", 5);
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-message");
+      const send = await rect(page, "#conversation-send");
+      expect(send.top).toBeGreaterThanOrEqual(0);
+      expect(send.bottom).toBeLessThanOrEqual(send.height);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps a message holding the keyboard focus on the page while newer ones come, so its Copy keeps the focus (home-c1-2)", async () => {
+    const seed = exchange(6);
+    const { page, errors } = await home(seed);
+    try {
+      const texts = () => page.locator("#conversation > li p").allInnerTexts();
+      // The oldest answer shown, its Copy focused from the keyboard (to copy it, or read it again).
+      const copy = page.locator("#conversation > li.ember").first().getByRole("button", { name: /Copy/ });
+      await copy.focus();
+      const more = [...seed, ...exchange(2, 6)];
+      await page.evaluate(e => window.__home.emit("onConversation", e), more);
+      expect(await page.evaluate(() => document.activeElement?.closest("li")?.querySelector("p")?.textContent)).toBe(seed[1].text);
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Copy");
+      expect((await texts())[0]).toBe(seed[1].text);
+      expect(await page.locator("#conversation-earlier").innerText()).toBe("Show 1 earlier message");
+      // Once the focus has gone, the next change shows the latest few again.
+      await page.locator("#conversation-message").focus();
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...more, ...exchange(2, 8)]);
+      await expect.poll(() => page.locator("#conversation > li").count()).toBe(6);
+      expect((await texts())[0]).toBe("Question number 4");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps the keyboard focus on Send, Stop response and a message's Copy while main answers them (home-c1-3)", async () => {
+    const { page, errors } = await home(exchange(2));
+    try {
+      await page.evaluate(() => { window.__home.hold = true; });
+      const settle = () => page.evaluate(() => new Promise<void>(resolve => { document.body.getBoundingClientRect(); requestAnimationFrame(() => requestAnimationFrame(() => resolve())); }));
+      await page.locator("#conversation-stop").focus();
+      await page.keyboard.press("Enter");
+      await settle();
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-stop");
+      // A second press while the first is answered sends nothing more.
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => window.__home.stops)).toBe(1);
+      await page.evaluate(() => window.__home.release());
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-stop");
+      const copy = page.locator("#conversation li.ember").getByRole("button", { name: /Copy Ember's answer/ });
+      await copy.focus();
+      await page.keyboard.press("Enter");
+      await settle();
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toMatch(/^Copy Ember's answer/);
+      await page.evaluate(() => window.__home.release());
+      await expect.poll(() => copy.innerText()).toBe("Copied");
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toMatch(/^Copy Ember's answer/);
+      expect(await page.evaluate(() => window.__home.copied)).toHaveLength(1);
+      // Send pressed from the keyboard: the focus stays on it while it says "Sending…", and a second press sends nothing.
+      await page.locator("#conversation-message").fill("What's next?");
+      await page.locator("#conversation-send").focus();
+      await page.keyboard.press("Enter");
+      await settle();
+      expect(await page.evaluate(() => [document.activeElement?.id, document.activeElement?.textContent])).toEqual(["conversation-send", "Sending…"]);
+      await page.keyboard.press("Enter");
+      await page.evaluate(() => window.__home.release());
+      await expect.poll(() => page.locator("#conversation-send").innerText()).toBe("Send");
+      expect(await page.evaluate(() => [window.__home.sent, document.activeElement?.id])).toEqual([["What's next?"], "conversation-send"]);
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);

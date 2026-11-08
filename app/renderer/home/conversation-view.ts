@@ -18,9 +18,17 @@ export interface Said { t: string; who: string; text: string; truncated?: boolea
 
 const same = (a: Said, b: Said) => a.t === b.t && a.who === b.who && a.text === b.text && !!a.truncated === !!b.truncated && !!a.stopped === !!b.stopped;
 
-/** The messages shown: the latest CONVERSATION_SHOWN, or every one once the earlier ones were asked for. */
-export function conversationShown<T extends Said>(entries: readonly T[], all: boolean): T[] {
-  return all ? [...entries] : entries.slice(-CONVERSATION_SHOWN);
+/**
+ * The messages shown: the latest CONVERSATION_SHOWN, or every one once the earlier ones were asked for. `keep`: a message
+ * shown now that holds the keyboard focus (its Copy or Edit), shown still with all after it though newer ones came, so
+ * the focus and a screen reader's place don't drop to the page (home-c1-2: with six shown, every exchange after the third).
+ */
+export function conversationShown<T extends Said>(entries: readonly T[], all: boolean, keep?: Said): T[] {
+  if (all) return [...entries];
+  const from = Math.max(0, entries.length - CONVERSATION_SHOWN);
+  let k = -1;
+  if (keep) for (let i = entries.length - 1; i >= 0 && k < 0; i--) if (same(entries[i], keep)) k = i;
+  return entries.slice(k >= 0 && k < from ? k : from);
 }
 
 /**
