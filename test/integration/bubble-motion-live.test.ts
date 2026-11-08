@@ -182,6 +182,8 @@ function axHints(): string[] {
     chips: chips(),
     keyHints: keyHints(),
     axHints: axHints(),
+    // Ember's own font, loaded: the key hints are measured in it, not in a fallback a runner happens to have.
+    emberSans: [...document.fonts].some(f => f.family.replace(/"/g, "") === "Ember Sans" && f.status === "loaded"),
   };
   (window as unknown as { done: unknown }).done = result;
 };
@@ -239,6 +241,8 @@ type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext"
   keyHints: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[];
   /** What a screen reader reads of each hint left in the page (by its host's id). */
   axHints: Record<string, string | null>;
+  /** Whether the bundled "Ember Sans" (Inter) had loaded when the hints were measured. */
+  emberSans: boolean;
 };
 
 /** How far a sample is from at rest: its scale's distance from 1, its translate in px. */
@@ -264,9 +268,14 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
       stdin: { contents: PAGE, loader: "ts", resolveDir: root, sourcefile: "bubble-motion-page.ts" },
       bundle: true, platform: "browser", format: "iife", target: "chrome120", outfile: path.join(dir, "page.js"), logLevel: "silent",
     });
-    // The page as Ember's overlay has it: the shared design system, then the bubble's own CSS (it adds it itself).
-    fs.copyFileSync(path.join(root, "app", "renderer", "shared", "ember.css"), path.join(dir, "ember.css"));
-    fs.writeFileSync(path.join(dir, "page.html"), `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="ember.css"><style>html,body{margin:0;background:transparent}</style></head><body><script src="page.js"></script></body></html>`);
+    // The page as Ember's overlay has it: the shared design system, then the bubble's own CSS (it adds it itself), and
+    // the bundled font beside it as in dist/app/renderer (ember.css loads ../fonts/). Without it the page fell back to
+    // whatever sans-serif the runner has: Inter here, wider DejaVu Sans on CI's Ubuntu, where a Windows key hint that
+    // fits the bubble in Ember's own font wrapped.
+    fs.mkdirSync(path.join(dir, "shared"), { recursive: true });
+    fs.copyFileSync(path.join(root, "app", "renderer", "shared", "ember.css"), path.join(dir, "shared", "ember.css"));
+    fs.cpSync(path.join(root, "assets", "fonts"), path.join(dir, "fonts"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "page.html"), `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="shared/ember.css"><style>html,body{margin:0;background:transparent}</style></head><body><script src="page.js"></script></body></html>`);
     fs.writeFileSync(path.join(dir, "main.cjs"), MAIN);
     fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "ember-bubble-motion-test", main: "main.cjs" }));
     const env: NodeJS.ProcessEnv = { ...process.env, DISPLAY: display, ELECTRON_ENABLE_LOGGING: "0" };
@@ -315,6 +324,8 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
   });
 
   it("keeps a question's key hint inside a narrowed bubble on every OS and text size, with no \" · \" ending or starting a line (companion-r3-2, accessibility-visual-r3-2, accessibility-visual-c3-1, companion-v4-2)", () => {
+    // Measured in the bubble's own font: a runner's wider fallback wrapped a Windows hint that fits (CI's Ubuntu).
+    expect(result.emberSans).toBe(true);
     const all = result.keyHints;
     expect(all.length).toBe(24);
     for (const k of all) {
