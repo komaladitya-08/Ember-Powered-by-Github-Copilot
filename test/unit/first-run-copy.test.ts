@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
-import { tagline } from "../../app/renderer/home/copy";
+import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, pressOnStep, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { retryMessage, tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
+import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
+import { explainSignInError, explainStartError, runtimeWords, START_TIMEOUT_DETAIL } from "../../app/main/agent/host";
+import { PROVIDER_BAD_REQUEST } from "../../app/main/provider-ipc";
+import { cliTimedOutMessage } from "../../app/main/agent/github-app";
+import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 
 describe("first run: own provider offer (FE #2)", () => {
   const base = { bridge: true, managedProvider: false, locked: false, userProviderOff: false };
@@ -197,5 +203,130 @@ describe("first run: a failed check of new details for a provider in use (first-
     expect(providerFailField({ why: "b.example didn't accept the API key. Check it, or replace it." })).toBe("key");
     expect(providerFailField({ why: "b.example needs an API key." })).toBe("key");
     expect(providerFailField({ why: "Ember can't keep the key safely here: this computer has no keyring for passwords." })).toBe("key");
+  });
+});
+
+describe("first run says main's connection words as mine, on every visit (first-run-r4-2)", () => {
+  // main's own sentences (shared with Models & connections, which speaks of Ember), as the steps receive them.
+  const agreed = (baseUrl: string, host: string) => ({ ...DEFAULT_SETTINGS.provider, on: true, baseUrl, consent: { version: FEATURE_CONSENT_VERSION.provider, at: "2026-11-08T12:00:00Z", host } });
+  const failing = (err: Error) => async () => { throw err; };
+  const refused = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  it("says a failed check of the provider's details as mine, on a first visit as after a failed edit of the one in use", async () => {
+    const down = await testConnection(agreed("http://127.0.0.1:18397/v1", "127.0.0.1:18397"), null, failing(refused));
+    expect(providerCheckLine(down)).toBe("I can't reach 127.0.0.1:18397. Check the address and the network.");
+    expect(providerKeptLine(providerCheckLine(down), "127.0.0.1:18300")).toBe("I can't reach 127.0.0.1:18397. Check the address and the network. Nothing has changed: I'm still using 127.0.0.1:18300.");
+    const moved = await testConnection(agreed("https://b.example/v1", "b.example"), null, failing(new TypeError("fetch failed: redirect mode is set to error")));
+    expect(providerCheckLine(moved)).toBe("b.example sent me to another address. Enter the address it moved to.");
+    const cert = await testConnection(agreed("https://b.example/v1", "b.example"), null, failing(new Error("self signed certificate in certificate chain")));
+    expect(providerCheckLine(cert)).toBe("I can't verify b.example's certificate.");
+    expect(providerCheckLine({ ok: false, why: KEY_NO_KEYRING })).toBe("I can't keep the key safely here: this computer has no keyring for passwords, so the key would be saved as plain text. Set up a keyring (GNOME Keyring or KWallet), then try again.");
+    expect(providerCheckLine({ ok: false, why: KEY_WRITE_FAILED })).toBe("I couldn't save the key: my data folder can't be written. Try again.");
+    expect(providerCheckLine({ ok: false, why: PROVIDER_MANAGED })).toBe("Your organisation decides which model service I use.");
+    expect(providerCheckLine({ ok: false, why: PROVIDER_NO_CONSENT })).toBe("Finish setting me up first.");
+    expect(providerCheckLine({ ok: false, why: providerNotAgreed("b.example") })).toBe("Agree to the note above first: I send nothing to b.example until you do.");
+  });
+  it("says why the provider in use can't connect as mine, under “I'm using the model provider you set up”", () => {
+    const down = { ok: false as const, why: "Ember can't reach 127.0.0.1:18397. Check the address and the network.", cause: "refused" as const };
+    expect(providerInUseLine({ host: "127.0.0.1:18397", phase: "error", detail: providerDown(down, "127.0.0.1:18397", true)! })).toEqual({ line: "I can't reach the model server on this computer (127.0.0.1:18397). Start it, and I'll connect in a moment.", tone: "error" });
+    expect(providerInUseLine({ host: "api.example.com", phase: "error", detail: providerDown({ ...down, cause: "unreachable" }, "api.example.com", false)! }).line).toBe("I can't reach api.example.com. Check the address and the network: I'll try again in a moment.");
+    expect(providerInUseLine({ host: "api.example.com", phase: "error", detail: providerDown({ ok: false, why: "api.example.com didn't answer within 10 seconds.", cause: "timeout" }, "api.example.com", false)! }).line).toBe("api.example.com didn't answer within 10 seconds. I'll try again in a moment.");
+  });
+  it("says the sign-in step's connection words as mine too, leaving Ember's name where it names the app", () => {
+    expect(inMyVoice(START_TIMEOUT_DETAIL)).toBe("Copilot isn't answering. I'll try again in a moment.");
+    expect(inMyVoice(explainStartError(new Error("net::ERR_INTERNET_DISCONNECTED")))).toBe("I can't reach GitHub right now. I'll try again when the network is back.");
+    expect(inMyVoice(explainStartError(new Error("503 Service Unavailable")))).toBe("Copilot had a problem on its side while I connected. I'll try again in a moment.");
+    expect(inMyVoice(explainStartError(new Error("client not connected")))).toBe("My Copilot runtime stopped while connecting. Press Check again.");
+    expect(inMyVoice(explainStartError(new Error("401 Unauthorized"), { proxy: { url: "http://proxy.corp:3128" } }))).toBe("Copilot didn't accept the GitHub sign-in I found. It may have expired, or this account may not have Copilot. Sign in again. I sent Copilot through your system proxy (http://proxy.corp:3128); if that proxy needs its own sign-in, set HTTPS_PROXY for Ember with it.");
+    expect(inMyVoice(explainSignInError(new Error("getaddrinfo ENOTFOUND github.com")))).toBe("I can't reach GitHub right now. Check the network, then sign in again.");
+    expect(inMyVoice(explainStartError(new Error("unable to verify the first certificate")))).toBe("I can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember.");
+    expect(inMyVoice(cliTimedOutMessage("linux", true))).toMatch(/^I didn't see a new GitHub sign-in\. /);
+    expect(inMyVoice("Your model service refused the request. Check its API key in Ember's settings (Ctrl+Alt+E).")).toBe("Your model service refused the request. Check its API key in Ember's settings (Ctrl+Alt+E).");
+    expect(inMyVoice("GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date.")).toBe("GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date.");
+    expect(inMyVoice("Your organisation doesn't allow Ember to connect to build-01.")).toBe("Your organisation doesn't allow Ember to connect to build-01.");
+    // Said once: a line already in my voice stays as it is.
+    for (const s of ["I can't reach GitHub right now. I'll try again when the network is back.", "Connected to your own provider (127.0.0.1:11434)."]) expect(inMyVoice(s)).toBe(s);
+  });
+  it("says what main's sentence calls Ember's as mine once it says Ember as I: my saved sign-in, my files, what I know (first-run-v5-1)", () => {
+    // main's own calls: the sign-in it used (host.ts passes its source, and the variable's name, every time).
+    const refused = (source: string, sourceName?: string) => inMyVoice(explainStartError(new Error("not authenticated"), { source, sourceName }));
+    expect(refused("stored")).toBe("Copilot didn't accept the GitHub sign-in I found (my saved sign-in). It may have expired, or this account may not have Copilot. Sign in again.");
+    expect(refused("environment")).toBe("Copilot didn't accept the GitHub sign-in I found (a token from the environment). It may have expired, or this account may not have Copilot. Sign in again.");
+    // The environment Ember runs in is named as the app's, as "set HTTPS_PROXY for Ember" is.
+    expect(refused("environment", "COPILOT_GITHUB_TOKEN")).toBe("Copilot didn't accept the GitHub token in COPILOT_GITHUB_TOKEN (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove COPILOT_GITHUB_TOKEN, then restart me; or run “gh auth login” in a terminal and press Check again.");
+    expect(inMyVoice(retryMessage({ found: true, source: "stored" }))).toBe("Found my saved sign-in; connecting…");
+    // A file error that names no file.
+    expect(inMyVoice(explainStartError(new Error("EACCES: permission denied, mkdir")))).toBe("I'm not allowed to use one of my files. Check that its folder belongs to you, then press Check again.");
+    expect(inMyVoice(explainStartError(new Error("ENOENT: no such file or directory")))).toBe("I couldn't find one of my files. Press Check again; if it keeps happening, restart me.");
+    expect(inMyVoice(explainStartError(new Error("ENOSPC: no space left on device, write")))).toBe("I couldn't save one of my files: the disk (or your storage quota) is full. Free some space, then press Check again.");
+    expect(inMyVoice(explainStartError(new Error("EBUSY: resource busy or locked")))).toBe("One of my files is in use by another program. Close it, then press Check again.");
+    expect(inMyVoice(explainStartError(new Error("EACCES: permission denied, open '/home/u/.config/ember/a.json'")))).toBe("I'm not allowed to use /home/u/.config/ember/a.json. Check that its folder belongs to you, then press Check again.");
+    expect(providerCheckLine({ ok: false, why: PROVIDER_BAD_REQUEST })).toBe("I couldn't do that: the request wasn't one I know.");
+  });
+  it("says my model connection for the own provider's and the organisation's runtime words, under the first-person lead (first-run-v5-2)", () => {
+    const own = runtimeWords("user");
+    const line = (detail: string) => providerInUseLine({ host: "localhost:11434", phase: "error", detail }).line;
+    expect(line(own.stopped)).toBe("My model connection stopped unexpectedly. Reconnecting…");
+    // The provider step has no Check again: it says the way to the sign-in step's Try again (first-run-w5-2).
+    expect(line(own.keepsStopping)).toBe("My model connection keeps stopping. Go back and press Try again, or restart me.");
+    expect(line(own.noWatchersWhy)).toBe("My model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.");
+    expect(inMyVoice(runtimeWords(true).keepsStopping)).toBe("My model connection keeps stopping. Press Check again to retry, or restart me.");
+    // A cut-off task's words are main's own, in my voice already: only ever a task's outcome (first-run-w5-1).
+    expect(own.cutOff).toBe("My model connection stopped unexpectedly; the task didn't finish.");
+    expect(inMyVoice(own.cutOff)).toBe(own.cutOff);
+    // Said once: welcome.ts says the status' detail as mine, and the line says it again.
+    expect(line(inMyVoice(own.keepsStopping))).toBe(line(own.keepsStopping));
+  });
+});
+
+describe("first run's lines name only a button the step shows (first-run-w5-2)", () => {
+  const files = ["EACCES: permission denied, mkdir", "ENOENT: no such file or directory", "ENOSPC: no space left on device, write", "EBUSY: resource busy or locked", "EROFS: read-only file system, open '/home/u/.config/ember/a.json'"].map(m => inMyVoice(explainStartError(new Error(m))));
+  it("says the sign-in step's Try again for main's Check again, which the step shows only for the GitHub CLI", () => {
+    const tried = (line: string) => signInWays({ line, checkAgain: false, primary: "retry", others: ["own-provider"] });
+    expect(files.map(l => tried(l).line)).toEqual([
+      "I'm not allowed to use one of my files. Check that its folder belongs to you, then press Try again.",
+      "I couldn't find one of my files. Press Try again; if it keeps happening, restart me.",
+      "I couldn't save one of my files: the disk (or your storage quota) is full. Free some space, then press Try again.",
+      "One of my files is in use by another program. Close it, then press Try again.",
+      "I couldn't save /home/u/.config/ember/a.json: the disk is read-only. Ask IT to check Ember's data folder, then press Try again.",
+    ]);
+    // Try again leads already: nothing is added beside it.
+    expect(tried(files[1]).others).toEqual(["own-provider"]);
+    for (const service of ["user", true, false] as const) expect(tried(inMyVoice(runtimeWords(service).keepsStopping)).line).toMatch(/^(My model connection|Copilot) keeps stopping\. Press Try again, or restart me\.$/);
+    expect(tried(inMyVoice("Ember's Copilot runtime stopped while connecting. Press Check again.")).line).toBe("My Copilot runtime stopped while connecting. Press Try again.");
+    // The GitHub CLI's Check again is shown: the line says it as main does.
+    for (const l of files) expect(signInWays({ line: l, checkAgain: true, primary: "retry", others: [] })).toEqual({ line: l, others: [] });
+  });
+  it("shows Try again when the line asks to check again and nothing on the step does it: a refused token, my organisation's service", () => {
+    const token = inMyVoice(explainStartError(new Error("not authenticated"), { source: "environment", sourceName: "COPILOT_GITHUB_TOKEN" }));
+    expect(signInWays({ line: token, checkAgain: false, primary: "sign-in", others: ["own-provider"] })).toEqual({
+      line: "Copilot didn't accept the GitHub token in COPILOT_GITHUB_TOKEN (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove COPILOT_GITHUB_TOKEN, then restart me; or run “gh auth login” in a terminal and press Try again.",
+      others: ["own-provider", "retry"],
+    });
+    expect(signInWays({ line: inMyVoice(runtimeWords(true).keepsStopping), checkAgain: false, primary: "continue", others: [] }).others).toEqual(["retry"]);
+    // A line that asks for no check adds nothing; Try again already among the others isn't added twice.
+    expect(signInWays({ line: "Signed in as octo.", checkAgain: false, primary: "sign-in", others: ["own-provider"] })).toEqual({ line: "Signed in as octo.", others: ["own-provider"] });
+    expect(signInWays({ line: files[0], checkAgain: false, primary: "provider", others: ["retry"] }).others).toEqual(["retry"]);
+  });
+  it("leaves Models & connections' own Check again as it is, and says the way back on the provider step", () => {
+    const gaveUp = "My model connection stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.";
+    expect(pressOnStep(gaveUp, "try-again")).toBe(gaveUp);
+    expect(pressOnStep(files[0], "go-back")).toBe("I'm not allowed to use one of my files. Check that its folder belongs to you, then go back and press Try again.");
+    expect(pressOnStep(files[1], "go-back")).toBe("I couldn't find one of my files. Go back and press Try again; if it keeps happening, restart me.");
+    expect(pressOnStep(files[1], "check-again")).toBe(files[1]);
+  });
+});
+
+describe("first run: the provider step's key field and its waiting reason", () => {
+  it("says a key is saved only for the address it was saved for, as main's state says it now (first-run follow-up: key placeholder)", () => {
+    expect(keyPlaceholder({ keySaved: true, keyHost: "api.example.com", host: "api.example.com" })).toBe("A key is saved. Paste a new one to replace it");
+    // Another address typed: the saved key never goes there, so it asks for that address's own.
+    expect(keyPlaceholder({ keySaved: true, keyHost: "api.example.com", host: "api2.example.com" })).toBe("Paste your key");
+    expect(keyPlaceholder({ keySaved: true, keyHost: "api.example.com", host: null })).toBe("Paste your key");
+    expect(keyPlaceholder({ keySaved: false, keyHost: "api.example.com", host: "api.example.com" })).toBe("Paste your key");
+  });
+  it("gives the waiting button a short reason of its own beside the no-keyring line, not that line again (first-run follow-up: w-why)", () => {
+    expect(PROVIDER_STEP.noKeyringWhy).toBe("I can't keep a key safely on this computer.");
+    expect(PROVIDER_STEP.noKeyring).not.toBe(PROVIDER_STEP.noKeyringWhy);
+    expect(PROVIDER_STEP.noKeyring.length).toBeGreaterThan(2 * PROVIDER_STEP.noKeyringWhy.length);
   });
 });

@@ -508,6 +508,45 @@ describe("restingGap: how often a face at rest is drawn (rp-4)", () => {
     // Its clock keeps real time: blinks, the breath and falling asleep keep their pace.
     expect(now.seconds).toBeCloseTo(120, 0);
   });
+
+  it("draws an idle glance at the resting rate once its eyes are there, and still brings them back on time (rp-4)", () => {
+    seeded(5);
+    const rig = resting();
+    type Glance = { kind: string; age: number; dur: number; dir?: { x: number; y: number } };
+    const glance = () => { const f = (rig as unknown as { fidget: Glance | null }).fidget; return f?.kind === "glance" ? f : null; };
+    let glances = 0, during = 0, held = 0, latest = 0, endsAt = 0, wasGlancing = false, last = 0, planned = 0, at = 0;
+    // The overlay's pacing (brisk at once, gentle every 22 ms, still restingGap's), its eyes on a still pointer.
+    while (at < 120_000) {
+      const now = Math.ceil(at / (1000 / 60)) * (1000 / 60);
+      const dt = frameSeconds(now - last, planned);
+      last = now;
+      rig.lookAt(0.3, 0.2);
+      const pose = rig.update(dt);
+      const g = glance();
+      if (g) {
+        during++;
+        if (!wasGlancing) glances++;
+        endsAt = now + (g.dur - g.age) * 1000;
+        if (rig.motion === "still") {
+          held++;
+          // Held only once the eyes are where it looks, and never taken for a face a page may stop drawing.
+          expect(Math.hypot(pose.look.x - g.dir!.x, pose.look.y - g.dir!.y)).toBeLessThan(0.02);
+          expect(rig.settled).toBe(false);
+        }
+      } else if (wasGlancing) latest = Math.max(latest, now - endsAt);
+      wasGlancing = !!g;
+      const m = rig.motion;
+      const rest = m !== "still" ? 0 : restingGap(rig, 55);
+      planned = rest > 55 ? rest : 0;
+      at = now + (m === "brisk" ? 0 : m === "gentle" ? 22 : rest) + 1;
+    }
+    expect(glances).toBeGreaterThanOrEqual(4);
+    expect(held).toBeGreaterThan(0);
+    // 39 drawings for each 1.2 s glance before, all at the lively rate or faster; 21 now.
+    expect(during / glances).toBeLessThan(25);
+    // The eyes come back no more than a resting page's own gap (55 ms) and a display frame after the glance ends.
+    expect(latest).toBeLessThan(75);
+  });
 });
 
 describe("frameSeconds", () => {

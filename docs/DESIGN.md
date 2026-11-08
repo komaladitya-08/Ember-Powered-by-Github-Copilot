@@ -47,9 +47,12 @@ They share one emotion rig, so switching never changes behaviour.
     the blinks and the first minute's fidgets drawn at their own rate, the overlay and the handle still draw 11–16
     times a second awake at rest (the pointer moves often enough to keep Ember there). The eyes count as still once
     less than a tenth of a pixel of their travel is left (`LOOK_STILL`), which saves the handle, whose eyes wander
-    because the pointer isn't over it, about a tenth of its drawings (14.7 to 13.6 a second); while Home sits behind the
-    window you are working in, its still faces aren't drawn at all until it takes the focus, the pointer comes over
-    it or something changes (`homeFrameGap`);
+    because the pointer isn't over it, about a tenth of its drawings (14.7 to 13.6 a second). An idle glance holds its
+    look once the eyes are there, so the rest of its 1.2 s is drawn at the resting rate too, waking as it ends for the
+    eyes to come back (39 drawings a glance to 21; the overlay 13.2–14.1 a second to 10.6–11.5, the whole tree 7.6–8.3 %
+    of a core to 6.0–6.8 %); while Home sits behind the window you are working in, its still faces aren't drawn at all
+    until it takes the focus, the pointer comes over it or something changes (`homeFrameGap`; a glance held there is
+    drawn on, so its eyes come back);
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
     something happens (it drew every 110 ms);
   - while a question is up, the idle float stops and the body's springs settle without wobbling;
@@ -527,10 +530,20 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
 - **First run's connection** (FE #2–#6; first-run-copy.ts, welcome.ts). The sign-in step offers “Use my own provider”
   beside GitHub's sign-in (hidden, with its reason, when the organisation fixes or forbids a provider of the user's own),
   which opens an optional detour (same position, “Step 3 of 6”): the provider's type, address, API key (not needed for
-  a model server on this computer, also where there is no keyring) and model names,
+  a model server on this computer, also where there is no keyring, when the button waits with “I can't keep a key
+  safely on this computer.” beside it; its field says a key is saved only while the address typed is the one it was
+  saved for) and model names,
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  Main's words for a check or a connection (written for Models & connections, which speaks of Ember) are said in first
+  run's own voice on every visit, on the sign-in step too: “I can't reach <host>…”, “…and I'll connect in a moment.”
+  (`inMyVoice`, first-run-r4-2), and what they call Ember's comes along: “…the GitHub sign-in I found (my saved
+  sign-in)”, “I couldn't find one of my files”, “My model connection keeps stopping…” (first-run-v5-1, v5-2). Their
+  “press Check again” is Home's button: the sign-in step says its own, “…then press Try again.”, and shows Try again
+  wherever nothing else on it does that check (a refused token, the organisation's service), keeping Check again only
+  where the GitHub CLI's button is shown; the in-use provider step, which has neither, says “Go back and press Try
+  again” (`signInWays`, `pressOnStep`, first-run-w5-2).
   A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
   provider or a different GitHub account, never the same sign-in. A failure of the user's own provider leads with
   “Check my provider's details” (or Try again for the network), with no GitHub account, sign-in or Copilot words, in

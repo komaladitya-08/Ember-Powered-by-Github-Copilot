@@ -161,9 +161,10 @@ export function helperStatusOfError(err: unknown): HelperStatus | null {
  * The shared host's `status` answer as main keeps it (EnvContext.helper). The host is another process, so its answer
  * is data: only fields of the expected type are kept, and toolkitAccessibility is null when it isn't a boolean.
  */
-export function toHelperStatus(s: { toolkitAccessibility?: unknown; detail?: unknown; languageMode?: unknown; dpi?: unknown; processDpi?: unknown }): HelperStatus {
+export function toHelperStatus(s: { toolkitAccessibility?: unknown; detail?: unknown; cause?: unknown; languageMode?: unknown; dpi?: unknown; processDpi?: unknown }): HelperStatus {
   const out: HelperStatus = { toolkitAccessibility: typeof s.toolkitAccessibility === "boolean" ? s.toolkitAccessibility : null };
   if (typeof s.detail === "string") out.detail = s.detail;
+  if (typeof s.cause === "string") out.cause = s.cause;
   if (typeof s.languageMode === "string") out.languageMode = s.languageMode;
   if (typeof s.dpi === "string") out.dpi = s.dpi;
   if (typeof s.processDpi === "string") out.processDpi = s.processDpi;

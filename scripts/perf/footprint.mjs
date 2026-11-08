@@ -3,13 +3,15 @@
 // memory (PSS from /proc: shared pages counted fairly, unlike RSS or working set) and CPU, and each page's main-thread
 // CPU through DevTools. Prints a table and the same as JSON, to compare a change against main on the same computer.
 // Linux only (it reads /proc); run it under a display and a session bus, as CI's el8 job runs Ember:
-//   dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs [--settle 35] [--sample 20] [--sound] [--max-cpu 16] [--max-pss 950]
+//   dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs [--settle 35] [--sample 20] [--sound] [--compositor] [--max-cpu 16] [--max-pss 950]
 // --sound feeds Chromium's fake microphone tone instead of silence (speech detection never rests). --max-cpu (% of one
 // core) and --max-pss (MB) are the budget: past either, it says so and exits 1 (docs/DEVELOPING.md records the figures).
 // The sample is of Ember awake at rest (it dozes after 3 minutes with the pointer still). Needs `npm run build`
 // and the speech models from `node scripts/voice/prepare.mjs`. Not counted: the Copilot runtime (no sign-in) and the
-// speech process for Ember's voice (it starts with the first reply). On Xvfb there is no GPU and no compositor, so the
-// GPU process composites in software and the overlay falls back to the handle card: compare like with like.
+// speech process for Ember's voice (it starts with the first reply). On Xvfb there is no GPU, so the GPU process
+// composites in software, and no compositor, so the overlay falls back to the handle card: --compositor starts xcompmgr
+// on the display first (EPEL's xcompmgr on EL8), so the overlay that sits beside the cursor on a desktop, the biggest
+// drawer at rest, is measured too, and the run fails if it didn't start. Compare like with like.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -20,7 +22,7 @@ if (process.platform !== "linux") { console.error("footprint.mjs reads /proc: Li
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const args = process.argv.slice(2);
 const opt = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? Number(args[i + 1]) : dflt; };
-const settle = opt("--settle", 35), sample = opt("--sample", 20), sound = args.includes("--sound");
+const settle = opt("--settle", 35), sample = opt("--sample", 20), sound = args.includes("--sound"), composited = args.includes("--compositor");
 const maxCpu = opt("--max-cpu", Infinity), maxPss = opt("--max-pss", Infinity);
 // The consent this build asks for: an older one opens the returning user's card in Home and keeps the microphone shut,
 // which is not Ember at rest (it was 6 after CONSENT_VERSION went to 7, so listening wasn't measured).
@@ -50,8 +52,20 @@ const port = 9300 + Math.floor(Math.random() * 500);
 const electron = path.join(root, "node_modules/electron/dist/electron");
 const flags = [root, `--remote-debugging-port=${port}`, "--use-fake-device-for-media-stream", ...(sound ? [] : [`--use-file-for-fake-audio-capture=${silence}`])];
 if (process.getuid?.() === 0) flags.push("--no-sandbox");
-const app = spawn(electron, flags, { env: { ...process.env, EMBER_USER_DATA: userData }, stdio: "ignore" });
 const wait = ms => new Promise(r => setTimeout(r, ms));
+const compositor = composited ? spawn("xcompmgr", ["-n"], { stdio: "ignore" }) : null;
+if (compositor) {
+  try {
+    await new Promise((resolve, reject) => { compositor.once("spawn", resolve); compositor.once("error", reject); });
+  } catch {
+    console.error("--compositor needs xcompmgr (on EL8, EPEL's xcompmgr package).");
+    fs.rmSync(tmp, { recursive: true, force: true });
+    process.exit(2);
+  }
+  // It owns the display's compositing selection before Ember looks for one at start.
+  await wait(500);
+}
+const app = spawn(electron, flags, { env: { ...process.env, EMBER_USER_DATA: userData }, stdio: "ignore" });
 
 /** Every process in the app's tree. */
 function tree(pid) {
@@ -125,8 +139,11 @@ try {
   console.log("\n" + JSON.stringify({ os: `${os.type()} ${os.release()}`, cpus: os.cpus().length, cpu: os.cpus()[0]?.model, sound, settle, sample, total, rows, pages: perPage }));
   const over = [...(total.cpu > maxCpu ? [`${total.cpu} % of a core, over ${maxCpu} %`] : []), ...(total.pssMb > maxPss ? [`${total.pssMb} MB, over ${maxPss} MB`] : [])];
   if (over.length) { console.error(`\nOver budget: ${over.join("; ")}.`); process.exitCode = 1; }
+  // A budget meant to count the overlay never passes without it (an overlay that fell back to the handle card).
+  if (compositor && !perPage.some(p => p.page === "overlay")) { console.error("\nThe overlay didn't start, so it wasn't measured: is xcompmgr running on this display?"); process.exitCode = 1; }
 } finally {
   app.kill("SIGTERM");
+  compositor?.kill("SIGTERM");
   await wait(1500);
   fs.rmSync(tmp, { recursive: true, force: true });
 }

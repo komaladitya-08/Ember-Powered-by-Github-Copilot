@@ -907,15 +907,18 @@ regression alongside the Electron smoke.
 - It starts the built app with a throwaway data folder, consent and voice on, and silence for a microphone (`--sound`
   plays a tone instead).
 - It prints each process's memory (PSS) and CPU, and each page's main-thread CPU, then the same as JSON.
-- Compare a change against `main` on the same computer: Xvfb has no GPU or compositor.
+- Compare a change against `main` on the same computer: Xvfb has no GPU or compositor. Without a compositor the
+  overlay beside the cursor falls back to the handle card; `--compositor` starts xcompmgr on the display first
+  (EPEL's `xcompmgr` on EL8), so the overlay is measured too, and the run fails if the overlay didn't start.
 - It agrees to the consent version the build asks for (it used to agree to an older one, which kept the microphone
   shut). Awake at rest, listening in silence, with Home open (no sign-in), it measured 758 MB and 11.3 % of one core on
   4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main threads. Most of the
   drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open decisions (docs/ASSISTANT.md).
 - `--max-cpu 16 --max-pss 950` is the budget for a change: past either it says so and exits 1. It sits above those
   figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job
-  runs it with that budget as its last step (the same run here, 2026-11-08: 841 MB and 12.3 % with the machine
-  shared, in 57 s).
+  runs it with that budget as its last step, past the first minute and with the overlay counted (`--compositor
+  --settle 70 --sample 30`; the same run here, 2026-11-08: 842–853 MB and 12.3–14.6 % with the machine shared, against
+  882 MB and 12.2 % without the overlay).
 
 ### Connecting Copilot
 
@@ -1128,8 +1131,9 @@ the address in force and its saved key are kept and come back with the switch (i
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
   title names the provider ("No model set for your provider", "I'm still connecting to your model provider").
   Ember's Copilot runtime, which still carries the requests, is "Ember's model connection" then ("My model connection
-  stopped unexpectedly. I'm reconnecting…", "Ember's model connection keeps stopping…", a task cut off by it, and
-  the file watchers running out: `runtimeWords`, `lostWords`), never Copilot.
+  stopped unexpectedly. I'm reconnecting…", "Ember's model connection keeps stopping…", and the file watchers running
+  out: `runtimeWords`, `lostWords`), never Copilot; a task cut off by it ends, in the bubble and the conversation, with
+  "My model connection stopped unexpectedly; the task didn't finish."
   **Check again** connects to the provider (or the organisation's service) again and never looks for or names a GitHub
   sign-in (`checkAgain`, app/main/provider.ts): connected, the status line says so; out of reach, it says "Checked
   again: Ember still can't connect to <host>."; reached but still unusable (no model named, a refused key), "Checked
@@ -1413,7 +1417,7 @@ On Linux (Windows: §10.9, macOS: §11.8):
 | Ember is slow, or uses a lot of the processor | Awake with nothing happening, Ember's processes together use about 7–10 % of one core on a computer with no GPU (Xvfb with a compositor, listening off), most of it drawing the character in the overlay and the handle (Home open in front adds about 3 %; behind other windows it draws nothing); listening for “Hey Ember” adds about 5 % more. After 3 minutes with the pointer still Ember dozes and draws nothing: about 2 %, or 6 % while listening. `node scripts/perf/footprint.mjs` (a development build, Linux) measures each process and page (docs/ASSISTANT.md phase 0). In `ember.log` (`EMBER_LOG_LEVEL=debug` for more), a line that repeats many times a minute points to the part at fault: `sidecar.revive_backoff` the accessibility helper, `agent.runtime_lost` the Copilot runtime, `window.renderer_gone` or `app.child_process_gone` one of Ember's windows or its GPU process |
 | Sharing a log | **Setup & about › About this build** lists the log file with **Copy** and **Show in Files** (Finder, File Explorer). Attach `ember.log`, and `ember.log.1` too if the problem was a while ago (each is rotated at 5 MB). It says what Ember did and what failed, with app names and error messages; it isn't meant to hold what you typed or said, window titles or keys (tokens are taken out), but read it before you share it |
 | Ember says it can't read the screen, or that its accessibility helper isn't working | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Bindings installed while Ember runs are used within a couple of seconds, without restarting it; apps started before accessibility was turned on must be restarted |
-| "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to |
+| "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to; when it says a path in the folder "isn't a folder" (a file or a broken link where Ember keeps one, such as `audit`), move that away. The dialog never shows the error's own text: `ember.log` has it as `app.start_failed` |
 
 ## 10. Windows
 
@@ -1740,7 +1744,7 @@ Ember can't work.
 | Operating system | Windows 10 before 22H2 (warns), before 1809 (fails) | Update Windows |
 | Desktop session | Ember runs in a service's session | Sign in to Windows and start Ember from the Start menu |
 | Transparent windows, Mouse and keyboard | Windows' window or input functions didn't load | Reinstall Ember |
-| Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
+| Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's or the compiler's own words, PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
 | Microphone | Windows doesn't let desktop apps use the microphone | **Settings › Privacy & security › Microphone › Let desktop apps access your microphone** (on Windows 10: **Settings › Privacy › Microphone › Allow desktop apps to access your microphone**); in the settings window, the row and the Voice section have **Open Settings** for it |
 | Administrator | Ember runs as administrator | Start it from the Start menu, not with **Run as administrator** |
 | PowerShell | A policy stops Windows PowerShell running the helper | §10.4: **Unblock it**, or ask your administrator |
@@ -1749,8 +1753,13 @@ Ember can't work.
 | Organisation policy | The registry policy can't be trusted, so Ember is locked down | Fix `PolicyJson` (§10.7) |
 | Speech models, Speaking | As on Linux; speech runs on sherpa-onnx's native addon (§5, How speech runs) | — |
 
-The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**), **Display
-scaling** (the helper and Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
+The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**, and why it didn't
+start when it says, in plain words by why: Windows PowerShell stopped before it was ready, couldn't set it up, couldn't
+be found or wasn't allowed to run, or the helper is out of date; PowerShell's own words are only in `ember doctor`'s
+**Accessibility helper** row; asked about 10 s after start, 60 s at login, again on **Check again**, which waits up to
+6 s for it, and in the background when a read finds the helper can't work while the row says it does, or works while
+the row says it doesn't), **Display scaling** (the helper and
+Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
 monitor to the same scale in **Settings › System › Display**, then restart Ember; if it still clicks in the wrong
 place, report it at https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues) and **Keyboard
 shortcuts**.
@@ -2433,13 +2442,28 @@ from `npm_config_*` or the `.npmrc` files, then `HTTPS_PROXY` or `HTTP_PROXY`, n
 computer; https by a CONNECT tunnel), and a network failure, or an error status from a proxy or server, is one
 sentence naming the host that answered and the next steps (`cantReach()`), never Node's "fetch failed" or a bare HTTP
 status (inside a tunnel a status is the host's own, so only a 403 or 451 there, or a refused CONNECT, sends the person
-to whoever runs the proxy, and a server's 5xx says to run it again later); a full disk or quota (`ENOSPC`, `EDQUOT`, or the unpacker's words for them, `roomSaid()`), from making the
+to whoever runs the proxy, and a server's 5xx says to run it again later; a 502 or 504 there names the proxy too, since
+one that inspects HTTPS answers inside the tunnel, and adds asking whoever runs it if it keeps happening); a full disk or quota (`ENOSPC`, `EDQUOT`, or the unpacker's words for them, `roomSaid()`), from making the
 cache folder and the lock to writing the marker, names the cache folder and, once known, the download's size instead
-(`noRoom()`).
+(`noRoom()`); a cache folder this user can't write in (`EACCES`, `EPERM`, `EROFS` as the cache folder, the lock or the
+work folder is made, not later, where Windows' `EPERM` is a file in use) is `cantWrite()`'s sentence; both say when a
+`--npm-reinstall` kept the copy it started from. What came for `SHA256SUMS` that isn't a list of hashes (a web page:
+a Wi-Fi's or a proxy's sign-in, never repeated), no line for the file, and a hash that doesn't match are
+`notChecked()`'s sentences, each with a next step.
 `ember doctor` and `ember --doctor`
 run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
-Ember that stops at once is reported with what it said and its exit code. The AppImage's AppRun and the RPM's `ember`
+Ember that stops at once is reported with what it said and its exit code. The log's `pid` line is written best-effort,
+so a disk that filled since the install neither fails a start that worked nor holds the terminal until Ember quits; a
+disk too full to make the log is `noRoom()`'s sentence. A log it can't open (`EACCES`, `EPERM`, `EROFS`) doesn't stop
+the start, so the copy there still starts, as a `--npm-reinstall` that stopped there says (`openStartLog()`): an old
+log of another user's in this user's own folder (left by `sudo -E ember`) is removed and made again; in a folder this
+user can't write in (another user's, an administrator's shared one, a read-only disk) the watch's log is `start.log` in
+a private `mkdtemp` folder in the temporary folder (0700, the log 0600), removed once the watch has ended; and where
+not even that can be made, an Ember that stops at once is said with "Run '<name> doctor' to see what it says."
+This computer refusing to start Ember's program (`EPERM` or `EACCES` from starting it: a security policy such as
+fapolicyd, antivirus, a `noexec` disk) is `cantRun()`'s sentence, never `cantWrite()`'s.
+The AppImage's AppRun and the RPM's `ember`
 take `--doctor` as well as `doctor`, and `--help`/`-h` (the launcher answers those itself with `usage()`, since Ember.exe
 and Ember.app have none). On Linux without `DISPLAY`, a plain start says so in the launcher's own words (`noDisplay()`,
 naming the command as it was run) before downloading anything. Once a plain start has kept running past its 3 s watch
@@ -2449,6 +2473,7 @@ keeps it), never one whose installer holds its lock or whose folder a running pr
 (`ps -axo command=`) names; the setup check and `--npm-install-only` remove nothing, because only a running Ember points
 **Start Ember when I log in** at itself. A start that ended at once with 0 and isn't what runs has handed over to an
 Ember already running (`startWatched()`): it removes nothing and says so (`afterHandover()`: `handedOver()`, naming
-the cache's version that runs when `ps` shows it; where `ps` isn't read, on Windows, the advice to quit only when the
-cache holds another version). Tests in
+the cache's version that runs when `ps` shows it; where `ps` isn't read, on Windows, the advice to quit an older Ember
+installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
+Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.

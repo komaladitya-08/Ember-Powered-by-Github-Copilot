@@ -228,6 +228,24 @@ describe("docs/DEVELOPING.md", () => {
     expect(desktop).toContain(`\`${el8} dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- <files>\``);
   });
 
+  it("gives the checks job's launcher pack check and the el8 job's footprint budget in CLAUDE.md, as CI runs them (install-docs-r4-3)", () => {
+    const ci = read(".github/workflows/ci.yml");
+    const claude = read("CLAUDE.md");
+    // The checks job packs the npm launcher, after the unit tests and before the sidecar's self-test.
+    expect(ci).toMatch(/working-directory: packages\/npm\n {8}run: npm pack --dry-run\n/);
+    const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(claude)?.[1] ?? "";
+    const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);
+    const pack = order.indexOf("(cd packages/npm && npm pack --dry-run)");
+    expect(pack).toBe(order.indexOf("npm test") + 1);
+    expect(order.indexOf("npm run test:sidecar")).toBe(pack + 1);
+    // el8's last step: the awake-rest budget, with every flag CI gives it.
+    const footprint = /node scripts\/perf\/footprint\.mjs [^\n]*--max-cpu \d+ --max-pss \d+/.exec(ci)?.[0] ?? "";
+    expect(footprint).toContain("--compositor");
+    const line = claude.split("\n").find(l => l.includes("scripts/perf/footprint.mjs")) ?? "";
+    expect(line).toContain(`\`dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" ${footprint}\``);
+    expect(line).toContain("xcompmgr");
+  });
+
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
     const paths = [...WINDOWS_MIC_FIX.matchAll(/Settings › [^()]+?microphone/g)].map(m => m[0]);
     expect(paths.length).toBe(2);

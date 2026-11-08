@@ -223,9 +223,10 @@ export interface ActionResult { ok: boolean; action?: string; option?: string; b
 
 /**
  * The helper's `status`. The sidecar host (Windows, macOS) also says why its provider couldn't start (`detail`, with
- * `toolkitAccessibility` false; null while it is still starting), the Windows bridge's `languageMode` from its fatal
- * line ("ConstrainedLanguage"), and the DPI awareness of the bridge's UI Automation threads (`dpi`) and of its process
- * (`processDpi`). The Python sidecar sends none of these.
+ * `toolkitAccessibility` false; null while it is still starting; and `cause`, the same in PowerShell's, the compiler's
+ * or Node's own words, for `ember doctor` only: reliability-performance-w5-1), the Windows bridge's `languageMode`
+ * from its fatal line ("ConstrainedLanguage"), and the DPI awareness of the bridge's UI Automation threads (`dpi`) and
+ * of its process (`processDpi`). The Python sidecar sends none of these.
  */
 export interface SidecarStatus {
   version: number;
@@ -233,6 +234,7 @@ export interface SidecarStatus {
   toolkitAccessibility: boolean | null;
   apps: number;
   detail?: string;
+  cause?: string;
   languageMode?: string;
   dpi?: string;
   processDpi?: string;

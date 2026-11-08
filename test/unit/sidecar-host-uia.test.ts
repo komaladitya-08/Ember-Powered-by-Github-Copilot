@@ -6,7 +6,7 @@ import { spawn as realSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
-  BACKOFF_MS, POLICY_DETAIL, UiaProvider, bridgeEnv, codeOf, fromBridgeNode, fromBridgeWindow, powershellPath, rectOf, uiaScript,
+  BACKOFF_MS, POLICY_DETAIL, START_DETAIL, UiaProvider, bridgeEnv, codeOf, fromBridgeNode, fromBridgeWindow, powershellPath, rectOf, spawnDetail, uiaScript,
   type BridgeNode,
 } from "../../app/sidecar-host/providers/uia";
 import { ProviderError, ownerPid } from "../../app/sidecar-host/provider";
@@ -303,7 +303,7 @@ describe("the bridge client", () => {
       for (const f of both) expect(f, line).toContain("out of date");
       // Nothing was written to it (requests are sent only after a valid ready line).
       expect(sent().filter(l => l.id !== undefined), line).toEqual([]);
-      expect(p.health(), line).toMatchObject({ ok: false, detail: "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember." });
+      expect(p.health(), line).toMatchObject({ ok: false, detail: "it doesn't match this Ember (it is out of date). Reinstall or update Ember." });
       await new Promise(r => setTimeout(r, 30));
       expect(await failure(p.start()), line).toContain("out of date");
       expect(spawned, line).toHaveLength(1);
@@ -323,7 +323,7 @@ describe("the bridge client", () => {
     expect(await failure(p.start())).toContain("out of date");
     expect(spawned).toHaveLength(1);
     expect(sent().filter(l => l.id !== undefined)).toEqual([]);
-    expect(p.health()).toMatchObject({ ok: false, detail: "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember." });
+    expect(p.health()).toMatchObject({ ok: false, detail: "it doesn't match this Ember (it is out of date). Reinstall or update Ember." });
     expect(notes.join("\n")).not.toContain("uia.ready");
   });
 
@@ -336,12 +336,25 @@ describe("the bridge client", () => {
   it("says why it couldn't start, and doesn't try again at once", async () => {
     const { p, spawned } = provider({ FAKE_BRIDGE_FATAL: "Add-Type: error CS1002" });
     expect(await failure(p.start())).toBe("error: the accessibility bridge could not start (Add-Type: error CS1002)");
-    expect(p.health()).toEqual({ ok: false, detail: "Add-Type: error CS1002" });
+    expect(p.health()).toEqual({ ok: false, detail: START_DETAIL.setUp, cause: "Add-Type: error CS1002" });
     expect(await failure(p.start())).toMatch(/could not start/);
     expect(spawned).toHaveLength(1);
     await new Promise(r => setTimeout(r, 600));
     await failure(p.start());
     expect(spawned).toHaveLength(2);
+  });
+
+  it("says in plain words when Windows PowerShell can't be run at all, keeping Node's own for ember doctor (reliability-performance-w5-1)", async () => {
+    const err = (code: string) => Object.assign(new Error(`spawn C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe ${code}`), { code });
+    expect(spawnDetail(err("ENOENT"))).toBe("Ember couldn't find Windows PowerShell on this computer.");
+    expect(spawnDetail(err("EACCES"))).toBe("Windows didn't let Ember run Windows PowerShell. Ask your administrator to allow it.");
+    expect(spawnDetail(err("EPERM"))).toBe(START_DETAIL.notAllowed);
+    expect([spawnDetail(err("EMFILE")), spawnDetail(new Error("no code"))]).toEqual(["Windows couldn't run Windows PowerShell.", START_DETAIL.notRun]);
+    // Node's own spawn error, for a program that isn't there.
+    const p = new UiaProvider({ script: "C:\\e.ps1", command: path.join(dir, "no-such-powershell.exe"), args: [], backoffMs: [60_000] });
+    providers.push(p);
+    expect(await failure(p.start())).toMatch(/could not run .*ENOENT/);
+    expect(p.health()).toEqual({ ok: false, detail: START_DETAIL.notFound, cause: expect.stringMatching(/^Windows PowerShell could not be run \(spawn .*ENOENT\)$/) });
   });
 
   it("backs off further after each failed start in a row: 5 s, 30 s, 2 min, then every 10 min (W4)", async () => {
@@ -353,7 +366,7 @@ describe("the bridge client", () => {
       expect(spawned).toHaveLength(n);
     };
     await failed(1);
-    expect(p.health()).toEqual({ ok: false, detail: "Windows PowerShell stopped before the bridge was ready (exit code 3)" });
+    expect(p.health()).toEqual({ ok: false, detail: "Windows PowerShell stopped before it was ready.", cause: "Windows PowerShell stopped before the bridge was ready (exit code 3)" });
     await failed(1);
     await new Promise(r => setTimeout(r, 400));
     await failed(2);
@@ -378,7 +391,7 @@ describe("the bridge client", () => {
     expect(helperCantRun(again)).toBe(true);
     // And so it stays, through the back-off, until a start works.
     expect(helperCantRun(await p.start().catch((e: Error) => e))).toBe(true);
-    expect(p.health()).toEqual({ ok: false, detail: "Windows PowerShell stopped before the bridge was ready (exit code 3)" });
+    expect(p.health()).toEqual({ ok: false, detail: START_DETAIL.stopped, cause: "Windows PowerShell stopped before the bridge was ready (exit code 3)" });
   });
 
   it("never starts again in this host's life after a fatal line in Constrained Language mode, and says why for good (W4)", async () => {
@@ -390,7 +403,7 @@ describe("the bridge client", () => {
     expect(await failure(p.start())).toBe(why);
     expect(Date.now() - t0).toBeLessThan(50);
     expect(spawned).toHaveLength(1);
-    expect(p.health()).toEqual({ ok: false, detail: "Cannot add type. Definition of new types is not supported in this language mode.", languageMode: "ConstrainedLanguage" });
+    expect(p.health()).toEqual({ ok: false, detail: START_DETAIL.constrained, cause: "Cannot add type. Definition of new types is not supported in this language mode.", languageMode: "ConstrainedLanguage" });
   });
 
   it("tells PowerShell refusing the script for an execution policy, and starts again at once only when its mark is gone (W2)", async () => {
@@ -403,7 +416,7 @@ describe("the bridge client", () => {
       note: (event, fields) => { notes.push(JSON.stringify([event, fields])); },
     });
     expect(await failure(p.start())).toBe(`error: the accessibility bridge could not start: ${POLICY_DETAIL}`);
-    expect(p.health()).toEqual({ ok: false, detail: "PowerShell refused to run the bridge (execution policy)" });
+    expect(p.health()).toEqual({ ok: false, detail: "your organisation's PowerShell execution policy refused it. Ask your administrator to allow it.", cause: POLICY_DETAIL });
     expect(looked).toEqual(["C:\\Ember\\sidecar\\uia\\ember_uia.ps1:Zone.Identifier"]);
     // Still marked: not started again (the back-off is a minute here); one look a request.
     expect(await failure(p.start())).toMatch(/execution policy/);
@@ -437,7 +450,7 @@ describe("the bridge client", () => {
     const fatal = JSON.stringify({ fatal: "Cannot add type.", languageMode: "ConstrainedLanguage" }) + "\n";
     const constrained = new UiaProvider({ script: "C:\\e.ps1", spawn: (() => exitsFirst(fatal, "")) as never, backoffMs: [0] });
     expect(await failure(constrained.start())).toBe("error: the accessibility bridge could not start (Cannot add type.)");
-    expect(constrained.health()).toEqual({ ok: false, detail: "Cannot add type.", languageMode: "ConstrainedLanguage" });
+    expect(constrained.health()).toEqual({ ok: false, detail: START_DETAIL.constrained, cause: "Cannot add type.", languageMode: "ConstrainedLanguage" });
     // Constrained Language mode: never again, even with no back-off at all.
     expect(await failure(constrained.start())).toMatch(/could not start \(Cannot add type\.\)/);
     const refusal = "File C:\\e.ps1 cannot be loaded. For more information, see about_Execution_Policies.\n";
@@ -448,7 +461,7 @@ describe("the bridge client", () => {
   it("isn't taken for an execution-policy refusal when the bridge wrote a line first", async () => {
     const { p } = provider({ FAKE_BRIDGE_FATAL: "File cannot be loaded: execution policy" });
     await failure(p.start());
-    expect(p.health()).toEqual({ ok: false, detail: "File cannot be loaded: execution policy" });
+    expect(p.health()).toEqual({ ok: false, detail: START_DETAIL.setUp, cause: "File cannot be loaded: execution policy" });
   });
 
   it("sends Ember's own pid as skipPids with the window list and hit tests only, never anything else into it (W14)", async () => {

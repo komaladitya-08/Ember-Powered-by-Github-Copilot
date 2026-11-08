@@ -144,12 +144,15 @@ describe("status and list_windows", () => {
 
   it("says why its provider couldn't start instead of failing, with the bridge's language mode (L7, W3)", async () => {
     const fake = new FakeProvider(benchDesktop(), { failStart: "the accessibility bridge could not start (Cannot add type.)" });
-    fake.health = () => ({ ok: false, detail: "Cannot add type.", languageMode: "ConstrainedLanguage" });
+    fake.health = () => ({ ok: false, detail: "Windows PowerShell is restricted on this computer (Constrained Language Mode).", cause: "Cannot add type.", languageMode: "ConstrainedLanguage" });
     const host = new Host(fake, { env: {}, settleMs: 0 });
     const answer = async (method: string) => JSON.parse((await host.handle(JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: {} })))!);
     const s = await answer("status");
     expect(s.error).toBeUndefined();
-    expect(s.result).toEqual({ version: 3, python: expect.any(String), toolkitAccessibility: false, apps: 0, detail: "Cannot add type.", languageMode: "ConstrainedLanguage" });
+    expect(s.result).toEqual({
+      version: 3, python: expect.any(String), toolkitAccessibility: false, apps: 0,
+      detail: "Windows PowerShell is restricted on this computer (Constrained Language Mode).", cause: "Cannot add type.", languageMode: "ConstrainedLanguage",
+    });
     expect(fake.startsTried).toBe(1);
     // Every other request still fails with the reason.
     expect((await answer("list_windows")).error.message).toBe("the accessibility bridge could not start (Cannot add type.)");

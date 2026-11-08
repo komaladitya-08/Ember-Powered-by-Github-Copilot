@@ -165,7 +165,8 @@ reported in every PR that touches it.
 - `scripts/perf/footprint.mjs` launches the built app headless with a temporary data folder, voice on and silence
   fed in. It prints PSS and CPU per process, and per page through DevTools, as this plan's numbers were taken, then the
   same as JSON. With `--max-cpu` and `--max-pss` (docs/DEVELOPING.md records the figures) it fails only on a large
-  regression, never on noise. CI's `el8` job runs it with that budget, after the desktop suites.
+  regression, never on noise. CI's `el8` job runs it with that budget, after the desktop suites, past the first minute
+  and under a compositor, so the overlay beside the cursor is counted (`--compositor`).
 - `voice.latency` logs transcription time and the steps from transcript arrival to the first speaking report. `voice.hush_ack`
   logs how long the speaking renderer took to acknowledge cancellation. The logs contain no words (CLAUDE.md privacy).
   See the [timing fields in the development guide](DEVELOPING.md#how-speech-runs-native-synthesis-native-or-webassembly-listening).
@@ -269,6 +270,8 @@ reported in every PR that touches it.
    - The overlay, the handle and Home's hero draw an awake Ready face at rest about 6 times a second (`restingGap`;
      measured on Xvfb with xcompmgr, Home closed: the overlay's canvas 14–17 drawings a second against 23–24, the
      handle's 15 against 21, the whole tree 8.7–10.1 % of a core against 11.4–15.2 %; Home's hero 11.5 against 18.4).
+     An idle glance held is drawn at that rate too once the eyes are there (rp-4, round five: the overlay 13.2–14.1
+     drawings a second to 10.6–11.5, the whole tree 7.6–8.3 % of a core to 6.0–6.8 %, pointer still, listening off).
      Fidgets and the handle's idle saccades are most of what is left. They will stop drawing entirely after about 10 s
      still, and wake on any state change (the resting rate is the owner's decision). Home behind other windows draws
      its still faces no more (`homeFrameGap`; measured with Home open: Home's renderer 0.3 % of a core against

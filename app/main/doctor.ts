@@ -120,7 +120,9 @@ function helperRow(h: HelperStatus | null, fix: string, reinstall: string): Doct
     return facts ? `${bare} (${facts}).` : `${bare}.`;
   };
   if (h.toolkitAccessibility === false) {
-    return { id: "accessibility-helper", status: "fail", label, detail: withFacts(`Ember's accessibility helper can't read apps${h.detail ? `: ${h.detail}` : ""}`), fix };
+    // The host's own words where it has them: an administrator reads this row (the setup check shows only `detail`).
+    const why = h.cause ?? h.detail;
+    return { id: "accessibility-helper", status: "fail", label, detail: withFacts(`Ember's accessibility helper can't read apps${why ? `: ${why}` : ""}`), fix };
   }
   if (h.toolkitAccessibility === null) return { id: "accessibility-helper", status: "warn", label, detail: withFacts("The accessibility helper answered but couldn't tell whether it can read apps"), fix };
   if (h.dpi && h.processDpi && h.dpi !== h.processDpi) {

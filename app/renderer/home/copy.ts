@@ -75,6 +75,9 @@ export const COMPOSER_SAYS = {
   copied: "Copied message.",
   copyFailed: "Couldn't copy this message. Select its text and copy it manually.",
   replyFailed: "Ember couldn't finish this reply. Review the message above; you can edit your request and send again.",
+  // A Problem line with no reply begun since the request (the model service refused it): nothing to finish
+  // (reliability-performance-c1-1).
+  notAnswered: "Ember couldn't answer this request. Review the message above; you can edit your request and send again.",
   replied: "Reply received.",
   loadFailed: "Couldn't load this conversation. New replies will still appear here.",
   started: "Started a new conversation. Memory, reminders and running tasks are untouched.",
@@ -165,7 +168,7 @@ export function composerLineFits(line: string, editing: boolean): string | null 
 }
 /** The composer's lines that say how something earlier went: they give way to a wait of the Ask box's or voice's. */
 const COMPOSER_OUTCOMES: ReadonlySet<string> = new Set([
-  COMPOSER_SAYS.copied, COMPOSER_SAYS.copyFailed, COMPOSER_SAYS.replyFailed, COMPOSER_SAYS.replied, COMPOSER_SAYS.loadFailed, COMPOSER_SAYS.started,
+  COMPOSER_SAYS.copied, COMPOSER_SAYS.copyFailed, COMPOSER_SAYS.replyFailed, COMPOSER_SAYS.notAnswered, COMPOSER_SAYS.replied, COMPOSER_SAYS.loadFailed, COMPOSER_SAYS.started,
   COMPOSER_SAYS.startFailed, COMPOSER_SAYS.editCancelled, COMPOSER_SAYS.stopFailed, COMPOSER_SAYS.noReply, COMPOSER_SAYS.replyStopped,
   COMPOSER_SAYS.stoppedAll, CONVERSATION_STOPPED, CONVERSATION_NOTHING_TO_STOP,
 ]);

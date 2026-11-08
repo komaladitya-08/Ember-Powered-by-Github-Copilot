@@ -2,7 +2,8 @@
  * The Windows inputs of the setup check (inspectEnvironment) and the fixes it offers. readEnvironment runs on every
  * settings-window status request, so everything here is cheap: process facts, the token's elevation and the session
  * read once, and the PowerShell facts (registry and two file streams) kept for a minute. What the accessibility helper
- * itself said arrives in EnvContext.helper (main asks it once in the background, never on Linux).
+ * itself said arrives in EnvContext.helper (main's HelperWatch asks it in the background after start, again on Check
+ * again, and when reads find the helper can't work while it says it does, or the reverse).
  */
 
 import os from "node:os";
@@ -23,6 +24,8 @@ export interface Win32EnvFacts {
   powershell: PowerShellState;
   /** The helper's threads and its process see different DPI awareness (mixed-DPI risk, R22). */
   dpiMixed: boolean;
+  /** Why the helper couldn't read apps, in the host's plain words: only for "missing" (reliability-performance-v5-1, w5-1). */
+  helperDetail?: string;
   /** "Let desktop apps access your microphone" (absent when Electron's systemPreferences isn't given). */
   microphone?: MediaAccess;
 }
@@ -76,6 +79,7 @@ export function win32Environment(d: Win32EnvDeps): {
       if (elevated === undefined || elevated === null) elevated = api ? api.elevated() : null;
       if (session === undefined) session = sessionKind(d.env, api ? api.sessionId(d.pid ?? process.pid) : null);
       const helper = ctx.helper;
+      const powershell = powershellState(d.powershell.get(), helper);
       let microphone: MediaAccess | undefined;
       if (d.systemPreferences?.getMediaAccessStatus) {
         try {
@@ -97,8 +101,10 @@ export function win32Environment(d: Win32EnvDeps): {
           build: windowsBuild(systemVersion()),
           elevated: elevated ?? null,
           session,
-          powershell: powershellState(d.powershell.get(), helper),
+          powershell,
           dpiMixed: !!helper?.dpi && !!helper.processDpi && helper.dpi !== helper.processDpi,
+          // The row the model's "see the setup check" words send the person to says why (reliability-performance-v5-1).
+          ...(powershell === "missing" && helper?.detail ? { helperDetail: helper.detail } : {}),
           ...(microphone ? { microphone } : {}),
         },
       };

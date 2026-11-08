@@ -508,7 +508,9 @@ export function reconnectWords(service: ServiceKind) {
  * What Ember's Copilot runtime stopping or running out of file watchers is called, for the service in use
  * (integrations-v1): Copilot's words above, and under the user's own provider or the organisation's service "Ember's
  * model connection" (noticeTitle's "My model connection" in the bubble), never Copilot, which the person isn't using.
- * `cutOffStalled`: a task cut off because the model service didn't answer.
+ * `cutOff`: a task cut off by it, said only as the task's outcome in Ember's own voice (the bubble, the conversation's
+ * task row), so as mine: "My model connection" (first-run-w5-1). `cutOffStalled`: a task cut off because the model
+ * service didn't answer.
  */
 export function runtimeWords(service: ServiceKind) {
   if (service === false) {
@@ -517,7 +519,7 @@ export function runtimeWords(service: ServiceKind) {
   return {
     stopped: "Ember's model connection stopped unexpectedly. Reconnecting…",
     keepsStopping: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.",
-    cutOff: "Ember's model connection stopped unexpectedly; the task didn't finish.",
+    cutOff: "My model connection stopped unexpectedly; the task didn't finish.",
     cutOffStalled: `${service === "user" ? "Your model provider" : "The model service"} didn't answer; the task didn't finish.`,
     noWatchers: "I can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.",
     noWatchersWhy: "Ember's model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.",

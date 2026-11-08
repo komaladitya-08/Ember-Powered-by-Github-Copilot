@@ -203,7 +203,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     sidecar = new AtspiSidecar(path.join(root, "sidecar", "atspi", "ember_atspi.py"), log, undefined, undefined, { ...launch, firstRequestMs: 90_000 });
     started = await waitFor("the host and its bridge to start", async () => {
       const st = await sidecar.status().catch(() => null);
-      if (st?.toolkitAccessibility === false) throw new Error(`the bridge didn't start: ${String(st.detail)} (language mode ${String(st.languageMode ?? "unknown")})`);
+      if (st?.toolkitAccessibility === false) throw new Error(`the bridge didn't start: ${String(st.cause ?? st.detail)} (language mode ${String(st.languageMode ?? "unknown")})`);
       return st?.toolkitAccessibility === true ? st : null;
     }, 120_000);
     const exe = buildBench();

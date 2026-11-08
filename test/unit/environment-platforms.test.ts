@@ -34,8 +34,11 @@ describe("Windows setup checks", () => {
     expect(check(win({ powershell: "constrained" }), "accessibility")?.fix).toBeUndefined();
     expect(check(win({ powershell: "policy" }), "accessibility")).toMatchObject({ status: "warn", detail: expect.stringMatching(/only signed PowerShell scripts/) });
     expect(check(win({ powershell: "blocked-download" }), "accessibility")).toMatchObject({ status: "warn", detail: expect.stringMatching(/came from the internet/), fix: "unblock-helper" });
-    expect(check(win({ powershell: "missing", helperDetail: "Add-Type failed: CS0246" }), "accessibility"))
-      .toMatchObject({ status: "warn", detail: "Ember's accessibility helper didn't start: Add-Type failed: CS0246" });
+    // The host's plain words, ending in one full stop whether or not they had one (reliability-performance-w5-1).
+    for (const helperDetail of ["Windows PowerShell stopped before it was ready.", "Windows PowerShell stopped before it was ready"]) {
+      expect(check(win({ powershell: "missing", helperDetail }), "accessibility"))
+        .toMatchObject({ status: "warn", detail: "Ember's accessibility helper didn't start: Windows PowerShell stopped before it was ready." });
+    }
     expect(check(win({ powershell: "missing" }), "accessibility")?.detail).toBe("Ember's accessibility helper didn't start.");
     // Not asked yet (the helper's status comes in the background): no row rather than a guess.
     expect(check(win({ powershell: "unknown" }), "accessibility")).toBeUndefined();

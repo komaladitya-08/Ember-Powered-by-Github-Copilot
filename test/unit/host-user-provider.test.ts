@@ -262,7 +262,8 @@ describe("AgentHost with the user's own model provider", () => {
     expect(runtimeWords("user")).toEqual({
       stopped: "Ember's model connection stopped unexpectedly. Reconnecting…",
       keepsStopping: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.",
-      cutOff: "Ember's model connection stopped unexpectedly; the task didn't finish.",
+      // Said only as a task's outcome, in my own voice, as the bubble's title says it (first-run-w5-1).
+      cutOff: "My model connection stopped unexpectedly; the task didn't finish.",
       cutOffStalled: "Your model provider didn't answer; the task didn't finish.",
       noWatchers: "I can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.",
       noWatchersWhy: "Ember's model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.",

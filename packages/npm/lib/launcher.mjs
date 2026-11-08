@@ -110,6 +110,32 @@ export function notReleased(version, env = {}) {
   return `Ember ${version} isn't on ${releaseSource(env)} yet, so there is nothing to start. Install a published version from https://github.com/${REPO}/releases instead.`;
 }
 
+/**
+ * What the launcher says when the release file can't be checked against the release's SHA256SUMS, so nothing is
+ * installed: what came for SHA256SUMS is a web page (a Wi-Fi's or a proxy's sign-in, which it never repeats) or isn't
+ * a list of hashes, it has no line for the file, or the file doesn't match its line; each with what to do next
+ * (install-docs-c4-1).
+ * @param {{ problem: "page" | "garbled" | "missing" | "mismatch"; version: string; asset: string; name: string; env?: Record<string, string | undefined>; host?: string; want?: string; got?: string }} o
+ *   host: the host that sent SHA256SUMS (after any redirect); want, got: the hashes that differ
+ */
+export function notChecked(o) {
+  const env = o.env ?? {};
+  const mirror = !!env.EMBER_NPM_DOWNLOAD_BASE;
+  const tag = `https://github.com/${REPO}/releases/tag/v${o.version}`;
+  const sums = `What ${o.host} sent for the v${o.version} release's SHA256SUMS`;
+  if (o.problem === "page") {
+    return `${sums} is a web page, perhaps a Wi-Fi or proxy sign-in, not its list of hashes, so nothing was installed. Open https://github.com/${REPO}/releases in your browser and sign in if it asks${mirror ? ", or check EMBER_NPM_DOWNLOAD_BASE" : ""}, then run '${o.name}' again.`;
+  }
+  if (o.problem === "garbled") {
+    return `${sums} isn't its list of hashes, so nothing was installed. Run '${o.name}' again${mirror ? ", check EMBER_NPM_DOWNLOAD_BASE" : ""}, or download ${o.asset} from ${tag} in your browser.`;
+  }
+  if (o.problem === "missing") {
+    const next = mirror ? `Ask whoever runs the mirror to copy the v${o.version} release again, or download ${o.asset} from ${tag} in your browser.` : `Download ${o.asset} from ${tag} in your browser instead.`;
+    return `The v${o.version} release's SHA256SUMS on ${releaseSource(env)} has no line for ${o.asset}, so nothing was installed. ${next}`;
+  }
+  return `${o.asset} doesn't match SHA256SUMS (expected ${o.want}, got ${o.got}), so nothing was installed: it was damaged or changed on the way. Run '${o.name}' again, or download it from ${tag} in your browser.`;
+}
+
 /** The version of this package, which is the version of Ember it starts. */
 export function packageVersion() {
   const pkg = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
@@ -355,12 +381,19 @@ function cantReach(err, o) {
   const cert = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|ERR_TLS/.test(code);
   const answered = code === "EMBER_HTTP";
   const status = answered ? `${err.status}${err.statusText ? ` ${err.statusText}` : ""}` : "";
-  // A proxy's Bad Gateway and Gateway Timeout are its own when it forwards a plain http request: it couldn't get to
-  // that host. Inside an https tunnel it only passes bytes, so the answer is the host's (install-docs-v4-3).
-  const gateway = answered && o.proxy && !err.tunnelled && (err.status === 502 || err.status === 504);
+  // A proxy's Bad Gateway and Gateway Timeout are its own when it forwards a plain http request, or answers a CONNECT:
+  // it couldn't get to that host. Inside an https tunnel it only passes bytes, so the answer is the host's
+  // (install-docs-v4-3), unless the proxy inspects HTTPS: then its own comes inside the tunnel too, and the launcher
+  // can't tell the two apart, so a tunnelled 502 or 504 names both (install-docs-r4-1).
+  const gatewayCode = err?.status === 502 || err?.status === 504;
+  const gateway = answered && o.proxy && !err.tunnelled && gatewayCode;
+  const inspected = answered && o.proxy && err.tunnelled && gatewayCode;
   const why = code === "EMBER_PROXY_REFUSED"
-    ? err.status === 407 ? "the proxy asked for a user name and password (407)" : `the proxy refused to connect to it (${err.status})`
+    ? err.status === 407 ? "the proxy asked for a user name and password (407)"
+    : gatewayCode ? `the proxy couldn't get an answer from ${err.host} (${err.status})`
+    : `the proxy refused to connect to it (${err.status})`
     : gateway ? `the proxy couldn't get an answer from ${err.host} (${status})`
+    : inspected ? `${err.host}, or the proxy if it inspects HTTPS, answered ${status}`
     : answered ? `${err.host} answered ${status}`
     : cert ? `the certificate it showed isn't one this computer trusts (${code})`
     : WHY[code] ? `${WHY[code]} (${code})`
@@ -384,8 +417,10 @@ function cantReach(err, o) {
   // A server's own failure (5xx) is its to mend: run again later.
   const later = answered && !gateway && err.status >= 500 ? " later" : "";
   const again = `un '${o.name}' again${later}, or download ${o.asset} from https://github.com/${REPO}/releases/tag/v${o.version} in your browser${mirror}.`;
+  // Running again later can't help while a proxy that inspects HTTPS can't reach the host.
+  const keeps = inspected ? ` If it keeps happening, ask whoever runs the proxy whether it can reach ${err.host}.` : "";
   // "Then" only after a step to take first.
-  return next ? `${first} ${next} Then r${again}` : `${first} R${again}`;
+  return next ? `${first} ${next} Then r${again}${keeps}` : `${first} R${again}${keeps}`;
 }
 
 /**
@@ -393,7 +428,8 @@ function cantReach(err, o) {
  * (and the status) on any answer but 2xx, and with cantReach's sentence when the network fails.
  * @param {string} url
  * @param {Net} o
- * @returns {Promise<{ status: number; length: number; body: http.IncomingMessage; text(): Promise<string> }>}
+ * @returns {Promise<{ status: number; length: number; host: string; body: http.IncomingMessage; text(): Promise<string> }>}
+ *   host: the host that answered (after any redirect)
  */
 async function get(url, o) {
   const npmrc = npmrcProxy(o.env);
@@ -427,7 +463,7 @@ async function get(url, o) {
     }
     const body = res;
     return {
-      status, body, length: Number(res.headers["content-length"]) || 0,
+      status, body, length: Number(res.headers["content-length"]) || 0, host: new URL(at).host,
       async text() {
         let s = "";
         body.setEncoding("utf8");
@@ -537,20 +573,25 @@ export async function ensureInstalled(o) {
   }
 
   const parent = p.dirname(dir);
+  // The copy a reinstall started from, which is there until a new one is published.
+  const haveCopy = () => fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe));
   // A full disk or quota, wherever it strikes (a disk already full strikes here or at the lock, before the download's
-  // size is known), said as this computer's, not as Node's bare "ENOSPC" (install-docs-v4-1).
-  const roomy = (/** @type {any} */ err) => ROOM.has(err?.code) ? new Error(noRoom(err, { folder: parent, version: o.version, name }), { cause: err }) : err;
+  // size is known), said as this computer's, not as Node's bare "ENOSPC" (install-docs-v4-1); and, where the cache
+  // folder, the lock and the work folder are made (`making`), a folder this user can't write in, not Node's "EACCES:
+  // permission denied, mkdir …". Only there: a rename that fails with EPERM later is a file in use on Windows. Either
+  // way a reinstall's copy, still there, is said to be kept (install-docs-c4-1).
+  const roomy = (/** @type {any} */ err, making = false) => onDisk(err, { folder: parent, version: o.version, name, kept: haveCopy(), making });
   try {
     fs.mkdirSync(parent, { recursive: true });
   } catch (err) {
-    throw roomy(err);
+    throw roomy(err, true);
   }
   // Caught from before the lock is taken until it is given back, so no stop leaves it behind: the download is ended,
   // and the finally below removes the work folder and the lock. A second Ctrl+C stops the launcher at once.
   const stop = new AbortController();
   const onSignal = (/** @type {string} */ sig) => {
     // A reinstall stopped before it publishes leaves the copy that was there, which a plain run starts.
-    const kept = fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe));
+    const kept = haveCopy();
     stop.abort(Object.assign(
       new Error(kept
         ? `Stopped before Ember ${o.version} was downloaded again, and the copy you had is kept. Run '${name}' to start it, or '${name} --npm-reinstall' to download it again.`
@@ -567,7 +608,7 @@ export async function ensureInstalled(o) {
     takeLock({ lock, parent, version: o.version, name, p });
   } catch (err) {
     unhook();
-    throw roomy(err);
+    throw roomy(err, true);
   }
   let work;
   let preserveWork = false;
@@ -577,18 +618,30 @@ export async function ensureInstalled(o) {
     if (!o.force && fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe))) {
       return { dir, exe: at(target.exe), app: at(target.app), fresh: false };
     }
-    work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
+    try {
+      work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
+    } catch (err) {
+      throw roomy(err, true);
+    }
     say(`getting Ember ${o.version} for ${platform}-${o.arch ?? process.arch} (${target.asset}) from ${releaseSource(env)}`);
     const how = { env, signal: stop.signal, version: o.version, asset: target.asset, name };
     const sums = await get(downloadUrl(o.version, "SHA256SUMS", env), how).catch(err => {
       throw err?.status === 404 ? new Error(notReleased(o.version, env), { cause: err }) : err;
     });
     const sumsText = await sums.text();
-    const want = parseSha256Sums(sumsText).get(target.asset);
-    if (!want) throw new Error(`the v${o.version} release's SHA256SUMS has no line for ${target.asset}`);
+    const unchecked = { version: o.version, asset: target.asset, name, env, host: sums.host };
+    let listed;
+    try {
+      listed = parseSha256Sums(sumsText);
+    } catch (err) {
+      // A web page in its place (a Wi-Fi's or a proxy's sign-in, a mirror's index), never repeated (install-docs-c4-1).
+      throw new Error(notChecked({ ...unchecked, problem: /^\s*</.test(sumsText) ? "page" : "garbled" }), { cause: err });
+    }
+    const want = listed.get(target.asset);
+    if (!want) throw new Error(notChecked({ ...unchecked, problem: "missing" }));
     const file = p.join(work, target.asset);
     const got = await download(downloadUrl(o.version, target.asset, env), file, how);
-    if (got !== want) throw new Error(`${target.asset} doesn't match SHA256SUMS (expected ${want}, got ${got}); nothing was installed`);
+    if (got !== want) throw new Error(notChecked({ ...unchecked, problem: "mismatch", want, got }));
     say(`checked ${target.asset} against SHA256SUMS (sha256 ${got})`);
 
     const stage = p.join(work, "app");
@@ -693,14 +746,67 @@ function roomSaid(said) {
 /**
  * What the launcher says when the cache's disk has no room for Ember, in place of Node's "ENOSPC": where, how big the
  * download is (when known), and what to do, which is this computer's to fix: running again or another download
- * wouldn't help.
+ * wouldn't help. After a reinstall, that the copy it started from is kept, and how to start it (install-docs-c4-1).
  * @param {any} err a ROOM error, with `bytes` when the download's size is known
- * @param {{ folder: string; version: string; name: string }} o
+ * @param {{ folder: string; version: string; name: string; kept?: boolean }} o kept: a reinstall's copy is still there
  */
 function noRoom(err, o) {
   const why = err.code === "EDQUOT" ? "your disk quota is used up" : "the disk is full";
   const size = err.bytes ? ` (${Math.max(1, Math.round(err.bytes / 1048576))} MB)` : "";
+  if (o.kept) return `There isn't room in ${o.folder} for Ember ${o.version}${size}: ${why} (${err.code}), and the copy you had is kept. Run '${o.name}' to start it, or free some space, then run '${o.name} --npm-reinstall' again.`;
   return `There isn't room in ${o.folder} for Ember ${o.version}${size}: ${why} (${err.code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run '${o.name}' again.`;
+}
+
+/** Node's codes for a folder this user can't write in: another user's, or on a read-only disk. */
+const LOCKED = new Set(["EACCES", "EPERM", "EROFS"]);
+
+/**
+ * What the launcher says when it can't write in the cache folder, in place of Node's "EACCES: permission denied,
+ * mkdir …": where, why, and what to do (a run with sudo can leave the folder another user's). After a reinstall, that
+ * the copy it started from is kept, and how to start it (install-docs-c4-1).
+ * @param {any} err a LOCKED error
+ * @param {{ folder: string; version: string; name: string; kept?: boolean }} o
+ */
+function cantWrite(err, o) {
+  const readOnly = err.code === "EROFS";
+  const why = readOnly ? "its disk is read-only" : "it, or a folder above it, belongs to another user or is read-only";
+  const own = `EMBER_NPM_CACHE to a folder of your own${readOnly ? "" : ", or make this one yours again"}`;
+  if (o.kept) return `Ember can't write to ${o.folder}: ${why} (${err.code}), and the copy you had is kept. Run '${o.name}' to start it, or set ${own}, then run '${o.name} --npm-reinstall' again.`;
+  return `Ember can't write to ${o.folder}: ${why} (${err.code}). Set ${own}, then run '${o.name}' again.`;
+}
+
+/**
+ * A full disk or quota (noRoom), or, where the cache folder or a file in it is made (`making`), a folder this user
+ * can't write in (cantWrite), as one sentence that names the cache folder; any other error as it is.
+ * @param {any} err
+ * @param {{ folder: string; version: string; name: string; kept?: boolean; making?: boolean }} o
+ */
+function onDisk(err, o) {
+  if (ROOM.has(err?.code)) return new Error(noRoom(err, o), { cause: err });
+  if (o.making && LOCKED.has(err?.code)) return new Error(cantWrite(err, o), { cause: err });
+  return err;
+}
+
+/**
+ * Starting a program's own refusal (EPERM, which Node throws, or EACCES, which it reports and startWatched wraps), not
+ * a file's: the error, or the one it wraps; else undefined.
+ * @param {any} err
+ */
+function refusedStart(err) {
+  return [err, err?.cause].find(e => /^spawn\b/.test(String(e?.syscall ?? "")) && (e.code === "EPERM" || e.code === "EACCES"));
+}
+
+/**
+ * What the launcher says when this computer won't run Ember's own program, in place of Node's "spawn EPERM": a
+ * security policy (fapolicyd, which RHEL 8's STIG requires, refuses an untrusted program with EPERM), antivirus (whose
+ * refusal on Windows reads as EPERM too) or, on Linux, a disk that runs no programs (noexec: EACCES), and what to do.
+ * Not cantWrite's sentence: the folder is likely this user's own (install-docs-v5-1).
+ * @param {any} err a refusedStart error
+ * @param {{ exe: string; name: string; platform: string }} o
+ */
+function cantRun(err, o) {
+  const what = o.platform === "linux" ? "a security policy such as fapolicyd, antivirus, or a disk that doesn't let programs run" : "a security policy or antivirus";
+  return `This computer didn't let Ember start (${err.code}): ${what} may be blocking ${o.exe}. Ask whoever manages this computer to allow it, or set EMBER_NPM_CACHE to a folder where programs may run, then run '${o.name}' again.`;
 }
 
 /**
@@ -855,12 +961,70 @@ export function runMode(args) {
 const EARLY_MS = 3000;
 
 /**
- * Starts `cmd`. Attached, it waits and passes on its output and exit code. Detached, its stderr goes to `log` and it
- * is watched for `earlyMs`: if it stops in that time with an error, what it said is printed and its exit code
- * returned; otherwise it is left running and 0 returned. (A pipe would break once the launcher exits, and Ember's
- * writes to a closed pipe would fail.)
+ * Opens the start log for a detached Ember's stderr, mode 0600: `log`; else, where `log` is another user's file in this
+ * user's own folder (an earlier run with sudo leaves one), `log` made again; else, where the folder is another user's
+ * or on a read-only disk, `start.log` in a private folder in the temporary folder (`temp`, removed once the watch has
+ * ended); else none, and Ember starts all the same (install-docs-v5-2, install-docs-w5-2). A disk too full to make
+ * `log` throws, as that is said (install-docs-r4-2).
+ * @param {string} log
+ * @returns {{ fd: number | null; file: string; temp: string | null }}
+ */
+function openStartLog(log) {
+  const open = (/** @type {string} */ file) => {
+    try {
+      return fs.openSync(file, "w", 0o600);
+    } catch (err) {
+      if (!LOCKED.has(/** @type {any} */ (err)?.code)) throw err;
+      return null;
+    }
+  };
+  let fd = open(log);
+  if (fd === null) {
+    let gone = false;
+    try {
+      fs.unlinkSync(log);
+      gone = true;
+    } catch {
+      // Not there, or not this user's to remove (a folder this user can't write in): the temporary folder's, below.
+    }
+    // A full disk once the old log is gone is still said.
+    if (gone) fd = open(log);
+  }
+  if (fd !== null) return { fd, file: log, temp: null };
+  const tp = process.platform === "win32" ? pathWin32 : pathPosix;
+  let temp = null;
+  try {
+    temp = fs.mkdtempSync(tp.join(os.tmpdir(), "ember-start-"));
+    const file = tp.join(temp, "start.log");
+    return { fd: fs.openSync(file, "w", 0o600), file, temp };
+  } catch {
+    // No temporary folder either: Ember starts without a log, and the launcher says how to see what it said.
+    dropStartLog(temp);
+    return { fd: null, file: log, temp: null };
+  }
+}
+
+/**
+ * Removes a start log's temporary folder (openStartLog), if there is one.
+ * @param {string | null} temp
+ */
+function dropStartLog(temp) {
+  if (!temp) return;
+  try {
+    fs.rmSync(temp, { recursive: true, force: true });
+  } catch {
+    // Still open in Ember on Windows, which may not remove it until Ember quits: left to the temporary folder's clean-up.
+  }
+}
+
+/**
+ * Starts `cmd`. Attached, it waits and passes on its output and exit code. Detached, its stderr goes to `log` (or a
+ * private temporary file, or nowhere, where the log can't be made in a folder this user can't write in: openStartLog)
+ * and it is watched for `earlyMs`: if it stops in that time with an error, what it said is printed and its exit code
+ * returned (or, with no log, how to see it: `<name> doctor`); otherwise it is left running and 0 returned. (A pipe
+ * would break once the launcher exits, and Ember's writes to a closed pipe would fail.)
  * @param {{ file: string; args: string[] }} cmd
- * @param {{ attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
+ * @param {{ attached: boolean; log: string; earlyMs?: number; name?: string; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
  * @returns {Promise<number>}
  */
 export async function start(cmd, o) {
@@ -872,7 +1036,7 @@ export async function start(cmd, o) {
  * with 0 has handed its request to an Ember already running, as a second Ember does. (open(1) on a Mac always ends at
  * once, so there only what runs can tell.)
  * @param {{ file: string; args: string[] }} cmd
- * @param {{ attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
+ * @param {{ attached: boolean; log: string; earlyMs?: number; name?: string; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
  * @returns {Promise<{ code: number; stayed: boolean }>}
  */
 export async function startWatched(cmd, o) {
@@ -883,30 +1047,46 @@ export async function startWatched(cmd, o) {
       const child = spawn(cmd.file, cmd.args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: false });
       child.stdout.pipe(stdout, { end: false });
       child.stderr.pipe(stderr, { end: false });
-      child.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
+      child.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`, { cause: err })));
       child.once("close", (code, signal) => resolve({ code: code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 1), stayed: false }));
     });
   }
-  const fd = fs.openSync(o.log, "w", 0o600);
+  // A folder this user can't write in (another user's, as a run with sudo or an administrator's shared cache leaves
+  // it, or a read-only disk) doesn't stop the copy there starting, so a reinstall's "the copy you had is kept. Run
+  // 'ember' to start it" holds (install-docs-v5-2). A full disk is said (install-docs-r4-2).
+  const made = openStartLog(o.log), fd = made.fd;
   let child;
   try {
     child = await new Promise((resolve, reject) => {
-      const c = spawn(cmd.file, cmd.args, { detached: true, stdio: ["ignore", "ignore", fd], windowsHide: false });
-      c.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
+      const c = spawn(cmd.file, cmd.args, { detached: true, stdio: ["ignore", "ignore", fd ?? "ignore"], windowsHide: false });
+      c.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`, { cause: err })));
       c.once("spawn", () => resolve(c));
     });
-    fs.writeSync(fd, `pid ${child.pid}\n`);
+    try {
+      if (fd !== null) fs.writeSync(fd, `pid ${child.pid}\n`);
+    } catch {
+      // No room for it (a disk that filled since Ember was installed): Ember has started all the same, and is watched
+      // and let go as ever, so the start isn't said as a failure, nor the terminal held until Ember quits (install-docs-r4-2).
+    }
   } finally {
-    fs.closeSync(fd);
+    if (fd !== null) fs.closeSync(fd);
+    // Not started: nothing will write in a temporary log.
+    if (!child) dropStartLog(made.temp);
   }
   const ended = await new Promise(resolve => {
     const timer = setTimeout(() => resolve(null), o.earlyMs ?? EARLY_MS);
     child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
   });
   child.unref();
-  if (!ended || ended.code === 0) return { code: 0, stayed: !ended };
-  const said = fs.readFileSync(o.log, "utf8").replace(/^pid \d+\n/m, "").trim();
-  stderr.write(`ember-copilot: Ember stopped as it started (${ended.code === null ? `signal ${ended.signal}` : `exit ${ended.code}`})${said ? `:\n${said.slice(-4000)}` : "."}\n`);
+  if (!ended || ended.code === 0) {
+    dropStartLog(made.temp);
+    return { code: 0, stayed: !ended };
+  }
+  const said = fd === null ? "" : fs.readFileSync(made.file, "utf8").replace(/^pid \d+\n/m, "").trim();
+  dropStartLog(made.temp);
+  // With no log at all, the setup check, which runs attached, shows what Ember says (install-docs-w5-2).
+  const none = fd === null ? `. Run '${o.name ?? "ember"} doctor' to see what it says.` : ".";
+  stderr.write(`ember-copilot: Ember stopped as it started (${ended.code === null ? `signal ${ended.signal}` : `exit ${ended.code}`})${said ? `:\n${said.slice(-4000)}` : none}\n`);
   return { code: ended.code ?? 1, stayed: false };
 }
 
@@ -937,9 +1117,12 @@ export function afterHandover(o) {
   if (older !== null) return handedOver(o.version, older, o.name);
   // A Mac's open(1) tells nothing, and a new Ember.app may still be starting (Gatekeeper's first check).
   if (o.platform === "darwin") return `started Ember ${o.version}`;
-  // Where what runs can't be read (Windows), only another version in the cache could be an older Ember running: with
-  // none, running `ember` again for its settings, as the help says, isn't told it may be out of date (install-docs-r3-3).
-  if (running === null && !o.others.length) return "Ember was already running, so it took this.";
+  // Where what runs isn't read (Windows) and the cache holds only this version, the Ember running is this one, or one
+  // unzipped from the Releases page, which shares its single-instance lock: running `ember` again for its settings, as
+  // the help says, isn't told its own may be out of date, and the zip's older one is still named (install-docs-r3-3).
+  if (running === null && !o.others.length && o.platform === "win32") {
+    return `Ember was already running, so it took this. If that is an older Ember you installed from the zip, quit it, then run '${o.name}' again to start ${o.version}.`;
+  }
   return handedOver(o.version, null, o.name);
 }
 
@@ -1001,7 +1184,7 @@ export function noDisplay(platform, env, name) {
 /**
  * The `ember` command.
  * @param {string[]} argv the arguments after the script
- * @param {{ platform?: string; env?: Record<string, string | undefined>; earlyMs?: number }} [o] this computer's, unless a test says otherwise
+ * @param {{ platform?: string; arch?: string; env?: Record<string, string | undefined>; earlyMs?: number }} [o] this computer's, unless a test says otherwise
  * @returns {Promise<number>} the exit code
  */
 export async function main(argv, o = {}) {
@@ -1021,12 +1204,20 @@ export async function main(argv, o = {}) {
   // Said before any download: the setup check and an install-only run need no display, and go ahead.
   const blocked = mode.attached || flags.has("--npm-install-only") ? null : noDisplay(platform, env, name);
   if (blocked) { process.stderr.write(`ember-copilot: ${blocked}\n`); return 1; }
-  const installed = await ensureInstalled({ version, platform, env, force: flags.has("--npm-reinstall"), name });
+  const installed = await ensureInstalled({ version, platform, arch: o.arch, env, force: flags.has("--npm-reinstall"), name });
   if (flags.has("--npm-install-only")) { process.stdout.write(`${installed.exe}\n`); return 0; }
   const p = platform === "win32" ? pathWin32 : pathPosix;
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
   if (mode.attached && platform === "darwin") return await doctorMac(installed, mode.args, log);
-  const { code, stayed } = await startWatched(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs });
+  const cmd = launchCommand(platform, installed, mode.args);
+  const { code, stayed } = await startWatched(cmd, { attached: mode.attached, log, earlyMs: o.earlyMs, name }).catch(err => {
+    // This computer refusing to run Ember's program (a security policy such as fapolicyd, antivirus), said as such,
+    // not as a folder this user can't write in, which doesn't stop a start (install-docs-v5-1); a disk too full to make
+    // the start log in the cache folder, said as this computer's (install-docs-r4-2).
+    const refused = cmd.file === installed.exe ? refusedStart(err) : undefined;
+    if (refused) throw new Error(cantRun(refused, { exe: installed.exe, name, platform }), { cause: err });
+    throw onDisk(err, { folder: p.dirname(installed.dir), version, name });
+  });
   if (!mode.attached && code === 0) {
     // Is this version what runs now? Still running after the watch, or its folder in a running command line (a Mac's
     // open(1) ends at once). Otherwise it handed over to an Ember already running (install-docs-c2-3).

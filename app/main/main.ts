@@ -14,7 +14,7 @@ import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, 
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, logLevel } from "./logger";
-import { dataFolderProblem } from "./data-folder";
+import { dataFolderProblem, startupDialogText, startupProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
@@ -60,6 +60,7 @@ import { taskNotice } from "./agent/tasks";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
+import { HelperWatch } from "./helper-watch";
 import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type ShortcutDef, type ShortcutId } from "../shared/shortcuts";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
@@ -211,16 +212,19 @@ watchCrashes(app, log);
 
 /** Set once Ember couldn't start: its exit isn't the session ending (the run marker stays). */
 let startFailed = false;
-/** Ember could not start: say so plainly and exit, so the single-instance lock isn't held by a hidden Ember. */
-function startupFailed(err: unknown): void {
+/**
+ * Ember could not start: say so plainly and exit, so the single-instance lock isn't held by a hidden Ember. `said` is
+ * the dialog's sentence: by default the plain words for `err` (startupProblem), never its own text, which the log keeps
+ * (reliability-performance-r4-1).
+ */
+function startupFailed(err: unknown, said = startupProblem(err, userData)): void {
   startFailed = true;
   log.error("app.start_failed", { err });
-  const message = err instanceof Error ? err.message : String(err);
   void app.whenReady().then(() => {
     // A dialog with no parent window comes up in front only once Ember is the active app (macOS).
     sys.lifecycle.focusOwnApp();
     // A log that couldn't be written (its folder can't be) isn't pointed to.
-    dialog.showErrorBox("Ember couldn't start", fs.existsSync(log.file) ? `${message}\n\nThe details are in ${log.file}.` : message);
+    dialog.showErrorBox("Ember couldn't start", startupDialogText(said, fs.existsSync(log.file) ? log.file : null));
     // Leave Electron from its message loop, not from inside ready (electron/electron#55011).
     setImmediate(() => app.exit(1));
   });
@@ -238,7 +242,7 @@ if (process.argv.includes("--doctor")) {
 } else if (!app.requestSingleInstanceLock()) {
   // Chromium can't take the lock in a data folder it can't write to either: that isn't another Ember (review #80).
   const unusable = dataFolderProblem(userData);
-  if (unusable) startupFailed(new Error(unusable));
+  if (unusable) startupFailed(new Error(unusable), unusable);
   else {
     log.info("instance.handover", { pid: process.pid });
     app.quit();
@@ -261,6 +265,12 @@ let shortcutsTaken: string[] | undefined;
 let questionTaken: string[] = [];
 /** The shared accessibility host's status (Windows, macOS): undefined until asked, null when it didn't answer. */
 let helper: HelperStatus | null | undefined;
+/**
+ * Asks the shared host for it again (Windows) once the host is made (reliability-performance-c4-1); null on Linux, and
+ * on macOS, whose Screen reading row reads the Accessibility permission live, not the host
+ * (reliability-performance-v5-2).
+ */
+let helperWatch: HelperWatch | null = null;
 
 /** The setup-check fixes the user applied while Ember runs (some rows then say what comes next, review #98). */
 let fixesApplied: readonly FixId[] = [];
@@ -307,6 +317,11 @@ const signInWith = (): SignInWith => githubClientId() ? "github" : "github-cli";
 
 /** How long Ember's windows get to come up before a saved sign-in is read on macOS (the keychain may ask; ms). */
 const KEYCHAIN_PAUSE_MS = 800;
+/**
+ * How long Check again waits for the shared host's status (Windows), as long as Linux's look: a bridge starting
+ * again can take 20 s, and its answer then lands for the next read of the rows (reliability-performance-c4-1).
+ */
+const HELPER_RECHECK_MS = 6000;
 
 // Packaged builds ship the sidecar under resources/; development runs it from the repo.
 const sidecarScript = () => app.isPackaged
@@ -598,6 +613,8 @@ function start(): void {
     // (reliability-performance-r2: a hung pyatspi import froze Ember for 5 s). Its look gives up after 5 s.
     const targetRows = targetChecks(fresh);
     if (fresh && sys.lookAgain) await Promise.race([sys.lookAgain().catch(() => undefined), new Promise(r => setTimeout(r, 6000))]);
+    // Windows: the shared host's status, which was asked once after start, is asked now (reliability-performance-c4-1).
+    if (fresh && helperWatch) await helperWatch.again();
     return withTargetChecks(readEnvironment(fresh), await targetRows);
   };
   ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
@@ -3096,10 +3113,22 @@ function start(): void {
     const seenBy = wrapForWsl(sidecar, wslOptions);
     const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);
     wsSeenRef = wsSeen;
-    // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked once, after
-    // the cold start (and later still at login, so the probe stays out of the way of everything else starting).
+    // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked after the cold
+    // start (and later still at login, so the probe stays out of the way of everything else starting). On Windows,
+    // whose Screen reading row reads it, again on Check again and when reads find the helper can't work while the row
+    // says it does, or the reverse (reliability-performance-c4-1): every request's outcome is told to the watch.
+    // macOS's row reads the Accessibility permission live, and there shell_overlays works without it while reads fail
+    // for it, so a watch would ask the host on every read for an answer nothing shows: it asks once, as before
+    // (reliability-performance-v5-2).
     if (launch) {
-      setTimeout(() => sidecar.status().then(st => { helper = toHelperStatus(st); }, err => { helper = helperStatusOfError(err); }), atLogin ? 60_000 : 10_000).unref();
+      const ask = () => sidecar.status().then(st => { helper = toHelperStatus(st); }, err => { helper = helperStatusOfError(err); });
+      const watch = helperWatch = platform.os === "win32" ? new HelperWatch({ ask, row: () => helper, waitMs: HELPER_RECHECK_MS }) : null;
+      if (watch) {
+        const request = sidecar.request.bind(sidecar);
+        sidecar.request = <T>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T> =>
+          request<T>(method, params, timeoutMs).then(v => { watch.saw(method, null); return v; }, (err: unknown) => { watch.saw(method, err); throw err; });
+      }
+      setTimeout(() => void (watch ? watch.again() : ask()), atLogin ? 60_000 : 10_000).unref();
     }
     // The first screenshot with Ember's marks on a fresh Windows or macOS machine doesn't pay fontconfig's cache build:
     // sharp's text is drawn once in the background, later at login (text-warm.ts).

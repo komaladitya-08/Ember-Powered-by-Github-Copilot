@@ -289,9 +289,31 @@ const POLICY_REFUSAL = /execution[ _]polic|PSSecurityException|UnauthorizedAcces
 /** The protocol version this host speaks with the bridge (sidecar/uia/PROTOCOL.md, `Bridge.Version` in ember_uia.cs). */
 export const BRIDGE_PROTOCOL_VERSION = 1;
 /** What status says when the bridge's ready line doesn't carry exactly that version (a stale cached DLL, a half-upgraded install). */
-export const VERSION_DETAIL = "Ember's accessibility helper doesn't match this Ember (it is out of date). Reinstall or update Ember.";
-/** The words for a refused execution policy, in the host's status and the setup check. */
+export const VERSION_DETAIL = "it doesn't match this Ember (it is out of date). Reinstall or update Ember.";
+/** The words for a refused execution policy, in what requests are told and status's cause. */
 export const POLICY_DETAIL = "PowerShell refused to run the bridge (execution policy)";
+/**
+ * What status says when the bridge couldn't start, by why, in plain words that read after "Ember's accessibility
+ * helper didn't start: " (the Windows setup check's Screen reading row). PowerShell's, the compiler's and Node's own
+ * words name .NET exceptions, error codes and paths in the user's own folder: they are status's `cause`, which only
+ * `ember doctor` shows (reliability-performance-w5-1).
+ */
+export const START_DETAIL = {
+  stopped: "Windows PowerShell stopped before it was ready.",
+  setUp: "Windows PowerShell couldn't set it up. If this keeps happening, reinstall Ember.",
+  constrained: "Windows PowerShell is restricted on this computer (Constrained Language Mode).",
+  policy: "your organisation's PowerShell execution policy refused it. Ask your administrator to allow it.",
+  notFound: "Ember couldn't find Windows PowerShell on this computer.",
+  notAllowed: "Windows didn't let Ember run Windows PowerShell. Ask your administrator to allow it.",
+  notRun: "Windows couldn't run Windows PowerShell.",
+} as const;
+
+/** What status says when Windows PowerShell couldn't be run at all (spawn's error): missing, refused, or anything else. */
+export function spawnDetail(err: Error): string {
+  const code = (err as NodeJS.ErrnoException).code;
+  // EACCES and EPERM: Windows refused to run powershell.exe (AppLocker, Software Restriction Policies, its permissions).
+  return code === "ENOENT" ? START_DETAIL.notFound : code === "EACCES" || code === "EPERM" ? START_DETAIL.notAllowed : START_DETAIL.notRun;
+}
 /** How much of a starting bridge's stderr is kept to tell a refusal (never logged, never past its start). */
 const STDERR_KEPT = 16_384;
 /** How long what a bridge wrote may still be on its way after its exit before its start's failure is judged without it. */
@@ -301,8 +323,10 @@ const STREAMS_GRACE_MS = 500;
 interface StartFailure {
   /** What requests are told. */
   why: string;
-  /** What status says (ProviderHealth.detail). */
+  /** What status says (ProviderHealth.detail): START_DETAIL's or VERSION_DETAIL's plain words. */
   detail: string;
+  /** PowerShell's, the compiler's or Node's own words (ProviderHealth.cause, for `ember doctor` only). */
+  cause?: string;
   /** "constrained" and "version": never started again (neither can change in this host's life); "policy": an execution policy refused the script; "other". */
   kind: "constrained" | "version" | "policy" | "other";
   languageMode?: string;
@@ -398,6 +422,7 @@ export class UiaProvider implements AxProvider {
     const out: ProviderHealth = { ok: up ? true : f && !starting ? false : null };
     if (f && !up) {
       out.detail = f.detail;
+      if (f.cause) out.cause = f.cause;
       if (f.languageMode) out.languageMode = f.languageMode;
     }
     if (this.dpiAwareness.dpi) out.dpi = this.dpiAwareness.dpi;
@@ -464,7 +489,7 @@ export class UiaProvider implements AxProvider {
       b.done = true;
       if (!b.isReady) {
         this.failures++;
-        this.failure = { why, at: Date.now(), ...(start ?? { kind: "other", detail: why }) };
+        this.failure = { why, at: Date.now(), ...(start ?? { kind: "other", detail: START_DETAIL.stopped, cause: why }) };
         this.note("uia.start_failed", { kind: this.failure.kind, failures: this.failures, ...(this.failure.languageMode ? { languageMode: this.failure.languageMode } : {}) });
       }
       settle.reject(new Error(why));
@@ -504,10 +529,11 @@ export class UiaProvider implements AxProvider {
           this.note("uia.ready", { dpi: this.dpiAwareness.dpi, processDpi: this.dpiAwareness.processDpi, generation: this.generation });
           settle.resolve();
         } else if (typeof msg.fatal === "string") {
-          const detail = msg.fatal.slice(0, 500);
+          const cause = msg.fatal.slice(0, 500);
           const languageMode = typeof msg.languageMode === "string" ? msg.languageMode : undefined;
-          fail(`the accessibility bridge could not start (${detail})`, {
-            kind: languageMode === "ConstrainedLanguage" ? "constrained" : "other", detail, ...(languageMode ? { languageMode } : {}),
+          const constrained = languageMode === "ConstrainedLanguage";
+          fail(`the accessibility bridge could not start (${cause})`, {
+            kind: constrained ? "constrained" : "other", detail: constrained ? START_DETAIL.constrained : START_DETAIL.setUp, cause, ...(languageMode ? { languageMode } : {}),
           });
         }
         return;
@@ -546,7 +572,7 @@ export class UiaProvider implements AxProvider {
         if (!b.done) fail(...this.exitBeforeReady(b, how));
       });
     });
-    child.on("error", err => fail(`the accessibility bridge could not run (${err.message})`, { kind: "other", detail: `Windows PowerShell could not be run (${err.message})` }));
+    child.on("error", err => fail(`the accessibility bridge could not run (${err.message})`, { kind: "other", detail: spawnDetail(err), cause: `Windows PowerShell could not be run (${err.message})` }));
     child.stdin.on("error", () => fail("the accessibility bridge stopped"));
     return b;
   }
@@ -560,10 +586,10 @@ export class UiaProvider implements AxProvider {
    */
   private exitBeforeReady(b: Bridge, how: string): [string, Omit<StartFailure, "at" | "why">] {
     if (b.lines === 0 && POLICY_REFUSAL.test(b.stderr)) {
-      return [`the accessibility bridge could not start: ${POLICY_DETAIL}`, { kind: "policy", detail: POLICY_DETAIL, marked: this.marked() }];
+      return [`the accessibility bridge could not start: ${POLICY_DETAIL}`, { kind: "policy", detail: START_DETAIL.policy, cause: POLICY_DETAIL, marked: this.marked() }];
     }
     const why = this.failures > 0 ? `the accessibility bridge could not start (it stopped before it was ready again: ${how})` : `the accessibility bridge stopped (${how})`;
-    return [why, { kind: "other", detail: `Windows PowerShell stopped before the bridge was ready (${how})` }];
+    return [why, { kind: "other", detail: START_DETAIL.stopped, cause: `Windows PowerShell stopped before the bridge was ready (${how})` }];
   }
 
   /** Keeps the ready line's DPI awareness, and says once when the threads' and the process's differ (R22). */

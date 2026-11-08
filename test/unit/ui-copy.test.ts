@@ -1125,6 +1125,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
       copied: "Copied message.",
       copyFailed: "Couldn't copy this message. Select its text and copy it manually.",
       replyFailed: "Ember couldn't finish this reply. Review the message above; you can edit your request and send again.",
+      notAnswered: "Ember couldn't answer this request. Review the message above; you can edit your request and send again.",
       replied: "Reply received.",
       loadFailed: "Couldn't load this conversation. New replies will still appear here.",
       started: "Started a new conversation. Memory, reminders and running tasks are untouched.",
@@ -1302,7 +1303,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
   });
 
   it("lets another request's wait take the composer's line only from an earlier outcome, never from a note about my draft (home-c3-1)", () => {
-    for (const line of ["", conv.COMPOSER_SAYS.replied, conv.COMPOSER_SAYS.replyFailed, conv.COMPOSER_SAYS.noReply, conv.COMPOSER_SAYS.stoppedAll, conv.COMPOSER_SAYS.copied, conv.COMPOSER_SAYS.editCancelled, conv.CONVERSATION_STOPPED, conv.CONVERSATION_NOTHING_TO_STOP]) {
+    for (const line of ["", conv.COMPOSER_SAYS.replied, conv.COMPOSER_SAYS.replyFailed, conv.COMPOSER_SAYS.notAnswered, conv.COMPOSER_SAYS.noReply, conv.COMPOSER_SAYS.stoppedAll, conv.COMPOSER_SAYS.copied, conv.COMPOSER_SAYS.editCancelled, conv.CONVERSATION_STOPPED, conv.CONVERSATION_NOTHING_TO_STOP]) {
       expect(conv.composerLineYields(line), line).toBe(true);
     }
     for (const line of [conv.CONVERSATION_EDIT, conv.COMPOSER_OVER, conv.COMPOSER_SAYS.empty, conv.COMPOSER_SAYS.sendFailed, conv.COMPOSER_SAYS.sending, "Ember can't reach the model service right now. Your message is still here: send it again once you're online."]) {

@@ -152,6 +152,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => calls(p)).toContain("signIn");
     await fail(p, "signIn", "GitHub didn't answer.");
     await expect.poll(() => p.locator("#w-signin-line").innerText()).toContain("didn't answer");
+    // Main's own words for a sign-in that failed, said as mine (first-run-r4-2).
+    await emit(p, "onSignInProgress", { state: "error", message: "Ember can't reach GitHub right now. Check the network, then sign in again." });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe("I can't reach GitHub right now. Check the network, then sign in again.");
     expect(await p.locator("#w-models").isHidden()).toBe(true);
     // Retry: the same primary button; the connection then comes up and the models are shown, not assumed.
     await next(p).click();
@@ -224,6 +227,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("Connected to api.example.com. It lists 2 models.");
     // Connected, but Ember is not yet: Continue says it is waiting.
     expect(await p.locator("#w-why").innerText()).toContain("Connecting to api.example.com");
+    // It can't connect yet: why, beside the waiting Continue, said as mine (first-run-r4-2).
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "error", reason: "network", detail: "Ember can't reach api.example.com. Check the address and the network: Ember will try again in a moment.", service: { kind: "user", host: "api.example.com" } });
+    await expect.poll(() => p.locator("#w-why").innerText()).toBe("I can't reach api.example.com. Check the address and the network: I'll try again in a moment.");
     await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service: { kind: "user", host: "api.example.com" } }));
     await expect.poll(() => next(p).getAttribute("aria-disabled")).toBeNull();
     await next(p).click();
@@ -746,6 +752,13 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await next(p).innerText()).toBe("Agree and check the models");
     await p.waitForTimeout(100);
     expect(await calls(p)).not.toContain(off);
+    // The saved key is said only for the address it was saved for: another one asks for its own (first-run follow-up:
+    // key placeholder).
+    expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("A key is saved. Paste a new one to replace it");
+    await p.fill("#w-p-url", "https://api2.example.com/v1");
+    expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("Paste your key");
+    await p.fill("#w-p-url", "https://api.example.com/v1");
+    expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("A key is saved. Paste a new one to replace it");
     // Left unchecked, the edit isn't shown as the details in use on the next visit.
     await p.locator("#w-back").click();
     await next(p).click();
@@ -757,14 +770,16 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#w-alt").click();
     await expect.poll(() => calls(p)).toContain(off);
     expect(await p.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
-    // Failing: its details, opened from the sign-in step, show the connection's own words; Back leaves it on.
+    // Failing: its details, opened from the sign-in step, show the connection's own words, as mine (first-run-r4-2);
+    // Back leaves it on.
     const detail = "Ember can't reach the model server on this computer (localhost:11434). Start it, and Ember will connect in a moment.";
+    const mine = "I can't reach the model server on this computer (localhost:11434). Start it, and I'll connect in a moment.";
     const local = { ...provider, baseUrl: "http://localhost:11434/v1", consent: { ...provider.consent, host: "localhost:11434" } };
     const q = await open({ provider: local, providerState: { ...inForce, host: "localhost:11434", keySaved: false }, agent: { ...SIGNED_OUT, phase: "error", reason: "network", detail, service: { kind: "user", host: "localhost:11434" } } });
     await expect.poll(() => buttons(q)).toContain("Check my provider's details");
     await q.getByRole("button", { name: "Check my provider's details" }).click();
     expect(await q.locator("#w-title").innerText()).toBe("Your own model provider's details");
-    expect(await q.locator("#w-p-result").innerText()).toBe(detail);
+    expect(await q.locator("#w-p-result").innerText()).toBe(mine);
     expect(await q.locator("#w-lead").innerText()).not.toContain("Nothing is sent");
     await q.locator("#w-back").click();
     expect(await q.locator("#w-title").innerText()).toBe("Your own model provider");
@@ -900,7 +915,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await calls(p)).not.toContain("test-draft:api3.example.com");
     const why = "Ember can't reach api3.example.com. Check the address and the network.";
     await settle(p, "test", { ok: false, why, cause: "unreachable" });
-    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe(why);
+    // In my voice, as after a failed edit of the provider in use (first-run-r4-2).
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("I can't reach api3.example.com. Check the address and the network.");
     // Not verified: nothing stays pointed at it, and nothing says it is in use.
     await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
     expect((await calls(p)).lastIndexOf(off)).toBeGreaterThan((await calls(p)).indexOf("test"));
@@ -1099,7 +1115,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // The local server isn't running: the provider's own words, and what can be done about it.
     const detail = "Ember can't reach the model server on this computer (localhost:11434). Start it, and Ember will connect in a moment.";
     await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "error", reason: "network", detail, service });
-    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(detail);
+    // Said as mine, under a lead that is (first-run-r4-2).
+    const mine = "I can't reach the model server on this computer (localhost:11434). Start it, and I'll connect in a moment.";
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(mine);
     expect(await p.locator("#w-lead").innerText()).toBe("I can't connect to the model provider you set up (localhost:11434) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.");
     expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
     const shown = await buttons(p);
@@ -1112,7 +1130,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await settle(p, "retry", { found: false, source: null, hint: "Ember signs in through the GitHub CLI. Install it, then press Check again." });
     await p.waitForTimeout(50);
     expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
-    expect(await p.locator("#w-signin-line").innerText()).toBe(detail);
+    expect(await p.locator("#w-signin-line").innerText()).toBe(mine);
     // Skip, then on to Your Ember: the provider by name, not "Not signed in yet" (first-run-c1-3).
     await p.locator("#w-alt").click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
@@ -1135,6 +1153,51 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
   });
+
+  it("(al) the sign-in step's line names only buttons the step shows: Try again for main's Check again, the GitHub CLI's Check again where it is shown (first-run-w5-2)", async () => {
+    /** Every button the line tells me to press is on the step. */
+    const pressable = async (p: Page) => {
+      const said = await p.locator("#w-signin-line").innerText();
+      const shown = await buttons(p);
+      for (const [, name] of said.matchAll(/\b[Pp]ress (Try again|Check again|Sign in with GitHub)\b/g)) expect(shown, `${said} | ${shown.join(", ")}`).toContain(name);
+      return said;
+    };
+    // A file of mine that can't be found, on a build with Ember's own GitHub App: no Check again here, so Try again.
+    const files = await open({ agent: { ...SIGNED_OUT, phase: "error", reason: "other", detail: "Ember couldn't find one of its files. Press Check again; if it keeps happening, restart Ember." } });
+    await expect.poll(() => files.locator("#w-signin-line").innerText()).toBe("I couldn't find one of my files. Press Try again; if it keeps happening, restart me.");
+    await pressable(files);
+    expect(await buttons(files)).not.toContain("Check again");
+    // A token in the environment that Copilot refused: Sign in with GitHub leads, and Try again is there for the line.
+    const token = await open({ agent: { ...SIGNED_OUT, phase: "error", reason: "sign-in", detail: "Copilot didn't accept the GitHub token in COPILOT_GITHUB_TOKEN (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove COPILOT_GITHUB_TOKEN, then restart Ember; or run “gh auth login” in a terminal and press Check again." } });
+    await expect.poll(() => token.locator("#w-signin-line").innerText()).toContain("then restart me; or run “gh auth login” in a terminal and press Try again.");
+    await pressable(token);
+    expect(await next(token).innerText()).toBe("Sign in with GitHub");
+    await token.getByRole("button", { name: "Try again" }).click();
+    await expect.poll(() => calls(token)).toContain("retry");
+    // My own provider in use, its connection that keeps stopping: Try again, and its details' step says the way to it.
+    const service = { kind: "user", host: "localhost:11434" };
+    const local = { on: true, baseUrl: "http://localhost:11434/v1", conductor: "llama3.2:3b", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "localhost:11434" } };
+    const own = await open({ provider: local, providerState: { inForce: true, host: "localhost:11434", agreed: true }, agent: { ...SIGNED_OUT, phase: "error", reason: "runtime", detail: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.", service } });
+    await expect.poll(() => own.locator("#w-signin-line").innerText()).toBe("My model connection keeps stopping. Press Try again, or restart me.");
+    await pressable(own);
+    await own.getByRole("button", { name: "Check my provider's details" }).click();
+    expect(await own.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    expect(await own.locator("#w-p-result").innerText()).toBe("My model connection keeps stopping. Go back and press Try again, or restart me.");
+    expect(await buttons(own)).toContain("Back");
+    await own.locator("#w-back").click();
+    expect(await own.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await buttons(own)).toContain("Try again");
+    // The organisation's service that keeps stopping: nothing to sign in to, and Try again for the line.
+    const org = await open({ admin: { provider: "https://models.corp.example/v1" }, agent: { ...SIGNED_OUT, phase: "error", reason: "runtime", detail: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.", service: { kind: "admin", host: "models.corp.example" } } });
+    await expect.poll(() => org.locator("#w-signin-line").innerText()).toBe("My model connection keeps stopping. Press Try again, or restart me.");
+    await pressable(org);
+    // A build that signs in through the GitHub CLI shows Check again: the line keeps it, and no second button is added.
+    const cli = await open({ agent: { ...SIGNED_OUT, signInWith: "github-cli", phase: "error", reason: "other", detail: "Ember couldn't find one of its files. Press Check again; if it keeps happening, restart Ember." } });
+    await expect.poll(() => cli.locator("#w-signin-line").innerText()).toBe("I couldn't find one of my files. Press Check again; if it keeps happening, restart me.");
+    await pressable(cli);
+    expect((await buttons(cli)).filter(b => b === "Try again")).toHaveLength(1);
+    for (const p of [files, token, own, org, cli]) expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
 
   it("(o) under the organisation's lockdown the steps say so, never that a service runs or to sign in (first-run-v1)", async () => {
     const p = await open({ admin: { error: "The policy file is writable by others.", provider: null }, agent: { ...SIGNED_OUT, phase: "error", reason: "policy", detail: "Your organisation's policy stops me from connecting." } });
@@ -1242,7 +1305,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await next(d).click();
     await expect.poll(async () => (await calls(d)).some(x => x.startsWith('save:{"consent":{"version":'))).toBe(true);
     expect((c as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(q2) tells me about you says why memory is paused under a model service, shows no answers it couldn't keep, and goes on with Continue (memory-c1-2)", async () => {
     const p = await open({ agent: readyAgent() });
@@ -1355,7 +1418,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await r.locator("#w-why").innerText()).not.toContain("keyring");
     await r.fill("#w-p-key", "sk-x");
     await expect.poll(() => next(r).getAttribute("aria-disabled")).toBe("true");
-    expect(await r.locator("#w-why").innerText()).toContain("A model server on this computer that needs no key still works");
+    // The line says it whole; the waiting button, in short (first-run follow-up: w-why).
+    expect(await r.locator("#w-p-result").innerText()).toContain("A model server on this computer that needs no key still works");
+    expect(await r.locator("#w-why").innerText()).toBe("I can't keep a key safely on this computer.");
     await r.fill("#w-p-key", "");
     await r.fill("#w-p-url", "https://api.example.com/v1");
     await expect.poll(() => next(r).getAttribute("aria-disabled")).toBe("true");
@@ -1364,7 +1429,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await next(r).click();
     await expect.poll(() => calls(r)).toContain("agree:127.0.0.1:1234");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(t) Check again reads the setup rows anew after a fix made outside Ember, in first run and Home, and shows what it found (first-run-6, first-run-r2)", async () => {
     const missing = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" };
@@ -1404,7 +1469,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await h.locator("#checks-again").isVisible()).toBe(false);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((h as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(u) Home's setup check says each row's state in first run's words and offers the command to copy (first-run-9)", async () => {
     const missing = { id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" };

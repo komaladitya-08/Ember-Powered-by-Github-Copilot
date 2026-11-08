@@ -1350,7 +1350,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
-  it("says the reply failed when its Problem line came before its end, and that Stop ended it when the bubble's Stop or Stop everything did (home-r2-1, home-c2-2)", async () => {
+  it("says the reply failed when its Problem line came before its end, never a reply that didn't begin, and that Stop ended it when the bubble's Stop or Stop everything did (home-r2-1, home-c2-2, reliability-performance-c1-1)", async () => {
     const { page, errors } = await home([]);
     try {
       await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
@@ -1361,12 +1361,22 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       const failed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "What's the weather?" }, { t: at(1), who: "problem", text: "The model service reported a problem. Try again." }];
       await page.evaluate(e => window.__home.emit("onConversation", e), failed);
       await turn(page, "idle");
+      // No reply began (the model service refused it): it couldn't answer, not "finish this reply" (reliability-performance-c1-1).
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember couldn't answer this request. Review the message above; you can edit your request and send again.");
+      // A reply that began, then stopped short with a Problem line: that reply couldn't finish.
+      await page.locator("#conversation-message").fill("And the wind?");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      const in1 = (s: number) => new Date(Date.UTC(2026, 10, 7, 9, 1, s)).toISOString();
+      const cut: TranscriptEntry[] = [...failed, { t: in1(20), who: "you", text: "And the wind?" }, { t: in1(30), who: "ember", text: "The wind is", stopped: true }, { t: in1(40), who: "problem", text: "My model connection stopped unexpectedly. Try again." }];
+      await page.evaluate(e => window.__home.emit("onConversation", e), cut);
+      await turn(page, "idle");
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember couldn't finish this reply. Review the message above; you can edit your request and send again.");
       // The bubble's own Stop on a stalled reply: no line comes, main says Stop ended it.
       await page.locator("#conversation-message").fill("And tomorrow?");
       await page.locator("#conversation-send").click();
       await turn(page, "thinking");
-      const asked = [...failed, { t: at(2), who: "you" as const, text: "And tomorrow?" }];
+      const asked = [...cut, { t: at(2), who: "you" as const, text: "And tomorrow?" }];
       await page.evaluate(e => window.__home.emit("onConversation", e), asked);
       await turn(page, "slow");
       await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));

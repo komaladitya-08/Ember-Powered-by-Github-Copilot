@@ -415,8 +415,13 @@ export type FixId = "enable-accessibility" | "open-accessibility-settings" | "op
 /** The shared host's `status` answer as main keeps it (port/host answers it without starting the provider, PH correction). */
 export interface HelperStatus {
   toolkitAccessibility: boolean | null;
-  /** Why the provider couldn't start: the bridge's fatal line, or "refused by an execution policy" when PowerShell ran nothing. */
+  /** Why the provider couldn't start, in plain words that read after "didn't start: " (the setup check shows them). */
   detail?: string;
+  /**
+   * The same in PowerShell's, the compiler's or Node's own words (the bridge's fatal line, spawn's error), which can name
+   * .NET exceptions, error codes and paths in the user's folder: `ember doctor` only, never a window (reliability-performance-w5-1).
+   */
+  cause?: string;
   /** Windows: the bridge's `languageMode` ("FullLanguage", "ConstrainedLanguage"). */
   languageMode?: string;
   /** Windows: the bridge threads' DPI awareness and the process's; they differ on mixed-DPI risk (§12.2 R22). */
@@ -431,8 +436,10 @@ export interface EnvContext {
   /** Ember's accelerators another app holds; undefined while unknown. */
   shortcutsTaken?: string[];
   /**
-   * win32/darwin: the shared host's `status` answer, fetched once in the background after start (never on Linux, where
-   * the Python sidecar still starts on demand only): null when it didn't answer, undefined when not asked yet.
+   * win32/darwin: the shared host's `status` answer, fetched in the background after start (never on Linux, where the
+   * Python sidecar still starts on demand only); on Windows, whose Screen reading row reads it, also on Check again and
+   * when reads find the helper can't work while it says it does, or the reverse (main's HelperWatch; macOS's row reads
+   * the Accessibility permission live): null when it didn't answer, undefined when not asked yet.
    */
   helper?: HelperStatus | null;
   /** The user pressed Check again: a probe that waits between tries (Linux's pyatspi, every 30 s) tries now (first-run-6). */
