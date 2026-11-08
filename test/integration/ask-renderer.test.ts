@@ -287,6 +287,12 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       const setup = page.getByRole("button", { name: "Set up voice in Settings…", exact: true });
       expect(await setup.isVisible()).toBe(true);
       expect(await setup.getAttribute("aria-disabled")).toBeNull();
+      // Its capsule is as wide as the one button it holds, not a full-width strip with nothing after it (companion-r2),
+      // and the clicks it takes (the input shape) end there too.
+      const row = await page.locator("#listen-once-row").boundingBox(), only = await setup.boundingBox();
+      expect(row!.width, JSON.stringify([row, only])).toBeLessThanOrEqual(only!.width + 2 * 6 + 2 * 1 + 1);
+      const taken = await page.evaluate(() => (window as unknown as TestWindow).askHarness.shape ?? []);
+      expect(taken.some(r => r.y <= row!.y && r.y + r.height >= row!.y + row!.height && r.width <= row!.width + 4 + 1), JSON.stringify(taken)).toBe(true);
       await setup.click();
       expect(await harness()).toMatchObject({ rows: -1, listens: 0, voiceSettings: 1 });
       // Turned off by the organisation: nothing here can change that, so the row is left out and the box is a row shorter.

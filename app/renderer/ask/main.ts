@@ -132,6 +132,8 @@ const drawListenOnce = mountListenOnce(listenButton, listenDetail, on => window.
 function showListenOnce(s: ListenOnceStatus | undefined): void {
   const setup = s?.phase === "blocked" && s.fix === "settings";
   listenRow.hidden = !listenOnceShown(s);
+  // The one button's capsule is as wide as it (companion-r2: a full-width strip with nothing after it).
+  listenRow.classList.toggle("setup", setup);
   listenButton.hidden = listenDetail.hidden = setup;
   voiceSetup.hidden = !setup;
   drawListenOnce(s);

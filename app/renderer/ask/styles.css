@@ -100,6 +100,8 @@ html[data-glass="clear"] .cut { color: var(--label); }
 .suggest.away { visibility: hidden; }
 .suggest-cap { flex: none; max-width: 100%; font: var(--type-footnote); line-height: 16px; color: var(--label-2); }
 .listen-once { width: calc(100% - 28px); }
+/* "Set up voice in Settings…" alone: its capsule as wide as the button, not a strip with nothing after it. */
+.listen-once.setup { width: auto; }
 .listen-once[hidden], .listen-once [hidden] { display: none; }
 .listen-once span { min-width: 0; font: var(--type-footnote); line-height: 16px; color: var(--label-2); overflow-wrap: anywhere; }
 .suggest button, .listen-once button {
