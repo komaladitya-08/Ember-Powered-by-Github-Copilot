@@ -129,6 +129,24 @@ it("refuses a setup script that exports a password and a request that gives one 
   expect(await projectPrompt([gh], "review", "Why does the token come back empty?", new AbortController().signal, privateDir)).toContain("$(gh auth token)");
 });
 
+it("sends a call's last keyword argument, a shell function's arguments, a switch and a password's state, beside an exported password (memory-w5-1, memory-w5-3)", async () => {
+  const files = await Promise.all([
+    file("db.py", "import psycopg2\n\n\ndef connect(host, user, password):\n    return psycopg2.connect(\n        host=host, user=user, password=password\n    )\n"),
+    file("client.py", "from openai import OpenAI\n\n\ndef make_client(api_key):\n    return OpenAI(\n        api_key=api_key\n    )\n"),
+    file("login.sh", "#!/bin/bash\nlogin() {\n  local user=$1\n  local password=$2\n  curl -u \"$user:$password\" https://example.com/login\n}\n"),
+    file("deploy.sh", "#!/bin/sh\ndeploy() {\n  token=$1\n  curl -H \"Authorization: Bearer $token\" https://example.com/deploy\n}\nTOKEN=$token ./deploy\n"),
+    file("transport.py", "def channel(cert, key, client_cert_source):\n    if client_cert_source:\n        cert, key = client_cert_source()\n        return grpc.ssl_channel_credentials(\n            certificate_chain=cert, private_key=key\n        )\n"),
+    file("lexer_types.py", "class Lexer:\n    def __init__(self,\n                 text=None,\n                 oldToken=None):\n        self.text = text\n"),
+    file("config.sh", "#!/bin/sh\nPASSWORD_REQUIRED=true\nUSE_TOKEN=false\n"),
+    file("README.md", "# Auth service\n\nPasswords are hashed.\n\nLogin\n\nThe password is masked.\n"),
+  ]);
+  const result = (await projectPrompt(files.slice(0, 4), "review", "Review this.", new AbortController().signal, privateDir))
+    + await projectPrompt(files.slice(4), "review", "Review this.", new AbortController().signal, privateDir);
+  for (const line of ["password=password", "api_key=api_key", "local password=$2", "oldToken=None):", "USE_TOKEN=false", "Passwords are hashed."]) expect(result).toContain(line);
+  const setup = await file("setup.sh", "#!/bin/sh\nsetup() {\n  export DB_PASSWORD=changeme\n}\n");
+  await expect(projectPrompt([setup], "review", "Why does start fail?", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
+});
+
 it("offers a reviewed patch whose new line sets max_tokens or reads a key from the environment (memory-r4-2, integrations-c4-1)", async () => {
   const source = await file("client.ts", "export const options = {\n  temperature: 0.2,\n};\n");
   const snapshots: ProjectSource[] = [];

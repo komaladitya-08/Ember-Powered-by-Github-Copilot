@@ -82,7 +82,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
   "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password
-  is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1), and a code counts only for
+  is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1; "typed", "entered",
+  "hashed" and "masked" also at the clause's end, "Passwords are hashed.", "Password: Masked", but not before a value
+  in brackets, "PIN: entered (4821)", memory-w5-3), and a code counts only for
   something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
   "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
   "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
@@ -113,8 +115,11 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   arrow or a property ("token => …", "token.type === …") and code on the next line ("creds.refresh_token:"); only the
   name is passed over, so a token in the value is still found. A quoted value, a bare word, a value with a digit or a
   symbol, a PIN's number and a shell variable's unquoted word ("export DB_PASSWORD=changeme", "readonly
-  ADMIN_PASSWORD=opensesame": "=" with nothing around it, first on its line or after export, readonly, declare,
-  typeset, local or ENV, memory-v5-2) stay values, and so does code that gives a literal as a default or one shaped like a
+  ADMIN_PASSWORD=opensesame": "=" with nothing around it, after export, readonly, declare, typeset, local or ENV, or a
+  name in capitals first on its line or after others, memory-v5-2) stay values, but for a reference or a switch
+  ("local password=$2", "TOKEN=$token", "USE_TOKEN=false"); a call's or a signature's arguments, a lowercase name
+  without one of those words and a capitals one inside a call's brackets are never a shell's ("password=password\n)",
+  "oldToken=None):", "token=$1": memory-w5-1), and so does code that gives a literal as a default or one shaped like a
   password ("os.getenv('PW', 'changeme')", "pw || 'hunter2'", "f(user, 'S3cret!')"). After a label's ":" in prose
   (not a line of code, nor one that ends as code does) none of the bare shapes counts: the same name, three letters, a
   name for a secret, an operator, a number of more than two digits, a word in brackets, "new" without a call, "self."

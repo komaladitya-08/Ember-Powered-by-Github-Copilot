@@ -13,11 +13,15 @@ import { redactSecrets } from "../commands/redact";
  * Words that say no value follows only with more words after them in the clause, none with a digit or a symbol
  * ("Password: never logged", "password: hashed with bcrypt", "The pin of a tool: its name, description…"; "its" before
  * two words at least), since a slip for "it's" or a value after one is written the same way ("Wi-Fi password is its
- * BlueSky99", "Password for Gmail is never Summer2024!", "password: its fluffy"): memory-v5-1.
+ * BlueSky99", "Password for Gmail is never Summer2024!", "password: its fluffy"): memory-v5-1. "typed", "entered", "hashed"
+ * and "masked" say it at the clause's end too ("Passwords are hashed.", "Password: Masked", "Password: hashed (bcrypt)"),
+ * but not before brackets with a value-shaped word in them ("PIN: entered (4821)"): memory-w5-3.
  */
 const CLAUSE_WORD = String.raw`[ \t]+[A-Za-z][A-Za-z'’-]*(?![\w!@#$%^&*])`;
 const CLAUSE_END = String.raw`[^\d!@#$%^&*\n.;]{0,80}(?:[\n.;]|$)`;
-const BEFORE_WORDS = String.raw`its(?=${CLAUSE_WORD}[ \t,]*${CLAUSE_WORD}${CLAUSE_END})|(?:never|typed|entered|hashed|masked)(?=${CLAUSE_WORD}${CLAUSE_END})`;
+const STATE_END = String.raw`[ \t]*(?:[.,;:!?)\n]|$|\((?![^)\n]*(?:\d{3}|[A-Za-z]\d|\d[A-Za-z]|[!@#$%^&])))`;
+const BEFORE_WORDS = String.raw`its(?=${CLAUSE_WORD}[ \t,]*${CLAUSE_WORD}${CLAUSE_END})|never(?=${CLAUSE_WORD}${CLAUSE_END})`
+  + String.raw`|(?:typed|entered|hashed|masked)(?=${CLAUSE_WORD}${CLAUSE_END}|${STATE_END})`;
 /**
  * Words that follow a secret's name without being its value ("the password is required", "PIN: the tab is pinned",
  * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse").
@@ -175,10 +179,15 @@ function codeMember(chain: string): boolean {
 /** A line of code by how it starts or ends ("const …", "export declare …", "def …", "… {"): a bare name in it is a variable. */
 const CODE_LINE = /^\s*(?:export|declare|const|let|var|val|final|readonly|private|public|protected|static|abstract|override|async|function|def|fn|func|interface|class|struct|enum|return|yield|await)\s|[{(]\s*$/;
 /**
- * What may stand before a shell's variable on its line: nothing, export, readonly, declare or typeset and their flags,
- * local, a Dockerfile's ENV, and other variables set before it ("DB_USER=app DB_PASSWORD=x ./start"): memory-v5-2.
+ * What stands before a shell's variable on its line: export, readonly, declare or typeset and their flags, local or a
+ * Dockerfile's ENV, perhaps with other variables set after it, or, for a name in capitals, nothing but other variables
+ * in capitals ("DB_USER=app DB_PASSWORD=x ./start"): memory-v5-2. Never a call's or a signature's arguments
+ * ("host=host, password=password", "oldToken=None):"): memory-w5-1.
  */
-const SHELL_BEFORE = /^\s*(?:(?:export|readonly|declare|typeset|local)(?:\s+-[A-Za-z]+)*\s+|ENV\s+)?(?:[A-Za-z_]\w*=\S*\s+)*$/;
+const SHELL_BEFORE = /^\s*(?:(?:export|readonly|declare|typeset|local)(?:\s+-[A-Za-z]+)*\s+|ENV\s+)(?:[A-Za-z_]\w*=\S*\s+)*$/;
+const SHELL_CAPS_BEFORE = /^\s*(?:[A-Z_][A-Z0-9_]*=\S*\s+)*$/;
+/** A shell's reference or switch where its value would be ("local password=$2", "TOKEN=$token", "USE_TOKEN=false"): memory-w5-1. */
+const SHELL_CODE = /^(?:\$(?:\d|[@*#?]|[A-Za-z_]+)|true|false|yes|no|null|none)(?![\w$@.!#%&*-])/i;
 /** A TypeScript type ("type CommentOrToken = Comment | Token;"), which never holds a value. */
 const TYPE_ALIAS = /^\s*(?:export\s+)?(?:declare\s+)?type\s+[A-Za-z_$][\w$]*(?:<[^=\n]*>)?\s*=/;
 
@@ -216,7 +225,7 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   const word = /^[^\s,;)\]}"'`]+/.exec(v)?.[0] ?? "";
   // A setting's own name and a value that isn't shaped like a password ("AWS_PROFILE=dev2").
   const setting = /^[A-Z][A-Z0-9]*_[A-Z0-9_]*=([^\s,;]*)/.exec(v);
-  if (PLACEHOLDER.test(word) || (!key.shell && (CODE_TYPE.test(v) || CODE_WORD.test(v))) || (setting && !secretShaped(setting[1]!))) return true;
+  if (PLACEHOLDER.test(word) || (key.shell ? SHELL_CODE.test(v) : CODE_TYPE.test(v) || CODE_WORD.test(v)) || (setting && !secretShaped(setting[1]!))) return true;
   // A negated member ("!!n.secret", "!opts.token").
   if (!key.shell && /^!!?[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+/.test(v)) return true;
   const num = /^-?(?:0x[0-9a-f]+|\d[\d_]*(?:\.\d+)?(?:e[-+]?\d+)?)(?![\w$@.!#%&*:/-])/i.exec(v)?.[0];
@@ -258,6 +267,28 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
 function codeish(line: string): boolean {
   return CODE_LINE.test(line) || /[,;{([]\s*(?:(?:\/\/|#).*)?$/.test(line) || /^\s*["'][^"'\n]*["']\s*:/.test(line)
     || /[{(][^)}]*[A-Za-z_$][\w$]*["']?\s*:/.test(line);
+}
+
+/**
+ * The bracket ("(", "[" or "{") opened on an earlier line that the line at `lineStart` stands inside, looked for in the
+ * 2 KiB before it, or undefined: only a line of code opens one (`codeish`), so prose in brackets never does. A call's,
+ * a signature's or an object's own lines read as code by it ("connect(\n    password=password\n)", "auth = {\n
+ * password: urlPassword\n}"): memory-w5-1, memory-w5-2.
+ */
+function openedAbove(text: string, lineStart: number): string | undefined {
+  let depth = 0;
+  for (let i = lineStart - 1; i >= Math.max(0, lineStart - 2048); i--) {
+    const c = text[i]!;
+    if (c === ")" || c === "]" || c === "}") depth++;
+    else if (c === "(" || c === "[" || c === "{") {
+      if (depth > 0) { depth--; continue; }
+      // Its line, at most 200 characters either side of it, so a long line stays linear.
+      const head = text.slice(Math.max(0, i - 200), i);
+      const end = text.indexOf("\n", i);
+      return codeish(head.slice(head.lastIndexOf("\n") + 1) + text.slice(i, Math.min(end < 0 ? text.length : end, i + 200))) ? c : undefined;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -313,8 +344,9 @@ function withoutCodeKeys(text: string): string {
     const key: CodeKey = {
       name: segs[s]!, count, pin: !count && own.some(w => PIN_PARTS.test(w)),
       compared: (property && op.startsWith("==")) || /\?\s*["'`]$/.test(before), typeOf: op.startsWith("==") && /\btypeof\s+$/.test(before),
-      shell: op === "=" && text[start + name.length] === "=" && /^[A-Za-z_]\w*$/.test(name) && /^[^\s,)]\S*(?<![,)])(?!\S)/.test(text.slice(i, i + 400))
-        && SHELL_BEFORE.test(text.slice(lineStart, start)),
+      shell: op === "=" && text[start + name.length] === "=" && /^[A-Za-z_]\w*$/.test(name) && /^[^\s,)]\S*(?<![,):])(?!\S)/.test(text.slice(i, i + 400))
+        && (SHELL_BEFORE.test(text.slice(lineStart, start))
+          || (/^[A-Z_][A-Z0-9_]*$/.test(name) && SHELL_CAPS_BEFORE.test(text.slice(lineStart, start)) && !/[([]/.test(openedAbove(text, lineStart) ?? ""))),
     };
     let code: boolean;
     // An arrow's parameter, a path, or a property about the secret ("token.type").

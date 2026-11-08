@@ -356,6 +356,19 @@ describe("what memory never keeps", () => {
   ])("keeps %j, where no value follows (memory-v5-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A password's state at the clause's end was taken for its value once those words needed more words after them
+  // (memory-w5-3).
+  it.each([
+    ["Passwords are hashed."], ["The password is masked."], ["Password: Masked"], ["Password: Hashed"], ["PIN: Entered"], ["Password: hashed (bcrypt)"],
+    ["The password is hashed, salted and stored"], ["Password: masked (****)"], ["Password: hashed (bcrypt, cost 12)"], ["The password is typed"],
+  ])("keeps %j, a password's state where its value would be (memory-w5-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).not.toBe("refused");
+  });
+  it.each([["password: hashed hunter2"], ["PIN: entered (4821)"], ["Password: typed (hunter2)"], ["Passwords are hashed hunter2."]])(
+    "still refuses %j, a value after a password's state (memory-w5-3)", text => {
+      expect(memoryRefusal(text)).not.toBeNull();
+    });
 
   // A shell's unquoted word is its value, never a variable's name: these were passed over as code (memory-v5-2).
   it.each([
@@ -370,6 +383,22 @@ describe("what memory never keeps", () => {
     ["client = Client(\n    token=token,\n    password=password,\n)"], ["login(user, password=pw)"],
   ])("keeps %j, a shell reference or a keyword argument (memory-v5-2)", text => {
     expect(memoryRefusal(text)).toBeNull();
+  });
+  // Only a line that is clearly shell takes its word as the value: a call's or a signature's last argument, a shell
+  // function's argument and a switch were refused as passwords once any "name=word" did (memory-w5-1).
+  it.each([
+    ["        host=host, user=user, password=password\n    )"], ["    return OpenAI(\n        api_key=api_key\n    )"],
+    ["            certificate_chain=cert, private_key=key\n        )"], ["    def __init__(self,\n                 text=None,\n                 oldToken=None):"],
+    ["        messages.StartEnvironmentRequest(\n            accessToken=access_token\n        ),"], ["login() {\n  local user=$1\n  local password=$2\n}"],
+    ["deploy() {\n  token=$1\n}"], ["TOKEN=$token ./deploy"], ["PASSWORD_REQUIRED=true"], ["USE_TOKEN=false"], ["export REQUIRE_PASSWORD=yes"],
+    ["os.environ.update(\n    TOKEN=token\n)"],
+  ])("keeps %j, an argument, a reference or a switch where a shell's value would be (memory-w5-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["setup() {\n  export DB_PASSWORD=changeme\n}"], ["login() {\n  local password=letmein\n}"], ["export PASSWORD=$ecret99"], ["PASSWORD=password\n"],
+  ])("still refuses %j, a shell variable set to a password (memory-w5-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
   });
 
   // Prose after a secret's name, read as code by round five's code shapes (memory-v5-3): each look-alike secret is

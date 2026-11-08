@@ -222,6 +222,15 @@ describe("a disk's use and code that names a token, which hold no secret (memory
   });
 });
 
+describe("a password's state as a label's value (memory-w5-3)", () => {
+  it.each([["Password", "Masked"], ["Password", "Hashed"], ["PIN", "Entered"]])("shows %s: %s", (label, value) => {
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Account", value: "priya@example.com" }, { label, value }] }))).toBe(null);
+  });
+  it("still refuses a value after the state", () => {
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Password", value: "hashed hunter2" }] }))).toBe("secret");
+  });
+});
+
 describe("ordinary paths and words that only look private (re-review S-d)", () => {
   it.each([
     "/private/tmp/report.txt", "/private/var/folders/x/notes.txt", "~/Documents/Talk.key", "My keyring is on the desk", "Keychains sync across Macs",
