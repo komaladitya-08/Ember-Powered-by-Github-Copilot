@@ -79,7 +79,7 @@ import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
-import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
+import { AnswerLanguage, cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { SpeechStream } from "../voice/tts";
 import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
@@ -1066,6 +1066,8 @@ function start(): void {
    * answer always did), the rest follow it.
    */
   const answerSpeech = new SpeechStream();
+  /** The answer's language, decided once for all its pieces (voice-speaking-r1): Kitten reads only English. */
+  const answerLanguage = new AnswerLanguage();
   let answerSpoken = false;
   let answerInterrupted = false;
   /**
@@ -1088,13 +1090,14 @@ function start(): void {
     if (speechSilenced(!!voice?.speaking, allowed)) { cancelAck(); voice?.hush(); }
     return allowed;
   };
-  const sayStreamed = (chunks: string[]) => {
+  /** `end`: the message is complete, so nothing of it waits any longer to tell its language. */
+  const sayStreamed = (chunks: string[], end = false) => {
     if (answerInterrupted || confirmer?.waiting || !silenceIfOff()) return;
-    for (const chunk of chunks) {
+    for (const { text: chunk, lang } of answerLanguage.take(chunks, end)) {
       const c = afterAck(chunk, ackSaid);
       ackSaid = null;
       if (!c.trim()) continue;
-      turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken }); answerSpoken = true;
+      turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken, lang }); answerSpoken = true;
     }
   };
   /**
@@ -1125,6 +1128,7 @@ function start(): void {
     answerInterrupted = true;
     cancelAck();
     answerSpeech.reset();
+    answerLanguage.reset();
     answerSpoken = false;
     ackSaid = null;
     lastAskByVoice = false;
@@ -3285,6 +3289,8 @@ function start(): void {
         if (maySpeak()) voice?.warmSpeech();
         askedAt = Date.now();
         answerInterrupted = false;
+        // A request typed in another language: its answer's short first words are said in that language (voice-speaking-11).
+        answerLanguage.reset(turn.text);
         lastAskByVoice = turn.spoken && !turn.manual;
         if (turn.spoken) ackLater(turn.text);
         syncListenOnce();
@@ -3292,8 +3298,8 @@ function start(): void {
       onAnswerInterrupted: resetAnswerSpeech,
       onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
       // An answer whose voice Stop speaking silenced is still the answer, unsaid (voice-speaking-c1-1).
-      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text)); },
-      onAnswer: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text)); },
+      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
+      onAnswer: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
         aborted ||= (answerInterrupted && !answerHushed) || !!confirmer?.waiting;
@@ -3307,6 +3313,7 @@ function start(): void {
         if (next?.suggestions.length && lastState.bubble.visible) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
         lastReply = "";
         answerSpeech.reset();
+        answerLanguage.reset();
         answerSpoken = false;
         ackSaid = null;
         if (lastAskByVoice && !aborted) voice?.followUp(next?.followUpMs ?? 8000, { afterQuestion: endsWithQuestion(turnAnswer) });

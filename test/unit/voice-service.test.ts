@@ -1471,6 +1471,45 @@ describe("speech models", () => {
       expect(posted(electron.procs[0], "say")).toEqual([{ type: "say", id: 1, text: "Night Light is on." }]);
     });
 
+    it("says each piece of an answer in the answer's language, never judging one piece on its own (voice-speaking-r1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Here are three films you might like:", { lang: null });
+      v.speak("1. La La Land.", { append: true, lang: null });
+      await flush();
+      expect(posted(electron.procs[0], "say").map(m => (m as { text?: string }).text)).toEqual(["Here are three films you might like:", "1. La La Land."]);
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      // Speech that isn't an answer's is still judged whole.
+      v.speak("Playing La Vie en Rose.");
+      expect(posted(electron.procs[0], "say").at(-1)).toEqual(expect.objectContaining({ text: "Playing La Vie en Rose." }));
+    });
+
+    it("says another language's words only after the pieces Ember's own voice is still making, never ahead of them (voice-speaking-r1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Claro.", { lang: null });
+      await flush();
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      v.speak("Aquí tienes los archivos que pediste.", { append: true, lang: "es" });
+      await flush();
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      electron.procs[0].emit("message", { type: "audio", id: 1, samples: new Float32Array(4), rate: 22_050, remaining: "" });
+      await flush();
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      electron.procs[0].emit("message", { type: "done", id: 1 });
+      await flush();
+      const sent = speech.webContents.send.mock.calls.map(c => c[0]);
+      expect(sent.lastIndexOf(VOICE.audioDone)).toBeLessThan(sent.lastIndexOf(VOICE.speak));
+      expect(speech.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, { text: "Aquí tienes los archivos que pediste.", append: true, lang: "es" });
+      // A hush drops what was waiting.
+      v.speak("Vale.", { lang: null });
+      v.speak("Hasta luego, y gracias por todo.", { append: true, lang: "es" });
+      v.hush();
+      electron.procs[0].emit("message", { type: "done", id: 2 });
+      await flush();
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.objectContaining({ text: "Hasta luego, y gracias por todo." }));
+    });
+
     it("loads the voice and its speak-only page when a request is likely, once, and lets them go when idle (voice-speaking-1)", async () => {
       vi.useFakeTimers();
       const { v } = service(true, { neuralVoice: true });

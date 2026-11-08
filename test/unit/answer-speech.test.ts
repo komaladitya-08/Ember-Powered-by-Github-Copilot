@@ -3,7 +3,7 @@ import fs from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SpeechStream } from "../../app/voice/tts";
-import { endsWithQuestion, spokenText } from "../../app/voice/spoken";
+import { AnswerLanguage, endsWithQuestion, spokenText } from "../../app/voice/spoken";
 import { TurnLatency } from "../../app/main/turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "../../app/main/acknowledge";
 import { speaksAloud, speechSilenced } from "../../app/shared/speech";
@@ -50,8 +50,8 @@ function wiring() {
       manualListening: on => { manualCall = on ? { source: "ask" } : null; },
     };
   `, { target: ts.ScriptTarget.ES2022 });
-  const run = new Function("SpeechStream", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "speechSilenced", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", "prefs", code);
-  const callbacksUnderTest = run(SpeechStream, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, speechSilenced, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice, prefs) as {
+  const run = new Function("SpeechStream", "AnswerLanguage", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "speechSilenced", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", "prefs", code);
+  const callbacksUnderTest = run(SpeechStream, AnswerLanguage, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, speechSilenced, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice, prefs) as {
     onTurnStart(turn: { text: string; spoken: boolean; manual?: true }): void;
     onAnswerDelta(text: string): void;
     onAnswer(text: string): void;
@@ -102,7 +102,7 @@ describe("main's answer speech ownership", () => {
     expect(w.voicePreference).toEqual({ natural: true, naturalModel: "kitten" });
     w.onTurnStart({ text: "The new account’s own request", spoken: false });
     w.onAnswer("Only the new reply.");
-    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Only the new reply.", { append: false });
+    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Only the new reply.", { append: false, lang: null });
   });
 
   it("hushes authoritative account erasure, while an ordinary empty learned-fact view preserves speech", () => {
@@ -139,7 +139,7 @@ describe("main's answer speech ownership", () => {
     expect(w.voice.speak).not.toHaveBeenCalled();
     w.onTurnStart({ text: "Another account’s request", spoken: false });
     w.onAnswer("The current account’s answer.");
-    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("The current account’s answer.", { append: false });
+    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("The current account’s answer.", { append: false, lang: null });
     expect(w.voicePreference).toEqual({ natural: true, naturalModel: "kitten" });
   });
   it("preserves spoken ownership through a formal question and speaks its post-approval completion", () => {
@@ -155,7 +155,7 @@ describe("main's answer speech ownership", () => {
     w.onAnswer("The event is updated.");
     w.onTurnEnd(false);
     expect(w.agent.pauseAnswer).toHaveBeenCalledOnce();
-    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("The event is updated.", { append: false });
+    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("The event is updated.", { append: false, lang: null });
     expect(w.voice.followUp).toHaveBeenCalledExactlyOnceWith(8000, { afterQuestion: false });
   });
 
@@ -178,7 +178,7 @@ describe("main's answer speech ownership", () => {
     w.confirmer.waiting = false; // Closing a prior card changes no per-turn state.
     w.onAnswer("New typed completion.");
     w.onTurnEnd(false);
-    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("New typed completion.", { append: false });
+    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("New typed completion.", { append: false, lang: null });
     expect(w.voice.followUp).not.toHaveBeenCalled();
   });
 
@@ -220,7 +220,7 @@ describe("main's answer speech ownership", () => {
     expect(w.voice.cancelListenOnce).toHaveBeenCalledOnce();
     w.onAnswer("Would you like the first report?");
     w.onTurnEnd(false);
-    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Would you like the first report?", { append: false });
+    expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Would you like the first report?", { append: false, lang: null });
     expect(w.voice.followUp).not.toHaveBeenCalled();
   });
 
@@ -318,7 +318,7 @@ describe("main's answer speech ownership", () => {
     // The next request speaks again.
     w.onTurnStart({ text: "And the next one?", spoken: false });
     w.onAnswer("The next answer.");
-    expect(w.voice.speak).toHaveBeenLastCalledWith("The next answer.", { append: false });
+    expect(w.voice.speak).toHaveBeenLastCalledWith("The next answer.", { append: false, lang: null });
   });
 
   it("still ends a turn stopped by a cut-in as stopped, after an earlier Stop speaking (voice-speaking-c1-1)", () => {
@@ -332,6 +332,34 @@ describe("main's answer speech ownership", () => {
     w.onAnswer("The first sentence. The second sentence.");
     w.onTurnEnd(false);
     expect(w.personal.answered).not.toHaveBeenCalled();
+  });
+
+  it("says an English answer's list of films in Ember's voice, its language decided once for the answer (voice-speaking-r1)", () => {
+    const w = wiring();
+    w.onTurnStart({ text: "Suggest three films", spoken: false });
+    const answer = "Here are three films you might like:\n1. La La Land\n2. Les Misérables\n3. Amélie\n\nShall I find where to watch them?";
+    for (let i = 0; i < answer.length; i += 4) w.onAnswerDelta(answer.slice(i, i + 4));
+    w.onAnswer(answer);
+    const calls = w.voice.speak.mock.calls as [string, { append: boolean; lang: string | null }][];
+    expect(calls.map(c => c[0]).join(" ")).toBe("Here are three films you might like: 1. La La Land. 2. Les Misérables. 3. Amélie. Shall I find where to watch them?");
+    expect(calls.map(c => c[1].lang)).toEqual(calls.map(() => null));
+    // The first words weren't held back to decide.
+    expect(calls[0][0]).toBe("Here are three films you might like:");
+  });
+
+  it("says the first words of an answer to a request typed in another language in that language too (voice-speaking-11)", () => {
+    const w = wiring();
+    w.onTurnStart({ text: "Peux-tu ouvrir les fichiers que je t'ai envoyés ?", spoken: false });
+    const answer = "D'accord. Voici les trois fichiers que vous avez demandés. Le premier est le rapport de ventes.";
+    for (let i = 0; i < answer.length; i += 4) w.onAnswerDelta(answer.slice(i, i + 4));
+    w.onAnswer(answer);
+    const calls = w.voice.speak.mock.calls as [string, { append: boolean; lang: string | null }][];
+    expect(calls[0][0]).toBe("D'accord.");
+    expect(calls.map(c => c[1].lang)).toEqual(calls.map(() => "fr"));
+    // The next answer is judged afresh.
+    w.onTurnStart({ text: "Open the report", spoken: false });
+    w.onAnswer("Done. I opened Por Una Cabeza.");
+    expect(w.voice.speak).toHaveBeenLastCalledWith("Done. I opened Por Una Cabeza.", { append: false, lang: null });
   });
 
   it("keeps background results on cards during a foreground request and appends them after playback", () => {

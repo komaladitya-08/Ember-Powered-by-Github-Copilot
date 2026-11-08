@@ -1,7 +1,7 @@
 /** What Ember says out loud for an answer: the words, not the Markdown, code or addresses. */
 
 import { describe, expect, it } from "vitest";
-import { cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
+import { AnswerLanguage, cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 import { heardCutInWake } from "../../app/voice/engine";
 
 describe("spokenText says keys, menu paths and symbols as people say them", () => {
@@ -204,4 +204,89 @@ describe("speechLanguage: which language a reply is in, so Kitten (English only)
     "As soon as it's done, see github.com.",
     "Come in and see the van.",
   ])("takes %j as English (or can't tell): Kitten says it", text => expect(speechLanguage(text)).toBeNull());
+
+  it.each([
+    "Playing La Vie en Rose.",
+    "Done. I played Por Una Cabeza.",
+    "Los Angeles, San Diego and Las Vegas.",
+    "Visit El Paso, Las Cruces or Los Alamos.",
+    "1. La La Land.",
+    "2. Les Misérables.",
+    "Your playlist has La Bamba, La Isla Bonita and Por Una Cabeza.",
+    "Leonardo da Vinci painted it.",
+    "The café is on Rue de Rivoli.",
+    "Meeting at 10 o'clock with Anna and Paul.",
+    "Um, I think so.",
+  ])("takes %j, English with a name from another language, as English (voice-speaking-r1)", text => expect(speechLanguage(text)).toBeNull());
+
+  it.each([
+    ["Il y a trois fenêtres ouvertes : Firefox, Fichiers et Terminal.", "fr"],
+    ["Autre chose ? Je suis là si vous avez besoin de moi.", "fr"],
+    ["No puedo hacer eso, pero puedo ayudarte a encontrar el archivo.", "es"],
+    ["Es sind drei Fenster offen: Firefox, Dateien und Terminal.", "de"],
+    ["Fertig! Das Meeting ist um drei Uhr mit Anna und Paul.", "de"],
+    ["Non posso farlo, ma posso aiutarti a trovare il file.", "it"],
+    ["Não posso fazer isso, mas posso ajudar você a encontrar o arquivo.", "pt"],
+    ["Pronto! A reunião é às três com Maria e Paulo.", "pt"],
+    ["Klaar! De vergadering is om drie uur met Anna en Paul.", "nl"],
+  ])("still finds %j is %j, beside its names (voice-speaking-r1)", (text, lang) => expect(speechLanguage(text)).toBe(lang));
+});
+
+describe("AnswerLanguage: an answer is said in one language, decided once from enough of it (voice-speaking-r1, voice-speaking-11)", () => {
+  const said = (pieces: string[], o: { request?: string } = {}) => {
+    const a = new AnswerLanguage();
+    a.reset(o.request ?? "");
+    const out: { text: string; lang: string | null; at: number }[] = [];
+    pieces.forEach((p, i) => { for (const x of a.take([p], i === pieces.length - 1)) out.push({ ...x, at: i }); });
+    return out;
+  };
+
+  it("says every piece of an English answer in Ember's voice, its films' and songs' names too", () => {
+    for (const pieces of [
+      ["Done.", "I played Por Una Cabeza.", "It is a tango from 1935, and it should be playing now."],
+      ["Here are three films you might like:", "1. La La Land.", "2. Les Misérables.", "3. Amélie."],
+      ["Playing La Vie en Rose.", "It is by Édith Piaf, from 1947.", "Shall I play more of hers?"],
+      ["Los Angeles, San Diego and Las Vegas.", "All three are about four hours apart by car, and the drive is easy."],
+      ["C'est la vie, as they say.", "I couldn't find the file you asked for, so I opened your Documents folder instead."],
+    ]) {
+      const out = said(pieces);
+      expect(out.map(x => x.text), pieces[0]).toEqual(pieces);
+      expect(out.every(x => x.lang === null), pieces[0]).toBe(true);
+    }
+  });
+
+  it("starts an English answer at once, and holds nothing back once it knows", () => {
+    const out = said(["Sure.", "I opened the report for you, and the totals are at the bottom of its first page.", "1. La La Land."]);
+    expect(out.map(x => x.at)).toEqual([0, 1, 2]);
+  });
+
+  it("says the short first words of a reply in another language in that language, not in Ember's English voice", () => {
+    for (const [pieces, lang] of [
+      [["Bien sûr !", "Voici les trois fichiers que vous avez demandés.", "Le premier est le rapport de ventes."], "fr"],
+      [["Voilà !", "La réunion est à quinze heures avec Marie et Paul."], "fr"],
+      [["¡Listo!", "La reunión es a las tres con María y Pablo."], "es"],
+      [["Natürlich.", "Ich habe die Datei geöffnet und zwei Fehler in der Tabelle gefunden."], "de"],
+    ] as [string[], string][]) {
+      const out = said(pieces);
+      expect(out.map(x => x.text), pieces[0]).toEqual(pieces);
+      expect(out.every(x => x.lang === lang), pieces[0]).toBe(true);
+    }
+  });
+
+  it("follows a request typed in another language for a reply too short to tell", () => {
+    expect(said(["Claro."], { request: "¿Puedes abrir los archivos que te pedí ayer?" })).toEqual([{ text: "Claro.", lang: "es", at: 0 }]);
+    expect(said(["Fertig!", "Ich habe die Datei geöffnet und zwei Fehler in der Tabelle gefunden."], { request: "Kannst du die Datei öffnen und mir sagen, was nicht stimmt?" }).map(x => x.lang)).toEqual(["de", "de"]);
+    // A long enough answer is judged by its own words.
+    expect(said(["Sure.", "I opened the files you asked for, and the totals are at the bottom of the first one."], { request: "¿Puedes abrir los archivos?" }).map(x => x.lang)).toEqual([null, null]);
+  });
+
+  it("decides nothing from an empty message, and starts again for the next answer", () => {
+    const a = new AnswerLanguage();
+    a.reset("");
+    expect(a.take([], true)).toEqual([]);
+    expect(a.take(["Bien sûr !", "Voici les trois fichiers que vous avez demandés."], true).map(x => x.lang)).toEqual(["fr", "fr"]);
+    expect(a.take(["Et voilà le dernier."], true)).toEqual([{ text: "Et voilà le dernier.", lang: "fr" }]);
+    a.reset("Open the report");
+    expect(a.take(["Done.", "I opened it, and the totals are at the bottom of the first page as you wanted."], true).map(x => x.lang)).toEqual([null, null]);
+  });
 });

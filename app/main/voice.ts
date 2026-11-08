@@ -262,6 +262,11 @@ export class VoiceService {
   private ttsHushed = 0;
   /** Replies still being synthesised: original text, producer-reported ungenerated suffix, and their page. */
   private ttsPending = new Map<number, { text: string; remaining: string; send: PageSend }>();
+  /**
+   * Words for the system's voice (another language's) that follow pieces Ember's own voice is still making: sent once
+   * those are done, so they are never said ahead of them (voice-speaking-r1). A hush drops them.
+   */
+  private afterVoice: { send: PageSend; request: SpeakRequest }[] = [];
   /** Enrolment (Voice Match) is under way in the voice process, and how far it got (said if it is cut short). */
   private enrolling = false;
   private enrolGot = { got: 0, of: 0 };
@@ -827,9 +832,10 @@ export class VoiceService {
 
   /**
    * Says `text` (plain words: spokenText). `append`: after what Ember is saying (the next sentences of an answer that is
-   * still streaming), instead of cutting it off.
+   * still streaming), instead of cutting it off. `lang`: the language of the answer this piece is part of, decided once
+   * for all its pieces (main's AnswerLanguage; null: English); without it, `text` is judged on its own.
    */
-  speak(text: string, o: { append?: boolean } = {}): void {
+  speak(text: string, o: { append?: boolean; lang?: string | null } = {}): void {
     if (this.locked || !text.trim()) return;
     if (this.manual) this.cancelListenOnce();
     // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
@@ -837,13 +843,18 @@ export class VoiceService {
     // What is heard over Ember's voice is told from Ember's own words by these (engine.ts spokenByEmber).
     this.proc?.postMessage({ type: "self-words", text });
     // Kitten reads only English: a reply in another language goes to a local system voice for it, or isn't said.
-    const lang = speechLanguage(text);
+    const lang = o.lang !== undefined ? o.lang : speechLanguage(text);
     const neural = this.neuralVoice && !lang;
     if (!o.append) this.hush();
     if (!o.append || !this.saidSpeaking) this.awaitingSpeechStart = true;
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + (neural && !this.tts?.ready ? VOICE_START_MS : SPEECH_START_MS));
     const send = this.pageSend();
-    if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}), ...(lang ? { lang } : {}), ...this.rateField } satisfies SpeakRequest); return; }
+    if (!neural) {
+      const request: SpeakRequest = { text, ...(o.append ? { append: true } : {}), ...(lang ? { lang } : {}), ...this.rateField };
+      if (o.append && (this.ttsPending.size || this.afterVoice.length)) this.afterVoice.push({ send, request });
+      else send(VOICE.speak, request);
+      return;
+    }
     const id = ++this.ttsId;
     this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.cancelVoiceIdle();
@@ -1010,6 +1021,7 @@ export class VoiceService {
       this.ttsPending.clear();
       this.tts?.proc.postMessage({ type: "hush", id: this.ttsHushed });
     }
+    this.afterVoice = [];
     this.idleVoice();
     const generation = ++this.speechGeneration;
     const hushPage = (wc: Electron.WebContents) => { this.pageGenerations.set(wc, generation); wc.send(VOICE.hush, generation); };
@@ -1133,6 +1145,7 @@ export class VoiceService {
       if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro" || this.ttsInfo?.voice === "supertonic") this.kokoroFailed(); else this.voiceFailed("load", true); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
+      this.sendAfterVoice();
       if (!this.saidSpeaking) { this.awaitingSpeechStart = true; this.speakingUntil = Date.now() + SPEECH_START_MS; }
       this.openFollowUp();
       this.switchWhenIdle();
@@ -1255,7 +1268,16 @@ export class VoiceService {
       const text = p.remaining;
       if (text) p.send(VOICE.speak, { text, append: true, ...this.rateField } satisfies SpeakRequest);
     }
+    this.sendAfterVoice();
     this.openFollowUp();
+  }
+
+  /** The system voice's words that waited for Ember's own (afterVoice), once it has nothing left to make. */
+  private sendAfterVoice(): void {
+    if (this.ttsPending.size) return;
+    const waiting = this.afterVoice;
+    this.afterVoice = [];
+    for (const w of waiting) w.send(VOICE.speak, w.request);
   }
 
   /** Retire optional Kokoro and append only its ungenerated suffix through baseline Kitten. */
@@ -1591,6 +1613,7 @@ export class VoiceService {
     this.closeSpeaker();
     this.releaseVoice();
     this.ttsPending.clear();
+    this.afterVoice = [];
   }
 
   private closeSpeaker(): void {

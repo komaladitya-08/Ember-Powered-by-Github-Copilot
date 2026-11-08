@@ -27,12 +27,13 @@ export class LocalSpeech<V extends VoiceInfo> {
     const voices = this.d.voices();
     const voice = bestVoice(voices, this.lang);
     // Words in another language wait only for the voices to load: with none for that language, they aren't said (the
-    // bubble shows them), and that isn't speech failing.
+    // bubble shows them), and that isn't speech failing, also on a computer with no voices at all (voice-speaking-r1).
     if (!voices.length || (!voice && this.pending.some(p => !p.lang))) {
       if (this.timer === null) this.timer = this.d.setTimer(() => {
         this.timer = null;
+        const failed = this.pending.some(p => !p.lang);
         this.pending = [];
-        this.d.unavailable();
+        if (failed) this.d.unavailable();
       }, 3000);
       return;
     }
