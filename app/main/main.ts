@@ -54,7 +54,7 @@ import { AuditLog } from "./policy/audit";
 import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine, isRiskyLabel } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
-import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
+import { restartOptions, runningAppImage, watchAdminPolicy } from "./policy/admin-watch";
 import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
 import { taskNotice } from "./agent/tasks";
 import { CursorBorrow } from "./hands/borrow";
@@ -112,7 +112,7 @@ import { MemoryLearning, withLearned } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
-import { releasePage, UpdateChecker, updateNotice } from "./updates";
+import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
@@ -582,6 +582,7 @@ function start(): void {
     fixLabels: Object.fromEntries(sys.fixes.ids.map(id => [id, sys.fixes.label(id)])),
     desk: !!platform.desk && platform.desk.available().ok,
     autostartNote: sys.autostart.note(),
+    install: installKind({ os: platform.os, packaged: app.isPackaged, execPath: process.execPath, appImage: runningAppImage(process.env, process.execPath), exists: fs.existsSync }),
   });
   // The setup check shows the other computers' and WSL's rows too, as ember --doctor does (§8.8): read through the
   // targets runtime, kept a few seconds, and waited for briefly (the rows from before show while a slow one finishes).

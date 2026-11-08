@@ -14,7 +14,7 @@ import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOI
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -486,6 +486,8 @@ function render(status: Status): void {
 // ───── What differs by OS: shortcuts, folders, the consent's OS sentences (from main; Linux's markup until then) ─────
 /** The OS words main sent; undefined while no status named them (the page's own markup is Linux's). */
 let platform: StatusPlatform | undefined;
+/** The last update status, drawn again once main's word of the platform (how Ember was installed) arrives. */
+let updatesNow: UpdateStatus | null = null;
 /** Rich text as elements: key caps in <kbd>, commands and paths in <code>. */
 const segmentNode = (s: Segment): Node => (typeof s === "string" ? document.createTextNode(s)
   : "kbd" in s ? Object.assign(document.createElement("kbd"), { textContent: s.kbd }) : Object.assign(document.createElement("code"), { textContent: s.code }));
@@ -507,6 +509,7 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   for (const patch of homePatches(p)) applyPatch(patch);
   // Keep the voice choice available while platform capabilities are refreshed.
   renderNatural();
+  if (updatesNow) renderUpdates(updatesNow);
   const muted = micOffText(p.shortcuts.mute.label);
   if (VOICE_TEXT.muted !== muted) { VOICE_TEXT.muted = muted; if (voice) renderVoice(voice); }
   // Keys read differently on this OS: the lines already shown are written again.
@@ -1725,7 +1728,12 @@ function applyUpdateSettings(s: Settings): void {
   ($("updates-on") as HTMLInputElement).checked = s.updates.on && s.updates.consent.version >= FEATURE_CONSENT_VERSION.updates;
 }
 function renderUpdates(s: UpdateStatus): void {
+  updatesNow = s;
   $("updates-status").textContent = updateStatusText(s);
+  // How to update this kind of install, while a newer version is out (install-docs-11).
+  const how = s.phase === "available" ? updateHowTo(platform?.install ?? null) : "";
+  $("updates-how").textContent = how;
+  $("updates-how").hidden = !how;
   ($("updates-open") as HTMLButtonElement).hidden = s.phase !== "available";
   const check = $("updates-check") as HTMLButtonElement;
   check.hidden = s.phase === "off";

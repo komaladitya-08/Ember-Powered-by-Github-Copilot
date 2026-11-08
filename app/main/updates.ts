@@ -7,8 +7,10 @@
  * version number, never from what the reply says.
  */
 
+import path from "node:path";
 import { z } from "zod";
-import type { UpdateStatus } from "../shared/ipc";
+import type { OS } from "../shared/shortcuts";
+import type { InstallKind, UpdateStatus } from "../shared/ipc";
 
 const REPO = "komaladitya-08/Ember-Powered-by-Github-Copilot";
 /** Every release, not /releases/latest: that skips prereleases, and every Ember so far is one. */
@@ -62,6 +64,29 @@ export function releasePage(version: string): string | null {
  */
 export function updateNotice(version: string): { title: string; body: string; section: string } {
   return { title: "Ember: a new version is out", body: `Ember ${version} is out. Open Ember's settings to see what's new.`, section: "updates:updates-open" };
+}
+
+/** The file the npm launcher (packages/npm/lib/launcher.mjs, MARKER) leaves in each complete version folder. */
+export const NPM_MARKER = ".ember-npm-complete";
+
+/**
+ * How this Ember was installed, so Home's Updates can say how to update it (install-docs-11), or null when it can't
+ * tell (development, a build run from elsewhere). The npm launcher's copy has its marker in the version folder: beside
+ * the AppImage, above Ember\Ember.exe, or beside Ember.app. Otherwise the RPM installs into /opt/ember, the AppImage
+ * runs with APPIMAGE set (runningAppImage), and Windows and macOS have one package each (the zip; the app, from the dmg
+ * or the zip).
+ */
+export function installKind(o: { os: OS; packaged: boolean; execPath: string; appImage: string | null; exists: (file: string) => boolean }): InstallKind | null {
+  if (!o.packaged) return null;
+  const p = o.os === "win32" ? path.win32 : path.posix;
+  const folder = o.os === "linux" ? (o.appImage ? p.dirname(o.appImage) : null)
+    : o.os === "win32" ? p.dirname(p.dirname(o.execPath))
+    : p.resolve(o.execPath, "../../../..");
+  if (folder !== null && o.exists(p.join(folder, NPM_MARKER))) return "npm";
+  if (o.os === "win32") return "zip";
+  if (o.os === "darwin") return "app";
+  if (o.appImage) return "appimage";
+  return o.execPath.startsWith("/opt/ember/") ? "rpm" : null;
 }
 
 export interface UpdateCheckerOptions {

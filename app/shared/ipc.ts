@@ -13,6 +13,8 @@ import type { MemoryCorrection } from "./memory-correction";
 export interface RoutineRow { id: string; name: string; steps: string[] }
 /** Whether a newer Ember is out (app/main/updates.ts): "off" until the user turned it on and agreed to its note. */
 export interface UpdateStatus { phase: "off" | "idle" | "checking" | "current" | "available" | "failed"; latest: string | null; checkedAt: string | null }
+/** How this Ember was installed (app/main/updates.ts installKind), so Updates can say how to update it. */
+export type InstallKind = "rpm" | "appimage" | "zip" | "app" | "npm";
 /** A waiting reminder and whether its exact current version is retained after quit. */
 export interface ReminderRow { id: string; text: string; at: number; created: number; kept: boolean }
 export interface ReminderChange { expected: Omit<ReminderRow, "kept">; replacement: { text: string; at: number } | null }
@@ -346,6 +348,8 @@ export interface StatusPlatform {
   desk: boolean;
   /** A note under "Start Ember when I log in" (macOS waiting for approval, Windows turned off in Task Manager), or null. */
   autostartNote: string | null;
+  /** How this Ember was installed, for Updates' line on how to update it; null or absent when unknown (development). */
+  install?: InstallKind | null;
 }
 
 export interface Status {

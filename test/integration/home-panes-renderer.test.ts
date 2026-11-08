@@ -10,7 +10,8 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
-import type { ActivityEntry } from "../../app/shared/ipc";
+import type { ActivityEntry, StatusPlatform, UpdateStatus } from "../../app/shared/ipc";
+import { FALLBACK_SHORTCUTS, heldShortcuts, SHORTCUTS, shownShortcuts } from "../../app/shared/shortcuts";
 
 declare global {
   interface Window {
@@ -25,7 +26,7 @@ declare global {
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[] }
+interface Seed { settings?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus }
 
 let browser: Browser;
 let server: http.Server;
@@ -56,7 +57,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  await page.addInitScript(({ settings, admin, activity, checks }) => {
+  await page.addInitScript(({ settings, admin, activity, checks, platform, updates }) => {
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     // Main's list as last pushed: what a read after a task control gets.
     let tasks: unknown = [];
@@ -66,10 +67,11 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       activity: activity as ActivityEntry[] | "fail",
       reads: 0,
     };
-    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin });
+    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}) });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
+      if (name === "updates" && updates) return async () => updates;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { h.calls.push(`save:${JSON.stringify(patch)}`); };
       if (name === "conversation") return async () => [];
       if (name === "tasks") return async () => tasks;
@@ -78,7 +80,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "activity") return async (limit?: number) => { h.reads++; if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
-  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [] });
+  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -432,4 +434,40 @@ describe.skipIf(gate)("Home at 200% zoom and more (2026-11-07 product audit)", (
     await evidence(page, "privacy-380-larger");
     await page.close();
   }, 60_000);
+});
+
+describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 product audit)", () => {
+  const linux = (install: StatusPlatform["install"]): StatusPlatform => ({
+    os: "linux", shortcuts: shownShortcuts(SHORTCUTS.linux, heldShortcuts(SHORTCUTS.linux, FALLBACK_SHORTCUTS.linux, [])),
+    dataDir: "~/.config/ember", settingsFile: "~/.config/ember/settings.json", auditCopy: null, micIndicator: "", permissionsNote: "",
+    speakerRejection: true, outputLevel: false, fixLabels: {}, desk: false, autostartNote: null, install,
+  });
+  const out: UpdateStatus = { phase: "available", latest: "0.1.2", checkedAt: "2026-11-08T09:00:00.000Z" };
+  const settings = { updates: { on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" }, told: "0.1.2", checkedAt: "2026-11-08T09:00:00.000Z" } };
+
+  it("says how to update this kind of install under “Ember 0.1.2 is out.”, beside See what's new… (install-docs-11)", async () => {
+    const page = await open("checks", { settings, platform: linux("rpm"), updates: out });
+    await expect.poll(() => page.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out.");
+    await expect.poll(() => page.locator("#updates-how").isVisible()).toBe(true);
+    expect(await page.locator("#updates-how").textContent()).toBe("To update, quit Ember, download the new RPM from See what's new… and install it with sudo dnf upgrade.");
+    expect(await page.locator("#updates-open").isVisible()).toBe(true);
+    await page.locator("#updates-h").scrollIntoViewIfNeeded();
+    await evidence(page, "updates-rpm-1000");
+    await page.setViewportSize({ width: 380, height: 800 });
+    await page.locator("#updates-h").scrollIntoViewIfNeeded();
+    await evidence(page, "updates-rpm-380");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("says nothing of how while Ember has the latest version, or when main can't tell how it was installed (install-docs-11)", async () => {
+    const current = await open("checks", { settings, platform: linux("appimage"), updates: { phase: "current", latest: null, checkedAt: out.checkedAt } });
+    await expect.poll(() => current.locator("#updates-status").textContent()).toBe("You have the latest version.");
+    expect(await current.locator("#updates-how").isVisible()).toBe(false);
+    await current.close();
+    const dev = await open("checks", { settings, platform: linux(null), updates: out });
+    await expect.poll(() => dev.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out.");
+    expect(await dev.locator("#updates-how").isVisible()).toBe(false);
+    await dev.close();
+  });
 });

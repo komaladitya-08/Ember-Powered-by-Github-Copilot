@@ -6,9 +6,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CHECK_EVERY_MS, FIRST_CHECK_MS, isNewer, newestVersion, releasePage, RELEASES_URL, UpdateChecker, updateNotice, versionOf } from "../../app/main/updates";
+import { CHECK_EVERY_MS, FIRST_CHECK_MS, installKind, isNewer, newestVersion, NPM_MARKER, releasePage, RELEASES_URL, UpdateChecker, updateNotice, versionOf } from "../../app/main/updates";
 import { applyAdminPolicy, managedKeys, parseAdminPolicy } from "../../app/main/admin";
-import { updateStatusText, UPDATES_CONSENT_TEXT } from "../../app/renderer/home/copy";
+import { updateHowTo, updateStatusText, UPDATES_CONSENT_TEXT } from "../../app/renderer/home/copy";
 import { SettingsSchema } from "../../app/main/settings";
 
 const release = (tag_name: string, draft = false) => ({ tag_name, draft, html_url: "https://evil.example/" });
@@ -247,6 +247,47 @@ describe("Home's words", () => {
     expect(updateStatusText({ phase: "checking", latest: null, checkedAt: null })).toBe("Checking…");
     expect(updateStatusText({ phase: "off", latest: null, checkedAt: null })).toBe("");
     expect(updateStatusText({ phase: "current", latest: null, checkedAt: null })).toBe("You have the latest version.");
+  });
+});
+
+describe("how to install a new version, for this kind of install (install-docs-11)", () => {
+  const has = (...files: string[]) => (p: string) => files.includes(p);
+  const kind = (os: "linux" | "win32" | "darwin", execPath: string, o: { appImage?: string; files?: string[]; packaged?: boolean } = {}) =>
+    installKind({ os, packaged: o.packaged ?? true, execPath, appImage: o.appImage ?? null, exists: has(...(o.files ?? [])) });
+
+  it("tells the RPM, the AppImage, the Windows zip, the Mac's app and the npm launcher's copy apart (install-docs-11)", () => {
+    expect(kind("linux", "/opt/ember/ember")).toBe("rpm");
+    expect(kind("linux", "/tmp/.mount_EmberAb/ember/ember", { appImage: "/home/k/Ember-0.1.1-x86_64.AppImage" })).toBe("appimage");
+    expect(kind("win32", "C:\\Users\\k\\AppData\\Local\\Programs\\Ember\\Ember.exe")).toBe("zip");
+    expect(kind("darwin", "/Applications/Ember.app/Contents/MacOS/Ember")).toBe("app");
+    // The npm launcher's cache marks each complete version folder (packages/npm/lib/launcher.mjs).
+    expect(fs.readFileSync(path.resolve("packages/npm/lib/launcher.mjs"), "utf8")).toContain(`const MARKER = "${NPM_MARKER}";`);
+    const npmLinux = "/home/k/.cache/ember-npm/0.1.1";
+    expect(kind("linux", "/tmp/.mount_EmberCd/ember/ember", { appImage: `${npmLinux}/Ember-0.1.1-x86_64.AppImage`, files: [`${npmLinux}/${NPM_MARKER}`] })).toBe("npm");
+    const npmWin = "C:\\Users\\k\\AppData\\Local\\ember-npm\\0.1.1";
+    expect(kind("win32", `${npmWin}\\Ember\\Ember.exe`, { files: [`${npmWin}\\${NPM_MARKER}`] })).toBe("npm");
+    const npmMac = "/Users/k/Library/Caches/ember-npm/0.1.1";
+    expect(kind("darwin", `${npmMac}/Ember.app/Contents/MacOS/Ember`, { files: [`${npmMac}/${NPM_MARKER}`] })).toBe("npm");
+    // Development, or a Linux build run from somewhere no package puts it: nothing to say.
+    expect(kind("linux", "/opt/ember/ember", { packaged: false })).toBeNull();
+    expect(kind("linux", "/home/k/src/ember/release/linux-unpacked/ember")).toBeNull();
+  });
+
+  it("says how to update under “Ember X is out.”, in Home's words, while a newer version is out (install-docs-11)", () => {
+    expect(updateHowTo("rpm")).toBe("To update, quit Ember, download the new RPM from See what's new… and install it with sudo dnf upgrade.");
+    expect(updateHowTo("appimage")).toBe("To update, quit Ember, download the new AppImage from See what's new…, save it where this one is, make it executable and start it.");
+    expect(updateHowTo("zip")).toBe("To update, quit Ember, download the new zip from See what's new… and replace the Ember folder with the one in it.");
+    expect(updateHowTo("app")).toBe("To update, quit Ember, download the new dmg from See what's new… and drag Ember into Applications over this one, then allow its permissions again.");
+    expect(updateHowTo("npm")).toBe("To update, quit Ember, run npm i -g ember-copilot@latest and start ember again.");
+    expect(updateHowTo(null)).toBe("");
+    // Home shows it only while a newer version is out, under its status line, from main's word of the install.
+    const home = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
+    expect(home).toContain('<p class="hint" id="updates-status" role="status"></p>\n      <p class="hint" id="updates-how" hidden></p>');
+    const page = fs.readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8");
+    expect(page).toContain('const how = s.phase === "available" ? updateHowTo(platform?.install ?? null) : "";');
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
+    expect(main).toContain("install: installKind({ os: platform.os, packaged: app.isPackaged, execPath: process.execPath, appImage: runningAppImage(process.env, process.execPath), exists: fs.existsSync }),");
+    expect(fs.readFileSync(path.resolve("README.md"), "utf8").replace(/\s+/g, " ")).toContain("**Updates** says how for the way you installed Ember");
   });
 });
 

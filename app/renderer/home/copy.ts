@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, NaturalVoiceStatus, RetryResult, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, InstallKind, NaturalVoiceStatus, RetryResult, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -665,6 +665,21 @@ export const ROUTINES_CONSENT_TEXT = "Ember will keep the routines you name and 
 
 /** The update note (FEATURE_CONSENT_VERSION.updates): change it only with a bump of that version. */
 export const UPDATES_CONSENT_TEXT = "Once a day, Ember will ask GitHub whether a newer version is out. GitHub sees your internet address and that someone asked, and nothing else: no sign-in, and nothing about you or what you do. Ember only tells you. It never downloads or installs anything by itself.";
+
+/**
+ * How to update this kind of install, under "Ember X is out." (install-docs-11): README's steps, shortly. "" when main
+ * can't tell how Ember was installed.
+ */
+export function updateHowTo(kind: InstallKind | null): string {
+  switch (kind) {
+    case "rpm": return "To update, quit Ember, download the new RPM from See what's new… and install it with sudo dnf upgrade.";
+    case "appimage": return "To update, quit Ember, download the new AppImage from See what's new…, save it where this one is, make it executable and start it.";
+    case "zip": return "To update, quit Ember, download the new zip from See what's new… and replace the Ember folder with the one in it.";
+    case "app": return "To update, quit Ember, download the new dmg from See what's new… and drag Ember into Applications over this one, then allow its permissions again.";
+    case "npm": return "To update, quit Ember, run npm i -g ember-copilot@latest and start ember again.";
+    default: return "";
+  }
+}
 
 /** Where the update check stands, in a sentence; nothing while it is off. */
 export function updateStatusText(s: UpdateStatus): string {
