@@ -1501,27 +1501,32 @@ export function clearHearingLine(s: ClearHearingStatus | undefined): string {
   }
 }
 
-/** Effective selected voice and actual playback/fallback from the service, without guessing from the old toggle. */
+/**
+ * Effective selected voice and actual playback/fallback from the service, without guessing from the old toggle. Worded
+ * without Ember's name: it changes by itself (a voice too slow just now, one that stopped working), and is said then
+ * (#natural-live), where "Ember speaks in Kitten Nano." said into the idle wake microphone woke Ember and was sent as a
+ * request in 32 of 40 placements (voice-listening-c5-1; design-system.md "Screen readers").
+ */
 export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: NaturalModel = "kitten"): { text: string; retry: boolean; busy: boolean } {
   const name = NATURAL_CHOICES[model].name;
-  const fallback = s?.voice === "kitten" ? "Ember uses Kitten Nano."
-    : s?.voice === "system" || model === "kitten" ? "Ember uses this computer's system voice when available."
-    : "Ember uses Kitten Nano when available, otherwise this computer's system voice.";
+  const fallback = s?.voice === "kitten" ? "Replies use Kitten Nano."
+    : s?.voice === "system" || model === "kitten" ? "Replies use this computer's system voice when available."
+    : "Replies use Kitten Nano when available, otherwise this computer's system voice.";
   if (!s || s.model && s.model !== model) return { text: `${name} is selected. Checking voice availability…`, retry: false, busy: true };
   switch (s.state) {
-    case "later": return { text: `${name} will be checked the next time Ember speaks.`, retry: false, busy: false };
+    case "later": return { text: `${name} will be checked the next time a reply is spoken.`, retry: false, busy: false };
     case "checking": return { text: `Checking ${name} on this computer…`, retry: false, busy: true };
     case "needs-voice": return { text: `Kitten Nano is included in the speech models. Use Show speech model download to add it (63.8 MB for this voice). ${fallback}`, retry: false, busy: false };
     case "downloading": return { text: `Downloading ${name}… ${Math.max(0, Math.min(99, Math.round(s.percent)))}%`, retry: false, busy: true };
-    case "ready": return { text: `${name} is ready for Ember's next reply.`, retry: false, busy: false };
-    case "on": return { text: s.voice && s.voice !== model ? `${name} is selected. ${fallback}` : `Ember speaks in ${name}.`, retry: false, busy: false };
+    case "ready": return { text: `${name} is ready for the next reply.`, retry: false, busy: false };
+    case "on": return { text: s.voice && s.voice !== model ? `${name} is selected. ${fallback}` : `Replies are spoken in ${name}.`, retry: false, busy: false };
     // Kitten is timed again at every start, so a busy moment or one failure needn't cost it the session (voice-speaking-6):
     // Try again loads and times it now. An optional voice's slow verdict is kept for a week.
     case "too-slow": return model === "kitten"
-      ? { text: `${name} was too slow just now, perhaps because this computer was busy, so Ember uses this computer's system voice when available. Try again when it's less busy.`, retry: true, busy: false }
+      ? { text: `${name} was too slow just now, perhaps because this computer was busy, so replies use this computer's system voice when available. Try again when it's less busy.`, retry: true, busy: false }
       : { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
     case "wont-load": return model === "kitten"
-      ? { text: `${name} ${s.stopped ? "stopped working" : "couldn't load"}, so Ember uses this computer's system voice when available. Try again, or restart Ember.`, retry: true, busy: false }
+      ? { text: `${name} ${s.stopped ? "stopped working" : "couldn't load"}, so replies use this computer's system voice when available. Try again, or restart the app.`, retry: true, busy: false }
       : { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
     case "needs-native": return { text: `${name} isn't available on this computer. ${fallback}`, retry: false, busy: false };
     case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model !== "kitten", busy: false };

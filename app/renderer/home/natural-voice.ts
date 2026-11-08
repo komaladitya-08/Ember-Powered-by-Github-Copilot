@@ -41,7 +41,10 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
     retry.disabled = busy || deps.managed() || !allowed(current);
     if (hadRetry && retry.hidden) select.focus();
     const state = `${current}:${status?.model ?? ""}:${status?.state ?? ""}:${status?.voice ?? ""}`;
-    if (state !== said && status?.state !== "downloading") deps.live(view.text);
+    // Only where it stands, never that it is checking (or downloading): the voice loads again at every first wake or
+    // request after two quiet minutes, and "Checking Kitten Nano on this computer…" was said over the request and
+    // into the idle wake microphone (voice-listening-c5-1). What it decides is said once it holds (main's heldLive).
+    if (state !== said && status?.state !== "downloading" && !view.busy) deps.live(view.text);
     said = state;
   }
   async function save(): Promise<void> {

@@ -2581,6 +2581,7 @@ function renderVoice(v: VoiceStatus): void {
   voice = v;
   clearLive.hold(micHeld(v));
   speakLive.hold(micHeld(v));
+  naturalLive.hold(micHeld(v));
   holdTaskNews(micHeld(v));
   renderVoiceFix();
   const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
@@ -2725,8 +2726,15 @@ $("consent-yes").addEventListener("click", () => {
   });
 });
 $("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });
+/**
+ * The voice row's line, said through its own status line as Hear me more clearly's is: once it has held, only when its
+ * words change, and never while the microphone opens or is open for a request. Said straight into #voice-live, it was
+ * read over the request after "Hey Ember" as the voice loaded again, and took the voice line's place there, so the voice
+ * line was said again as the conversation ended (voice-listening-c5-1).
+ */
+const naturalLive = heldLive($("natural-live"));
 /** The voice choice discloses the optional Kokoro download before switching. */
-const naturalUI = mountNaturalVoice({ save, live: voiceLive, managed: () => managed.has("naturalVoice") });
+const naturalUI = mountNaturalVoice({ save, live: text => naturalLive.say(text), managed: () => managed.has("naturalVoice") });
 /**
  * Hear me more clearly's line, said through its own status line as the voice line is: once it has held, only when its
  * words change, and never while the microphone opens or is open for a request (`micHeld`). Written on every voice push,

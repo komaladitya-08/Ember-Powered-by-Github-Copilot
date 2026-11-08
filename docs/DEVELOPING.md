@@ -748,7 +748,8 @@ speech models. Keep the bundled sherpa, eSpeak NG and phonemiser licence notices
 remove those transitive library obligations. The neural synthesis utility releases after two minutes without pending
 generation and rewarms on the next wake, when the ask box opens and when a typed request starts (`warmSpeech`, which
 with listening off opens the speak-only page too: a cold voice put the first sound 2.7 s after Send, a warm one
-0.8 s); queued playback retains its own ownership. Captured audio remains in memory
+0.8 s); a voice already on stays on in Settings › Voice as it loads again, so nothing there changes or is said to a
+screen reader then; queued playback retains its own ownership. Captured audio remains in memory
 and on the device.
 
 `node scripts/voice/bench.mjs --kokoro <models-directory>` compares default Kitten with explicitly requested Kokoro in
