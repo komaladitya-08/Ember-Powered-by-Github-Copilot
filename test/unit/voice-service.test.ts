@@ -1676,6 +1676,21 @@ describe("speech models", () => {
       expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
       expect(v.isEnrolling).toBe(false);
     });
+
+    it("says so too when teaching starts while a conversation is listening, and the window it ends says it stopped (voice-listening-r2)", async () => {
+      const { v, states } = service(true, { voiceprint: () => null });
+      await v.setWanted(true);
+      const proc = electron.procs.at(-1)!;
+      proc.emit("message", { type: "ready", loadMs: 10 });
+      proc.emit("message", { type: "listening", on: true, reason: "conversation", window: "conversation", generation: 0 });
+      expect(states.at(-1)).toMatchObject({ s: "active" });
+      expect(v.enrol()).toBe(true);
+      expect(states.at(-1)).toEqual({ s: "waiting", detail: "Learning your voice. Until that's done, Ember hears only “Ember, stop”." });
+      // The voice process ends that window at once (engine.cancel()), and says so.
+      const { generation } = posted(proc, "enrol")[0] as { type: string; generation?: number };
+      proc.emit("message", { type: "listening", on: false, reason: "stop", window: "conversation", generation });
+      expect(states.at(-1)).toEqual({ s: "waiting", detail: "Learning your voice. Until that's done, Ember hears only “Ember, stop”." });
+    });
   });
 
   describe("the native build (Windows and macOS)", () => {

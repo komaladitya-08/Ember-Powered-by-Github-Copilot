@@ -751,7 +751,8 @@ export class VoiceService {
     this.enrolling = true;
     this.enrolGot = { got: 0, of: 0 };
     this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
-    if (this.state === "waiting") this.setState("waiting", ENROL_TEXT);
+    // (A conversation or follow-up listening now ends at once in the voice process: voice-listening-r2.)
+    if (this.state === "waiting" || this.state === "active") this.setState("waiting", ENROL_TEXT);
     this.o.onListenOnce?.();
     return true;
   }
@@ -1602,6 +1603,9 @@ export class VoiceService {
   }
 
   private setState(s: MicState, detail?: string): void {
+    // While Ember learns a voice, the voice line says so whenever it has nothing of its own to say: a window that ended
+    // as teaching began (a conversation's) left "Listening for “Ember”" beside the phrase to say (voice-listening-r2).
+    if (s === "waiting" && detail === undefined && this.enrolling) detail = ENROL_TEXT;
     const hearing = s === "active";
     if (hearing !== (this.state === "active")) {
       // The mic page sends the microphone's level only while Ember hears a request; the meter stops at once after.
