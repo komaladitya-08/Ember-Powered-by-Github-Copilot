@@ -438,7 +438,11 @@ export function withRealPaths(cls: Classification, paths: ReadonlyMap<string, Pa
     return [...out];
   };
   const writes = Array.isArray(x.writes) ? add(x.writes) : null;
-  const downloads = add(cls.downloads);
-  if ((writes === null || writes.length === x.writes!.length) && downloads.length === cls.downloads.length) return cls;
+  // A download moved to a name the target says is a folder went into it: the folder isn't the download, its file
+  // there is (commands-remote-c2-2).
+  const folders = new Set((Array.isArray(x.downloadsIfFile) ? x.downloadsIfFile : []).filter(p => paths.get(p)?.dir === true));
+  const kept = folders.size ? cls.downloads.filter(p => !folders.has(p)) : cls.downloads;
+  const downloads = add(kept);
+  if ((writes === null || writes.length === x.writes!.length) && downloads.length === cls.downloads.length && kept === cls.downloads) return cls;
   return { ...cls, downloads, ...(writes ? { writes } : {}) } as Classification;
 }

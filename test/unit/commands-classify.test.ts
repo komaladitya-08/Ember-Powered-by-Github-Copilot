@@ -13,6 +13,7 @@ import { lexPosix } from "../../app/main/commands/lex-posix";
 import { lexPowerShell } from "../../app/main/commands/lex-powershell";
 import { lexCmd } from "../../app/main/commands/lex-cmd";
 import { lit, type Arg } from "../../app/main/commands/words";
+import { withRealPaths } from "../../app/main/commands/scripts";
 import { contextOf, loadCorpus, problemsOf, runCase, type Family } from "../fixtures/commands/corpus";
 
 const FAMILIES: Family[] = ["posix", "powershell", "cmd", "wsl"];
@@ -662,6 +663,45 @@ describe("loops and ifs (commands-remote-2)", () => {
     const wsl = (cmd: string) => classifyCommand(cmd, "bash", contextOf("wsl")).findings.map(f => f.rule);
     expect(wsl("notepad.exe 'a\"b'")).toContain("unclear.interop-args");
     expect(wsl("if true; then notepad.exe 'a\"b'; fi")).toContain("unclear.interop-args");
+  });
+
+  it("keeps a download a download when it is renamed, copied, linked or written out again, so running it asks (commands-remote-c2-2)", () => {
+    const P = "/home/ana/proj";
+    const cls = (cmd: string, downloaded = [`${P}/x.py`]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)) as ClassificationExtra;
+    for (const [cmd, as] of [
+      ["mv x.py y.py", `${P}/y.py`], ["cp x.py y.py", `${P}/y.py`], ["cp -n x.py y.py", `${P}/y.py`], ["install -m 755 x.py y.py", `${P}/y.py`],
+      ["ln -s x.py y.py", `${P}/y.py`], ["cp x.py tools/", `${P}/tools/x.py`], ["mv x.py ../y.py", "/home/ana/y.py"], ["mv -t tools x.py", `${P}/tools/x.py`],
+      ["cat x.py > y.py", `${P}/y.py`], ["sed 's/a/b/' x.py > y.py", `${P}/y.py`], ["tee y.py < x.py", `${P}/y.py`], ["cat x.py | tee y.py", `${P}/y.py`],
+      ["cat < x.py > y.py", `${P}/y.py`], ["rsync -a x.py y.py", `${P}/y.py`], ["head -n 500 x.py >> y.py", `${P}/y.py`],
+    ]) expect(cls(cmd).downloads, cmd).toContain(as);
+    // Run in the same command line, it is a download run.
+    for (const cmd of ["mv x.py y.py && python3 y.py", "cat x.py > y.py; python3 y.py", "cp x.py /tmp/y.sh && sh /tmp/y.sh"]) {
+      expect(cls(cmd).findings.map(f => f.rule), cmd).toContain("escape.run-downloaded");
+    }
+    // Into a name that may be a folder: the file in it, and the name only while the target doesn't say it's a folder.
+    const into = cls("mv x.py tools");
+    expect(into.downloads).toEqual(expect.arrayContaining([`${P}/tools`, `${P}/tools/x.py`]));
+    const folder = withRealPaths(into, new Map([[`${P}/tools`, { exists: true, real: `${P}/tools`, dir: true }]]));
+    expect(folder.downloads).toContain(`${P}/tools/x.py`);
+    expect(folder.downloads).not.toContain(`${P}/tools`);
+    expect(withRealPaths(into, new Map([[`${P}/tools`, { exists: false, real: `${P}/tools` }]])).downloads).toContain(`${P}/tools`);
+    // A file that isn't a download passes nothing on.
+    expect(cls("mv notes.txt y.py").downloads).toEqual([]);
+    expect(cls("cat notes.txt > y.py").downloads).toEqual([]);
+  });
+
+  it("asks before a tool runs a download it picks up by name: a Makefile, tests, package.json, a module, a preload (commands-remote-c2-2)", () => {
+    const P = "/home/ana/proj";
+    const ran = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)).findings.map(f => f.rule);
+    for (const [cmd, file] of [
+      ["make", `${P}/Makefile`], ["make -C sub", `${P}/sub/GNUmakefile`], ["make -f build.mk", `${P}/build.mk`], ["python3 -m pytest", `${P}/conftest.py`],
+      ["pytest", `${P}/tests/test_x.py`], ["npm test", `${P}/package.json`], ["python3 -m x", `${P}/x.py`], ["python3 -m pkg.tool", `${P}/pkg/tool.py`],
+      ["python3 -m tool", `${P}/tool/__main__.py`], ["node -r ./x.js -v", `${P}/x.js`], ["node --import ./x.mjs app.js", `${P}/x.mjs`],
+    ]) expect(ran(cmd, [file]), cmd).toContain("escape.run-downloaded");
+    // A download that isn't code the tool runs leaves it as it was.
+    for (const [cmd, file] of [["make", `${P}/data.json`], ["npm test", `${P}/notes.txt`], ["python3 -m pytest", `${P}/fixtures/data.csv`], ["python3 -m json.tool data.json", `${P}/data.json`]]) {
+      expect(ran(cmd, [file]), cmd).not.toContain("escape.run-downloaded");
+    }
   });
 
   it("reads IFS in front of read as only how that read splits, so the usual line loop is no assignment (commands-remote-2)", () => {

@@ -164,7 +164,10 @@ Ember stops and asks before a command that:
   settings a program runs code from (`~/.vimrc`, `~/.tmux.conf`, `~/.config/pip`, `~/.cargo/config.toml`), and
   launchers and desktop extensions (`~/.local/share/applications`, GNOME Shell extensions), even when the file is new;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
-  downloaded in this task, running a program or script from another computer's share (`\\server\share\x.exe`),
+  downloaded in this task (also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
+  `rsync`, `cat x.py > y.py` or `tee`, run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
+  by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder),
+  running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, and interactive programs such as `vim`, `less`, `top` or `python` with no
