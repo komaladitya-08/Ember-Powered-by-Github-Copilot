@@ -34,7 +34,7 @@ import {
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
-import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
+import { onProviderDestination, ownProvider, providerCard, providerSettings, startProvider } from "./provider";
 import { modelDestination, privacyFoldWords, recipientWords, type ModelDestination } from "./copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
@@ -572,7 +572,13 @@ function destinationNow(): ModelDestination {
   if (!a) return { kind: "unknown" };
   return modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
 }
-onProviderDestination(renderRecipient);
+// The provider's card coming or going changes what the status panel says while nothing is connected (integrations-c2-3).
+let cardDrawn = "";
+onProviderDestination(() => {
+  renderRecipient();
+  const card = JSON.stringify(providerCard());
+  if (card !== cardDrawn) { cardDrawn = card; if (agent) renderAgent(agent); }
+});
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
@@ -860,12 +866,13 @@ function renderAgent(a: AgentStatus | null): void {
   // What leads depends on why Copilot isn't connected (FE #3): an account without Copilot is not asked to sign in again.
   const a2 = lastAdmin;
   const view = homeConnectionView({
-    phase: a.phase, reason: a.reason, detail: a.detail, signingIn, waiting, service: a.service?.kind,
+    phase: a.phase, reason: a.reason, detail: a.detail, signingIn, waiting, service: a.service?.kind, own: providerCard(),
     ownOffered: ownProviderOffer({
       bridge: !!window.emberProvider, managedProvider: !!a2?.provider, locked: !!a2 && a2.error !== null,
       userProviderOff: a2?.features.userProvider === false,
     }).offered,
   });
+  if (view.line) $("agent-text").textContent = view.line;
   $("sign-in").hidden = !view.show["sign-in"] || waiting;
   // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
   $("sign-in").textContent = signInLabel(a.signInWith);

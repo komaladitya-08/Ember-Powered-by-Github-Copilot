@@ -1015,7 +1015,9 @@ answers; then the details, the key and the card's yes are saved as usual.
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees
-  to nothing (`AgreeGuard`).
+  to nothing (`AgreeGuard`). While the card waits with no GitHub sign-in, nothing is connected, and Models &
+  connections says "Not connected: Ember is waiting for you to agree to use <host>." and points to the card or the
+  switch, with no "Sign in with GitHub" or "Use my own provider" (`homeConnectionView`'s `own`: integrations-c2-3).
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
   from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
   no keyring is asked to know it). It goes only to that host: moving the endpoint to another host deletes it, and the

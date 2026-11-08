@@ -115,6 +115,14 @@ function suggestModels(ids: readonly string[]): void {
   list.replaceChildren(...ids.filter(id => MODEL_ID.test(id)).slice(0, 50).map(id => { const o = document.createElement("option"); o.value = id; return o; }));
 }
 
+/**
+ * The switch as drawn (`on`, not the organisation's service) and the host whose card is up (`card`, null: none), for
+ * Home's status panel while nothing is connected (integrations-c2-3).
+ */
+export function providerCard(): { on: boolean; card: string | null } {
+  return { on: !!own?.on && !state?.managed, card: cardHost };
+}
+
 /** Told when what the page knows of the provider changes (the words naming where requests go follow it). */
 let onDestination: () => void = () => undefined;
 export function onProviderDestination(fn: () => void): void { onDestination = fn; }

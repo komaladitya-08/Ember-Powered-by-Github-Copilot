@@ -84,21 +84,34 @@ export function failureView(o: { reason?: string; detail?: string; ownOffered: b
   }
 }
 
-/** Which of Home's connection buttons show, which one leads, and the help words under the status line. */
-export interface HomeConnectionView { help: string; show: Record<FailureAction, boolean>; primary: FailureAction | null }
+/**
+ * Which of Home's connection buttons show, which one leads, and the help words under the status line; `line`: the
+ * status line's words instead of main's, where Home knows better why nothing is connected (integrations-c2-3).
+ */
+export interface HomeConnectionView { help: string; show: Record<FailureAction, boolean>; primary: FailureAction | null; line?: string }
 
 /**
  * Home's Models & connections area for a Copilot that isn't connected (FE #3, the same recovery as first run's): the
  * action that leads comes from why it failed (`failureView`), so an account without Copilot is never offered
  * "Sign in with GitHub" first. "Check again" stays for every way of not being connected, as before. `waiting` (Copilot
- * stopped answering with tasks at work) and `signingIn` keep their own buttons and show nothing else.
+ * stopped answering with tasks at work) and `signingIn` keep their own buttons and show nothing else. `own`: the user's
+ * own provider's switch (`on`) and the host whose card is up under Model provider (`card`). While that card waits with
+ * no GitHub sign-in, nothing is connected, but signing in isn't the way on: the line and help say what is, with no
+ * button (the card's I agree is the one), and the switch that is on is never offered as a way on (integrations-c2-3).
  */
-export function homeConnectionView(o: { phase: string; reason?: string; detail?: string; ownOffered: boolean; signingIn: boolean; waiting: boolean; service?: string }): HomeConnectionView {
+export function homeConnectionView(o: { phase: string; reason?: string; detail?: string; ownOffered: boolean; signingIn: boolean; waiting: boolean; service?: string; own?: { on: boolean; card: string | null } }): HomeConnectionView {
   const none: Record<FailureAction, boolean> = { retry: false, "switch-account": false, "own-provider": false, "sign-in": false, provider: false };
   const notConnected = o.phase === "signed-out" || o.phase === "error";
   if (!notConnected || o.signingIn) return { help: "", show: none, primary: null };
   if (o.waiting) return { help: "", show: { ...none, retry: true }, primary: null };
-  const v = failureView({ reason: o.phase === "signed-out" ? "sign-in" : o.reason, detail: o.detail, ownOffered: o.ownOffered, service: o.phase === "error" ? o.service : undefined });
+  if (o.phase === "signed-out" && o.own?.on && o.own.card) {
+    return {
+      line: `Not connected: Ember is waiting for you to agree to use ${o.own.card}.`,
+      help: "Agree in the note under Model provider below, or turn off “Use my own model provider” to use GitHub Copilot instead.",
+      show: none, primary: null,
+    };
+  }
+  const v = failureView({ reason: o.phase === "signed-out" ? "sign-in" : o.reason, detail: o.detail, ownOffered: o.ownOffered && !o.own?.on, service: o.phase === "error" ? o.service : undefined });
   const show = { ...none, retry: true };
   for (const a of [v.primary, ...v.others]) if (a !== "continue") show[a] = true;
   return { help: v.help, show, primary: v.primary === "continue" ? null : v.primary };

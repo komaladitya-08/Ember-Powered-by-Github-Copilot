@@ -139,6 +139,23 @@ describe("Home's connection buttons by why Copilot isn't connected (FE #3)", () 
     expect(v.primary).toBe("sign-in");
     expect(v.show).toEqual({ "sign-in": true, "own-provider": true, "switch-account": false, retry: true, provider: false });
   });
+  it("says my own provider waits for its note instead of leading with a GitHub sign-in, and never offers the provider that is already on (integrations-c2-3)", () => {
+    const none = { "sign-in": false, "own-provider": false, "switch-account": false, retry: false, provider: false };
+    const v = homeConnectionView({ ...base, phase: "signed-out", detail: "Not connected to Copilot: sign in with GitHub below.", own: { on: true, card: "127.0.0.1:18409" } });
+    expect(v).toEqual({
+      line: "Not connected: Ember is waiting for you to agree to use 127.0.0.1:18409.",
+      help: "Agree in the note under Model provider below, or turn off “Use my own model provider” to use GitHub Copilot instead.",
+      show: none, primary: null,
+    });
+    // The note put away with Not now: signing in leads again, but the switch that is on isn't offered as a way on.
+    const declined = homeConnectionView({ ...base, phase: "signed-out", own: { on: true, card: null } });
+    expect(declined.primary).toBe("sign-in");
+    expect(declined.show).toEqual({ ...none, "sign-in": true, retry: true });
+    expect(declined.line).toBeUndefined();
+    // A failed Copilot sign-in while the switch is on and its note waits: the failure still leads.
+    expect(homeConnectionView({ ...base, reason: "sign-in", own: { on: true, card: "127.0.0.1:18409" } }).show).toEqual({ ...none, "sign-in": true, retry: true });
+    expect(homeConnectionView({ ...base, phase: "signed-out", own: { on: false, card: null } }).show["own-provider"]).toBe(true);
+  });
   it("shows nothing while signing in, and only Reconnect while waiting for tasks", () => {
     expect(homeConnectionView({ ...base, signingIn: true }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: false, provider: false });
     expect(homeConnectionView({ ...base, waiting: true, reason: "network" }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: true, provider: false });

@@ -408,6 +408,31 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(ae) while my own provider's note waits for a new address with no GitHub sign-in, Models & connections points to the note, not to a GitHub sign-in (integrations-c2-3)", async () => {
+    const signedOut = { ...SIGNED_OUT, detail: "Not connected to Copilot: sign in with GitHub below." };
+    const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:18409/v1" }, agent: signedOut });
+    const shown = (id: string) => p.locator(`#${id}`).isVisible();
+    await expect.poll(() => shown("byok-consent")).toBe(true);
+    await expect.poll(() => p.locator("#agent-text").innerText()).toBe("Not connected: Ember is waiting for you to agree to use 127.0.0.1:18409.");
+    expect(await p.locator("#connection-help").innerText()).toBe("Agree in the note under Model provider below, or turn off “Use my own model provider” to use GitHub Copilot instead.");
+    for (const id of ["sign-in", "own-provider", "retry", "switch-account", "provider-details"]) expect(await shown(id), id).toBe(false);
+    // The card's I agree is the one prominent button in view.
+    expect(await p.locator(".copilot .btn:not(.quiet):visible, #byok .btn:not(.quiet):visible").count()).toBe(1);
+    // Not now puts the note away and turns the switch off: signing in leads again, with the provider beside it.
+    await p.locator("#byok-no").click();
+    await expect.poll(() => shown("byok-consent")).toBe(false);
+    await expect.poll(() => shown("sign-in")).toBe(true);
+    expect(await p.locator("#agent-text").innerText()).toBe(signedOut.detail);
+    expect(await shown("own-provider")).toBe(true);
+    expect(await shown("connection-help")).toBe(false);
+    // Turned on again with no address yet: no note, so signing in leads, and the switch already on isn't offered.
+    await p.evaluate(() => { const s = window.__frState.settings as { provider: Record<string, unknown> }; s.provider = { ...s.provider, on: true, baseUrl: "" }; window.__frEmit("onSettingsChanged", s); });
+    await expect.poll(() => shown("own-provider")).toBe(false);
+    expect(await shown("sign-in")).toBe(true);
+    expect(await shown("byok-consent")).toBe(false);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(ad) Check again under an own provider with no model named says it still can't use it, never that it can't connect (integrations-c2-2)", async () => {
     const service = { kind: "user", host: "127.0.0.1:18408" };
     const noModel = { ...SIGNED_OUT, phase: "error", reason: "models", detail: "Enter the model your provider should use in Ember's settings, under Models & connections.", service };
