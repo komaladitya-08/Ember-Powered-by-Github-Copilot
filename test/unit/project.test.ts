@@ -73,6 +73,13 @@ it("sends a file and a request that say how a token is signed, and a contact pag
   await expect(prompt([house])).rejects.toThrow("contain a password");
 });
 
+it("sends a file that names in-house source and an office's cost code, which hold no secret (memory-v4-3)", async () => {
+  const about = await file("about.md", "# About\n\nOur in-house code is 15000 lines of Python.\nCharge build minutes to office code 4410.\n");
+  expect(await projectPrompt([about], "review", "Branch office code: 4410 goes in the footer", new AbortController().signal, privateDir)).toContain("office code 4410");
+  const house = await file("house.txt", "My house code is 4821.");
+  await expect(prompt([house])).rejects.toThrow("contain a password");
+});
+
 const diffAnswer = (diff: string) =>"A change to review.\n\n" + ["```diff", diff, "```"].join("\n");
 const diff = (name: string, hunks: string) => `--- a/${name}\n+++ b/${name}\n${hunks}`;
 

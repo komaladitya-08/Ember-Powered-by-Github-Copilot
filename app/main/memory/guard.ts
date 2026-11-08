@@ -151,10 +151,13 @@ const LOGIN_PASS = /\b(?:user(?:name)?|login)\b[^\n]{0,60}?\bpass\b(?:\s*[:=]\s*
  * A code or combination for a door, alarm, safe and the like, with digits for its value ("the door code is 4821",
  * "Garage code: 7734", "backup codes are 1234-5678", "the safe combination is 32-18-04"). "The door code changes on
  * Monday" and "the access code for the conference is on the invite" have no digits where the value would be. A house's,
- * a home's or an office's own code locks it ("my house code is 4821": memory-i4); with another word between ("our office
- * ZIP code is 90210", "the house style code 123") only a word for its lock counts (memory-r6).
+ * a home's or an office's own code locks it ("my house code is 4821": memory-i4), only as someone's or "the" one ("the
+ * office code is 4821"), never a post office's, a branch or head office's, a box office's or in-house source code
+ * ("Post office code: 560001", "Our in-house code is 2000 lines long": memory-v4-3); with another word between ("our
+ * office ZIP code is 90210", "the house style code 123") only a word for its lock counts (memory-r6).
  */
-const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|key ?box|lockbox|padlock|vault|flat|apartment|house|home|office`;
+const OWN_PLACE = String.raw`(?:my|our|your|his|her|their|the|[a-z]+['’]s)\s+(?:house|home|office)`;
+const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|key ?box|lockbox|padlock|vault|flat|apartment|${OWN_PLACE}`;
 /** Places that only lock, so a code for one is a lock's whatever word comes before it ("the bank code for the vault"). */
 const LOCKS = String.raw`door|front door|back door|side door|gate|garage|alarm|safe|bike lock|locker|keypad|key ?safe|key ?box|lockbox|padlock|vault`;
 /**
@@ -170,7 +173,7 @@ const PLACE_CODE = new RegExp(
   "i",
 );
 /** Codes that open nothing, whatever place they are for ("the area code for the building is 0113"): memory-r6. */
-const NOT_A_LOCK = String.raw`area|zip|postal|post|cost|project|status|error|exit|timeout|dial|dialling|dialing|permit|mode|phone|country|tax|product|discount|promo|voucher|coupon|tracking|reference|booking|course|class|style|source|room|department|billing|account|sort|branch|bank|swift|flight|airport|zone|extension|colour|color`;
+const NOT_A_LOCK = String.raw`area|zip|postal|post|cost|project|status|error|exit|timeout|dial|dialling|dialing|permit|mode|phone|country|tax|product|discount|promo|voucher|coupon|tracking|reference|booking|course|class|style|source|room|department|billing|account|sort|branch|bank|swift|flight|airport|zone|extension|colour|color|centre|center`;
 /**
  * The code or combination first, then what it opens ("the code for the front door is 4821", "the combination to my bike
  * lock is 1234", "the code to the safe is 32-18-04", "the code to get into the office is 4821"), with digits for its

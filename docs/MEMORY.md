@@ -75,8 +75,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   Summer2024!", "my wifi password, it's BlueSky99", "hunter2 is my password", a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value, and a code counts only for
-  something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors" and
-  "our office ZIP code is 90210" are ordinary words, as are how a token is made ("the access token is HS256-signed",
+  something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
+  "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
+  "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
+  are ordinary words, as are how a token is made ("the access token is HS256-signed",
   "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
   long") and an Indian postcode called a "PIN code" after an address or at the start of a line ("Bengaluru, PIN code:
   560001"; "my PIN code is 560034" is still refused): memory-c3-1, memory-r3-3 (Projects and task views share this

@@ -199,6 +199,16 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
 
+  // A house, a home or an office locks only as someone's ("my house code", "the office code"), never a post office's, a
+  // branch office's, a box office's or in-house source code (memory-v4-3).
+  it.each([
+    ["Branch office code: 4410"], ["Head office code 1001"], ["Use office code 4410 on the expense form"], ["The cost centre code for the office is 4410"],
+    ["Our in-house code is 2000 lines long"], ["Post office code: 560001"], ["Box office code 2024"], ["Home code 200 means the page loaded"],
+    ["Charge build minutes to office code 4410."], ["The head office code is 1001"], ["The post office code is 560001"], ["The cost center code for the house is 4410"],
+  ])("keeps %j, a business code or source code (memory-v4-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],
