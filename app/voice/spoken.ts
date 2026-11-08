@@ -76,6 +76,27 @@ const KEY_SAID: Readonly<Record<string, string>> = {
   ctrl: "Control", win: "Windows key", cmd: "Command", opt: "Option", esc: "Escape", del: "Delete", return: "Enter",
   pgup: "Page Up", pgdn: "Page Down",
 };
+/** Only an arrow's direction, before the word "arrow": "the ↑ arrow key" was "the up arrow arrow key" (voice-speaking-r3-1). */
+const DIRECTION: Readonly<Record<string, string>> = { "←": "left", "→": "right", "↑": "up", "↓": "down" };
+/** An arrow, a list of them ("← and →", "←/→", "↑↓"), or a spaced "->": said as arrowSaid decides. */
+const ARROWS = /[←→↑↓](?:(?:[ \t]*,?[ \t]+(?:and|or)[ \t]+|[ \t]*[,/][ \t]*|[ \t]*)[←→↑↓])*|(?<=[ \t])->(?=[ \t])/gi;
+
+/**
+ * An arrow (or a list of them) said for the ear (voice-speaking-2): before the word "arrow" by its direction ("the ← and
+ * → arrow keys" is "the left and right arrow keys"); one between two words as "to" ("Documents → Archive", "Back→Next"),
+ * unless it names a key: after "the" or "press", before "key", or before "to" ("Click Next → to go on" was "Next to to");
+ * any other by its name ("Press ← or → to move" was "left arrow or to to move").
+ */
+function arrowSaid(run: string, at: number, all: string): string {
+  const before = all.slice(Math.max(0, at - 8), at), after = all.slice(at + run.length, at + run.length + 12);
+  const each = (say: Readonly<Record<string, string>>) => run.replace("->", "→").replace(/[ \t]*\/[ \t]*/g, " or ").replace(/[←→↑↓](?=[←→↑↓])/g, "$& ").replace(/[←→↑↓]/g, a => say[a]);
+  // (A lower-case "a" only: "A → B → C" names no key.)
+  const key = /\b(?:the|an|press|hit|tap|use|hold)[ \t]+$/i.test(before) || /\ba[ \t]+$/.test(before) || /^[ \t]+(?:keys?|buttons?|icons?|symbols?|signs?|to)\b/i.test(after);
+  const between = /[\p{L}\p{N} \t]$/u.test(before) && /^[\p{L}\p{N} \t]/u.test(after);
+  const said = /^[ \t]+arrows?\b/i.test(after) ? each(DIRECTION) : (run === "→" || run === "->") && !key && between ? "to" : each(ARROW);
+  // Never joined to the word beside it ("Back→Next", "5→10").
+  return `${/[\p{L}\p{N}]$/u.test(before) ? " " : ""}${said}${/^[\p{L}\p{N}]/u.test(after) ? " " : ""}`;
+}
 
 /**
  * A pictograph (an emoji, a flag) with its skin tone, variation and the ones joined to it ("👨‍👩‍👧"): read aloud, Kitten says
@@ -153,14 +174,18 @@ const duration = (_m: string, h: string, m: string) => `${h} ${h === "1" ? "hour
 
 /**
  * A range between two amounts or two clock times ("$5-$10", "10:30–11:00"), or two numbers with an en dash ("5–10"):
- * its dash is said "to" (it was "5 dollars-10 dollars"). "555-1234", "1-2" and "5-star" keep their hyphen.
+ * its dash is said "to" (it was "5 dollars-10 dollars"). "555-1234", "1-2" and "5-star" keep their hyphen, and so does a
+ * spaced hyphen between two amounts, a sum ("$1,500 - $200 for fees" was said as a range: voice-speaking-c3-1).
  */
-const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?|(?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=[$£€¥]\d|\d{1,2}:\d{2}(?![\d:]))|(\d)[ \t]*–[ \t]*(?=\d)/g;
+const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)(?:-|[ \t]*–[ \t]*)(?=[$£€¥]\d)|((?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=\d{1,2}:\d{2}(?![\d:]))|(\d)[ \t]*–[ \t]*(?=\d)/g;
+/** A dash between two amounts that an equals sign follows is "minus" ("$2,000 - $1,500 = $500"). */
+const MINUS = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)[ \t]*[-–−][ \t]*(?=[$£€¥]\d[\d,]*(?:\.\d{1,2})?[ \t]*=)/g;
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
   return text
-    .replace(RANGE, (_m, from: string | undefined, digit: string | undefined) => `${from ?? digit} to `)
+    .replace(MINUS, "$1 minus ")
+    .replace(RANGE, (_m, amount: string | undefined, time: string | undefined, digit: string | undefined) => `${amount ?? time ?? digit} to `)
     .replace(PATH, pathSaid)
     .replace(AMOUNT, money)
     .replace(CLOCK, clock)
@@ -170,8 +195,11 @@ function sayable(text: string): string {
     .replace(/(?<![\w&#])#(\d+)\b/g, "number $1");
 }
 
-/** A list's item or a heading, as Markdown writes them; and a line that is a rule between parts. */
-const ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S/;
+/**
+ * A list's item (or a line an arrow starts, as a bullet: voice-speaking-r3-1) or a heading, as Markdown writes them; and
+ * a line that is a rule between parts.
+ */
+const ITEM = /^[ \t]*(?:[-*+→]|\d{1,9}[.)])[ \t]+\S/;
 const HEADING = /^[ \t]{0,3}#{1,6}[ \t]+\S/;
 const RULE = /^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
 /** A line that ends as a sentence does already, or with a pause (a colon, a comma). */
@@ -245,18 +273,15 @@ export function spokenText(markdown: string): string {
   const said = endLines(plain)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
-    .replace(/^[ \t]*[-*+][ \t]+/gm, "")
+    .replace(/^[ \t]*[-*+→][ \t]+/gm, "")
     .replace(/^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
     // Key chords as said ("Ctrl+Shift+T" is "Control Shift T", not "C T R L plus…"), and a path through menus or
     // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".
     .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
     .replace(/\s*›\s*(?=\S)/g, ", then ")
-    // An arrow named as a key or a symbol ("the → key", "the ← and → keys") by its name, one between two words
-    // ("Documents → Archive", "Back→Next") as "to", and any other by its name (voice-speaking-2).
-    .replace(/\b(the|a|an)([ \t]+)([←→↑↓])|([←→↑↓])(?=[ \t]+(?:keys?|arrows?|buttons?|icons?|symbols?|signs?)\b)/gi, (_m, det: string | undefined, space: string | undefined, named: string | undefined, before: string | undefined) => `${det ? `${det}${space}` : ""}${ARROW[named ?? before ?? ""]}`)
-    .replace(/\s+(?:→|->)\s+/g, " to ")
-    .replace(/(?<=\p{L})→(?=\p{L})/gu, " to ")
-    .replace(/[←→↑↓]+/g, run => [...run].map(a => ARROW[a]).join(" "))
+    // Arrows as arrowSaid says them (voice-speaking-2), one after its own direction once ("up ↑" was "up up arrow").
+    .replace(/\b(up|down|left|right)[ \t]*([←→↑↓])(?![←→↑↓])/gi, (m, word: string, a: string) => (DIRECTION[a] === word.toLowerCase() ? word : m))
+    .replace(ARROWS, arrowSaid)
     // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
     .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ");
   return sayable(said).replace(/\n{2,}/g, "\n").trim();

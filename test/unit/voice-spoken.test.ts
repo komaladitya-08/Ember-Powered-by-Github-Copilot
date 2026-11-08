@@ -70,6 +70,35 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["Read pages 5–10, from 2020–2024.", "Read pages 5 to 10, from 2020 to 2024."],
   ])("%j is said %j, an arrow by its name and a range with its 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
+  it.each([
+    ["Press the ↑ arrow key.", "Press the up arrow key."],
+    ["Use the ← and → arrow keys to move.", "Use the left and right arrow keys to move."],
+    ["Use the ↑ and ↓ arrow keys, or the ←/→ arrows.", "Use the up and down arrow keys, or the left or right arrows."],
+    ["Click the ↓ arrow next to the name.", "Click the down arrow next to the name."],
+    ["Press the ↓ arrow, then the → arrow.", "Press the down arrow, then the right arrow."],
+    ["Sales are up ↑ this month.", "Sales are up this month."],
+    // An arrow at the start of a line is its bullet, and never joins one line to the next with a "to".
+    ["→ Open the file\n→ Save it", "Open the file.\nSave it."],
+  ])("%j is said %j, an arrow before the word 'arrow' by its direction alone (voice-speaking-r3-1)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["Press ← or → to move.", "Press left arrow or right arrow to move."],
+    ["Click Next → to continue.", "Click Next right arrow to continue."],
+    ["Press → twice, then Enter.", "Press right arrow twice, then Enter."],
+    ["Go Settings → Privacy → Camera.", "Go Settings to Privacy to Camera."],
+    ["Pages 5→10, then Back →Next, and A → B → C.", "Pages 5 to 10, then Back to Next, and A to B to C."],
+    ["Press Shift+→, or →.", "Press Shift+right arrow, or right arrow."],
+  ])("%j is said %j, an arrow in a list or named as a key never as 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    // A spaced hyphen between two amounts is a sum, not a range: a range was heard where the bubble shows a subtraction.
+    ["That's $1,500 - $200 for fees, so $1,300 is left.", "That's 1,500 dollars - 200 dollars for fees, so 1,300 dollars is left."],
+    ["Your balance is $2,000 - $1,500 = $500.", "Your balance is 2,000 dollars minus 1,500 dollars = 500 dollars."],
+    ["It's £40 – £10 = £30 with the voucher.", "It's 40 pounds minus 10 pounds = 30 pounds with the voucher."],
+    // Written as a range, with no spaces around its hyphen or with an en dash, it is still one.
+    ["It's $5-$10 a month, or £5 – £8.", "It's 5 dollars to 10 dollars a month, or 5 pounds to 8 pounds."],
+  ])("%j is said %j, a sum between amounts never as a range (voice-speaking-c3-1)", (text, said) => expect(spokenText(text)).toBe(said));
+
   it("says nothing for an answer that is only emoji", () => {
     expect(spokenText("🎉🎉")).toBe("");
     expect(spokenText("- 🎉\n- ✅")).toBe("");
