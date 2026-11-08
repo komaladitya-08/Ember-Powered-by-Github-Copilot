@@ -15643,6 +15643,24 @@
   {
    "cmd": "d=~/.config/ember; read -r f <<< \"$d\"; echo \"$f\"",
    "verdict": "run"
+  },
+  {
+   "cmd": "d=emberx; rm -rf ~/.config/\"${d%x}\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rm -rf \"${HOME:?}/.config/ember\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "cat \"${HOME:?}/notes.txt\"",
+   "verdict": "run"
   }
  ]
 }

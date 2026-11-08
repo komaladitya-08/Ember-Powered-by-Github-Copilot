@@ -13,9 +13,10 @@ export type Seg =
   | { t: "var"; name: string }
   /**
    * An expansion Ember can't resolve (a substitution, `${x:-y}`, `$((…))`, `$1`, `$@`…); `of`: the variable an operator
-   * expansion stands for (`${d:?}`, `${d:-x}`, `${d%/}`), for Ember's own refusal.
+   * expansion stands for (`${d:?}`, `${d:-x}`, `${d%/}`), for Ember's own refusal; `exact`: a check (`${d:?}`, `${d?}`),
+   * whose text is the value itself, where a cut or a default may give other text (commands-remote-w5-1).
    */
-  | { t: "unres"; why: string; of?: string }
+  | { t: "unres"; why: string; of?: string; exact?: true }
   /** `~` or `~user` at the start of a word (or of an assignment's value). */
   | { t: "tilde"; user: string };
 
@@ -560,8 +561,9 @@ class Parser {
       if (this.shell === "zsh" && /^[(=~^]/.test(body)) this.note("zsh", "It uses zsh-only syntax.");
       // A default, a check or a cut end (`${d:-x}`, `${d:?}`, `${d%/}`, `${d#./}`) stands for the variable's value, so
       // Ember's own refusal follows the variable through it (commands-remote-v5-2); `${d:+x}` gives other text.
-      const of = /^([A-Za-z_][A-Za-z0-9_]*)(?::?[-=?]|%|#)/.exec(body)?.[1];
-      return { segs: [of ? { t: "unres", why: "expansion", of } : { t: "unres", why: "expansion" }], subs: [], quoted: false };
+      const op = /^([A-Za-z_][A-Za-z0-9_]*)(:?[-=?]|%|#)/.exec(body);
+      const seg: Seg = !op ? { t: "unres", why: "expansion" } : op[2].endsWith("?") ? { t: "unres", why: "expansion", of: op[1], exact: true } : { t: "unres", why: "expansion", of: op[1] };
+      return { segs: [seg], subs: [], quoted: false };
     }
     if (n !== undefined && /[A-Za-z_]/.test(n)) {
       const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(this.s.slice(this.i + 1))!;

@@ -57,6 +57,8 @@ export const MAX_SCRIPTS = 16;
 const UNSEEN = "\u0000";
 const PATTERN = "\u0001";
 const MAX_FORMS = 32;
+/** One piece of a POSIX word Ember couldn't resolve (Arg.parts). */
+type Part = NonNullable<Arg["parts"]>[number];
 /**
  * Programs that only test, print or name a variable's value, reading no file it names (commands-remote-r4-5): a word
  * that uses a variable there leaves the variable's value unjudged.
@@ -318,7 +320,7 @@ class Classifier {
   /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
   private psVarValues = new Map<string, string[]>();
   /** Words of a variable Ember couldn't resolve, with how they were used: judged again once a loop's input gives it a value. */
-  private unseenUses: { parts: readonly (string | { name: string | null })[]; use: PathUse; sc: Scope }[] = [];
+  private unseenUses: { parts: readonly Part[]; use: PathUse; sc: Scope }[] = [];
   /** The text a command was given on stdin by a here-document or here-string (null: Ember can't see all of it), by index. */
   protected hereAt = new Map<number, string | null>();
   /** The names each `read` sets, by command index, with its scope: a loop's here-string gives them values (result). */
@@ -639,10 +641,12 @@ class Classifier {
   }
 
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
-  private formsOf(parts: readonly (string | { name: string | null })[], vars: ReadonlyMap<string, string[]> = this.varValues): string[] {
+  private formsOf(parts: readonly Part[], vars: ReadonlyMap<string, string[]> = this.varValues): string[] {
     let out = [""];
     for (const p of parts) {
-      const vals = typeof p === "string" ? [p] : (p.name !== null && vars.get(p.name)) || [UNSEEN];
+      const known = typeof p === "string" ? [p] : p.value !== undefined ? [p.value] : (p.name !== null && vars.get(p.name)) || [UNSEEN];
+      // A cut or a default: its values, and text Ember can't see (commands-remote-w5-1).
+      const vals = typeof p !== "string" && p.cut && !known.includes(UNSEEN) ? [...known, UNSEEN] : known;
       const next = out.flatMap(a => vals.map(b => a + b));
       // Too many to judge one by one: what stands there is unseen (judgeForm's rule for an unseen part).
       out = next.length > MAX_FORMS ? out.map(a => a + UNSEEN) : next;
@@ -1701,7 +1705,7 @@ class Engine extends Classifier {
     // A word whose only substitution is a plain `$(pwd)` or `` `pwd` `` gives the folder, as `$PWD` does (review #170).
     const cwdSub = w.subs.length === 1 && w.segs.filter(seg => seg.t === "unres" && seg.why === "command substitution").length === 1 && lonePwd(w.subs[0]);
     // The word as pieces, for Ember's own refusal through variables the text sets (commands-remote-c3-2).
-    const parts: (string | { name: string | null })[] = [];
+    const parts: Part[] = [];
     // Which parts are unquoted text, where `*`, `?` and `[` match names (commands-remote-v4-4).
     const open: boolean[] = [];
     for (const seg of w.segs) {
@@ -1729,9 +1733,15 @@ class Engine extends Classifier {
         unresolved = true;
         parts.push({ name: seg.why.slice(1) });
       } else if (seg.t === "unres" && seg.of !== undefined) {
-        // `${d:?}`, `${d:-x}`, `${d%/}`: the variable's values, for Ember's own refusal (commands-remote-v5-2).
-        unresolved = true;
-        parts.push({ name: seg.of });
+        // `${d:?}`: the variable's values, for Ember's own refusal (commands-remote-v5-2). A cut or a default (`${d%x}`,
+        // `${url##*/}`, `${d:-x}`) may be other text too, so a part Ember can't see stays as well: the near rule and a
+        // copied download still see it (commands-remote-w5-1). HOME and PWD are the scope's, as `$HOME` is (w5-3).
+        const val = seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null;
+        if (val !== null && seg.exact) { v += val; parts.push(val); pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
+        else {
+          unresolved = true;
+          parts.push({ name: seg.of, ...(seg.exact ? {} : { cut: true as const }), ...(val !== null ? { value: val } : {}) });
+        }
       } else { unresolved = true; parts.push({ name: null }); }
     }
     const globs = /[*?]/.test(unquoted) || /\[[^\]]*\]/.test(unquoted);

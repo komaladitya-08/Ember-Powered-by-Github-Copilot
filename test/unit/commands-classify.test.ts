@@ -225,6 +225,48 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(classifyCommand("f=notes.txt; xargs -a \"$f\" echo", "bash", contextOf("linux")).findings).toEqual([]);
   });
 
+  it("keeps a download a download through a cut or a default, and refuses Ember's folder that one could name (commands-remote-w5-1)", () => {
+    // Each step of a task in turn, the downloads carried from one to the next as the flow carries them.
+    const steps = (ctx: ContextName, ...cmds: string[]): string[] => {
+      const dl: string[] = [];
+      let rules: string[] = [];
+      for (const cmd of cmds) {
+        const cls = classifyCommand(cmd, "bash", contextOf(ctx, dl)) as ClassificationExtra;
+        dl.push(...cls.downloads);
+        rules = cls.findings.map(f => f.rule);
+      }
+      return rules;
+    };
+    for (const ctx of ["linux", "darwin", "wsl"] as const) {
+      for (const [get, copy, run] of [
+        ["curl -fsSLo tool.py https://example.com/tool.py", "url=https://example.com/tool.py; cp \"${url##*/}\" run.py", "python3 run.py"],
+        ["curl -fsSLo tool.py https://example.com/tool.py", "url=https://example.com/tool.py; mv \"${url##*/}\" app.py", "python3 app.py"],
+        ["curl -fsSLo run.sh.bak https://example.com/run.sh", "d=run.sh.bak; cp \"${d%.bak}.bak\" run.sh", "bash run.sh"],
+        ["curl -fsSLo tool https://example.com/tool", "u=https://example.com/tool; mkdir -p bin; cp \"${u##*/}\" bin/tool; chmod +x bin/tool", "./bin/tool"],
+        ["curl -fsSLo tool.py https://example.com/tool.py", "f=; cp \"${f:-tool.py}\" run.py", "python3 run.py"],
+      ]) expect(steps(ctx, get, copy, run), `${ctx}: ${copy}`).toContain("escape.run-downloaded");
+    }
+    // A cut or a default that may name Ember's folder beside the part Ember sees is refused, as a part it can't see is.
+    const refused = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux")).refuse?.rule;
+    for (const cmd of [
+      "d=emberx; rm -rf ~/.config/\"${d%x}\"", "d=; cat ~/.config/\"${d:-ember}/settings.json\"", "b=~/.config; d=emberx; rm -rf \"$b/${d%x}\"",
+      "d=xember; rm -rf ~/.config/\"${d#x}\"", "d=emberx; rm -rf ~/.config/\"${d%%x}\"",
+    ]) expect(refused(cmd), cmd).toBe("ember.path");
+    // A check is the value itself: only that value is judged.
+    for (const cmd of ["d=build; rm -rf ~/.config/\"${d:?}\"", "d=build; rm -rf \"${d%/}\"", "d=/tmp/x/; rm -rf \"${d%/}\""]) expect(refused(cmd), cmd).toBeUndefined();
+  });
+
+  it("refuses Ember's folder through ${HOME:?} and ${HOME:-…}, as through $HOME (commands-remote-w5-3)", () => {
+    const refused = (cmd: string, ctx: ContextName = "linux") => classifyCommand(cmd, "bash", contextOf(ctx)).refuse?.rule;
+    for (const cmd of [
+      "rm -rf \"${HOME:?}/.config/ember\"", "rm -rf \"${HOME?}/.config/ember\"", "cat \"${HOME:?}/.config/ember/settings.json\"",
+      "rm -rf \"${HOME:-/home/ana}/.config/ember\"", "rm -rf \"${HOME%/}/.config/ember\"", "cd ~/.config && rm -rf \"${PWD:?}/ember\"",
+    ]) expect(refused(cmd), cmd).toBe("ember.path");
+    expect(refused("rm -rf \"${HOME:?}/Library/Application Support/ember\"", "darwin")).toBe("ember.path");
+    // ${HOME:?} is the home folder: the rest of it is judged as the plain path is.
+    expect(classifyCommand("rm -rf \"${HOME:?}/proj/build\"", "bash", contextOf("linux")).findings.map(f => f.says)).toContain("Deletes ~/proj/build and everything in it.");
+  });
+
   it("refuses Ember's own folder reached through a PowerShell variable the command sets, as when it is named (commands-remote-c3-2)", () => {
     const ps = (cmd: string) => says(cmd, "powershell", "win32");
     for (const cmd of [
