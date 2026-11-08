@@ -352,8 +352,7 @@ export function speechLanguage(text: string): string | null {
  * pas ».") is English (voice-speaking-r2-1).
  */
 function languageOf(quoting: string, minDifferent: number): string | null {
-  const unquoted = quoting.replace(QUOTED, "$1 ");
-  const text = /\p{L}/u.test(unquoted) ? unquoted : quoting;
+  const text = outsideQuotes(quoting);
   const letters = text.match(/\p{L}/gu) ?? [];
   if (!letters.length) return null;
   for (const [script, lang] of SCRIPTS) {
@@ -377,6 +376,11 @@ const stopwords = (words: readonly string[], lang: string): string[] => words.fi
 
 /** Words in quotes ("what does 'no sé' mean?"): quoting another language doesn't make a request or a reply that language. */
 const QUOTED = /"[^"\n]*"|“[^”\n]*”|„[^“”\n]*[“”]|«[^»\n]*»|\u2018[^\u2019\n]*\u2019|(^|[\s(])'[^'\n]*'(?=[\s.,;:!?)]|$)/g;
+/** `text` less what it quotes, or all of it when it is all quotes. */
+function outsideQuotes(text: string): string {
+  const unquoted = text.replace(QUOTED, "$1 ");
+  return /\p{L}/u.test(unquoted) ? unquoted : text;
+}
 
 /**
  * The language a request was clearly typed in, or null: its words outside quotes need three different short words of
@@ -418,7 +422,8 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
  * (voice-speaking-r1), and a French reply's "Bien sûr !" was said by Kitten with English sounds (voice-speaking-11).
  * Until DECIDE_LETTERS letters have come, English-looking pieces are said at once; a piece that may be in another
  * language waits for more of the answer, as does every piece when the request was clearly typed in another language
- * (requestLanguage), unless it is clearly English. A message that ends shorter is judged by itself, or by the request's
+ * (requestLanguage), unless its words outside quotes are clearly English ("Ça veut dire « I don't know what you have »"
+ * isn't: voice-speaking-r3-2). A message that ends shorter is judged by itself, or by the request's
  * language when it can't be told and has fewer English words than that language's. A message before a tool call that
  * ends shorter decides nothing for the messages after it (voice-speaking-r2-1: "Sure, one moment." had fixed a whole
  * turn to the request's language).
@@ -452,7 +457,7 @@ export class AnswerLanguage {
       else if (end) {
         lang = found ?? this.followsRequest();
         if (!more) this.lang = lang;
-      } else if (found || (this.asked && !englishClearly(this.text)) || mayBeAnother(this.text)) return [];
+      } else if (found || (this.asked && !englishClearly(outsideQuotes(this.text))) || mayBeAnother(this.text)) return [];
     }
     const out = this.held.map(text => ({ text, lang: lang ?? null }));
     this.held = [];
@@ -462,11 +467,13 @@ export class AnswerLanguage {
   /**
    * The request's language for a reply too short to tell, unless the reply has as many English words as words of that
    * language ("It means that's life." to "what does c'est la vie mean?" is English): Kitten can say a name, and an
-   * English reply left unsaid, or read by another language's voice, is worse than "Claro." said by Kitten.
+   * English reply left unsaid, or read by another language's voice, is worse than "Claro." said by Kitten. What the
+   * reply quotes isn't counted: "Ça veut dire « I don't know »." is French, and "It's « je ne sais pas »." English
+   * (voice-speaking-r3-2).
    */
   private followsRequest(): string | null {
     if (!this.asked) return null;
-    const words = wordsBesidesNames(this.text);
+    const words = wordsBesidesNames(outsideQuotes(this.text));
     const english = stopwords(words, "en").length;
     return english && english >= stopwords(words, this.asked).length ? null : this.asked;
   }

@@ -372,6 +372,20 @@ describe("AnswerLanguage: an answer is said in one language, decided once from e
     expect(said(["Claro."], { request: "What does \"no sé lo que es\" mean?" }).map(x => x.lang)).toEqual([null]);
   });
 
+  it("weighs a short reply's own words, not the English it quotes, against a request clearly in another language (voice-speaking-r3-2)", () => {
+    expect(said(["Ça veut dire « I don't know »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual(["fr"]);
+    expect(said(["Ça veut dire « I don't know what you have »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual(["fr"]);
+    expect(said(["Se dice \"thank you\"."], { request: "¿Cómo se dice gracias en inglés, por favor?" }).map(x => x.lang)).toEqual(["es"]);
+    // A reply whose own words are English stays in Ember's voice, whatever it quotes.
+    expect(said(["It's « je ne sais pas »."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual([null]);
+    expect(said(["It means that's life."], { request: "que veut dire je ne sais pas ?" }).map(x => x.lang)).toEqual([null]);
+    // While the reply streams, the English it quotes doesn't make it clearly English either.
+    const a = new AnswerLanguage();
+    a.reset("que veut dire je ne sais pas ?");
+    expect(a.take(["Ça veut dire « I don't know what you have »,"])).toEqual([]);
+    expect(a.take(["ou presque."], true).map(x => x.lang)).toEqual(["fr", "fr"]);
+  });
+
   /** A turn of several messages: each but the last ends before a tool call (main's onAnswerEnd). */
   const turn = (messages: string[][], request: string) => {
     const a = new AnswerLanguage();

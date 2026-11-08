@@ -841,8 +841,9 @@ once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kep
 list's "1. La La Land." is Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters
 English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
 typed in another language (three different short words of it outside quotes, and none only English writes:
-`requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer. A reply too short to tell follows that
-request's language unless it has as many English short words ("It means that's life."), and a message that ends before
+`requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that
+request's language unless it has as many English short words outside its quotes ("It means that's life.", never "Ça
+veut dire « I don't know »."), and a message that ends before
 a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
 pieces Kitten is still making are done.
 
