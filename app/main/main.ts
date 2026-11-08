@@ -582,7 +582,13 @@ function start(): void {
   // The setup check shows the other computers' and WSL's rows too, as ember --doctor does (§8.8): read through the
   // targets runtime, kept a few seconds, and waited for briefly (the rows from before show while a slow one finishes).
   const targetChecks = targetChecksSource(() => targets?.doctorRows() ?? Promise.resolve([]), { keepMs: 15_000, waitMs: 3000, now: () => Date.now() });
-  const environmentNow = async (fresh = false) => withTargetChecks(readEnvironment(fresh), await targetChecks(fresh));
+  const environmentNow = async (fresh = false) => {
+    // Check again: what waits between tries looks now, and is waited for here, never on the main thread
+    // (reliability-performance-r2: a hung pyatspi import froze Ember for 5 s). Its look gives up after 5 s.
+    const targetRows = targetChecks(fresh);
+    if (fresh && sys.lookAgain) await Promise.race([sys.lookAgain().catch(() => undefined), new Promise(r => setTimeout(r, 6000))]);
+    return withTargetChecks(readEnvironment(fresh), await targetRows);
+  };
   ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
     appVersion: app.getVersion(),
     settings: settings.get(),

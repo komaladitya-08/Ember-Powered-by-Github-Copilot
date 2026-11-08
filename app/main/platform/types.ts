@@ -583,6 +583,11 @@ export interface SystemPlatform {
   readonly chromiumSwitches: readonly string[];
   /** Inputs for inspectEnvironment. Cheap: getStatus calls it on every settings-window status request. */
   environment(ctx: EnvContext): EnvInputs;
+  /**
+   * Check again (first-run-6): a probe that waits between tries looks now, off the main thread, and this resolves once
+   * it has its answer (reliability-performance-r2). linux: pyatspi's import, in the background; absent elsewhere.
+   */
+  lookAgain?(): Promise<void>;
   readonly fixes: { readonly ids: readonly FixId[]; apply(fix: FixId): Promise<void>; label(fix: FixId): string };
   doctorProbes(): Promise<PlatformDoctorProbes>;
   readonly a11y: A11yProbes;

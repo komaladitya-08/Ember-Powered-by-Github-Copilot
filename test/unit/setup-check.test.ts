@@ -167,7 +167,10 @@ describe("main.ts's wiring of the setup check (the lead's ruling)", () => {
 
   it("shows the targets runtime's doctor rows in the settings window's status", () => {
     expect(MAIN).toContain("const targetChecks = targetChecksSource(() => targets?.doctorRows() ?? Promise.resolve([]),");
-    expect(MAIN).toContain("const environmentNow = async (fresh = false) => withTargetChecks(readEnvironment(fresh), await targetChecks(fresh));");
+    expect(MAIN).toContain("const targetRows = targetChecks(fresh);");
+    expect(MAIN).toContain("return withTargetChecks(readEnvironment(fresh), await targetRows);");
+    // Check again waits for what looks again off the main thread, never longer than 6 s (reliability-performance-r2).
+    expect(MAIN).toContain("if (fresh && sys.lookAgain) await Promise.race([sys.lookAgain().catch(() => undefined), new Promise(r => setTimeout(r, 6000))]);");
     expect(MAIN).toContain("ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({ appVersion: app.getVersion(), settings: settings.get(), environment: await environmentNow(),");
   });
 

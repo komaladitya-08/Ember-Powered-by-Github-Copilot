@@ -291,6 +291,39 @@ describe("the setup-check inputs", () => {
     expect(probe().pyatspi).toBe(true);
   });
 
+  it("looks for pyatspi in the background when the user checks again, and never imports it in the read (reliability-performance-r2)", async () => {
+    const fake = execFake({ "gsettings get org.gnome.desktop.interface toolkit-accessibility": "true\n" });
+    const asked: string[] = [];
+    const settles: ((found: boolean) => void)[] = [];
+    const run: ExecAsync = (cmd, args) => {
+      asked.push([cmd, ...args].join(" "));
+      return new Promise<void>((resolve, reject) => { settles.push(found => (found ? resolve() : reject(new Error("No module named 'pyatspi'")))); });
+    };
+    const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run, now: () => 1000 });
+    settles[0](false);
+    await Promise.resolve(); await Promise.resolve();
+    // Check again's own read returns at once with what is known: no import on the main thread (it hung for 5 s).
+    expect(probe(true)).toEqual({ enabled: true, pyatspi: false });
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(0);
+    // Its look runs in the background, a second press joins it, and the check waits for that answer, off the main thread.
+    let answered = false;
+    const looked = probe.again().then(() => { answered = true; });
+    void probe.again();
+    expect(asked).toEqual(["/opt/py -c import pyatspi", "/opt/py -c import pyatspi"]);
+    await Promise.resolve();
+    expect(answered).toBe(false);
+    settles[1](true);
+    await looked;
+    expect(probe(true).pyatspi).toBe(true);
+    // Once pyatspi is there, checking again has nothing to wait for.
+    await probe.again();
+    expect(asked).toHaveLength(2);
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(0);
+    // The platform's lookAgain is the same look.
+    const sys = linuxSystem(deps(), { exec: fake.exec, run });
+    expect(sys.lookAgain).toBeTypeOf("function");
+  });
+
   it("answers the first read itself when the background look hasn't yet, as before (rp-1)", () => {
     const fake = execFake({ "/opt/py -c import pyatspi": "" });
     const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run: () => new Promise<void>(() => undefined), now: () => 0 });

@@ -39,6 +39,7 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
   const exec = io.exec ?? execSync;
   const later = io.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const whichLinux = (cmd: string) => which(cmd, { os: "linux", env: deps.env });
+  const environment = linuxEnvironment({ env: deps.env, exec, run: io.run ?? (io.exec ? undefined : execAsync) });
 
   let screenReader: boolean | null = null;
   /** Orca running (GNOME's screen-reader switch, asked at most once a minute), or anything else using Chromium's accessibility. */
@@ -97,7 +98,8 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
     spawnDefaults: {},
     // Chromium on Linux speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
     chromiumSwitches: ["enable-speech-dispatcher"],
-    environment: linuxEnvironment({ env: deps.env, exec, run: io.run ?? (io.exec ? undefined : execAsync) }),
+    environment,
+    lookAgain: () => environment.again(),
     fixes: {
       ids: ["enable-accessibility"],
       apply: async fix => {
