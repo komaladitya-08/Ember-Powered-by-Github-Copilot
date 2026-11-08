@@ -215,6 +215,27 @@ export function triedWords(group: StepGroup, n: number, app?: string): string {
   return `${TRIED_WORDS[group]}${n > 1 ? ` ${n} times` : ""}${app ? ` in ${app}` : ""}`;
 }
 
+/** How a refusal's row begins, before Ember's (or policy's) reason. */
+const REFUSED_LEAD = "Not allowed: ";
+
+/**
+ * A refusal's row: "Not allowed: an authentication prompt is open", and refusals for one reason in a row folded into
+ * one, "Not allowed 6 times: …", so a model that keeps looking while Ember can't tell whether a password prompt is open
+ * never fills the card with one sentence (tasks-approvals-v5-2).
+ */
+export function refusedWords(reason: string, n = 1): string {
+  return n > 1 ? `Not allowed ${n} times: ${reason}` : `${REFUSED_LEAD}${reason}`;
+}
+
+/**
+ * The reason of refusal `it` when it folds into the row before it, `last`: a refusal (or refusals) in the very same words
+ * (`refused`, its first item's) and state. Null when it doesn't fold.
+ */
+export function foldedReason(it: Pick<ActivityItem, "kind" | "state" | "words">, last: { refused?: string; state: ActivityState } | undefined): string | null {
+  return last && it.kind === "refused" && it.words.startsWith(REFUSED_LEAD) && last.refused === it.words && last.state === it.state
+    ? it.words.slice(REFUSED_LEAD.length) : null;
+}
+
 /**
  * Which kinds a summary names first: a picture of the window that went to the model (so the summary always says so,
  * safety-privacy-6), then what changed things before what only looked (T3 Code's rule).
@@ -331,12 +352,19 @@ export function telemetryItems(a: Pick<CardActivity, "approvals" | "nearLimit">,
 
 /**
  * The card's details: the items as rows, steps of one kind in a row folded into one ("Read the window 3 times in
- * Settings"), the latest `max` of them. A step still under way is a row of its own.
+ * Settings"), as are refusals for one reason ("Not allowed 3 times: …"), the latest `max` of them. A step still under
+ * way is a row of its own.
  */
 export function activityRows(items: readonly ActivityItem[], max = DETAIL_ROWS): ActivityRow[] {
-  const rows: (ActivityRow & { group?: StepGroup; app?: string; n?: number; apps?: Set<string> })[] = [];
+  const rows: (ActivityRow & { group?: StepGroup; app?: string; n?: number; apps?: Set<string>; refused?: string })[] = [];
   for (const it of items) {
     const last = rows.at(-1);
+    const reason = foldedReason(it, last);
+    if (last && reason !== null) {
+      last.n = (last.n ?? 1) + 1;
+      last.words = refusedWords(reason, last.n);
+      continue;
+    }
     if (last && it.kind === "step" && it.state !== "running" && it.group && last.group === it.group && last.state === it.state) {
       last.n = (last.n ?? 1) + 1;
       if (it.app) last.apps!.add(it.app);
@@ -348,6 +376,7 @@ export function activityRows(items: readonly ActivityItem[], max = DETAIL_ROWS):
     rows.push({
       at: it.at, state: it.state, words: it.words, ...(it.model ? { model: true as const } : {}),
       ...(it.kind === "step" && it.state !== "running" ? { group: it.group, apps: new Set(it.app ? [it.app] : []) } : {}),
+      ...(it.kind === "refused" ? { refused: it.words } : {}),
     });
   }
   return rows.slice(-max).map(r => ({ at: r.at, state: r.state, words: r.words, ...(r.model ? { model: true as const } : {}) }));

@@ -237,7 +237,7 @@ Ember is two places at once, each for one kind of work.
   - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come
     (the step a failed or stopped task was on keeps its weight in red or grey, not the accent);
   - **Details**: up to six rows of what it did (steps of one kind in a row folded together, "Read the window 3 times in
-    Settings", and a read that sent a picture of it apart, "Sent the model a picture of the window in Firefox"; a refusal with policy's reason, or Ember's own (a password prompt open, the accessibility helper not working); a question and how it was answered; the worker's notes, marked as
+    Settings", and a read that sent a picture of it apart, "Sent the model a picture of the window in Firefox"; a refusal with policy's reason, or Ember's own (a password prompt open, the accessibility helper not working), refusals for one reason in a row folded together too ("Not allowed 6 times: …"), and one that came once the user had answered its question after that answer; a question and how it was answered; the worker's notes, marked as
     its words), each with a static state symbol and when it happened. Closed until the user opens it, kept open by
     task id across updates;
   - when it ends, what it found or made, as a **view**, and on a failure, or a question that ran out of time while the
@@ -380,7 +380,7 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   stopped there), hand and place, and its steps in one sentence; then
   the plan as a checklist (done ticks, the accent dot for now, rings to come), then the timeline: rows of at least
   44 px with the time after the task began in tabular figures, a state symbol and Ember's words, steps of one kind
-  folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
+  folded behind a chevron (and refusals for one reason, each listed as the step it refused), a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
   **Note** in the secondary label. Then how it ended: the worker's summary in the secondary label and its view, drawn
   by the cards' catalog code. A finished task folds to its head. Home offers exact-task Stop, retained safe retry (Try again
   wherever its card has it: a failure, and a task whose question went unanswered; none once the card has gone, never a

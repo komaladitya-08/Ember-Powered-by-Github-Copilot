@@ -12,6 +12,8 @@ import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import { Perception } from "../../app/main/perception";
 import type { Logger } from "../../app/main/logger";
+import { ActivityLog } from "../../app/main/agent/activity";
+import { timelineRows } from "../../app/renderer/home/tasks-copy";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -1973,6 +1975,36 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     log.add({ type: "denied" }, 20);
     log.add({ type: "tool-end", id: "c1", ok: false }, 30);
     expect(log.card().rows.map(r => [r.state, r.words])).toEqual([["stopped", "Not allowed: Ember's accessibility helper isn't working"]]);
+  });
+
+  /** The card's and Home's rows for one tool call: its start, what the worker told its activity from `from` on, its end. */
+  const rowsOf = (activity: Record<string, unknown>[], from: number, tool: string) => {
+    const log = new ActivityLog(0);
+    let t = 1000;
+    log.add({ type: "tool-start", id: "c1", tool, step: "Working", app: "Text Editor" }, t);
+    for (const e of activity.slice(from)) log.add(e as never, t += 100);
+    log.add({ type: "tool-end", id: "c1", ok: false }, t + 100);
+    return { card: log.card().rows.map(r => r.words), home: timelineRows(log.get().items).map(r => r.words) };
+  };
+
+  it("puts a step refused right before acting, once the user allowed it, after their answer, never as refused before their Allow (tasks-approvals-v5-1)", async () => {
+    // No grant for gedit: the click asks, and a password prompt opens while the user answers.
+    let prompt = false;
+    const made = makeWorker({ grants: {}, promptOpen: () => prompt, onAsk: () => { prompt = true; } });
+    await made.call("perceive_window", {});
+    let from = made.activity.length;
+    expect((await made.call("click", { id: 1 })).resultType).toBe("denied");
+    expect(made.activity.slice(from).map(e => e.type)).toEqual(["question", "answer", "refused", "denied"]);
+    const after = ["Asked you: you allowed it", "Not allowed: an authentication prompt is open"];
+    expect(rowsOf(made.activity, from, "click")).toEqual({ card: after, home: after });
+    // The borrow's own look (the window system's check), turned on while the user answers: the same order.
+    let dialog = false;
+    const borrow = makeWorker({ grants: {}, systemDialogOpen: () => dialog, onAsk: () => { dialog = true; }, states: () => ["enabled", "focused"] });
+    await borrow.call("perceive_window", {});
+    from = borrow.activity.length;
+    expect((await borrow.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("denied");
+    expect(borrow.activity.slice(from).map(e => e.type)).toEqual(["question", "answer", "refused", "denied"]);
+    expect(rowsOf(borrow.activity, from, "press_keys").card).toEqual(["Asked you: you allowed it", "Not allowed: a system dialog is open"]);
   });
 
   it("lists no window's title, and reads none, until it's done", async () => {
