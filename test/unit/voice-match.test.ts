@@ -262,6 +262,40 @@ describe("Enrolment", () => {
     expect(e.done).toBe(true);
   });
 
+  it("learns nothing from a screen reader reading its prompts aloud, and asks again when the owner's phrase ran into the reading (voice-listening-r4-1)", async () => {
+    // Home tells screen readers each prompt ("Say: “Ember, what's the weather like today?”", "Heard 1 of 4. Say: …"),
+    // and over speakers the teaching microphone heard it: on the real models the voiceprint came out mostly the screen
+    // reader's, which Voice Match then took for the owner, and the owner's own phrases scored 0.47-0.66 (threshold 0.75).
+    let now = 0;
+    const words = new Map<Float32Array, string>();
+    const said = (text: string, a = 1, b = 0) => { const s = phrase(a, b); words.set(s, text); return s; };
+    const printed: Float32Array[] = [];
+    const printer = fakePrinter();
+    const counting: Printer = { print: s => { printed.push(s); return printer.print(s); } };
+    const states: EnrolState[] = [];
+    const e = new Enrolment(counting, s => states.push(s), 4, ENROL_LIMITS, { said: s => words.get(s) ?? "", now: () => now });
+    // The reading starts as the prompt shows: never the owner, who first has to hear which phrase to say.
+    await e.heard(said("Say, Ember, what's the weather like today?", 0, 1), 400);
+    // Read slowly, its second part begins later, in the prompt's own words.
+    await e.heard(said("Say. Ember, what's the weather like today?", 0, 1), 2400);
+    await e.heard(said("That was too short. Say it again.", 0, 1), 2900);
+    const first = said("Ember, what's the weather like today?");
+    now = 4000;
+    await e.heard(first, 3800);
+    expect(states.map(s => s.state)).toEqual(["listening", "heard"]);
+    // The owner answered so soon after the reading that the two came as one segment: said again, never learnt.
+    now = 6000;
+    await e.heard(said("Heard 1 of 4. Say, hey Ember, open my calendar. Hey Ember, open my calendar.", 0.5, 0.5), 4300);
+    expect(states.at(-1)).toEqual({ state: "again", got: 1, of: 4, why: "over" });
+    await e.heard(said("Your screen reader was still reading. Wait for it to finish, then say, hey Ember, open my calendar.", 0, 1), 6400);
+    now = 9000;
+    const second = said("Hey Ember, open my calendar.", 1, 0.05);
+    await e.heard(second, 8500);
+    expect(states.map(s => s.state + ("why" in s ? `:${s.why}` : ""))).toEqual(["listening", "heard", "again:over", "heard"]);
+    expect(printed).toEqual([first, second]);
+    e.cancel();
+  });
+
   it("gives up after three phrases' worth of tries each, and says it gave up rather than that it was cancelled (voice-listening-5)", async () => {
     const states: EnrolState[] = [];
     const e = new Enrolment(fakePrinter(true), s => states.push(s), 2);

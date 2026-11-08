@@ -1,8 +1,9 @@
 /** What Ember says out loud for an answer: the words, not the Markdown, code or addresses. */
 
 import { describe, expect, it } from "vitest";
-import { AnswerLanguage, cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
+import { AnswerLanguage, type Lead, cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 import { heardCutInWake } from "../../app/voice/engine";
+import { SpeechStream } from "../../app/voice/tts";
 
 describe("spokenText says keys, menu paths and symbols as people say them", () => {
   it.each([
@@ -87,8 +88,16 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["Press → twice, then Enter.", "Press right arrow twice, then Enter."],
     ["Go Settings → Privacy → Camera.", "Go Settings to Privacy to Camera."],
     ["Pages 5→10, then Back →Next, and A → B → C.", "Pages 5 to 10, then Back to Next, and A to B to C."],
-    ["Press Shift+→, or →.", "Press Shift+right arrow, or right arrow."],
+    ["Press Shift+→, or →.", "Press Shift right arrow, or right arrow."],
   ])("%j is said %j, an arrow in a list or named as a key never as 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["Press Win+← to snap the window to the left.", "Press Windows key left arrow to snap the window to the left."],
+    ["Press Alt+← to go back, and Alt+→ to go forward.", "Press Alt left arrow to go back, and Alt right arrow to go forward."],
+    ["Press Ctrl+→ to jump a word.", "Press Control right arrow to jump a word."],
+    ["Use Shift+↑ or Ctrl+Shift+↓ to select.", "Use Shift up arrow or Control Shift down arrow to select."],
+    ["Press Cmd + ↓ to go to the end.", "Press Command down arrow to go to the end."],
+  ])("%j is said %j, an arrow key in a chord as the other keys are (voice-speaking-c4-3)", (text, said) => expect(spokenText(text)).toBe(said));
 
   it.each([
     ["Move it from right → left.", "Move it from right to left."],
@@ -104,6 +113,36 @@ describe("spokenText says money, times, paths and numbers as people say them, an
   ])("%j is said %j, an arrow between two directions or before a name with its 'to' (voice-speaking-v4-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
   it.each([
+    // A path through the menu in a window's corner: the arrow after "right" is a step, said "to".
+    ["Click the three dots at the top right → Settings.", "Click the three dots at the top right to Settings."],
+    ["In Chrome, click ⋮ in the top-right → Settings → Privacy.", "In Chrome, click ⋮ in the top-right to Settings to Privacy."],
+    ["Go to the menu in the upper right → Settings → Appearance.", "Go to the menu in the upper right to Settings to Appearance."],
+    ["Scroll right → Next.", "Scroll right to Next."],
+    ["Swipe down from the top right → tap Wi-Fi.", "Swipe down from the top right to tap Wi-Fi."],
+    // Before "to", a preposition, "and", "then", "twice", a key's word or nothing more, it is said once, as is "back ←".
+    ["Turn right → then left, and swipe right → twice.", "Turn right then left, and swipe right twice."],
+    ["Press the right → key.", "Press the right key."],
+    ["Then go back ← to the start, or forward → to the end.", "Then go back to the start, or forward to the end."],
+    ["Swipe right →\nThen tap Done.", "Swipe right\nThen tap Done."],
+    ["Sales are up ↑ this month, and down ↓ in May.", "Sales are up this month, and down in May."],
+  ])("%j is said %j, an arrow after 'right' before any other word with its 'to' (voice-speaking-v4-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    // A menu's name in quotes or brackets is a step's too.
+    ["Click the three dots at the top right → “Settings”.", "Click the three dots at the top right to “Settings”."],
+    ['Click the three dots at the top right → "Settings".', 'Click the three dots at the top right to "Settings".'],
+    ["Click the three dots at the top right → 'Settings'.", "Click the three dots at the top right to 'Settings'."],
+    ["Click the three dots at the top right → (Settings).", "Click the three dots at the top right to (Settings)."],
+    ["Open the menu at the upper right → [Settings] → “Privacy”.", "Open the menu at the upper right to [Settings] to “Privacy”."],
+    // An aside of the words it is said once before, a mark or the end are as before.
+    ["Swipe right → (twice) to go back.", "Swipe right (twice) to go back."],
+    ["Turn right → (then left) at the end.", "Turn right (then left) at the end."],
+    ["Swipe right →.", "Swipe right."],
+    // In quotes, even one that starts with such a word is a name.
+    ["Tap Browse at the bottom right → “On My iPhone”.", "Tap Browse at the bottom right to “On My iPhone”."],
+  ])("%j is said %j, an arrow after 'right' before a quoted or bracketed name with its 'to' (voice-speaking-v5-3)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
     // A spaced hyphen between two amounts is a sum, not a range: a range was heard where the bubble shows a subtraction.
     ["That's $1,500 - $200 for fees, so $1,300 is left.", "That's 1,500 dollars - 200 dollars for fees, so 1,300 dollars is left."],
     ["Your balance is $2,000 - $1,500 = $500.", "Your balance is 2,000 dollars minus 1,500 dollars = 500 dollars."],
@@ -111,6 +150,24 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     // Written as a range, with no spaces around its hyphen or with an en dash, it is still one.
     ["It's $5-$10 a month, or £5 – £8.", "It's 5 dollars to 10 dollars a month, or 5 pounds to 8 pounds."],
   ])("%j is said %j, a sum between amounts never as a range (voice-speaking-c3-1)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    // A spaced hyphen between two amounts that go up is a range ("$50 - $100" was heard as two prices); one that goes
+    // down, a sum, is said as written.
+    ["Expect to pay $50 - $100 for a new one.", "Expect to pay 50 dollars to 100 dollars for a new one."],
+    ["Prices range from $5 - $10 a month.", "Prices range from 5 dollars to 10 dollars a month."],
+    ["Plans cost £8 - £12.50 per user, and €1,000 - €2,500 a year.", "Plans cost 8 pounds to 12 pounds 50 per user, and 1,000 euros to 2,500 euros a year."],
+    ["You pay $1,500 - $200 for fees, and $5 - $5 is nothing.", "You pay 1,500 dollars - 200 dollars for fees, and 5 dollars - 5 dollars is nothing."],
+    ["Prices: $5 - $10 - $15, and $500k - $1M.", "Prices: 5 dollars - 10 dollars - 15 dollars, and 500 thousand dollars to 1 million dollars."],
+  ])("%j is said %j, a spaced range as a range and a sum as written (voice-speaking-c3-1)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["It's $5-10 a month, or €20–30 a year.", "It's 5 dollars to 10 dollars a month, or 20 euros to 30 euros a year."],
+    ["Open 9am–5pm, and 10-11 am or 2 - 3 p.m. on Sundays.", "Open 9am to 5pm, and 10 to 11 am or 2 to 3 p.m. on Sundays."],
+    // A run of numbers joined by dashes is one number, and "$10-5" or "$5-10k" isn't plainly a range.
+    ["Call 0800–123–456, or see ISBN 978–3–16–148410–0.", "Call 0800–123–456, or see ISBN 978–3–16–148410–0."],
+    ["It was $10-5 off, or $5-10k.", "It was 10 dollars-5 off, or 5 dollars-10k."],
+  ])("%j is said %j, a range with its currency once or its am or pm once with its 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
   it("says nothing for an answer that is only emoji", () => {
     expect(spokenText("🎉🎉")).toBe("");
@@ -182,6 +239,49 @@ describe("spokenText", () => {
     ["Note: the file is locked by Excel\nwhile it is open.", "Note: the file is locked by Excel\nwhile it is open."],
     ["Tip: press Control S to save it\nI can do that for you if you like", "Tip: press Control S to save it\nI can do that for you if you like"],
   ])("ends the labelled lines of %j so they are said apart (voice-speaking-c3-2)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  // The line before a heading or a label ends too, as before a list's item: "Keep both copies Option B." was one breath.
+  it.each([
+    ["### Option A\nKeep both copies\n### Option B\nDelete the older one", "Option A.\nKeep both copies.\nOption B.\nDelete the older one"],
+    ["Option A: Keep both copies\nThis is the safest choice\nOption B: Delete the older one", "Option A: Keep both copies\nThis is the safest choice.\nOption B: Delete the older one"],
+    ["**Step 1:** Open Settings\n   Then go to Privacy\n**Step 2:** Turn off Location", "Step 1: Open Settings\n   Then go to Privacy.\nStep 2: Turn off Location"],
+    ["Here's what I'd do\nStep 1: Open Settings\nStep 2: Turn off Location", "Here's what I'd do.\nStep 1: Open Settings.\nStep 2: Turn off Location."],
+    // A label with a spaced dash, two in a row, is a list's items too.
+    ["**Option A** – keep both copies\n**Option B** – delete the older one", "Option A – keep both copies.\nOption B – delete the older one."],
+  ])("ends the line before a heading or a label in %j, so the next one's name is never said at its end (voice-speaking-r4-2)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  it("ends a labelled step said after another one already said, as the stream says them (voice-speaking-c4-1)", () => {
+    expect(spokenText("Step 3: Turn off Location", { afterLabel: true })).toBe("Step 3: Turn off Location.");
+    expect(spokenText("Step 3: Turn off Location")).toBe("Step 3: Turn off Location");
+    // A line of other words after a label line is still its paragraph.
+    expect(spokenText("They look right to me", { afterLabel: true })).toBe("They look right to me");
+  });
+
+  it("ends a line of a colon line's run said after a cut, the last one too, and says what the last whole line leads into (voice-speaking-v5-1, voice-speaking-v5-2)", () => {
+    expect(spokenText("It costs more and needs a sign-in", { ledIn: true, afterLed: true })).toBe("It costs more and needs a sign-in.");
+    expect(spokenText("It costs more and needs a sign-in", { ledIn: true })).toBe("It costs more and needs a sign-in");
+    expect(spokenText("Note: this can take a few minutes\nDelete the old copies", { afterLed: true })).toBe("Note: this can take a few minutes.\nDelete the old copies.");
+    // A second blank line ends the run.
+    expect(spokenText("\nOpen the file\nSave it", { ledIn: true, afterBlank: true })).toBe("Open the file\nSave it");
+    const leads: Lead[] = [];
+    for (const [piece, o] of [["Here's the plan:\n", {}], ["Back up the folder\n", { ledIn: true }], ["Here's the plan:\n\n", {}], ["No line break", { ledIn: true }]] as const) {
+      spokenText(piece, { ...o, leads: lead => leads.push(lead) });
+    }
+    expect(leads).toEqual([
+      { ledIn: true, afterLed: false, afterBlank: false },
+      { ledIn: false, afterLed: true, afterBlank: false },
+      { ledIn: true, afterLed: false, afterBlank: true },
+      { ledIn: true, afterLed: false, afterBlank: false },
+    ]);
+  });
+
+  it("judges a last line cut after its full stop by all of it that has come, as a short list's line or not (voice-speaking-w5-2)", () => {
+    expect(spokenText("Downloads\nDocuments\nPictures.", { lineEnd: " Done." })).toBe("Downloads.\nDocuments.\nPictures.");
+    expect(spokenText("Downloads\nDocuments\nPictures.", { lineEnd: " **Done.**" })).toBe("Downloads.\nDocuments.\nPictures.");
+    expect(spokenText("Downloads\nDocuments\nPictures.", { lineEnd: " That is all of them for now" })).toBe("Downloads\nDocuments\nPictures.");
+    // Still coming, it is judged as long.
+    expect(spokenText("Downloads\nDocuments\nPictures.", { lineEnd: " Done.", goesOn: true })).toBe("Downloads\nDocuments\nPictures.");
+  });
 
   it("ends the lines a colon line leads into when that line was said already, as a stream cuts after it (voice-speaking-3)", () => {
     const steps = "Open the spreadsheet you sent me this morning\nAdd up the totals for each month\nSave it as a new file in Documents";
@@ -428,6 +528,26 @@ describe("AnswerLanguage: an answer is said in one language, decided once from e
     ["\"I don't know\", basically.", "que veut dire je ne sais pas ?"],
   ])("says the English reply %j, which quotes English and has no short word of the request's language, in Ember's voice (voice-speaking-v4-1)", (reply, request) => {
     expect(said([reply], { request }).map(x => x.lang)).toEqual([null]);
+  });
+
+  it.each([
+    ["Voilà « Ventes.xlsx ».", "ouvre le fichier des ventes s'il te plaît", "fr"],
+    ["Ouvert : « Ventes.xlsx ».", "ouvre le fichier des ventes s'il te plaît", "fr"],
+    ["Listo, abrí \"Ventas.xlsx\".", "abre el archivo de ventas por favor", "es"],
+    ["Abrí \"Ventas.xlsx\".", "abre el archivo de ventas por favor", "es"],
+    ["Hecho: abrí «Ventas.xlsx».", "abre el archivo de ventas por favor", "es"],
+  ])("says the short reply %j, which names a file and has a letter or mark of the request's language, in that language (voice-speaking-c4-2)", (reply, request, lang) => {
+    expect(said([reply], { request }).map(x => x.lang)).toEqual([lang]);
+    // Streamed, as main says it.
+    const a = new AnswerLanguage();
+    a.reset(request);
+    const s = new SpeechStream();
+    const out: { lang: string | null }[] = [];
+    for (let i = 0; i < reply.length; i += 4) out.push(...a.take(s.push(reply.slice(i, i + 4))));
+    out.push(...a.take(s.finish(reply), true));
+    expect(out.map(x => x.lang)).toEqual([lang]);
+    // The same reply in English is Ember's.
+    expect(said(["Done: \"Ventas.xlsx\" is open."], { request }).map(x => x.lang)).toEqual([null]);
   });
 
   it("still says a short reply that quotes English in the request's language where its own words are that language's (voice-speaking-v4-1)", () => {

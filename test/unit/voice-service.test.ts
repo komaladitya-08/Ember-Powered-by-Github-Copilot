@@ -48,7 +48,7 @@ import { VOICE, type MicState } from "../../app/shared/voice";
 import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
-import { withoutAnnounced, type VoiceEvent } from "../../app/voice/engine";
+import { calledByName, withoutAnnounced, type VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
 
 const log: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => log, file: "" };
@@ -182,6 +182,21 @@ describe("Hear me more clearly", () => {
     electron.procs[0].emit("message", { type: "ready", loadMs: 20, backend: { backend: "native", detail: "", provider: "cpu", threads: 2, tried: [] } });
     expect(v.clearStatus.state).toBe("wont-load");
     expect(electron.procs[0].kill).not.toHaveBeenCalled();
+  });
+
+  it("says how it stands once as each voice process is ready, never \"Starting…\" between (voice-listening-c4-1)", async () => {
+    // Each ready set "starting" and then what checkClear found: the line under the switch changed twice as a Listen once
+    // with wake listening off opened its window, and a screen reader said it over the request.
+    const seen: string[] = [];
+    const { v } = service(true, { native: false, onNatural: () => { seen.push(v.clearStatus.state); } });
+    v.setClearHearing(true);
+    expect(v.clearStatus.state).toBe("needs-native");
+    v.listenOnce();
+    const [temporary] = electron.procs;
+    seen.length = 0;
+    temporary.emit("message", { type: "ready", loadMs: 20 });
+    expect(seen).not.toContain("starting");
+    expect(v.clearStatus.state).toBe("needs-native");
   });
 
   it("fetches nothing where speech doesn't run natively", () => {
@@ -611,14 +626,38 @@ describe("VoiceService", () => {
     }
   });
 
-  it("words that doubt for Settings in the third person, never begun with the name, and keeps the first person in Ask (voice-listening-v4-3)", () => {
-    // Home calls it Ember; its neighbouring lines say "Checking what Ember heard…". Said as the window ends, into the
-    // wake word's microphone, a line that began with the name would be heard as a request.
+  it("words that doubt for Settings without \"I\" or the name, and keeps the first person in Ask (voice-listening-v4-3, voice-listening-r4-3)", () => {
+    // Ember isn't "I" in Settings. Said as the window ends, into the wake word's microphone, a line with the name in it
+    // was heard as a request.
     const ask = { phase: "ready", detail: "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." } as const;
     const home = listenOnceInSettings(ask);
-    expect(home).toEqual({ phase: "ready", detail: "There was talking, but Ember couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." });
-    expect(home.detail).not.toMatch(/^Ember\b|\bI\b/);
+    expect(home).toEqual({ phase: "ready", detail: "There was talking, but it wasn't clear it was a request. Wait a moment after pressing Listen once, then speak." });
+    expect(home.detail).not.toMatch(/\bEmber\b|\bI\b/);
     expect(listenOnceInSettings({ phase: "ready", detail: "No request heard. Try again." }).detail).toBe("No request heard. Try again.");
+  });
+
+  it("ends Listen once, in Settings and in Ask, with no line that wakes Ember when a screen reader says it into the wake word's microphone (voice-listening-r4-3)", async () => {
+    // "There was talking, but Ember couldn't tell it was a request…", said as the window ended with wake listening back
+    // on, woke Ember in 6 of 40 real-model placements: the check hears from the spotted name on, and "Ember couldn't
+    // tell it was a request…" starts with it. No tail of a line that ends a window may call Ember by name.
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    const ends: string[] = [];
+    for (const end of [{ reason: "timeout", doubt: true }, { reason: "timeout" }, { reason: "rejected" }, { reason: "cancel" }]) {
+      v.listenOnce();
+      const generation = (posted(proc, "listen-once").at(-1) as { generation?: number }).generation;
+      proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+      proc.emit("message", { generation, type: "listening", on: false, window: "manual", ...end });
+      ends.push(v.listenOnceStatus.detail, listenOnceInSettings(v.listenOnceStatus).detail);
+    }
+    expect(ends).toContain("I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.");
+    for (const line of ends) {
+      const words = line.split(/\s+/);
+      for (let i = 0; i < words.length; i++) expect(calledByName(words.slice(i).join(" ")), `${line} (from “${words[i]}”)`).toBe(false);
+    }
   });
 
   it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {
@@ -918,6 +957,24 @@ describe("VoiceService", () => {
     expect(events).toEqual([{ type: "utterance", text: "Fresh request.", ms: 0, window: "wake" }]);
   });
 
+  it("tells the voice process a screen reader reads the prompts aloud as teaching starts, and says Listen once waits for it in a line screen readers aren't told (voice-listening-r4-1)", async () => {
+    // "Finish teaching Ember your voice first." was said through the speakers as teaching began, into its microphone.
+    let reader = true;
+    const { v } = service(true, { screenReaderOn: () => reader });
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 10 });
+    captured();
+    expect(v.enrol()).toBe(true);
+    expect(posted(proc, "enrol")).toEqual([{ type: "enrol", generation: 1, reader: true }]);
+    expect(v.listenOnceStatus).toEqual({ phase: "blocked", detail: "Finish teaching Ember your voice first.", reason: "listening" });
+    v.cancelEnrol();
+    reader = false;
+    expect(v.enrol()).toBe(true);
+    expect(posted(proc, "enrol").at(-1)).toEqual({ type: "enrol", generation: 2 });
+    v.cancelEnrol();
+  });
+
   it("kills a voice process stopped before it had started, once it starts (Electron's kill() does nothing until then) (review #256)", async () => {
     const { v } = service();
     await v.setWanted(true);
@@ -1100,7 +1157,7 @@ describe("VoiceService", () => {
     electron.net.fetch.mockRejectedValue(new Error("net::ERR_PROXY_CONNECTION_FAILED"));
     await expect(v.downloadModels(() => undefined)).rejects.toThrow(/ERR_PROXY/);
     expect(states.map(s => s.s)).toContain("downloading");
-    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "Couldn't download the speech models. Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again." });
+    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "Couldn't download the speech models. The download couldn't reach github.com right now. Check the network or proxy, then try again." });
     expect(v.micState).toBe("needs-models");
     expect(fs.readdirSync(root)).toEqual([]);
   });
@@ -1418,22 +1475,41 @@ describe("the echo check (scripts/voice/echo-check.mjs)", () => {
 
 describe("a failed download, in plain words", () => {
   it.each([
-    ["net::ERR_CERT_AUTHORITY_INVALID", /can't verify the download site's certificate.*ask IT/],
-    ["self signed certificate in certificate chain", /can't verify the download site's certificate/],
-    ["net::ERR_PROXY_CONNECTION_FAILED", /can't reach the download site/],
-    ["net::ERR_INTERNET_DISCONNECTED", /can't reach the download site/],
-    ["nothing arrived for 30 seconds (check the network or proxy)", /can't reach the download site/],
-    ["download failed: HTTP 503", /can't reach the download site/],
-    ["download failed: HTTP 407", /proxy asked for a sign-in/],
+    ["net::ERR_CERT_AUTHORITY_INVALID", /couldn't verify github\.com's certificate.*ask IT/],
+    ["self signed certificate in certificate chain", /couldn't verify github\.com's certificate/],
+    ["net::ERR_PROXY_CONNECTION_FAILED", /couldn't reach github\.com/],
+    ["net::ERR_INTERNET_DISCONNECTED", /couldn't reach github\.com/],
+    ["nothing arrived for 30 seconds (check the network or proxy)", /from github\.com stalled/],
+    ["download failed: HTTP 503", /\(github\.com\) had a problem\. Try again later/],
+    ["download failed: HTTP 407", /proxy asks for a sign-in before downloads/],
     ["download failed: HTTP 403", /refused the request/],
     ["ENOSPC: no space left on device, write", /enough free disk space for the speech models \(about \d+ MB\)/],
     ["Command failed: tar -xjf x.tar.bz2\ntar: Cannot write: No space left on device", /enough free disk space/],
     ["EACCES: permission denied, open '/x'", /permission denied/],
     ["Moonshine: checksum mismatch (got 0123456789ab…). The download was not used.", /arrived damaged or changed/],
+    ["EDQUOT: disk quota exceeded, write", /enough free disk space/],
+    ["EBUSY: resource busy or locked, rename 'C:\\Users\\me\\AppData\\Local\\ember\\models\\.unpack-x\\x' -> 'C:\\Users\\me\\AppData\\Local\\ember\\models\\x'", /couldn't be saved in the data folder/],
+    ["ENOENT: no such file or directory, open '/home/me/.config/ember/models/.download-x'", /couldn't be saved in the data folder/],
+    ["download failed: too many redirects", /^Something went wrong with the download\. Try again\.$/],
   ])("%s", async (raw, plain) => {
     const { downloadHelp } = await import("../../app/main/voice");
     expect(downloadHelp(raw)).toMatch(plain);
-    expect(downloadHelp(raw)).not.toMatch(/net::|ERR_|ENOSPC|EACCES/);
+    expect(downloadHelp(raw)).not.toMatch(/net::|ERR_|ENOSPC|EACCES|EDQUOT|EBUSY|ENOENT|ember/i);
+  });
+
+  it("puts what went wrong on the download or the site, never on this computer, which reached it (voice-listening-w5-1)", async () => {
+    // "This computer can't reach the download site…" was said for a 503 and for a transfer that stalled after it
+    // started: the computer had reached github.com, so the person checked a network that worked.
+    const { downloadHelp } = await import("../../app/main/voice");
+    expect(downloadHelp("download failed: HTTP 503")).toBe("The download site (github.com) had a problem. Try again later.");
+    expect(downloadHelp("download failed: HTTP 502")).toBe("The download site (github.com) had a problem. Try again later.");
+    expect(downloadHelp("nothing arrived for 30 seconds (check the network or proxy)")).toBe("The download from github.com stalled. Check the network or proxy, then try again.");
+    expect(downloadHelp("net::ERR_INTERNET_DISCONNECTED")).toBe("The download couldn't reach github.com right now. Check the network or proxy, then try again.");
+    expect(downloadHelp("net::ERR_CERT_AUTHORITY_INVALID")).toBe("The download couldn't verify github.com's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.");
+    expect(downloadHelp("download failed: HTTP 407")).toBe("The network proxy asks for a sign-in before downloads. Ask IT to allow downloads from github.com without one.");
+    for (const raw of ["download failed: HTTP 503", "nothing arrived for 30 seconds (check the network or proxy)", "net::ERR_CONNECTION_RESET", "fetch failed", "self signed certificate in certificate chain", "net::ERR_PROXY_AUTH_UNSUPPORTED"]) {
+      expect(downloadHelp(raw), raw).not.toMatch(/this computer can't|can't give/i);
+    }
   });
 });
 
@@ -2313,7 +2389,7 @@ describe("speech models", () => {
         v.setNaturalVoice(true);
         await vi.waitFor(() => expect(v.naturalStatus.state).toBe("failed"));
         expect(seen.map(status => status.state)).toEqual(["downloading", "downloading", "failed"]);
-        expect(v.naturalStatus).toMatchObject({ model: "kokoro", voice: "kitten", detail: expect.stringMatching(/can.t reach the download site/) });
+        expect(v.naturalStatus).toMatchObject({ model: "kokoro", voice: "kitten", detail: expect.stringMatching(/download site \(github\.com\) had a problem/) });
         expect(downloader.mock.calls[0][0]).toBe(NATURAL_VOICE.url);
         v.retryNaturalVoice();
         await vi.waitFor(() => expect(downloader).toHaveBeenCalledTimes(2));

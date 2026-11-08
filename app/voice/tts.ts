@@ -4,7 +4,7 @@
  * or fails, a voice that runs locally on the operating system speaks instead. Pure helpers; no model loads here.
  */
 
-import { speechMarkupOpen, spokenText } from "./spoken";
+import { type Lead, labelLine, speechMarkupOpen, spokenText } from "./spoken";
 
 /** Persisted preference names; Kitten is the default, with Kokoro as the optional alternative. */
 export type NaturalVoiceModel = "kokoro" | "supertonic" | "kitten";
@@ -63,6 +63,8 @@ export const REST_IN_BUBBLE = "The rest is in the bubble.";
 const SCAN_BACK = 64;
 /** A line that opens or closes a code block. */
 const FENCE_LINE = /^[ \t]*(?:```|~~~)/;
+/** A heading's line, as Markdown writes it ("## Totals"). */
+const HEADING_LINE = /^[ \t]{0,3}#{1,6}[ \t]+\S/;
 
 /** Abbreviations whose full stop doesn't end a sentence. */
 const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig|a\.m|p\.m)\.$/i;
@@ -72,22 +74,25 @@ const SHORT_NAMES = /(?:^|\s)(?:Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun|Jan|
 /**
  * Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending after `from`, in order.
  * A list's item and a heading end at their line too, and a numbered step starts its own piece ("2. Choose Privacy"):
- * its number is never said at the end of the step before it (voice-speaking-v1). Each ending is checked by the few
- * characters before it, never by all the text before it, so a long answer streams cheaply (voice-speaking-r4: a
- * heading's lookbehind made a 3,000-character paragraph cost 4 s). `seen` is told where every possible ending was looked
- * at, ending or not: a scan started there again finds the same endings after it.
+ * its number is never said at the end of the step before it (voice-speaking-v1). So do a line ending with a colon, and
+ * a line before a heading or a labelled step ("Step 2: …"), as spokenText ends them: labelled steps were said only once
+ * the whole answer was in (voice-speaking-c4-1). Each ending is checked by the few characters around it, never by all
+ * the text before it, so a long answer streams cheaply (voice-speaking-r4: a heading's lookbehind made a
+ * 3,000-character paragraph cost 4 s). `seen` is told where every possible ending was looked at, ending or not: a scan
+ * started there again finds the same endings after it.
  */
 function sentenceEnds(text: string, from = 0, seen?: (end: number) => void): number[] {
   const ends: number[] = [];
-  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|(\n)/g;
+  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|:[ \t]*\n(?![ \t]*\n)|(\n)/g;
   re.lastIndex = from;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const end = m.index + m[0].length;
     seen?.(end);
-    // A lone line break ends only a heading's line ("## Totals").
+    // A lone line break ends a heading's line ("## Totals"), and the line before a heading or a label. (A label's colon
+    // and the word after it are within 40 characters of its line's start, and a heading's first word within 12.)
     if (m[1]) {
       const start = text.lastIndexOf("\n", m.index - 1) + 1;
-      if (!/^[ \t]{0,3}#{1,6}[ \t]+\S/.test(text.slice(start, Math.min(m.index, start + 12)))) continue;
+      if (!HEADING_LINE.test(text.slice(start, Math.min(m.index, start + 12))) && !HEADING_LINE.test(text.slice(end, end + 12)) && !labelLine(text.slice(end, end + 40))) continue;
     }
     // "e.g." and "Dr." don't end a sentence, nor does a numbered list's "1." at the start of a line (the longest of
     // them is "approx.", so 16 characters show it whole, with what is before it).
@@ -101,11 +106,18 @@ function sentenceEnds(text: string, from = 0, seen?: (end: number) => void): num
   return ends;
 }
 
+/**
+ * Whether the clause break `m` in `text` is a dash between two numbers or amounts ("50 dollars - 100 dollars", "$1,500 -
+ * $200"): cut there, they were heard as two prices, "fifty dollars." then "One hundred dollars" (voice-speaking-c3-1).
+ */
+const betweenAmounts = (text: string, m: RegExpExecArray) =>
+  /[—–-]/.test(m[0]) && /\d(?:[ \t]?\p{L}+){0,2}$/u.test(text.slice(Math.max(0, m.index - 32), m.index)) && /^[$£€¥]?\d/.test(text.slice(m.index + m[0].length, m.index + m[0].length + 2));
+
 /** Cuts `chunk` at its first clause break (", " "; " " — ") between `min` and `max` characters, or returns it whole. */
 function cutAtClause(chunk: string, min: number, max: number): [string, string] | null {
   const re = /[,;:]\s+|\s+[—–-]\s+/g;
   for (let m = re.exec(chunk); m; m = re.exec(chunk)) {
-    if (m.index < min) continue;
+    if (m.index < min || betweenAmounts(chunk, m)) continue;
     if (m.index > max) break;
     const at = m.index + m[0].length;
     return [chunk.slice(0, at).trim(), chunk.slice(at).trim()];
@@ -166,10 +178,9 @@ export function speechChunks(text: string): string[] {
   if (!t) return [];
   const sentences: string[] = [];
   let from = 0;
-  // A line ending with a colon ends its piece too, so the line it leads into is never cut after its own label ("To do
-  // this:\nStep 1: Open…" was said "To do this: Step 1:", then the step: voice-speaking-c3-2).
-  const led = [...t.matchAll(/:[ \t]*\n/g)].map(m => m.index + m[0].length);
-  for (const end of [...new Set([...sentenceEnds(t), ...led])].sort((a, b) => a - b)) { sentences.push(t.slice(from, end)); from = end; }
+  // A line ending with a colon ends its piece too (sentenceEnds), so the line it leads into is never cut after its own
+  // label ("To do this:\nStep 1: Open…" was said "To do this: Step 1:", then the step: voice-speaking-c3-2).
+  for (const end of sentenceEnds(t)) { sentences.push(t.slice(from, end)); from = end; }
   if (from < t.length) sentences.push(t.slice(from));
   const out: string[] = [];
   for (const s of sentences.map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean)) {
@@ -209,6 +220,19 @@ export class SpeechStream {
   /** The start of each whole line of `raw` that opens or closes a code block, and of the first line not looked at yet. */
   private fences: number[] = [];
   private fenceScan = 0;
+  /**
+   * What the last whole line said leaves for the line after it (spokenText's Lead): whether it ends with a colon ("Here's
+   * what I'll do:" said on its own, then its steps), whether a colon line led into it and whether it is blank, so the
+   * lines after a cut end as a list's do (voice-speaking-3). They were said in one breath, the steps cut from the line
+   * that leads into them, and so were those after a cut before a label line among them, the colon line's run lost there
+   * (voice-speaking-v5-1).
+   */
+  private lead: Lead = { ledIn: false, afterLed: false, afterBlank: false };
+  /**
+   * shortLabelEnds' answer for the end after the last line break, looked at again as each delta comes, and where the
+   * stream may cut before that label's line instead (`from`; 0: nowhere).
+   */
+  private labelEnd = { said: -1, end: -1, short: false, from: 0 };
 
   /** `maxChars`: the most of an answer said aloud (SPOKEN_MAX); the rest is left to the bubble, which shows it all. */
   constructor(private maxChars = SPOKEN_MAX) {}
@@ -218,9 +242,32 @@ export class SpeechStream {
     this.raw += delta;
     const cut = this.safeCut();
     if (cut <= this.said) return [];
-    const spoken = spokenText(this.raw.slice(this.said, cut), { ledIn: this.ledIn(), lineStart: this.lineStart() });
+    // (Cut inside a line, it goes on after the piece: a sentence's end has a space after it, a clause's no line break.
+    // What has come of the rest of that line is judged with it, all of it once its line break has.)
+    const inLine = this.raw[cut - 1] !== "\n" && this.raw[cut] !== "\n";
+    const nl = inLine ? this.raw.indexOf("\n", cut) : -1;
+    const piece = this.raw.slice(this.said, cut);
+    const o = { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel(), lineEnd: inLine ? this.raw.slice(cut, nl < 0 ? undefined : nl) : "" };
+    // Till that line has come, a piece said otherwise were the line longer waits: as short as a list's line, it ends a
+    // run of such lines before it, and longer it doesn't. Judged as long, "Downloads\nDocuments\nPictures. Done." was
+    // said "Downloads Documents Pictures." (voice-speaking-w5-2); the wait is the rest of a short line at most. (Such a
+    // run is three lines: with fewer in the piece, the line's length changes nothing.)
+    if (inLine && nl < 0 && piece.indexOf("\n") < piece.lastIndexOf("\n") && spokenText(piece, { ...o, goesOn: true }) !== spokenText(piece, o)) return [];
+    const spoken = this.withLabel(spokenText(piece, { ...o, leads: lead => { this.lead = lead; } }));
     this.said = cut;
     return spoken.trim() ? this.budget(spoken) : [];
+  }
+
+  /**
+   * `spoken` with a short label alone on its first line ("Cons:", "Steps:": under CHUNK_MIN) said with the line after it,
+   * once something has been said: the whole answer's pieces join it to the next (speechChunks), but for the answer's
+   * first, and after a full stop or a list's item the stream said "Cons:" on its own (voice-speaking-v5-2).
+   */
+  private withLabel(spoken: string): string {
+    const nl = spoken.indexOf("\n");
+    if (!this.spokenChars || nl < 0) return spoken;
+    const first = spoken.slice(0, nl).trim();
+    return first.endsWith(":") && first.length < CHUNK_MIN ? `${first} ${spoken.slice(nl + 1).trimStart()}` : spoken;
   }
 
   /**
@@ -262,21 +309,12 @@ export class SpeechStream {
     if (!this.said) rest = text;
     else if (text.startsWith(this.raw.slice(0, this.said))) rest = text.slice(this.said);
     else rest = full === undefined ? this.raw.slice(this.said) : "";
-    const spoken = spokenText(rest, { ledIn: this.ledIn(), lineStart: this.lineStart() });
+    const spoken = this.withLabel(spokenText(rest, { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel() }));
     const out = spoken.trim() ? this.budget(spoken) : [];
     const question = this.closingQuestion();
     if (question) out.push(question);
     this.reset();
     return out;
-  }
-
-  /**
-   * Whether what is said next starts on the line after one ending with a colon that was said already ("Here's what I'll
-   * do:" said on its own, then its steps): spokenText ends those lines as a list's (voice-speaking-3). They were said in
-   * one breath, the steps cut from the line that leads into them.
-   */
-  private ledIn(): boolean {
-    return /:[ \t]*\n(?:[ \t]*\n)?[ \t]*$/.test(this.raw.slice(Math.max(0, this.said - SCAN_BACK), this.said));
   }
 
   /**
@@ -287,6 +325,15 @@ export class SpeechStream {
    */
   private lineStart(): string {
     return this.said ? this.raw.slice(this.raw.lastIndexOf("\n", this.said - 1) + 1, this.said) : "";
+  }
+
+  /**
+   * Whether what is said next starts on the line after a labelled step said already ("Step 1: …" said once "Step 2:"
+   * came): that step ends as the list's next one does, the last of them too (voice-speaking-c4-1).
+   */
+  private afterLabel(): boolean {
+    if (this.raw[this.said - 1] !== "\n") return false;
+    return labelLine(this.raw.slice(this.raw.lastIndexOf("\n", this.said - 2) + 1, this.said - 1));
   }
 
   /** Whether any of the answer has been spoken. */
@@ -303,6 +350,8 @@ export class SpeechStream {
     this.scanFrom = 0;
     this.fences = [];
     this.fenceScan = 0;
+    this.lead = { ledIn: false, afterLed: false, afterBlank: false };
+    this.labelEnd = { said: -1, end: -1, short: false, from: 0 };
   }
 
   /**
@@ -320,25 +369,35 @@ export class SpeechStream {
    * as speechChunks cuts it (voice-speaking-8). 0 while it is shorter, or inside Markdown that isn't whole yet.
    */
   private joinCut(): number {
-    if (this.raw.length <= FIRST_MAX) return 0;
-    const head = this.raw.slice(0, FIRST_MAX + 1);
+    // (A line break before the answer's words is no line of it: voice-speaking-r4-1.)
+    const lead = /^\s*/.exec(this.raw)?.[0].length ?? 0;
+    if (this.raw.length <= lead + FIRST_MAX) return 0;
+    const head = this.raw.slice(lead, lead + FIRST_MAX + 1);
     // Only on the answer's first line, as a sentence: not in a list, a heading, a quote or a table.
     if (head.includes("\n") || /^[ \t]*(?:[|#>*+-]|\d+[.)])/.test(head)) return 0;
     // Never inside a code span or a link's words: cut there, its backtick or its address would be said (voice-speaking-r2).
-    return Math.max(0, joinAt(this.raw, FIRST_MIN, FIRST_MAX, at => !speechMarkupOpen(this.raw.slice(0, at))));
+    // Nor just after an arrow, which ended the piece with "right arrow" (voice-speaking-2: a third of long paths).
+    return Math.max(0, joinAt(this.raw, lead + FIRST_MIN, lead + FIRST_MAX, at => !/(?:[←→↑↓]|->)[ \t]*$/.test(this.raw.slice(Math.max(0, at - 4), at)) && !speechMarkupOpen(this.raw.slice(0, at))));
   }
 
   /**
    * The first clause break of the answer, when it can be said on its own (0: none yet). Only on its first line: past it,
    * a line said without the lines beside it can't be told from a list's ("Step 1: Open Settings\nStep 2:" said "Open
-   * Settings Step 2": voice-speaking-c3-2), as joinCut's first sentence is.
+   * Settings Step 2": voice-speaking-c3-2), as joinCut's first sentence is. A line break before the answer's words, or
+   * a first line of its own ("OK", "Here's what I found") with no label or colon, is no list, so the first clause of
+   * the line after it is said too, when that line is no label and its words before the clause are more than a list's
+   * short line has: they held the first sound until the whole first sentence had come (voice-speaking-r4-1).
    */
   private clauseCut(): number {
     const re = /[,;:]\s+|\s+[—–-]\s+/g;
     for (let m = re.exec(this.raw); m; m = re.exec(this.raw)) {
-      if (m.index < FIRST_MIN) continue;
+      if (m.index < FIRST_MIN || betweenAmounts(this.raw, m)) continue;
+      // (A dash is judged by what comes after it: wait for that.)
+      if (/[—–-]/.test(m[0]) && m.index + m[0].length + 2 > this.raw.length) return 0;
       const before = this.raw.slice(0, m.index);
-      if (before.includes("\n")) return 0;
+      const lines = before.trimStart().split("\n");
+      if (lines.length > 2) return 0;
+      if (lines.length === 2 && (labelLine(lines[0]) || /:[ \t]*$/.test(lines[0]) || labelLine(lines[1]) || lines[1].trim().split(/\s+/).length <= 4)) return 0;
       // Not inside Markdown that isn't whole yet: a code span or block, a link's text or address, a table, a list's
       // first line (it reads better as a whole), or a heading.
       if (speechMarkupOpen(before)) return 0;
@@ -347,6 +406,38 @@ export class SpeechStream {
       return m.index + m[0].length;
     }
     return 0;
+  }
+
+  /**
+   * Whether `end` is just after a line ending with a colon that ends a piece too short to be said on its own ("Cons:",
+   * "Step 2:": under CHUNK_MIN): the whole answer's pieces say it with the line after it (speechChunks), and cut after it
+   * the stream said it on its own, the step after it alone (voice-speaking-v5-2). The answer's first piece, and one
+   * with the line before it ("Firefox Option A:"), are said on their own in the whole answer too, so they are still cut.
+   * What is before the label's line is said without it (`labelEnd.from`), where the whole answer's pieces break there
+   * too: only the label waits for its step. Held with it, the step before it and every one after waited for the whole
+   * answer, and a bold heading over one ("**Kitten**\nPros:\n…") made no sound till then (voice-speaking-w5-1).
+   */
+  private shortLabelEnds(end: number): boolean {
+    if (this.raw[end - 1] !== "\n") return false;
+    // The last line with words before `end` (a blank line after the label is none of its own).
+    let to = end - 1, from = this.raw.lastIndexOf("\n", to - 1) + 1;
+    while (from > 0 && !this.raw.slice(from, to).trim()) { to = from - 1; from = this.raw.lastIndexOf("\n", to - 1) + 1; }
+    const line = this.raw.slice(from, to).replace(/\*\*|__/g, "").trim();
+    if (!line.endsWith(":") || line.length >= CHUNK_MIN) return false;
+    // (Past twice what is said aloud, it is left to the bubble anyway: 1,000 labels with nothing cut between them cost
+    // 2.5 s, each piece read again whole.)
+    if (this.capped || end - this.said > 2 * this.maxChars) return false;
+    if (this.labelEnd.said !== this.said || this.labelEnd.end !== end) {
+      const o = { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel() };
+      const chunks = speechChunks(spokenText(this.raw.slice(this.said, end), o));
+      const last = chunks[chunks.length - 1] ?? "";
+      const short = last.endsWith(":") && last.length < CHUNK_MIN && (this.spokenChars > 0 || chunks.length > 1);
+      // The pieces before the label's line, said now, are the whole answer's pieces before the label.
+      const before = short && from > this.said ? speechChunks(spokenText(this.raw.slice(this.said, from), o)) : null;
+      const apart = !!before && before.length === chunks.length - 1 && before.every((c, i) => c === chunks[i]);
+      this.labelEnd = { said: this.said, end, short, from: apart ? from : 0 };
+    }
+    return this.labelEnd.short;
   }
 
   private sentenceCut(): number {
@@ -360,8 +451,11 @@ export class SpeechStream {
     const lastBreak = this.fenceScan - 1;
     const settled = (at: number) => at <= lastBreak || (at > lastBreak + 1 && at <= this.raw.length - SCAN_BACK);
     let best = 0, fence = 0, scanned = this.scanFrom;
-    for (const end of sentenceEnds(this.raw, Math.max(this.said, this.scanFrom), at => { if (settled(at)) scanned = at; })) {
-      if (end <= this.said) continue;
+    for (const ending of sentenceEnds(this.raw, Math.max(this.said, this.scanFrom), at => { if (settled(at)) scanned = at; })) {
+      if (ending <= this.said) continue;
+      // After a short label alone on its line, before that line, or nowhere (voice-speaking-v5-2, voice-speaking-w5-1).
+      const end = this.shortLabelEnds(ending) ? this.labelEnd.from : ending;
+      if (end <= Math.max(this.said, best)) continue;
       // Inside a code block: as many fence lines start before it as speechMarkupOpen would count, and an odd number.
       while (fence < this.fences.length && this.fences[fence] < end) fence++;
       if ((fence + (tail >= 0 && tail < end ? 1 : 0)) % 2 !== 0) continue;

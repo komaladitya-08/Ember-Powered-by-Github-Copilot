@@ -165,6 +165,25 @@ describe("speechChunks", () => {
     expect(chunks.join(" ")).toBe(text);
   });
 
+  it("never cuts a piece at a dash between two amounts, which was heard as two prices (voice-speaking-c3-1)", () => {
+    const sum = "After the discount, that's $1,500 - $200 for fees, so $1,300 is left for the rest of the trip.";
+    expect(speechChunks(spokenText(sum))).toEqual(["After the discount,", "that's 1,500 dollars - 200 dollars for fees, so 1,300 dollars is left for the rest of the trip."]);
+    expect(speechChunks(spokenText("That's $1,500 - $200 for fees, so $1,300 is left after it."))[0]).toBe("That's 1,500 dollars - 200 dollars for fees,");
+    expect(speechChunks(spokenText("The two offers came to $3M - $2.5M in fees, so the second one is better for you."))[0]).toBe("The two offers came to 3 million dollars - 2.5 million dollars in fees,");
+    // Streamed too, also when the dash is the last of what has come: the first clause is never cut at it.
+    const text = "The two quotes you have come to $1,500 - $200 in fees, so the cheaper one is better for you.";
+    for (const delta of [1, 2, 3, 4, 16]) {
+      const s = new SpeechStream();
+      const said: string[] = [];
+      for (let i = 0; i < text.length; i += delta) said.push(...s.push(text.slice(i, i + delta)));
+      said.push(...s.finish(text));
+      expect(said[0], `${delta}`).toBe("The two quotes you have come to 1,500 dollars - 200 dollars in fees,");
+      for (const piece of said.flatMap(speechChunks)) expect(piece, `${delta}`).not.toMatch(/dollars -$/);
+    }
+    // A dash before words is still a place to cut ("…your Downloads folder — and three of them…").
+    expect(new SpeechStream().push("I found five spreadsheets in Downloads — and three of")).toEqual(["I found five spreadsheets in Downloads —"]);
+  });
+
   it("joins a very short piece to the one before it", () => {
     expect(speechChunks("The build finished in twelve seconds. OK. Next?")).toEqual(["The build finished in twelve seconds.", "OK. Next?"]);
   });
@@ -384,10 +403,180 @@ describe("SpeechStream", () => {
     expect(streamed(note, 4).flatMap(speechChunks).join(" ")).toBe(speechChunks(spokenText(note)).join(" "));
   });
 
+  /** Where `text` streamed `delta` characters at a time gave its first piece: how much of it had come, and the piece. */
+  const firstPiece = (text: string, delta: number) => {
+    const s = new SpeechStream();
+    for (let i = 0; i < text.length; i += delta) {
+      const said = s.push(text.slice(i, i + delta));
+      if (said.length) return { at: Math.min(i + delta, text.length), piece: said[0] };
+    }
+    return { at: Infinity, piece: s.finish(text)[0] };
+  };
+
+  const STEPS = "Step 1: Open the Start menu and type Sound in the search box at the bottom\nStep 2: Click Sound settings when it appears in the list of results\nStep 3: Under Output, choose the headphones you want to use from the list";
+
+  it.each([
+    [STEPS, "Step 1: Open the Start menu and type Sound in the search box at the bottom.", "Step 3"],
+    [STEPS.replace(/Step (\d):/g, "**Step $1:**"), "Step 1: Open the Start menu and type Sound in the search box at the bottom.", "**Step 3"],
+    [`To fix the sound:\n${STEPS}`, "To fix the sound:", "\nStep 2"],
+  ])("starts saying the labelled steps of %j as they arrive, not once the whole answer is in (voice-speaking-c4-1)", (answer, first, before) => {
+    for (const delta of [1, 4, 16]) {
+      const { at, piece } = firstPiece(answer, delta);
+      expect(piece, `${delta}`).toBe(first);
+      expect(at, `${delta}`).toBeLessThan(answer.indexOf(before));
+      // Each step is said whole, its label at its start, and ends as the whole answer's do, the last one too.
+      const chunks = streamed(answer, delta).flatMap(speechChunks);
+      expect(chunks.join(" "), `${delta}`).toBe(speechChunks(spokenText(answer)).join(" "));
+      expect(chunks.filter(c => /^Step \d: /.test(c)), `${delta}`).toHaveLength(3);
+      for (const chunk of chunks) expect(chunk, `${delta}`).not.toMatch(/\S (?:Step \d|To fix the sound):/);
+    }
+  });
+
+  it.each([
+    "Here's the plan:\nBack up the folder to your USB drive\nNote: this can take a few minutes\nDelete the old copies once the backup is done\nEmpty the bin to free up the space",
+    "**To fix the sound:**\nNote: you need to be signed in as an admin\nOpen Sound settings from the Start menu\nChoose your headphones in the list\nPlay a test sound to check",
+    "To fix the sound:\nStep 1: Open Sound settings\nStep 2: Choose your headphones\nCheck that the volume slider is not at zero\nPlay a test sound to check",
+    "**Here's what I'd do:**\nStep 1: Back up the folder\nDelete the old copies once the backup is done\nEmpty the bin to free up the space",
+    "Here's the plan:\n\nBack up the folder to your USB drive\nNote: this can take a few minutes\nDelete the old copies once the backup is done",
+    "Here's the plan:\nBack up the folder. Then copy it to the drive\nNote: this can take a while\nDelete the old copies",
+  ])("says each step of %j apart when streamed, a label line among them, as the whole answer does (voice-speaking-v5-1)", answer => {
+    const whole = speechChunks(spokenText(answer));
+    // Every line ends: none is said in one breath with the line after it.
+    for (const chunk of whole.slice(1)) expect(chunk).toMatch(/\.$/);
+    for (const delta of [1, 4, 16]) expect(streamed(answer, delta).flatMap(speechChunks), `${delta}`).toEqual(whole);
+    // Two blank lines end a colon line's run, streamed or not.
+    const apart = "Done.\nHere's what I found:\n\n\nTo fix the sound:\nYour windows";
+    for (const delta of [1, 4, 16]) expect(streamed(apart, delta).flatMap(speechChunks), `${delta}`).toEqual(speechChunks(spokenText(apart)));
+  });
+
+  it.each([
+    ["Step 1:\nOpen Settings\nStep 2:\nChoose Privacy\nStep 3:\nTurn off Location", ["Step 1:", "Open Settings.", "Step 2: Choose Privacy.", "Step 3: Turn off Location."]],
+    ["Pros:\nIt's faster and uses less memory\nCons:\nIt costs more and needs a sign-in", ["Pros:", "It's faster and uses less memory.", "Cons: It costs more and needs a sign-in."]],
+    ["Option A:\nKeep both copies\nOption B:\nDelete the older one", ["Option A:", "Keep both copies.", "Option B: Delete the older one."]],
+    ["Morning:\nCheck your email\nAfternoon:\nWrite the report", ["Morning:", "Check your email.", "Afternoon: Write the report."]],
+    ["In Windows:\nOpen Settings\nOn a Mac:\nOpen System Settings", ["In Windows:", "Open Settings.", "On a Mac: Open System Settings."]],
+    // After a full stop, a list's item or a blank line too.
+    ["Sure.\nSteps:\nOpen the file\nAdd the totals\nSave it", ["Sure.", "Steps: Open the file.", "Add the totals.", "Save it."]],
+    ["It's faster.\nCons:\nIt costs more.", ["It's faster.", "Cons: It costs more."]],
+    ["Pros:\n- It's faster and uses less memory\n\n**Cons:**\n- It costs more and needs a sign-in", ["Pros:", "It's faster and uses less memory.", "Cons: It costs more and needs a sign-in."]],
+  ])("says each later label of %j with its step when streamed, the last one ended, as the whole answer does (voice-speaking-v5-2)", (answer, chunks) => {
+    expect(speechChunks(spokenText(answer))).toEqual(chunks);
+    for (const delta of [1, 4, 16]) expect(streamed(answer, delta).flatMap(speechChunks), `${delta}`).toEqual(chunks);
+    // The answer's first line is still said as soon as it has come.
+    expect(firstPiece(answer, 1).piece).toBe(chunks[0]);
+  });
+
+  /** Each piece `text` streamed `delta` characters at a time gives out, with how much of it had come ("end": at finish). */
+  const timeline = (text: string, delta: number) => {
+    const s = new SpeechStream();
+    const out: [number | "end", string][] = [];
+    for (let i = 0; i < text.length; i += delta) for (const piece of s.push(text.slice(i, i + delta))) out.push([Math.min(i + delta, text.length), piece]);
+    for (const piece of s.finish(text)) out.push(["end", piece]);
+    return out;
+  };
+
+  it.each([
+    ["Step 1:\nOpen Settings\nStep 2:\nChoose Privacy\nStep 3:\nTurn off Location", [["Open Settings.", "Step 2:"], ["Choose Privacy.", "Step 3:"]]],
+    ["Step 1:\nOpen Settings from the Start menu and choose Bluetooth and devices\nStep 2:\nTurn Bluetooth on and put your headphones in pairing mode\nStep 3:\nChoose Add device, then Bluetooth, and pick your headphones from the list", [["Open Settings from the Start menu", "Step 2:"], ["Turn Bluetooth on", "Step 3:"]]],
+    ["Both work.\nWindows:\nOpen Settings, then Bluetooth and devices, and turn Bluetooth on\nOn a Mac:\nOpen System Settings, choose Bluetooth and turn it on", [["Open Settings, then Bluetooth", "On a Mac:"]]],
+    ["Here are three options.\nOption A:\nKeep both copies and rename the newer one so you can tell them apart\nOption B:\nDelete the older copy once you've checked the newer one opens\nOption C:\nMove both into an Archive folder and decide later", [["Keep both copies", "Option B:"], ["Delete the older copy", "Option C:"]]],
+    // A bold heading or a list's item over the first label is said before it: they made no sound till the answer's end.
+    ["**Kitten**\nPros:\nIt's small and quick to start on any computer\nCons:\nIt only speaks English, so other languages use the system voice", [["Kitten.", "Pros:"], ["It's small and quick", "Cons:"]]],
+    ["- Open Settings\nPros:\nI looked through the folder you mentioned, and found three files you might want", [["Open Settings.", "Pros:"]]],
+  ])("says each step of %j once the next label's line has come, only that label waiting for its step (voice-speaking-w5-1)", (answer, steps) => {
+    for (const delta of [1, 4, 16]) {
+      const said = timeline(answer, delta);
+      for (const [step, label] of steps) {
+        const at = said.find(([, piece]) => piece.includes(step))?.[0];
+        expect(at, `${delta} ${step}`).not.toBe("end");
+        expect(at as number, `${delta} ${step}`).toBeLessThanOrEqual(answer.indexOf(label) + label.length + 1 + delta);
+      }
+      // The words and full stops the whole answer says, each label with its step.
+      expect(said.map(([, piece]) => piece).flatMap(speechChunks).join(" "), `${delta}`).toBe(speechChunks(spokenText(answer)).join(" "));
+    }
+  });
+
+  it.each([
+    "Downloads\nDocuments\nPictures. Done.",
+    "Firefox\nFiles\nTerminal. That's all.",
+    "Firefox\nFiles\nTerminal. **That's all.**",
+    "Firefox\nFiles\nTerminal. That's all.\nAnything else?",
+    // A longer last line is no list's line: the lines before it go on in one breath, whole or streamed.
+    "Firefox\nFiles\nTerminal. That is all of them for now, more later.",
+  ])("ends each short line before a last one that goes on after its full stop when %j streams, as the whole answer does (voice-speaking-w5-2)", answer => {
+    const whole = speechChunks(spokenText(answer)).join(" ");
+    for (const delta of [1, 4, 16, 1000]) expect(streamed(answer, delta).flatMap(speechChunks).join(" "), `${delta}`).toBe(whole);
+  });
+
+  it("waits for such a last line only while it could still be a list's short line (voice-speaking-w5-2)", () => {
+    const long = "Firefox\nFiles\nTerminal. That is all of them for now, more later.";
+    // Its fifth word starts it is no list's line.
+    expect(firstPiece(long, 1)).toEqual({ at: long.indexOf(" of ") + 2, piece: "Firefox\nFiles\nTerminal." });
+    expect(firstPiece("Firefox\nFiles\nTerminal. That's all.\nAnything else?", 1).at).toBe("Firefox\nFiles\nTerminal. That's all.\n".length);
+  });
+
+  const FOUND = "I looked through your Downloads folder, and I found three spreadsheets that you changed this week, all of them from the sales team.";
+
+  it.each([
+    [`\n${FOUND}`, "I looked through your Downloads folder,"],
+    [`OK\n${FOUND}`, "OK\nI looked through your Downloads folder,"],
+    [`Here's what I found\n${FOUND}`, "Here's what I found\nI looked through your Downloads folder,"],
+    ["Sure thing\nI've closed the three Firefox windows you weren't using, and kept the one with your email open.", "Sure thing\nI've closed the three Firefox windows you weren't using,"],
+  ])("starts %j at its first clause, a short first line or a line break before it no reason to wait (voice-speaking-r4-1)", (answer, first) => {
+    for (const delta of [1, 4, 16]) {
+      const { at, piece } = firstPiece(answer, delta);
+      expect(piece, `${delta}`).toBe(first);
+      expect(at, `${delta}`).toBeLessThanOrEqual(answer.indexOf(",") + 1 + delta);
+      expect(streamed(answer, delta).join(" ").replace(/\s+/g, " "), `${delta}`).toBe(spokenText(answer).replace(/\s+/g, " "));
+    }
+  });
+
+  it("starts a long first sentence with no comma after a line break before a joining word, as on the first line (voice-speaking-r4-1)", () => {
+    const long = "\nI looked through the folder you mentioned and found the quarterly reports from last year together with the drafts that were never sent. Shall I open them?";
+    for (const delta of [1, 4, 16]) {
+      const { at, piece } = firstPiece(long, delta);
+      expect(piece, `${delta}`).toBe("I looked through the folder you mentioned");
+      expect(at, `${delta}`).toBeLessThan(long.indexOf("sent."));
+    }
+  });
+
+  it.each([
+    "Your open windows\nFirefox, Files\nTerminal and Mail",
+    "Step 1: Open Settings\nStep 2: Choose Privacy, then Location",
+    "Note: the file is locked\nIt may take a while, so I'll wait",
+    "Steps:\nOpen the spreadsheet you sent me, then add up the totals",
+    "Hi\nOK\nI looked through your Downloads folder, and I found three spreadsheets.",
+  ])("still says %j as its lines end, never a clause cut from a list's line or a label's (voice-speaking-c3-2)", answer => {
+    for (const delta of [1, 4, 16]) {
+      expect(streamed(answer, delta).flatMap(speechChunks).join(" "), `${delta}`).toBe(speechChunks(spokenText(answer)).join(" "));
+      expect(firstPiece(answer, delta).piece, `${delta}`).not.toMatch(/\n.*,$/);
+    }
+  });
+
+  it("says a line before a heading or a labelled option on its own when streamed, as it does the whole answer (voice-speaking-r4-2)", () => {
+    for (const delta of [1, 4, 16]) {
+      expect(streamed("### Option A\nKeep both copies\n### Option B\nDelete the older one", delta).flatMap(speechChunks), `${delta}`).toEqual(["Option A.", "Keep both copies.", "Option B.", "Delete the older one"]);
+      expect(streamed("Option A: Keep both copies\nThis is the safest choice\nOption B: Delete the older one", delta).flatMap(speechChunks), `${delta}`).toEqual(["Option A: Keep both copies This is the safest choice.", "Option B: Delete the older one"]);
+      expect(streamed("**Option A** – keep both copies\n**Option B** – delete the older one", delta).flatMap(speechChunks), `${delta}`).toEqual(["Option A – keep both copies.", "Option B – delete the older one."]);
+    }
+  });
+
   it("says a long menu path cut at a space before an arrow with that arrow's 'to', not as a bullet (voice-speaking-v4-3)", () => {
     const path = "Go to Network → Privacy & Security → Display → Additional mouse settings → System Services → Accessibility → Advanced and turn it off.";
     for (const delta of [1, 4, 16]) {
       expect(streamed(path, delta), `${delta}`).toEqual(["Go to Network to Privacy and Security to Display to Additional mouse settings to System Services", "to Accessibility to Advanced and turn it off."]);
+    }
+    // A long path is never cut just after an arrow, which would end a piece with "right arrow" (voice-speaking-2).
+    const after = "Go to System Services → Output → General → Privacy & Security → Sound → Mission Control → General and turn it off.";
+    for (const delta of [1, 4, 16]) {
+      const said = streamed(after, delta);
+      expect(said.join(" "), `${delta}`).toBe("Go to System Services to Output to General to Privacy and Security to Sound to Mission Control to General and turn it off.");
+      for (const piece of said) expect(piece, `${delta}`).not.toMatch(/arrow/);
+    }
+    const names = ["Network", "Privacy & Security", "Display", "Additional mouse settings", "System Services", "Accessibility", "Advanced", "Keyboard", "Shortcuts", "Mission Control", "General", "Login Items", "Sound", "Output"];
+    for (let seed = 0; seed < 200; seed++) {
+      const path = Array.from({ length: 5 + (seed % 4) }, (_, i) => names[(seed * 7 + i * 5) % names.length]).join(" → ");
+      for (const delta of [1, 4, 16]) for (const piece of streamed(`Go to ${path} and turn it off.`, delta)) expect(piece, `${seed} ${delta}`).not.toMatch(/arrow/);
     }
     // An arrow at the start of a line is still its bullet, streamed too.
     for (const delta of [1, 4, 16]) expect(streamed("Here is what to do:\n→ Open the file\n→ Save it", delta), `${delta}`).toEqual(["Here is what to do:", "Open the file.\nSave it."]);

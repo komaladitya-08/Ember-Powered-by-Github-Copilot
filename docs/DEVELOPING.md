@@ -598,6 +598,10 @@ the four phrases it shows. While it learns, Ember takes no requests (the phrases
 “Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
 stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),
 after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
+While a screen reader runs, which reads each prompt aloud, teaching takes nothing it reads: speech that begins within
+1.5 s of a prompt showing, or in a prompt's own words ("Say…", "Heard 2 of 4…", "That was too short…"), teaches
+nothing, and a phrase said so soon after the reading that the two ran together is asked for again ("Your screen reader
+was still reading. Wait for it to finish, then say: …"). Listen once's line then isn't announced either.
 It decides only what a voice may approve: every voice is heard, and a request it doesn't
 match simply can't approve anything (owner decision of 2026-11-05: on a laptop's microphone the owner's own requests
 scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint and the words Ember learnt (the button says so). With **Keep learning my voice** (on by default once Voice Match knows you), the
@@ -815,7 +819,8 @@ request that fits none of these (or isn't in English) gets no acknowledgement: a
 (app/main/acknowledge.ts).
 
 A streamed answer is spoken from its first clause once that has at least 18 characters and 4 words ("I can't do that
-one,"), on the answer's first line only. Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
+one,"), on the answer's first line only, or on its second after a line break or a short first line with no label or
+colon ("OK", "Here's what I found"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
 character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
 field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
@@ -827,22 +832,31 @@ or underscore to be said. No piece of speech is longer than 120
 characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
 it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into
-a list, three or more short lines in a row that each start with a capital (a list without its markers), two or more
+a list, three or more short lines in a row that each start with a capital (a list without its markers; streamed, a
+last one cut after a full stop is judged whole, so a piece waits for the rest of that line while it is still short:
+"Downloads\nDocuments\nPictures. Done."), two or more
 such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…", also
 after a blank line, and when that line was said on its own as the answer streamed), two or more lines in a row that
-each start with a short label and its colon ("Step 1: Open Settings", "**Option A:** Keep it", also when a streamed
-step was cut at its comma: "Step 1: Open Settings,", then "then go to Privacy.") and a
+each start with a short label and its colon or a spaced dash ("Step 1: Open Settings", "**Option A:** Keep it",
+"**Option A** – keep both", also when a streamed step was cut at its comma: "Step 1: Open Settings,", then "then go
+to Privacy."), the line before a heading or a label line ("Keep both copies.", then "Option B.") and a
 paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
 its number ("2. Choose Privacy", never "Open Settings 2."), a line ending with a colon ends its piece, so a label is
-never cut from its step ("To do this:", then "Step 1: Open Settings…"), and a streamed list is said as each item's line
-ends, not after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
+never cut from its step ("To do this:", then "Step 1: Open Settings…"), but for one too short to be said on its own
+after the answer's first piece ("Pros:\n…\nCons:\nIt costs more" says "Cons: It costs more."; streamed, only that
+label waits for its step, and what is before it is said once its line has come), and a streamed list,
+its labelled steps too, is said as each item's line ends, not after the whole answer, each line ending as the whole
+answer's would (a colon line's run goes on past a label line among its lines: "Note: this can take a while."). What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
 last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
 "Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
 key" as "the right arrow key", "Press ← or →" as "left arrow or right arrow") or, before the word "arrow", by its
-direction ("the ← and → arrow keys" as "the left and right arrow keys"), an arrow between two words as "to", an arrow
-starting a line as its bullet, a range's dash as "to" ("$5-$10", "10:30–11:00", "5–10"; never a spaced hyphen between
-amounts, a sum, which is "minus" before "=": "$2,000 - $1,500 = $500"), and other emoji and typed
+direction ("the ← and → arrow keys" as "the left and right arrow keys"), in a chord as the other keys are ("Win+←" as
+"Windows key left arrow"), an arrow between two words as "to" (after its own direction too, before any word but "to",
+a preposition and the like, and before a name in quotes or brackets: "top right → Settings" and "top right → “Settings”"
+with "to", "Swipe right → to go back" and "Swipe right → (twice)" with "right" once), an arrow starting a line as its bullet, a range's dash as "to" ("$5-$10", "$5-10", "$50 - $100", "10:30–11:00", "9am–5pm", "5–10"; a spaced
+hyphen between amounts that go down is a sum, said as written, or "minus" before "=": "$2,000 - $1,500 = $500"; never a
+run of numbers, "0800–123–456"; no piece is cut at a dash between two amounts), and other emoji and typed
 smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
 language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by
@@ -855,7 +869,8 @@ typed in another language (three different short words of it outside quotes, and
 `requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that
 request's language unless it has as many English short words outside its quotes ("It means that's life.", never "Ça
 veut dire « I don't know »."); one that quotes something follows it only where its own words have more of that
-language's short words than English's ("Literally, "I don't know"." and "In English: "thank you"." are Kitten's), and a message that ends before
+language's short words than English's, or as many and a letter or mark of that language ("Abrí "Ventas.xlsx".",
+"Voilà « Ventes.xlsx »."; "Literally, "I don't know"." and "In English: "thank you"." are Kitten's), and a message that ends before
 a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
 pieces Kitten is still making are done.
 

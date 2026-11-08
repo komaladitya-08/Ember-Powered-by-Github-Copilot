@@ -68,7 +68,7 @@ function linkLabels(text: string): string {
  * A key chord as written ("Ctrl+Alt+Y", "Win + Shift + S", "Cmd+Space"): modifiers joined by "+" to a key, standing on
  * its own: never inside a word, an address or a path ("me.alt+s@example.com", "build/ctrl+c"; review of #143).
  */
-const CHORD = /(?<![\w.@+/\\-])(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)(?![\w@+/\\-]|\.\w)/gi;
+const CHORD = /(?<![\w.@+/\\-])(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|[←→↑↓]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)(?![\w@+/\\-]|\.\w)/gi;
 /** How a key in a chord is said (keyLabel's names, for the ear): the rest are said as they are written. */
 /** An arrow said by its name, where it is a key or a symbol ("Press the → key"): Kitten said "the → key" as "the to key". */
 const ARROW: Readonly<Record<string, string>> = { "←": "left arrow", "→": "right arrow", "↑": "up arrow", "↓": "down arrow" };
@@ -78,6 +78,15 @@ const KEY_SAID: Readonly<Record<string, string>> = {
 };
 /** Only an arrow's direction, before the word "arrow": "the ↑ arrow key" was "the up arrow arrow key" (voice-speaking-r3-1). */
 const DIRECTION: Readonly<Record<string, string>> = { "←": "left", "→": "right", "↑": "up", "↓": "down" };
+/** The words an arrow points the same way as, after which it is said once ("up ↑" was "up up arrow"). */
+const SAME_WAY: Readonly<Record<string, readonly string[]>> = { "←": ["left", "back"], "→": ["right", "forward"], "↑": ["up"], "↓": ["down"] };
+/**
+ * After its own direction, a "→" before one of these, a key's word or no other word is said once ("Swipe right → to go
+ * back", "turn right → at the end"); before any other word it is a step, said "to" ("the top right → Settings" was "the
+ * top right Settings": voice-speaking-v4-2), and so is a name in quotes or brackets after a space ("the top right →
+ * “Settings”" was "the top right “Settings”": voice-speaking-v5-3), though not an aside of those words ("→ (twice)").
+ */
+const ONCE_BEFORE = /^(?:[^\p{L}\p{N} \t]|[ \t]*(?:$|(?!["“‘'«[(][ \t]*\p{L})[^\p{L}\p{N} \t]|\(?[ \t]*(?:to|at|on|in|into|onto|for|from|of|by|with|and|or|then|but|so|until|till|twice|again|once|a|an|the|here|there|now|too|as|if|when|while|keys?|buttons?|arrows?)\b))/iu;
 /** An arrow, a list of them ("← and →", "←/→", "↑↓"), or a spaced "->": said as arrowSaid decides. */
 const ARROWS = /[←→↑↓](?:(?:[ \t]*,?[ \t]+(?:and|or)[ \t]+|[ \t]*[,/][ \t]*|[ \t]*)[←→↑↓])*|(?<=[ \t])->(?=[ \t])/gi;
 
@@ -178,15 +187,32 @@ const duration = (_m: string, h: string, m: string) => `${h} ${h === "1" ? "hour
  * its dash is said "to" (it was "5 dollars-10 dollars"). "555-1234", "1-2" and "5-star" keep their hyphen, and so does a
  * spaced hyphen between two amounts, a sum ("$1,500 - $200 for fees" was said as a range: voice-speaking-c3-1).
  */
-const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)(?:-|[ \t]*–[ \t]*)(?=[$£€¥]\d)|((?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=\d{1,2}:\d{2}(?![\d:]))|(\d)[ \t]*–[ \t]*(?=\d)/g;
+// (Not a run of numbers joined by en dashes, a phone number's or an ISBN's: "0800–123–456" was "0800 to 123 to 456".)
+const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)(?:-|[ \t]*–[ \t]*)(?=[$£€¥]\d)|((?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=\d{1,2}:\d{2}(?![\d:]))|(?<!\d[ \t]*–[ \t]*\d*)(\d)[ \t]*–[ \t]*(?=\d+(?!\d|[ \t]*–[ \t]*\d))/g;
 /** A dash between two amounts that an equals sign follows is "minus" ("$2,000 - $1,500 = $500"). */
 const MINUS = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?)[ \t]*[-–−][ \t]*(?=[$£€¥]\d[\d,]*(?:\.\d{1,2})?[ \t]*=)/g;
+/**
+ * A spaced hyphen between two amounts of one currency that go up is a range too ("Expect to pay $50 - $100" was cut
+ * there and heard as two prices: voice-speaking-c3-1); one that goes down is a sum, said as written ("$1,500 - $200"),
+ * and so is a run of three ("Prices: $5 - $10 - $15").
+ */
+const SPACED_RANGE = /(?<!-[ \t]+)([$£€¥])(\d[\d,]*(?:\.\d{1,2})?)(?!\d)(?:[ \t]?(k|K|m|M|bn|B|thousand|million|billion|trillion)\b)?[ \t]+-[ \t]+(?=\1(\d[\d,]*(?:\.\d{1,2})?)(?!\d)(?:[ \t]?(k|K|m|M|bn|B|thousand|million|billion|trillion)\b)?(?![ \t]*[-–][ \t]*[$£€¥]?\d))/g;
+/** A range with its currency only before the first amount, going up ("$5-10", "€20–30"): said with it twice. */
+const RANGE_TO = /([$£€¥])(\d[\d,]*(?:\.\d{1,2})?)(?:-|[ \t]*–[ \t]*)(?=(\d[\d,]*(?:\.\d{1,2})?)(?!\d|[ \t]?(?:k|K|m|M|bn|B|thousand|million|billion|trillion)\b|[ \t]*[-–][ \t]*\d|%))/g;
+/** Two times with am or pm after the second ("9am–5pm", "10-11 am", "2 - 3 p.m."): said with "to". */
+const HOURS = /((?<![\w:.,$£€¥])\d{1,2}(?::[0-5]\d)?(?:[ \t]?[ap]\.?m\.?)?)[ \t]*[-–][ \t]*(?=\d{1,2}(?::[0-5]\d)?[ \t]?[ap]\.?m\b)/gi;
+/** What an amount is worth, with its scale ("2.5M"), to tell a range from a sum. */
+const SCALES: Readonly<Record<string, number>> = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, bn: 1e9, b: 1e9, billion: 1e9, trillion: 1e12 };
+const worth = (n: string, scale?: string) => Number(n.replace(/,/g, "")) * (scale ? SCALES[scale.toLowerCase()] : 1);
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
   return text
     .replace(MINUS, "$1 minus ")
+    .replace(SPACED_RANGE, (m: string, _sign: string, low: string, lowScale: string | undefined, high: string, highScale: string | undefined) => (worth(low, lowScale) < worth(high, highScale) ? m.replace(/[ \t]+-[ \t]+$/, " to ") : m))
+    .replace(RANGE_TO, (m: string, sign: string, low: string, high: string) => (worth(low) < worth(high) ? `${sign}${low} to ${sign}` : m))
     .replace(RANGE, (_m, amount: string | undefined, time: string | undefined, digit: string | undefined) => `${amount ?? time ?? digit} to `)
+    .replace(HOURS, "$1 to ")
     .replace(PATH, pathSaid)
     .replace(AMOUNT, money)
     .replace(CLOCK, clock)
@@ -213,10 +239,22 @@ const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
  */
 const BARE_ITEM = (body: string) => body.length <= 40 && body.trim().split(/\s+/).length <= 4 && /^[ \t]*[\p{Lu}\p{N}]/u.test(body);
 /**
- * A line that starts with a short label and its colon ("Step 1: Open Settings", "Option A: Keep it"): two or more in a
- * row are a list's items, so a label is never said at the end of the step before it (voice-speaking-c3-2).
+ * A line that starts with a short label and its colon ("Step 1: Open Settings", "Option A: Keep it") or a spaced dash
+ * ("Option A – keep both"): two or more in a row are a list's items, and the line before one ends, so a label is never
+ * said at the end of the step before it (voice-speaking-c3-2, voice-speaking-r4-2).
  */
-const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}:[ \t]+\S/u;
+const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}(?::|[ \t]+[–—-])[ \t]+\S/u;
+
+/**
+ * What the lines said so far leave for the next one (spokenText's `leads`): whether the last of them ends with a colon
+ * (or is a blank line after one), whether a colon line led into it, and whether it is blank.
+ */
+export interface Lead { ledIn: boolean; afterLed: boolean; afterBlank: boolean }
+
+/** Whether a line of an answer, as Markdown writes it ("**Step 2:** Choose Privacy"), starts with a label (LABEL). */
+export function labelLine(line: string): boolean {
+  return LABEL.test(line.replace(/\*\*|__/g, ""));
+}
 
 /**
  * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
@@ -224,29 +262,48 @@ const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}:[ \t]+\S/u;
  * (voice-speaking-3). A line wrapped inside a paragraph is left as it is, and so is what is only shown in the bubble.
  * `ledIn`: a line ending with a colon, said already, leads into the first line. `lineStart`: the start of the first
  * line, said already, so an arrow starting what is left of it is no bullet, and a label at its start still counts.
+ * `afterLabel`: the line before the first, said already, starts with a label, so a label line first is the next of
+ * their list. `afterLed`: the line before the first, said already, is one a colon line led into; `afterBlank`: it is a
+ * blank line (`ledIn` then says the one before it ends with a colon). `leads` is told what the last whole line leaves
+ * for the line after it, as those three (the same as given when there is none). `goesOn`: the last line goes on past
+ * `text`, so how long it is isn't known yet. `lineEnd`: the rest of the last line, after `text` (Markdown).
  */
-function endLines(text: string, ledIn = false, lineStart = ""): string {
+function endLines(text: string, ledIn = false, lineStart = "", afterLabel = false, afterLed = false, afterBlank = false, leads?: (lead: Lead) => void, goesOn = false, lineEnd = ""): string {
   const lines = text.split("\n");
+  // The first line whole, its start said already (without Markdown's bold, as labelLine reads it).
+  const whole = (i: number) => (i === 0 && lineStart ? lineStart.replace(/\*\*|__/g, "") + lines[0] : lines[i]);
   const item = lines.map((l, i) => ITEM.test(l) && !(i === 0 && lineStart && ARROW_BULLET.test(l)));
   // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
-  const bare = lines.map((l, i) => (l.trim() && !item[i] && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
+  // (Each line whole: the rest of one cut inside it, or the start of one said already, may make it longer than a list's;
+  // as short, it may end a list: "Downloads\nDocuments\nPictures. Done." was "Downloads Documents Pictures.":
+  // voice-speaking-w5-2.)
+  const bare = lines.map((_l, i) => { const l = i === lines.length - 1 ? whole(i) + lineEnd.replace(/\*\*|__/g, "") : whole(i); return l.trim() && !item[i] && !HEADING.test(l) && !(goesOn && i === lines.length - 1) && BARE_ITEM(l.trimEnd()) ? 1 : 0; });
   const run: number[] = [...bare];
   for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
   for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
   // Lines of any length that a line ending with a colon leads into (perhaps after a blank line), each starting with a
   // capital: two or more are a list without its markers too ("Here is the plan:\nStep one is to open it\nStep two is…").
-  const colon = (i: number) => (i < 0 ? ledIn : /:[ \t]*$/.test(lines[i]));
+  // (A stream cut between such lines, before a label line or after a colon line, carries the run on: `afterLed`, `ledIn`.
+  // Without it, "Here's the plan:\n…\nNote: …\nDelete…\nEmpty…" lost its run at "Note:": voice-speaking-v5-1.)
+  const colon = (i: number) => (i < 0 ? ledIn : /:[ \t]*$/.test(whole(i)));
+  // (Past a blank line: a second one, `afterBlank` before the first, ends the run.)
+  const colonPast = (i: number) => (i < 0 ? ledIn && !afterBlank : colon(i));
   const led = lines.map(() => false);
+  const ledBefore = (i: number) => (i < 0 ? afterLed : led[i]);
   for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    led[i] = !!l.trim() && !item[i] && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || colon(i - 1) || (i > 0 && !lines[i - 1].trim() && colon(i - 2)));
+    const l = whole(i);
+    led[i] = !!l.trim() && !item[i] && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (ledBefore(i - 1) || colon(i - 1) || (i > 0 && !whole(i - 1).trim() && colonPast(i - 2)));
   }
+  const last = lines.length - 2;
+  const blank = last >= 0 && !whole(last).trim();
+  leads?.(last < 0 ? { ledIn, afterLed, afterBlank } : { ledIn: blank ? colonPast(last - 1) : colon(last), afterLed: led[last], afterBlank: blank });
   const label = lines.map((l, i) => LABEL.test(i === 0 ? lineStart + l : l));
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
-    const listed = (led[i] && (led[i - 1] || led[i + 1])) || (label[i] && (label[i - 1] || label[i + 1]));
-    const alone = item[i] || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || item[i + 1]));
+    const listed = (led[i] && (ledBefore(i - 1) || led[i + 1])) || (label[i] && ((i === 0 && afterLabel) || label[i - 1] || label[i + 1]));
+    // Before a heading or a label too, as before a list's item: "Keep both copies Option B." was said in one breath.
+    const alone = item[i] || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || item[i + 1] || HEADING.test(next) || label[i + 1]));
     return alone ? `${body}.` : line;
   }).join("\n");
 }
@@ -257,9 +314,14 @@ function endLines(text: string, ledIn = false, lineStart = ""): string {
  * line, said already, as a long first sentence is cut inside its line: an arrow starting the rest is no bullet ("
  * → Accessibility" is "to Accessibility": voice-speaking-v4-3), and a label at the line's start still makes it a
  * labelled step ("Step 1: Open Settings," said, then "then go to Privacy\nStep 2: …" ends the step before "Step 2":
- * voice-speaking-v4-4).
+ * voice-speaking-v4-4). `o.afterLabel`: the line before its first, said already, starts with a label ("Step 1: …"
+ * said, then "Step 2: Turn off Location" ends as the step it is: voice-speaking-c4-1). `o.afterLed`: that line is one a
+ * colon line led into (`o.afterBlank`: it is blank); `o.leads` is told what its own last whole line leaves for the next
+ * piece (Lead); `o.goesOn`: its last line goes on after it, by more than has come; `o.lineEnd`: what has come of the
+ * rest of that line. So a run of such lines cut apart ends each of them as the whole answer does (voice-speaking-v5-1,
+ * voice-speaking-v5-2, voice-speaking-w5-2).
  */
-export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string } = {}): string {
+export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string; afterLabel?: boolean; afterLed?: boolean; afterBlank?: boolean; leads?: (lead: Lead) => void; goesOn?: boolean; lineEnd?: string } = {}): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
@@ -291,18 +353,20 @@ export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: s
     // "2**8", "_config.yml" or "__init__.py".
     .replace(/(^|[\s(])(?:\*\*?|_(?=\p{L}+(?:[\s,;:!?)]|$)))(?=\p{L})/gu, "$1")
     .replace(/(?<=[\p{L}\p{N}.,!?;:])(?:\*\*?|_)(?=[\s.,!?;:)]|$)/gu, "");
-  const said = endLines(plain, o.ledIn, o.lineStart)
+  const said = endLines(plain, o.ledIn, o.lineStart, o.afterLabel, o.afterLed, o.afterBlank, o.leads, o.goesOn, o.lineEnd)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+→][ \t]+/gm, (m: string, at: number) => (at === 0 && o.lineStart && ARROW_BULLET.test(m) ? m : ""))
     .replace(/^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
     // Key chords as said ("Ctrl+Shift+T" is "Control Shift T", not "C T R L plus…"), and a path through menus or
     // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".
-    .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
+    // (An arrow key too: "Win+←" is "Windows key left arrow", never "Win plus left arrow": voice-speaking-c4-3.)
+    .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? ARROW[k] ?? k).join(" "))
     .replace(/\s*›\s*(?=\S)/g, ", then ")
     // Arrows as arrowSaid says them (voice-speaking-2), one after its own direction once ("up ↑" was "up up arrow"),
-    // but not one between two directions or sides ("from right → left" is "right to left": voice-speaking-v4-2).
-    .replace(/\b(up|down|left|right)[ \t]*([←→↑↓])(?![←→↑↓]|(?<=→)[ \t]*(?:up|down|left|right|top|bottom|centre|center|middle)\b)/gi, (m, word: string, a: string) => (DIRECTION[a] === word.toLowerCase() ? word : m))
+    // but not a "→" before another word ("from right → left" is "right to left", "top right → Settings" "top right to
+    // Settings": voice-speaking-v4-2).
+    .replace(/\b(up|down|left|right|back|forward)[ \t]*([←→↑↓])(?![←→↑↓])/gi, (m: string, word: string, a: string, at: number, all: string) => (!SAME_WAY[a].includes(word.toLowerCase()) || (a === "→" && !ONCE_BEFORE.test(all.slice(at + m.length, at + m.length + 24))) ? m : word))
     .replace(ARROWS, arrowSaid)
     // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
     .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ");
@@ -500,7 +564,9 @@ export class AnswerLanguage {
     const own = outsideQuotes(this.text);
     const words = wordsBesidesNames(own);
     const english = stopwords(words, "en").length, asked = stopwords(words, this.asked).length;
-    if (own !== this.text) return asked > english ? this.asked : null;
+    // With as many of each (none, often: "Abrí "Ventas.xlsx"."), a letter or a mark of another language outside the
+    // quotes follows the request ("Voilà « Ventes.xlsx ».": voice-speaking-c4-2); English's own words stay Kitten's.
+    if (own !== this.text) return asked > english || (asked === english && mayBeAnother(own)) ? this.asked : null;
     return english && english >= asked ? null : this.asked;
   }
 }

@@ -12,6 +12,7 @@ import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
+import { heldLive } from "../shared/held-live";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
   memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateOut, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
@@ -48,7 +49,7 @@ import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
-import { startTasks } from "./tasks";
+import { holdTaskNews, startTasks } from "./tasks";
 import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, stillUnsent } from "./conversation-view";
@@ -888,7 +889,6 @@ function renderAgent(a: AgentStatus | null): void {
   projectReady(a.phase === "ready", a.service?.host ?? "GitHub Copilot", a.conductorModel);
   const had = document.activeElement;
   ($("agent-dot") as HTMLElement).dataset.phase = a.phase;
-  $("agent-text").textContent = a.detail;
   // Copilot stopped answering with tasks at work: Ember reconnects once they're done. Signing in again isn't the
   // fix, and reconnecting now stops the tasks: the button says so.
   const waiting = a.waitingForTasks === true;
@@ -901,7 +901,10 @@ function renderAgent(a: AgentStatus | null): void {
       userProviderOff: a2?.features.userProvider === false,
     }).offered,
   });
-  if (view.line) $("agent-text").textContent = view.line;
+  // Written only when its words change: its role=status line said "Connected." again on every request, into the
+  // conversation it opened (voice-listening-r4-2).
+  const line = view.line || a.detail;
+  if ($("agent-text").textContent !== line) $("agent-text").textContent = line;
   $("sign-in").hidden = !view.show["sign-in"] || waiting;
   // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
   $("sign-in").textContent = signInLabel(a.signInWith);
@@ -2461,6 +2464,13 @@ let voiceTold = "";
  * comes back to as the window closes is the one said before it, so nothing is said then (voice-listening-c3-1).
  */
 const VOICE_LINE_SETTLE_MS = 1000;
+/**
+ * The microphone opens or is open for a request: a wake's window, a conversation's or Listen once's, or listening (or a
+ * Listen once's own voice process) starting, or for Voice Match's phrases while it is taught (only its prompts are said
+ * then: anything else read aloud was taken for one of the owner's phrases, voice-listening-r4-1). Status lines besides
+ * the voice line's are held then (held-live.ts).
+ */
+const micHeld = (v: VoiceStatus): boolean => v.state === "active" || v.state === "starting" || v.listenOnce?.phase === "starting" || v.listenOnce?.phase === "listening" || !!v.match?.enrolling;
 let voiceLineSoon: ReturnType<typeof setTimeout> | undefined;
 /** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
 function renderVoiceFix(): void {
@@ -2484,6 +2494,9 @@ $("voice-fix").addEventListener("click", () => {
 function renderVoice(v: VoiceStatus): void {
   if (v !== voice) showListenOnce(v.listenOnce);
   voice = v;
+  clearLive.hold(micHeld(v));
+  speakLive.hold(micHeld(v));
+  holdTaskNews(micHeld(v));
   renderVoiceFix();
   const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
   $("voice-text").textContent = text;
@@ -2523,6 +2536,7 @@ function renderVoice(v: VoiceStatus): void {
   if (missing !== speechMissing) {
     speechMissing = missing;
     $("speak-note").textContent = missing ? SPEAK_NO_VOICE : "";
+    speakLive.say(missing ? SPEAK_NO_VOICE : "");
     // The setup check gains (or loses) its Speaking row.
     window.ember.getStatus().then(s => { if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment); }, () => { /* shown at the next status */ });
   }
@@ -2628,12 +2642,26 @@ $("consent-yes").addEventListener("click", () => {
 $("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });
 /** The voice choice discloses the optional Kokoro download before switching. */
 const naturalUI = mountNaturalVoice({ save, live: voiceLive, managed: () => managed.has("naturalVoice") });
+/**
+ * Hear me more clearly's line, said through its own status line as the voice line is: once it has held, only when its
+ * words change, and never while the microphone opens or is open for a request (`micHeld`). Written on every voice push,
+ * a screen reader said it as Listen once opened, over the request after "Hey Ember" and into the conversation, where it
+ * was sent with the request or as one (voice-listening-c4-1). A download is said every 25 %.
+ */
+const clearLive = heldLive($("clear-live"));
+/**
+ * The note under the Speak control, said the same way: it comes as Ember fails to speak an answer, which is while a
+ * conversation is open, and starts with the name (voice-listening-r4-2).
+ */
+const speakLive = heldLive($("speak-live"));
 function renderNatural(): void {
   // Kitten remains the baseline choice even when speech must use the system voice.
   $("natural-row").hidden = false;
   naturalUI.status(voice?.natural, voice?.naturalModels ?? []);
   const clearLine = clearHearingLine(voice?.clear);
-  $("clear-text").textContent = clearLine;
+  if ($("clear-text").textContent !== clearLine) $("clear-text").textContent = clearLine;
+  const c = voice?.clear;
+  clearLive.say(c?.state === "downloading" ? clearHearingLine({ ...c, percent: progressStep(c.percent / 100) }) : clearLine);
 }
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("speak-rate").addEventListener("change", e => {

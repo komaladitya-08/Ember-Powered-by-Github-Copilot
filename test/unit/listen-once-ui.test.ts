@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { listenOnceShown, type ListenOnceStatus } from "../../app/shared/ipc";
 import { boxRows } from "../../app/renderer/ask/field";
 import { mountListenOnce } from "../../app/renderer/shared/listen-once";
+import { LISTEN_ONCE_READY } from "../../app/renderer/home/copy";
+import { calledByName } from "../../app/voice/engine";
 
 vi.mock("electron", () => ({ BrowserWindow: class {}, Menu: {}, screen: {}, ipcMain: { on() {} } }));
 const { askOpeningRows } = await import("../../app/main/ask");
@@ -140,5 +142,13 @@ describe("Listen once controls", () => {
     expect(askOpeningRows({ ...context({ phase: "blocked", detail: "", fix: "settings" }), tip: true, suggestions: ["What's next?"] })).toBe(5);
     expect(askOpeningRows(context({ phase: "blocked", detail: "Your organisation has turned voice off.", fix: "admin" }))).toBe(1);
     expect(askOpeningRows({ ...context({ phase: "blocked", detail: "", fix: "admin" }), suggestions: ["What's next?"] })).toBe(2);
+  });
+
+  it("words Home's ready line without Ember's name, which a screen reader says as the wake word's microphone opens (voice-listening-c4-2)", () => {
+    // "Press Listen once, then say one request without saying “Hey Ember”." changed to ready as listening started (each
+    // switch-on, unmute and restart), and read into the microphone just opened it woke Ember in 11 of 20 placements.
+    expect(LISTEN_ONCE_READY).toBe("Press Listen once, then just say your request.");
+    const words = LISTEN_ONCE_READY.split(/\s+/);
+    for (let i = 0; i < words.length; i++) expect(calledByName(words.slice(i).join(" "))).toBe(false);
   });
 });

@@ -97,10 +97,11 @@ export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to
  */
 const LISTEN_ONCE_DOUBT = "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.";
 /**
- * The same in Settings, where Home calls it Ember (voice-listening-v4-3). Not begun with the name: a screen reader says
- * it as the window ends, into the wake word's microphone, and a line that starts with the name is heard as a request.
+ * The same in Settings, where Ember isn't "I" (voice-listening-v4-3). Without the name: a screen reader says it as the
+ * window ends, into the wake word's microphone, and the check hears from a spotted name on, so "…but Ember couldn't
+ * tell it was a request…" woke Ember and was sent as a request (6 of 40 real-model placements, voice-listening-r4-3).
  */
-const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but Ember couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.";
+const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but it wasn't clear it was a request. Wait a moment after pressing Listen once, then speak.";
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
@@ -454,7 +455,8 @@ export class VoiceService {
     const blocked = (detail: string): ListenOnceStatus => ({ phase: "blocked", detail });
     if (this.locked) return blocked("The screen is locked.");
     if (this.muted) return blocked("Unmute the microphone first.");
-    if (this.enrolling) return blocked("Finish teaching Ember your voice first.");
+    // (Not told screen readers: said as teaching began, into its microphone, it was taken for a phrase: voice-listening-r4-1.)
+    if (this.enrolling) return { ...blocked("Finish teaching Ember your voice first."), reason: "listening" };
     if (!this.modelsReady) return this.downloading ? blocked("Speech models are downloading.") : { ...blocked("Download speech models in Settings first."), reason: "needs-models" };
     // Ember talking: Listen once hushes it first, as "Hey Ember" does (it was blocked, and the keyboard had no other way
     // to cut in but Stop response or Stop everything: voice-listening-7).
@@ -810,7 +812,8 @@ export class VoiceService {
     this.cancelListenOnce();
     this.enrolling = true;
     this.enrolGot = { got: 0, of: 0 };
-    this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
+    // (A screen reader reads each prompt aloud, into the teaching microphone: voice-listening-r4-1.)
+    this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration, ...(this.o.screenReaderOn?.() ? { reader: true } : {}) });
     // (A conversation or follow-up listening now ends at once in the voice process: voice-listening-r2.)
     if (this.state === "waiting" || this.state === "active") this.setState("waiting", ENROL_TEXT);
     this.o.onListenOnce?.();
@@ -1460,8 +1463,11 @@ export class VoiceService {
         if (b?.wasmModels?.length) this.o.log.warn("voice.model_wasm_fallback", { models: b.wasmModels, detail: b.detail });
         this.clearLoaded = !!b?.clear;
         if (this.clearWanted && !this.clearFetch && this.clear.state !== "failed") {
-          this.setClear({ state: b?.clear ? "on" : this.rootOf("clear") === null ? "starting" : "wont-load" });
+          // Not fetched yet: checkClear says what comes next (it can't run here, or its download), never "Starting…"
+          // first. Home's line changed twice as each ready came, a temporary Listen once's as its window opened, and a
+          // screen reader said it over the request (voice-listening-c4-1).
           if (!b?.clear && this.rootOf("clear") === null) this.checkClear();
+          else this.setClear({ state: b?.clear ? "on" : "wont-load" });
         }
         // (A Listen once with wake listening off stays "Starting…" until its window opens: "Listening for “Ember”" was up
         // a moment, untrue, and a screen reader said it over the microphone as the request began: voice-listening-r3-1.)
@@ -1795,21 +1801,36 @@ export function cutByQuestion(source: "ask" | "home" | undefined, status: Listen
   return source && !questionHoldsListen(true, status) ? source : null;
 }
 
-/** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */
+/**
+ * What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…).
+ * Never with Ember's name: Hear me more clearly's line says it under its switch while the wake word's microphone may be
+ * open, and a screen reader saying "Ember can't reach the download site…" into it woke Ember and sent the rest as a
+ * request in 37 of 40 real-model placements (voice-listening-v5-1).
+ */
 export function downloadHelp(message: string, bytes = VOICE_MODELS_BYTES): string {
+  // Each line says what went wrong with the download, or at the site, never "this computer can't…": for a 5xx or a
+  // transfer that stalled, the computer had reached github.com (voice-listening-w5-1).
   if (/ERR_CERT_|certificate|self.signed|issuer|SSL|TLS/i.test(message)) {
-    return "Ember can't verify the download site's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.";
+    return "The download couldn't verify github.com's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.";
   }
-  if (/ERR_PROXY_AUTH|HTTP 407/i.test(message)) return "The network proxy asked for a sign-in Ember can't give. Ask IT to allow github.com for Ember.";
-  if (/nothing arrived for|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|fetch failed|socket hang up|net::ERR_|HTTP 5\d\d/i.test(message)) {
-    return "Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again.";
+  if (/ERR_PROXY_AUTH|HTTP 407/i.test(message)) return "The network proxy asks for a sign-in before downloads. Ask IT to allow downloads from github.com without one.";
+  if (/HTTP 5\d\d/i.test(message)) return "The download site (github.com) had a problem. Try again later.";
+  if (/nothing arrived for/i.test(message)) return "The download from github.com stalled. Check the network or proxy, then try again.";
+  if (/ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|fetch failed|socket hang up|net::ERR_/i.test(message)) {
+    return "The download couldn't reach github.com right now. Check the network or proxy, then try again.";
   }
   if (/HTTP 4\d\d/i.test(message)) return "The download site refused the request. Try again later; if it keeps happening, ask IT whether github.com downloads are blocked.";
-  if (/ENOSPC|no space left/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(bytes / 1e6)} MB).`;
-  if (/EACCES|EPERM|EROFS|permission denied|read-only/i.test(message)) return "Ember can't write the speech models to its data folder (permission denied).";
+  if (/ENOSPC|EDQUOT|no space left|quota exceeded/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(bytes / 1e6)} MB).`;
+  if (/EACCES|EPERM|EROFS|permission denied|read-only/i.test(message)) return "The speech models can't be written to the data folder (permission denied).";
   if (/checksum mismatch/i.test(message)) return "The download arrived damaged or changed, so it wasn't used. Try again; if it keeps happening, something on the network may be altering downloads.";
-  if (/\btar\b/i.test(message)) return "The download couldn't be unpacked. Try again.";
-  return message;
+  // (Not an archive's name in a path, ".download-….tar.bz2": that is a file error, below.)
+  if (/(?<!\.)\btar\b/i.test(message)) return "The download couldn't be unpacked. Try again.";
+  // Never the raw message (main logs it): a file error carries the data folder's path, …/ember/models, and said into the
+  // wake word's microphone that woke Ember (voice-listening-w5-2). EBUSY: on Windows, still held after RENAME_WAIT_MS.
+  if (/\b(EBUSY|ENOTEMPTY|EEXIST|ENOENT|EMFILE|ENFILE|EXDEV|EIO|EISDIR|ENOTDIR)\b/.test(message)) {
+    return "The download couldn't be saved in the data folder. Try again; if it keeps happening, restart this computer.";
+  }
+  return "Something went wrong with the download. Try again.";
 }
 
 /** The microphone's error in plain words; `hint` says where to allow it when the system refused it. */

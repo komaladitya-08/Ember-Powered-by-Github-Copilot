@@ -735,4 +735,80 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     await new Promise(r => setTimeout(r, 2000));
     expect(sent.map(e => e.type)).toEqual(["utterance"]);
   });
+
+  // The test-only Ryan voice reads the prompts (node scripts/voice/prepare.mjs --voice ryan): skipped without it.
+  const readerVoice = path.join(dir, "vits-piper-en_US-ryan-low");
+  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
+    // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
+    // phrases: the owner's held-out clips then scored 0.47-0.66 against the voiceprint, the screen reader's 0.70-0.82.
+    const ort = createRequire(import.meta.url)("onnxruntime-web");
+    ort.env.wasm.numThreads = 1;
+    ort.env.logLevel = "error";
+    const session = await ort.InferenceSession.create(modelPaths(path.join(dir, "models")).speaker, { executionProviders: ["wasm"] });
+    const printer: Printer = {
+      async print(samples) {
+        const { data, frames } = printFeatures(samples);
+        const out = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", data, [1, frames, 80]) });
+        return unit(out[session.outputNames[0]].data as Float32Array);
+      },
+    };
+    const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(readerVoice, "en_US-ryan-low.onnx"), tokens: path.join(readerVoice, "tokens.txt"), dataDir: path.join(readerVoice, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
+    const spoken = new Map<string, Float32Array>();
+    const rms = (x: Float32Array) => Math.sqrt(x.reduce((n, v) => n + v * v, 0) / x.length);
+    const owner = ["wake", "dnd", "chat", "remember"].map(trimmed);
+    /** What a screen reader says (match-copy.ts's prompts), 14 dB under the owner's voice. */
+    const reads = (text: string) => {
+      let samples = spoken.get(text);
+      if (!samples) {
+        const raw: Float32Array = tts.generate({ text, sid: 0, speed: 1 }).samples;
+        let a = 0, b = raw.length;
+        while (a < b && Math.abs(raw[a]) < 0.01) a++;
+        while (b > a && Math.abs(raw[b - 1]) < 0.01) b--;
+        const level = (rms(owner[0]) / rms(raw.subarray(a, b))) * 10 ** (-14 / 20);
+        samples = raw.slice(a, b).map(x => x * level);
+        spoken.set(text, samples);
+      }
+      return samples;
+    };
+    const phrase = ["Ember, what's the weather like today?", "Hey Ember, open my calendar.", "Ember, turn on Do Not Disturb.", "Ember, set a timer for ten minutes."];
+    const prompt = (st: EnrolState) => {
+      const say = st.state === "again" ? { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" }[st.why] : "Say:";
+      return `${st.state === "heard" ? `Heard ${st.got} of ${st.of}. ` : ""}${say} ${phrase[Math.min(st.got, 3)]}`;
+    };
+    // The room as it goes: each prompt read 0.4 s after it shows, the owner's phrase 0.7 s after the reading ends (said
+    // again when nothing came of it for 6 s), the voice process's VAD dating each segment from where it heard speech begin.
+    let t = 0;
+    const scene: { from: number; samples: Float32Array }[] = [];
+    const playAt = (samples: Float32Array, ms: number) => { scene.push({ from: at(ms / 1000), samples }); return ms + samples.length / 16; };
+    /** The phrase the owner said last, and when it ends (ms). */
+    const owed: { phrase: { i: number; at: number } | null } = { phrase: null };
+    let told = 0;
+    const states: EnrolState[] = [];
+    const enrol = new Enrolment(printer, st => {
+      states.push(st);
+      told = t;
+      if (st.state === "done" || st.state === "cancelled") return;
+      const i = Math.min(st.got, 3);
+      owed.phrase = { i, at: playAt(owner[i], playAt(reads(prompt(st)), t + 400) + 700) };
+    }, 4, { quietMs: 600_000, totalMs: 600_000 }, { said: samples => backend.transcribe(samples), now: () => t });
+    let from: number | null = null;
+    let seed = 5;
+    try {
+      for (let n = 0; t < 120_000 && !enrol.done; n++) {
+        const frame = new Float32Array(512);
+        for (const c of scene) for (let k = 0; k < 512; k++) { const j = n * 512 + k - c.from; if (j >= 0 && j < c.samples.length) frame[k] += c.samples[j]; }
+        for (let k = 0; k < 512; k++) frame[k] += ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 0.001 / 0.2887;
+        for (const seg of backend.vad(frame)) { await enrol.heard(seg, from ?? t); from = null; }
+        if (!backend.speaking()) from = null;
+        else from ??= t;
+        t += 32;
+        const w = owed.phrase;
+        if (w && t > w.at + 6000 && told < w.at) owed.phrase = { i: w.i, at: playAt(owner[w.i], t) };
+      }
+    } finally { backend.resetVad(); }
+    const done = states.find(st => st.state === "done") as Extract<EnrolState, { state: "done" }> | undefined;
+    expect(done, states.map(st => st.state).join(" ")).toBeDefined();
+    for (const clip of ["followup", "bigger"]) expect(similarity(await printer.print(read(clip)), done!.print)).toBeGreaterThanOrEqual(VOICE_MATCH_THRESHOLD);
+    expect(similarity(await printer.print(reads("Ember, what time is my next meeting?")), done!.print)).toBeLessThan(VOICE_MATCH_THRESHOLD);
+  }, 240_000);
 });

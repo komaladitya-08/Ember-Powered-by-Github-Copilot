@@ -7,9 +7,10 @@ import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
 import { ASK_OVER, WAIT_TIP, askCount, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, overLimit, sendKey, textScaleOf } from "./field";
-import { ANSWERS_AGAIN, liveWords, seesView, unavailableLine, type SeesView } from "./chips";
+import { ANSWERS_AGAIN, heldNewsLine, liveWords, seesView, unavailableLine, type HeldNews, type SeesView } from "./chips";
 import { watchPixels } from "../shared/pixels";
 import { mountListenOnce } from "../shared/listen-once";
+import { LIVE_SETTLE_MS } from "../shared/held-live";
 
 // Hairlines of one device pixel at any scale (ember.css --glass-hairline reads --dpx).
 watchPixels();
@@ -30,6 +31,42 @@ const cut = document.getElementById("cut")!;
 const tip = document.getElementById("tip")!;
 const suggest = document.getElementById("suggest")!;
 const seesLive = document.getElementById("sees-live")!;
+/**
+ * The microphone is open for a request (Ask's own Listen once starting or listening, or another window's: a wake's, a
+ * conversation's, which main gives as Listen once's `listening` block). What the live region would say waits, and is
+ * said once the microphone has been closed for LIVE_SETTLE_MS, while the box is still open: said meanwhile, it went
+ * through the speakers into what Ember heard, and "Ember will see: <app — window title>." opening Ask in a voice
+ * conversation was taken as the next request (voice-listening-i5).
+ */
+let micOpen = false;
+/** What waits meanwhile: the latest of each kind of line, said as it stands then (heldNewsLine: voice-listening-v5-2). */
+let heldNews: HeldNews = {};
+let newsSoon: ReturnType<typeof setTimeout> | undefined;
+const opensMic = (s: ListenOnceStatus | undefined): boolean =>
+  s?.phase === "starting" || s?.phase === "listening" || (s?.phase === "blocked" && s.reason === "listening");
+/** Tells screen readers `text` through the box's live region now, or notes in its slot (`hold`) that it waits. */
+function sayNews(text: string, hold: (held: HeldNews) => void): void {
+  if (micOpen || newsSoon !== undefined) { hold(heldNews); return; }
+  seesLive.textContent = text;
+}
+/** Nothing waiting is said (the box went, or opened afresh), and an emptied region says nothing. */
+function dropNews(): void {
+  clearTimeout(newsSoon);
+  newsSoon = undefined;
+  heldNews = {};
+}
+function micOpens(open: boolean): void {
+  if (open === micOpen) return;
+  micOpen = open;
+  clearTimeout(newsSoon);
+  newsSoon = undefined;
+  if (!open && Object.keys(heldNews).length) newsSoon = setTimeout(() => {
+    newsSoon = undefined;
+    const text = heldNewsLine(heldNews, { sees: said, cant: cantSay.full, over }, ASK_OVER);
+    heldNews = {};
+    if (text) seesLive.textContent = text;
+  }, LIVE_SETTLE_MS);
+}
 const seesText = document.getElementById("sees-text")!;
 const seesExtra = document.getElementById("sees-extra")!;
 /** Why Ember can't answer now: the line's sentence, and its word alone for a crowded line (fitMeta); "" for none. */
@@ -122,7 +159,7 @@ function fit(): void {
   cut.hidden = !full;
   const nowOver = overLimit(input.value.trim());
   if (nowOver) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
-  if (nowOver && !over) seesLive.textContent = ASK_OVER;
+  if (nowOver && !over) sayNews(ASK_OVER, h => { h.over = true; });
   over = nowOver;
   // Layout heights: the opening animation's scale must not make the window too short for its final contents.
   const listenRows = auxiliaryRows(listenRow.offsetHeight, s);
@@ -172,6 +209,7 @@ function showListenOnce(s: ListenOnceStatus | undefined): void {
   listenButton.hidden = listenDetail.hidden = listenLive.hidden = setup;
   voiceSetup.hidden = !setup;
   drawListenOnce(s);
+  micOpens(opensMic(s));
 }
 window.emberAsk.onListenOnce(showListenOnce);
 /**
@@ -232,7 +270,7 @@ form.addEventListener("submit", e => {
   e.preventDefault();
   const text = input.value.trim();
   // Longer than is sent: nothing goes, and the request stays to be shortened (companion-i1: it was cut unseen).
-  if (overLimit(text)) { seesLive.textContent = ASK_OVER; return; }
+  if (overLimit(text)) { sayNews(ASK_OVER, h => { h.over = true; }); return; }
   if (text) window.emberAsk.ask(text);
   input.value = "";
   fit();
@@ -265,11 +303,13 @@ window.addEventListener("focus", () => input.focus());
 // The box went away: what was left in it (after Esc, or a click away) is selected, so typing replaces it when it opens
 // again instead of running on from it ("draftwhat can you do"); End or a click keeps it. Done now, while nothing can be
 // typed: done as the box opened, it selected the letters already typed, and the next one replaced them (review #78).
-window.emberAsk.onHidden(() => input.select());
+window.emberAsk.onHidden(() => { input.select(); dropNews(); });
 // Each time the box opens (sent before its window is shown): where Ember will look (so nothing is sent by surprise) and
 // the earlier questions. The update once the quick look is done (not `opened`) keeps the user's place in the history
 // and what they were typing.
 window.emberAsk.onContext(c => {
+  // (First: whether what it says now waits for the microphone to close.)
+  if (c.listenOnce) micOpens(opensMic(c.listenOnce));
   history.context(c.history, c.opened === true);
   // "↑ earlier questions" only when there are some.
   document.getElementById("hint-history")!.hidden = history.size === 0;
@@ -295,7 +335,8 @@ window.emberAsk.onContext(c => {
   document.querySelector(".meta")!.classList.toggle("bare", quiet && !unavailableLine(c.unavailable));
   // The field had the keyboard before this came, so its description isn't read again: a screen reader hears it here.
   const live = liveWords(said, c);
-  if (live !== null) seesLive.textContent = said = live;
+  if (live === "") { dropNews(); seesLive.textContent = said = ""; }
+  else if (live !== null) { const before = said; sayNews(said = live, h => { h.seesFrom ??= before; }); }
   fitMeta();
   // Main opens the window one line tall, a row taller when this opening says to wait for the box (review #78). Said
   // before the window is shown, so the tip is there from the first frame.
@@ -326,12 +367,13 @@ function showUnavailable(word: string | undefined, live: boolean): void {
   const news = live && !!cant && cant !== cantSay.full;
   // Back while the box is open: said too, so the live region doesn't keep the old "Offline" (companion-6).
   const back = live && !cant && !!cantSay.full;
+  const before = cantSay.full;
   cantSay = { full: cant ?? "", word: cant ? word!.replace(/…$/, "") : "" };
   unavailable.hidden = !cant;
   unavailable.textContent = cant ?? "";
   unavailable.title = cant ?? "";
-  if (news) seesLive.textContent = cant;
-  if (back) seesLive.textContent = ANSWERS_AGAIN;
+  if (news) sayNews(cant, h => { h.cantFrom ??= before; });
+  if (back) sayNews(ANSWERS_AGAIN, h => { h.cantFrom ??= before; });
   if (!live) return;
   document.querySelector(".meta")!.classList.toggle("bare", quiet && !cant);
   fitMeta();

@@ -881,8 +881,16 @@ export function heardThrough(text: string, state: string, detail: string | null,
   return state === "waiting" && !detail && micLabel ? `${text} through ${micLabel}` : text;
 }
 
-export const SPEAK_NO_VOICE = "Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.";
-export const LISTEN_ONCE_READY = "Press Listen once, then say one request without saying “Hey Ember”.";
+/**
+ * Under the Speak control once Ember found no voice for a reply. Without the name: a screen reader says it into the
+ * wake word's microphone, and "Ember couldn't speak: …" woke Ember and was sent as a request (voice-listening-r4-2).
+ */
+export const SPEAK_NO_VOICE = "Your reply wasn't spoken: no local voice is available for your language. It's still in the bubble, and the setup check says how to add a voice.";
+/**
+ * Home's Listen once, ready. Without the name: it becomes ready as listening starts, and a screen reader saying "…without
+ * saying “Hey Ember”." into the wake word's microphone just opened woke Ember (voice-listening-c4-2).
+ */
+export const LISTEN_ONCE_READY = "Press Listen once, then just say your request.";
 
 /** The voice line while the microphone is off; `muteLabel` is the mute shortcut Ember holds as this OS writes it ("": none). */
 export function micOffText(muteLabel = SHORTCUTS.linux.mute.label): string {
@@ -1420,14 +1428,18 @@ export const NATURAL_HINT = naturalModelHint("kitten");
 /** Hear me more clearly's note: what it fetches and what it costs. */
 export const CLEAR_HINT = "Downloads a 482 MB speech model that gets about half as many words wrong, above all with an accent or across a room. Each request takes about 0.3 s longer and listening uses about 550 MB more memory. It runs on this computer, and nothing you say leaves it.";
 
-/** How Hear me more clearly stands, under its switch ("" while off). */
+/**
+ * How Hear me more clearly stands, under its switch ("" while off). Never with Ember's name: a screen reader says the
+ * line into the wake word's microphone, and "On. Ember writes what you say…" woke Ember and was sent as a request
+ * (voice-listening-c4-1).
+ */
 export function clearHearingLine(s: ClearHearingStatus | undefined): string {
   switch (s?.state) {
     case "downloading": return `Downloading… ${s.percent}%`;
     case "starting": return "Starting…";
-    case "on": return "On. Ember writes what you say with the clearer model.";
-    case "wont-load": return "It wouldn't start on this computer, so Ember is using its usual speech model.";
-    case "needs-native": return "This computer can't run it, so Ember is using its usual speech model.";
+    case "on": return "On. The clearer model writes what you say.";
+    case "wont-load": return "It wouldn't start on this computer, so the usual speech model writes what you say.";
+    case "needs-native": return "This computer can't run it, so the usual speech model writes what you say.";
     case "failed": return `${s.detail} Turn this off and on to try again.`;
     default: return "";
   }

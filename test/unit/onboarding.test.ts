@@ -566,14 +566,19 @@ describe("the settings window when no voice speaks", () => {
   });
 
   it("says so under the Speak switch, and reads the setup check again when it changes (review #101)", () => {
-    expect(SPEAK_NO_VOICE).toBe("Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.");
+    // Not begun with the name: said into the wake word's microphone, "Ember couldn't speak: …" woke Ember and was sent as
+    // a request in 20 of 20 real-model placements (voice-listening-r4-2).
+    expect(SPEAK_NO_VOICE).toBe("Your reply wasn't spoken: no local voice is available for your language. It's still in the bubble, and the setup check says how to add a voice.");
+    expect(SPEAK_NO_VOICE).not.toMatch(/\bEmber\b/);
     // Under the Speak control in the Voice section, whatever that control is (fix/voice makes it a <select>).
     const at = PAGE.indexOf("aria-labelledby=\"voice-h\"");
     const voice = PAGE.slice(at, PAGE.indexOf("</section>", at));
     expect(voice.indexOf("id=\"speak-note\"")).toBeGreaterThan(voice.indexOf("id=\"speak\""));
     expect(voice.indexOf("id=\"speak\"")).toBeGreaterThan(0);
-    // A status line on the page while empty, so its words are announced as they come (accessibility-visual-c1-1).
-    expect(tagOf("speak-note")).toEqual({ tag: "p", attrs: { class: "hint", id: "speak-note", role: "status" } });
+    // Shown at once, and said through a status line of its own, on the page while empty, so its words are announced as
+    // they come (accessibility-visual-c1-1), never while the microphone is open for a request (voice-listening-r4-2).
+    expect(tagOf("speak-note")).toEqual({ tag: "p", attrs: { class: "hint", id: "speak-note" } });
+    expect(tagOf("speak-live")).toEqual({ tag: "p", attrs: { class: "sr", id: "speak-live", role: "status" } });
   });
 });
 

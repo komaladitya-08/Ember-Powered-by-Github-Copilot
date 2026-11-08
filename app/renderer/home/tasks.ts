@@ -11,6 +11,7 @@ import type { TaskControlAction, TaskEntry } from "../../shared/activity";
 import { PLAN_WORD, type PlanStep } from "../../shared/view";
 import { rowWord } from "../../shared/activity";
 import { renderView } from "../shared/view-dom";
+import { LIVE_SETTLE_MS } from "../shared/held-live";
 import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offersRetry, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -326,15 +327,38 @@ function render(sent: TaskEntry[]): void {
   if (body && asking.parentElement !== body) body.prepend(asking);
   else if (!body && asking.nextElementSibling !== list) list.before(asking);
   if (focus) keepFocus(focus);
-  // A task's state, said once when it changes (not on the first list).
+  announce(all);
+  for (const fn of listeners) fn(all);
+}
+
+/** Home's microphone is open for a request (holdTaskNews), and the timer that says what changed once it closes. */
+let newsHeld = false;
+let newsSoon: ReturnType<typeof setTimeout> | undefined;
+/** A task's state, said once when it changes (not on the first list), and while news is held only once it is let go. */
+function announce(all: readonly TaskEntry[]): void {
   const live: string[] = [];
   for (const t of all) {
     const before = said.get(t.id);
+    // (Held, a task new since keeps its first state, so what it comes to is said once the microphone closes.)
+    if (newsHeld) { if (before === undefined) said.set(t.id, t.status); continue; }
     if (before !== undefined && before !== t.status) live.push(taskAnnouncement(t.title, t.status, t.unanswered === true));
     said.set(t.id, t.status);
   }
   if (live.length) $("tasks-live").textContent = live.join(". ");
-  for (const fn of listeners) fn(all);
+}
+
+/**
+ * Home's microphone opens or is open for a request (a wake's window, a conversation's, Listen once's): a task's change
+ * of state is said only once it closes and that has held for LIVE_SETTLE_MS, then each task's state as it is by then,
+ * once. Said meanwhile, "<task>: Waiting for you" went through the speakers into the conversation held open while the
+ * task worked, and was sent as the next request; with Voice Match on, the screen reader's voice was turned away and
+ * locked the question's spoken yes (voice-listening-r4-2).
+ */
+export function holdTaskNews(on: boolean): void {
+  if (on === newsHeld) return;
+  newsHeld = on;
+  clearTimeout(newsSoon);
+  if (!on) newsSoon = setTimeout(() => { if (!newsHeld) announce(latest); }, LIVE_SETTLE_MS);
 }
 
 /** The clock of each task under way, written as text once a second while the window can be seen. */
