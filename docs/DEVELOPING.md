@@ -368,7 +368,8 @@ for them. Each task card has **Stop**, says what Ember is doing now in its own w
 under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
 what went wrong). So does the card of a task whose question ran out of time while you were away: it says so ("No
 answer in time", on the card and in Home's Task activity, where its **Try again** is too), offers **Try again**, the
-bubble's note points to it, and a notification says Ember couldn't finish it. While you are away (idle for 30 s, or
+bubble's note says the card offers it if Ember can't finish without the answer (otherwise, to say or type the request
+again), and a notification says Ember couldn't finish it. While you are away (idle for 30 s, or
 Ember hidden) neither kind of card goes, nor one showing a result: each waits, and has its whole time again once you
 are back. **Stop everything** clears both kinds of card at once; "What did I miss?" says the question wasn't answered
 in time, never "you stopped it". More time multiplies the lifetime by ten; expanded Details, hover or keyboard focus pauses expiry,
