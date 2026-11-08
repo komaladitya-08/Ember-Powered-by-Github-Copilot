@@ -69,6 +69,12 @@ const ALIVE_MS = 15_000;
 /** Listen once: how long speech may take to start (ms); a request under way then is heard to its end (MANUAL_MAX_MS). */
 const LISTEN_ONCE_MS = 8000;
 const LISTEN_ONCE_CHECK_MS = 3000;
+/**
+ * What the voice line says while Listen once is open: "Hearing you…" was up from its first frame, though nobody had
+ * spoken, and then turned into "No request heard." (voice-listening-c2-2). It stays as the user starts: a screen
+ * reader announcing a change then would say it over their words (voice-listening-c2-1).
+ */
+const LISTEN_ONCE_LISTENING = "Listening…";
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
@@ -1515,7 +1521,7 @@ export class VoiceService {
           manual.timer.unref();
           if (temporary) { this.capturing = false; this.closeMic(); }
         }
-        this.setState(m.on ? "active" : "waiting");
+        this.setState(m.on ? "active" : "waiting", m.on ? LISTEN_ONCE_LISTENING : undefined);
         this.o.onEvent(event);
         if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? (this.manualSilent ? SILENT_TEXT : "No request heard. Try again.") : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
         else this.o.onListenOnce?.();

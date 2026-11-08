@@ -43,7 +43,7 @@ describe("the microphone badge", () => {
     // The name alone, as settings' voice line says it ("Ember" and "Hey Ember" both work; voice-listening-8).
     expect(micBadge("waiting")!.label).toBe("Listening for “Ember”");
     expect(readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8")).toContain('waiting: "Listening for “Ember”"');
-    expect(micBadge("active")!.label).toBe("Hearing you");
+    expect(micBadge("active")!.label).toBe("Listening");
     expect(micBadge("muted")!.label).toBe("Microphone off");
     expect(micBadge("error")!.label).toBe("Microphone problem");
     expect(micBadge("needs-models")!.label).toBe("Voice isn't set up: download the speech models in Settings");

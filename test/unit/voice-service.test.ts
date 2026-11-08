@@ -45,6 +45,7 @@ vi.mock("electron", () => electron);
 import { VoiceGate } from "../../app/voice/match";
 import { VoiceService, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
+import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
 import type { VoiceEvent } from "../../app/voice/engine";
@@ -410,6 +411,26 @@ describe("VoiceService", () => {
     v.listenOnce();
     vi.advanceTimersByTime(23_001);
     expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "Listening timed out. Try again." });
+  });
+
+  it("says Listen once is listening, never “Hearing you”, while it waits for a request, and says nothing new once speech starts (voice-listening-c2-2)", async () => {
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    v.listenOnce();
+    const generation = (posted(proc, "listen-once")[0] as { generation?: number }).generation;
+    states.length = 0;
+    proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+    expect(states).toEqual([{ s: "active", detail: "Listening…" }]);
+    // (A change on the voice line as the user starts would be a screen reader's words over theirs: voice-listening-c2-1.)
+    proc.emit("message", { generation, type: "speech", on: true });
+    expect(states).toEqual([{ s: "active", detail: "Listening…" }]);
+    proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window: "manual" });
+    expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+    // The handle's badge says so too, in every window: it listens, and hears the user only once they speak.
+    expect(micBadge("active")!.label).toBe("Listening");
   });
 
   it("says the microphone sends only silence, not “No request heard”, when Listen once heard only zeros (voice-listening-4)", async () => {
