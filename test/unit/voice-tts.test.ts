@@ -102,8 +102,17 @@ describe("speechChunks", () => {
     expect(speechChunks("Ask Dr. Smith, e.g. by mail.")).toEqual(["Ask Dr. Smith, e.g. by mail."]);
   });
 
+  it("says each labelled step on its own, its label never cut from it after a short line leading into it (voice-speaking-c3-2)", () => {
+    const said = (md: string) => speechChunks(spokenText(md));
+    expect(said("To do this:\nStep 1: Open Settings and go to the Privacy section\nStep 2: Turn off Location for every app")).toEqual(["To do this:", "Step 1: Open Settings and go to the Privacy section.", "Step 2: Turn off Location for every app."]);
+    expect(said("**Step 1:** Open Settings\n**Step 2:** Choose Privacy\n**Step 3:** Turn off Location")).toEqual(["Step 1: Open Settings.", "Step 2: Choose Privacy.", "Step 3: Turn off Location."]);
+    // A colon inside a line still cuts a long first sentence there.
+    expect(speechChunks("Here's what I found in Documents: three reports from last week and a spreadsheet.")).toEqual(["Here's what I found in Documents:", "three reports from last week and a spreadsheet."]);
+  });
+
   it("keeps a list's items apart, as sentences (voice-speaking-3)", () => {
-    expect(speechChunks(spokenText("Your apps:\n- Text Editor\n- Calendar\n- Contacts\n- Firefox"))).toEqual(["Your apps: Text Editor.", "Calendar. Contacts.", "Firefox."]);
+    // The line leading into them is a piece of its own, as it is when the list streams (voice-speaking-c3-2).
+    expect(speechChunks(spokenText("Your apps:\n- Text Editor\n- Calendar\n- Contacts\n- Firefox"))).toEqual(["Your apps:", "Text Editor.", "Calendar. Contacts.", "Firefox."]);
   });
 
   it("doesn't end a sentence at a.m., p.m. or a day's short name (voice-speaking-3)", () => {
@@ -325,6 +334,38 @@ describe("SpeechStream", () => {
     said.push(...t.finish(steps));
     expect(said).toEqual(["To change it:", "1. Open Settings.", "2. Choose Privacy.", "3. Turn off Location."]);
     expect(said.flatMap(speechChunks)).toEqual(speechChunks(spokenText(steps)));
+  });
+
+  /** `text` streamed `delta` characters at a time: every piece said, the last ones at its end. */
+  const streamed = (text: string, delta: number) => {
+    const s = new SpeechStream();
+    const said: string[] = [];
+    for (let i = 0; i < text.length; i += delta) said.push(...s.push(text.slice(i, i + delta)));
+    return [...said, ...s.finish(text)];
+  };
+
+  it.each([
+    "Here's what I'll do:", "Sure, here's the plan:", "I'll do three things:", "This is what I found:",
+    "I found three files in your Downloads folder:", "Here is the plan:", "Okay. Here's what I'll do:", "Steps:", "Here's what I'll do:\n",
+  ])("says each line that %j leads into apart when streamed, as it does the whole answer (voice-speaking-3)", lead => {
+    const answer = `${lead}\nOpen the spreadsheet you sent me this morning\nAdd up the totals for each month\nSave it as a new file in Documents`;
+    for (const delta of [1, 4, 16]) {
+      const said = streamed(answer, delta);
+      expect(said.join("\n"), `${delta}`).toContain("this morning.\nAdd up the totals for each month.\nSave it as a new file in Documents.");
+      // Each step is a piece of its own for the voice, the first perhaps after the line that leads into it.
+      const chunks = said.flatMap(speechChunks);
+      expect(chunks.slice(-2), `${delta}`).toEqual(["Add up the totals for each month.", "Save it as a new file in Documents."]);
+      expect(chunks[chunks.length - 3], `${delta}`).toMatch(/^(?:.*: )?Open the spreadsheet you sent me this morning\.$/);
+    }
+  });
+
+  it.each([
+    "**Step 1:** Open Settings\n**Step 2:** Choose Privacy\n**Step 3:** Turn off Location",
+    "Step 1: Open Settings\nStep 2: Choose Privacy\nStep 3: Turn off Location",
+  ])("says each labelled step of %j on its own when streamed, its label at its start (voice-speaking-c3-2)", answer => {
+    for (const delta of [1, 4, 16]) {
+      expect(streamed(answer, delta).flatMap(speechChunks), `${delta}`).toEqual(["Step 1: Open Settings.", "Step 2: Choose Privacy.", "Step 3: Turn off Location."]);
+    }
   });
 
   it("says a whole answer that wasn't streamed", () => {

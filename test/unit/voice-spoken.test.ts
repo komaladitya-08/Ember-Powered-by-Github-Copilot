@@ -155,9 +155,28 @@ describe("spokenText", () => {
     // on in lower case, isn't.
     ["Here is the plan:\nStep one is to open the file you sent\nStep two is to save it as a copy in Documents\nStep three is to close it", "Here is the plan:\nStep one is to open the file you sent.\nStep two is to save it as a copy in Documents.\nStep three is to close it."],
     ["Here's what it says:\nThe meeting moved to Friday and the room changed", "Here's what it says:\nThe meeting moved to Friday and the room changed"],
+    ["Here is the plan:\n\nStep one is to open the file you sent\nStep two is to close it", "Here is the plan:\nStep one is to open the file you sent.\nStep two is to close it."],
     ["Here is the plan:\nOpen the file you sent me and\nsave a copy of it in Documents", "Here is the plan:\nOpen the file you sent me and\nsave a copy of it in Documents"],
     ["I opened the report you sent and\nFound the totals at the bottom of it\nAll of them add up", "I opened the report you sent and\nFound the totals at the bottom of it\nAll of them add up"],
   ])("ends the lines of %j so they are said apart (voice-speaking-3)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  // Two or more lines in a row that each start with a short label and its colon are a list's items too, so a label is
+  // never said at the end of the step before it ("Open Settings Step 2."); one such line, or a wrapped one, isn't.
+  it.each([
+    ["**Step 1:** Open Settings\n**Step 2:** Choose Privacy\n**Step 3:** Turn off Location", "Step 1: Open Settings.\nStep 2: Choose Privacy.\nStep 3: Turn off Location."],
+    ["Step 1: Open Settings and go to Privacy\nStep 2: Turn off Location for every app", "Step 1: Open Settings and go to Privacy.\nStep 2: Turn off Location for every app."],
+    ["**Option A:** Keep the file as it is\n**Option B:** Save a copy in Documents", "Option A: Keep the file as it is.\nOption B: Save a copy in Documents."],
+    ["Note: the file is locked by Excel\nwhile it is open.", "Note: the file is locked by Excel\nwhile it is open."],
+    ["Tip: press Control S to save it\nI can do that for you if you like", "Tip: press Control S to save it\nI can do that for you if you like"],
+  ])("ends the labelled lines of %j so they are said apart (voice-speaking-c3-2)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  it("ends the lines a colon line leads into when that line was said already, as a stream cuts after it (voice-speaking-3)", () => {
+    const steps = "Open the spreadsheet you sent me this morning\nAdd up the totals for each month\nSave it as a new file in Documents";
+    expect(spokenText(steps, { ledIn: true })).toBe("Open the spreadsheet you sent me this morning.\nAdd up the totals for each month.\nSave it as a new file in Documents.");
+    expect(spokenText(steps)).toBe(steps);
+    // A line that goes on in lower case is still a wrapped one.
+    expect(spokenText("Open the file you sent me and\nsave a copy of it in Documents", { ledIn: true })).toBe("Open the file you sent me and\nsave a copy of it in Documents");
+  });
 
   // Stars and underscores that aren't emphasis are said as they are shown: a marker with a space on its inner side is
   // none (CommonMark's flanking rule), and neither is "__" inside a file name (review #258).

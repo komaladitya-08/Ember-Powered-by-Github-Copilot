@@ -209,36 +209,48 @@ const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
  * without its markers. A line wrapped inside a paragraph goes on in lower case ("folder and found").
  */
 const BARE_ITEM = (body: string) => body.length <= 40 && body.trim().split(/\s+/).length <= 4 && /^[ \t]*[\p{Lu}\p{N}]/u.test(body);
+/**
+ * A line that starts with a short label and its colon ("Step 1: Open Settings", "Option A: Keep it"): two or more in a
+ * row are a list's items, so a label is never said at the end of the step before it (voice-speaking-c3-2).
+ */
+const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}:[ \t]+\S/u;
 
 /**
  * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
  * own, so the voice pauses between them: "Firefox Files Terminal Mail" in one breath was heard as one name
  * (voice-speaking-3). A line wrapped inside a paragraph is left as it is, and so is what is only shown in the bubble.
+ * `ledIn`: a line ending with a colon, said already, leads into the first line.
  */
-function endLines(text: string): string {
+function endLines(text: string, ledIn = false): string {
   const lines = text.split("\n");
   // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
   const bare = lines.map(l => (l.trim() && !ITEM.test(l) && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
   const run: number[] = [...bare];
   for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
   for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
-  // Lines of any length that a line ending with a colon leads into, each starting with a capital: two or more are a list
-  // without its markers too ("Here is the plan:\nStep one is to open it\nStep two is…").
+  // Lines of any length that a line ending with a colon leads into (perhaps after a blank line), each starting with a
+  // capital: two or more are a list without its markers too ("Here is the plan:\nStep one is to open it\nStep two is…").
+  const colon = (i: number) => (i < 0 ? ledIn : /:[ \t]*$/.test(lines[i]));
   const led = lines.map(() => false);
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
-    led[i] = !!l.trim() && !ITEM.test(l) && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || /:[ \t]*$/.test(lines[i - 1]));
+    led[i] = !!l.trim() && !ITEM.test(l) && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || colon(i - 1) || (i > 0 && !lines[i - 1].trim() && colon(i - 2)));
   }
+  const label = lines.map(l => LABEL.test(l));
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
-    const listed = led[i] && (led[i - 1] || led[i + 1]);
+    const listed = (led[i] && (led[i - 1] || led[i + 1])) || (label[i] && (label[i - 1] || label[i + 1]));
     const alone = ITEM.test(body) || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || ITEM.test(next)));
     return alone ? `${body}.` : line;
   }).join("\n");
 }
 
-export function spokenText(markdown: string): string {
+/**
+ * What Ember says for `markdown`. `o.ledIn`: its first line follows a line ending with a colon that was said already, as
+ * a streamed answer is cut just after "Here's what I'll do:" (voice-speaking-3).
+ */
+export function spokenText(markdown: string, o: { ledIn?: boolean } = {}): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
@@ -270,7 +282,7 @@ export function spokenText(markdown: string): string {
     // "2**8", "_config.yml" or "__init__.py".
     .replace(/(^|[\s(])(?:\*\*?|_(?=\p{L}+(?:[\s,;:!?)]|$)))(?=\p{L})/gu, "$1")
     .replace(/(?<=[\p{L}\p{N}.,!?;:])(?:\*\*?|_)(?=[\s.,!?;:)]|$)/gu, "");
-  const said = endLines(plain)
+  const said = endLines(plain, o.ledIn)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+→][ \t]+/gm, "")

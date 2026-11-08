@@ -166,7 +166,10 @@ export function speechChunks(text: string): string[] {
   if (!t) return [];
   const sentences: string[] = [];
   let from = 0;
-  for (const end of sentenceEnds(t)) { sentences.push(t.slice(from, end)); from = end; }
+  // A line ending with a colon ends its piece too, so the line it leads into is never cut after its own label ("To do
+  // this:\nStep 1: Open…" was said "To do this: Step 1:", then the step: voice-speaking-c3-2).
+  const led = [...t.matchAll(/:[ \t]*\n/g)].map(m => m.index + m[0].length);
+  for (const end of [...new Set([...sentenceEnds(t), ...led])].sort((a, b) => a - b)) { sentences.push(t.slice(from, end)); from = end; }
   if (from < t.length) sentences.push(t.slice(from));
   const out: string[] = [];
   for (const s of sentences.map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean)) {
@@ -215,7 +218,7 @@ export class SpeechStream {
     this.raw += delta;
     const cut = this.safeCut();
     if (cut <= this.said) return [];
-    const spoken = spokenText(this.raw.slice(this.said, cut));
+    const spoken = spokenText(this.raw.slice(this.said, cut), { ledIn: this.ledIn() });
     this.said = cut;
     return spoken.trim() ? this.budget(spoken) : [];
   }
@@ -259,12 +262,21 @@ export class SpeechStream {
     if (!this.said) rest = text;
     else if (text.startsWith(this.raw.slice(0, this.said))) rest = text.slice(this.said);
     else rest = full === undefined ? this.raw.slice(this.said) : "";
-    const spoken = spokenText(rest);
+    const spoken = spokenText(rest, { ledIn: this.ledIn() });
     const out = spoken.trim() ? this.budget(spoken) : [];
     const question = this.closingQuestion();
     if (question) out.push(question);
     this.reset();
     return out;
+  }
+
+  /**
+   * Whether what is said next starts on the line after one ending with a colon that was said already ("Here's what I'll
+   * do:" said on its own, then its steps): spokenText ends those lines as a list's (voice-speaking-3). They were said in
+   * one breath, the steps cut from the line that leads into them.
+   */
+  private ledIn(): boolean {
+    return /:[ \t]*\n(?:[ \t]*\n)?[ \t]*$/.test(this.raw.slice(Math.max(0, this.said - SCAN_BACK), this.said));
   }
 
   /** Whether any of the answer has been spoken. */
@@ -306,12 +318,17 @@ export class SpeechStream {
     return Math.max(0, joinAt(this.raw, FIRST_MIN, FIRST_MAX, at => !speechMarkupOpen(this.raw.slice(0, at))));
   }
 
-  /** The first clause break of the answer, when it can be said on its own (0: none yet). */
+  /**
+   * The first clause break of the answer, when it can be said on its own (0: none yet). Only on its first line: past it,
+   * a line said without the lines beside it can't be told from a list's ("Step 1: Open Settings\nStep 2:" said "Open
+   * Settings Step 2": voice-speaking-c3-2), as joinCut's first sentence is.
+   */
   private clauseCut(): number {
     const re = /[,;:]\s+|\s+[—–-]\s+/g;
     for (let m = re.exec(this.raw); m; m = re.exec(this.raw)) {
       if (m.index < FIRST_MIN) continue;
       const before = this.raw.slice(0, m.index);
+      if (before.includes("\n")) return 0;
       // Not inside Markdown that isn't whole yet: a code span or block, a link's text or address, a table, a list's
       // first line (it reads better as a whole), or a heading.
       if (speechMarkupOpen(before)) return 0;

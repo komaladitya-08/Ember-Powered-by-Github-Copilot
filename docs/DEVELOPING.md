@@ -808,7 +808,7 @@ request that fits none of these (or isn't in English) gets no acknowledgement: a
 (app/main/acknowledge.ts).
 
 A streamed answer is spoken from its first clause once that has at least 18 characters and 4 words ("I can't do that
-one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
+one,"), on the answer's first line only. Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
 character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
 field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
@@ -821,10 +821,13 @@ characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of spee
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
 it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into
 a list, three or more short lines in a row that each start with a capital (a list without its markers), two or more
-such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…") and a
+such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…", also
+after a blank line, and when that line was said on its own as the answer streamed), two or more lines in a row that
+each start with a short label and its colon ("Step 1: Open Settings", "**Option A:** Keep it") and a
 paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
-its number ("2. Choose Privacy", never "Open Settings 2."), and a streamed list is said as each item's line ends, not
-after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
+its number ("2. Choose Privacy", never "Open Settings 2."), a line ending with a colon ends its piece, so a label is
+never cut from its step ("To do this:", then "Step 1: Open Settings…"), and a streamed list is said as each item's line
+ends, not after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
 last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
 "Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
