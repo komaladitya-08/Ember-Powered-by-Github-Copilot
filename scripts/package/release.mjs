@@ -1,9 +1,12 @@
 // What a GitHub release of Ember holds, and its notes (docs/DEVELOPING.md §15). CI's release job runs it on a v* tag,
 // in the folder holding the four package artifacts, before it writes SHA256SUMS and publishes:
 //   node scripts/package/release.mjs <folder> <tag> <owner/repo> <notes.md>
+//   node scripts/package/release.mjs --readme <tag>    (only the README's check, which the tag's checks job runs first)
 // It refuses a tag that isn't v<package.json's version>, a folder missing one of the release's files or holding one
-// more, and a version CHANGELOG.md has no "## <version> (" section for. The notes are that section, its relative
-// links made absolute at the tag (a release page resolves them elsewhere) and its wrapped lines joined.
+// more, a version CHANGELOG.md has no "## <version> (" section for, and a README whose Download section still says the
+// version isn't out: the notes link the README at the tag, so it is what everyone reads (install-docs-c1-1). The notes
+// are that section, its relative links made absolute at the tag (a release page resolves them elsewhere) and its
+// wrapped lines joined.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,12 +79,49 @@ export function releaseProblems(present, version) {
   ];
 }
 
+/**
+ * What's wrong with README.md for a release of `version` (empty when nothing): its **Download** section (up to the
+ * next "## " heading, From npm included) still says this version isn't published, sends readers to another
+ * version's release or README, or says the npm launcher isn't on npm yet. §15 step 1 has that text replaced in the
+ * commit that is tagged, because the release's notes, and See what's new… with them, link the README at the tag.
+ * @param {string} readme
+ * @param {string} version
+ */
+export function readmeProblems(readme, version) {
+  const lines = readme.split("\n");
+  const start = lines.findIndex(l => /^## Download\s*$/.test(l));
+  if (start < 0) return ["README.md has no Download section"];
+  let end = lines.findIndex((l, i) => i > start && /^## /.test(l));
+  if (end < 0) end = lines.length;
+  const download = lines.slice(start + 1, end).join(" ").replace(/\s+/g, " ");
+  const problems = [];
+  if (/isn't published yet/.test(download)) problems.push(`README.md's Download section still says ${version} isn't published yet`);
+  const others = new Set([...download.matchAll(/\/(?:releases\/tag|blob)\/v(\d+\.\d+\.\d+)\b/g)].map(m => m[1]).filter(v => v !== version));
+  for (const v of others) problems.push(`README.md's Download section sends readers to v${v} instead of ${version}`);
+  if (/isn't on npm until/.test(download)) problems.push(`README.md's From npm still says ember-copilot isn't on npm until ${version} is published`);
+  return problems;
+}
+
+/** The README's check alone, or the whole release's. */
 function main() {
-  const [dir, tag, repo, notesFile] = process.argv.slice(2);
-  if (!dir || !tag || !repo || !notesFile) throw new Error("usage: node scripts/package/release.mjs <folder> <tag> <owner/repo> <notes.md>");
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  const readme = () => {
+    const wrong = readmeProblems(fs.readFileSync(path.join(root, "README.md"), "utf8"), version);
+    if (wrong.length) throw new Error(`README.md isn't ready for ${version}'s release (docs/DEVELOPING.md §15 step 1):\n  ${wrong.join("\n  ")}`);
+  };
+  if (process.argv[2] === "--readme") {
+    const tag = process.argv[3];
+    if (!tag) throw new Error("usage: node scripts/package/release.mjs --readme <tag>");
+    if (tag !== `v${version}`) throw new Error(`the tag ${tag} isn't v${version}, package.json's version`);
+    readme();
+    console.log(`release ${tag}: README.md describes ${version}`);
+    return;
+  }
+  const [dir, tag, repo, notesFile] = process.argv.slice(2);
+  if (!dir || !tag || !repo || !notesFile) throw new Error("usage: node scripts/package/release.mjs <folder> <tag> <owner/repo> <notes.md>");
   if (tag !== `v${version}`) throw new Error(`the tag ${tag} isn't v${version}, package.json's version`);
+  readme();
   const problems = releaseProblems(fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isFile()), version);
   if (problems.length) throw new Error(`the release folder isn't what the README downloads:\n  ${problems.join("\n  ")}`);
   fs.writeFileSync(notesFile, releaseNotes(fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8"), version, { repo, ref: tag }));
