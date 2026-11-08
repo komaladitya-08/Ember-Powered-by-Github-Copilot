@@ -217,7 +217,7 @@ let startFailed = false;
  * the dialog's sentence: by default the plain words for `err` (startupProblem), never its own text, which the log keeps
  * (reliability-performance-r4-1).
  */
-function startupFailed(err: unknown, said = startupProblem(err, userData)): void {
+function startupFailed(err: unknown, said = startupProblem(err, userData, fs, platform.os)): void {
   startFailed = true;
   log.error("app.start_failed", { err });
   void app.whenReady().then(() => {
@@ -241,7 +241,7 @@ if (process.argv.includes("--doctor")) {
   void runDoctor();
 } else if (!app.requestSingleInstanceLock()) {
   // Chromium can't take the lock in a data folder it can't write to either: that isn't another Ember (review #80).
-  const unusable = dataFolderProblem(userData);
+  const unusable = dataFolderProblem(userData, process.pid, fs, platform.os);
   if (unusable) startupFailed(new Error(unusable), unusable);
   else {
     log.info("instance.handover", { pid: process.pid });
