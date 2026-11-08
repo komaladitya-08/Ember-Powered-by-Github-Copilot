@@ -20,7 +20,8 @@ export interface ReminderRow { id: string; text: string; at: number; created: nu
 export interface ReminderChange { expected: Omit<ReminderRow, "kept">; replacement: { text: string; at: number } | null }
 export type ProjectMode = "review" | "plan" | "patch";
 export interface ProjectSelection { names: string[]; sizes?: (number | null)[]; changed?: boolean; error?: string }
-export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; canContinue: boolean } | { error: string };
+/** `withheld`: an exact patch not offered, as its patched file looks like it holds a secret at that line (integrations-c4-1). */
+export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; withheld?: { name: string; line: number | null }; canContinue: boolean } | { error: string };
 /**
  * What Check again found: a GitHub sign-in (`found`, its `source`, or a `hint` on how to get one), or, with a model
  * provider in force (the user's own or the organisation's), that it connected to it again or not (integrations-c1-1),

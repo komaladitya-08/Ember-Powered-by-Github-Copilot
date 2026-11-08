@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { projectSelection, removeProjectFile } from "../../app/main/agent/project";
 import { exportProjectText } from "../../app/main/agent/project-export";
-import { PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, projectAnswerParts, projectCommandsState, projectBytes, projectCommandsOn, projectConnectionText, projectSelectionText } from "../../app/renderer/home/project-copy";
+import { PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, projectAnswerParts, projectAnswerText, projectCommandsState, projectBytes, projectCommandsOn, projectConnectionText, projectSelectionText } from "../../app/renderer/home/project-copy";
 
 let dir: string;
 let privateDir: string;
@@ -59,6 +59,18 @@ it("says only sending waits while Ember isn't connected, and that the person's w
   expect(projectConnectionText(false, { files: false, work: false })).toBe("Connect a model to work with project files.");
   expect(projectConnectionText(true, { files: true, work: true })).toBe("Review the selection before sending.");
   expect(projectConnectionText(true, { files: false, work: true })).toBe("Choose the files for this request.");
+});
+
+it("says why a draft offers no Apply and an answer won't go with the next send, never that a diff that applies couldn't be verified (integrations-c4-1)", () => {
+  expect(projectAnswerText({ mode: "patch", patch: true, withheld: null, canContinue: true })).toBe("Patch ready to review.");
+  expect(projectAnswerText({ mode: "patch", patch: false, withheld: null, canContinue: true })).toBe("Draft ready. Ember could not verify an exact patch to apply.");
+  expect(projectAnswerText({ mode: "patch", patch: false, withheld: { name: "client.ts", line: 3 }, canContinue: true }))
+    .toBe("Draft ready. Ember won't offer to apply it: line 3 of the patched client.ts appears to contain a password, token or key.");
+  expect(projectAnswerText({ mode: "patch", patch: false, withheld: { name: "client.ts", line: null }, canContinue: false }))
+    .toBe("Draft ready. Ember won't offer to apply it: the patched client.ts appears to contain a password, token or key. Ember won't include this answer on the next send either.");
+  expect(projectAnswerText({ mode: "review", patch: false, withheld: null, canContinue: true })).toBe("Project answer ready.");
+  expect(projectAnswerText({ mode: "review", patch: false, withheld: null, canContinue: false }))
+    .toBe("Project answer ready. Ember won't include this answer on the next send, as it appears to contain a password, token or key.");
 });
 
 it("exports exact inert text only after the destination is chosen, privately and without staging residue", () => {

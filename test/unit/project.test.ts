@@ -2,9 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM, secretLine } from "../../app/main/agent/project";
 import { readFileSync } from "node:fs";
-import { applyProjectPatch, draftProjectPatch } from "../../app/main/agent/project-patch";
+import { applyProjectPatch, draftProjectPatch, readProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
 import { copilotOneShot, type OneShotFailure } from "../../app/main/agent/one-shot";
 import type { Logger } from "../../app/main/logger";
@@ -185,6 +185,28 @@ it("offers a reviewed patch whose new line sets max_tokens or reads a key from t
   expect(draftProjectPatch(diffAnswer(change), snapshots)?.diff).toBe(change);
   const literal = diff("client.ts", "@@ -1,3 +1,4 @@\n export const options = {\n   temperature: 0.2,\n+  apiKey: \"Tr0ub4dor&3xyz\",\n };");
   expect(draftProjectPatch(diffAnswer(literal), snapshots)).toBeNull();
+});
+
+it("names each chosen file that looks like it holds a secret, with its line, so I remove only that file (integrations-r4-1)", async () => {
+  const greeting = await file("greeting.ts", "export const greet = (name: string) => `Hello ${name}`;\n");
+  const api = await file("api.ts", "export async function call() {\n  const res = await fetch(URL);\n  const password = \"Summer2024!\";\n  return res;\n}\n");
+  await expect(prompt([greeting, api])).rejects.toThrow(new Error("api.ts appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const config = await file("config.ts", "// Settings\nexport const token = \"ghp_" + "a1".repeat(18) + "\";\n");
+  await expect(prompt([api, greeting, config])).rejects.toThrow(new Error("api.ts (line 3) and config.ts (line 2) appear to contain a password, token or key. Remove those files or the values, then send again."));
+  // The line is the first one the guard refuses with all the lines above it; nothing at all is a file with none.
+  expect(secretLine("a\nb\npassword = \"Summer2024!\"\nc\n")).toBe(3);
+  expect(secretLine("export const greet = 1;\n")).toBeNull();
+});
+
+it("says it won't offer to apply a patch whose new line looks like a secret, with the patched file's line, unlike a diff that doesn't apply (integrations-c4-1)", async () => {
+  const source = await file("client.ts", "export const options = {\n  temperature: 0.2,\n};\n");
+  const snapshots: ProjectSource[] = [];
+  await projectPrompt([source], "patch", "Read the key from the environment.", new AbortController().signal, privateDir, snapshots);
+  const literal = diff("client.ts", "@@ -1,3 +1,4 @@\n export const options = {\n   temperature: 0.2,\n+  apiKey: \"Tr0ub4dor&3xyz\",\n };");
+  expect(readProjectPatch(diffAnswer(literal), snapshots)).toEqual({ withheld: true, name: "client.ts", line: 3 });
+  const stale = diff("client.ts", "@@ -1,3 +1,4 @@\n export const settings = {\n   temperature: 0.2,\n+  max_tokens: 1024,\n };");
+  expect(readProjectPatch(diffAnswer(stale), snapshots)).toBeNull();
+  expect(readProjectPatch(diffAnswer(diff("client.ts", "@@ -1,3 +1,4 @@\n export const options = {\n   temperature: 0.2,\n+  max_tokens: 1024,\n };")), snapshots)).toMatchObject({ source: { name: "client.ts" } });
 });
 
 const diffAnswer = (diff: string) =>"A change to review.\n\n" + ["```diff", diff, "```"].join("\n");

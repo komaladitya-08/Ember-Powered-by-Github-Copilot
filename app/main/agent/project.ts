@@ -149,11 +149,40 @@ export function removeProjectFile(files: readonly string[], name: unknown): stri
 
 export interface ProjectSource { name: string; file: string; resolved: string; text: string; stat: Stats; digest: string; bom: boolean }
 
+/**
+ * The line where memory's secret guard first finds what looks like a password, token or key in `text`: the first line
+ * it refuses with all the lines above it, found by halving (a dozen looks for a 24 KiB file), or null when the whole
+ * text passes. It only points the person at the line (integrations-r4-1): the refusal is always the whole text's.
+ */
+export function secretLine(text: string): number | null {
+  const lines = text.split("\n");
+  const refuses = (n: number) => memoryRefusal(lines.slice(0, n).join("\n")) !== null;
+  if (!refuses(lines.length)) return null;
+  let passes = 0, refused = lines.length;
+  while (refused - passes > 1) {
+    const mid = (passes + refused) >> 1;
+    if (refuses(mid)) refused = mid; else passes = mid;
+  }
+  return refused;
+}
+
+/** Which chosen files look like they hold a secret, and the line in each, so the person removes only those (integrations-r4-1). */
+export function projectSecretFiles(found: readonly { name: string; line: number | null }[]): string {
+  if (found.length === 1) {
+    const [{ name, line }] = found;
+    return `${name} appears to contain a password, token or key${line ? ` on line ${line}` : ""}. Remove that file or the value, then send again.`;
+  }
+  const named = found.map(f => f.line ? `${f.name} (line ${f.line})` : f.name);
+  return `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]} appear to contain a password, token or key. Remove those files or the values, then send again.`;
+}
+
 /** Reads only the selected regular files. A changed file is retried by the user, never sent partly. */
 export async function projectPrompt(files: readonly string[], mode: ProjectMode, question: string, signal: AbortSignal, privateDir: string, snapshots?: ProjectSource[], previous?: ProjectExchange | null): Promise<string> {
   const names = projectNames(files);
   if (memoryRefusal(question)) throw new ProjectInputError("Remove passwords, tokens and keys from the request.");
   const sources: { name: string; text: string }[] = [];
+  // Every chosen file is looked at before refusing, so the refusal names each one that holds a secret (integrations-r4-1).
+  const secrets: { name: string; line: number | null }[] = [];
   const privateRoot = (await fs.realpath(privateDir)).toLowerCase();
   let total = 0;
   for (const [index, file] of files.entries()) {
@@ -183,7 +212,7 @@ export async function projectPrompt(files: readonly string[], mode: ProjectMode,
       try { text = new TextDecoder("utf-8", { fatal: true }).decode(data.subarray(0, length)); }
       catch { throw new ProjectInputError("Choose UTF-8 text files."); }
       if (text.includes("\0")) throw new ProjectInputError("Choose UTF-8 text files.");
-      if (memoryRefusal(text)) throw new ProjectInputError("A selected file appears to contain a password, token or key.");
+      if (memoryRefusal(text)) { secrets.push({ name: names[index], line: secretLine(text) }); continue; }
       sources.push({ name: names[index], text });
       if (snapshots) {
         const bytes = data.subarray(0, length);
@@ -195,6 +224,7 @@ export async function projectPrompt(files: readonly string[], mode: ProjectMode,
     }
   }
   signal.throwIfAborted();
+  if (secrets.length) throw new ProjectInputError(projectSecretFiles(secrets));
   const action = {
     review: "Review the selected files. Give concrete findings with file and line references.",
     plan: "Plan the requested change. Include files likely to change and how to verify it.",

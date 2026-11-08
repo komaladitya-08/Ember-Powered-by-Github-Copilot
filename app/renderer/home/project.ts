@@ -1,6 +1,6 @@
 /** Project selection, explicit context sharing and inert, reviewable output in the Projects destination. */
 import { renderProjectAnswer } from "./project-output";
-import { PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectBytes, projectCommandsState, projectConnectionText, projectSelectionText } from "./project-copy";
+import { PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectAnswerText, projectBytes, projectCommandsState, projectConnectionText, projectSelectionText } from "./project-copy";
 import type { ProjectMode, ProjectWorkspaceAction } from "../../shared/ipc";
 
 export function mountProject() {
@@ -354,7 +354,7 @@ export function mountProject() {
           patchCurrent = true;
           patchSummary.textContent = "Review changes before applying";
         }
-        status.textContent = result.patch ? "Patch ready to review." : sent.mode === "patch" ? "Draft ready. Ember could not verify an exact patch to apply." : "Project answer ready.";
+        status.textContent = projectAnswerText({ mode: sent.mode, patch: !!result.patch, withheld: result.withheld ?? null, canContinue: result.canContinue });
       } else {
         status.textContent = failedLine = result.error + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
         failedAt = Date.now();

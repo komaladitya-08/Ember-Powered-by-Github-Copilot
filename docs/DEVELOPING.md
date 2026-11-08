@@ -2194,6 +2194,13 @@ confirm the destination. If the source has changed since you sent it, draft the 
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
 unsupported diff formats remain available as text.
 
+Files, requests, patched files and an answer kept as the next send's context go through memory's secret guard
+(`memoryRefusal`, docs/MEMORY.md), which passes over code for a secret-named key's value. A chosen file that still
+looks like it holds a password, token or key is named with its line (`secretLine`, `projectSecretFiles`): every such
+file at once, so the person removes only those. An exact patch whose patched file looks like it holds one isn't
+offered, and the status says which line (`readProjectPatch`'s `withheld`), never that the diff couldn't be verified; an
+answer that looks like it holds one isn't offered as context, and the status says so (`projectAnswerText`).
+
 A request the model service refuses or can't finish says why in the conversation's words (`projectFailureText`): a
 refused key points at the key in settings, a usage limit says to try later, files over the model's limit say to choose
 fewer or smaller ones, and the two-minute wait says so. "Try again" is left for a failure nothing says more about. The
