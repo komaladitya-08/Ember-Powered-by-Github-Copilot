@@ -68,7 +68,7 @@ function linkLabels(text: string): string {
  * A key chord as written ("Ctrl+Alt+Y", "Win + Shift + S", "Cmd+Space"): modifiers joined by "+" to a key, standing on
  * its own: never inside a word, an address or a path ("me.alt+s@example.com", "build/ctrl+c"; review of #143).
  */
-const CHORD = /(?<![\w.@+/\\-])(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)(?![\w@+/\\-]|\.\w)/gi;
+const CHORD = /(?<![\w.@+/\\-])(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|[←→↑↓]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)(?![\w@+/\\-]|\.\w)/gi;
 /** How a key in a chord is said (keyLabel's names, for the ear): the rest are said as they are written. */
 /** An arrow said by its name, where it is a key or a symbol ("Press the → key"): Kitten said "the → key" as "the to key". */
 const ARROW: Readonly<Record<string, string>> = { "←": "left arrow", "→": "right arrow", "↑": "up arrow", "↓": "down arrow" };
@@ -78,6 +78,14 @@ const KEY_SAID: Readonly<Record<string, string>> = {
 };
 /** Only an arrow's direction, before the word "arrow": "the ↑ arrow key" was "the up arrow arrow key" (voice-speaking-r3-1). */
 const DIRECTION: Readonly<Record<string, string>> = { "←": "left", "→": "right", "↑": "up", "↓": "down" };
+/** The words an arrow points the same way as, after which it is said once ("up ↑" was "up up arrow"). */
+const SAME_WAY: Readonly<Record<string, readonly string[]>> = { "←": ["left", "back"], "→": ["right", "forward"], "↑": ["up"], "↓": ["down"] };
+/**
+ * After its own direction, a "→" before one of these, a key's word or no other word is said once ("Swipe right → to go
+ * back", "turn right → at the end"); before any other word it is a step, said "to" ("the top right → Settings" was "the
+ * top right Settings": voice-speaking-v4-2).
+ */
+const ONCE_BEFORE = /^[ \t]*(?:$|[^\p{L}\p{N} \t]|(?:to|at|on|in|into|onto|for|from|of|by|with|and|or|then|but|so|until|till|twice|again|once|a|an|the|here|there|now|too|as|if|when|while|keys?|buttons?|arrows?)\b)/iu;
 /** An arrow, a list of them ("← and →", "←/→", "↑↓"), or a spaced "->": said as arrowSaid decides. */
 const ARROWS = /[←→↑↓](?:(?:[ \t]*,?[ \t]+(?:and|or)[ \t]+|[ \t]*[,/][ \t]*|[ \t]*)[←→↑↓])*|(?<=[ \t])->(?=[ \t])/gi;
 
@@ -308,11 +316,13 @@ export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: s
     .replace(/^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
     // Key chords as said ("Ctrl+Shift+T" is "Control Shift T", not "C T R L plus…"), and a path through menus or
     // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".
-    .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
+    // (An arrow key too: "Win+←" is "Windows key left arrow", never "Win plus left arrow": voice-speaking-c4-3.)
+    .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? ARROW[k] ?? k).join(" "))
     .replace(/\s*›\s*(?=\S)/g, ", then ")
     // Arrows as arrowSaid says them (voice-speaking-2), one after its own direction once ("up ↑" was "up up arrow"),
-    // but not one between two directions or sides ("from right → left" is "right to left": voice-speaking-v4-2).
-    .replace(/\b(up|down|left|right)[ \t]*([←→↑↓])(?![←→↑↓]|(?<=→)[ \t]*(?:up|down|left|right|top|bottom|centre|center|middle)\b)/gi, (m, word: string, a: string) => (DIRECTION[a] === word.toLowerCase() ? word : m))
+    // but not a "→" before another word ("from right → left" is "right to left", "top right → Settings" "top right to
+    // Settings": voice-speaking-v4-2).
+    .replace(/\b(up|down|left|right|back|forward)[ \t]*([←→↑↓])(?![←→↑↓])/gi, (m: string, word: string, a: string, at: number, all: string) => (!SAME_WAY[a].includes(word.toLowerCase()) || (a === "→" && !ONCE_BEFORE.test(all.slice(at + m.length, at + m.length + 24))) ? m : word))
     .replace(ARROWS, arrowSaid)
     // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
     .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ");

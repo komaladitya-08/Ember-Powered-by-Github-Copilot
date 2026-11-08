@@ -464,6 +464,18 @@ describe("SpeechStream", () => {
     for (const delta of [1, 4, 16]) {
       expect(streamed(path, delta), `${delta}`).toEqual(["Go to Network to Privacy and Security to Display to Additional mouse settings to System Services", "to Accessibility to Advanced and turn it off."]);
     }
+    // A long path is never cut just after an arrow, which would end a piece with "right arrow" (voice-speaking-2).
+    const after = "Go to System Services → Output → General → Privacy & Security → Sound → Mission Control → General and turn it off.";
+    for (const delta of [1, 4, 16]) {
+      const said = streamed(after, delta);
+      expect(said.join(" "), `${delta}`).toBe("Go to System Services to Output to General to Privacy and Security to Sound to Mission Control to General and turn it off.");
+      for (const piece of said) expect(piece, `${delta}`).not.toMatch(/arrow/);
+    }
+    const names = ["Network", "Privacy & Security", "Display", "Additional mouse settings", "System Services", "Accessibility", "Advanced", "Keyboard", "Shortcuts", "Mission Control", "General", "Login Items", "Sound", "Output"];
+    for (let seed = 0; seed < 200; seed++) {
+      const path = Array.from({ length: 5 + (seed % 4) }, (_, i) => names[(seed * 7 + i * 5) % names.length]).join(" → ");
+      for (const delta of [1, 4, 16]) for (const piece of streamed(`Go to ${path} and turn it off.`, delta)) expect(piece, `${seed} ${delta}`).not.toMatch(/arrow/);
+    }
     // An arrow at the start of a line is still its bullet, streamed too.
     for (const delta of [1, 4, 16]) expect(streamed("Here is what to do:\n→ Open the file\n→ Save it", delta), `${delta}`).toEqual(["Here is what to do:", "Open the file.\nSave it."]);
   });

@@ -87,8 +87,16 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["Press → twice, then Enter.", "Press right arrow twice, then Enter."],
     ["Go Settings → Privacy → Camera.", "Go Settings to Privacy to Camera."],
     ["Pages 5→10, then Back →Next, and A → B → C.", "Pages 5 to 10, then Back to Next, and A to B to C."],
-    ["Press Shift+→, or →.", "Press Shift+right arrow, or right arrow."],
+    ["Press Shift+→, or →.", "Press Shift right arrow, or right arrow."],
   ])("%j is said %j, an arrow in a list or named as a key never as 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["Press Win+← to snap the window to the left.", "Press Windows key left arrow to snap the window to the left."],
+    ["Press Alt+← to go back, and Alt+→ to go forward.", "Press Alt left arrow to go back, and Alt right arrow to go forward."],
+    ["Press Ctrl+→ to jump a word.", "Press Control right arrow to jump a word."],
+    ["Use Shift+↑ or Ctrl+Shift+↓ to select.", "Use Shift up arrow or Control Shift down arrow to select."],
+    ["Press Cmd + ↓ to go to the end.", "Press Command down arrow to go to the end."],
+  ])("%j is said %j, an arrow key in a chord as the other keys are (voice-speaking-c4-3)", (text, said) => expect(spokenText(text)).toBe(said));
 
   it.each([
     ["Move it from right → left.", "Move it from right to left."],
@@ -102,6 +110,21 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["Swipe right → to go back, or turn right → at the end.", "Swipe right to go back, or turn right at the end."],
     ["Click Next → to continue.", "Click Next right arrow to continue."],
   ])("%j is said %j, an arrow between two directions or before a name with its 'to' (voice-speaking-v4-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    // A path through the menu in a window's corner: the arrow after "right" is a step, said "to".
+    ["Click the three dots at the top right → Settings.", "Click the three dots at the top right to Settings."],
+    ["In Chrome, click ⋮ in the top-right → Settings → Privacy.", "In Chrome, click ⋮ in the top-right to Settings to Privacy."],
+    ["Go to the menu in the upper right → Settings → Appearance.", "Go to the menu in the upper right to Settings to Appearance."],
+    ["Scroll right → Next.", "Scroll right to Next."],
+    ["Swipe down from the top right → tap Wi-Fi.", "Swipe down from the top right to tap Wi-Fi."],
+    // Before "to", a preposition, "and", "then", "twice", a key's word or nothing more, it is said once, as is "back ←".
+    ["Turn right → then left, and swipe right → twice.", "Turn right then left, and swipe right twice."],
+    ["Press the right → key.", "Press the right key."],
+    ["Then go back ← to the start, or forward → to the end.", "Then go back to the start, or forward to the end."],
+    ["Swipe right →\nThen tap Done.", "Swipe right\nThen tap Done."],
+    ["Sales are up ↑ this month, and down ↓ in May.", "Sales are up this month, and down in May."],
+  ])("%j is said %j, an arrow after 'right' before any other word with its 'to' (voice-speaking-v4-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
   it.each([
     // A spaced hyphen between two amounts is a sum, not a range: a range was heard where the bubble shows a subtraction.

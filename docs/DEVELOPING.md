@@ -841,8 +841,10 @@ times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and fold
 last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
 "Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
 key" as "the right arrow key", "Press ← or →" as "left arrow or right arrow") or, before the word "arrow", by its
-direction ("the ← and → arrow keys" as "the left and right arrow keys"), an arrow between two words as "to", an arrow
-starting a line as its bullet, a range's dash as "to" ("$5-$10", "10:30–11:00", "5–10"; never a spaced hyphen between
+direction ("the ← and → arrow keys" as "the left and right arrow keys"), in a chord as the other keys are ("Win+←" as
+"Windows key left arrow"), an arrow between two words as "to" (after its own direction too, before any word but "to",
+a preposition and the like: "top right → Settings" as "top right to Settings", "Swipe right → to go back" with "right"
+once), an arrow starting a line as its bullet, a range's dash as "to" ("$5-$10", "10:30–11:00", "5–10"; never a spaced hyphen between
 amounts, a sum, which is "minus" before "=": "$2,000 - $1,500 = $500"), and other emoji and typed
 smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European

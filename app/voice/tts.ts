@@ -340,7 +340,8 @@ export class SpeechStream {
     // Only on the answer's first line, as a sentence: not in a list, a heading, a quote or a table.
     if (head.includes("\n") || /^[ \t]*(?:[|#>*+-]|\d+[.)])/.test(head)) return 0;
     // Never inside a code span or a link's words: cut there, its backtick or its address would be said (voice-speaking-r2).
-    return Math.max(0, joinAt(this.raw, lead + FIRST_MIN, lead + FIRST_MAX, at => !speechMarkupOpen(this.raw.slice(0, at))));
+    // Nor just after an arrow, which ended the piece with "right arrow" (voice-speaking-2: a third of long paths).
+    return Math.max(0, joinAt(this.raw, lead + FIRST_MIN, lead + FIRST_MAX, at => !/(?:[←→↑↓]|->)[ \t]*$/.test(this.raw.slice(Math.max(0, at - 4), at)) && !speechMarkupOpen(this.raw.slice(0, at))));
   }
 
   /**
