@@ -13,7 +13,7 @@ import { lexPosix } from "../../app/main/commands/lex-posix";
 import { lexPowerShell } from "../../app/main/commands/lex-powershell";
 import { lexCmd } from "../../app/main/commands/lex-cmd";
 import { lit, type Arg } from "../../app/main/commands/words";
-import { withRealPaths } from "../../app/main/commands/scripts";
+import { withoutReadFlow, withRealPaths } from "../../app/main/commands/scripts";
 import { contextOf, loadCorpus, problemsOf, runCase, type Family } from "../fixtures/commands/corpus";
 
 const FAMILIES: Family[] = ["posix", "powershell", "cmd", "wsl"];
@@ -554,6 +554,21 @@ describe("the card's words from the classifier (review #214)", () => {
     expect(says("cd ~/Documents && unzip /tmp/a.zip")).toEqual(["Unpacks /tmp/a.zip over files in ~/Documents."]);
     expect(says("cd ~/Documents && cd ~/proj && rm -rf *")).toEqual(["Deletes everything in the current folder."]);
     expect(says("cd \"$X\" && rm -rf *")).toContain("Deletes everything in a folder Ember can't name.");
+  });
+
+  it("says a loop's variable as the files the loop names, never as shell text like \"$f\" (commands-remote-c2-3)", () => {
+    // As the flow judges a loop: by the commands in it.
+    const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.map(f => f.says);
+    expect(says("for f in *.log; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
+    expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes each file the loop names and everything in it."]);
+    expect(says("while IFS= read -r l; do rm -rf \"$l\"; done < list.txt")).toEqual(["Deletes each file listed in its input and everything in it."]);
+    expect(says("find . -name '*.log' | while read -r f; do rm \"$f\"; done")).toEqual(["Deletes each file listed in its input."]);
+    // Anything else stays as written: a variable that isn't the loop's, or more than the variable.
+    expect(says("rm \"$X\"")).toEqual(["Deletes \"$X\"."]);
+    expect(says("for f in *.log; do rm \"$f.bak\"; done")).toEqual(["Deletes \"$f.bak\"."]);
+    for (const cmd of ["for f in *.log; do rm \"$f\"; done", "while read -r l; do rm \"$l\"; done < list.txt"]) {
+      for (const l of says(cmd)) expect(l, cmd).not.toMatch(/\$/);
+    }
   });
 
   it("names a path in the home folder from ~, as the card's header does, and keeps the whole path elsewhere (commands-remote-r2-3)", () => {

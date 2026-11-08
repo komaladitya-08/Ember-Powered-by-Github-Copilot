@@ -257,6 +257,8 @@ class Classifier {
   envChanged = false;
   /** The commands (by index) given a file or text to read (`< list.txt`, a here-document or here-string). */
   stdinGiven = new Set<number>();
+  /** Variables a loop sets for each file it names (`for f in …`) or each line it reads (`read -r l`), for the card. */
+  loopVars = new Map<string, "for" | "read">();
 
   constructor(readonly ctx: ClassifyContext, readonly topShell: ShellId) {}
 
@@ -268,7 +270,7 @@ class Classifier {
     const wrappers = this.commands[this.at]?.wrappers ?? [];
     // A POSIX shell's home folder is said as ~, as the card's header says it (commands-remote-r2-3).
     const home = this.topShell === "bash" || this.topShell === "zsh" || this.topShell === "sh" ? this.ctx.home : null;
-    const says = cardWords(said, o.objects ?? [], wrappers, this.ctx.cwd || null, this.ctx.os, home);
+    const says = cardWords(said, o.objects ?? [], wrappers, this.ctx.cwd || null, this.ctx.os, home, this.loopVars);
     // "If it exists" is asked of the file the kernel opens: `> sub/../x` overwrites the x beside sub's target.
     const opened = (objs: readonly Obj[], p: string): string => objs.find(ob => ob.abs === p && ob.phys !== undefined)?.phys ?? p;
     const ifExists = o.ifExists === undefined ? undefined : opened(o.objects ?? [], o.ifExists);
@@ -284,7 +286,7 @@ class Classifier {
     if ((o.objects ?? []).some(ob => ob.realDiffers) && !widening.includes("real-path")) widening.push("real-path");
     const f: Finding = { cls, rule, says, program, objects, widening, at: this.at };
     if (ifExists !== undefined) f.ifExists = ifExists;
-    if (o.inFolder) f.inFolder = { says: cardWords(o.inFolder.says, o.inFolder.objects, wrappers, this.ctx.cwd || null, this.ctx.os, home), objects: shown(o.inFolder.objects), ifExists: opened(o.inFolder.objects, o.inFolder.ifExists) };
+    if (o.inFolder) f.inFolder = { says: cardWords(o.inFolder.says, o.inFolder.objects, wrappers, this.ctx.cwd || null, this.ctx.os, home, this.loopVars), objects: shown(o.inFolder.objects), ifExists: opened(o.inFolder.objects, o.inFolder.ifExists) };
     this.findings.push(f);
   }
 
@@ -1941,20 +1943,25 @@ const objsOf = (h: H, list: Arg[], use: PathUse): Obj[] => list.map(a => h.e.use
 /** Objects for the card: as written; an unresolved one by its text. */
 /**
  * A finding's words with each of its objects that is a dot folder said as shownPath says it, wherever it stands as a
- * word of its own ("under .." is "under" and "." and the full stop), find's `{}` as each file it finds, and a path in
- * `home` (a POSIX shell's home folder) from ~ ("~/Documents/report.pdf", commands-remote-r2-3). Only the words change:
- * the objects, their paths and the matching stay as written.
+ * word of its own ("under .." is "under" and "." and the full stop), find's `{}` as each file it finds, a loop's
+ * variable as the files the loop names (commands-remote-c2-3), and a path in `home` (a POSIX shell's home folder) from
+ * ~ ("~/Documents/report.pdf", commands-remote-r2-3). Only the words change: the objects, their paths and the matching
+ * stay as written.
  */
-function cardWords(says: string, objects: readonly Obj[], wrappers: readonly string[], start: string | null = null, os: OS = "linux", home: string | null = null): string {
+function cardWords(says: string, objects: readonly Obj[], wrappers: readonly string[], start: string | null = null, os: OS = "linux", home: string | null = null, loops: ReadonlyMap<string, "for" | "read"> = new Map()): string {
   let out = says;
   for (const text of new Set(objects.map(o => o.text))) {
     let shown = shownPath(text);
+    // `"$f"` alone, f a loop's variable: each file the loop names, or each one listed in what it reads.
+    const v = /^"?\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))"?$/.exec(text);
+    const loop = v ? loops.get(v[1] ?? v[2]) : undefined;
+    if (loop) shown = loop === "for" ? "each file the loop names" : "each file listed in its input";
     if (shown === text) continue;
     // After a cd in the same command (`cd ~ && git checkout .`), a dot folder isn't the one the card says the command
     // starts in: it is named (commands-remote-v1).
     const abs = objects.find(o => o.text === text)?.abs ?? null;
     if (abs !== null && start !== null && /^\.\.?[\\/]*$/.test(text)) shown = folderWords(abs, start, os);
-    const esc = text.replace(/[.\\/]/g, c => `\\${c}`);
+    const esc = text.replace(/[.*+?^${}()|[\]\\/]/g, c => `\\${c}`);
     out = out.replace(new RegExp(`(^|[\\s(])${esc}(?=[\\s,;:)]|\\.?$)`, "g"), (_m, pre: string) => `${pre}${shown}`);
   }
   if (objects.some(o => o.text === "{}") && wrappers.some(w => /^find -(exec|execdir|ok|okdir)$/.test(w))) {
@@ -3381,6 +3388,7 @@ reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bi
   if (h.key === "for" || h.key === "select") {
     h.e.envChanged = true;
     const name = h.args[0]?.v ?? null;
+    if (name !== null && /^[A-Za-z_]\w*$/.test(name)) h.e.loopVars.set(name, "for");
     if (name === null || RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   }
   // A keyword in front of a command (`then rm x`, `do rm x`): the command after it is classified too.
@@ -3391,6 +3399,15 @@ reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bi
 reg(NATIVE, ["!"], h => { if (h.sc.family === "posix") h.e.unwrap(h, h.args, "!"); else generic(h); });
 reg(NATIVE, ["read", "mapfile", "readarray"], h => {
   if (h.s.stdin === null && h.key === "read") h.e.unclear("unclear.interactive", SAYS.interactive);
+  // The names it sets from each line it reads (`read -r l`; -a, -d, -n, -N, -p, -t, -u, -i take a value).
+  if (h.key === "read") {
+    for (let k = 0; k < h.args.length; k++) {
+      const v = h.args[k].v;
+      if (v === null) continue;
+      if (/^-[a-zA-Z]+$/.test(v)) { if (/[adnNptui]$/.test(v)) k++; continue; }
+      if (/^[A-Za-z_]\w*$/.test(v)) h.e.loopVars.set(v, "read");
+    }
+  }
   // mapfile's callback (-C) is shell text it runs for every line.
   if (h.key !== "read" && h.args.some(a => a.v !== null && /^-[A-Za-z]*C/.test(a.v))) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
 });
