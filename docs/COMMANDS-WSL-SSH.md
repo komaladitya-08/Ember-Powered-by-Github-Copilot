@@ -180,7 +180,10 @@ Ember stops and asks before a command that:
   `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
   `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
   saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
-  folder either); a listing or a read never does),
+  folder either); a listing or a read never does; and a patch this task downloaded or fetched applied with `patch`,
+  `git apply` or `git am`, or code pulled or fetched from an address rather than the repository's own remote (`git
+  pull https://…`), marks the files it changes the same way, so the next `make`, `npm test` or `bash build.sh`
+  asks),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),

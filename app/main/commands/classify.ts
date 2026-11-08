@@ -1010,6 +1010,14 @@ class Classifier {
    */
   downloadUnnamed(folder: string | null, sc: Scope): void {
     this.add("destroy", "download.unnamed", SAYS.downloadsUnnamed);
+    this.markUnnamed(folder, sc);
+  }
+
+  /**
+   * Records that files of names Ember can't tell in `folder` (or anywhere) may hold code this task fetched: a patch it
+   * downloaded applied there, a pull from an address (UNNAMED_DOWNLOAD; commands-remote-c5-4). It asks nothing itself.
+   */
+  markUnnamed(folder: string | null, sc: Scope): void {
     const mod = sc.path.flavour === "win32" ? win32 : posix;
     const at = folder === null ? null
       : isAbsolute(folder, sc.path.flavour) || (folder.startsWith("~") && sc.home) || sc.cwd ? resolveTargetPath(folder, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" })
@@ -4611,9 +4619,23 @@ git(["push"], (h, widen) => {
 });
 
 // fetch, pull and ls-remote run --upload-pack's program (on this computer for a local or ext:: remote).
-git(["fetch", "pull", "ls-remote"], h => {
+const gitFetch = (fetches: boolean): GitFn => h => {
   if (h.args.some(a => /^--(upload-pack|exec)(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.git-receive-pack", "It runs a program Ember can't see.");
   h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
+  // Code fetched from an address rather than a remote the repository names (`git pull https://…`, `git fetch <url> &&
+  // git merge FETCH_HEAD`) can change any file of the work tree, as a clone's are its (commands-remote-c5-4).
+  // Only the repository word is an scp-style address: a refspec after it (`main:main`) looks like one.
+  const ops = h.args.filter(a => !isOption(a));
+  if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? ""))) h.e.markUnnamed(".", h.sc);
+};
+git(["fetch", "pull"], gitFetch(true));
+git(["ls-remote"], gitFetch(false));
+// apply and am change the work tree's files with a patch: one this task downloaded marks them (commands-remote-c5-4).
+git(["apply", "am"], h => {
+  const files = h.args.filter(a => !isOption(a));
+  h.e.readArgs(files, h.sc);
+  if (h.args.some(a => /^--(check|stat|numstat|summary|show-current-patch|abort|skip|quit)$/.test(a.v ?? ""))) return;
+  if (appliesDownload(h, files)) h.e.markUnnamed(".", h.sc);
 });
 // diff, log and friends write their output to a file with --output; format-patch writes into -o's folder.
 git(["diff", "log", "show", "format-patch", "range-diff", "whatchanged", "diff-tree", "diff-files", "diff-index", "shortlog"], h => {
@@ -6459,7 +6481,22 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   // The file it changes: an edit inside the user's work, judged by §3.6's rules like `sed -i`.
   if (file) h.e.usePath(file, "write", sc);
   if (patchFile) h.e.usePath(patchFile, "read", sc);
+  // A patch this task downloaded, or one fetched into it: what it changes is that download (commands-remote-c5-4).
+  const patches = [...values(p, "i", "input").flatMap(f => (f ? [lit(f)] : [])), ...(patchFile ? [patchFile] : [])];
+  if (appliesDownload(ph, patches)) {
+    if (file?.v) h.e.carryDownload(file.v, sc);
+    else h.e.markUnnamed(".", sc);
+  }
 });
+/**
+ * Whether a patch tool applies something this task downloaded: a patch file it downloaded, or input fetched or read
+ * from a download earlier in the pipeline (`curl … | git apply`, `cat x.patch | patch -p1`, `patch < x.patch`).
+ */
+function appliesDownload(h: H, patches: readonly Arg[]): boolean {
+  if (patches.some(f => h.e.isDownloaded(f, h.sc))) return true;
+  if ((h.s.stdin === "pipe" || h.s.stdin === "heredoc") && patches.length === 0 && (h.s.fetchBefore || h.e.pipe.carried === true)) return true;
+  return h.s.redirs.some(r => r.kind === "read" && r.target !== null && h.e.isDownloaded(r.target, h.sc));
+}
 reg(NATIVE, ["certutil"], h => {
   // NSS's certutil (Linux, macOS): a capital letter names its command; adding, changing or deleting a certificate or
   // key changes what this computer trusts (review #108), and -W changes the store's password.
