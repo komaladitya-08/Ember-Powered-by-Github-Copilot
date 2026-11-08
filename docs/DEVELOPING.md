@@ -882,7 +882,9 @@ regression alongside the Electron smoke.
   4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main threads. Most of the
   drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open decisions (docs/ASSISTANT.md).
 - `--max-cpu 16 --max-pss 950` is the budget for a change: past either it says so and exits 1. It sits above those
-  figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's.
+  figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job
+  runs it with that budget as its last step (the same run here, 2026-11-08: 841 MB and 12.3 % with the machine
+  shared, in 57 s).
 
 ### Connecting Copilot
 

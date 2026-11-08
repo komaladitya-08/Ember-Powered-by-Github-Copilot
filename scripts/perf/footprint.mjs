@@ -3,7 +3,7 @@
 // memory (PSS from /proc: shared pages counted fairly, unlike RSS or working set) and CPU, and each page's main-thread
 // CPU through DevTools. Prints a table and the same as JSON, to compare a change against main on the same computer.
 // Linux only (it reads /proc); run it under a display and a session bus, as CI's el8 job runs Ember:
-//   dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs [--settle 35] [--sample 20] [--sound] [--max-cpu 14] [--max-pss 1100]
+//   dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs [--settle 35] [--sample 20] [--sound] [--max-cpu 16] [--max-pss 950]
 // --sound feeds Chromium's fake microphone tone instead of silence (speech detection never rests). --max-cpu (% of one
 // core) and --max-pss (MB) are the budget: past either, it says so and exits 1 (docs/DEVELOPING.md records the figures).
 // The sample is of Ember awake at rest (it dozes after 3 minutes with the pointer still). Needs `npm run build`
