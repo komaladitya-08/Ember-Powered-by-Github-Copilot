@@ -754,7 +754,7 @@ export type ProviderDone = { ok: true } | { ok: false; why: string };
  * `ids`: the models it names, as suggestions for the model fields (at most 50, each a MODEL_ID). `cause`: nothing
  * answered at all (main's TestResult), so the address or the network is what to check.
  */
-export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" };
+export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
 /**
  * Details typed for the user's own provider but not saved, checked before they replace the details in use (first run's

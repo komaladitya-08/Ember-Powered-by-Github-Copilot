@@ -1043,6 +1043,11 @@ the new host waits in its field. "I agree" checks the held details with the same
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
 names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
 main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
+A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
+chat only do: the test's `cause: "no-list"`, which the start probe doesn't count as down either) is adopted the same
+way, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
+(integrations-r4-2); one that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
+answers with another error changes nothing.
 An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so

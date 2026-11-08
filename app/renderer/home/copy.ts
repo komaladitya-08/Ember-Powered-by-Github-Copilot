@@ -526,6 +526,9 @@ export const providerHeldKey = (to: string | null) => (to ? `Ember saves this ke
 export const providerCardShown = (host: string) => `Read the note above: Ember sends nothing to ${host} until you agree.`;
 /** Said once the card is agreed to, in place of the line above (integrations-r4). */
 export const providerAgreedText = (host: string) => `Agreed. Ember now sends your requests to ${host}.`;
+/** Said instead when a held edit's new host answered but lists no models there, so it is used as typed (integrations-r4-2). */
+export const providerAgreedUnlisted = (host: string, model: string | null) =>
+  `Agreed. ${host} answered but lists no models, so Ember asks it for ${model ?? "the models"} as typed.`;
 
 /** Why Test connection waits, beside it (its aria-describedby), or null when it can be pressed or the organisation set it. */
 export function providerTestWaits(o: { host: string | null; agreed: boolean; managed: boolean }): string | null {

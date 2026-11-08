@@ -26,7 +26,7 @@ import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
 import { friendlyError, lostWords } from "../../app/main/agent/presenter";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -907,6 +907,9 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerCardShown("127.0.0.1:18108")).toBe("Read the note above: Ember sends nothing to 127.0.0.1:18108 until you agree.");
     // Once agreed, the line says where requests go now, never that nothing goes there (integrations-r4).
     expect(providerAgreedText("127.0.0.1:18108")).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108.");
+    // A held edit adopted though the new host lists no models: what Ember will ask it for (integrations-r4-2).
+    expect(providerAgreedUnlisted("gw.example.com", "gpt-4.1")).toBe("Agreed. gw.example.com answered but lists no models, so Ember asks it for gpt-4.1 as typed.");
+    expect(providerAgreedUnlisted("gw.example.com", null)).toBe("Agreed. gw.example.com answered but lists no models, so Ember asks it for the models as typed.");
     expect(providerTestWaits({ host: null, agreed: false, managed: false })).toBe("Enter the endpoint to test it.");
     expect(providerTestWaits({ host: "models.example.com", agreed: false, managed: false })).toBe("Test connection works once you agree to the note above for models.example.com.");
     expect(providerTestWaits({ host: "models.example.com", agreed: true, managed: false })).toBeNull();

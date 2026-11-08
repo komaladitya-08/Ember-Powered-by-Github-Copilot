@@ -346,6 +346,8 @@ describe("AgentHost with the user's own model provider", () => {
     expect(providerDown({ ok: false, why: "x", cause: "refused" }, "models.example.com", false)).toBe("Ember can't reach models.example.com. Check the address and the network: Ember will try again in a moment.");
     // Something is there: the key, the model list or a certificate is the request's to explain.
     expect(providerDown({ ok: false, why: "models.example.com didn't accept the API key. Check it, or replace it." }, "models.example.com", false)).toBeNull();
+    // An answer with no model list isn't down either (integrations-r4-2).
+    expect(providerDown({ ok: false, why: "localhost:11434 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" }, "localhost:11434", true)).toBeNull();
     expect(providerDown({ ok: true, host: "127.0.0.1:18109", models: null }, "127.0.0.1:18109", true)).toBeNull();
     // Copilot's own words stay as they were.
     expect(idleWord({ phase: "error", reason: "network" })).toBe("Offline");
