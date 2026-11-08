@@ -98,6 +98,10 @@ chmod +x Ember-0.1.1-x86_64.AppImage
 ./Ember-0.1.1-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
 
+Start Ember with `./Ember-0.1.1-x86_64.AppImage` (`--ask` after it opens the ask box). It adds no entry to your apps
+menu, so run the file again to start Ember again or to open its settings while it runs. The RPM installs a menu
+entry, which also has **Ask Ember** when you right-click it.
+
 The AppImage carries the speech models too, as the RPM does, so nothing is downloaded when voice is turned on. Should
 Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still listens, replies in the system's voice or
 takes no spoken yes meanwhile, and settings offers just that one to download. The AppImage needs `fusermount` to start
@@ -208,7 +212,8 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 
 ## First steps
 
-1. Start Ember from your apps (Linux), the Start menu (Windows) or Applications (macOS). Its first window takes you
+1. Start Ember from your apps (Linux), the Start menu (Windows) or Applications (macOS); the AppImage by running the
+   file, and the npm launcher with `ember`. Its first window takes you
    through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree), **Sign
    in to GitHub** (or **Use my own provider**), **Checking this computer** (what to fix, with a button where Ember can
    do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Your Ember**, a summary
@@ -216,9 +221,11 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 2. To ask, press Ctrl+Alt+Space (on Windows Win+Alt+Space, on a Mac Control+Shift+Command+Space; see **Shortcuts**),
    type your request and press Enter. Ember answers in its bubble beside your cursor, and asks "May I?" before it does
    something in an app.
-3. To stop, press Ctrl+Alt+X or say “Ember, stop”: everything stops at once.
+3. To stop, press Ctrl+Alt+X (on Windows Win+Alt+X, on a Mac Control+Shift+Command+X) or say “Ember, stop”:
+   everything stops at once.
 4. If something doesn't work, run the setup check (`ember doctor`, the AppImage's `doctor`, `.\ember-doctor.cmd` on
-   Windows, or the `open` command above on a Mac), or open Ember's settings with Ctrl+Alt+E.
+   Windows, or the `open` command above on a Mac), or open Ember's settings with Ctrl+Alt+E (on Windows Win+Alt+E, on
+   a Mac Control+Shift+Command+E) or by starting Ember again.
 
 ## Hear about new versions
 
@@ -324,13 +331,13 @@ check says so ("Ctrl+Alt+Space is taken by another app, so Ask Ember is
 Ctrl+Alt+Shift+Space"), and the greeting, the handle's menu, settings and every hint name the chord Ember holds.
 
 If another app holds the fallback too, the setup check says which, and Ember keeps trying to get them. Meanwhile click
-Ember's handle in its corner, or from the keyboard start Ember again (from your apps, the Start menu or
-Applications) or press the settings shortcut: settings then opens at **Ask Ember…** and **Stop everything**, at the
+Ember's handle in its corner, or from the keyboard start Ember again (from your apps, the AppImage, `ember`, the Start
+menu or Applications) or press the settings shortcut: settings then opens at **Ask Ember…** and **Stop everything**, at the
 top of **Home**. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar uses Win+Alt+M by
 default.
 
 **Ask Ember** is also in the system's own launcher, whatever another app holds: right-click Ember in the dash or the
-app grid (Linux), Ember's taskbar icon (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Windows,
+app grid (Linux, with the RPM), Ember's taskbar icon (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Windows,
 Ember has a taskbar icon while its settings, command, or password and consent window is open, or once you pin it there: right-click
 Ember in the Start menu and pin it to the taskbar. On Linux and Windows it starts Ember with `--ask` (`ember --ask`,
 `Ember.exe --ask`), which opens the ask box, starting Ember first if it isn't running (settings instead until Ember is
@@ -372,7 +379,7 @@ and VoiceOver on a Mac. While one runs:
 | Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds it and its fallback: **Ask Ember…** in settings, at the top of **Home**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |
 | Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good. A question about typing a long text shows all of it in a box under it and allows only once all of it has been in view: until then Ctrl+Alt+Y shows the next part, and once it has, a moment later, Ctrl+Alt+Y pressed again allows |
 | Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds it and its fallback: **Stop everything** at the top of settings' **Home** |
-| Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
+| Open settings | The settings shortcut, or start Ember again from your apps, the AppImage, `ember`, the Start menu or Applications |
 | What the handle's menu does | Settings' **Home**: **Ask Ember…** and **Stop everything**. Settings › **Your Ember › Ember on screen**: **Hide Ember until it needs me** for **Hide Ember**, **Follow my cursor** for **Stay put**, **Handle position** for **Move to the other side**, and **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
 | A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command; or say “Ember, allow” (Voice Match on) or “Ember, not now” then |
 | Any question of Ember's | Say “Ember, allow” (only with **Answer questions with my voice (Voice Match)** on and recognising you) or “Ember, not now” (anyone). Never “Always” by voice. **Apps & privacy › Work without asking** has Ember tell you instead of asking before routine steps; risky ones still ask |
@@ -450,7 +457,11 @@ sh ~/Library/Application\ Support/Ember\ Remote/versions/*/uninstall.sh    # mac
 Report what doesn't work, or what is hard to use, on the
 [issue tracker](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues). Settings'
 **About this build** shows the same address under **Report a problem**, to copy, and the setup check's advice points
-there when only a report can help.
+there when only a report can help. **About this build** also shows Ember's **Log file** (`ember.log`), with **Copy** and
+**Show in Files** (**Show in File Explorer** on Windows, **Show in Finder** on a Mac): look it over, then attach it to
+your report. What to try first for common problems is in the developer guide's troubleshooting tables, for
+[Linux](docs/DEVELOPING.md#9-troubleshooting), [Windows](docs/DEVELOPING.md#109-troubleshooting) and
+[macOS](docs/DEVELOPING.md#118-troubleshooting).
 
 ## Develop
 
@@ -461,7 +472,7 @@ npm ci && npm run dev      # needs Node 22 and npm 11, see docs/DEVELOPING.md
 - **[PLAN.md](PLAN.md)**: the frozen v1 plan, task list and progress (Windows and macOS: milestone M11; SSH, WSL and
   commands: M12)
 - [docs/DEVELOPING.md](docs/DEVELOPING.md): set up a development machine (RHEL 8.4 §1–§9, Windows §10, macOS §11;
-  SSH, WSL and commands §14)
+  SSH, WSL and commands §14), and troubleshooting (§9, §10.9, §11.8)
 - [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md): commands, WSL and other computers, for users and administrators
 - [CHANGELOG.md](CHANGELOG.md): release notes
 - [docs/RESEARCH.md](docs/RESEARCH.md): background research and evidence

@@ -29,7 +29,7 @@ import * as targetCopy from "../../app/renderer/overlay/target-copy";
 import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
-import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
+import { MIC_PROBLEM_MENU, micBadge } from "../../app/shared/mic";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import { ISSUES_URL } from "../../app/shared/support";
 import { STEP_TEXT, WELCOME_STEPS } from "../../app/renderer/home/welcome-copy";
@@ -512,9 +512,49 @@ describe("README.md", () => {
     const first = flat(section(readme, "First steps"));
     expect(first).toContain(`${WELCOME_STEPS.length} steps`);
     for (const step of ["consent", "sign-in", "checks", "try"] as const) expect(first, step).toContain(`**${STEP_TEXT[step].title}**`);
-    // The keys a first-time person needs, Linux's as the other sections name them (Shortcuts has every OS's).
-    for (const id of ["ask", "stop"] as const) expect(first, id).toContain(SHORTCUTS.linux[id].label);
+    // The keys a first-time person needs, every OS's: Ember holds only its own OS's, so Linux's alone is wrong on the
+    // others (install-docs-7).
+    for (const os of ["linux", "win32", "darwin"] as const) for (const id of ["ask", "stop", "settings"] as const) expect(first, `${os} ${id}`).toContain(SHORTCUTS[os][id].label);
     expect(first).toContain("`ember doctor`");
+  });
+
+  it("says how to start the AppImage, which adds nothing to the apps menu, and how to reach settings from it (install-docs-r3)", () => {
+    // Only the RPM installs a desktop entry: the AppImage's is inside the image, and Ember writes none of its own.
+    expect(read("packaging/rpm/ember.spec")).toContain("%{_datadir}/applications/ember.desktop");
+    expect(read("scripts/package/appimage.sh")).toMatch(/cp "\$root\/packaging\/ember\.desktop" "\$app\/ember\.desktop"/);
+    const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
+    expect(linux).toContain(`Start Ember with \`./Ember-${version}-x86_64.AppImage\``);
+    expect(linux).toContain("It adds no entry to your apps menu, so run the file again to start Ember again or to open its settings while it runs");
+    // First steps and the keyboard routes name it beside the apps menu, and the npm launcher's `ember`.
+    expect(flat(section(readme, "First steps"))).toContain("the AppImage by running the file, and the npm launcher with `ember`");
+    expect(flat(section(readme, "Shortcuts"))).toMatch(/start Ember again \(from your apps, the AppImage, `ember`, the Start menu or Applications\)/);
+    expect(flat(section(readme, "Shortcuts"))).toContain("right-click Ember in the dash or the app grid (Linux, with the RPM)");
+    expect(flat(section(readme, "Accessibility"))).toContain("or start Ember again from your apps, the AppImage, `ember`, the Start menu or Applications");
+  });
+
+  it("says where Ember's log is for a report, and points to the troubleshooting tables, which match the windows (install-docs-c1-2)", () => {
+    const report = flat(section(readme, "Report a problem"));
+    // About this build's facts (home/main.ts): the log file, with Copy and the file manager's Show in ….
+    const home = read("app/renderer/home/main.ts");
+    expect(home).toContain('["Log file", status.logFile, "log"]');
+    expect(report).toContain("**About this build** also shows Ember's **Log file** (`ember.log`), with **Copy** and **Show in Files**");
+    // Each OS's troubleshooting section, by the anchor GitHub gives its heading.
+    const dev = read("docs/DEVELOPING.md");
+    const anchors = new Set(dev.split("\n").filter(l => /^#{2,3} /.test(l)).map(l => l.replace(/^#+ /, "").toLowerCase().replace(/[^\w\- ]/g, "").replace(/ /g, "-")));
+    const links = [...report.matchAll(/\(docs\/DEVELOPING\.md#([\w-]+)\)/g)].map(m => m[1]);
+    expect(links).toEqual(["9-troubleshooting", "109-troubleshooting", "118-troubleshooting"]);
+    for (const a of links) expect([...anchors], a).toContain(a);
+    // The Develop list says the developer guide has them.
+    expect(flat(section(readme, "Develop"))).toMatch(/troubleshooting/i);
+    // §9's wake-word row: the words Settings and the handle show while listening, and the models the packages carry.
+    const row = section(dev, "9. Troubleshooting").split("\n").find(l => l.startsWith("| Ember doesn't react to “Hey Ember”")) ?? "";
+    expect(row).toContain(`the state must say “${micBadge("waiting")?.label}”`);
+    expect(row).not.toMatch(/the models must be downloaded/);
+    // §5: a first `npm run dev` opens first run, whose checking step is the setup check.
+    const run = flat(section(dev, "5. Run it"));
+    expect(run).not.toMatch(/opens with a \*\*Setup check\*\*/);
+    expect(run).toContain(`opens first run (“${STEP_TEXT.hello.title}”)`);
+    expect(run).toContain(`**${STEP_TEXT.checks.title}**`);
   });
 
   it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {

@@ -80,8 +80,8 @@ npm ci
 npm run dev
 ```
 
-The Ember window opens with a **Setup check**. Every row should be green on RHEL 8.4
-with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
+The Ember window opens first run (“Hi, I'm Ember.”); its **Checking this computer** step is the setup check, and every
+row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 `npx install-electron` and try again.
 
 | Command | What it does |
@@ -1252,7 +1252,7 @@ On Linux (Windows: §10.9, macOS: §11.8):
 | `The SUID sandbox helper binary was found, but is not configured correctly` | User namespaces are disabled (common on STIG-hardened machines; check `sysctl user.max_user_namespaces`, 0 means disabled). For development only: `npx electron . --no-sandbox`. The RPM installs the setuid sandbox helper, so installed Ember works there; `ember doctor` checks it. |
 | `npm ci` fails with `edgesOut` | Upgrade npm: `sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2` for the Node in /opt/node22 (§3); a Node of your own (nvm, a user prefix) upgrades without sudo. `EACCES` there means /opt/node22 isn't root's: `sudo chown -R root:root /opt/node22` |
 | Electron download fails | `npx install-electron` |
-| Ember doesn't react to “Hey Ember” | Check the **Voice** section: the models must be downloaded and the state must say “Listening for ‘Hey Ember’”. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
+| Ember doesn't react to “Hey Ember” | Check the **Voice** section: the speech models must be there (the packages carry them; a development build downloads them) and the state must say “Listening for “Ember””. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
 | "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf` |
 | "Copilot isn't answering. Ember will try again in a moment." | The Copilot runtime started but didn't answer a step of connecting in time (30 s to start or open the conversation, 20 s for the sign-in check or the model list). Ember stops it and tries again after 15 s, 30 s, then every minute; `ember.log` has `agent.start_failed` with `why: "timeout"` and the step. A proxy or VPN that drops GitHub's traffic without refusing it does this: check `HTTPS_PROXY` and the system proxy |
 | Home says "Ember closed unexpectedly last time" | Ember's main process ended without quitting (a crash, `kill -9`, the computer losing power): the log says `app.previous_run_ended` with when that run started, and its last lines are what it was doing. That run's conversation is deleted at this start, as after any crash. If it keeps happening, report it with `ember.log` (see "Sharing a log") |
