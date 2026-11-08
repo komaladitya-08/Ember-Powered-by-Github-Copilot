@@ -1125,6 +1125,49 @@ describe("'Ember, stop' is checked", () => {
   });
 });
 
+describe("while Voice Match is taught, only the kill phrase is heard (stopsOnly)", () => {
+  /**
+   * The engine as the voice process runs it then (stopsOnly, the VAD the enrolment's): the spotter takes `keyword` 0.5 s
+   * into a phrase, as the real one takes the bare name in "Ember, stop" and "Hey Ember" in "Hey Ember, stop", and the
+   * recognizer hears `heard`. `speaking`: Ember is speaking meanwhile.
+   */
+  const teach = (keyword: string, heard: string, o: { speaking?: boolean } = {}) => {
+    const b = fake([heard, heard]);
+    b.spot = f => (f[0] === 3 ? [keyword] : []);
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+    e.cancel();
+    e.stopsOnly(true);
+    if (o.speaking) e.selfSpeaking(true);
+    const voice = new Float32Array(512).fill(0.05), spotted = voice.slice();
+    spotted[0] = 3;
+    for (let i = 0; i < 80; i++) { c.t += 32; e.feed(frame(0)); }
+    for (let i = 0; i < 16; i++) { c.t += 32; e.feed(voice); }
+    c.t += 32; e.feed(spotted);
+    for (let i = 0; i < 10; i++) { c.t += 32; e.feed(voice); }
+    for (let i = 0; i < 50; i++) { c.t += 32; e.feed(frame(0)); }
+    return events;
+  };
+
+  it("stops on “Ember, stop”, though the real spotter takes the bare name first (voice-listening-r1)", () => {
+    for (const heard of ["Ember, stop.", "Ember stopped.", "Hey, Amber stop."]) expect(teach("ember", heard), heard).toEqual([{ type: "stop" }]);
+  });
+
+  it("stops on “Hey Ember, stop”, which the spotter hears as “Hey Ember”, also while Ember speaks (voice-listening-r1)", () => {
+    expect(teach("hey_ember", "Hey Ember, stop.")).toEqual([{ type: "stop" }]);
+    expect(teach("hey_ember", "Hey Ember, stop.", { speaking: true })).toEqual([{ type: "stop" }]);
+    expect(teach("ember", "Ember, stop!", { speaking: true })).toEqual([{ type: "stop" }]);
+  });
+
+  it("takes the teaching's phrases, and the name inside other words, as nothing: no stop, wake or request (voice-listening-r1)", () => {
+    for (const [keyword, heard] of [["hey_ember", "Hey Ember, open my calendar."], ["hey_ember", "Hey Ember, what's on my schedule today?"], ["ember", "I remember the September weather."], ["hey_ember", "Hey Ember, turn on night light."]] as const) {
+      expect(teach(keyword, heard), heard).toEqual([]);
+      expect(teach(keyword, heard, { speaking: true }), `${heard} (while Ember speaks)`).toEqual([]);
+    }
+  });
+});
+
 describe("the speakers' stream", () => {
   it("is only spotted while a wake or stop is checked: their last 3 s, then as they play, until it's decided", () => {
     const b = fake([]);

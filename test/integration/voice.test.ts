@@ -389,6 +389,31 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     }
   });
 
+  it("stops on “Ember, stop” and “Hey Ember, stop” while Voice Match is taught, and takes its phrases as nothing (voice-listening-r1)", () => {
+    // The engine as the voice process runs it then: stopsOnly, the VAD fed apart from it (the enrolment's). The spotter
+    // takes the bare name in "Ember, stop" and "Hey Ember" in "Hey Ember, stop": only "ember_stop" counted, and teaching
+    // stopped 0 times in 24 on these clips (24 of 24 when not teaching).
+    const teaching = (clip: Float32Array) => {
+      const events: VoiceEvent[] = [];
+      let t = 0;
+      const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") events.push(e); }, { now: () => t });
+      engine.cancel();
+      engine.stopsOnly(true);
+      const mic = inRoom(cat(silence(4), clip, silence(3)));
+      try {
+        for (let i = 0; i + 512 <= mic.length; i += 512) { const f = mic.subarray(i, i + 512); engine.feed(f, t + 1); backend.vad(f); t += 32; }
+      } finally { backend.resetVad(); backend.resetSpot?.(); }
+      return events;
+    };
+    const stop = read("stop");
+    const heyStop = cat(read("wake_pause").subarray(0, at(1.52)), silence(0.1), stop.subarray(at(1.09)), silence(1));
+    for (const [name, clip] of [["Ember, stop!", stop], ["Ember, stop! (softer)", stop.map(x => x * 0.6)], ["Ember, … stop!", cat(stop.subarray(0, at(0.62)), silence(0.6), stop.subarray(at(0.62)))], ["Hey Ember, stop", heyStop]] as const) {
+      for (const lead of [0, 0.1, 0.25]) expect(teaching(cat(silence(lead), clip)).filter(e => e.type === "stop"), `${name}, ${lead} s in`).toHaveLength(1);
+    }
+    // Phrases like the teaching's, and the name inside another word: nothing.
+    for (const clip of ["wake", "dnd", "name_wake", "remember"]) expect(teaching(read(clip)), clip).toEqual([]);
+  });
+
   it("hears a one-word reply in a follow-up (the VAD hears speech only 0.2 s into it)", () => {
     // "Bigger." alone, and "Stop!" 3 dB softer than the request: both were dropped before the recognizer.
     for (const [word, then] of [[trimmed("bigger").subarray(at(1.45)), "utterance"], [trimmed("stop").subarray(at(0.45)).map(x => x * 0.7), "stop"]] as const) {

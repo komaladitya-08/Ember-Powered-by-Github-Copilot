@@ -556,7 +556,7 @@ to 1.4) sets how fast it speaks, in its own voice and the system's, and **Hear E
 replies are said and which voice said it (not with **Never**, while the screen is locked or when the organisation has
 turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
 the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
-“Learning your voice”) and hears only “Ember, stop”, which stops the teaching with everything else. Teaching also
+“Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
 stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),
 after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
 It decides only what a voice may approve: every voice is heard, and a request it doesn't

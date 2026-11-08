@@ -201,6 +201,21 @@ describe("the voice process", () => {
       ]);
     });
 
+    it("still hears “Ember, stop” when the spotter takes the bare name first, as the real one does (voice-listening-r1)", async () => {
+      vi.useFakeTimers();
+      let spotted = 0;
+      const p = await voiceProcess(() => quiet({ spot: () => { spotted++; return spotted === 30 ? ["ember"] : []; }, transcribe: () => "Ember, stop." }));
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      // (Checked once "stop" can have been said: here, with no pause, 1.2 s after the name.)
+      for (let i = 0; i < 100; i++) { p.frame(); vi.advanceTimersByTime(32); }
+      expect(relevant(p)).toEqual([
+        { type: "enrol", state: "listening", got: 0, of: 4 },
+        { type: "enrol", state: "cancelled", got: 0, of: 4, why: "stopped" },
+        { type: "stop", generation: 1 },
+      ]);
+    });
+
     it("takes no wake or request meanwhile: its phrases (“Hey Ember, open my calendar.”) aren't requests (voice-listening-v1)", async () => {
       vi.useFakeTimers();
       const p = await voiceProcess(() => quiet({ spot: () => ["hey_ember"], transcribe: () => "Hey Ember, open my calendar." }));

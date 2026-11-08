@@ -607,8 +607,11 @@ type Mode =
   | { kind: "idle" }
   | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; maybeAmber?: boolean };
 
-/** A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. */
-type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean };
+/**
+ * A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. `teaching`: the name
+ * spotted while Voice Match is taught (stopsOnly), a stop only if "stop" was said with it.
+ */
+type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean; teaching?: boolean };
 
 export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
@@ -819,7 +822,10 @@ export class VoiceEngine {
   /**
    * Voice Match is being taught (process.ts): its phrases sound like requests ("Hey Ember, open my calendar."), so no
    * wake, follow-up or request is taken, but "Ember, stop" still is, checked as ever (voice-listening-v1: it went unheard
-   * for as long as teaching lasted). The VAD is the enrolment's meanwhile: nothing here feeds it.
+   * for as long as teaching lasted). The real spotter takes the bare name first in "Ember, stop", and "Hey Ember" in "Hey
+   * Ember, stop", so the name is a stop too where the recognizer heard "stop" said with it, as while Ember speaks (only
+   * "ember_stop" counted, and it stopped 0 times in 24 on the real models: voice-listening-r1). The VAD is the
+   * enrolment's meanwhile: nothing here feeds it.
    */
   private onlyStops = false;
   /** A request that trailed off, waiting until `until` for the rest of it (trailsOff); `t0`: when it was heard. */
@@ -1014,7 +1020,12 @@ export class VoiceEngine {
 
     const checkAt = (at: number) => (this.o.verifyWake === false ? null : at + (this.o.checkAfterMs ?? (paused ? PAUSED_CHECK_MS : 0)));
     for (const keyword of keywords) {
-      if (this.onlyStops && keyword !== "ember_stop") continue;
+      if (this.onlyStops && keyword !== "ember_stop") {
+        // While Voice Match is taught, the name (said first in "Ember, stop" and "Hey Ember, stop") is checked once "stop"
+        // can have been said (see decideStop); the teaching's own phrases are nothing here.
+        if (!this.pendingStop) { this.pendingStop = { keyword, at: now, checkAt: now + SELF_STOP_MAX_MS, teaching: true }; this.watchSpeakers(); }
+        continue;
+      }
       if (keyword !== "ember_stop" && this.inConversation) this.spottedAt = now;
       if (keyword === "ember_stop") {
         // The kill phrase works in every state (also while Ember speaks: that's when it's needed). It goes once
@@ -1190,7 +1201,7 @@ export class VoiceEngine {
       this.emit({ type: "rejected", keyword: s.keyword, reason: "speakers" });
       return;
     }
-    if (s.keyword !== "ember_stop" && !s.checked && !this.inConversation && now < this.selfSpeakingUntil && this.speakersClear(s.at, now) && (this.hearsSpeakers(now) || s.keyword !== BARE_NAME)) {
+    if (s.keyword !== "ember_stop" && !s.teaching && !s.checked && !this.inConversation && now < this.selfSpeakingUntil && this.speakersClear(s.at, now) && (this.hearsSpeakers(now) || s.keyword !== BARE_NAME)) {
       // "Hey Ember" while Ember speaks, and its speakers' own stream didn't say it: the user is cutting in (see bargeIn).
       // Without that stream (Windows, macOS, Linux without parec) "Hey Ember" cuts in too: Ember never says it there
       // (VoiceService.speak drops its own wake and stop phrases, withoutOwnPhrases), the check below takes back "they
@@ -1207,8 +1218,13 @@ export class VoiceEngine {
     const emberSpeaking = now < this.selfSpeakingUntil;
     if (s.keyword !== "ember_stop") {
       // "Hey Ember" while Ember spoke: a stop if "stop" came with it, otherwise Ember's own voice (or a wake it can't take now).
+      // The name while Voice Match is taught: a stop if "stop" came with it ("Ember stopped the task." too, as the
+      // recognizer writes it), otherwise one of the teaching's phrases.
       const heard = this.backend.transcribe(this.fromSound(this.recentAudio(this.fedAt - s.at + SELF_STOP_BEFORE_MS)), "keyword");
-      if (!saidWakeStop(heard)) { if (!s.bargeIn) this.emit({ type: "rejected", keyword: s.keyword, reason: "self", heard }); return; }
+      if (!saidWakeStop(heard) && !(s.teaching && EMBER_STOP.test(heard.toLowerCase()))) {
+        if (!s.bargeIn && !s.teaching) this.emit({ type: "rejected", keyword: s.keyword, reason: "self", heard });
+        return;
+      }
     } else if (s.checkAt !== null) {
       const heard = this.backend.transcribe(this.fromSound(this.recentAudio(s.again ? this.fedAt - s.at + SELF_STOP_BEFORE_MS : STOP_CHECK_SECONDS * 1000)), "keyword");
       const empty = !/[a-z]/i.test(heard);
