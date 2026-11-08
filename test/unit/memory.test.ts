@@ -157,6 +157,130 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
   });
 
+  // A house's, a home's or an office's own code, a vault's or a safe's after a word like "bank", and a password said in
+  // shorthand: round three's narrowing kept them (memory-i4, safety-privacy-c3-1, memory-1).
+  it.each([
+    ["Remember the code to my house is 4821"], ["my house code is 4821"], ["The user's house code is 4821"], ["the house code: 4821"],
+    ["the code for our house is 4821"], ["the code to get into the office is 4821"], ["my office code is 4821"], ["The user's office code is 4821"],
+    ["the office code is 4821"], ["the house code is 4821"], ["Our house code is 1234"], ["the code for the office is 4821"],
+    ["the bank code for the vault is 4821"], ["the room code for the safe is 4821"], ["My phone's code is 4821"], ["The home code is 4821"],
+    ["HR portal pw Summer2024!"], ["gmail pw Tr0ub4dor&3"], ["Jenkins admin: admin / j3nkins!"], ["The token is 550e8400e29b41d4a716446655440000"],
+    // The phrasings safety-privacy-1's re-rating still found kept.
+    ["The user uses hunter2 as their Netflix password"], ["The user's password everywhere is Tr0ub4dor&3"], ["The user's wifi password, it's BlueSky99"],
+    ["Wifi password — BlueSky99"], ["my Netflix password — hunter2"], ["remember my gmail password, it's Summer2024"], ["my netflix password? it's hunter2"],
+    ["Remember that hunter2 is my password"], ["my bank PIN, 4821"], ["Key box code: 4821"], ["WiFi key BlueSky99"], ["My PUK is 12345678"],
+  ])("refuses %j, a code that opens a home or an office, or a password in shorthand (memory-i4)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+
+  // Ordinary developer sentences and an Indian address, which round three's guard refused (memory-c3-1, memory-r3-3):
+  // Projects' requests and files and task views share this guard.
+  it.each([
+    ["The token is base64-encoded"], ["The token is base64url-encoded before it is sent"], ["The token is SHA256-hashed before storage"],
+    ["The refresh token is RS256-signed"], ["The access token is HS256-signed by the server"], ["// The token is base64-encoded and expires after 1 hour"],
+    ["Each token is utf8-encoded"], ["The session token is UUIDv4-formatted"], ["The token is 32-characters"], ["The token is SHA-256-hashed."],
+    ["Our Android code is 12000 lines long"], ["The Android code is 15000 lines"], ["The iPad code is 2024-ready"],
+    ["Mumbai, PIN code: 560001"], ["12 MG Road\nBengaluru\nPIN Code - 560001"], ["Mumbai PIN Code: 400 001"], ["Bengaluru, Karnataka, PIN code: 560001"],
+    ["Visit us at 12 MG Road, Bengaluru, PIN code: 560001."], ["Our office PIN code is 560001; add it to the footer"], ["Pincode: 560034"],
+    ["Fix the access code 401 errors"], ["the security code 403 error"], ["Our office ZIP code is 90210"], ["The office cost code is 4821"],
+    ["The house style code 123"], ["The area code for the office is 0113"], ["The office Teams code is 482193"], ["The bank sort code for the account is 12-34-56"],
+    ["The house number is 42"], ["Rent is £500 pw for the flat"], ["The admin is Priya, with Bob as backup"], ["root: /opt/app2/bin"],
+    ["my phone PIN is 6 digits long"], ["Uses Bitwarden as their password manager"], ["Bitwarden is my password manager"],
+    ["The password, it's required at sign-in"], ["My password? It's in 1Password"], ["Enter the PIN, 4 digits"],
+  ])("keeps %j, which names no secret (memory-c3-1, memory-r3-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // Still refused: a PIN said as one, a card's or a device's PIN code, and a token's real run (memory-1, memory-r3-3).
+  it.each([
+    ["My PIN code is 560034"], ["My card PIN code is 482193"], ["PIN code: 4821"], ["The PIN code for my SIM is 123456"], ["Pin code 1234"],
+    ["The token for the API is abc123def456ghi789"], ["The token is Xy7k2Lm9Qp3R-abcde"], ["My Android unlock code is 4821"], ["My laptop code is 1234"],
+  ])("still refuses %j (memory-1, memory-r3-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+
+  // A login or credentials said as one value, the way the model writes a fact: round four's re-rating found them kept.
+  it.each([
+    ["The user's Netflix login is hunter2"], ["The user's Netflix credentials: hunter2"], ["My Netflix login is Summer2024!"],
+    ["The login for the NAS is Tr0ub4dor&3"], ["Credentials for the NAS are Tr0ub4dor&3"], ["The router creds: P@ssw0rd"],
+    ["my gmail login was hunter22."], ["The VPN credentials are 'blue-sky-99' for now"], ["The user's work login is j5m1th!\nTheir desk is on floor 3"],
+  ])("refuses %j, a login said as its password (safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).toBe("a login said that way may be its password");
+  });
+
+  // A login's user name, address, protocol or when it happened, and credentials in code: still facts (safety-privacy-1).
+  it.each([
+    ["The user's GitHub login is octocat"], ["My work login is priya.k@example.com"], ["The login is via SSO"], ["The login is 2FA-protected"],
+    ["Our app's login is OAuth2, how do I add PKCE?"], ["The login is SAML2 based"], ["Last login was 10:30 yesterday"], ["The last login was 2024-01-05"],
+    ["The last login was 2023"], ["The credentials are AES-256 encrypted"], ["Credentials: https://vault.example.com/team"],
+    ["fetch(url, { credentials: 'include' })"], ["credentials: ${{ secrets.DEPLOY_KEY }}"], ["login: user1"], ["The login page is https://example.com/sign-in2"],
+    ["The credentials are 30 days old"], ["The user's login is the same as their email"], ["The login is 10am-6pm"], ["Login is 404ing"],
+    ["The credentials are base64"], ["credentials are sha256"],
+  ])("keeps %j, which names no password (safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // A user at a computer named by its address or as localhost, a handle, a host with its port and a variable in code
+  // name no password: refused, they blocked a README in Projects and an SSH question (safety-privacy-v4-1).
+  it.each([
+    ["The admin login is admin@localhost."], ["The SSH login for the build box is deploy@10.0.0.5."],
+    ["My SSH login is pi@192.168.1.20, why does the deploy step fail?"], ["The user's SSH login for their Raspberry Pi is pi@192.168.1.20"],
+    ["The NAS login is admin@192.168.1.10"], ["The login is root@127.0.0.1:2222"], ["The user's GitHub login is @octocat"],
+    ["Login is localhost:8080"], ["The login is nas.local:5000"], ["credentials: process.env.AWS_CREDS_V2,"],
+  ])("keeps %j, a user at a computer or a handle (safety-privacy-v4-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // Still refused: a password with an at sign in it, and a user name with a digit, which said as a login is as often its
+  // password; the model is told that, not that the user name is a password (safety-privacy-v4-1).
+  it.each([
+    ["The login is P@ssw0rd"], ["The login is P@ss-w0rd!"], ["The login is Tr0ub@dor-3"], ["The router login is @dmin123"], ["The login is p@ss.word1"],
+    ["The login is admin@nas1"], ["The user's GitHub login is octocat2"], ["The user's Minecraft login is Steve123"],
+  ])("still refuses %j as a login that may be its password (safety-privacy-v4-1)", text => {
+    expect(memoryRefusal(text)).toBe("a login said that way may be its password");
+  });
+
+  // A six-digit PIN code is a postcode only after an address (a road, a city, a state, an office), never after a lock, a
+  // profile or a bare comma, nor on a line with no address before it (memory-v4-5).
+  it.each([
+    ["Garage, PIN code: 482193"], ["The gate, PIN code 482193"], ["For the locker, PIN code 482193"], ["Netflix kids profile, PIN code 482193"],
+    ["PIN code: 482193"], ["Pin code is 482193"], ["PIN code: 560001"], ["PIN Code - 560001"], ["PIN Code: 400 001"], ["Garage door.\nPIN code: 482193"],
+    ["My bank card\nPIN code: 482193"],
+  ])("refuses %j, a PIN with no address before it (memory-v4-5)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+  it.each([
+    ["Bengaluru, PIN code: 560001"], ["Delhi, PIN code 110001"], ["12 MG Road\nBengaluru\nPIN Code - 560001"], ["Address: 4 Park Street, Kolkata.\nPIN code: 700016"],
+    ["Our office PIN code is 560001; add it to the footer"], ["Andheri East, Maharashtra, PIN code: 400069"],
+  ])("keeps %j, an Indian postcode after an address (memory-r3-3, memory-v4-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // A board's pins and advice about passwords name no secret; a PIN said first only with digits, and ", it's" only before
+  // a value with a digit or a symbol (memory-v4-6).
+  it.each([
+    ["GPIO4 is the data pin and GPIO5 is the clock pin."], ["The ESP32 uses GPIO0 as the boot pin"], ["GPIO4 is the data pin; update the wiring doc"],
+    ["Never share your password, it's personal."], ["Pick a long passphrase, it's easier to remember"], ["Your PIN, it's private"],
+    ["D13 is the LED pin on the Uno"], ["The board uses GPIO2 as its status pin"],
+  ])("keeps %j, wiring or advice (memory-v4-6)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["4821 is my PIN"], ["4821 is my bank PIN"], ["Use 4821 as the door PIN"], ["Use hunter2 as the PIN"], ["my PIN, it's 4821"], ["My password? it's Tr0ub4dor&3"],
+  ])("still refuses %j, a PIN or a password said first or after “it's” (memory-v4-6)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+
+  // A house, a home or an office locks only as someone's ("my house code", "the office code"), never a post office's, a
+  // branch office's, a box office's or in-house source code (memory-v4-3).
+  it.each([
+    ["Branch office code: 4410"], ["Head office code 1001"], ["Use office code 4410 on the expense form"], ["The cost centre code for the office is 4410"],
+    ["Our in-house code is 2000 lines long"], ["Post office code: 560001"], ["Box office code 2024"], ["Home code 200 means the page loaded"],
+    ["Charge build minutes to office code 4410."], ["The head office code is 1001"], ["The post office code is 560001"], ["The cost center code for the house is 4410"],
+  ])("keeps %j, a business code or source code (memory-v4-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],
@@ -299,6 +423,20 @@ describe("the memory graph", () => {
     const profile = (await s.requestContext("open Firefox")).text;
     expect(profile).toContain("Prefers short answers");
     expect(profile).toContain("Likes to be called Ram");
+  });
+
+  it("sends the new answer length with every request once “remember that I prefer long answers” replaces About you's (memory-r1)", async () => {
+    const s = new MemoryService({ dir: fs.mkdtempSync(path.join(os.tmpdir(), "ember-memory-r1-")), log: { info: () => undefined, warn: () => undefined }, inForce: () => true });
+    for (const f of introFacts({ name: "Ram", length: "short" })) s.learn(f);
+    expect(s.remember("Prefers long answers", [{ name: "User", kind: "person" }], "Remember that I prefer long answers")).toMatch(/replacing/);
+    const profile = (await s.requestContext("open Firefox")).text;
+    expect(profile).toContain("Prefers long answers");
+    expect(profile).not.toContain("Prefers short answers");
+    // A preference of another kind beside it replaces nothing and takes no place in the profile: the length stays.
+    expect(s.remember("Prefers bulleted answers", [{ name: "User", kind: "person" }], "Remember that I prefer bulleted answers")).not.toMatch(/replacing/);
+    const after = (await s.requestContext("open Firefox")).text;
+    expect(after).toContain("Prefers long answers");
+    expect(after).not.toContain("Prefers bulleted answers");
   });
 
   it("lets nothing it saw overrule what the user said", () => {

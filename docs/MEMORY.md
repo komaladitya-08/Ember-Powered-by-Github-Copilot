@@ -46,7 +46,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     same place, to another of the same kind (how long, how set out, what tone, light or dark, when, how often, by
     what: "Prefers dark mode" → "Prefers light mode", "…short answers" → "…detailed answers"; never "Prefers tea" and
     "Prefers coffee", "…dark mode" and "…dark chocolate", "…short answers" and "…short emails" or "…bulleted
-    answers", "…email updates" and "…weekly updates", or dark mode in Slack and in Outlook: memory-r1). A
+    answers", "…email updates" and "…weekly updates", or dark mode in Slack and in Outlook: memory-r1). A changed
+    preference takes the predicate of the one it closed, so "Prefers long answers" after About you's "Prefers short
+    answers" is the answer length in the profile sent with every request (memory-r1). A
     weaker source never closes what the user said,
     and the closed fact stays as history, so Undo of the newer puts it back.
 - `recall.ts`: BM25 over fact text plus entity names. The matched facts and named entities then seed a Personalized
@@ -68,11 +70,30 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
 - `guard.ts`: refuses any fact holding a token, key, password, PIN, code, card number, IBAN or social security
   number, however it is said: "the password for the HR portal is…", "VPN password hunter2", "my debit card pin 4821",
   "the door code is 4821", "the code for the front door is 4821", "use hunter2 as the password for…", "login for the
-  router: admin / P@ssw0rd", "…with CVV 123", "my PIN number is 1234", "my phone code is 4821", a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  router: admin / P@ssw0rd", "…with CVV 123", "my PIN number is 1234", "my phone code is 4821", "my house code is
+  4821", "the code to get into the office is 4821", "the bank code for the vault is 4821", "HR portal pw
+  Summer2024!", "my wifi password, it's BlueSky99", "hunter2 is my password", "the user's Netflix login is hunter2",
+  "Netflix credentials: hunter2" (a login said with a digit or a symbol, even a user name such as "my login is
+  jsmith42" or a user at a computer named only by a word such as "admin@nas1", since one said that way is as often
+  its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never that it is
+  one), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value, and a code counts only for
-  something that locks: "the access control code 401", "backup exit code 255" and "our office ZIP code is 90210" are
-  ordinary words (Projects and task views share this guard). Secrets are refused whole, never stored redacted.
+  something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
+  "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
+  "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
+  are ordinary words, as are a login's address, protocol or time ("my work login is priya@example.com", "the login is
+  OAuth2", "last login was 10:30", "the credentials are AES-256 encrypted"), a user at a computer named by its address
+  or as localhost, a handle with no digit, a host with its port and an environment variable in code ("my SSH login is
+  pi@192.168.1.20", "the admin login is admin@localhost", "my GitHub login is @octocat", "login is localhost:8080",
+  "credentials: process.env.AWS_CREDS_V2", safety-privacy-v4-1), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
+  GPIO0 as the boot pin", "never share your password, it's personal": a value said before "the data pin" or "the
+  boot pin" counts only as digits, and ", it's" only before a value with a digit or a symbol, memory-v4-6), how a
+  token is made ("the access token is HS256-signed", "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
+  long") and an Indian postcode called a "PIN code" after an address (a road, a place, an Indian city or state) in its
+  sentence or the lines just before it ("Bengaluru, PIN code: 560001"; "my PIN code is 560034", "Garage, PIN code:
+  482193" and a "PIN code: 482193" line with no address before it are still refused): memory-c3-1, memory-r3-3,
+  memory-v4-5 (Projects and task views share this guard). Secrets are refused whole, never stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
@@ -245,20 +266,33 @@ download, so English-only MiniLM is the trade-off for now.
      (memory-c1-3). **Forget everything** clears the lines too.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
-     only for Ember to forget something about the user ("forget that I…", "forget my…", "forget where I live"),
-     everything ("forget everything", "clear your memory", "delete everything you remember") or a name ("Forget Priya",
-     "remove Priya from your memory"; `memoryAsk`, memory-v1) is answered in code with the truth: memory is off (and
+     only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's
+     birthday", "forget where I live", "forget what you know about me"), everything ("forget everything", "clear my
+     memory", "delete everything you remember") or a name ("Forget Priya", "Forget Priya's birthday", "remove Priya
+     from your memory"; `memoryAsk`, memory-v1) is answered in code with the truth: memory is off (and
      Memory opens at its search, never at its note's "I agree, remember": memory-r7), why it is paused, or that the
      organisation turned it off. A request that says something to keep ("remember that…", "keep in mind the deadline
-     is Friday", "remember I'm vegetarian") goes to the conversation, which knows it until Ember closes, and Ember says
+     is Friday", "remember I'm vegetarian", "remember my wife likes tulips", "make a note that Bob owes me £20",
+     "remember my birthday: 12 March", "remember my kids love pizza", "remember my wife and I prefer window seats"
+     (memory-v4-4), and one with a request after it, "remember that I'm vegetarian and book a table":
+     `remembersWithMore`, memory-r3-2) goes to the conversation, which knows it until Ember closes, and Ember says
      behind the answer that memory won't keep it (`rememberNote`: a line in the conversation and a bubble with **Open
-     Memory**, never Settings opened on its own); "remember the file I mentioned", "remember this" and "don't forget my
-     umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
+     Memory**, never Settings opened on its own); "remember the file I mentioned", "remember this", "don't forget the
+     documents Priya sent" and "don't forget my umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
      a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
-     "Forget my previous instructions") and a request with more in it (after a comma, a semicolon, a dash, or "and" or
+     "Forget my previous instructions"), what isn't memory ("Clear all" and "Delete everything" without a word for
+     what Ember knows; "my…" only for something about the user (`ABOUT_ME`), to the end of the request and with a
+     possessive only before another such word, never a device, a network or an app's things: "Forget my home Wi-Fi
+     network", "Forget my AirPods", "Forget my reminder", "Forget my wife's AirPods", "Forget my data in Chrome";
+     "saved", "kept" or "stored" after "delete", "clear" or "remove" only with "you" and about the user, never "Clear
+     everything saved about me in Firefox" or "Delete what you saved about the project"; "Forget all about my last
+     request"; a name only as names are written, never an app, a day, a folder or a device: "Forget Outlook", "Forget
+     Monday", "Forget HomeNet": memory-r3-1, memory-v4-1, memory-v4-2) and a request with more in it (after a comma, a
+     semicolon, a dash, or "and" or
      "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox
      instead") are the conversation's like any other (memory-c1-1). When the first part was a forget request ("Forget
-     my address and open Firefox"), Ember says behind the answer that memory can't change what's saved (`forgetNote`).
+     my address and open Firefox"), Ember says behind the answer that memory can't change what's saved (`forgetNote`),
+     and its **Open Memory** opens Settings › Memory at the list and its Forget, never at the note (memory-r3-4).
 4. **Sleep-time refinement** (done; `refine.ts`). After 5 minutes idle (no turn, no task, the screen unlocked; an
    unknown lock counts as locked), `MemoryLearning` runs `consolidate()`, then one model pass (the same one-shot
    session) over up to 40 facts changed or used since the last pass:

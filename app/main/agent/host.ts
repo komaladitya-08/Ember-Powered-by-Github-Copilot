@@ -51,7 +51,7 @@ import type { CommandService } from "../commands/types";
 import { createHash, randomUUID } from "node:crypto";
 import type { OneShot } from "../memory/learn";
 import type { MemoryWait } from "../memory/owner";
-import type { MemoryNote } from "../memory/questions";
+import { memoryNoteActions, type MemoryNote } from "../memory/questions";
 import { runtimeClientOptions } from "./runtime-env";
 import { redactGitHubTokens } from "./auth";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
@@ -1314,7 +1314,7 @@ export class AgentHost {
     this.remember("ember", n.text);
     this.memoryHint?.quiet();
     const p = this.memoryHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
-    p.outcome({ title: n.title, text: n.text, emotion: "neutral", gesture: "rest", mood: "idle", actions: n.open ? [{ id: "ui:memory", label: "Open Memory" }] : [] });
+    p.outcome({ title: n.title, text: n.text, emotion: "neutral", gesture: "rest", mood: "idle", actions: memoryNoteActions(n) });
   }
 
   /** Changes with every Stop: main takes it before a slow step (reading the screen) and passes it to ask(). */

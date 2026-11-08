@@ -390,10 +390,11 @@ or steer a task. If an app can't be operated through accessibility, Ember asks t
 your mouse**: it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse, turn
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
-take screenshots or press keys; while GNOME Shell's own prompt is up (or Ember can't tell, because the shell is too busy
+take screenshots or press keys (nor asks to borrow your mouse or keyboard, or says it's borrowing them without asking,
+while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up (or Ember can't tell, because the shell is too busy
 or didn't answer, or because the accessibility helper isn't working: then Ember says so and points to the setup check),
-it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one), until
-the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
+it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
+it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
 **Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
@@ -431,7 +432,8 @@ Ember runs as an administrator or as root every command asks, and the hint under
 computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
 as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on
 the task's card by its kind, app and size ("Clicking in Text Editor, without asking as you let me."), never with
-typed text or words from the screen, and **What Ember did** lists it as "Without asking" (the audit entry has
+typed text or words from the screen, once the check for a password prompt right before the step has passed (a step that
+check stops is said and listed only as refused), and **What Ember did** lists it as "Without asking" (the audit entry has
 `autonomy: true`), and lists turning the mode on or off with how (Home, voice, typed). Risky steps ask every time as before, with no "Always", and so do dangerous
 commands; a task that text on screen tried to steer, that went off-task or where you said no (at any point in it) goes
 back to asking.

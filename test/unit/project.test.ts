@@ -64,6 +64,41 @@ it("sends a request and a file that name an HTTP status or exit code, which hold
   await expect(prompt([door])).rejects.toThrow("contain a password");
 });
 
+it("sends a file and a request that say how a token is signed, and a contact page with an Indian PIN code, which hold no secret (memory-c3-1, memory-r3-3)", async () => {
+  const jwt = await file("jwt.ts", "/**\n * The access token is HS256-signed by the server and expires after 15 minutes.\n * The refresh token is base64url-encoded before it is set as a cookie.\n */\nexport const expiresIn = (minutes: number) => minutes * 60_000;\n");
+  const result = await projectPrompt([jwt], "review", "Check that the access token is HS256-signed everywhere", new AbortController().signal, privateDir);
+  expect(result).toContain("base64url-encoded");
+  const contact = await file("contact.md", "# Contact\n\nVisit us at 12 MG Road, Bengaluru, PIN code: 560001.\n\n12 MG Road\nBengaluru\nPIN Code - 560001\n");
+  expect(await projectPrompt([contact], "review", "Our office PIN code is 560001; add it to the footer", new AbortController().signal, privateDir)).toContain("PIN Code - 560001");
+  const house = await file("house.txt", "The code to get into the office is 4821.");
+  await expect(prompt([house])).rejects.toThrow("contain a password");
+});
+
+it("sends a file that names in-house source and an office's cost code, which hold no secret (memory-v4-3)", async () => {
+  const about = await file("about.md", "# About\n\nOur in-house code is 15000 lines of Python.\nCharge build minutes to office code 4410.\n");
+  expect(await projectPrompt([about], "review", "Branch office code: 4410 goes in the footer", new AbortController().signal, privateDir)).toContain("office code 4410");
+  const house = await file("house.txt", "My house code is 4821.");
+  await expect(prompt([house])).rejects.toThrow("contain a password");
+});
+
+it("sends a wiring note, a security guide and a request about a board's pins, which hold no secret (memory-v4-6)", async () => {
+  const wiring = await file("wiring.md", "# Wiring\n\nGPIO4 is the data pin and GPIO5 is the clock pin. The ESP32 uses GPIO0 as the boot pin.\n");
+  const security = await file("SECURITY.md", "# Passwords\n\nNever share your password, it's personal. Pick a long passphrase, it's easier to remember.\n");
+  const result = await projectPrompt([wiring, security], "review", "GPIO4 is the data pin; update the wiring doc", new AbortController().signal, privateDir);
+  expect(result).toContain("GPIO0 as the boot pin");
+  expect(result).toContain("it's personal");
+  const pin = await file("pin.txt", "4821 is my bank PIN.");
+  await expect(prompt([pin])).rejects.toThrow("contain a password");
+});
+
+it("sends a README and a request that name a user at a computer, which hold no password (safety-privacy-v4-1)", async () => {
+  const readme = await file("README.md", "# Deploy\n\nThe admin login is admin@localhost.\nThe SSH login for the build box is deploy@10.0.0.5.\n");
+  const result = await projectPrompt([readme], "review", "My SSH login is pi@192.168.1.20, why does the deploy step fail?", new AbortController().signal, privateDir);
+  expect(result).toContain("deploy@10.0.0.5");
+  const nas = await file("nas.txt", "The NAS login is Tr0ub4dor&3.");
+  await expect(prompt([nas])).rejects.toThrow("contain a password");
+});
+
 const diffAnswer = (diff: string) =>"A change to review.\n\n" + ["```diff", diff, "```"].join("\n");
 const diff = (name: string, hunks: string) => `--- a/${name}\n+++ b/${name}\n${hunks}`;
 

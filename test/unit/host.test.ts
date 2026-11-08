@@ -4548,6 +4548,15 @@ describe("“remember…” while memory is off (memory-c1-1, memory-i1)", () =>
       conductorSession().emit("assistant.message", { content: "Opening Firefox." });
       conductorSession().emit("session.idle", {});
       expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox." });
+      // "Clear all" after a list, and the system's own "forget" for a network, are the conversation's too: nothing is
+      // answered in code, nothing opens and no note follows (memory-r3-1, memory-c1-1).
+      for (const [text, answer] of [["Clear all", "Cleared your notifications."], ["Forget my home Wi-Fi network", "I'll forget it in Settings."]]) {
+        await host.ask(text);
+        expect(conductorSession().sent.at(-1), text).toContain(text);
+        conductorSession().emit("assistant.message", { content: answer });
+        conductorSession().emit("session.idle", {});
+        expect(host.getTranscript().at(-1), text).toMatchObject({ who: "ember", text: answer });
+      }
       // "Forget my last request and open Firefox instead" is about the conversation: it reaches it whole, with no note
       // (memory-c1-1).
       await host.ask("Forget my last request and open Firefox instead");
@@ -4562,6 +4571,18 @@ describe("“remember…” while memory is off (memory-c1-1, memory-i1)", () =>
       conductorSession().emit("assistant.message", { content: "Opening Firefox." });
       conductorSession().emit("session.idle", {});
       expect(host.getTranscript().slice(-2).map(e => [e.who, e.text])).toEqual([["ember", "Opening Firefox."], ["ember", "Memory is off, so I can't change what's saved."]]);
+      // Its Open Memory opens Settings › Memory at the list and its Forget, never at the note (memory-r3-4).
+      seen = null;
+      for (let i = 0; i < 30 && !seen; i++) { await vi.advanceTimersByTimeAsync(1000); if (bubble?.thought === "Memory is off, so I can't change what's saved." && bubble?.visible) seen = bubble; }
+      expect(seen).toMatchObject({ visible: true, title: "Memory is off", actions: [{ id: "ui:memory-list", label: "Open Memory" }] });
+      // A fact said with any verb, and one with a request after it: the answer, then the truth (memory-r3-2).
+      for (const [text, answer] of [["Remember my wife likes tulips", "Tulips it is."], ["Remember that I'm vegetarian and book a table", "Booking a table."]]) {
+        await host.ask(text);
+        expect(conductorSession().sent.at(-1), text).toContain(text);
+        conductorSession().emit("assistant.message", { content: answer });
+        conductorSession().emit("session.idle", {});
+        expect(host.getTranscript().slice(-2).map(e => [e.who, e.text]), text).toEqual([["ember", answer], ["ember", "Memory is off, so I won't keep this after Ember closes."]]);
+      }
       await host.stop();
     } finally {
       vi.useRealTimers();

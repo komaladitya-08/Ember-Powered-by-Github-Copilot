@@ -275,6 +275,8 @@ export function taskPrompt(goal: string, partWay: boolean, where: string): strin
 const NEAR_LIMIT = "You have used most of this task's steps or time: finish the step you're on, then call finish_task saying what's done and what's left.";
 /** A step refused while a password or authentication prompt is open on the user's screen (M8.3, safety-privacy-3). */
 const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.";
+/** Steps done with the user's borrowed mouse and keyboard (tier 3), which an authentication prompt with the keyboard stops. */
+const BORROWED: ReadonlySet<ActionKind> = new Set<ActionKind>(["cursor_click", "cursor_text", "keys", "scroll"]);
 /**
  * A step refused because the desktop couldn't be asked whether such a prompt is open (fail closed, safety-privacy-r1):
  * never said to be one, so nobody goes looking for a prompt that isn't there (safety-privacy-c1-2).
@@ -1185,6 +1187,13 @@ export class Worker {
   private readonly commandState: CommandFlowContext["state"] = { cwd: null, downloaded: new Set<string>(), running: false };
   /** The latest decision authorize() let through (gate 1's stamp for a remote step, onAuthorized). */
   private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null } | null = null;
+  /**
+   * A step Work without asking let through (authorize, authorizeCells): its decisions' audit entries and its
+   * announcement, held until the look right before acting has passed (act, system, withCursor: goAhead). So a step a
+   * password prompt then stops is never said, nor recorded, as going ahead without asking, and no extra look through the
+   * shell is made to find out (safety-privacy-v4-2). The next decision drops one that never got that far.
+   */
+  private ahead: { entries: AuditEntry[]; words: string | null } | null = null;
   /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
   private agreed: Agreement[];
   /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
@@ -1374,6 +1383,27 @@ export class Worker {
   private announce(words: string): void {
     try { this.d.presenter.workedWithoutAsking(words); } catch (err) { this.d.log.warn("worker.announce_failed", { err }); }
     this.activity({ type: "announce", text: words });
+  }
+
+  /** The step held in `ahead` goes ahead now that the look right before acting has passed: recorded, then said. */
+  private goAhead(): void {
+    const ahead = this.ahead;
+    if (!ahead) return;
+    this.ahead = null;
+    for (const e of ahead.entries) this.audit(e);
+    if (ahead.words) this.announce(ahead.words);
+  }
+
+  /**
+   * An authentication prompt (an X11 pinentry or ssh-askpass window) has the keyboard on the user's screen: the borrow
+   * refuses (M8.3), and so does a question about one before it is asked, so nobody is asked about a borrow that is then
+   * refused (safety-privacy-v4-3). Only the window with the keyboard is looked at, with no walk of the shell.
+   */
+  private keyboardTaken(kind: ActionKind, element?: Focus): ToolResultObject | null {
+    const w = this.place ? null : this.d.cursor?.activeWindow?.();
+    if (!w || !this.sys.privacy.isSecurityWindow(w)) return null;
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
+    return denied(AUTH_PROMPT_OPEN);
   }
 
   /**
@@ -2791,6 +2821,8 @@ export class Worker {
     // Never while the shell's own password prompt is open, also by accessibility (safety-privacy-3).
     const prompt = await this.promptRefusal(kind, element);
     if (prompt) return prompt;
+    // Only now is a step Work without asking let through recorded and said (safety-privacy-v4-2).
+    this.goAhead();
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     try {
       if (this.isOver) return STOPPED();
@@ -3406,6 +3438,7 @@ export class Worker {
    */
   private async authorizeCells(jobs: CellJob[]): Promise<ToolResultObject | null | "each"> {
     this.asked = false;
+    this.ahead = null;
     if (this.isOver) return STOPPED();
     this.keyed = { window: "", selected: null };
     this.moving = null;
@@ -3434,10 +3467,22 @@ export class Worker {
     const asks = judged.find(j => j.d.verdict !== "allow");
     const alone = judged.some(j => j.d.aligned === false) || jobs.some(j => reachesOut(j.text));
     const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
-    for (const [i, { req, d }] of judged.entries()) {
-      const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
-      this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...batch });
+    // No question while the shell's own password prompt is open (or Ember can't tell), or an authentication prompt has
+    // the keyboard: the borrow would refuse the batch once the user answered, as for one step (authorize;
+    // safety-privacy-3, safety-privacy-v4-3). A batch going ahead without asking is looked at by the borrow alone.
+    if (!no && !alone && asks) {
+      const cells: Focus = { role: "table cell", name: jobs.map(j => j.cell).join(", ") };
+      const prompt = this.keyboardTaken("cursor_text", cells) ?? await this.promptRefusal("cursor_text", cells);
+      if (prompt) return prompt;
     }
+    const entries: AuditEntry[] = judged.map(({ req, d }, i) => {
+      const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
+      return { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...batch };
+    });
+    // A batch going ahead without asking is recorded, and said, once the borrow's look right before acting has passed
+    // (goAhead), as one step is (authorize; safety-privacy-v4-2).
+    const ahead = !no && !alone && !asks && judged.some(j => j.d.autonomy);
+    if (!ahead) for (const e of entries) this.audit(e);
     if (no) return denied(`Not allowed in ${no.job.cell}: ${no.d.reason}. Nothing was typed. Don't try another way for that cell; fill the others without it if that still makes sense, and tell the user in finish_task.`);
     const out = jobs.find(j => reachesOut(j.text));
     if (out) return fail(`The formula for ${out.cell} can fetch from the internet or read other files, which the user is asked about on its own. Nothing was typed: fill ${out.cell} with type_text (cell ${out.cell}), and the other cells with fill_cells.`);
@@ -3448,11 +3493,10 @@ export class Worker {
     if (judged.every(j => j.d.verdict === "allow")) {
       // Going ahead without asking: one line for the batch, built from it (how many cells, the app), never their text.
       const waived = judged.filter(j => j.d.autonomy && j.d.announce);
-      if (waived.length === 1 && jobs.length === 1) this.announce(waived[0].d.announce!);
-      else if (waived.length) {
-        const app = this.window.app ? friendlyApp(this.window.app) : "this app";
-        this.announce(`${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, without asking as you let me.${this.place ? "" : " Move the mouse or press a key to take it back."}`);
-      }
+      const app = this.window.app ? friendlyApp(this.window.app) : "this app";
+      const words = waived.length === 1 && jobs.length === 1 ? waived[0].d.announce!
+        : waived.length ? `${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, without asking as you let me.${this.place ? "" : " Move the mouse or press a key to take it back."}` : null;
+      if (ahead) this.ahead = { entries, words };
       return null;
     }
     // Each cell, with what goes in (and what it replaces): the values cut short, all of them listed.
@@ -4101,10 +4145,8 @@ export class Worker {
     const c = this.d.cursor;
     // A password or authentication prompt has the keyboard: those are the user's alone (M8.3).
     const authPrompt = () => { const w = c.activeWindow?.(); return !!w && this.sys.privacy.isSecurityWindow(w); };
-    if (authPrompt()) {
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
-      return denied(AUTH_PROMPT_OPEN);
-    }
+    const taken = this.keyboardTaken(kind, element);
+    if (taken) return taken;
     // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too. A check that fails refuses
     // (fail closed, safety-privacy-r1).
     const dialog = await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => "unchecked" as const);
@@ -4119,6 +4161,8 @@ export class Worker {
         : unchecked ? PROMPT_REFUSAL[unchecked]
           : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
+    // Only now is a borrow Work without asking let through recorded and said (safety-privacy-v4-2, safety-privacy-v4-3).
+    this.goAhead();
     const check = () => {
       if (this.isOver) throw new BorrowStopped();
       if (authPrompt()) throw new Error("an authentication prompt took the keyboard, so Ember stopped");
@@ -4183,6 +4227,8 @@ export class Worker {
   /** Tier 2: full mouse and keyboard on Ember's own desk (the user's input is never touched). */
   private async onDeskInput(place: DeskPlace, kind: ActionKind, element: Focus | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number, afterBorrow?: () => Promise<void>): Promise<ToolResultObject> {
     if (place.userInControl()) return this.deskTaken(kind, element);
+    // Ember's desk has no password prompt of the user's: a step let through without asking is recorded and said now.
+    this.goAhead();
     // Exactly the window approved, as on the user's screen: a refusal is in the audit log too.
     if (!this.window.name) {
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 2, error: "no window known yet" });
@@ -4240,6 +4286,7 @@ export class Worker {
     // Never while the shell's own password prompt is open: a new app's window would open over it (safety-privacy-3).
     const prompt = await this.promptRefusal(kind);
     if (prompt) return prompt;
+    this.goAhead();
     try {
       this.authorized(request);
       const text = await run();
@@ -4327,6 +4374,9 @@ export class Worker {
 
   /** Every audit entry goes through here: an action done (or a command started) after a "Not now" means the task went on. */
   private audit(e: AuditEntry): void {
+    // A step held to go ahead without asking that fails before its look right before acting (the user's clipboard couldn't
+    // be saved) is still recorded as decided before what it did, though it isn't said (goAhead).
+    if (e.event === "action" && this.ahead) { const held = this.ahead.entries; this.ahead = null; for (const d of held) this.audit(d); }
     // (Only a step that happened: one that failed after the "Not now" leaves the task declined.)
     if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) { this.declined = false; this.expired = false; }
     try {
@@ -4348,6 +4398,7 @@ export class Worker {
   private async authorize(request: ActionRequest, o: { note?: string; covered?: boolean } = {}): Promise<ToolResultObject | null> {
     this.asked = false;
     this.lastAuth = null;
+    this.ahead = null;
     if (this.isOver) return STOPPED();
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
     // What the keys selected ends where text goes in, or the mouse clicks or types into a text field (that moves the
@@ -4399,14 +4450,19 @@ export class Worker {
     // A yes to keys that only move (Ctrl+End) never puts the app on that list: typing or a save is asked about itself.
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted
       && this.allowedApps.has(req.app.toLowerCase());
-    // No question while the shell's own password prompt is open (or Ember can't tell): the step would only be refused
-    // once the user answered (safety-privacy-3). Looked at here only for a step that asks, since a walk of the shell costs
-    // up to a second on the target; the look right before acting (act, system) still keeps the rule for every step.
+    // No question while the shell's own password prompt is open (or Ember can't tell), nor about a borrow while an
+    // authentication prompt has the keyboard: the step would only be refused once the user answered (safety-privacy-3,
+    // safety-privacy-v4-3). Looked at here only for a step that asks, since a walk of the shell costs up to a second on
+    // the target; the look right before acting (act, system, withCursor) still keeps the rule for every step.
     if (decision.verdict === "confirm" && !sessionAllowed) {
-      const prompt = await this.promptRefusal(req.kind, req.element);
+      const prompt = (BORROWED.has(req.kind) ? this.keyboardTaken(req.kind, req.element) : null) ?? await this.promptRefusal(req.kind, req.element);
       if (prompt) return prompt;
     }
-    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) });
+    const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) };
+    // Going ahead without asking is recorded, and said, once the look right before acting has passed (goAhead), so a
+    // step that look refuses is recorded only as refused (safety-privacy-v4-2).
+    if (decision.verdict === "allow" && decision.autonomy) this.ahead = { entries: [entry], words: decision.announce ?? null };
+    else this.audit(entry);
     if (decision.verdict === "deny") {
       this.activity({ type: "refused", reason: decision.reason });
       return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
@@ -4414,8 +4470,8 @@ export class Worker {
     const decidedAt = performance.now();
     if (decision.verdict === "allow" || sessionAllowed) {
       this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null };
-      // Going ahead without asking: Ember says what it is doing, in the bubble and on the task's card.
-      if (decision.autonomy && decision.announce) this.announce(decision.announce);
+      // Going ahead without asking: Ember says what it is doing, in the bubble and on the task's card, once the look right
+      // before acting has passed (goAhead).
       return null;
     }
     // "Always in this app" isn't offered once something on screen tried to steer Ember.

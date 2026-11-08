@@ -1887,6 +1887,56 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     expect(acted).toEqual(["click"]);
   });
 
+  it("never asks about filling cells it would then refuse, while one is open, may be or can't be checked (safety-privacy-3, safety-privacy-v4-4)", async () => {
+    let prompt: boolean | "unchecked" | "helper" = false;
+    const input: string[] = [];
+    // No grant for gedit: fill_cells' one question would be asked; the borrow would refuse it once the user said yes.
+    // A spreadsheet's cell in the window, so the tool is called as the model calls it.
+    const cell: AxNode = { id: 5, parent: null, depth: 1, role: "table cell", name: "B5", text: "", states: ["enabled", "focusable", "editable"], bounds: { x: 10, y: 40, width: 80, height: 20 } };
+    const { call, asked, audit } = makeWorker({ grants: {}, promptOpen: () => prompt, systemDialogOpen: () => !!prompt, more: [cell], onInput: (kind, value) => { input.push(`${kind}:${value ?? ""}`); } });
+    await call("perceive_window", {});
+    const fill = () => call("fill_cells", { cells: [{ cell: "B5", text: "42" }] });
+    const said = { open: /^An authentication prompt is open/, unchecked: /^Ember can't tell right now whether a password prompt is open/, helper: /^Ember's accessibility helper isn't working/ };
+    for (const [now, words] of [[true, said.open], ["unchecked", said.unchecked], ["helper", said.helper]] as const) {
+      prompt = now;
+      expect(await fill()).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(words) });
+    }
+    expect(asked).toEqual([]);
+    expect(input).toEqual([]);
+    // The record says it refused, never that it asked.
+    expect(audit.filter(e => e.event === "decision").map(e => [e.kind, e.verdict, e.reason])).toEqual([
+      ["cursor_text", "deny", "an authentication prompt is open"], ["cursor_text", "deny", "Ember couldn't tell whether a password prompt was open"],
+      ["cursor_text", "deny", "Ember's accessibility helper isn't working"],
+    ]);
+    expect(audit.some(e => e.event === "confirm")).toBe(false);
+    // Once the prompt has gone, the batch is asked about as before, and the keyboard is borrowed.
+    prompt = false;
+    await fill();
+    expect(asked).toEqual(["Borrow your keyboard to fill 1 cell in gedit: B5 “42”?"]);
+    expect(audit.filter(e => e.event === "confirm").map(e => e.answer)).toEqual(["once"]);
+  });
+
+  it("never asks about borrowing the keyboard while an authentication prompt has it, and asks once it has gone (safety-privacy-v4-3)", async () => {
+    let pinentry = true;
+    const input: string[] = [];
+    const cell: AxNode = { id: 5, parent: null, depth: 1, role: "table cell", name: "B5", text: "", states: ["enabled", "focusable", "editable"], bounds: { x: 10, y: 40, width: 80, height: 20 } };
+    const { call, asked, audit } = makeWorker({ grants: {}, more: [cell], activeWindow: () => pinentry ? { app: "pinentry", title: "Passphrase" } : { app: "gedit", title: "notes.txt" },
+      onInput: (kind, value) => { input.push(`${kind}:${value ?? ""}`); } });
+    await call("perceive_window", {});
+    for (const step of [() => call("fill_cells", { cells: [{ cell: "B5", text: "42" }] }), () => call("press_keys", { keys: "ctrl+s" }), () => call("scroll", { id: 1, direction: "down" })]) {
+      expect(await step()).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/^An authentication prompt is open on the user's screen/) });
+    }
+    expect(asked).toEqual([]);
+    expect(input).toEqual([]);
+    expect(audit.filter(e => e.event === "decision").map(e => [e.verdict, e.reason])).toEqual([
+      ["deny", "an authentication prompt has the keyboard"], ["deny", "an authentication prompt has the keyboard"], ["deny", "an authentication prompt has the keyboard"],
+    ]);
+    expect(audit.some(e => e.event === "confirm")).toBe(false);
+    pinentry = false;
+    await call("fill_cells", { cells: [{ cell: "B5", text: "42" }] });
+    expect(asked).toEqual(["Borrow your keyboard to fill 1 cell in gedit: B5 “42”?"]);
+  });
+
   it("lists no window's title, and reads none, until it's done", async () => {
     const { call } = makeWorker({ promptOpen: () => true });
     expect(await call("list_windows", {})).toMatchObject({ resultType: "denied", textResultForLlm: expect.not.stringMatching(/notes\.txt|gedit/) });
