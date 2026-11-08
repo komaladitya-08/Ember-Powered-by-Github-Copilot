@@ -164,6 +164,19 @@ it("sends an object's last property, a multi-line signature, a Python block's bo
   await expect(projectPrompt([literal], "review", "Review this.", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
 });
 
+it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {
+  const app = await file("app.py", "print(1)\n");
+  for (const q of ["Why don't the user scripts pass linting?", "How do I make user uploads pass scanning?", "Do the user queries pass sanitisation?"]) {
+    expect(await projectPrompt([app], "review", q, new AbortController().signal, privateDir)).toContain(q);
+  }
+  await expect(projectPrompt([app], "review", "Log in as username bob pass hunter", new AbortController().signal, privateDir)).rejects.toThrow("Remove passwords");
+  const paths = await file("paths.py", "from pathlib import Path\n\n\ndef out(tmp_path):\n    root = tmp_path / \"out1\"\n    return root\n");
+  const settings = await file("settings.py", "BASE_DIR = Path(__file__).resolve().parent\nroot = BASE_DIR / \"static2\"\n");
+  expect(await projectPrompt([paths, settings], "review", "Review this.", new AbortController().signal, privateDir)).toContain("root = BASE_DIR / ");
+  const literal = await file("notes.txt", "Admin = admin / hunter2!\n");
+  await expect(projectPrompt([literal], "review", "Review this.", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
+});
+
 it("offers a reviewed patch whose new line sets max_tokens or reads a key from the environment (memory-r4-2, integrations-c4-1)", async () => {
   const source = await file("client.ts", "export const options = {\n  temperature: 0.2,\n};\n");
   const snapshots: ProjectSource[] = [];

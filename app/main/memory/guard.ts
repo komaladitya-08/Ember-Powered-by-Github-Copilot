@@ -592,13 +592,17 @@ function toldLogin(text: string): boolean {
  * Never with a size, a number or a path for the user name, so a disk's use ("Root: 45G / 100G") stays (memory-c4-2), and
  * after "=" only outside code: never after const or let, before a ";" that ends its line (looked for in the next 200
  * characters, so a long line stays linear), or with a number or a bracket after the slash ("const root = -b / (2*a);",
- * "root = width / 2000"), but "Admin = admin / hunter2!" (memory-v5-4).
+ * "root = width / 2000"), but "Admin = admin / hunter2!" (memory-v5-4). After "=" the user name is an account's, admin,
+ * root or a capitalised name ("Priya"), never a variable, so a path or a division stays code ("root = tmp_path /
+ * \"out1\"", "root = BASE_DIR / \"static2\"", "root = sum / count2": memory-w5-5).
  */
 const ADMIN_PAIR = new RegExp(
-  String.raw`\b(?:admin|administrator|root)\b${FOR_WHAT}(?!\s*=)${SAYS}["'“]?(?![\d(+\-–—~.])[^\s/]+\s+/\s+["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`
-  + String.raw`|(?<!\b(?:const|let|var|val|final|static|auto|int|float|double|local)\s+)\b(?:admin|administrator|root)\s*=(?![^\n;]{0,200};[ \t]*(?:\n|$))\s*["'“]?(?![\d(+\-–—~.])[^\s/()]+\s+/\s+`
-  + String.raw`["'“]?(?![\d.]+(?:[\s,)]|$))(?![^\s"'”]*[()])(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
+  String.raw`\b(?:admin|administrator|root)\b${FOR_WHAT}(?!\s*=)${SAYS}["'“]?(?![\d(+\-–—~.])[^\s/]+\s+/\s+["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
   "i",
+);
+const ADMIN_SET = new RegExp(
+  String.raw`(?<!\b(?:const|let|var|val|final|static|auto|int|float|double|local)\s+)\b(?:[Aa]dmin(?:istrator)?|ADMIN(?:ISTRATOR)?|[Rr]oot|ROOT)\s*=(?![^\n;]{0,200};[ \t]*(?:\n|$))\s*`
+  + String.raw`["'“]?(?:admin|administrator|root|[A-Z][a-z]+)["'”]?\s+/\s+["'“]?(?![\d.]+(?:[\s,)]|$))(?![^\s"'”]*[()])(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
 );
 /** "Wifi: BlueSky99": the network's key, only with a digit or a symbol in it ("Wifi: slow" is a fact). */
 const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}/i;
@@ -611,12 +615,24 @@ const SEED_WORDS = /\b[Ss]eed\b\s*(?::|=|\bis\b)\s*(?:[a-z]+\s+){5,}[a-z]+/;
  * "user priya, pass hunter2": "pass" as a password, but only after a user name or login, since it is a common word, and
  * with a digit or a symbol in its value unless a ":" or "=" says it is one ("so we pass our own object" is a verb), or as
  * the last word straight after "user" and a name ("username bob pass hunter", never "the user should pass validation"
- * or "make the user tests pass again": memory-v5-4).
+ * or "make the user tests pass again": memory-v5-4). The name is quoted, before a comma, after "username" or not a
+ * lowercase plural, and the word isn't one for a check ("-ing", "-tion", "-sion", "-ment"), so "Why don't the user
+ * scripts pass linting?" and "Ensure user inputs pass sanitisation." stay (memory-w5-4).
  */
 const PASS_NOT_USER = String.raw`should|must|can|could|will|would|may|might|shall|to|do|does|did|doesn['’]t|don['’]t|didn['’]t|can['’]t|won['’]t|cannot|needs?|has|have|had|is|was|are|and|or|then|also|always|never|who|that|which|gets?|got|input|data|tests?|checks?|requests?|sessions?|ids?|names?|accounts?|records?|objects?|info|details|credentials|creds|events?|flows?|stories|story`;
 const PASS_NOT_VALUE = String.raw`again|now|through|on|by|it|them|this|that|the|a|an|all|fine|locally|validation|review|tests?|ci|checks?|over|along|away|out|up|down|in|back|around|here|there|first|too|also|today|anyway|either|though|yet|muster|ok|okay|safely|correctly|properly|cleanly|green|unchanged|null|none|true|false|undefined|args|arguments|params|parameters|data|values?|control|ownership|context|state|props|everything|anything|nothing|both|well|quickly|later|soon|instead`;
-const LOGIN_PASS = new RegExp(String.raw`\b(?:user(?:name)?|login)\b[^\n]{0,60}?\bpass\b(?:\s*[:=]\s*["'“]?|\s+["'“]?(?=[^\s"'”,;]{0,64}[0-9!@#$%^&*]))[^\s"'”,;]{3,}`
-  + String.raw`|\buser(?:name)?\s+["'“]?(?!(?:${PASS_NOT_USER})\b)[\w.@-]{2,}["'”]?,?\s+pass\s+["'“]?(?!(?:${PASS_NOT_VALUE})\b)[A-Za-z]{3,}["'”]?(?=\s*(?:$|\n|[.,;!?)]))`, "i");
+const LOGIN_PASS = new RegExp(String.raw`\b(?:user(?:name)?|login)\b[^\n]{0,60}?\bpass\b(?:\s*[:=]\s*["'“]?|\s+["'“]?(?=[^\s"'”,;]{0,64}[0-9!@#$%^&*]))[^\s"'”,;]{3,}`, "i");
+const USER_PASS = new RegExp(String.raw`\buser(?<username>name)?\s+(?<user>["'“][\w.@-]{2,}["'”]|(?!(?:${PASS_NOT_USER})\b)[\w.@-]{2,})(?<comma>,?)\s+pass\s+["'“]?`
+  + String.raw`(?!(?:${PASS_NOT_VALUE})\b)(?![A-Za-z]*(?:ing|tion|sion|ment)\b)[A-Za-z]{3,}["'”]?(?=\s*(?:$|\n|[.,;!?)]))`, "gi");
+/** Whether `text` gives a user's name and password (LOGIN_PASS, USER_PASS), never a lowercase plural after "user" alone. */
+function loginPass(text: string): boolean {
+  if (LOGIN_PASS.test(text)) return true;
+  for (const m of text.matchAll(USER_PASS)) {
+    const { username, user, comma } = m.groups!;
+    if (username || comma || !/^[a-z]+[^s\W]s$/.test(user!)) return true;
+  }
+  return false;
+}
 /**
  * A code or combination for a door, alarm, safe and the like, with digits for its value ("the door code is 4821",
  * "Garage code: 7734", "backup codes are 1234-5678", "the safe combination is 32-18-04"). "The door code changes on
@@ -703,9 +719,9 @@ export function memoryRefusal(text: string): string | null {
   // The redactor hides a key only with its END line too: a key's first line alone is still a key's start (audit).
   if (PRIVATE_KEY_START.test(text)) return "it holds a private key";
   const pins = withoutPostcodes(said);
-  if (TOLD_SECRET.test(said) || BARE_PASSWORD.test(said) || BARE_PIN.test(pins) || LOGIN_PASS.test(said) || PLACE_CODE.test(said)
+  if (TOLD_SECRET.test(said) || BARE_PASSWORD.test(said) || BARE_PIN.test(pins) || loginPass(said) || PLACE_CODE.test(said)
     || CODE_FOR_PLACE.test(said) || BARE_CVV.test(said) || USED_AS.test(said) || LOGIN_PAIR.test(said) || WIFI_KEY.test(said) || SEED_WORDS.test(said)
-    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(said) || TOLD_TOKEN.test(said) || ADMIN_PAIR.test(said) || VALUE_FIRST.test(said)) {
+    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(said) || TOLD_TOKEN.test(said) || ADMIN_PAIR.test(said) || ADMIN_SET.test(said) || VALUE_FIRST.test(said)) {
     return "it holds a password, PIN or code";
   }
   // Said as a login's one value, it may be the user name ("my login is jsmith42"): the model is told it may be the

@@ -99,7 +99,8 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   user's name has no digit, so "Credentials: MY_PASS=hunter2" and "the login is p4ss@word" are refused, memory-v5-4), a
   disk's use and a formula ("Root: 45G / 100G", "const root = -b / (2*a);", "root = width / 2000": an admin's pair
   after "=" only outside code, so "Admin = admin / hunter2!" is refused, and never with a size for the user name,
-  memory-c4-2, memory-v5-4), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
+  memory-c4-2, memory-v5-4; after "=" only with admin, root or a capitalised name for the user, so a path or a division
+  such as `root = tmp_path / "out1"` or `root = sum / count2` is sent, memory-w5-5), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
   GPIO0 as the boot pin", "never share your password, it's personal": a value said before "the data pin" or "the
   boot pin" counts only as digits, and ", it's" only before a value with a digit or a symbol, memory-v4-6), how a
   token is made ("the access token is HS256-signed", "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
@@ -131,7 +132,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   urlUsername,\n  password: urlPassword\n};`, a multi-line signature, `if not tokens:\n    return ""` and
   `f"Failed to refresh token: {e}"` are sent, and a task view reads a code block's or a file's line with the lines
   before it (memory-w5-2); a letters-only "pass" straight after "user" and a name is a
-  password too ("username bob pass hunter", never "the user should pass validation": memory-v5-4). Secrets are refused
+  password too ("username bob pass hunter", never "the user should pass validation": memory-v5-4), but never a
+  lowercase plural straight after "user" nor a word for a check after "pass" ("Why don't the user scripts pass
+  linting?", "Ensure user inputs pass sanitisation.": memory-w5-4). Secrets are refused
   whole, never stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file

@@ -456,6 +456,22 @@ describe("what memory never keeps", () => {
   ])("keeps %j, which names no password (memory-v5-4)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // "user" before a plural and "pass" before a check, and a path or a division into "root", read as a user name and a
+  // password once those rules took any word there (memory-w5-4, memory-w5-5).
+  it.each([
+    ["Why don't the user scripts pass linting?"], ["How do I make user uploads pass scanning?"], ["Do the user queries pass sanitisation?"],
+    ["Ensure user inputs pass sanitisation."], ["Make sure user permissions pass inspection."], ["user emails pass verification"], ["the user agents pass unchallenged"],
+    ['root = tmp_path / "out1"'], ['root = BASE_DIR / "static2"'], ['root = base / "data_v2"'], ["root = sum / count2"], ["root = total / n_items2"],
+  ])("keeps %j, a check or a path in code (memory-w5-4, memory-w5-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).not.toBe("refused");
+  });
+  it.each([
+    ["username bob pass hunter"], ["user priya, pass hunter"], ['user "james" pass hunter'], ["username james pass hunter"], ["user James pass hunter"],
+    ["Admin = admin / hunter2!"], ["admin = Priya / Bob99"], ["root = root / toor123"],
+  ])("still refuses %j, a user's name and password (memory-w5-4, memory-w5-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
 
   // A Wi-Fi password under the names Windows and routers give it, which Ember's screen reading already treats as secret
   // (safety-privacy-c4-2), and a security question's answer in the model's own style (memory-1).
