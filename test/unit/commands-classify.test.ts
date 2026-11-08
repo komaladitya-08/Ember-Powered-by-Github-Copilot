@@ -183,6 +183,24 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     ]) expect(refused(cmd), cmd).toBeUndefined();
   });
 
+  it("judges a variable set to Ember's folder where a command uses it, so testing or printing it runs (commands-remote-r4-5)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "p=~/.config/ember; [ -d \"$p\" ] && echo yes", "p=~/.config/ember; test -d \"$p\" && echo yes", "p=~/.config/ember; echo \"Ember keeps data in $p\"",
+      "x=~/.config/ember; echo hi", "for f in ~/.config/*; do echo \"$f\"; done", "for f in ~/.local/share/*; do echo \"$f\"; done",
+      "while read -r l; do echo \"$l\"; done <<EOF\n/home/ana/.config/ember\nEOF", "printf -v d %s ~/.config/ember; echo \"$d\"", "set -- ~/.config/ember; echo \"$1\"",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+    // Where it is used it is judged as the path: read, changed, or listed as `ls` of the pattern itself is.
+    expect(refused("p=~/.config/ember; cat \"$p/settings.json\"")).toBe(READ);
+    expect(refused("p=~/.config/ember; rm -rf \"$p\"")).toBe(CHANGE);
+    expect(refused("for app in ~/.config/*; do ls \"$app\" | head -1; done")).toBe(refused("ls ~/.config/*"));
+    // A value that may reach a program's environment (exported, before a command, or an environment variable's name)
+    // is still judged when it is set.
+    for (const cmd of ["export d=~/.config/ember; make", "D=~/.config/ember make", "XDG_CONFIG_HOME=~/.config/ember; gedit-like-tool", "declare -x d=~/.config/ember; make"]) {
+      expect(refused(cmd), cmd).toBe(READ);
+    }
+  });
+
   it("refuses Ember's own folder reached through a PowerShell variable the command sets, as when it is named (commands-remote-c3-2)", () => {
     const ps = (cmd: string) => says(cmd, "powershell", "win32");
     for (const cmd of [

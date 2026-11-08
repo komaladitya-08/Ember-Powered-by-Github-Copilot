@@ -475,17 +475,19 @@ class Classifier {
 
   /**
    * A POSIX variable's value the text sets (`d=…`, `export d=…`, a loop's list, `set --`'s `$1`…, `printf -v d`, `read
-   * d` from a here-string: its lines and words, else unseen), judged at once for
-   * any use (one of Ember's paths, or a pattern that can match one, is refused as fallbackScan refuses it) and kept for
-   * the words that use the variable later (commands-remote-c3-2). Every value is kept, earlier ones too, so a value
-   * set again inside a loop still counts. A name set again no longer says the loop's files on the card.
+   * d` from a here-string: its lines and words, else unseen), kept for the words that use the variable later, where it
+   * is judged as the path it names (commands-remote-c3-2). Only a value that may reach a program's environment (`export`,
+   * `declare -x`, an assignment before a command, or an environment variable's name such as XDG_CONFIG_HOME) is judged
+   * when it is set, for any use: testing or printing a plain variable reads nothing (commands-remote-r4-5). Every value
+   * is kept, earlier ones too, so a value set again inside a loop still counts. A name set again no longer says the
+   * loop's files on the card.
    */
-  setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false): void {
+  setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
     if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
-    for (const f of forms) this.judgeForm(f, null, sc);
+    if (exported || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc);
     const all = [...new Set([...(this.varValues.get(name) ?? []), ...forms])];
     this.varValues.set(name, all.length > MAX_FORMS ? [UNSEEN] : all);
   }
@@ -1554,7 +1556,7 @@ class Engine extends Classifier {
       return;
     }
     this.simple({ words, redirs, stdin, stdinText, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
-      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v);
+      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
   }
 
@@ -1651,7 +1653,7 @@ class Engine extends Classifier {
    * before `read`, `mapfile` or `readarray` (`IFS= read -r l`) lasts only while that built-in splits what it reads, in
    * bash, zsh and sh alike, so it changes how nothing else runs (commands-remote-2).
    */
-  private assignments(list: { name: string; value: Arg }[], sc: Scope, program: string | null = null): void {
+  private assignments(list: { name: string; value: Arg }[], sc: Scope, program: string | null = null, beforeCommand = program !== null): void {
     if (list.length) this.envChanged = true;
     const splitOnly = sc.family === "posix" && program !== null && READS_LINES.has(program);
     for (const a of list) {
@@ -1660,7 +1662,7 @@ class Engine extends Classifier {
         this.unclear("unclear.assignment", "It changes how commands are found or run.");
       }
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
-      this.setVar(a.name, [a.value], sc);
+      this.setVar(a.name, [a.value], sc, false, beforeCommand);
     }
   }
 
@@ -2108,7 +2110,7 @@ class Engine extends Classifier {
       pc.program = nameArg.raw;
       pc.args = words.slice(1).map(a => a.v);
       this.program = nameArg.raw;
-      this.assignments(assigns, sc, null);
+      this.assignments(assigns, sc, null, true);
       this.unclear("unclear.program", "It runs a program Ember can't name.");
       if (nameArg.fetch) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       this.readArgs(words.slice(1), sc);
@@ -3888,7 +3890,7 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
     if (RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
     if (n.v !== null && n.v.includes("=") && commandLineSecret(n.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
     // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2).
-    if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc);
+    if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc, false, h.key === "export" || has(p, "x"));
   }
 });
 reg(NATIVE, ["compgen"], h => { if (h.args.some(a => /^-[a-zA-Z]*[ev]/.test(a.v ?? ""))) h.e.add("secret", "secret.env", SAYS.env); });

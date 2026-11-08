@@ -363,8 +363,10 @@ Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do
 `printf -v` and the text a here-string or here-document gives `read` (`while read f; do rm -rf "$f"; done <<<
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`) or a pattern before it
-could match one (`rm -rf ~/.c*/$x`). A value Ember can't see at all (a file `read` reads, a command's output) isn't
-followed: such a command asks, as any delete does.
+could match one (`rm -rf ~/.c*/$x`). A variable is judged where a command uses it, so one that only names Ember's
+folder to test or print it (`p=~/.config/ember; [ -d "$p" ] && echo yes`) runs, unless it is exported to a program. A
+value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
+does.
 
 ### 2.7 What Copilot gets back
 
