@@ -3,7 +3,7 @@
  * handle's, bottom right or bottom left) and the status pill's place. Pure, so it is unit-tested.
  */
 
-import type { Rect } from "../../shared/overlay";
+import type { BubbleState, Rect } from "../../shared/overlay";
 import { sideOf, type HandlePosition, type HandleSide } from "../../shared/handle-place";
 
 /** How far the ring round a control reaches beyond the control (its 4 px inset, keylines and glow). */
@@ -96,11 +96,22 @@ export function bubbleHere(f: { ember: { x: number; y: number }; on?: number }, 
 
 /**
  * The open Ask box for the bubble to keep off (global DIP), from main's word (`box`: state.askBox, null once it closes)
- * and the question showing (`question`: its answers' ids, "" for none), given what it kept off last (`held`): a bubble
- * that comes up while the box is open is placed clear of it where it can (companion-c1-1: a question came up under the
- * field). A question already shown keeps off the box where the box was when it came, so it never moves for the box
- * stepping aside, growing or closing (nothing near a pending question moves).
+ * and the bubble showing (`question`: askKeepOffKey, "" for none), given what it kept off last (`held`): a bubble that
+ * comes up while the box is open is placed clear of it where it can (companion-c1-1: a question came up under the
+ * field). A bubble already shown keeps off the box where the box was when it came (nowhere, if it came first), so it
+ * never moves for the box opening, stepping aside, growing or closing: nothing near a pending question moves, and an
+ * answer being read isn't thrown across the screen (companion-c2-4); the box keeps clear of it instead (ask.ts).
  */
 export function askKeepOff(box: Rect | null, question: string, held: { box: Rect | null; question: string }): { box: Rect | null; question: string } {
   return question && question === held.question ? held : { box, question };
+}
+
+/**
+ * Which bubble askKeepOff holds for: a question by its answers' ids; anything else by its kind and title, so an answer
+ * is one bubble from when it shows until it goes, however its words stream in ("Read all" opens a new one); "" while
+ * none shows.
+ */
+export function askKeepOffKey(b: Pick<BubbleState, "visible" | "mood" | "title" | "actions" | "expanded">): string {
+  if (!b.visible) return "";
+  return b.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id).join(",") || `${b.mood}|${b.title}${b.expanded ? "|expanded" : ""}`;
 }

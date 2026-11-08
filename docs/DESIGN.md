@@ -146,7 +146,9 @@ They share one emotion rig, so switching never changes behaviour.
   bubble, or over or under it where it fits beside neither (larger text, a 1024-wide screen), never
   on it nor on Ember (the bubble never moves for it). A bubble that comes up while the box is open
   keeps off it where it can (never hiding for it); a question, or its own Listen once's
-  "Listening…" (never a wake's), that finds no room moves the box aside once, and a question already shown never moves for the box. While the box is
+  "Listening…" (never a wake's), that finds no room moves the box aside once, and a bubble already
+  shown, a question or an answer being read, never moves for the box: where the box can't keep
+  clear of it whole (a small screen at Larger text), the box may come against it. While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
   More time to read). Without a
