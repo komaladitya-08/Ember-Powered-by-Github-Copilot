@@ -15,7 +15,7 @@ import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import { BubbleOwner, Presenter, lostWords, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import { providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
@@ -464,7 +464,6 @@ const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when 
 /** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
 const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
 const NO_WATCHERS_WHY = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.";
-const NO_WATCHERS_DETAIL = `${NO_WATCHERS_WHY} Reconnecting…`;
 /**
  * The conversation's turn began and then heard nothing from Copilot for minutes (TurnWatch), and ending it didn't
  * end it: Copilot is reconnected (the conductor said NO_ANSWER).
@@ -486,6 +485,26 @@ export function reconnectWords(service: ServiceKind) {
     notAnsweringDetail: `${who} isn't answering. Reconnecting…`,
     noAnswerDetail: `${who} didn't answer in time. Reconnecting…`,
     notAnsweringNow: `${who} isn't answering.`,
+  };
+}
+
+/**
+ * What Ember's Copilot runtime stopping or running out of file watchers is called, for the service in use
+ * (integrations-v1): Copilot's words above, and under the user's own provider or the organisation's service "Ember's
+ * model connection" (noticeTitle's "My model connection" in the bubble), never Copilot, which the person isn't using.
+ * `cutOffStalled`: a task cut off because the model service didn't answer.
+ */
+export function runtimeWords(service: ServiceKind) {
+  if (service === false) {
+    return { stopped: "Copilot stopped unexpectedly. Reconnecting…", keepsStopping: "Copilot keeps stopping. Press Check again to retry, or restart Ember.", cutOff: CUT_OFF, cutOffStalled: CUT_OFF_STALLED, noWatchers: NO_WATCHERS, noWatchersWhy: NO_WATCHERS_WHY };
+  }
+  return {
+    stopped: "Ember's model connection stopped unexpectedly. Reconnecting…",
+    keepsStopping: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.",
+    cutOff: "Ember's model connection stopped unexpectedly; the task didn't finish.",
+    cutOffStalled: `${service === "user" ? "Your model provider" : "The model service"} didn't answer; the task didn't finish.`,
+    noWatchers: "I can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.",
+    noWatchersWhy: "Ember's model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.",
   };
 }
 
@@ -993,7 +1012,7 @@ export class AgentHost {
   /** What the last "I can't reach Copilot" (or "I need Copilot first") notice said, until Ember is connected again. */
   private unreachable: string | null = null;
   /** The bubble says the runtime stopped and Ember is reconnecting (lost): once ready, it says Copilot is back (rp-6). */
-  private reconnectingShown = false;
+  private reconnectingShown: string | null = null;
   /** A finished task's line in the transcript: its result as it said it (without the title the conversation wrote). */
   private readonly results = new WeakMap<TranscriptEntry, string>();
   /**
@@ -1637,9 +1656,10 @@ export class AgentHost {
     // Connected again: a notice saying why Ember couldn't answer no longer holds (one still up goes).
     if (this.status.phase === "ready" && this.unreachable !== null) { this.presenter.withdraw(this.unreachable); this.unreachable = null; }
     // Connected again after the runtime stopped: a bubble still saying it is reconnecting says it is back (rp-6).
-    if (this.status.phase === "ready" && this.reconnectingShown) {
-      this.reconnectingShown = false;
-      this.presenter.reconnected(LOST_RECONNECTING);
+    if (this.status.phase === "ready" && this.reconnectingShown !== null) {
+      const shown = this.reconnectingShown;
+      this.reconnectingShown = null;
+      this.presenter.reconnected(shown);
       this.problemReconnected();
     }
     this.o.onStatus(this.status);
@@ -1650,11 +1670,13 @@ export class AgentHost {
    * (reliability-performance-c1-1: Home kept "ask me again in a moment" for good, under its own "Connected.").
    */
   private problemReconnected(): void {
-    const said = retainedConversationText(LOST_RECONNECTING).text;
-    const at = this.transcript.findLastIndex(e => e.who === "problem" && e.text === said);
+    // Copilot's words or "my model connection"'s, as the line was written (integrations-v1).
+    const pairs = [lostWords(false), lostWords("user")].map(w => ({ said: retainedConversationText(w.reconnecting).text, back: w.reconnected }));
+    const at = this.transcript.findLastIndex(e => e.who === "problem" && pairs.some(p => p.said === e.text));
     if (at < 0) return;
     const was = this.transcript[at];
-    const now = { ...was, ...retainedConversationText(LOST_RECONNECTED) };
+    const back = pairs.find(p => p.said === was.text)!.back;
+    const now = { ...was, ...retainedConversationText(back) };
     this.transcript[at] = now;
     if (this.unsaved.has(was)) this.unsaved.add(now);
     this.o.onTranscript?.(this.getTranscript());
@@ -2053,17 +2075,19 @@ export class AgentHost {
           const reason = why === "silent" ? "turn went silent and didn't end" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
           // Named for the service in use, never Copilot when it isn't (integrations-v1).
           const words = reconnectWords(this.serviceKind());
+          const runtime = runtimeWords(this.serviceKind());
+          const noWatchersDetail = `${runtime.noWatchersWhy} Reconnecting…`;
           if (this.tasksAtWork()) {
             this.o.log.warn("agent.reconnect_after_tasks", { why: reason });
             // (A silent turn: the conductor said Copilot didn't answer.)
-            if (why === "not-started") this.presenter.fail(full ? NO_WATCHERS : words.notAnsweringAfterTasks);
+            if (why === "not-started") this.presenter.fail(full ? runtime.noWatchers : words.notAnsweringAfterTasks);
             // (Set first: the status says the reconnect waits for the tasks, so settings doesn't offer one that stops them.)
-            this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? words.noAnswerDetail : full ? NO_WATCHERS_DETAIL : words.notAnsweringDetail, asked, CUT_OFF_STALLED); };
-            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${NO_WATCHERS_WHY} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
+            this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? words.noAnswerDetail : full ? noWatchersDetail : words.notAnsweringDetail, asked, runtime.cutOffStalled); };
+            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${runtime.noWatchersWhy} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
             return;
           }
-          if (why === "silent") this.lost(gen, reason, noAnswer(this.serviceKind()), words.noAnswerDetail, asked, CUT_OFF_STALLED);
-          else this.lost(gen, reason, full ? NO_WATCHERS : words.notAnswering, full ? NO_WATCHERS_DETAIL : undefined, asked, CUT_OFF_STALLED);
+          if (why === "silent") this.lost(gen, reason, noAnswer(this.serviceKind()), words.noAnswerDetail, asked, runtime.cutOffStalled);
+          else this.lost(gen, reason, full ? runtime.noWatchers : words.notAnswering, full ? noWatchersDetail : undefined, asked, runtime.cutOffStalled);
         },
         startTask: tasks ? (goal, choice) => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
@@ -2361,19 +2385,22 @@ export class AgentHost {
    * file watchers used up, Ember would otherwise stop trying, and stay stopped once they're free again).
    * `cut`: what the tasks cut off by the reconnect say.
    */
-  private lost(gen: number, why: string, says?: string, detail?: string, stalled = false, cut = CUT_OFF): void {
+  private lost(gen: number, why: string, says?: string, detail?: string, stalled = false, cut?: string): void {
     if (gen !== this.gen) return;
     this.o.log.error("agent.runtime_lost", { why });
+    // Named for the service in use: under a provider the runtime is "Ember's model connection" (integrations-v1).
+    const words = runtimeWords(this.serviceKind());
+    const reconnecting = lostWords(this.serviceKind()).reconnecting;
     // Its tasks were cut off: they end as failed (the user stopped nothing), and the next conductor hears so.
-    this.cutOff = cut;
+    this.cutOff = cut ?? words.cutOff;
     // An answer cut off half-way says so, instead of vanishing.
-    if (says || this.presenter.busy || why === "send failed") { this.presenter.fail(says ?? LOST_RECONNECTING); this.reconnectingShown = !says; }
+    if (says || this.presenter.busy || why === "send failed") { this.presenter.fail(says ?? reconnecting); this.reconnectingShown = says ? null : reconnecting; }
     else this.presenter.reset();
-    this.setStatus({ phase: "error", reason: says || stalled ? "not-answering" : "runtime", detail: detail ?? (says ? reconnectWords(this.serviceKind()).notAnsweringDetail : "Copilot stopped unexpectedly. Reconnecting…") });
+    this.setStatus({ phase: "error", reason: says || stalled ? "not-answering" : "runtime", detail: detail ?? (says ? reconnectWords(this.serviceKind()).notAnsweringDetail : words.stopped) });
     if (!stalled) {
       const recent = this.crashes.filter(t => Date.now() - t < 10 * 60_000);
       if (recent.length >= 5) {
-        this.setStatus({ phase: "error", reason: "runtime", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." });
+        this.setStatus({ phase: "error", reason: "runtime", detail: words.keepsStopping });
         void this.halt(false);
         return;
       }

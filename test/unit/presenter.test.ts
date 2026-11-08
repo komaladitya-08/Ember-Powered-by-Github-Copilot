@@ -1313,6 +1313,9 @@ describe("a wait for Copilot says so and can be stopped (UI audit #4)", () => {
     expect(taskStoppedWords(false, "not-started")).toBe("Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
     expect(taskStoppedWords("user", "silent")).toBe("Your model provider didn't answer, so I stopped this task. You can ask me again in a moment.");
     expect(taskStoppedWords(true, "not-started")).toBe("The model service isn't answering, so I stopped this task. You can ask me again in a moment.");
+    // Out of file watchers: Copilot's words as they were, and under a provider never Copilot (integrations-v1).
+    expect(taskStoppedWords(false, "watchers")).toBe("Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.");
+    for (const p of ["user", true] as const) expect(taskStoppedWords(p, "watchers")).toBe("I can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.");
     expect(new Presenter(() => undefined, undefined, undefined, undefined, undefined, "user").taskStopped("silent")).toBe(taskStoppedWords("user", "silent"));
   });
 

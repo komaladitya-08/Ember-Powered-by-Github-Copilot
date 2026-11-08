@@ -177,8 +177,9 @@ export function problemTitle(said: string, provider: ServiceKind = false): strin
   if (/too much for me/i.test(said)) return "Too much at once";
   if (/can't reach|\bnetwork\b/i.test(said)) return provider ? "I can't reach the model service" : "I can't reach Copilot";
   if (/isn't answering|didn't answer|not answering/i.test(said)) return provider === "user" ? "Your model provider isn't answering" : provider ? "The model service isn't answering" : "Copilot isn't answering";
-  if (/stopped unexpectedly/i.test(said)) return "Copilot stopped";
-  if (/file watchers/i.test(said)) return "Copilot can't work right now";
+  // Ember's Copilot runtime, named "my model connection" while it serves another model service (integrations-v1).
+  if (/stopped unexpectedly/i.test(said)) return provider ? "My model connection stopped" : "Copilot stopped";
+  if (/file watchers/i.test(said)) return provider ? "I can't work right now" : "Copilot can't work right now";
   return `${service} had a problem`;
 }
 
@@ -585,8 +586,12 @@ export function keysLanding(turn: ConversationTurn, route: "access:ask" | "acces
 /** The model service in use, as a sentence starts with it. */
 const serviceName = (provider: ServiceKind) => (provider === "user" ? "Your model provider" : provider ? "The model service" : "Copilot");
 
-/** What a task stopped for its model service's silence says (worker.ts TurnWatch), for the service in use (integrations-v1). */
-export function taskStoppedWords(provider: ServiceKind, why: "silent" | "not-started"): string {
+/**
+ * What a task stopped for its model service's silence says (worker.ts TurnWatch), for the service in use (integrations-v1),
+ * and with the file watchers used up, Copilot's runtime as "I" under another service.
+ */
+export function taskStoppedWords(provider: ServiceKind, why: "silent" | "not-started" | "watchers"): string {
+  if (why === "watchers") return `${provider ? "I" : "Copilot"} can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.`;
   return `${serviceName(provider)} ${why === "silent" ? "didn't answer" : "isn't answering"}, so I stopped this task. You can ask me again in a moment.`;
 }
 
@@ -617,6 +622,18 @@ export const STOPPED_ANSWER = "Okay, I've stopped.";
 export const LOST_RECONNECTING = "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.";
 /** The conversation's line for that problem once Copilot is connected again (host.ts: reliability-performance-c1-1). */
 export const LOST_RECONNECTED = "Copilot stopped unexpectedly. I'm connected again: send it again.";
+/**
+ * LOST_RECONNECTING and LOST_RECONNECTED for the model service in use (integrations-v1): Copilot's as they are, and
+ * under the user's own provider or the organisation's service the runtime is "my model connection" (noticeTitle's name
+ * for it then), never Copilot, which the person isn't using.
+ */
+export function lostWords(service: ServiceKind): { reconnecting: string; reconnected: string } {
+  if (service === false) return { reconnecting: LOST_RECONNECTING, reconnected: LOST_RECONNECTED };
+  return {
+    reconnecting: "My model connection stopped unexpectedly. I'm reconnecting; ask me again in a moment.",
+    reconnected: "My model connection stopped unexpectedly. I'm connected again: send it again.",
+  };
+}
 /** The same bubble once Copilot is connected again (reconnected), with Try again (rp-6), or without a request to offer. */
 export const RECONNECTED_RETRY = "I'm connected again. Try again?";
 export const RECONNECTED = "I'm connected again. Ask me again.";
@@ -739,7 +756,7 @@ export class Presenter {
   }
 
   /** What a task stopped for its model service's silence says, for the service in use now (integrations-v1). */
-  taskStopped(why: "silent" | "not-started"): string {
+  taskStopped(why: "silent" | "not-started" | "watchers"): string {
     return taskStoppedWords(this.provider, why);
   }
 

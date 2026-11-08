@@ -12,7 +12,7 @@ import path from "node:path";
 import type { Logger } from "../../app/main/logger";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- a pretend SDK */
-const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[], refuse: null as null | { errorType: string; statusCode?: number; message: string } }));
+const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[], refuse: null as null | { errorType: string; statusCode?: number; message: string }, pingFails: false }));
 vi.mock("@github/copilot-sdk", async importOriginal => {
   const real = await importOriginal<typeof import("@github/copilot-sdk")>();
   class FakeClient {
@@ -24,7 +24,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async listModels() { return [{ id: "copilot-model", name: "Copilot model", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return []; }
     async deleteSession() { /* nothing */ }
-    ping() { return Promise.resolve({}); }
+    ping() { return sim.pingFails ? Promise.reject(new Error("Connection is disposed.")) : Promise.resolve({}); }
     async createSession(cfg: any) {
       sim.sessions.push(cfg);
       const own: ((e: any) => void)[] = [];
@@ -40,7 +40,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, idleWord, noticeTitle, reconnectWords, stillConnectingTitle } from "../../app/main/agent/host";
+import { AgentHost, CUT_OFF, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, idleWord, noticeTitle, reconnectWords, runtimeWords, stillConnectingTitle } from "../../app/main/agent/host";
+import { LOST_RECONNECTED, LOST_RECONNECTING, lostWords, problemTitle } from "../../app/main/agent/presenter";
 import type { BubbleState, EmberState } from "../../app/shared/overlay";
 import { SettingsStore } from "../../app/main/settings";
 import { providerDown, type ActiveProvider, type TestResult } from "../../app/main/provider";
@@ -231,6 +232,53 @@ describe("AgentHost with the user's own model provider", () => {
       notAnsweringNow: "Your model provider isn't answering.",
     });
     expect(reconnectWords(true).noAnswerDetail).toBe("The model service didn't answer in time. Reconnecting…");
+  });
+
+  it("names Ember's model connection, never Copilot, when the runtime stops or runs out of file watchers under a provider (integrations-v1)", () => {
+    // Copilot's words are as they were.
+    expect(runtimeWords(false)).toEqual({
+      stopped: "Copilot stopped unexpectedly. Reconnecting…",
+      keepsStopping: "Copilot keeps stopping. Press Check again to retry, or restart Ember.",
+      cutOff: CUT_OFF, cutOffStalled: "Copilot didn't answer; the task didn't finish.",
+      noWatchers: "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.",
+      noWatchersWhy: "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.",
+    });
+    expect(lostWords(false)).toEqual({ reconnecting: LOST_RECONNECTING, reconnected: LOST_RECONNECTED });
+    expect(runtimeWords("user")).toEqual({
+      stopped: "Ember's model connection stopped unexpectedly. Reconnecting…",
+      keepsStopping: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.",
+      cutOff: "Ember's model connection stopped unexpectedly; the task didn't finish.",
+      cutOffStalled: "Your model provider didn't answer; the task didn't finish.",
+      noWatchers: "I can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.",
+      noWatchersWhy: "Ember's model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.",
+    });
+    expect(runtimeWords(true).cutOffStalled).toBe("The model service didn't answer; the task didn't finish.");
+    for (const service of ["user", true] as const) {
+      expect(lostWords(service)).toEqual({
+        reconnecting: "My model connection stopped unexpectedly. I'm reconnecting; ask me again in a moment.",
+        reconnected: "My model connection stopped unexpectedly. I'm connected again: send it again.",
+      });
+      const words = [...Object.values(runtimeWords(service)), ...Object.values(lostWords(service))];
+      for (const w of words) expect(w, w).not.toMatch(/Copilot/);
+      // The bubble's title names it too.
+      expect(problemTitle(lostWords(service).reconnecting, service)).toBe("My model connection stopped");
+      expect(problemTitle(runtimeWords(service).noWatchers, service)).toBe("I can't work right now");
+    }
+    expect(problemTitle(LOST_RECONNECTING)).toBe("Copilot stopped");
+  });
+
+  it("says Ember's model connection stopped, never Copilot, when the runtime dies under my own provider (integrations-v1)", async () => {
+    sim.clients = []; sim.sessions = []; sim.listeners = [];
+    const { host, statuses } = makeHost(() => OWN, undefined, { healthMs: 40 });
+    try {
+      expect(await host.start(null)).toBe("ready");
+      sim.pingFails = true;
+      expect(await until(() => statuses.some(s => JSON.parse(s).detail === "Ember's model connection stopped unexpectedly. Reconnecting…"), 3000)).toBe(true);
+      expect(statuses.join("\n")).not.toContain("Copilot stopped");
+    } finally {
+      sim.pingFails = false;
+      await host.stop();
+    }
   });
 
   it("tells memory it waits for the own provider, never for a GitHub account, when the provider can't connect (integrations-r5)", async () => {
