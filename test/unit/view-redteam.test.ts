@@ -222,6 +222,18 @@ describe("a disk's use and code that names a token, which hold no secret (memory
   });
 });
 
+describe("a code block's line read with the lines before it (memory-w5-2)", () => {
+  it("shows an object whose last property is the same name as its variable", () => {
+    expect(why(stack({ kind: "code", lines: ["const auth = {", "  username: user,", "  password: password", "};"] }))).toBe(null);
+    expect(why(stack({ kind: "file", path: "src/auth.js", lines: ["auth = {", "  username: urlUsername,", "  password: urlPassword", "};"] }))).toBe(null);
+  });
+  it("still refuses a line that holds a password alone or after an object's opening", () => {
+    expect(why(stack({ kind: "code", lines: ["  password: password"] }))).toBe("secret");
+    expect(why(stack({ kind: "code", lines: ["const auth = {", "  password: hunter2", "};"] }))).toBe("secret");
+    expect(why(stack({ kind: "code", lines: ["Router password:", "hunter2 is my password"] }))).toBe("secret");
+  });
+});
+
 describe("a password's state as a label's value (memory-w5-3)", () => {
   it.each([["Password", "Masked"], ["Password", "Hashed"], ["PIN", "Entered"]])("shows %s: %s", (label, value) => {
     expect(why(stack({ kind: "keyvalue", rows: [{ label: "Account", value: "priya@example.com" }, { label, value }] }))).toBe(null);

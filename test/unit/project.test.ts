@@ -147,6 +147,23 @@ it("sends a call's last keyword argument, a shell function's arguments, a switch
   await expect(projectPrompt([setup], "review", "Why does start fail?", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
 });
 
+it("sends an object's last property, a multi-line signature, a Python block's body and an f-string's placeholder, beside a password in an object (memory-w5-2)", async () => {
+  const files = await Promise.all([
+    file("fetch.js", "if (!auth && (parsedURL.username || parsedURL.password)) {\n  const urlUsername = decodeURIComponentSafe(parsedURL.username);\n  const urlPassword = decodeURIComponentSafe(parsedURL.password);\n  auth = {\n    username: urlUsername,\n    password: urlPassword\n  };\n}\n"),
+    file("api.js", "export function makeClient(user, password) {\n  return new Client({\n    user: user,\n    password: password\n  });\n}\n"),
+    file("session.ts", "export function session(user: string, accessToken: string) {\n  return {\n    user,\n    token: accessToken\n  };\n}\n"),
+    file("ec.py", "def sign(\n    backend: Backend, private_key: _EllipticCurvePrivateKey, data: bytes\n) -> bytes:\n    return backend.sign(private_key, data)\n"),
+    file("lex.py", "def first(tokens):\n    if not tokens:\n        return \"\"\n    return tokens[0]\n\n\ndef pairs(tokens):\n    for token in tokens:\n        yield token.kind, token.value\n"),
+    file("refresh.py", "try:\n    refresh()\nexcept Exception as e:\n    raise AuthError(\n        f\"Failed to refresh token: {e}\"\n    )\n"),
+    file("lexer_types.py", "class Token:\n    def __init__(self,\n                 text=None,\n                 oldToken=None):\n        self.text = text\n"),
+  ]);
+  const result = (await projectPrompt(files.slice(0, 4), "review", "Review this.", new AbortController().signal, privateDir))
+    + await projectPrompt(files.slice(4), "review", "Review this.", new AbortController().signal, privateDir);
+  for (const line of ["password: urlPassword", "token: accessToken", "private_key: _EllipticCurvePrivateKey", "if not tokens:", "{e}", "class Token:"]) expect(result).toContain(line);
+  const literal = await file("config.js", "const auth = {\n  user: \"app\",\n  password: hunter2\n};\n");
+  await expect(projectPrompt([literal], "review", "Review this.", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
+});
+
 it("offers a reviewed patch whose new line sets max_tokens or reads a key from the environment (memory-r4-2, integrations-c4-1)", async () => {
   const source = await file("client.ts", "export const options = {\n  temperature: 0.2,\n};\n");
   const snapshots: ProjectSource[] = [];

@@ -125,7 +125,12 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   name for a secret, an operator, a number of more than two digits, a word in brackets, "new" without a call, "self."
   with a digit, a bare plural and a next line not indented under it or not written as code, so "The router's password:
   password", "Netflix password: (fluffy)", "Gmail password: new Summer2024!", "pins: 4821" and "Admin
-  password:\ndefault is admin123" are refused (memory-v5-3); a letters-only "pass" straight after "user" and a name is a
+  password:\ndefault is admin123" are refused (memory-v5-3). A line inside a bracket that a line of code opened above
+  it (in the 2 KiB before; never "(My notes:" or "Router ("), a list's last item before its closing line, a Python
+  block's body under its own line and a format string's placeholder are code, so axios's `auth = {\n  username:
+  urlUsername,\n  password: urlPassword\n};`, a multi-line signature, `if not tokens:\n    return ""` and
+  `f"Failed to refresh token: {e}"` are sent, and a task view reads a code block's or a file's line with the lines
+  before it (memory-w5-2); a letters-only "pass" straight after "user" and a name is a
   password too ("username bob pass hunter", never "the user should pass validation": memory-v5-4). Secrets are refused
   whole, never stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.

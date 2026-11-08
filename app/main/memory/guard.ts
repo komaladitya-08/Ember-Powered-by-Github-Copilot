@@ -94,12 +94,16 @@ const CODE_TYPE = new RegExp(String.raw`^(?:string|str|number|int|integer|float|
 const CODE_WORD = new RegExp(String.raw`^(?:(?:new|await|yield|typeof|keyof|readonly)\s+[A-Za-z_$][\w$.]*[(<]|(?:async|function)\s*[(*]|(?:async|function|lambda)\s+[A-Za-z_$][\w$]*\s*[(:]|(?:require|import)\s*\(|(?:this|self|super|cls)\.(?![\w$.]*\d)|(?:true|false|True|False|null|NULL|None|nil|undefined|NaN|void\s+0)(?![\w$@!#%&*.-])${CODE_AFTER})`);
 /** A statement where a block's first line would be, after a key that ends its line ("if creds.refresh_token:\n  if …"). */
 const CODE_STATEMENT = /^(?:if|elif|else|for|while|return|raise|throw|try|except|finally|with|def|class|pass|break|continue|print|assert|del|case|default|const|let|var|static|import|from|yield|await)\b/;
+/** A Python block's own line, which ends with the key's ":" ("if not tokens:", "elif volume.secret:", "class Token:"). */
+const PY_BLOCK = /^\s*(?:if|elif|while|for|with|def|class|async\s+(?:def|for|with))\s[^\n]*:\s*$/;
+/** A Python statement, which a block's body opens with ("return \"\"", "yield token.kind, token.value"). */
+const PY_STATEMENT = /^(?:return|yield|raise|pass|break|continue|if|for|while|with|try|del|assert|print|import|from|await|global|nonlocal|def|class|async)\b/;
 /**
  * Whether `s`, a block's first line, is a statement written as code: one that ends as a block's or a call's line does,
  * or a keyword alone or before one name or call ("return creds", "pass"), never "default is admin123" (memory-v5-3).
  */
 const codeStatement = (s: string) => CODE_STATEMENT.test(s)
-  && (/[:({;)\]]\s*$/.test(s) || /^[a-z]+(?:\s+[A-Za-z_$][\w$.]*(?:\([^()]*\))?)?$/.test(s));
+  && (/[:({;)[\]]\s*$/.test(s) || /^[a-z]+(?:\s+[A-Za-z_$][\w$.]*(?:\([^()]*\))?)?$/.test(s));
 /** A placeholder for a secret, never one ("...", "sk-...", "xxxx", "****", "<your-token>", "YOUR_API_KEY", "[redacted]"). */
 const PLACEHOLDER = /^(?:\.{3}|…|\w{0,6}[-_](?:\.{3}|…)|x{3,}(?:[-_]x+)*|\*{3,}|<[^<>\d]*>|\[[^\]\d]*\]|your[-_][\w-]+|(?:Bearer|Basic|token)\s+(?:\.{3}|…|x{3,}|<[^<>\d]*>|\$\{[^}]*\}|\$\w+))$/i;
 /**
@@ -194,15 +198,26 @@ const TYPE_ALIAS = /^\s*(?:export\s+)?(?:declare\s+)?type\s+[A-Za-z_$][\w$]*(?:<
 /**
  * What a key is: the name that says a secret, whether a number after it is a count or a PIN, whether it is compared
  * through a property or is a ternary's quoted branch ("token.value === …", '? "password" : …'), so a literal after it is
- * code unless shaped like a password, whether typeof reads it ("typeof token === …"), and whether it is a shell's
- * variable, whose unquoted value is a literal ("export DB_PASSWORD=changeme"), never a name (memory-v5-2).
+ * code unless shaped like a password, whether typeof reads it ("typeof token === …"), whether it is a shell's
+ * variable, whose unquoted value is a literal ("export DB_PASSWORD=changeme"), never a name (memory-v5-2), and whether
+ * it stands inside a bracket a line of code opened above it or that the next line closes, so its line is code however
+ * it ends ("auth = {\n  password: urlPassword\n};"): memory-w5-2.
  */
-interface CodeKey { name: string; count: boolean; pin: boolean; compared: boolean; typeOf: boolean; shell: boolean }
+interface CodeKey { name: string; count: boolean; pin: boolean; compared: boolean; typeOf: boolean; shell: boolean; inside: boolean }
 
 /** Whether `v`, what follows a secret-named key's ":" or "=" on `line`, reads as code rather than a value. */
 function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   if (TYPE_ALIAS.test(line)) return true;
   if (holdsLiteral(v)) return false;
+  const inCode = key.inside || codeish(line);
+  // A format string's placeholder for a name or a number, inside the string ('f"Failed to refresh token: {e}"', "'No
+  // aud field in token: {0}'"), never a password in braces ("{hunter2}"): memory-w5-2.
+  const holder = /^\{([A-Za-z_][\w.]*|\d*)(?:![rsa])?(?::[^{}"'`\n]*)?\}/.exec(v);
+  if (holder && holder[1]!.split(".").every(w => /^\d*$/.test(w) || codeLineName(w)) && line.endsWith(v)) {
+    const before = line.slice(0, line.length - v.length);
+    const after = v.slice(holder[0].length);
+    if (['"', "'", "`"].some(q => (before.split(q).length - 1) % 2 === 1 && after.includes(q))) return true;
+  }
   // A word with a digit or a symbol in brackets or after a comment's mark is a value written that way ("(hunter2)",
   // "<P@ss>", "[Summer2024, Winter2025]", "# hunter2"), unless a line of code names a variable so ("[node1]").
   const bracket = /^(?:[([{<]|\/\/|\/\*|#)([^()[\]{}<>\n]{0,80})/.exec(v)?.[1];
@@ -211,7 +226,7 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   // A comment, a bracket with code in it, a regular expression, a reference, a YAML tag or a borrow ("&str", "&[u8]")
   // where the value would be; never YAML's block markers ("|", ">"), whose value is on the lines after.
   if (/^(?:\/\/|\/\*|#\s|\/[\^([\\]|&(?:str\b|mut\b|self\b|\[|'|[A-Z][A-Za-z]*\b(?!\d))|![A-Za-z]+\s+\S)/.test(v) || REFERENCE.test(v)) return true;
-  if (/^[([{<]/.test(v)) return codeInBracket(v, line, op);
+  if (/^[([{<]/.test(v)) return codeInBracket(v, op !== ":" || inCode);
   const quoted = /^(["'`])(.*?)\1/.exec(v);
   if (quoted) {
     const s = quoted[2]!;
@@ -230,7 +245,7 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   if (!key.shell && /^!!?[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+/.test(v)) return true;
   const num = /^-?(?:0x[0-9a-f]+|\d[\d_]*(?:\.\d+)?(?:e[-+]?\d+)?)(?![\w$@.!#%&*:/-])/i.exec(v)?.[0];
   // After a prose label's ":", only a one- or two-digit number, never "Password: 0xCAFE" (memory-v5-3).
-  const short = op === ":" && !codeish(line) ? /^\d{1,2}$/ : /^-?(?:\d{1,2}|0x[0-9a-f]{1,4}|\d*\.\d+(?:e[-+]?\d+)?)$/i;
+  const short = op === ":" && !inCode ? /^\d{1,2}$/ : /^-?(?:\d{1,2}|0x[0-9a-f]{1,4}|\d*\.\d+(?:e[-+]?\d+)?)$/i;
   if (num) return key.count || (!key.pin && short.test(num));
   // A shell's unquoted word is its value, whatever it looks like (memory-v5-2).
   if (key.shell) return false;
@@ -244,7 +259,7 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   if (member) {
     const rest = v.slice(member.length);
     // "self.made99" outside code is a password written so (memory-v5-3).
-    if (!ends.test(rest) || (/^(?:this|self|super|cls)\./.test(member) && /\d/.test(member) && !codeish(line))) return false;
+    if (!ends.test(rest) || (/^(?:this|self|super|cls)\./.test(member) && /\d/.test(member) && !inCode)) return false;
     return codeMember(member) || CODE_LINE.test(line) || (/;\s*(?:\/\/.*)?$/.test(line) && /^[a-z.]+$/.test(member)) || op.startsWith("==") || operator.test(rest);
   }
   const id = /^[A-Za-z_$][\w$]*(?![\w$@.!#%&*^~+=:/-])/.exec(v)?.[0];
@@ -255,7 +270,7 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   // after a prose label's ":" ("The router's password: password", "My Wi-Fi password: abc", "Password: rex + 1985"),
   // but for an indented field's type ("  token: Token"): memory-v5-3.
   const named = id.toLowerCase() === key.name.toLowerCase() || namesSecret(id);
-  if (op === ":" && !codeish(line)) return named && /^[A-Z][A-Za-z]*$/.test(id) && /^[a-z]/.test(key.name) && /^[ \t]+[a-z]/.test(line);
+  if (op === ":" && !inCode) return named && /^[A-Z][A-Za-z]*$/.test(id) && /^[a-z]/.test(key.name) && /^[ \t]+[a-z]/.test(line);
   return named || (!key.pin && id.length <= 3)
     || operator.test(after) || (op.startsWith("==") && !/\d/.test(id)) || (CODE_LINE.test(line) && codeLineName(id));
 }
@@ -270,25 +285,34 @@ function codeish(line: string): boolean {
 }
 
 /**
- * The bracket ("(", "[" or "{") opened on an earlier line that the line at `lineStart` stands inside, looked for in the
- * 2 KiB before it, or undefined: only a line of code opens one (`codeish`), so prose in brackets never does. A call's,
- * a signature's or an object's own lines read as code by it ("connect(\n    password=password\n)", "auth = {\n
- * password: urlPassword\n}"): memory-w5-1, memory-w5-2.
+ * The bracket ("(", "[" or "{") opened on an earlier line that the line at `lineStart` stands inside, at most 2 KiB
+ * before it, or undefined: only a line of code opens one (one that starts or ends as code does, never "(My notes:" or
+ * words before a spaced bracket, "Router ("), so prose in brackets never does. A call's, a signature's or an object's
+ * own lines read as code by it ("connect(\n    password=password\n)", "auth = {\n  password: urlPassword\n}"):
+ * memory-w5-1, memory-w5-2. The text is read once, forwards, so the lines must be asked for in order.
  */
-function openedAbove(text: string, lineStart: number): string | undefined {
-  let depth = 0;
-  for (let i = lineStart - 1; i >= Math.max(0, lineStart - 2048); i--) {
-    const c = text[i]!;
-    if (c === ")" || c === "]" || c === "}") depth++;
-    else if (c === "(" || c === "[" || c === "{") {
-      if (depth > 0) { depth--; continue; }
-      // Its line, at most 200 characters either side of it, so a long line stays linear.
-      const head = text.slice(Math.max(0, i - 200), i);
-      const end = text.indexOf("\n", i);
-      return codeish(head.slice(head.lastIndexOf("\n") + 1) + text.slice(i, Math.min(end < 0 ? text.length : end, i + 200))) ? c : undefined;
+function openedAbove(text: string): (lineStart: number) => string | undefined {
+  const open: number[] = [];
+  let at = 0;
+  let asked = -1;
+  let answer: string | undefined;
+  return lineStart => {
+    if (lineStart === asked) return answer;
+    for (; at < lineStart; at++) {
+      const c = text[at];
+      if (c === "(" || c === "[" || c === "{") open.push(at);
+      else if (c === ")" || c === "]" || c === "}") open.pop();
     }
-  }
-  return undefined;
+    const i = open.at(-1);
+    asked = lineStart;
+    answer = undefined;
+    if (i === undefined || i < lineStart - 2048) return answer;
+    // Its line, at most 200 characters either side of it, so a long line stays linear.
+    const head = text.slice(Math.max(0, i - 200), i);
+    const line = head.slice(head.lastIndexOf("\n") + 1) + text.slice(i, Math.min(lineStart - 1, i + 200));
+    if ((CODE_LINE.test(line) || /[,;{([]\s*(?:(?:\/\/|#).*)?$/.test(line)) && !/^\s*[A-Z][A-Za-z0-9'’ -]*\s[({[]\s*$/.test(line)) answer = text[i];
+    return answer;
+  };
 }
 
 /**
@@ -296,12 +320,11 @@ function openedAbove(text: string, lineStart: number): string | undefined {
  * "[str]", "<your-key>", an arrow's parameters, names or numbers in code: "[bos]", "(where, at) =>"), never a word
  * written in one after a label ("Netflix password: (fluffy)", "Wi-Fi password: [BlueSky]"): memory-v5-3.
  */
-function codeInBracket(v: string, line: string, op: string): boolean {
+function codeInBracket(v: string, inCode: boolean): boolean {
   const first = /^\S+/.exec(v)![0].replace(/[,;]$/, "");
   if (BRACKET_HOLDER.test(first) || BRACKET_CAPS.test(first) || /^\([^()]*\)\s*(?::\s*[^=]{1,80})?=>/.test(v)) return true;
   const inner = /^[([{<]([^)\]}>\n]*)/.exec(v)![1]!.trim();
   if (!inner || /[.(){}[\]<>:=;"'`$*&|+]|\bfor\b.*\bin\b/.test(inner)) return true;
-  const inCode = op !== ":" || codeish(line);
   return inner.split(/[\s,]+/).every(w => namesSecret(w) || CODE_TYPE.test(w) || /^(?:\.{3}|…)$/.test(w)
     || (inCode && (codeLineName(w) || /^-?\d+$/.test(w))));
 }
@@ -323,6 +346,7 @@ function codeLineName(id: string): boolean {
 function withoutCodeKeys(text: string): string {
   let out = "";
   let at = 0;
+  const above = openedAbove(text);
   for (const m of text.matchAll(KEY_BEFORE_SEP)) {
     const name = m[0];
     if (!SECRET_IN_NAME.test(name) || redactSecrets(name) !== name) continue;
@@ -346,7 +370,8 @@ function withoutCodeKeys(text: string): string {
       compared: (property && op.startsWith("==")) || /\?\s*["'`]$/.test(before), typeOf: op.startsWith("==") && /\btypeof\s+$/.test(before),
       shell: op === "=" && text[start + name.length] === "=" && /^[A-Za-z_]\w*$/.test(name) && /^[^\s,)]\S*(?<![,):])(?!\S)/.test(text.slice(i, i + 400))
         && (SHELL_BEFORE.test(text.slice(lineStart, start))
-          || (/^[A-Z_][A-Z0-9_]*$/.test(name) && SHELL_CAPS_BEFORE.test(text.slice(lineStart, start)) && !/[([]/.test(openedAbove(text, lineStart) ?? ""))),
+          || (/^[A-Z_][A-Z0-9_]*$/.test(name) && SHELL_CAPS_BEFORE.test(text.slice(lineStart, start)) && !/[([]/.test(above(lineStart) ?? ""))),
+      inside: false,
     };
     let code: boolean;
     // An arrow's parameter, a path, or a property about the secret ("token.type").
@@ -355,6 +380,10 @@ function withoutCodeKeys(text: string): string {
       // Each look is bounded (a value's first 400 characters, its line's first and last 200), so a long line of
       // keys stays linear.
       const lineEnd = text.indexOf("\n", i);
+      // Inside a bracket a line of code opened above it, or a list's last item, after one that ends with ",", before the
+      // line that closes it (memory-w5-2).
+      key.inside = above(lineStart) !== undefined || (lineEnd >= 0 && /^\s*[)\]}]/.test(text.slice(lineEnd + 1, lineEnd + 401))
+        && /,[ \t]*(?:\n[ \t]*)*$/.test(text.slice(Math.max(0, lineStart - 400), lineStart)));
       const end = lineEnd < 0 ? text.length : lineEnd;
       const rest = text.slice(i, Math.min(end, i + 400)).replace(/^[ \t]+/, "");
       const line = end - lineStart <= 400 ? text.slice(lineStart, end) : `${text.slice(lineStart, lineStart + 200)}\n${text.slice(end - 200, end)}`;
@@ -368,7 +397,10 @@ function withoutCodeKeys(text: string): string {
         // A statement may follow at the same depth after a block's own line or a comment ("case X:\ncase Y:").
         const under = next !== undefined && /^[ \t]*/.exec(next)![0].length > /^[ \t]*/.exec(line)![0].length;
         const block = CODE_STATEMENT.test(line.trim()) || /^\s*(?:\/\/|\/\*|\*|#)/.test(line);
-        code = next === undefined || (under && /^\s*[A-Za-z_$][\w$.-]*["']?\s*[:=]/.test(next)) || ((under || block) && codeStatement(next.trim()))
+        // A Python block's body under its own line ("if not tokens:\n    return \"\"", "for token in tokens:\n
+        // yield token.kind, token.value"): memory-w5-2.
+        const body = under && PY_BLOCK.test(line) && PY_STATEMENT.test(next.trim());
+        code = next === undefined || body || (under && /^\s*[A-Za-z_$][\w$.-]*["']?\s*[:=]/.test(next)) || ((under || block) && codeStatement(next.trim()))
           || (/^\s*(?:\/\*|\*)/.test(line) && /^\s*\*(?:\s|$)/.test(next)) || readsAsCode(key, next.trim(), next, op);
       }
     }

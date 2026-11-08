@@ -422,6 +422,25 @@ describe("what memory never keeps", () => {
   ])("keeps %j, code with no secret where the value would be (memory-v5-3)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A property on its own line inside an object or a call opened above it, a Python block's body and a format string's
+  // placeholder were read as a prose label's value when only their own line was looked at (memory-w5-2).
+  it.each([
+    ["auth = {\n  username: urlUsername,\n  password: urlPassword\n};"], ["return {\n  user,\n  token: accessToken\n}"],
+    ["new Client({\n  user: user,\n  password: password\n})"], ['const opts = {\n  passphrase: sslPass ? await readFile(sslPassPath) : ""\n};'],
+    ["def sign(\n    backend: Backend, private_key: _EllipticCurvePrivateKey, data: bytes\n) -> bytes:"], ['if not tokens:\n    return ""'],
+    ["for token in tokens:\n    yield token.kind, token.value"], ["elif volume.secret:\n    return cp.Labeled(["],
+    ['    raise AuthError(\n        f"Failed to refresh token: {e}"\n    )'], ['msg = f"Invalid token: {err}"'], ['print(f"password={password!r}")'],
+    ["raise AppIdentityError(\n    'No aud field in token: {0}'.format(payload))"], ["class Token:\n    def __init__(self,\n                 text=None,\n                 oldToken=None):"],
+    ["  user: u,\n  password: password\n}"],
+  ])("keeps %j, code inside the construct around it (memory-w5-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["(My notes:\nThe router's password: password"], ["Router (\n  password: password\n)"], ['msg = f"Invalid token: {hunter2}"'], ['"Password: {fluffy99}"'],
+    ["credentials:\n  password: password"], ["docker:\n  environment:\n    POSTGRES_PASSWORD: password"], ["auth = {\n  password: hunter2\n}"],
+  ])("still refuses %j, prose in brackets or a value in code (memory-w5-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
 
   // A login's password written with "@", a setting that names a password, an admin's pair after "=" and a letters-only
   // "pass" after a user name, which round five's login and admin rules kept (memory-v5-4).
