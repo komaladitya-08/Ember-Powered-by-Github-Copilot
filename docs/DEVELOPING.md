@@ -811,8 +811,9 @@ its number ("2. Choose Privacy", never "Open Settings 2."), and a streamed list 
 after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
 last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
-"Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", and other emoji and typed smileys not at
-all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
+"Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
+key" as "the right arrow key"), a range's dash as "to" ("$5-$10", "10:30–11:00", "5–10"), and other emoji and typed
+smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
 language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by
 a local system voice for that language, or not at all when there is none, which isn't reported as Ember failing to

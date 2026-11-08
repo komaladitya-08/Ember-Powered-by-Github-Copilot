@@ -60,6 +60,16 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["It's at github.com/foo/bar and docs.python.org/3/library.", "It's at github.com and docs.python.org."],
   ])("%j is said %j, a heart as a word, a duration and an address without its path (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
+  it.each([
+    ["Press the → key to go on.", "Press the right arrow key to go on."],
+    ["Use the ← and → keys.", "Use the left arrow and right arrow keys."],
+    ["Press ↑ twice, then ↓.", "Press up arrow twice, then down arrow."],
+    ["Go Back→Next.", "Go Back to Next."],
+    ["It's $5-$10 a month, or £5 – £8.", "It's 5 dollars to 10 dollars a month, or 5 pounds to 8 pounds."],
+    ["Free 10:30–11:00 and 14:00 - 15:30.", "Free 10 30 to 11 o'clock and 14 hundred to 15 30."],
+    ["Read pages 5–10, from 2020–2024.", "Read pages 5 to 10, from 2020 to 2024."],
+  ])("%j is said %j, an arrow by its name and a range with its 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
   it("says nothing for an answer that is only emoji", () => {
     expect(spokenText("🎉🎉")).toBe("");
     expect(spokenText("- 🎉\n- ✅")).toBe("");
@@ -73,6 +83,7 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     "Read and/or write 1/2 of it, at github.com.",
     "Open src/main.ts and notes.txt/old, about 15m away.",
     "Install C++ and © 2026 Ember™.",
+    "A 5-star hotel, rows 1-2 and a well-known 3-4 day trip.",
   ])("leaves %j as it is", text => expect(spokenText(text)).toBe(text.replace("John 3:16", "John 3 16")));
 });
 

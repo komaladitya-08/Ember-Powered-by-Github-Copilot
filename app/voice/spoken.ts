@@ -70,6 +70,8 @@ function linkLabels(text: string): string {
  */
 const CHORD = /(?<![\w.@+/\\-])(?:(?:ctrl|control|alt|shift|win|super|cmd|command|option|opt|fn)\s*\+\s*)+(?:f\d{1,2}|[a-z0-9]|enter|return|esc|escape|tab|space|delete|del|backspace|home|end|pgup|pgdn|up|down|left|right|period|comma|plus|minus)(?![\w@+/\\-]|\.\w)/gi;
 /** How a key in a chord is said (keyLabel's names, for the ear): the rest are said as they are written. */
+/** An arrow said by its name, where it is a key or a symbol ("Press the → key"): Kitten said "the → key" as "the to key". */
+const ARROW: Readonly<Record<string, string>> = { "←": "left arrow", "→": "right arrow", "↑": "up arrow", "↓": "down arrow" };
 const KEY_SAID: Readonly<Record<string, string>> = {
   ctrl: "Control", win: "Windows key", cmd: "Command", opt: "Option", esc: "Escape", del: "Delete", return: "Enter",
   pgup: "Page Up", pgdn: "Page Down",
@@ -149,9 +151,16 @@ const SHORT_NAMES = new RegExp(`\\b(${Object.keys(SHORT_NAME).join("|")})\\.(?=\
 const DURATION = /\b(\d+)h[ \t]?(\d+)m\b/g;
 const duration = (_m: string, h: string, m: string) => `${h} ${h === "1" ? "hour" : "hours"} ${m} ${m === "1" ? "minute" : "minutes"}`;
 
+/**
+ * A range between two amounts or two clock times ("$5-$10", "10:30–11:00"), or two numbers with an en dash ("5–10"):
+ * its dash is said "to" (it was "5 dollars-10 dollars"). "555-1234", "1-2" and "5-star" keep their hyphen.
+ */
+const RANGE = /([$£€¥]\d[\d,]*(?:\.\d{1,2})?|(?<![\w:.])\d{1,2}:\d{2})[ \t]*[-–][ \t]*(?=[$£€¥]\d|\d{1,2}:\d{2}(?![\d:]))|(\d)[ \t]*–[ \t]*(?=\d)/g;
+
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
   return text
+    .replace(RANGE, (_m, from: string | undefined, digit: string | undefined) => `${from ?? digit} to `)
     .replace(PATH, pathSaid)
     .replace(AMOUNT, money)
     .replace(CLOCK, clock)
@@ -234,7 +243,12 @@ export function spokenText(markdown: string): string {
     // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".
     .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
     .replace(/\s*›\s*(?=\S)/g, ", then ")
+    // An arrow named as a key or a symbol ("the → key", "the ← and → keys") by its name, one between two words
+    // ("Documents → Archive", "Back→Next") as "to", and any other by its name (voice-speaking-2).
+    .replace(/\b(the|a|an)([ \t]+)([←→↑↓])|([←→↑↓])(?=[ \t]+(?:keys?|arrows?|buttons?|icons?|symbols?|signs?)\b)/gi, (_m, det: string | undefined, space: string | undefined, named: string | undefined, before: string | undefined) => `${det ? `${det}${space}` : ""}${ARROW[named ?? before ?? ""]}`)
     .replace(/\s+(?:→|->)\s+/g, " to ")
+    .replace(/(?<=\p{L})→(?=\p{L})/gu, " to ")
+    .replace(/[←→↑↓]+/g, run => [...run].map(a => ARROW[a]).join(" "))
     // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
     .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ");
   return sayable(said).replace(/\n{2,}/g, "\n").trim();
