@@ -274,8 +274,10 @@ const RELATIVE = new Set(["that", "which", "who"]);
  * the cache folder", "kill these processes: 1234 and 5678"), up to the next verb, a new sentence, a dash, "then",
  * "but" or "so". What the words say
  * of a thing (its subject before "is", "stays", "must", "has to" and the like: "kill 5678, 1234 is my editor") is cut
- * out, so it never counts as named. Each part is returned as words of its own for the row to read. Conservative: a
- * clause that begins with any other word ends the list, and only makes the step ask.
+ * out, so it never counts as named, with every thing listed with it ("main and develop stay"). A clause that only says
+ * where the thing before it is (", which is in dist") stays with it, for folderNamed. Each part is returned as words of
+ * its own for the row to read. Conservative: a clause that begins with any other word ends the list, and only makes
+ * the step ask.
  */
 function actedOn(raw: string, verbs: readonly string[], names: (token: string) => boolean): string[] {
   const out: string[] = [];
@@ -313,11 +315,20 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
     }
     const polite = { first: false };
     let chain: string[] | null = null;
-    const end = () => { if (chain) out.push(chain.join(" and ")); chain = null; };
+    // How many of the chain's last entries only list more things after the verb's own clause.
+    let more = 0;
+    const end = () => { if (chain) out.push(chain.join(" and ")); chain = null; more = 0; };
     clauses.forEach(([tokens, listed], n) => {
       const starts = clauseStarts(userWordList(tokens.join(" ")), n, question, polite);
       const leads = asksVerb(starts);
       const first = tokens.find(t => !userWordList(t).every(x => FILLERS.has(x)));
+      if (chain && listed && !leads) {
+        // ", which is in dist", ", it's in dist": where the thing before it is, read with it (folderNamed).
+        if (chain.length > 0 && placesIt(tokens)) { chain[chain.length - 1] += ` ${tokens.join(" ")}`; return; }
+        // "main and develop stay", "nginx and postgres are fine": what is said of the last thing listed is said of
+        // every thing listed with it since the verb's clause, so none of them counts (commands-remote-v4-3).
+        if (saysOfAll(tokens)) { chain.splice(chain.length - more); end(); return; }
+      }
       if (!leads && !(chain && listed && first !== undefined && nounish(first))) { end(); return; }
       if (leads) end();
       // Cut from the thing something is said of ("…, 1234 is my editor"), and end the list there.
@@ -339,11 +350,39 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
       }
       const kept = tokens.slice(0, cut).join(" ").replace(/\?+(?=["'”’)\]]*$)/, "");
       chain = [...(chain ?? []), ...(kept.trim() !== "" ? [kept] : [])];
+      if (!leads && kept.trim() !== "") more++;
       if (cut < tokens.length) end();
     });
     end();
   }
   return out;
+}
+
+/** Words that stand for things already named, never a thing of their own ("they are huge", "both are big"). */
+const PRONOUN = new Set([
+  "it", "they", "these", "those", "this", "that", "both", "all", "each", "either", "neither", "i", "you", "we", "he", "she",
+  "there", "which", "who", "what", "everything", "something", "nothing", "one", "ones",
+]);
+
+/**
+ * Whether a clause says something of the thing it begins with ("develop stay", "postgres are fine", "4321 are my
+ * editors"): a word such as "is", "stay" or "must" within its first five words, after words that aren't a pronoun.
+ */
+function saysOfAll(tokens: readonly string[]): boolean {
+  for (let k = 1; k < Math.min(tokens.length, 5); k++) {
+    if (!PREDICATE.has(userWordList(tokens[k])[0] ?? "")) continue;
+    const subject = tokens.slice(0, k).flatMap(t => userWordList(t));
+    return subject.length > 0 && !subject.some(x => PRONOUN.has(x) || RELATIVE.has(x) || FILLERS.has(x));
+  }
+  return false;
+}
+
+/** Whether a clause only says where the thing before it is ("which is in dist", "it's in dist", "the one in dist"). */
+function placesIt(tokens: readonly string[]): boolean {
+  const ts = userTokens(tokens.join(" "));
+  let k = 0;
+  while (SAYS_WHERE.has(ts[k] ?? "")) k++;
+  return k < ts.length && IN_FOLDER.has(ts[k]);
 }
 
 /** Whether the user's words ask for one of these verbs (base form, multi-word verbs as consecutive words). */
@@ -361,11 +400,14 @@ function wordsOf(userWords: string): Words {
 }
 
 /** Words that say which folder a named path is in ("build/ in my-app", "the build folder inside packages/app"). */
-const IN_FOLDER = new Set(["in", "inside", "within", "under"]);
+const IN_FOLDER = new Set(["in", "inside", "within", "under", "from"]);
 const AFTER_OBJECT = new Set(["folder", "folders", "directory", "directories", "dir", "file", "files"]);
 const BEFORE_FOLDER = new Set(["the", "my", "our", "your", "this", "that"]);
-/** "the build folder that is in dist", "which sits inside docs". */
-const SAYS_WHERE = new Set(["that", "which", "that's", "is", "are", "sits", "lives"]);
+/** "the build folder that is in dist", "which sits inside docs", ", it's in dist", "(the one in dist)". */
+const SAYS_WHERE = new Set([
+  "that", "which", "that's", "is", "are", "sits", "lives", "it", "it's", "it\u2019s", "its", "they", "they're",
+  "they\u2019re", "both", "the", "one", "ones", "was", "were",
+]);
 /** Words after "in" that say when or how, not which folder ("in a moment", "in the background", "in place"). */
 const NOT_A_FOLDER = new Set([
   "a", "an", "one", "minute", "minutes", "moment", "second", "seconds", "sec", "hour", "hours", "bit", "while",
@@ -382,6 +424,9 @@ const HERE_FOLDER = new Set(["folder", "directory", "dir", "repo", "repository",
  * minutes"), times and ways ("in a moment", "in the background") and the task's own folder ("in this repo") name none.
  */
 function folderNamed(idx: number, w: Words): string | null {
+  // "dist's build folder" (commands-remote-v4-3).
+  const owner = /^(.+?)['’]s$/u.exec(w.tokens[idx - 1] ?? "")?.[1];
+  if (owner !== undefined && !PRONOUN.has(owner) && !RELATIVE.has(owner) && !HERE_FOLDER.has(owner)) return owner === "home" ? "~" : owner;
   let k = idx + 1;
   while (AFTER_OBJECT.has(w.tokens[k] ?? "") || SAYS_WHERE.has(w.tokens[k] ?? "")) k++;
   if (!IN_FOLDER.has(w.tokens[k] ?? "")) return null;

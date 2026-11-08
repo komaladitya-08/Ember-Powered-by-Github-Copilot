@@ -480,3 +480,37 @@ describe("matchIntent: the verb said again, or a list after a colon (commands-re
     expect(announce(cmd, words)).toBeNull();
   });
 });
+
+describe("matchIntent: things kept together, and a folder named after a comma (commands-remote-v4-3)", () => {
+  it.each([
+    // What is said of the last thing listed is said of every thing listed with it.
+    ["git branch -D main", "delete my old branches, main and develop stay"],
+    ["kill 1234", "kill 5678, 1234 and 4321 are my editors"],
+    ["systemctl stop nginx", "stop apache, nginx and postgres are fine"],
+    // The folder the path must be in, after a comma, in brackets, after "from" or before the name.
+    ["rm -rf build", "delete the build folder, which is in dist"],
+    ["rm -rf build", "delete the build folder, it's in dist"],
+    ["rm -rf build", "delete the build folder, it\u2019s in dist"],
+    ["rm -rf build", "delete the build folder (the one in dist)"],
+    ["rm -rf build", "delete the build folder from dist"],
+    ["rm -rf build", "delete dist's build folder"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    ["kill 1234", "kill 1234, 5678 and 4321 are my editors", "Stopping 1234, as you asked."],
+    ["git branch -D old-ui", "delete the branch old-ui, main and develop stay", "Deleting the branch old-ui, as you asked."],
+    // "they" and "both" stand for what the verb acts on, not something else.
+    ["rm -rf build dist", "delete build/ and dist/, they are huge", "Deleting build and dist, as you asked."],
+    ["rm -rf build dist", "delete build/ and dist/, both are huge", "Deleting build and dist, as you asked."],
+    ["rm -rf dist/build", "delete the build folder, which is in dist", "Deleting dist/build, as you asked."],
+    ["rm -rf dist/build", "delete the build folder (the one in dist)", "Deleting dist/build, as you asked."],
+    ["rm -rf dist/build", "delete the build folder from dist", "Deleting dist/build, as you asked."],
+    ["rm -rf dist/build", "delete dist's build folder", "Deleting dist/build, as you asked."],
+    ["rm -rf build", "delete build/ from the repo", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the project's build folder", "Deleting build, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+});
