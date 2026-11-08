@@ -1,6 +1,7 @@
 /**
  * A count of the user's deliberate changes to their own model provider made in Home (the switch, the address, the
- * models, the key, the card's yes), shared with first run (PR #191 re-review). First run's check puts the provider away
+ * models, the key, the card's yes) or by first run's "Use GitHub Copilot instead", shared with first run (PR #191
+ * re-review, first-run-r2-1). First run's check puts the provider away
  * again when it is abandoned, but only if nobody has chosen anything since it began: a later deliberate choice owns
  * the provider, and a late compensation must not undo it. Nothing here is saved or sent.
  */

@@ -98,7 +98,8 @@ async function open(seed: Seed = {}): Promise<Page> {
         saveKey: () => { window.__frCalls.push("saveKey"); return Promise.resolve({ ok: true }); },
         removeKey: async () => ({ ok: true }),
         agree: (host: string) => { window.__frCalls.push(`agree:${host}`); if (slowAgree) return (defer("agree") as Promise<unknown>).then(r => { window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return r; }) as never; window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return Promise.resolve({ ok: true }); },
-        test: () => { window.__frCalls.push("test"); return defer("test") as never; },
+        // A draft of typed details (first-run-r2-1) is told apart by its host, and whether a key came with it (never the key).
+        test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
   }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff });
@@ -583,6 +584,105 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(ac) an edit of a provider in use is checked before it replaces the details that work: a slip, a failed check, Back or Copilot while it checks leave it in use as it was (first-run-r2-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const inForce = { inForce: true, host: "api.example.com", agreed: true, keySaved: true };
+    const off = `save:${JSON.stringify({ provider: { on: false } })}`;
+    const lead = "I'm using the model provider you set up (api.example.com) instead of GitHub Copilot. You can change its details here.";
+    const inUse = async () => {
+      const p = await open({ provider, providerState: inForce, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+      await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+      await next(p).click();
+      await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+      await p.locator("#w-back").click();
+      expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+      return p;
+    };
+    const kept = (p: Page) => p.evaluate(() => ({ on: window.__frState.settings.provider.on, baseUrl: window.__frState.settings.provider.baseUrl }));
+    const working = { on: true, baseUrl: "https://api.example.com/v1" };
+    const changed = (p: Page) => calls(p).then(c => c.filter(x => x.startsWith("save:") || x === "saveKey" || x.startsWith("agree:") || x === "test"));
+
+    // A slip: a field cleared and the button pressed says what to fill; typing it back switches nothing off.
+    const a = await inUse();
+    await a.fill("#w-p-conductor", "");
+    await next(a).click();
+    expect(await a.locator("#w-p-result").innerText()).toBe("Enter the name of a model first.");
+    await a.fill("#w-p-conductor", "gpt-4.1");
+    await a.waitForTimeout(100);
+    expect(await changed(a)).toEqual([]);
+    expect(await kept(a)).toEqual(working);
+    expect(await a.locator("#w-lead").innerText()).toBe(lead);
+
+    // A new address whose check fails: checked as typed, nothing saved or agreed, and the step says it kept the old one.
+    const b = await inUse();
+    await b.fill("#w-p-url", "https://api2.example.com/v1");
+    await b.fill("#w-p-key", "sk-new-not-real");
+    await next(b).click();
+    await expect.poll(() => calls(b)).toContain("test-draft:api2.example.com+key");
+    expect(await changed(b)).toEqual([]);
+    await settle(b, "test", { ok: false, why: "Ember can't reach api2.example.com. Check the address and the network.", cause: "unreachable" });
+    await expect.poll(() => b.locator("#w-p-result").innerText()).toBe("Ember can't reach api2.example.com. Check the address and the network. Nothing has changed: I'm still using api.example.com.");
+    // The failure names the address, so the address takes the focus.
+    expect(await focusedId(b)).toBe("w-p-url");
+    await b.waitForTimeout(100);
+    expect(await changed(b)).toEqual([]);
+    expect(await kept(b)).toEqual(working);
+    expect(await b.locator("#w-lead").innerText()).toBe(lead);
+    // A refused key names the key.
+    await b.fill("#w-p-url", "https://api.example.com/v1");
+    await next(b).click();
+    await expect.poll(async () => (await calls(b)).filter(c => c.startsWith("test-draft:")).length).toBe(2);
+    await settle(b, "test", { ok: false, why: "api.example.com didn't accept the API key. Check it, or replace it." }, 1);
+    await expect.poll(() => focusedId(b)).toBe("w-p-key");
+    // Back to the sign-in step: still my provider, never "Sign in to GitHub".
+    await b.locator("#w-back").click();
+    expect(await b.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await changed(b)).toEqual([]);
+
+    // Back while the check runs: whatever it answers later, nothing changes.
+    const c = await inUse();
+    await c.fill("#w-p-key", "sk-another-not-real");
+    await next(c).click();
+    await expect.poll(() => calls(c)).toContain("test-draft:api.example.com+key");
+    await c.locator("#w-back").click();
+    await settle(c, "test", { ok: true, host: "api.example.com", models: 3 });
+    await c.waitForTimeout(200);
+    expect(await changed(c)).toEqual([]);
+    expect(await kept(c)).toEqual(working);
+    expect(await c.locator("#w-title").innerText()).toBe("Your own model provider");
+
+    // “Use GitHub Copilot instead” while it checks switches it off, and a late answer turns nothing on again.
+    const d = await inUse();
+    await d.fill("#w-p-url", "https://api2.example.com/v1");
+    await next(d).click();
+    await expect.poll(() => calls(d)).toContain("test-draft:api2.example.com");
+    await d.locator("#w-alt").click();
+    await expect.poll(() => calls(d)).toContain(off);
+    await settle(d, "test", { ok: true, host: "api2.example.com", models: 1 });
+    await d.waitForTimeout(200);
+    expect((await calls(d)).filter(x => x.startsWith("agree:") || x === "saveKey")).toEqual([]);
+    expect(await d.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+
+    // Details that answer replace the old ones: saved, the key, then the card's yes for the new host.
+    const e = await inUse();
+    await e.fill("#w-p-url", "https://api2.example.com/v1");
+    await e.fill("#w-p-key", "sk-good-not-real");
+    await next(e).click();
+    await expect.poll(() => calls(e)).toContain("test-draft:api2.example.com+key");
+    await settle(e, "test", { ok: true, host: "api2.example.com", models: 2 });
+    await expect.poll(() => e.locator("#w-p-result").innerText()).toBe("Connected to api2.example.com. It lists 2 models.");
+    expect(await changed(e)).toEqual([`save:${JSON.stringify({ provider: { type: "openai", baseUrl: "https://api2.example.com/v1", conductor: "gpt-4.1", worker: null } })}`, "saveKey", "agree:api2.example.com"]);
+    expect(await kept(e)).toEqual({ on: true, baseUrl: "https://api2.example.com/v1" });
+    expect(await calls(e)).not.toContain(off);
+
+    // Switched off by any other way while its step shows: the step no longer says it is in use.
+    const f = await inUse();
+    await f.evaluate(() => { window.__frState.settings.provider = { ...window.__frState.settings.provider, on: false }; window.__frEmit("onSettingsChanged", window.__frState.settings); });
+    await expect.poll(() => f.locator("#w-lead").innerText()).not.toContain("I'm using");
+    for (const page of [a, b, c, d, e, f]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
+  }, 30_000);
+
   it("(z) resumed while the user's own provider connects or fails, the sign-in step names it, with no Copilot or sign-in words (first-run-1, first-run-c1-3)", async () => {
     const service = { kind: "user", host: "localhost:11434" };
     const own = { on: true, baseUrl: "http://localhost:11434/v1", conductor: "llama3.2:3b", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "localhost:11434" } };
@@ -823,7 +923,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     const copilot = await open({ consent: 6 });
     await expect.poll(() => send(copilot)).toContain("go to GitHub Copilot.");
     for (const page of [p, q, org, copilot]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
-  });
+  }, 20_000);
 
   it("(r) a model server on this computer is checked without an API key, also on a computer with no keyring (first-run-v2)", async () => {
     const p = await open();

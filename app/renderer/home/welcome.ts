@@ -11,7 +11,7 @@
 import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
-import type { ProviderState, Status, VoiceStatus } from "../../shared/ipc";
+import type { ProviderState, ProviderTest, Status, VoiceStatus } from "../../shared/ipc";
 import { AGREE_ARM_MS, endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { LEVEL_STEPS } from "../../shared/level";
 import { holdsBack, needsUser } from "../../shared/setup-attention";
@@ -19,9 +19,9 @@ import { keptWords } from "./admin-copy";
 import { fixButtonName, fixFailedText, ipcErrorText, recipientWords, retryMessage, signInLabel, type ModelDestination } from "./copy";
 import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
-import { onProviderChoice, providerChoice } from "./provider-choice";
+import { noteProviderChoice, onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerInUse, providerInUseLine, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeptLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
@@ -189,7 +189,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const at = stepPosition(step);
     [...arc.children].forEach((seg, i) => seg.classList.toggle("on", i <= at));
     $("w-count").textContent = stepCount(step);
-    const using = step === "provider" && visitInUse ? inUseHost() : null;
+    // In use only while it still is: switched off by any way, the step no longer says "I'm using" it (first-run-r2-1).
+    const using = step === "provider" && visitInUse && settings?.provider.on ? inUseHost() : null;
     const text = step === "sign-in" ? signInText({
       managed: !!status?.admin.provider, locked: locked(), held: !!status?.admin.held,
       own: ownInUse() ? agent?.service?.host : null, ownPhase: agent?.phase === "ready" || agent?.phase === "error" ? agent.phase : "starting", ownOffered: ownOffer().offered,
@@ -414,8 +415,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (!MODEL_ID.test(f.conductor) || (f.worker && !MODEL_ID.test(f.worker))) return { text: "A model name has no spaces in it, such as gpt-4.1 or llama3.2:3b.", field: MODEL_ID.test(f.conductor) ? "w-p-worker" : "w-p-conductor" };
     return null;
   }
-  /** Saves the fields, the key, the card's yes for exactly this address, then asks the service for its models. */
-  const checkProvider = latestOnly<{ epoch: number; result: { ok: true; host: string; models: number | null } | { ok: false; why: string } }>(
+  /**
+   * Saves the fields, the key, the card's yes for exactly this address, then asks the service for its models. With the
+   * provider in use as the step opened, the details typed are asked first, as they are, and saved only once they
+   * answer (`kept`: the host still in use after a check that failed).
+   */
+  const checkProvider = latestOnly<{ epoch: number; result: ProviderTest; kept?: string }>(
     async () => {
       const epoch = checkEpoch;
       const mine = ++checkRun;
@@ -423,6 +428,26 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       const host = endpointHost(f.baseUrl);
       const api = window.emberProvider;
       if (!api || !host) return { epoch, result: { ok: false, why: PROVIDER_STEP.needAddress } };
+      // In use (first-run-r2-1): nothing replaces the details that work until the new ones answer, with the card's yes
+      // for their host given by this press. A check that fails, or that the user leaves or edits under, changes nothing.
+      const keep = visitInUse && settings?.provider.on ? inUseHost() : null;
+      if (keep) {
+        const since = providerChoice();
+        const tried = await api.test({ type: f.type, baseUrl: f.baseUrl, host, ...(f.key.trim() ? { key: f.key } : {}) });
+        if (epoch !== checkEpoch) return { epoch, result: { ok: false, why: "" } };
+        if (!tried.ok) return { epoch, result: tried, kept: keep };
+        // It answers: adopted whole (moments, not a network wait), unless a choice made since (“Use GitHub Copilot
+        // instead”, or Home's own) owns the provider now.
+        const ours = () => since === providerChoice();
+        const saved = await deps.save({ provider: { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null } } as SettingsPatch);
+        if (!saved) return { epoch, result: { ok: false, why: "I couldn't save these details. The notice at the top says why." } };
+        if (f.key.trim() && ours()) {
+          const k = await api.saveKey(f.key);
+          if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
+        }
+        const agreed = ours() ? await api.agree(host) : { ok: true as const };
+        return { epoch, result: agreed.ok ? tried : { ok: false, why: agreed.why } };
+      }
       // Back, an edit or another check can come between any two steps. Each step that does something (the card's yes
       // turns the provider on) first looks whether this check was abandoned; one abandoned after the yes was recorded
       // puts the provider away again, unless a newer check has taken over (it owns the provider now).
@@ -453,15 +478,19 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (!active || step !== "provider") return;
       if (!r.ok) { if (providerCheck.phase === "checking") finishCheck(false, "I couldn't check the provider. Try again."); return; }
       if (r.value.epoch !== checkEpoch) return;
-      finishCheck(r.value.result.ok, providerCheckLine(r.value.result));
+      const { result, kept } = r.value;
+      const line = providerCheckLine(result);
+      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : providerFailField(result));
     },
   );
-  function finishCheck(ok: boolean, line: string): void {
+  function finishCheck(ok: boolean, line: string, field: "address" | "key" = "key"): void {
     providerCheck = { phase: ok ? "ok" : "failed", line };
-    // Not verified: nothing stays pointed at a service that didn't answer.
-    if (!ok) void turnOwnOff();
+    // Not verified: nothing stays pointed at a service that didn't answer. One in use as the step opened is left as it
+    // was: its edit was checked before it replaced anything (first-run-r2-1).
+    if (!ok && !visitInUse) void turnOwnOff();
     render();
-    if (!ok) provField("w-p-key").focus(); else next.focus();
+    // The field the failure names takes the focus: the address when nothing answered there (first-run-r2-1).
+    if (!ok) provField(field === "address" ? "w-p-url" : "w-p-key").focus(); else next.focus();
   }
   /**
    * Puts the user's own provider away. `force`: also when the page's copy of the settings doesn't show it on yet (the
@@ -521,7 +550,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const result = $("w-p-result");
     // In use as the step opened, and nothing changed since: the connection's own state, and Continue goes on without
     // agreeing or checking again (first-run-c1-2).
-    const using = visitInUse && !edited && providerCheck.phase === "idle" ? inUseHost() : null;
+    const using = visitInUse && !edited && providerCheck.phase === "idle" && settings?.provider.on ? inUseHost() : null;
     providerGoesOn = !!using || providerCheck.phase === "ok";
     if (using) {
       const v = providerInUseLine({ host: using, phase: ownInUse() ? agent?.phase ?? null : "starting", detail: agent?.detail });
@@ -786,7 +815,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       go("checks");
     }
     // The provider in use as its step opened: the one way back to Copilot from here, said on the button (first-run-c1-2).
-    if (step === "provider" && visitInUse) { void turnOwnOff(); go("sign-in"); }
+    // A deliberate choice: an edit being checked or adopted meanwhile turns nothing on again (first-run-r2-1).
+    if (step === "provider" && visitInUse) { noteProviderChoice(); void turnOwnOff(); go("sign-in"); }
   });
   $("w-open-page").addEventListener("click", () => { void window.ember.openSignInPage(); });
   $("w-check-again").addEventListener("click", () => checkAgain());
@@ -868,7 +898,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $(id).addEventListener("input", () => {
       checkEpoch++;
       edited = true;
-      if (providerCheck.phase !== "idle") { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
+      // A provider in use as the step opened stays on: its edit is checked before it counts (first-run-r2-1).
+      if (providerCheck.phase !== "idle") { providerCheck = { phase: "idle", line: "" }; if (!visitInUse) void turnOwnOff(); }
       if (active && step === "provider") render();
     });
   }

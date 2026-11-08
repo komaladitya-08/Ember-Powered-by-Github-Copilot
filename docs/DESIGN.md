@@ -456,8 +456,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   with no GitHub, Copilot or sign-in words and no “Use my own provider”, and Back from the setup check returns to the
   provider's step (first-run-1). A provider already in use as that step opens is shown as in use (“Your own model
   provider's details”, its connection's status, the card without a last sentence about going back, and Continue with
-  no new check); Back leaves it on, an edit is checked before it counts, and only “Use GitHub Copilot instead” switches
-  it off. Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). A service with nothing to sign in to that isn't connected yet (the user's own, the
+  no new check); Back leaves it on, an edit is checked as typed before it replaces anything (one that fails, or is left
+  while it is checked, changes nothing: “Nothing has changed: I'm still using <host>.”, with the focus on the field
+  the failure names), and only “Use GitHub Copilot instead” switches it off (first-run-r2-1). Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). A service with nothing to sign in to that isn't connected yet (the user's own, the
   organisation's) is named on **Your Ember** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay

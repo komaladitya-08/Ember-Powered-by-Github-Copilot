@@ -24,7 +24,7 @@ import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { endpointHost, MAX_API_KEY, MODEL_ID } from "../shared/provider";
-import type { ProviderState, RetryResult } from "../shared/ipc";
+import type { ProviderDraft, ProviderState, RetryResult } from "../shared/ipc";
 
 /** The user's provider settings (SettingsSchema `provider`). */
 export type UserProviderSettings = Settings["provider"];
@@ -412,6 +412,35 @@ export function createProviderService(d: ProviderServiceDeps) {
     return pending;
   };
 
+  /**
+   * Checks details typed but not saved (first run's provider step, editing a provider in use: first-run-r2-1), so a
+   * failed or abandoned check leaves the details in use as they are. The card's yes for exactly the address's host
+   * comes with the same press (`draft.host`); nothing goes to any other host. Nothing is saved or recorded: a key just
+   * typed goes only to that host and is kept nowhere (and is refused, unsent, where it couldn't be kept on adopting the
+   * details), and without one the saved key goes only when it was entered for that very host.
+   */
+  const testDraft = async (draft: ProviderDraft): Promise<TestResult> => {
+    const host = endpointHost(draft.baseUrl);
+    if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
+    if (draft.host !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
+    let key: StoredKey | null = null;
+    if (draft.key !== undefined) {
+      const problem = apiKeyProblem(draft.key);
+      if (problem) return { ok: false, why: problem };
+      if (!(await d.keys.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
+      key = { key: draft.key.trim(), host };
+    } else if (hostNow() === host && providerAgreed(d.settings.get().provider)) {
+      await readKey(true);
+      key = stored;
+    }
+    // Consent or the policy may have changed while the keyring answered.
+    if (!d.consented() || !allowed()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+    const consent = { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host };
+    const r = await testConnection({ ...d.settings.get().provider, type: draft.type, baseUrl: draft.baseUrl, consent }, key, d.fetch);
+    d.log.info("provider.tested", { ok: r.ok, draft: true });
+    return r;
+  };
+
   return {
     /** The saved key and its host, once read (null: none, or not needed yet). */
     key: (): StoredKey | null => stored,
@@ -488,9 +517,10 @@ export function createProviderService(d: ProviderServiceDeps) {
         d.log.info("provider.agreed", {});
         return { ok: true };
       },
-      test: async (): Promise<TestResult> => {
+      test: async (draft?: ProviderDraft): Promise<TestResult> => {
         if (!d.consented()) return { ok: false, why: PROVIDER_NO_CONSENT };
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
+        if (draft) return testDraft(draft);
         const started = revision;
         const p = d.settings.get().provider;
         // Checked before the keyring is asked: nothing at all for a host whose card isn't agreed.

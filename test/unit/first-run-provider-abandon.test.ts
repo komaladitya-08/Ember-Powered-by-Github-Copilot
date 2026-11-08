@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { latestOnly, endpointHost } from "../../app/shared/provider";
-import { providerCheckLine, PROVIDER_STEP } from "../../app/renderer/home/first-run-copy";
+import { providerCheckLine, providerFailField, providerKeptLine, PROVIDER_STEP } from "../../app/renderer/home/first-run-copy";
 import { gated, stepPosition } from "../../app/renderer/home/welcome-copy";
 import { SettingsStore, withOwnProvider } from "../../app/main/settings";
 import { AdminPolicySchema } from "../../app/main/admin";
@@ -51,9 +51,10 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const keys = new ProviderKeyStore(path.join(dir, "provider-key.bin"), box as never, { asyncKeyring: true });
   const http = deferred<typeof OK | typeof FAIL>();
   let tested = false;
+  const requests: { url: string; headers: Record<string, string> }[] = [];
   // eslint-disable-next-line prefer-const -- the service's `changed` callback needs it before the host is built
   let host!: AgentHost;
-  const service = createProviderService({ settings, admin: () => admin, keys, consented: () => true, log: quiet, changed: () => { if (host) void host.providerChanged(); }, fetch: async () => { tested = true; return http.promise; } } as never);
+  const service = createProviderService({ settings, admin: () => admin, keys, consented: () => true, log: quiet, changed: () => { if (host) void host.providerChanged(); }, fetch: async (url: string, init: { headers: Record<string, string> }) => { tested = true; requests.push({ url, headers: init.headers }); return http.promise; } } as never);
   const provider = () => activeProvider({ fixed: null, settings: settings.get(), admin, key: service.key() });
   host = new AgentHost({ userData: dir, runtimePath: "/not-used", settings, log: quiet, setState() {}, onStatus() {}, provider } as never);
   await host.start(null);
@@ -64,7 +65,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const api = {
     saveKey: (k: string) => service.api.saveKey(k),
     agree: async (h: string) => { const gate = agreeGates[agrees++]; if (gate) await gate.promise; return service.api.agree(h); },
-    test: () => service.api.test(),
+    test: (draft?: never) => service.api.test(draft),
   };
   const nodes: Record<string, { hidden: boolean; textContent: string; focus(): void }> = {};
   let failOff = o.failOff;
@@ -72,9 +73,9 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const ctx: Record<string, unknown> = {
     active: true, step: "provider", checkEpoch: 0, checkRun: 0, providerCheck: { phase: "checking", line: "Checking" }, navigation: 0, heardBefore: -1,
     // The visit set the provider up (it wasn't in use as the step opened): Back to Copilot puts it away (first-run-c1-2).
-    visitInUse: false, edited: false, ownInForce: () => false,
+    visitInUse: false, edited: false, ownInForce: () => false, inUseHost: () => null,
     get settings() { return settings.get(); },
-    latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, PROVIDER_STEP, gated, stepPosition,
+    latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, providerFailField, providerKeptLine, PROVIDER_STEP, gated, stepPosition,
     root: { dataset: {} }, consented: () => true, render() {}, $: (id: string) => (nodes[id] ??= { hidden: true, textContent: "", focus() {} }), provField: () => ({ focus() {} }), next: { focus() {} },
     readProviderFields: () => ({ ...fields }), window: { emberProvider: api, scrollTo() {} },
     deps: {
@@ -86,7 +87,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   };
   const f = compile(ctx);
   const disk = () => JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8")).provider.on as boolean;
-  return { ctx, f, fields, nodes, mend: () => { failOff = undefined; },
+  return { ctx, f, fields, nodes, service, requests, mend: () => { failOff = undefined; },
     /** What Home does when the switch is turned on: a deliberate choice, then the write. */
     homeTurnsOn: () => { noteProviderChoice(); settings.update(withOwnProvider({ provider: { on: true } } as never, settings.own().provider)); }, settings, host, sealed, http, agreeGates, agrees: () => agrees, tested: () => tested, disk, edit: () => { (ctx.checkEpoch as number)++; ctx.providerCheck = { phase: "idle", line: "" }; } };
 }
@@ -208,6 +209,66 @@ describe("first run's own-provider check, abandoned part-way", () => {
     await done;
     expect(h.settings.get().provider.on).toBe(true);
     expect(h.disk()).toBe(true);
+    await h.host.stop();
+  });
+});
+
+describe("first run's check of an edit to the provider in use (first-run-r2-1)", () => {
+  const OLD = "sk-old-" + "o".repeat(30); // not a real key
+  const NEW = "sk-new-" + "n".repeat(30); // not a real key
+  /** In use as the step opens: a.example, agreed, its key saved and connected; the user has typed b.example and a new key. */
+  async function inUse() {
+    const h = await harness();
+    h.settings.update(withOwnProvider({ provider: { type: "openai", baseUrl: "https://a.example/v1", conductor: "model-a" } } as never, h.settings.own().provider));
+    expect(h.service.api.agree("a.example")).toEqual({ ok: true });
+    expect(await h.service.api.saveKey(OLD)).toEqual({ ok: true });
+    await vi.waitFor(() => expect(h.host.getStatus().service?.host).toBe("a.example"));
+    Object.assign(h.ctx, { visitInUse: true, ownInForce: () => true, inUseHost: () => "a.example", providerCheck: { phase: "checking", line: "Checking" } });
+    Object.assign(h.fields, { baseUrl: "https://b.example/v1", key: NEW });
+    return h;
+  }
+  /** The details that worked are still the ones in use: the file, the agreement, the key and the runtime. */
+  const unchanged = async (h: H) => {
+    const p = h.settings.get().provider;
+    expect([p.on, p.baseUrl, p.consent.host]).toEqual([true, "https://a.example/v1", "a.example"]);
+    expect(h.disk()).toBe(true);
+    expect(h.service.key()?.key).toBe(OLD);
+    await vi.waitFor(() => expect(h.host.getStatus().service?.host).toBe("a.example"));
+    expect(h.agrees()).toBe(0);
+    await h.host.stop();
+  };
+
+  it("asks the typed host with the typed key, and a failure leaves the details in use as they were and says so", async () => {
+    const h = await inUse();
+    const done = h.f.checkProvider();
+    await vi.waitFor(() => expect(h.tested()).toBe(true));
+    expect(h.requests).toEqual([{ url: "https://b.example/v1/models", headers: { authorization: `Bearer ${NEW}` } }]);
+    h.http.resolve(FAIL);
+    await done;
+    expect((h.ctx.providerCheck as { phase: string; line: string })).toEqual({ phase: "failed", line: "b.example didn't accept the API key. Check it, or replace it. Nothing has changed: I'm still using a.example." });
+    await unchanged(h);
+  });
+
+  it("Back while the edit is checked leaves the details in use, even when the check then answers", async () => {
+    const h = await inUse();
+    const done = h.f.checkProvider();
+    await vi.waitFor(() => expect(h.tested()).toBe(true));
+    h.f.go("sign-in");
+    h.http.resolve(OK);
+    await done;
+    await unchanged(h);
+  });
+
+  it("an edit that answers replaces the details, the key and the agreement, and stays on", async () => {
+    const h = await inUse();
+    const done = h.f.checkProvider();
+    await vi.waitFor(() => expect(h.tested()).toBe(true));
+    h.http.resolve(OK);
+    await done;
+    const p = h.settings.get().provider;
+    expect([p.on, p.baseUrl, p.consent.host]).toEqual([true, "https://b.example/v1", "b.example"]);
+    expect(h.service.key()).toMatchObject({ key: NEW, host: "b.example" });
+    await vi.waitFor(() => expect(h.host.getStatus().service?.host).toBe("b.example"));
     await h.host.stop();
   });
 });

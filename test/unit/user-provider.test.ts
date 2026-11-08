@@ -260,11 +260,25 @@ describe("Home's provider channels", () => {
     }
     expect(await call(PROVIDER_IPC.removeKey, HOME, "x")).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
     expect(await call(PROVIDER_IPC.test, HOME, { url: "https://evil.example.com" })).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    // A draft of typed details (first-run-r2-1): its kind, address and agreed host, a key at most, and nothing else.
+    const draft = { type: "openai", baseUrl: "https://b.example/v1", host: "b.example" };
+    for (const bad of [{ ...draft, type: "other" }, { ...draft, host: "B EXAMPLE" }, { ...draft, baseUrl: "x".repeat(3000) }, { ...draft, key: "" }, { ...draft, key: "k".repeat(9000) }, { ...draft, on: true }, [draft, draft]]) {
+      expect(await call(PROVIDER_IPC.test, HOME, ...(Array.isArray(bad) ? bad : [bad]))).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    }
     expect(await call(PROVIDER_IPC.state, HOME, 1)).toBeNull();
     expect(calls).toEqual([]);
     expect(await call(PROVIDER_IPC.saveKey, HOME, KEY)).toEqual({ ok: true });
     expect(await call(PROVIDER_IPC.removeKey, HOME)).toEqual({ ok: true });
     expect(calls).toEqual(["save", "remove"]);
+  });
+
+  it("passes a draft of typed details to the check, and none when there is none (first-run-r2-1)", async () => {
+    const seen: unknown[] = [];
+    const { call } = wire({ test: async d => { seen.push(d); return { ok: true, host: "b.example", models: 1 }; } });
+    const draft = { type: "anthropic", baseUrl: "https://b.example/v1", host: "b.example", key: KEY };
+    expect(await call(PROVIDER_IPC.test, HOME, draft)).toEqual({ ok: true, host: "b.example", models: 1 });
+    expect(await call(PROVIDER_IPC.test, HOME)).toEqual({ ok: true, host: "b.example", models: 1 });
+    expect(seen).toEqual([draft, undefined]);
   });
 
   it("never sends the key back, and never logs it, even when saving it fails", async () => {

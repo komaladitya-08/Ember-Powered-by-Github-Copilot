@@ -143,6 +143,23 @@ export function providerInUseLine(o: { host: string; phase: string | null; detai
   return { line: `Connecting to your own provider (${o.host})…`, tone: "" };
 }
 
+/**
+ * A check of new details for a provider in use that failed (first-run-r2-1): what failed, and that the details in use
+ * are still the ones Ember uses, since nothing was saved before they answered.
+ */
+export function providerKeptLine(line: string, host: string): string {
+  return `${line} Nothing has changed: I'm still using ${host}.`;
+}
+
+/**
+ * The field a failed provider check names, to take the focus (first-run-r2-1): the address when nothing answered
+ * there (`cause`) or the trouble is anything but the key, the key when the key is what failed.
+ */
+export function providerFailField(r: { why: string; cause?: string }): "address" | "key" {
+  if (r.cause) return "address";
+  return /\bkey(ring)?\b/i.test(r.why) ? "key" : "address";
+}
+
 /** What the provider check found, as a status line (the real answer only; `why` is main's sentence). */
 export function providerCheckLine(r: { ok: true; host: string; models: number | null } | { ok: false; why: string }): string {
   if (!r.ok) return r.why;

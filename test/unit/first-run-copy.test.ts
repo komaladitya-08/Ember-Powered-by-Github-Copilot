@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 
@@ -143,5 +143,19 @@ describe("Home's connection buttons by why Copilot isn't connected (FE #3)", () 
     expect(homeConnectionView({ ...base, signingIn: true }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: false, provider: false });
     expect(homeConnectionView({ ...base, waiting: true, reason: "network" }).show).toEqual({ "sign-in": false, "own-provider": false, "switch-account": false, retry: true, provider: false });
     expect(homeConnectionView({ ...base, phase: "ready" }).show.retry).toBe(false);
+  });
+});
+
+describe("first run: a failed check of new details for a provider in use (first-run-r2-1)", () => {
+  it("says the details in use are still the ones used, after what failed", () => {
+    expect(providerKeptLine("Ember can't reach 127.0.0.1:18397. Check the address and the network.", "127.0.0.1:18300")).toBe("Ember can't reach 127.0.0.1:18397. Check the address and the network. Nothing has changed: I'm still using 127.0.0.1:18300.");
+  });
+  it("hands the focus to the field the failure names: the address when nothing answered, the key when the key failed", () => {
+    expect(providerFailField({ why: "Ember can't reach b.example. Check the address and the network.", cause: "unreachable" })).toBe("address");
+    expect(providerFailField({ why: "b.example didn't answer within 10 seconds.", cause: "timeout" })).toBe("address");
+    expect(providerFailField({ why: "b.example answered, but has no model list at that address. Check the endpoint and the provider." })).toBe("address");
+    expect(providerFailField({ why: "b.example didn't accept the API key. Check it, or replace it." })).toBe("key");
+    expect(providerFailField({ why: "b.example needs an API key." })).toBe("key");
+    expect(providerFailField({ why: "Ember can't keep the key safely here: this computer has no keyring for passwords." })).toBe("key");
   });
 });
