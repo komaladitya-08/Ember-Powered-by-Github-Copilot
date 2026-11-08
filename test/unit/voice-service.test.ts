@@ -48,7 +48,7 @@ import { VOICE, type MicState } from "../../app/shared/voice";
 import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
-import { withoutAnnounced, type VoiceEvent } from "../../app/voice/engine";
+import { calledByName, withoutAnnounced, type VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
 
 const log: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => log, file: "" };
@@ -611,14 +611,38 @@ describe("VoiceService", () => {
     }
   });
 
-  it("words that doubt for Settings in the third person, never begun with the name, and keeps the first person in Ask (voice-listening-v4-3)", () => {
-    // Home calls it Ember; its neighbouring lines say "Checking what Ember heard…". Said as the window ends, into the
-    // wake word's microphone, a line that began with the name would be heard as a request.
+  it("words that doubt for Settings without \"I\" or the name, and keeps the first person in Ask (voice-listening-v4-3, voice-listening-r4-3)", () => {
+    // Ember isn't "I" in Settings. Said as the window ends, into the wake word's microphone, a line with the name in it
+    // was heard as a request.
     const ask = { phase: "ready", detail: "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." } as const;
     const home = listenOnceInSettings(ask);
-    expect(home).toEqual({ phase: "ready", detail: "There was talking, but Ember couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." });
-    expect(home.detail).not.toMatch(/^Ember\b|\bI\b/);
+    expect(home).toEqual({ phase: "ready", detail: "There was talking, but it wasn't clear it was a request. Wait a moment after pressing Listen once, then speak." });
+    expect(home.detail).not.toMatch(/\bEmber\b|\bI\b/);
     expect(listenOnceInSettings({ phase: "ready", detail: "No request heard. Try again." }).detail).toBe("No request heard. Try again.");
+  });
+
+  it("ends Listen once, in Settings and in Ask, with no line that wakes Ember when a screen reader says it into the wake word's microphone (voice-listening-r4-3)", async () => {
+    // "There was talking, but Ember couldn't tell it was a request…", said as the window ended with wake listening back
+    // on, woke Ember in 6 of 40 real-model placements: the check hears from the spotted name on, and "Ember couldn't
+    // tell it was a request…" starts with it. No tail of a line that ends a window may call Ember by name.
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    const ends: string[] = [];
+    for (const end of [{ reason: "timeout", doubt: true }, { reason: "timeout" }, { reason: "rejected" }, { reason: "cancel" }]) {
+      v.listenOnce();
+      const generation = (posted(proc, "listen-once").at(-1) as { generation?: number }).generation;
+      proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+      proc.emit("message", { generation, type: "listening", on: false, window: "manual", ...end });
+      ends.push(v.listenOnceStatus.detail, listenOnceInSettings(v.listenOnceStatus).detail);
+    }
+    expect(ends).toContain("I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.");
+    for (const line of ends) {
+      const words = line.split(/\s+/);
+      for (let i = 0; i < words.length; i++) expect(calledByName(words.slice(i).join(" ")), `${line} (from “${words[i]}”)`).toBe(false);
+    }
   });
 
   it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {

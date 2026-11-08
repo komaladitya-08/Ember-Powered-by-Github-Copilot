@@ -97,10 +97,11 @@ export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to
  */
 const LISTEN_ONCE_DOUBT = "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.";
 /**
- * The same in Settings, where Home calls it Ember (voice-listening-v4-3). Not begun with the name: a screen reader says
- * it as the window ends, into the wake word's microphone, and a line that starts with the name is heard as a request.
+ * The same in Settings, where Ember isn't "I" (voice-listening-v4-3). Without the name: a screen reader says it as the
+ * window ends, into the wake word's microphone, and the check hears from a spotted name on, so "…but Ember couldn't
+ * tell it was a request…" woke Ember and was sent as a request (6 of 40 real-model placements, voice-listening-r4-3).
  */
-const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but Ember couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.";
+const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but it wasn't clear it was a request. Wait a moment after pressing Listen once, then speak.";
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
