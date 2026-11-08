@@ -137,6 +137,25 @@ describe("the card's yes (S1, S4)", () => {
     expect(settings.own().provider).toMatchObject({ on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, host: "a.example" } });
   });
 
+  it("comes with the details an edit of the provider in force moved to, all written in one change only for the host they name, so it never leaves force between (integrations-c3-1)", async () => {
+    const { s, settings, keys } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    expect(s.api.agree("a.example")).toEqual({ ok: true });
+    expect(await s.api.saveKey(KEY)).toEqual({ ok: true });
+    const inForce: (string | null)[] = [];
+    settings.onChange(next => inForce.push(next.provider.on && next.provider.consent.host === new URL(next.provider.baseUrl).host ? next.provider.consent.host : null));
+    // Details that name another host than the one agreed to: nothing is written.
+    expect(s.api.agree("c.example", { type: "openai", baseUrl: "https://b.example/v1" })).toEqual({ ok: false, why: PROVIDER_HOST_CHANGED });
+    expect(settings.own().provider).toMatchObject({ baseUrl: "https://a.example/v1", consent: { host: "a.example" } });
+    expect(inForce).toEqual([]);
+    expect(s.api.agree("b.example", { type: "anthropic", baseUrl: "https://b.example/v1", conductor: "claude-x", worker: null, wireApi: null, azureApiVersion: null })).toEqual({ ok: true });
+    expect(settings.own().provider).toMatchObject({ on: true, type: "anthropic", baseUrl: "https://b.example/v1", conductor: "claude-x", consent: { version: FEATURE_CONSENT_VERSION.provider, host: "b.example" } });
+    expect(inForce).toEqual(["b.example"]);
+    // The key entered for a.example never goes with it.
+    s.settingsChanged();
+    expect(keys.savedHost()).toBeNull();
+    expect(s.key()).toBeNull();
+  });
+
   it("can't be sent with Home's general settings changes", () => {
     const sent = { size: 64, provider: { on: true, baseUrl: "https://evil.example/v1", consent: agreedFor("evil.example") } } as never;
     const { patch, dropped } = settingsFromHome(sent);

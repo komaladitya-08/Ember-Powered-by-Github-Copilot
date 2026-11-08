@@ -272,6 +272,21 @@ describe("Home's provider channels", () => {
     expect(calls).toEqual(["save", "remove"]);
   });
 
+  it("takes one host for agree, or one host and the details an edit moved to, and nothing else (integrations-c3-1)", async () => {
+    const seen: unknown[] = [];
+    const { call } = wire({ agree: (host, move) => { seen.push([host, move]); return { ok: true }; } });
+    const move = { type: "openai", baseUrl: "https://b.example/v1", conductor: "gpt-4.1", worker: null, wireApi: "responses", azureApiVersion: null };
+    for (const bad of [[], ["B EXAMPLE"], ["b.example", { ...move, type: "other" }], ["b.example", { ...move, baseUrl: "x".repeat(3000) }], ["b.example", { ...move, conductor: "has space" }],
+      ["b.example", { ...move, consent: { version: 9, host: "b.example" } }], ["b.example", { ...move, on: true }], ["b.example", { conductor: "gpt-4.1" }], ["b.example", move, move]]) {
+      expect(await call(PROVIDER_IPC.agree, HOME, ...bad)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    }
+    expect(seen).toEqual([]);
+    expect(await call(PROVIDER_IPC.agree, HOME, "b.example")).toEqual({ ok: true });
+    expect(await call(PROVIDER_IPC.agree, HOME, "b.example", move)).toEqual({ ok: true });
+    expect(await call(PROVIDER_IPC.agree, HOME, "b.example", { type: "azure", baseUrl: "https://b.example/v1" })).toEqual({ ok: true });
+    expect(seen).toEqual([["b.example", undefined], ["b.example", move], ["b.example", { type: "azure", baseUrl: "https://b.example/v1" }]]);
+  });
+
   it("passes a draft of typed details to the check, and none when there is none (first-run-r2-1)", async () => {
     const seen: unknown[] = [];
     const { call } = wire({ test: async d => { seen.push(d); return { ok: true, host: "b.example", models: 1 }; } });

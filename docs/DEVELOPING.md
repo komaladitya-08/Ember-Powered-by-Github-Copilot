@@ -1017,6 +1017,18 @@ details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, t
 card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
 kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
 answers; then the details, the key and the card's yes are saved as usual.
+Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
+held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
+answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
+up for the new host, the status line says "Read the note above: Ember still uses <host in force>, and sends nothing to
+<new host> until you agree.", the hint "Ember still uses <host in force>. Agree to use <new host> to switch.", the card's
+quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
+the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
+fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
+names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
+main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
+An edit back to the host in force, or of the same host, is saved at once as before; turning the switch off saves what
+was held with it.
 
 - **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
   main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn or a

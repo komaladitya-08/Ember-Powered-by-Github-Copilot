@@ -1,23 +1,27 @@
 /**
  * Home's own model provider channels (PROVIDER_IPC) in main, over an injected ProviderApi. Every channel answers only
  * the settings window's own page (`isHomeSender`, checked before anything else) and takes its arguments as unknown,
- * checked with zod: saveKey one string of at most MAX_API_KEY characters, agree one host, test nothing or one draft of
- * typed details (first-run-r2-1), the others nothing at all. A key goes only from the page to main (saveKey, or a
+ * checked with zod: saveKey one string of at most MAX_API_KEY characters, agree one host (or one host and the details
+ * an edit of the provider in force moved to: integrations-c3-1), test nothing or one draft of typed details
+ * (first-run-r2-1), the others nothing at all. A key goes only from the page to main (saveKey, or a
  * draft's check, which keeps it nowhere) and is never sent back or logged; a raw error from below becomes one plain
  * sentence. Plain Node: Electron's objects are injected.
  */
 
 import { z } from "zod";
-import { PROVIDER_IPC, type ProviderDone, type ProviderDraft, type ProviderState, type ProviderTest } from "../shared/ipc";
-import { MAX_API_KEY, MAX_ENDPOINT, PROVIDER_TYPES } from "../shared/provider";
+import { PROVIDER_IPC, type ProviderDone, type ProviderDraft, type ProviderMove, type ProviderState, type ProviderTest } from "../shared/ipc";
+import { AZURE_API_VERSION, MAX_API_KEY, MAX_ENDPOINT, MODEL_ID, PROVIDER_TYPES, WIRE_APIS } from "../shared/provider";
 
 /** What main does for the channels (main.ts builds it over ProviderKeyStore, the settings and the host). */
 export interface ProviderApi {
   state(): ProviderState | Promise<ProviderState>;
   saveKey(key: string): Promise<ProviderDone>;
   removeKey(): ProviderDone;
-  /** Records the card's yes for `host`; main refuses a host other than the one the endpoint in settings names. */
-  agree(host: string): ProviderDone;
+  /**
+   * Records the card's yes for `host`; main refuses a host other than the one the endpoint in settings names, or, with
+   * `move` (the details an edit of the provider in force moved to), the one they name, written with the yes in one change.
+   */
+  agree(host: string, move?: ProviderMove): ProviderDone;
   /** The endpoint in settings, or `draft`'s typed details without saving or recording any of them (first-run-r2-1). */
   test(draft?: ProviderDraft): Promise<ProviderTest>;
 }
@@ -33,8 +37,19 @@ export interface ProviderIpcEvent { sender: unknown; senderFrame?: { url: string
 export const SaveKeyArgs = z.tuple([z.string().min(1).max(MAX_API_KEY)]);
 /** A host as endpointHost writes it (a name or address, with its port). */
 const HostArg = z.string().min(1).max(260).regex(/^[a-z0-9.\-[\]:]+$/);
-/** agree's argument: one host. */
-export const AgreeArgs = z.tuple([HostArg]);
+/**
+ * agree's arguments: one host, or one host and the details an edit of the provider in force moved to (integrations-c3-1):
+ * its kind and address, and the models, wire API and Azure version as the settings keep them. Never the switch, a key
+ * or a card's record.
+ */
+export const AgreeArgs = z.union([
+  z.tuple([HostArg]),
+  z.tuple([HostArg, z.object({
+    type: z.enum(PROVIDER_TYPES), baseUrl: z.string().min(1).max(MAX_ENDPOINT),
+    conductor: z.string().regex(MODEL_ID).nullable().optional(), worker: z.string().regex(MODEL_ID).nullable().optional(),
+    wireApi: z.enum(WIRE_APIS).nullable().optional(), azureApiVersion: z.string().regex(AZURE_API_VERSION).nullable().optional(),
+  }).strict()]),
+]);
 /** The other channels take nothing. */
 export const NoArgs = z.tuple([]);
 /**
@@ -79,6 +94,6 @@ export function registerProviderIpc(
   handle(PROVIDER_IPC.state, NoArgs, () => api.state(), () => null);
   handle(PROVIDER_IPC.saveKey, SaveKeyArgs, key => api.saveKey(key), () => fail(PROVIDER_BAD_REQUEST));
   handle(PROVIDER_IPC.removeKey, NoArgs, () => api.removeKey(), () => fail(PROVIDER_BAD_REQUEST));
-  handle(PROVIDER_IPC.agree, AgreeArgs, host => api.agree(host), () => fail(PROVIDER_BAD_REQUEST));
+  handle(PROVIDER_IPC.agree, AgreeArgs, (...args) => api.agree(args[0], args[1]), () => fail(PROVIDER_BAD_REQUEST));
   handle(PROVIDER_IPC.test, TestArgs, (...args) => api.test(args[0]), () => fail(PROVIDER_BAD_REQUEST));
 }

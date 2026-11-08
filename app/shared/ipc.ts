@@ -759,6 +759,20 @@ export type ProviderTest = { ok: true; host: string; models: number | null; ids?
  */
 export interface ProviderDraft { type: "openai" | "azure" | "anthropic"; baseUrl: string; key?: string; host: string }
 
+/**
+ * The details an edit of the provider in force moved to (Home's Model provider holds an edit to another host until its
+ * card is agreed and it answers: integrations-c3-1), sent with the card's yes so main writes them and the yes in one
+ * settings change and the provider never leaves force between. Only these fields: never the switch or a key.
+ */
+export interface ProviderMove {
+  type: "openai" | "azure" | "anthropic";
+  baseUrl: string;
+  conductor?: string | null;
+  worker?: string | null;
+  wireApi?: "completions" | "responses" | null;
+  azureApiVersion?: string | null;
+}
+
 /** The settings window's provider API (`window.emberProvider`, app/preload/home.ts). */
 export interface EmberProviderApi {
   state(): Promise<ProviderState>;
@@ -766,8 +780,11 @@ export interface EmberProviderApi {
   /** Saves the API key, encrypted (refused without a keyring); it is never sent back. */
   saveKey(key: string): Promise<ProviderDone>;
   removeKey(): Promise<ProviderDone>;
-  /** Records the yes to the card for `host` (the endpoint's host in settings now), and turns the provider on. */
-  agree(host: string): Promise<ProviderDone>;
+  /**
+   * Records the yes to the card for `host` (the endpoint's host in settings now, or that of `move`, the held edit's
+   * details, saved with it: integrations-c3-1), and turns the provider on.
+   */
+  agree(host: string, move?: ProviderMove): Promise<ProviderDone>;
   /** The endpoint in settings, or `draft`'s details without saving any of them (first-run-r2-1). */
   test(draft?: ProviderDraft): Promise<ProviderTest>;
 }

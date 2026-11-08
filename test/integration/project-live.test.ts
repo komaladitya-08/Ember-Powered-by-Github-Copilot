@@ -254,7 +254,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps the chosen files, the t
   }
 }, 120_000);
 
-it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps Projects' work while my own provider's new address waits for its card with no GitHub sign-in, and forgets it only at Sign out (integrations-c2-1)", async () => {
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps my own provider in force while its new address waits for its card, keeps Projects' work through the switch and while nothing is connected with no GitHub sign-in, and forgets it only at Sign out (integrations-c3-1, integrations-c2-1)", async () => {
   const requireCjs = createRequire(import.meta.url);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-provider-edit-"));
   const userData = path.join(dir, "profile");
@@ -298,24 +298,30 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps Projects' work while my
     await expect.poll(() => home.locator("#project-status").innerText(), { timeout: 30_000 }).toBe("Patch ready to review.");
     await home.locator("#project-question").fill("A follow-up I was typing.");
     // The provider's address changes (another port, LM Studio instead of Ollama): the new host waits for its card, and
-    // with no GitHub sign-in nothing is connected meanwhile, though nobody signed out.
+    // meanwhile the provider in use stays in force: nothing is saved, and Projects can still send there (integrations-c3-1).
+    const before = mock.requests.length;
     await home.locator('a[href="#copilot-h"]').click();
     await home.locator("#byok-url").fill(other.baseUrl);
     await home.locator("#byok-url").press("Tab");
     await home.locator("#byok-consent").waitFor({ state: "visible", timeout: 15_000 });
-    await expect.poll(() => home.evaluate(() => window.ember.agentStatus().then(s => s?.phase)), { timeout: 15_000 }).toBe("signed-out");
+    expect(await home.locator("#byok-hint").innerText()).toBe(`Ember still uses ${host}. Agree to use ${otherHost} to switch.`);
+    await home.waitForTimeout(2_000);
+    expect(await home.evaluate(() => window.ember.agentStatus().then(s => s?.phase))).toBe("ready");
+    expect(JSON.parse(fs.readFileSync(path.join(userData, "settings.json"), "utf8")).provider).toMatchObject({ baseUrl: mock.baseUrl, consent: { host } });
+    expect(other.requests.length).toBe(0);
     await home.locator('a[href="#project-h"]').click();
+    expect(await home.locator("#project-provider").innerText()).toBe(`Next send uses ${host} · mock-model.`);
     expect(await home.locator("#project-files").innerText()).toContain("greeting.ts");
     expect(await home.locator("#project-question").inputValue()).toBe("A follow-up I was typing.");
     expect(await home.locator("#project-answer").innerText()).toContain(diff);
-    expect(await home.locator("#project-status").innerText()).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
-    expect(await home.locator("#project-send").isEnabled()).toBe(false);
-    expect(await home.locator("#project-apply").isEnabled()).toBe(false);
-    // Agreed: the new host connects, and the work is still there; the previous answer, from the other host, goes
-    // with no request to this one.
+    expect(await home.locator("#project-send").isEnabled()).toBe(true);
+    expect(mock.requests.length).toBe(before);
+    // Agreed: the new address is asked for its models first, then it is in force, and the work is still there; the
+    // previous answer, from the other host, goes with no request to this one.
     await home.locator('a[href="#copilot-h"]').click();
     await home.waitForTimeout(AGREE_ARM_MS);
     await home.locator("#byok-yes").click();
+    await expect.poll(() => home.locator("#byok-msg").innerText(), { timeout: 15_000 }).toBe(`Agreed. Ember now sends your requests to ${otherHost}.`);
     await home.locator('a[href="#project-h"]').click();
     await expect.poll(() => home.locator("#project-provider").innerText(), { timeout: 30_000 }).toBe(`Next send uses ${otherHost} · mock-model.`);
     expect(await home.locator("#project-files").innerText()).toContain("greeting.ts");
@@ -323,6 +329,16 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps Projects' work while my
     expect(await home.locator("#project-answer").innerText()).toContain(diff);
     await expect.poll(() => home.locator("#project-apply").isEnabled()).toBe(true);
     expect(await home.locator("#project-previous-control").isVisible()).toBe(false);
+    // Turned off with no GitHub sign-in: nothing is connected now, though nobody signed out, and the work stays.
+    await home.locator('a[href="#copilot-h"]').click();
+    await home.locator("#byok-on").click();
+    await expect.poll(() => home.evaluate(() => window.ember.agentStatus().then(s => s?.phase)), { timeout: 15_000 }).toBe("signed-out");
+    await home.locator('a[href="#project-h"]').click();
+    expect(await home.locator("#project-files").innerText()).toContain("greeting.ts");
+    expect(await home.locator("#project-question").inputValue()).toBe("A follow-up I was typing.");
+    expect(await home.locator("#project-answer").innerText()).toContain(diff);
+    await expect.poll(() => home.locator("#project-status").innerText()).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
+    expect(await home.locator("#project-send").isEnabled()).toBe(false);
     // Sign out forgets it all, here and in main.
     await home.evaluate(() => window.ember.signOut());
     await expect.poll(() => home.locator("#project-files").innerText()).toBe("");

@@ -148,7 +148,7 @@ const provider: EmberProviderApi = {
   onChanged: fn => listen<null>(PROVIDER_IPC.changed, () => fn()),
   saveKey: key => ipcRenderer.invoke(PROVIDER_IPC.saveKey, key),
   removeKey: () => ipcRenderer.invoke(PROVIDER_IPC.removeKey),
-  agree: host => ipcRenderer.invoke(PROVIDER_IPC.agree, host),
+  agree: (host, move) => (move ? ipcRenderer.invoke(PROVIDER_IPC.agree, host, move) : ipcRenderer.invoke(PROVIDER_IPC.agree, host)),
   test: draft => (draft ? ipcRenderer.invoke(PROVIDER_IPC.test, draft) : ipcRenderer.invoke(PROVIDER_IPC.test)),
 };
 contextBridge.exposeInMainWorld("emberProvider", provider);

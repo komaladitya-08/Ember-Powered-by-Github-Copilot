@@ -378,7 +378,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Labelled fields** (Models & connections' **Model provider**): a label, then its filled text field (`.field-row`, the never-look
   field's look and height), the field under the label below 480 px. A secret goes in a password field and is never
   shown again: once saved the row says **Key saved** with **Replace** (quiet) and **Remove** (a `--red-text` text
-  button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**. A
+  button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**. An edit of
+  the provider in force to another host waits in the fields until its card is agreed and it answers: the hint says the
+  host in force still answers, the card's quiet button is “Keep using <host>”, and a failed check says “Nothing has
+  changed” (integrations-c3-1). A
   disclosure inside a group (Projects' patch, command and saved workspaces) has the folds' chevron (`details.disclose`),
   a lone button (Refresh list, Choose command folder…) keeps its own size in a row of actions, and an empty status line
   takes no row: every status line in Home stays on the page while it says nothing, as a box of nothing out of the flow,

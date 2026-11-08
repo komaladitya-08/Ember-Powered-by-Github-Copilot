@@ -113,10 +113,12 @@ async function open(seed: Seed = {}): Promise<Page> {
         onChanged: () => () => undefined,
         saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
         removeKey: async () => ({ ok: true }),
-        agree: (host: string) => {
+        agree: (host: string, move?: object) => {
           window.__frCalls.push(`agree:${host}`);
+          // Home's held edit of the provider in use comes with its details, saved with the yes (integrations-c3-1).
+          if (move) window.__frCalls.push(`move:${JSON.stringify(move)}`);
           if (liveState) {
-            window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true, consent: { version: 1, at: "2026-11-08T12:00:00Z", host } };
+            window.__frState.settings.provider = { ...window.__frState.settings.provider, ...move, on: true, consent: { version: 1, at: "2026-11-08T12:00:00Z", host } };
             window.__frEmit("onSettingsChanged", copy(window.__frState.settings));
             return Promise.resolve({ ok: true });
           }
@@ -496,6 +498,73 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108.");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
+
+  it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing (integrations-c3-1)", async () => {
+    const using = "127.0.0.1:18308";
+    const service = { kind: "user", host: using };
+    const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
+    await expect.poll(() => p.locator("#byok-hint").innerText()).toBe(`Ember sends your requests to ${using} instead of Copilot. A change applies from your next message; tasks already running finish where they started.`);
+    const saves = async () => (await calls(p)).filter(c => c.startsWith("save:"));
+    const provider = () => p.evaluate(() => window.__frState.settings.provider as { baseUrl: string; conductor: string | null; consent: { host: string } });
+    // Another port: held, never saved, so the provider in use stays in force; the note comes up for the new host.
+    await p.locator("#byok-url").fill("http://127.0.0.1:18309/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    expect(await p.locator("#byok-consent-text").innerText()).toContain("to 127.0.0.1:18309 instead");
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`Read the note above: Ember still uses ${using}, and sends nothing to 127.0.0.1:18309 until you agree.`);
+    expect(await p.locator("#byok-hint").innerText()).toBe(`Ember still uses ${using}. Agree to use 127.0.0.1:18309 to switch.`);
+    expect(await p.locator("#byok-no").innerText()).toBe(`Keep using ${using}`);
+    expect(await p.locator("#byok-test").isDisabled()).toBe(true);
+    // A model typed meanwhile is held with it.
+    await p.locator("#byok-conductor").fill("other-model");
+    await p.keyboard.press("Tab");
+    expect(await saves()).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { host: using } });
+    // I agree asks the new details first; nothing answers there: nothing has changed, and the address takes the focus.
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    await p.locator("#byok-yes").click();
+    await expect.poll(() => calls(p)).toContain("test-draft:127.0.0.1:18309");
+    expect(await p.locator("#byok-msg").innerText()).toBe("Checking 127.0.0.1:18309…");
+    expect(await p.locator("#byok-yes").getAttribute("aria-disabled")).toBe("true");
+    await settle(p, "test", { ok: false, why: "Ember can't reach 127.0.0.1:18309. Check the address and the network.", cause: "refused" });
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`Ember can't reach 127.0.0.1:18309. Check the address and the network. Nothing has changed: Ember still uses ${using}.`);
+    expect(await focusedId(p)).toBe("byok-url");
+    expect(await p.locator("#byok-consent").isVisible()).toBe(true);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      for (const scheme of ["light", "dark"] as const) {
+        await p.emulateMedia({ colorScheme: scheme });
+        await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `byok-held-${scheme}.png`), fullPage: true });
+      }
+    }
+    expect(await saves()).toEqual([]);
+    expect((await calls(p)).filter(c => c.startsWith("agree:"))).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { host: using } });
+    // Again, and it answers: the details and the yes are saved together, and the note goes.
+    await p.locator("#byok-yes").click();
+    await expect.poll(async () => (await calls(p)).filter(c => c === "test-draft:127.0.0.1:18309").length).toBe(2);
+    await settle(p, "test", { ok: true, host: "127.0.0.1:18309", models: 1, ids: ["other-model"] }, 1);
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18309.");
+    expect(await calls(p)).toContain("agree:127.0.0.1:18309");
+    expect(await calls(p)).toContain(`move:${JSON.stringify({ type: "openai", baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", worker: null, wireApi: null, azureApiVersion: null })}`);
+    expect(await saves()).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", consent: { host: "127.0.0.1:18309" } });
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
+    expect(await focusedId(p)).toBe("byok-url");
+    // Another edit, put away with Keep using: the address in use comes back, nothing is asked or saved.
+    await p.locator("#byok-url").fill("http://127.0.0.1:18310/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-no").innerText()).toBe("Keep using 127.0.0.1:18309");
+    await p.locator("#byok-no").click();
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
+    expect(await p.locator("#byok-url").inputValue()).toBe("http://127.0.0.1:18309/v1");
+    expect(await p.locator("#byok-msg").innerText()).toBe("Nothing has changed: Ember still uses 127.0.0.1:18309.");
+    expect(await focusedId(p)).toBe("byok-url");
+    expect(await p.locator("#byok-on").isChecked()).toBe(true);
+    expect((await calls(p)).filter(c => c.startsWith("test-draft:127.0.0.1:18310"))).toEqual([]);
+    expect(await saves()).toEqual([]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
 
   it("(x) Test connection names the provider's models and offers them in both model fields (integrations-9)", async () => {
     const consent = { version: 1, at: "2026-11-07T12:00:00Z", host: "127.0.0.1:11434" };
