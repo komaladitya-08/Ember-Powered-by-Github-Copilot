@@ -223,7 +223,10 @@ asked for nothing of the kind; when they asked for that kind of step but not exa
 `git push origin main`, "reinstall the dependencies" for `npm ci`) the card says "Your words don't name exactly this,
 so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. Words
 that say not to ("don't git push yet", "never force push") ask for nothing, so the card still says "You didn't ask for
-this.", typed or spoken. A
+this.", typed or spoken, and so does a step on what your words leave out ("delete everything except build/" for
+`rm -r build`). A "not" in a condition, an exception or a reminder leaves the rest as you asked it ("push my changes if
+the tests don't fail", "delete everything in build except .gitkeep", "don't forget to push"); any "not" in your words
+still keeps Ember from announcing a step instead of asking. A
 command that asks for what it does (deleting, publishing, secrets, system changes, downloading and running code, or
 what Ember can't read with certainty), which the bubble tags "Risky step", has a yellow bar on its card's edge, and
 its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**

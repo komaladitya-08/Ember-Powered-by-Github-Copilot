@@ -669,6 +669,7 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
   const scriptOf = (f: Finding) => (f.cls === "unclear" ? f.widening.find(x => x.startsWith("script:"))?.slice("script:".length) : undefined);
   if (findings.length > 0 && findings.every(f => { const s = scriptOf(f); return s !== undefined && scriptNamed(s, w); })) return true;
   return findings.some(f => {
+    if (leftOut(f, userWords)) return false;
     const row = rowOf(f, findings);
     const objectNamed = f.objects.length === 0 || f.objects.some(o => (o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0)));
     // A program and its subcommand named in full ("run npm ci", "docker push it"): the user asked for it (commands-remote-v2).
@@ -679,16 +680,82 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
   });
 }
 
-/** Where a request's clauses part: sentence and list punctuation, and "but". */
-const CLAUSE_BREAK = /[.;:!?,\n]+|\s+but\s+/iu;
+/**
+ * Where a request's clauses part: list punctuation, a full stop or colon before a space (never inside a file's name,
+ * "config.json"), dashes between words, brackets, and "but".
+ */
+const CLAUSE_BREAK = /[;!?,\n()[\]]+|[.:]+(?=\s|$)|\s+[-–—]+\s+|[–—]+|\s+but\s+/iu;
+/** Negated words that ask for what follows ("don't forget to push", "don't stop until it's published"). */
+const AFFIRMING = /(^|[^\p{L}\p{N}])(?:don['’]?t|do not|never)\s+(?:(?:ever\s+)?forget(?:\s+to)?|hesitate(?:\s+to)?|fail\s+to|stop\s+(?:until|till))(?=$|[^\p{L}\p{N}])/giu;
+/**
+ * Words that start a condition, a reason or an exception ("push if the tests don't fail", "delete it since I no longer
+ * need it", "publish unless the build fails"): a "not" after one is about that part, not the step before it.
+ */
+const SUBORDINATE = /(^|[^\p{L}\p{N}])(if|unless|except|without|since|because|as|once|when|whenever|until|till|while|whilst|though|although|after|before|so|provided|whether)(?=$|[^\p{L}\p{N}])/giu;
+/** A relative "that", "which" or "who" before the "not" ("the files that aren't needed", "the ones that I don't need"). */
+const RELATIVE_NOT = /(^|[^\p{L}\p{N}])(that|which|who)\s+(?:(?:i|you|we|they|he|she|it)\s+)?$/iu;
+/** Words after which "that" says what to make sure of, not which thing ("make sure that you don't push"). */
+const SAYS_THAT = /(^|[^\p{L}\p{N}])(sure|ensure|certain|careful|check|say|said|tell|told|mean|know|think|remember|promise|confirm|guarantee|insist)\s+$/iu;
+
+/** Words that leave something out of a request ("delete everything except .gitkeep", "commit without pushing"). */
+const EXCLUDES = /(^|[^\p{L}\p{N}])(except|excepting|excluding|without|other\s+than|apart\s+from|aside\s+from|besides|instead\s+of|rather\s+than)(?=$|[^\p{L}\p{N}])/iu;
 
 /**
- * The user's words without the clauses that say not to do something ("don't git push yet", "never force push",
- * "whatever you do, do not push"): a step they ruled out is never one they asked for, so its card keeps "You didn't ask
- * for this." and never says they asked by voice (commands-remote-c1-2). Only the card's words follow from it.
+ * One clause, split into what it asks for and what it leaves out by name. From a word that leaves something out
+ * ("except .gitkeep", "without running the linter") to the clause's end is left out. A "not" in a condition, a reason
+ * or a relative clause cuts there ("push my changes if the tests don't fail" asks for "push my changes"); a "not"
+ * about the clause's own step drops the clause ("don't git push yet", "I don't want you to push", "push nothing", "a
+ * push isn't needed").
+ */
+function sortClause(clause: string): { asked: string; leftOut: string } {
+  const neg = new RegExp(NEGATION.source, "iu").exec(clause);
+  const exc = EXCLUDES.exec(clause);
+  const at = neg ? neg.index + neg[1].length : clause.length;
+  const excAt = exc ? exc.index + exc[1].length : clause.length;
+  if (exc && excAt <= at) return { asked: clause.slice(0, excAt), leftOut: clause.slice(excAt) };
+  if (!neg) return { asked: clause, leftOut: "" };
+  // "delete build/, not src/": what follows the "not" is left out.
+  if (/^\s*not\s/iu.test(clause)) return { asked: "", leftOut: clause };
+  if (neg[2].toLowerCase() === "unless") return { asked: clause.slice(0, at), leftOut: "" };
+  const before = clause.slice(0, at);
+  const rel = RELATIVE_NOT.exec(before);
+  if (rel) {
+    const start = rel.index + rel[1].length;
+    if (!SAYS_THAT.test(before.slice(0, start))) return { asked: clause.slice(0, start), leftOut: "" };
+  }
+  let cut = -1;
+  for (const m of before.matchAll(SUBORDINATE)) cut = m.index + m[1].length;
+  return { asked: cut < 0 ? "" : clause.slice(0, cut), leftOut: "" };
+}
+
+/** The user's words as clauses, sorted (sortClause). */
+function sorted(userWords: string): { asked: string; leftOut: string }[] {
+  return userWords.normalize("NFKC").replace(AFFIRMING, "$1")
+    // "everything but build" leaves build out; "but" parts clauses otherwise.
+    .replace(/(^|[^\p{L}\p{N}])(everything|anything|all)\s+but(?=\s)/giu, "$1$2 except")
+    .split(CLAUSE_BREAK).map(sortClause);
+}
+
+/**
+ * The user's words without what they say not to do ("don't git push yet", "never force push", "whatever you do, do not
+ * push"): a step they ruled out is never one they asked for, so its card keeps "You didn't ask for this." and never says
+ * they asked by voice (commands-remote-c1-2). A "not" in a condition, an exception or a reminder leaves the step they
+ * asked for as asked ("push if the tests don't fail", "delete build except .gitkeep", "don't forget to push":
+ * commands-remote-r2-1). Only the card's words follow from it: any "not" still keeps a step from being announced.
  */
 function affirmed(userWords: string): string {
-  return userWords.normalize("NFKC").split(CLAUSE_BREAK).filter(c => !NEGATION.test(c)).join(". ");
+  return sorted(userWords).map(c => c.asked).filter(c => c.trim() !== "").join(". ");
+}
+
+/**
+ * Whether the words leave out what a finding acts on by name ("delete everything except build/" for `rm -r build`):
+ * that step wasn't asked for, whatever else the words ask (commands-remote-r2-1).
+ */
+function leftOut(f: Finding, userWords: string): boolean {
+  const out = sorted(userWords).map(c => c.leftOut).filter(c => c.trim() !== "").join(". ");
+  if (out === "") return false;
+  const w = wordsOf(out);
+  return f.objects.some(o => o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0));
 }
 
 /** Whether the words name a finding's program with its subcommand, in full and in order ("npm ci", "git push"). */
@@ -742,6 +809,7 @@ export function namedKind(findings: readonly Finding[], userWords: string): bool
   if (!userWords || userWords.trim() === "") return false;
   const w = wordsOf(affirmed(userWords));
   return findings.some(f => {
+    if (leftOut(f, userWords)) return false;
     const row = rowOf(f, findings);
     return hasVerb(w.list, [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])]);
   });

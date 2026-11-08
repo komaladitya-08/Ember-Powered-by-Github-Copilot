@@ -210,6 +210,54 @@ describe("decideCommand: the rules in order", () => {
     // A clause that says not to do something else leaves the rest of what they asked for as it was.
     expect(decide("git push origin main", { words: "push my changes, but don't force it" }).says).toContain(LINES.inexact);
     expect(decide("npm ci", { words: "don't touch the docs. run npm ci" }).says).not.toContain(LINES.unasked);
+    // However the "not" is said, before the step it rules out or after it (commands-remote-r2-1).
+    for (const [cmd, words] of [
+      ["git push origin main", "I don't want you to push"],
+      ["git push origin main", "push nothing yet"],
+      ["git push origin main", "a push isn't needed"],
+      ["git push origin main", "make sure that you don't push"],
+      ["git push origin main", "commit and don't push"],
+      ["git push origin main", "don't push unless I say so"],
+      ["git push origin main", "commit without pushing"],
+      ["rm -r build", "don't delete build if it has my notes"],
+      ["npm publish", "pushing is fine, publishing isn't"],
+      ["npm publish", "don't forget not to publish"],
+      // What the words leave out by name wasn't asked for, whatever else they ask.
+      ["rm -r build", "delete everything except build/"],
+      ["rm config.json", "tidy up without touching config.json"],
+      ["rm -r src", "delete build/ but not src/"],
+      ["git push origin main", "push my branch, not main"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(true);
+    }
+  });
+
+  it("never says \"You didn't ask for this.\" for the step asked for beside a \"not\" about something else: a condition, an exception, a reminder; it still asks (commands-remote-r2-1)", () => {
+    for (const [cmd, words] of [
+      ["git push origin main", "Don't forget to push my changes"],
+      ["git push origin main", "Push my branch without running the linter"],
+      ["npm publish", "don't stop until it's published"],
+      ["git push origin main", "push my changes if the tests don't fail"],
+      ["npm publish", "publish the package unless the build fails"],
+      ["rm -rf build/*", "delete everything in build except .gitkeep"],
+      ["rm -rf node_modules", "remove node_modules since we no longer need it"],
+      ["rm *.o", "delete the object files that aren't needed"],
+      ["git push origin main", "push the fix — I can't do it from here"],
+      ["git push origin main", "if the tests don't fail, push my changes"],
+      ["rm notes.txt", "delete notes.txt once it isn't open"],
+      ["rm -r build", "delete the files in build/ that I don't need"],
+    ]) {
+      const d = decide(cmd, { words });
+      // A "not" anywhere in the words never announces: the decision stays a question.
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(false);
+    }
+    expect(decide("git push origin main", { words: "Don't forget to push my changes" }).says).toContain(LINES.inexact);
+    // A file's name is one word, not two sentences, so the words still name it.
+    expect(decide("cp config.example.json config.json", { words: "copy config.example.json to config.json if config.json isn't there" }).says).not.toContain(LINES.unasked);
   });
 });
 
