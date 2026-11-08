@@ -267,7 +267,9 @@ reported in every PR that touches it.
      measured on Xvfb with xcompmgr, Home closed: the overlay's canvas 14–17 drawings a second against 23–24, the
      handle's 15 against 21, the whole tree 8.7–10.1 % of a core against 11.4–15.2 %; Home's hero 11.5 against 18.4).
      Fidgets and the handle's idle saccades are most of what is left. They will stop drawing entirely after about 10 s
-     still, and wake on any state change.
+     still, and wake on any state change (the resting rate is the owner's decision). Home behind other windows draws
+     its still faces no more (`homeFrameGap`; measured with Home open: Home's renderer 0.3 % of a core against
+     2.5–3 %, its hero 0.1 drawings a second against 12, the whole tree 9.2 % against 11.6–12.9 %).
    - The main process moves Ember 60 times a second only while it or the pointer moves, and about 10 once both have
      been still for 2 s (`tickGap`): main at rest 1.0–1.15 % of a core against 1.8–2.2 %.
    - Software compositing (no GPU) gets a cheaper still frame.
