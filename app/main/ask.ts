@@ -558,6 +558,19 @@ export class AskWindow {
     this.sendContext();
   }
 
+  /**
+   * Why a request would go unanswered now (host.ts unansweredWord; undefined: it would be answered) changed while the
+   * box may be open: its line follows, as the handle's word does (companion-6: it said "Offline" after Copilot was back,
+   * and nothing when the connection failed after it opened). Only the line changes: the page keeps all else it shows.
+   */
+  setUnavailable(word: string | undefined): void {
+    if (this.context.unavailable === word) return;
+    this.context = { ...this.context, unavailable: word };
+    if (this.win && !this.win.isDestroyed() && this.win.isVisible() && !this.win.webContents.isLoading()) {
+      this.win.webContents.send(IPC.askUnavailable, word ?? null);
+    }
+  }
+
   private sendContext(): void {
     if (this.win && !this.win.isDestroyed() && !this.win.webContents.isLoading()) this.win.webContents.send(IPC.askContext, this.context);
   }

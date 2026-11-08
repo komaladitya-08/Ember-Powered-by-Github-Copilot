@@ -239,6 +239,38 @@ describe("the ask box", () => {
     expect(stepsAsideFor({ visible: false, mood: "attention", actions: actions("q4:once") })).toBeNull();
   });
 
+  it("says why Ember can't answer as that changes while the box is open, without opening it afresh (companion-6)", async () => {
+    const sent: [string, unknown][] = [];
+    const ask = new AskWindow();
+    ask.prepare();
+    const [win] = made;
+    win.webContents.send = (ch: string, t: unknown) => { sent.push([ch, t]); };
+    win.emit("ready-to-show");
+    ask.show({ x: 400, y: 300 }, { sees: null, history: ["earlier"], unavailable: "Connecting…" });
+    ask.setContext({ sees: "Text Editor · Notes.txt", history: ["earlier"] });
+    const contexts = () => sent.filter(([ch]) => ch === "agent:ask-context").length;
+    const words = () => sent.filter(([ch]) => ch === "agent:ask-unavailable").map(([, w]) => w);
+    const before = contexts();
+    // Copilot's connection failed while the box was open: the line says so now, and only the line changes (the page keeps
+    // what it shows, its place in the history and the draft: not an opening, nor the context sent again).
+    ask.setUnavailable("Offline");
+    expect(words()).toEqual(["Offline"]);
+    expect(contexts()).toBe(before);
+    // The same word again: nothing to say. Connected: the line goes.
+    ask.setUnavailable("Offline");
+    ask.setUnavailable(undefined);
+    expect(words()).toEqual(["Offline", null]);
+    // Closed: kept for the next opening's context, not sent.
+    ask.hide();
+    ask.setUnavailable("Not connected");
+    expect(words()).toEqual(["Offline", null]);
+    ask.show({ x: 400, y: 300 });
+    expect(sent.filter(([ch]) => ch === "agent:ask-context").at(-1)?.[1]).toMatchObject({ unavailable: "Not connected", opened: true });
+    // Main tells it on every change of Copilot's status, in the handle's word.
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("app/main/main.ts", "utf8")).toMatch(/onStatus: status => \{[\s\S]{0,1200}askWindow\.setUnavailable\(unansweredWord\(status\) \?\? undefined\);\n\s+\},/);
+  });
+
   it("grows with its field as lines are added or pasted, upward above Ember, and opens one line tall again (review #70)", () => {
     const ask = new AskWindow();
     ask.show({ x: 400, y: 500 });

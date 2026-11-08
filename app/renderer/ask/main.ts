@@ -32,6 +32,8 @@ const suggest = document.getElementById("suggest")!;
 const seesLive = document.getElementById("sees-live")!;
 const seesText = document.getElementById("sees-text")!;
 const seesExtra = document.getElementById("sees-extra")!;
+/** Why Ember can't answer now: the line's sentence, and its word alone for a crowded line (fitMeta); "" for none. */
+let cantSay = { full: "", word: "" };
 /** What the chip says now (fitMeta picks the long or the brief form of what else is sent). */
 let view: SeesView | null = null;
 /** Room the window's name keeps on the line before the rest gives way, at the default text size. */
@@ -40,18 +42,23 @@ const NAME_ROOM = 160;
 const scale = () => textScaleOf(getComputedStyle(document.documentElement).getPropertyValue("--text-scale"));
 /**
  * The line under the field, while the window's name would be cut shorter than NAME_ROOM: the key hints step aside
- * (Esc first, then ↑, then Enter), then what else is sent says it in fewer words ("+ text, 2 titles"), then the other
- * computer's name is shortened (never its state). The tooltip and screen readers keep the whole sentence.
+ * (Esc first, then ↑, then Enter), then what else is sent says it in fewer words ("+ text, 2 titles"), then why Ember
+ * can't answer says just its word ("Not connected"), then the other computer's name is shortened (never its state).
+ * The tooltip and screen readers keep the whole sentence.
  */
 function fitMeta(): void {
   const keys = [...document.querySelectorAll<HTMLElement>("#hint .key")];
   for (const k of keys) k.classList.remove("crowded");
   where.classList.remove("tight");
   seesExtra.textContent = view?.extra ?? "";
+  const unavailable = document.getElementById("unavailable")!;
+  unavailable.textContent = cantSay.full;
+  unavailable.removeAttribute("aria-label");
   if (sees.hidden) return;
   const steps = [
     ...keys.reverse().filter(k => !k.hidden).map(k => () => k.classList.add("crowded")),
     () => { seesExtra.textContent = view?.brief ?? ""; },
+    () => { if (cantSay.word) { unavailable.textContent = cantSay.word; unavailable.setAttribute("aria-label", cantSay.full); } },
     () => where.classList.add("tight"),
   ];
   for (const step of steps) {
@@ -213,10 +220,7 @@ window.emberAsk.onContext(c => {
   document.getElementById("where-state")!.textContent = chip?.state ?? "";
   where.title = chip ? chip.name + chip.state : "";
   // Ember can't answer a request now (not connected, offline): said before one is typed, not after it is sent.
-  const unavailable = document.getElementById("unavailable")!;
-  const cant = unavailableLine(c.unavailable);
-  unavailable.hidden = !cant;
-  unavailable.textContent = cant ?? "";
+  showUnavailable(c.unavailable, false);
   // The window's app and title (shortened on the chip), what else goes with a request, all of it in the tooltip.
   view = seesView(c);
   sees.hidden = !view;
@@ -226,7 +230,8 @@ window.emberAsk.onContext(c => {
   seesText.textContent = view?.text ?? "";
   // Nothing to show once the quick look is done (no readable window, the desktop): the line is just its keys at the
   // trailing edge, not a long empty strip (companion-7). Whole while it waits, so nothing jumps when a name comes.
-  document.querySelector(".meta")!.classList.toggle("bare", c.opened !== true && !view && !chip && !cant);
+  quiet = c.opened !== true && !view && !chip;
+  document.querySelector(".meta")!.classList.toggle("bare", quiet && !unavailableLine(c.unavailable));
   // The field had the keyboard before this came, so its description isn't read again: a screen reader hears it here.
   const live = liveWords(said, c);
   if (live !== null) seesLive.textContent = said = live;
@@ -249,6 +254,28 @@ window.emberAsk.onContext(c => {
   if (c.listenOnce) showListenOnce(c.listenOnce);
   else fit();
 });
+/**
+ * The start of the line under the field while Ember can't answer a request (`word`: the handle's, or none). `live`: it
+ * changed while the box is open (companion-6), so a line that comes or changes is said, as the field's description isn't
+ * read again.
+ */
+function showUnavailable(word: string | undefined, live: boolean): void {
+  const unavailable = document.getElementById("unavailable")!;
+  const cant = unavailableLine(word);
+  const news = live && !!cant && cant !== cantSay.full;
+  cantSay = { full: cant ?? "", word: cant ? word!.replace(/…$/, "") : "" };
+  unavailable.hidden = !cant;
+  unavailable.textContent = cant ?? "";
+  unavailable.title = cant ?? "";
+  if (news) seesLive.textContent = cant;
+  if (!live) return;
+  document.querySelector(".meta")!.classList.toggle("bare", quiet && !cant);
+  fitMeta();
+  fit();
+}
+/** The quick look found nothing to show and no computer is named: the line is just its keys (and any line above). */
+let quiet = false;
+window.emberAsk.onUnavailable?.(w => showUnavailable(w ?? undefined, true));
 // Typed while the box was opening: it goes where the caret is, as if typed here.
 window.emberAsk.onTyped(t => {
   if (t.cancel) { window.emberAsk.close(); return; }

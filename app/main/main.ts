@@ -3336,6 +3336,8 @@ function start(): void {
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
         showState({ idle: idleNow(status), setup: setupNow(status) });
+        // An open Ask box says it too, as it changes (companion-6).
+        askWindow.setUnavailable(unansweredWord(status) ?? undefined);
       },
       // Home's conversation shows the answer as it develops (the same words as the bubble's).
       onAnswerStream: e => broadcast(IPC.conversationStream, e),

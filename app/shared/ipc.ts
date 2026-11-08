@@ -156,6 +156,8 @@ export const IPC = {
   focusSection: "ember:focus-section",
   /** The ask box: what Ember will read when you ask (shown as a chip), and your earlier questions. */
   askContext: "agent:ask-context",
+  /** Why a request would go unanswered now, as it changes while the box is open (companion-6): the word, or null. */
+  askUnavailable: "agent:ask-unavailable",
   /** What was typed while the ask box was opening (Ember held the keyboard meanwhile). */
   askTyped: "agent:ask-typed",
   /** The ask box's field needs this many lines (1 to 4) for its text: the box grows to fit. */
@@ -589,6 +591,8 @@ export interface EmberAskApi {
   listenOnce(on: boolean): Promise<ListenOnceStatus>;
   onListenOnce(fn: (s: ListenOnceStatus) => void): void;
   onContext(fn: (c: AskContext) => void): void;
+  /** Why a request would go unanswered changed while the box is open (the handle's word; null: it would be answered). */
+  onUnavailable?(fn: (word: string | null) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
   onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;
   /** The box went away (nothing can be typed in it now): what was left in the field is selected for the next opening. */

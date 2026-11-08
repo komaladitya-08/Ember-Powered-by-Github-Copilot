@@ -152,8 +152,9 @@ runtime. It does not change the app's consent or speaking settings.
 - **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
   will look at, and ↑/↓ bring back earlier questions. It opens above Ember (below it near the top of the screen),
   clear of Ember's handle and of the answer or question Ember shows: on the other side of Ember from it, else beside
-  it. While Ember can't answer a request (not connected, offline), the line under its field says so first, in the
-  handle's words ("Not connected: I can't answer yet").
+  it, else over or under it; a question that comes up while it is open shows beside it too. While Ember can't answer
+  a request (not connected, offline), the line under its field says so first, in the handle's words ("Not connected:
+  I can't answer yet"), and follows the connection while the box is open.
 - **The settings window** shows one pane at a time, picked in its sidebar as System Settings does: **Home**, **Projects**, **Models & connections**,
   **Voice**, **Your Ember** (character, size, start at login, and **Ember on screen**: **Handle position**, **Follow my
   cursor**, **Hide Ember until it needs me**, **Quit Ember**), **Memory** (with routines and reminders), **Apps &
