@@ -481,8 +481,30 @@ describe("ExtensionsService", () => {
   it("lists only plugins with a server Ember can run, and where each reaches", async () => {
     const s = new ExtensionsService(deps());
     const entries = await s.browse("local-market");
+    if (!Array.isArray(entries)) throw new Error(entries.why);
     expect(entries.map(e => e.name)).toEqual(["fake"]);
     expect(entries[0]).toMatchObject({ kind: "plugin", installed: false, publisher: "Org", source: "plugins/fake", reaches: ["Runs node server.mjs on this computer"] });
+  });
+
+  it("says it couldn't fetch or read a marketplace's list, rather than that it lists nothing (integrations-r2)", async () => {
+    const market = (browse: () => Promise<unknown>, source = `Local: ${path.join(dir, "market")}`) => deps({
+      client: () => ({ rpc: { plugins: { marketplaces: { list: async () => ({ marketplaces: [{ name: "local-market", source }] }), browse } } } }) as never,
+    });
+    // The runtime couldn't fetch it: offline, a proxy, TLS inspection.
+    expect(await new ExtensionsService(market(async () => { throw new Error("fetch failed: getaddrinfo ENOTFOUND github.com"); })).browse("local-market"))
+      .toEqual({ ok: false, why: "Ember couldn't reach “local-market”. Check the network, then press Browse again." });
+    // The runtime refused for another reason.
+    expect(await new ExtensionsService(market(async () => { throw new Error("Internal error: catalog refresh failed"); })).browse("local-market"))
+      .toEqual({ ok: false, why: "Ember couldn't fetch “local-market”'s list. Press Browse again in a moment." });
+    // Fetched, but the catalogue isn't where Ember reads it, or can't be read.
+    expect(await new ExtensionsService(market(async () => ({ plugins: [] }), `Local: ${path.join(dir, "gone")}`)).browse("local-market"))
+      .toEqual({ ok: false, why: "Ember couldn't read “local-market”'s list. Press Browse again in a moment." });
+    fs.writeFileSync(path.join(dir, "market/.claude-plugin/marketplace.json"), "{ not json");
+    expect(await new ExtensionsService(market(async () => ({ plugins: [] }))).browse("local-market"))
+      .toEqual({ ok: false, why: "Ember couldn't read “local-market”'s list. Press Browse again in a moment." });
+    // A catalogue that really lists nothing is empty.
+    writeJson("market/.claude-plugin/marketplace.json", { name: "local-market", owner: { name: "Org" }, plugins: [] });
+    expect(await new ExtensionsService(market(async () => ({ plugins: [] }))).browse("local-market")).toEqual([]);
   });
 
   it("shows every discovered tool before a second agreement permits any use", async () => {

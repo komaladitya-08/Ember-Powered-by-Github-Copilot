@@ -11,7 +11,7 @@ import type { ExtensionsApi, MarketplaceEntry } from "../shared/extensions";
 import { EXTENSIONS_IPC, type ExtensionsConnect, type ExtensionsDone, type ExtensionsEntries, type ExtensionsState } from "../shared/ipc";
 import { extensionsName, marketplaceSource, mayOpenConnectUrl } from "../shared/extensions-input";
 import {
-  EXTENSIONS_BAD_REQUEST, EXTENSIONS_LOCKDOWN, EXTENSIONS_MANAGED, EXTENSIONS_REFUSED_URL, EXTENSIONS_UNAVAILABLE, MARKETPLACE_INVALID, extensionsError,
+  EXTENSIONS_BAD_REQUEST, EXTENSIONS_FAILED, EXTENSIONS_LOCKDOWN, EXTENSIONS_MANAGED, EXTENSIONS_REFUSED_URL, EXTENSIONS_UNAVAILABLE, MARKETPLACE_INVALID, extensionsError,
 } from "../renderer/home/extensions-copy";
 
 /** The part of Electron's ipcMain these channels use. */
@@ -96,7 +96,11 @@ export function registerExtensionsIpc(
     if (why) return fail(why);
     const name = extensionsName(m);
     if (!name) return fail(EXTENSIONS_BAD_REQUEST);
-    try { return entries(await api!.browse(name)); } catch (err) { return raw(EXTENSIONS_IPC.browse, err); }
+    try {
+      const r = await api!.browse(name);
+      // Ember's own sentence for a list it couldn't fetch or read (browseFailed): said as it is, never as an empty list.
+      return Array.isArray(r) ? entries(r) : fail(typeof r?.why === "string" ? r.why : EXTENSIONS_FAILED);
+    } catch (err) { return raw(EXTENSIONS_IPC.browse, err); }
   });
 
   handle(EXTENSIONS_IPC.connectors, async (): Promise<ExtensionsEntries> => {

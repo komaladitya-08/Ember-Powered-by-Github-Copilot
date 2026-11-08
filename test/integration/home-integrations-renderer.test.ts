@@ -17,6 +17,8 @@ declare global {
     __ixCalls: string[];
     __ixState: ExtensionsState;
     __ixEntries: MarketplaceEntry[];
+    __ixBrowseFails: string[];
+    __ixBrowsed: string[];
     __ixEmit: (name: string, value: unknown) => void;
     __ixExtChanged: () => void;
   }
@@ -67,6 +69,8 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
     window.__ixCalls = [];
     window.__ixState = extensions;
     window.__ixEntries = entries;
+    window.__ixBrowseFails = [];
+    window.__ixBrowsed = [];
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     window.__ixEmit = (name, value) => { for (const fn of subs[name] ?? []) fn(value); };
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin });
@@ -87,7 +91,11 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
     window.emberExtensions = {
       state: async () => structuredClone(window.__ixState),
       onChanged: fn => { changed = fn; return () => undefined; },
-      browse: async () => ({ ok: true, entries: window.__ixEntries }),
+      browse: async (m: string) => {
+        window.__ixBrowsed.push(m);
+        const why = window.__ixBrowseFails.shift();
+        return why ? { ok: false, why } : { ok: true, entries: window.__ixEntries };
+      },
       connectors: async () => ({ ok: true, entries: [] }),
       addMarketplace: ok("addMarketplace"), removeMarketplace: ok("removeMarketplace"), uninstall: ok("uninstall"), setEnabled: ok("setEnabled"),
       disconnect: ok("disconnect"), connect: async () => ({ ok: true, state: "connected" }),
@@ -225,6 +233,25 @@ describe.skipIf(gate)("Home's Extensions, as the person sets them up (2026-11-07
     await rows.nth(1).getByRole("button", { name: "Remove the marketplace octo-tools" }).click();
     await expect.poll(() => page.locator("#extensions-msg").innerText()).toBe("Removed the marketplace “octo-tools”.");
     expect(await calls(page)).toContain('removeMarketplace("octo-tools")');
+    expect((page as Page & { errors: string[] }).errors).toEqual([]);
+    await page.close();
+  });
+
+  it("says a marketplace's list couldn't be fetched, never that it lists nothing, and offers Browse again (integrations-r2)", async () => {
+    const page = await open("extensions");
+    const why = "Ember couldn't reach “awesome-copilot”. Check the network, then press Browse again.";
+    await page.evaluate(w => { window.__ixBrowseFails = [w]; }, why);
+    await page.getByRole("button", { name: "Browse awesome-copilot" }).click();
+    await expect.poll(() => page.locator("#ext-browse-status").innerText()).toBe(why);
+    expect(await page.locator("#ext-browse-status").innerText()).not.toContain("lists nothing");
+    const again = page.getByRole("button", { name: "Browse again", exact: true });
+    expect(await again.isVisible()).toBe(true);
+    await evidence(page, "ext-browse-failed");
+    await again.click();
+    await expect.poll(() => page.getByRole("button", { name: "Add fake" }).isVisible()).toBe(true);
+    expect(await page.locator("#ext-browse-status").innerText()).toBe("");
+    expect(await again.isVisible()).toBe(false);
+    expect(await page.evaluate(() => window.__ixBrowsed)).toEqual(["awesome-copilot", "awesome-copilot"]);
     expect((page as Page & { errors: string[] }).errors).toEqual([]);
     await page.close();
   });

@@ -708,6 +708,7 @@ html { scroll-padding-top: 16px; }
 .ext-browse-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .ext-browse-head h3.sub { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .ext-browse-head h3.sub:focus { outline: none; }
+.ext-browse-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 #ext-browse-status, #extensions-msg { margin: 0 4px; }
 #ext-browse-status:empty, #extensions-msg:empty { display: none; }
 .ext-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); align-items: start; gap: 10px; }

@@ -41,7 +41,8 @@ export interface ExtensionsApi {
   addMarketplace(source: string): Promise<{ ok: true } | { ok: false; why: string }>;
   /** Refused, in one sentence, for a marketplace built into Copilot or set by the organisation. */
   removeMarketplace(name: string): Promise<{ ok: true } | { ok: false; why: string }>;
-  browse(marketplace: string): Promise<MarketplaceEntry[]>;
+  /** What it offers, or why its list couldn't be fetched or read, in one sentence (never an empty list for that). */
+  browse(marketplace: string): Promise<MarketplaceEntry[] | { ok: false; why: string }>;
   install(marketplace: string, name: string): Promise<{ ok: true; id: string } | { ok: false; why: string }>; // after Home's consent card
   uninstall(id: string): Promise<void>;
   setEnabled(id: string, on: boolean): Promise<void>;

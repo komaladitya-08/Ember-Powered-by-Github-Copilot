@@ -11,7 +11,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
 import { marketplaceSource } from "../../shared/extensions-input";
 import {
-  BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, MARKETPLACES_NOT_CONNECTED, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
+  BROWSE_AGAIN, BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, MARKETPLACES_NOT_CONNECTED, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
   addedMarketplace, added, addingMarketplace, agreedTo, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
   consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
   removed, removedMarketplace, toolBadge, type ConsentCard, type ItemAction,
@@ -434,6 +434,8 @@ function draw(): void {
   if (browsing) {
     $("ext-browse-h").textContent = browsingHeading(browsing.name);
     $("ext-browse-status").textContent = browsing.entries === null ? browsingLoading(browsing.name) : browsing.error ?? (browsing.entries.length ? "" : BROWSE_EMPTY);
+    // A list that couldn't be fetched or read is offered again here, where its sentence is (integrations-r2).
+    $("ext-browse-again").hidden = !browsing.error;
     $("ext-cards").replaceChildren(...(browsing.entries ?? []).map(entryNode));
   }
 
@@ -493,6 +495,8 @@ export function startExtensions(): void {
   window.ember?.onSettingsChanged?.(s => { extSettings = s.extensions; draw(); });
   $("ext-on-label").textContent = EXTENSIONS_ON_LABEL;
   $("ext-on").addEventListener("change", e => setSectionOn((e.target as HTMLInputElement).checked));
+  $("ext-browse-again").textContent = BROWSE_AGAIN;
+  $("ext-browse-again").addEventListener("click", () => { if (browsing) void browse(browsing.name); });
   $("ext-browse-done").textContent = BROWSE_DONE;
   $("ext-browse-done").addEventListener("click", () => {
     const back = browsing ? `market:${browsing.name}:browse` : "";

@@ -30,7 +30,7 @@ import type { AuditLog } from "../policy/audit";
 import type { Settings, SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
-import { MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT } from "../../renderer/home/extensions-copy";
+import { MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, browseFailed } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
@@ -350,13 +350,20 @@ export class ExtensionsService implements ExtensionsApi {
     return found.length === 1 ? found[0] : null;
   }
 
-  async browse(marketplace: string): Promise<MarketplaceEntry[]> {
+  /** What `marketplace` offers, or why its list couldn't be fetched or read (integrations-r2): never an empty list for that. */
+  async browse(marketplace: string): Promise<MarketplaceEntry[] | { ok: false; why: string }> {
     if (!this.allowed() || typeof marketplace !== "string") return [];
     try {
       // The runtime fetches (or refreshes) the catalogue; Ember reads it for what it offers.
-      await this.rpc().plugins.marketplaces.browse({ name: marketplace });
+      try {
+        await this.rpc().plugins.marketplaces.browse({ name: marketplace });
+      } catch (err) {
+        this.o.log.warn("extensions.browse_failed", { err });
+        const offline = /ECONN|ENOTFOUND|EAI_AGAIN|network|fetch failed|getaddrinfo|socket hang up|offline|timed? ?out|ETIMEDOUT/i.test(err instanceof Error ? err.message : String(err));
+        return { ok: false, why: browseFailed(marketplace, offline ? "offline" : "fetch") };
+      }
       const root = await this.marketplaceRoot(marketplace);
-      if (!root) return [];
+      if (!root) return { ok: false, why: browseFailed(marketplace, "read") };
       const m = readMarketplace(root);
       const installed = new Set(this.items.map(i => i.source));
       const out: MarketplaceEntry[] = [];
@@ -375,7 +382,7 @@ export class ExtensionsService implements ExtensionsApi {
       return out;
     } catch (err) {
       this.o.log.warn("extensions.browse_failed", { err });
-      return [];
+      return { ok: false, why: browseFailed(marketplace, "read") };
     }
   }
 

@@ -187,6 +187,15 @@ export const removeMarketplaceLabel = (name: string) => `Remove the marketplace 
 export const browsingHeading = (name: string) => `In “${name}”`;
 export const browsingLoading = (name: string) => `Loading “${name}”…`;
 export const BROWSE_EMPTY = "This marketplace lists nothing yet.";
+/**
+ * Why a marketplace's list couldn't be shown (integrations-r2), never as an empty list: the runtime couldn't reach it
+ * (`offline`) or fetch it (`fetch`), or its catalogue couldn't be found or read on this computer (`read`).
+ */
+export function browseFailed(name: string, why: "offline" | "fetch" | "read"): string {
+  if (why === "offline") return `Ember couldn't reach “${name}”. Check the network, then press Browse again.`;
+  return why === "fetch" ? `Ember couldn't fetch “${name}”'s list. Press Browse again in a moment.` : `Ember couldn't read “${name}”'s list. Press Browse again in a moment.`;
+}
+export const BROWSE_AGAIN = "Browse again";
 export const BROWSE_DONE = "Done";
 
 /** A catalog entry as its card shows it. */

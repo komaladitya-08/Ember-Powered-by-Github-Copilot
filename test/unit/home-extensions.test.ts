@@ -376,6 +376,12 @@ describe("main's extensions channels", () => {
     expect(t.warn).toHaveBeenCalledWith("extensions.ipc_failed", expect.objectContaining({ where: EXTENSIONS_IPC.uninstall, err: "x is not a function" }));
   });
 
+  it("passes on why a marketplace's list couldn't be fetched, never as an empty list (integrations-r2)", async () => {
+    const why = "Ember couldn't reach “m”. Check the network, then press Browse again.";
+    const t = setUp(fakeApi({ browse: async () => ({ ok: false, why }) }));
+    expect(await t.call(EXTENSIONS_IPC.browse, "m")).toEqual({ ok: false, why });
+  });
+
   it("caps a marketplace's list at what a person reads", async () => {
     const t = setUp(fakeApi({ browse: async () => Array.from({ length: ENTRIES_MAX + 50 }, (_, i) => entry({ name: `e${i}` })) }));
     const r = await t.call(EXTENSIONS_IPC.browse, "m") as { ok: true; entries: unknown[] };
