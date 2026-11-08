@@ -440,7 +440,8 @@ describe("the bubble's hierarchy (UI audit #9)", () => {
   it("keeps each chord on one line with its word, also in a bubble narrowed beside the Ask box, as the corner card does (companion-r2-4)", () => {
     // Narrowed to 273 px beside the open box at Larger text, the hint broke inside a chord ("Ctrl Alt" / "N not now").
     expect(BUBBLE_CSS).toContain(".eb-step .eb-key { white-space: nowrap; }");
-    const src = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "bubble.ts"), "utf8");
+    // __dirname, as the source pins below: a file URL's pathname is "/D:/a/…" on Windows, which no file has.
+    const src = fs.readFileSync(path.join(__dirname, "bubble.ts"), "utf8");
     const step = src.slice(src.indexOf("  setStep(text: string | null): void {"), src.indexOf("  setWhole("));
     expect(step).toMatch(/className: "eb-key" \}\);\n\s+chord\.append\(\.\.\.caps, word\);/);
   });
