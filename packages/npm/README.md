@@ -51,7 +51,7 @@ If the download doesn't match `SHA256SUMS`, nothing is installed. On macOS Ember
 for Accessibility and Screen Recording permissions for Ember itself. Its setup check warns that Ember isn't in the
 Applications folder, as the cache isn't: its **Move to Applications** takes Ember out of the cache (the next `ember`
 downloads it again), so for permissions that last across updates install the dmg from the Releases page instead. On Linux the AppImage needs `fusermount` (on RHEL 8
-and its family, `sudo dnf install fuse`); without it, run `APPIMAGE_EXTRACT_AND_RUN=1 ember`. Linux packages (RPMs for EL8) are on the Releases page too.
+and its family, `sudo dnf install fuse`); without it, run `APPIMAGE_EXTRACT_AND_RUN=1 ember`. The RPM for EL8 is on the Releases page too.
 
 ## Launcher options
 
@@ -66,6 +66,20 @@ Environment: `EMBER_NPM_CACHE` moves the cache folder, `EMBER_NPM_DOWNLOAD_BASE`
 `https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases/download`, `EMBER_NPM_QUIET=1` hides the
 progress messages.
 
+## Proxies and offline computers
+
+The download goes through the proxy npm itself uses: npm's `https-proxy` or `proxy` setting (from `npm config set`,
+your `.npmrc` or npm's global `npmrc`), otherwise `HTTPS_PROXY` (`HTTP_PROXY` for an `http://` mirror), in upper or
+lower case. Hosts in `NO_PROXY` (or npm's `noproxy`) are reached directly: names, `.example.com` for a domain,
+addresses and IPv4 ranges such as `10.0.0.0/8`, each with an optional `:port`. A user name and password go in the
+proxy's address (`http://name:password@proxy.example.com:8080`); the launcher never prints them. Behind a proxy that
+inspects HTTPS, set `NODE_EXTRA_CA_CERTS` to your organisation's certificate file, as for any Node program.
+
+When the download can't be reached, the launcher says why in one sentence (for example "Ember couldn't reach GitHub
+Releases through the proxy at proxy.example.com:8080: the proxy asked for a user name and password (407).") and what to
+do: fix the proxy setting, download the release file from the Releases page in your browser, or point
+`EMBER_NPM_DOWNLOAD_BASE` at your organisation's mirror. It gives up on a connection that is silent for 30 seconds.
+
 ## Failed or interrupted installs
 
 A reinstall keeps the previous copy until the checked replacement is published. If publication fails, the launcher
@@ -73,11 +87,18 @@ restores the previous copy so a normal launch can still work offline. If restora
 paths to the saved previous copy and checked replacement; neither is deleted. Close Ember before manually restoring
 one of those folders to the path printed by `ember --npm-where`, and do not overwrite another completed install.
 
-Only one installer per version runs at a time. A concurrent install reports that another installer may be running;
-retry after it finishes. A normal launch can still use a complete cached copy while a reinstall downloads. If an
-installer is killed, its `.<version>-install-lock` folder may remain beside the version folder. Remove that lock only
-after checking that no installer is running. An interruption between publication renames may also leave the previous
-copy in `.<version>-<random>/previous`; restore it before retrying offline. Crash recovery is not automatic.
+Only one installer per version runs at a time. A second one says "Another 'ember' is already downloading Ember
+<version>" and starts nothing; run `ember` again once the first has finished. A normal launch can still use a complete
+cached copy while a reinstall downloads.
+
+Ctrl+C, closing the terminal or stopping the launcher while it downloads ends the download and removes what it had
+made, its `.<version>-install-lock` folder included, so the next `ember` starts over (it exits with 130 after Ctrl+C).
+An installer killed outright (`kill -9`, a crash, a power cut) leaves its lock, which names its process: the next
+`ember` on the same computer sees that process is gone, takes the lock over and removes the half-made download. A lock
+whose installer is still running, was started on another computer sharing the cache, or names no process is never
+taken over; if no installer is running, delete the lock folder the message names and run `ember` again. An
+interruption between publication renames may also leave the previous copy in `.<version>-<random>/previous`, which is
+never removed for you: restore it before retrying offline.
 
 ## Update
 
@@ -85,7 +106,9 @@ Quit Ember, then run `npm i -g ember-copilot@latest` and start `ember` again (or
 first start downloads and checks the new version, and once the new version has started (it then points **Start Ember
 when I log in** at itself), removes the older versions from the cache; one that is still running, or that another
 installer is working on, stays until the next start. `ember doctor` and `--npm-install-only` remove nothing, since
-they don't start Ember.
+they don't start Ember. If an older Ember is still running, the new one hands what you asked over to it instead of
+starting: the launcher says which version is running ("Ember 0.1.1 is already running, so it took this instead of
+starting 0.1.2") and removes nothing, so quit Ember and run `ember` again.
 
 ## Uninstall
 

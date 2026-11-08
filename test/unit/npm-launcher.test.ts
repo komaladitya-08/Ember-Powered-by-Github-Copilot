@@ -3,15 +3,17 @@
  * the program is inside it, reading SHA256SUMS, the cache folders, how Ember is started, and that the package's version
  * is the app's, which the publish workflow (.github/workflows/npm.yml) relies on.
  */
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import https from "node:https";
+import net, { type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Writable } from "node:stream";
-import { assetFor, cacheDir, downloadUrl, ensureInstalled, invokedAs, launchCommand, main, noDisplay, notReleased, packageVersion, parseSha256Sums, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
+import { assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
@@ -132,6 +134,280 @@ describe("where the launcher gets Ember from", () => {
   });
 });
 
+/** A port on this computer that nothing listens on. */
+async function closedPort() {
+  const s = net.createServer();
+  await new Promise<void>(resolve => s.listen(0, "127.0.0.1", resolve));
+  const port = (s.address() as AddressInfo).port;
+  await new Promise<void>(resolve => s.close(() => resolve()));
+  return port;
+}
+/** No .npmrc settings from the computer running the tests. */
+const noNpmrc = { npm_config_userconfig: path.join(os.tmpdir(), "ember-no-such-npmrc"), npm_config_globalconfig: path.join(os.tmpdir(), "ember-no-such-npmrc") };
+/** A release's files for `version`: a stand-in AppImage of `size` bytes and its SHA256SUMS. */
+function release(version: string, size = 64) {
+  const asset = `Ember-${version}-x86_64.AppImage`, body = Buffer.alloc(size, 7);
+  return { asset, body, files: { [`/v${version}/${asset}`]: body, [`/v${version}/SHA256SUMS`]: `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` } as Record<string, string | Buffer> };
+}
+/** A proxy on this computer that records what it is asked, and answers with `answer` (or tunnels where it says). */
+async function proxyServer(o: { files?: Record<string, string | Buffer>; connect?: (target: string) => number | "407" | "403" }) {
+  const asked: { line: string; auth?: string }[] = [];
+  const server = http.createServer((req, res) => {
+    asked.push({ line: `${req.method} ${req.url}`, auth: req.headers["proxy-authorization"] });
+    const body = o.files?.[String(req.url)];
+    if (body === undefined) { res.statusCode = 404; res.end("Not Found"); return; }
+    res.end(body);
+  });
+  server.on("connect", (req: http.IncomingMessage, socket: net.Socket) => {
+    asked.push({ line: `CONNECT ${req.url}`, auth: req.headers["proxy-authorization"] });
+    const to = o.connect?.(String(req.url)) ?? "403";
+    if (to === "407") { socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\n\r\n"); return; }
+    if (to === "403") { socket.end("HTTP/1.1 403 Forbidden\r\n\r\n"); return; }
+    const up = net.connect(to, "127.0.0.1", () => { socket.write("HTTP/1.1 200 Connection established\r\n\r\n"); up.pipe(socket); socket.pipe(up); });
+    sockets.add(up);
+    up.on("error", () => socket.destroy());
+    socket.on("error", () => up.destroy());
+  });
+  // Tunnels aren't the server's connections any more, so closing it waits for them: end them all.
+  const sockets = new Set<net.Socket>();
+  server.on("connection", (socket: net.Socket) => sockets.add(socket));
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  return { port: (server.address() as AddressInfo).port, asked, close: () => new Promise<void>(resolve => { for (const s of sockets) s.destroy(); server.close(() => resolve()); }) };
+}
+/** A self-signed certificate for a mirror's name, from openssl if there is one (nothing is committed). */
+const mirrorCert = (() => {
+  try {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-npm-tls-"));
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", path.join(d, "key.pem"), "-out", path.join(d, "cert.pem"), "-days", "2", "-subj", "/CN=ember-mirror.test", "-addext", "subjectAltName=DNS:ember-mirror.test"], {
+      stdio: "ignore",
+      // Git for Windows' openssl would otherwise rewrite "/CN=..." as a Windows path.
+      env: { ...process.env, MSYS_NO_PATHCONV: "1", MSYS2_ARG_CONV_EXCL: "*" },
+    });
+    return { dir: d, key: fs.readFileSync(path.join(d, "key.pem")), cert: fs.readFileSync(path.join(d, "cert.pem")), certFile: path.join(d, "cert.pem") };
+  } catch {
+    return null; // No openssl (or one without -addext): the tunnel's own steps are still covered below.
+  }
+})();
+/** Runs the launcher's command as a person would, with only `env` (and PATH) in its environment. */
+function runLauncher(args: string[], env: Record<string, string>) {
+  const child = spawn(process.execPath, [path.resolve("packages/npm/bin/ember.mjs"), ...args], { env: { PATH: process.env.PATH ?? "", ...env }, stdio: ["ignore", "pipe", "pipe"] });
+  let out = "", err = "";
+  child.stdout.on("data", d => { out += String(d); });
+  child.stderr.on("data", d => { err += String(d); });
+  const ended = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => child.once("close", (code, signal) => resolve({ code, signal })));
+  return { child, ended, out: () => out, err: () => err };
+}
+
+describe("when the launcher can't reach the download (install-docs-r2-1)", () => {
+  it("says in one plain sentence why and what to do next, never \"fetch failed\" (install-docs-r2-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const port = await closedPort();
+    const cache = tempDir();
+    const env = { EMBER_NPM_DOWNLOAD_BASE: `http://127.0.0.1:${port}`, EMBER_NPM_CACHE: cache, ...noNpmrc };
+    const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env, name: "npx ember-copilot" }).then(() => null, (e: Error) => e);
+    expect(err?.message).toBe(`Ember couldn't reach the mirror at http://127.0.0.1:${port}: the connection was refused (ECONNREFUSED). If this computer reaches the internet through a proxy, set HTTP_PROXY (or npm's proxy setting) to it. Then run 'npx ember-copilot' again, or download Ember-9.9.9-x86_64.AppImage from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`);
+    expect(err?.message).not.toContain("fetch failed");
+    expect(fs.readdirSync(cache)).toEqual([]);
+  });
+
+  it("goes to GitHub through the proxy HTTPS_PROXY names, as npm did, and says what the proxy answered without its password (install-docs-r2-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const proxy = await proxyServer({ connect: () => "407" });
+    const cache = tempDir();
+    try {
+      const env = { HTTPS_PROXY: `http://kim:s3cret@127.0.0.1:${proxy.port}`, EMBER_NPM_CACHE: cache, ...noNpmrc };
+      const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env }).then(() => null, (e: Error) => e);
+      // It asked the proxy for a tunnel to github.com, with the proxy's sign-in, and never went straight there.
+      expect(proxy.asked).toEqual([{ line: "CONNECT github.com:443", auth: `Basic ${Buffer.from("kim:s3cret").toString("base64")}` }]);
+      expect(err?.message).toBe(`Ember couldn't reach GitHub Releases through the proxy at 127.0.0.1:${proxy.port}: the proxy asked for a user name and password (407). Put your user name and password in HTTPS_PROXY (http://name:password@127.0.0.1:${proxy.port}). Then run 'ember' again, or download Ember-9.9.9-x86_64.AppImage from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser, or set EMBER_NPM_DOWNLOAD_BASE to your organisation's mirror.`);
+      expect(err?.message).not.toContain("s3cret");
+      expect(fs.readdirSync(cache)).toEqual([]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("downloads a mirror through HTTP_PROXY when only the proxy can reach it (install-docs-r2-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const r = release("9.9.9");
+    // The proxy alone knows mirror.invalid: going straight there would fail to resolve.
+    const proxy = await proxyServer({ files: Object.fromEntries(Object.entries(r.files).map(([k, v]) => [`http://mirror.invalid${k}`, v])) });
+    const cache = tempDir();
+    try {
+      const env = { http_proxy: `127.0.0.1:${proxy.port}`, EMBER_NPM_DOWNLOAD_BASE: "http://mirror.invalid", EMBER_NPM_CACHE: cache, ...noNpmrc };
+      const installed = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env });
+      expect(fs.readFileSync(installed.exe)).toEqual(r.body);
+      expect(proxy.asked.map(a => a.line)).toEqual([`GET http://mirror.invalid/v9.9.9/SHA256SUMS`, `GET http://mirror.invalid/v9.9.9/${r.asset}`]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it.skipIf(!mirrorCert || process.platform !== "linux" || process.arch !== "x64")("downloads an https mirror through a CONNECT tunnel, checking the mirror's own certificate (install-docs-r2-1)", async () => {
+    const v = packageVersion();
+    const r = release(v, 300_000);
+    const mirror = https.createServer({ key: mirrorCert!.key, cert: mirrorCert!.cert }, (req, res) => {
+      const url = decodeURIComponent(req.url ?? "");
+      const body = r.files[url.replace(/^\/store/, "")];
+      if (body === undefined) { res.statusCode = 404; res.end(); return; }
+      // As GitHub serves a release file: a redirect to where it is stored.
+      if (url.endsWith(".AppImage") && !url.startsWith("/store/")) { res.statusCode = 302; res.setHeader("location", `/store${req.url}`); res.end(); return; }
+      res.end(body);
+    });
+    await new Promise<void>(resolve => mirror.listen(0, "127.0.0.1", resolve));
+    const mirrorPort = (mirror.address() as AddressInfo).port;
+    const proxy = await proxyServer({ connect: target => target === "ember-mirror.test:443" ? mirrorPort : "403" });
+    const cache = tempDir();
+    try {
+      const run = runLauncher(["--npm-install-only"], { HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`, NODE_EXTRA_CA_CERTS: mirrorCert!.certFile, EMBER_NPM_DOWNLOAD_BASE: "https://ember-mirror.test", EMBER_NPM_CACHE: cache, ...noNpmrc });
+      const ended = await run.ended;
+      expect(run.err()).not.toContain("couldn't reach");
+      expect(ended.code).toBe(0);
+      expect(fs.readFileSync(run.out().trim()).equals(r.body)).toBe(true);
+      expect(proxy.asked.map(a => a.line)).toEqual(["CONNECT ember-mirror.test:443", "CONNECT ember-mirror.test:443", "CONNECT ember-mirror.test:443"]);
+    } finally {
+      await proxy.close();
+      mirror.closeAllConnections();
+      await new Promise<void>(resolve => mirror.close(() => resolve()));
+      fs.rmSync(mirrorCert!.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("picks the proxy as npm does, and leaves out the hosts NO_PROXY names and this computer (install-docs-r2-1)", () => {
+    const gh = "https://github.com/x/releases/download/v1/SHA256SUMS";
+    const host = (url: string, env: Record<string, string>, npmrc = {}) => proxyFor(url, env, npmrc)?.url.host ?? null;
+    expect(proxyFor(gh, {})).toBeNull();
+    expect(proxyFor(gh, { HTTPS_PROXY: "http://p:8080" })).toMatchObject({ setting: "HTTPS_PROXY" });
+    expect(host(gh, { https_proxy: "p:3128" })).toBe("p:3128");
+    // An http mirror takes HTTP_PROXY, not HTTPS_PROXY (as curl does).
+    expect(host("http://mirror.corp/v1/x", { HTTPS_PROXY: "http://p:8080" })).toBeNull();
+    expect(host("http://mirror.corp/v1/x", { HTTP_PROXY: "http://p:8080" })).toBe("p:8080");
+    // npm's own setting wins, from its environment first, then its .npmrc; "false" means none.
+    expect(proxyFor(gh, { HTTPS_PROXY: "http://env:1", NPM_CONFIG_HTTPS_PROXY: "http://npm:2" })).toMatchObject({ setting: "npm's https-proxy setting" });
+    expect(host(gh, { HTTPS_PROXY: "http://env:1" }, { proxy: "http://rc:3" })).toBe("rc:3");
+    expect(host(gh, { npm_config_proxy: "http://npm:2" }, { "https-proxy": "http://rc:3" })).toBe("npm:2");
+    expect(host(gh, { HTTPS_PROXY: "http://env:1" }, { "https-proxy": "false" })).toBe("env:1");
+    for (const no of ["github.com", ".github.com", "*.github.com", "*", "example.org, github.com", "github.com:443"]) expect(host(gh, { HTTPS_PROXY: "http://p:1", NO_PROXY: no }), no).toBeNull();
+    for (const no of ["hub.com", "github.com:8443", "gitlab.com"]) expect(host(gh, { HTTPS_PROXY: "http://p:1", no_proxy: no }), no).toBe("p:1");
+    expect(host("https://objects.github.com/x", { HTTPS_PROXY: "http://p:1", NO_PROXY: "github.com" })).toBeNull();
+    expect(host("http://10.1.2.3/x", { HTTP_PROXY: "http://p:1", NO_PROXY: "10.0.0.0/8" })).toBeNull();
+    expect(host("http://11.1.2.3/x", { HTTP_PROXY: "http://p:1", NO_PROXY: "10.0.0.0/8" })).toBe("p:1");
+    expect(host(gh, { HTTPS_PROXY: "http://p:1", npm_config_noproxy: "github.com" })).toBeNull();
+    for (const url of ["http://127.0.0.1:9/x", "http://localhost/x", "http://[::1]:9/x"]) expect(host(url, { HTTP_PROXY: "http://p:1" }), url).toBeNull();
+    expect(() => proxyFor(gh, { HTTPS_PROXY: "socks5://p:1080" })).toThrow("HTTPS_PROXY names a socks5 proxy; the launcher can use an http:// or https:// one");
+  });
+
+  it("reads only the proxy settings from npm's .npmrc files, which a global command doesn't get from npm (install-docs-r2-1)", () => {
+    const d = tempDir();
+    const user = path.join(d, "user-npmrc"), global = path.join(d, "global-npmrc");
+    fs.writeFileSync(user, "; corp settings\nhttps-proxy = \"http://corp:3128\"\n//registry.npmjs.org/:_authToken=npm_s3cret\nnoproxy=${CORP_INTERNAL}\n");
+    fs.writeFileSync(global, "proxy=http://global:8080\nhttps-proxy=http://ignored:1\n");
+    expect(npmrcProxy({ npm_config_userconfig: user, npm_config_globalconfig: global, CORP_INTERNAL: ".corp" })).toEqual({ "https-proxy": "http://corp:3128", noproxy: ".corp", proxy: "http://global:8080" });
+    expect(npmrcProxy({ ...noNpmrc })).toEqual({});
+    // The user's .npmrc in their home folder, and npm's global npmrc beside Node, when nothing names them.
+    fs.writeFileSync(path.join(d, ".npmrc"), "proxy=http://home:1\n");
+    expect(npmrcProxy({}, { home: d, platform: "linux", execPath: path.join(d, "node", "bin", "node") })).toEqual({ proxy: "http://home:1" });
+  });
+});
+
+describe("what the launcher's pages say about proxies and interrupted downloads", () => {
+  it("say which proxy it uses and what to do when the download can't be reached (install-docs-r2-1)", () => {
+    const own = read("packages/npm/README.md").replace(/\s+/g, " ");
+    const proxies = own.split("## Proxies and offline computers")[1]?.split("## ")[0] ?? "";
+    for (const w of ["npm's `https-proxy` or `proxy` setting", "`HTTPS_PROXY`", "`NO_PROXY`", "`NODE_EXTRA_CA_CERTS`", "`EMBER_NPM_DOWNLOAD_BASE`", "in your browser"]) expect(proxies, w).toContain(w);
+    expect(read("README.md").replace(/\s+/g, " ")).toContain("Behind a proxy it uses npm's proxy setting or `HTTPS_PROXY`, as npm does.");
+    expect(usage("ember")).toContain("Downloads go through npm's https-proxy or proxy setting, else HTTPS_PROXY");
+  });
+
+  it("say an interrupted download cleans up after itself, and when a lock is left to the person (install-docs-c2-1)", () => {
+    const own = read("packages/npm/README.md").replace(/\s+/g, " ");
+    expect(own).not.toContain("Crash recovery is not automatic");
+    expect(own).toContain("Ctrl+C, closing the terminal or stopping the launcher while it downloads ends the download and removes what it had made");
+    expect(own).toContain("takes the lock over and removes the half-made download");
+  });
+});
+
+describe("an interrupted first download (install-docs-c2-1)", () => {
+  /** A release served slowly enough to stop part way: 4 MB, 64 KB every 40 ms. */
+  async function slowRelease(version: string) {
+    const r = release(version, 4 * 1024 * 1024);
+    let slow = true;
+    const server = http.createServer((req, res) => {
+      const body = r.files[decodeURIComponent(req.url ?? "")];
+      if (body === undefined) { res.statusCode = 404; res.end(); return; }
+      const buf = Buffer.from(body);
+      res.setHeader("content-length", buf.length);
+      if (!slow) { res.end(buf); return; }
+      let at = 0;
+      const tick = setInterval(() => {
+        if (at >= buf.length) { clearInterval(tick); res.end(); return; }
+        res.write(buf.subarray(at, at += 65_536));
+      }, 40);
+      res.on("close", () => clearInterval(tick));
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return { ...r, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, fast: () => { slow = false; }, close: () => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()); }) };
+  }
+  /** Waits until the launcher's half-made download has some bytes in it. */
+  async function partWay(cache: string, asset: string) {
+    for (let i = 0; i < 200; i++) {
+      for (const entry of fs.existsSync(cache) ? fs.readdirSync(cache) : []) {
+        const f = path.join(cache, entry, asset);
+        if (fs.existsSync(f) && fs.statSync(f).size > 0) return f;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error("the download never started");
+  }
+
+  // Signals are POSIX's: Windows ends a child at once whatever it is sent.
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("leaves no lock or half-made download when Ctrl+C stops it, so the next run downloads again (install-docs-c2-1)", async () => {
+    const v = packageVersion();
+    const server = await slowRelease(v);
+    const cache = tempDir();
+    try {
+      const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, EMBER_NPM_QUIET: "1", ...noNpmrc };
+      const run = runLauncher(["--npm-install-only"], env);
+      await partWay(cache, server.asset);
+      run.child.kill("SIGINT");
+      const ended = await run.ended;
+      expect(ended).toEqual({ code: 130, signal: null });
+      expect(run.err()).toBe(`ember-copilot: Stopped before Ember ${v} was installed, and nothing was kept. Run 'ember' again to download it.\n`);
+      expect(fs.readdirSync(cache)).toEqual([]);
+      server.fast();
+      const again = runLauncher(["--npm-install-only"], env);
+      expect((await again.ended).code).toBe(0);
+      // (Compared as bytes: a deep comparison of 4 MB takes vitest many seconds.)
+      expect(fs.readFileSync(again.out().trim()).equals(server.body)).toBe(true);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("takes over the lock of a download that was killed outright, instead of refusing every later run (install-docs-c2-1)", async () => {
+    const v = packageVersion();
+    const server = await slowRelease(v);
+    const cache = tempDir();
+    try {
+      const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, EMBER_NPM_QUIET: "1", ...noNpmrc };
+      const run = runLauncher(["--npm-install-only"], env);
+      await partWay(cache, server.asset);
+      // A kill nothing can catch (the computer's own out-of-memory killer, a crash): the lock stays, naming it.
+      run.child.kill("SIGKILL");
+      await run.ended;
+      expect(fs.readFileSync(path.join(cache, `.${v}-install-lock`, "owner"), "utf8")).toBe(`${run.child.pid} ${os.hostname()}\n`);
+      server.fast();
+      const again = runLauncher(["--npm-install-only"], env);
+      const ended = await again.ended;
+      expect(again.err()).not.toContain("already downloading");
+      expect(ended.code).toBe(0);
+      expect(fs.readdirSync(cache)).toEqual([v]);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+});
+
 /** What the launcher writes to stdout and stderr while `fn` runs. */
 async function captured<T>(fn: () => Promise<T>): Promise<{ result: T; out: string; err: string }> {
   let out = "", err = "";
@@ -208,6 +484,9 @@ describe("the launcher's own answers", () => {
     expect(text).toMatch(/^ember-copilot starts Ember/);
     expect(text).toContain("usage: ember [doctor | --show-settings | --ask]");
     for (const w of ["  ember doctor", "  ember --show-settings", "  ember --ask", "--npm-install-only", "--npm-where", "EMBER_NPM_DOWNLOAD_BASE"]) expect(text, w).toContain(w);
+    // No shortcut: another app may hold Ctrl+Alt+E, and then Ember holds its fallback (install-docs-r2-3).
+    expect(text).toContain("start Ember (it stays beside your cursor; run it again for its settings)");
+    expect(text).not.toMatch(/Ctrl\+|Alt\+/);
     expect(invokedAs("/usr/local/bin/ember", {})).toBe("ember");
     expect(invokedAs("/usr/local/bin/ember-copilot", {})).toBe("ember-copilot");
     expect(invokedAs("C:\\Users\\k\\AppData\\Roaming\\npm\\node_modules\\ember-copilot\\bin\\ember.mjs", {})).toBe("ember");
@@ -307,6 +586,43 @@ describe("updating through npm", () => {
       if (pid > 0) try { process.kill(pid); } catch { /* already gone */ }
       await server.close();
     }
+  });
+
+  // The stand-in AppImages are shell scripts, which this needs to run as the launcher runs the real ones.
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("says an older Ember still running took the start, and removes nothing, instead of saying the new one started (install-docs-c2-3)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "");
+    const v = packageVersion(), old = "0.0.1", other = "0.0.2";
+    const files: Record<string, string> = {};
+    // The older one keeps running; the new one finds it running and hands over, exiting 0 at once, as Ember does.
+    const bodies: Record<string, string> = { [old]: "#!/bin/sh\nwhile :; do sleep 1; done\n", [other]: "#!/bin/sh\nexit 0\n", [v]: "#!/bin/sh\nexit 0\n" };
+    for (const [ver, body] of Object.entries(bodies)) {
+      const asset = `Ember-${ver}-x86_64.AppImage`;
+      files[`/v${ver}/${asset}`] = body;
+      files[`/v${ver}/SHA256SUMS`] = `${createHash("sha256").update(body).digest("hex")}  ${asset}\n`;
+    }
+    const server = await serve(files);
+    const cache = tempDir();
+    const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, DISPLAY: ":99", EMBER_NPM_QUIET: "1", ...noNpmrc };
+    let running: ReturnType<typeof spawn> | null = null;
+    try {
+      for (const ver of [old, other]) await ensureInstalled({ version: ver, platform: "linux", arch: "x64", env });
+      running = spawn(path.join(cache, old, `Ember-${old}-x86_64.AppImage`), [], { stdio: "ignore" });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const r = await captured(() => main([], { platform: "linux", env: { ...env, EMBER_NPM_QUIET: "" }, earlyMs: 1500 }));
+      expect(r.result).toBe(0);
+      expect(r.err).toContain(`ember-copilot: Ember ${old} is already running, so it took this instead of starting ${v}. To start ${v}, quit Ember, then run 'ember' again.\n`);
+      expect(r.err).not.toContain("started Ember");
+      // Start at login still points at the one running: nothing is removed until the new one has started.
+      expect(fs.existsSync(path.join(cache, other, ".ember-npm-complete"))).toBe(true);
+      expect(fs.existsSync(path.join(cache, old, ".ember-npm-complete"))).toBe(true);
+    } finally {
+      running?.kill();
+      await server.close();
+    }
+    // Where the running one can't be named (Windows has no ps here; an Ember from outside the cache), it says so too.
+    expect(handedOver("0.1.2", null, "npx ember-copilot")).toBe("Ember was already running, so it took this. If it is older than 0.1.2, quit Ember, then run 'npx ember-copilot' again to start 0.1.2.");
+    const own = read("packages/npm/README.md").replace(/\s+/g, " ");
+    expect(own).toContain("If an older Ember is still running, the new one hands what you asked over to it instead of starting");
   });
 
   it("gives update steps, and uninstall steps in an order that works (install-docs-10)", () => {

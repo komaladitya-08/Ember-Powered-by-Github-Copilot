@@ -1,17 +1,23 @@
 // The ember-copilot npm launcher: `ember` (or `ember-copilot`) downloads the Ember release matching this package's
 // version from GitHub Releases on first run, checks it against the release's SHA256SUMS, unpacks it into a per-user
 // cache folder and starts it detached, passing its arguments on. Node built-ins only: the package has no dependencies.
+// Downloads use node:http and node:https through the proxy npm itself would use (proxyFor), because Node's fetch
+// ignores proxies before Node 24, and behind one said only "fetch failed".
 //   Windows: Ember-<v>-win-x64.zip         unpacked with tar.exe (bsdtar, Windows 10 1803+) or Expand-Archive
 //   macOS:   Ember-<v>-mac-<arch>.zip      unpacked with ditto, quarantine removed, started with open(1)
 //   Linux:   Ember-<v>-x86_64.AppImage     made executable
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
 import os from "node:os";
 import pathPosix from "node:path/posix";
 import pathWin32 from "node:path/win32";
-import { Readable, Transform } from "node:stream";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
 /** The repository whose GitHub Releases hold Ember's packages. */
@@ -115,21 +121,310 @@ const MARKER = ".ember-npm-complete";
 /** @param {string} msg */
 const say = msg => { if (!process.env.EMBER_NPM_QUIET) process.stderr.write(`ember-copilot: ${msg}\n`); };
 
-/** GET `url`, throwing with the status on anything but 2xx. */
-async function get(url) {
-  const res = await fetch(url, { redirect: "follow", headers: { "user-agent": "ember-copilot-npm-launcher" } });
-  if (!res.ok || !res.body) throw Object.assign(new Error(`downloading ${url} failed: HTTP ${res.status} ${res.statusText}`), { status: res.status });
-  return res;
+/** The value of npm's `key` setting in its environment (npm_config_<key>, in any case), or undefined. */
+function npmEnv(/** @type {Record<string, string | undefined>} */ env, /** @type {string} */ key) {
+  const want = `npm_config_${key.replace(/-/g, "_")}`;
+  const name = Object.keys(env).find(k => k.toLowerCase() === want);
+  return name ? env[name] : undefined;
+}
+
+/**
+ * The proxy settings in npm's configuration files (the user's .npmrc, then npm's global npmrc), which npm installed
+ * this package through but which aren't in a global command's environment. Only https-proxy, proxy and noproxy are
+ * read (nothing else in the files, such as a token, is kept); a file that can't be read counts as empty.
+ * @param {Record<string, string | undefined>} [env]
+ * @param {{ home?: string; platform?: string; execPath?: string }} [o] this computer's, unless a test says otherwise
+ * @returns {{ "https-proxy"?: string; proxy?: string; noproxy?: string }}
+ */
+export function npmrcProxy(env = {}, o = {}) {
+  const platform = o.platform ?? process.platform;
+  const p = platform === "win32" ? pathWin32 : pathPosix;
+  const exec = o.execPath ?? process.execPath;
+  // npm's global prefix is Node's own folder on Windows and the folder above Node's bin elsewhere.
+  const prefix = npmEnv(env, "prefix") || (platform === "win32" ? p.dirname(exec) : p.dirname(p.dirname(exec)));
+  const files = [npmEnv(env, "userconfig") || p.join(o.home ?? os.homedir(), ".npmrc"), npmEnv(env, "globalconfig") || p.join(prefix, "etc", "npmrc")];
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const file of files) {
+    let text;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue; // No such file, or not ours to read: npm would have gone without it too.
+    }
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s*(https-proxy|proxy|noproxy)\s*=\s*(.*?)\s*$/i.exec(line);
+      const key = m?.[1].toLowerCase();
+      if (!m || !key || out[key] !== undefined) continue;
+      out[key] = m[2].replace(/^(["'])(.*)\1$/, "$2").replace(/\$\{([^}]+)\}/g, (_all, n) => env[n] ?? "");
+    }
+  }
+  return out;
+}
+
+/** Whether `host` is this computer, which no proxy can reach for it. */
+function isLoopback(/** @type {string} */ host) {
+  return host === "localhost" || host.endsWith(".localhost") || host === "::1" || (net.isIPv4(host) && host.startsWith("127."));
+}
+
+/** Whether IPv4 `host` is in `cidr` ("10.0.0.0/8"). */
+function inCidr(/** @type {string} */ host, /** @type {string} */ cidr) {
+  const [base, bits] = cidr.split("/");
+  const n = Number(bits);
+  const v4 = (/** @type {string} */ s) => net.isIPv4(s) ? s.split(".").reduce((a, b) => a * 256 + Number(b), 0) : null;
+  const h = v4(host), b = v4(base);
+  if (h === null || b === null || !Number.isInteger(n) || n < 0 || n > 32) return false;
+  const size = 2 ** (32 - n);
+  return Math.floor(h / size) === Math.floor(b / size);
+}
+
+/**
+ * Whether a NO_PROXY list names `host` (and `port`): "*", a domain and its subdomains ("example.com", ".example.com",
+ * "*.example.com"), an address, an IPv4 range ("10.0.0.0/8"), each with an optional ":port".
+ */
+function bypasses(/** @type {string} */ host, /** @type {number} */ port, /** @type {string} */ list) {
+  for (const raw of list.split(/[\s,]+/)) {
+    let entry = raw.trim().toLowerCase();
+    if (!entry) continue;
+    if (entry === "*") return true;
+    const withPort = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(entry);
+    if (withPort) {
+      if (Number(withPort[2]) !== port) continue;
+      entry = withPort[1];
+    }
+    entry = entry.replace(/^\[|\]$/g, "");
+    if (entry.includes("/")) {
+      if (inCidr(host, entry)) return true;
+      continue;
+    }
+    entry = entry.replace(/^\*?\./, "");
+    if (host === entry || host.endsWith(`.${entry}`)) return true;
+  }
+  return false;
+}
+
+/**
+ * The proxy a download from `url` goes through, chosen as npm chooses the one it installed this package through:
+ * npm's https-proxy or proxy setting (from npm's environment, then its .npmrc files), else HTTPS_PROXY for an https
+ * URL or HTTP_PROXY for an http one (in either case). None for a host that NO_PROXY (or npm's noproxy) names, or for
+ * this computer itself.
+ * @param {string} url
+ * @param {Record<string, string | undefined>} [env]
+ * @param {{ "https-proxy"?: string; proxy?: string; noproxy?: string }} [npmrc] what npm's files set (npmrcProxy)
+ * @returns {{ url: URL; setting: string } | null} the proxy, and the setting that names it (to name it when it fails)
+ */
+export function proxyFor(url, env = {}, npmrc = {}) {
+  const u = new URL(url);
+  const secure = u.protocol === "https:";
+  /** @type {[string, string | undefined][]} */
+  const settings = [
+    ["npm's https-proxy setting", npmEnv(env, "https-proxy")], ["npm's proxy setting", npmEnv(env, "proxy")],
+    ["npm's https-proxy setting", npmrc["https-proxy"]], ["npm's proxy setting", npmrc.proxy],
+    ...(/** @type {[string, string | undefined][]} */ (secure ? [["HTTPS_PROXY", env.HTTPS_PROXY], ["https_proxy", env.https_proxy]] : [["HTTP_PROXY", env.HTTP_PROXY], ["http_proxy", env.http_proxy]])),
+  ];
+  // npm takes "false" for no proxy.
+  const chosen = settings.find(([, v]) => v !== undefined && v.trim() !== "" && v.trim() !== "false");
+  if (!chosen) return null;
+  const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const port = Number(u.port) || (secure ? 443 : 80);
+  const noProxy = [npmEnv(env, "noproxy"), npmrc.noproxy, env.NO_PROXY, env.no_proxy].find(v => v !== undefined && v.trim() !== "") ?? "";
+  if (isLoopback(host) || bypasses(host, port, noProxy)) return null;
+  const value = String(chosen[1]).trim();
+  let proxy;
+  try {
+    proxy = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(value) ? value : `http://${value}`);
+  } catch {
+    throw new Error(`${chosen[0]} isn't a proxy address the launcher can use; set it like http://proxy.example.com:8080`);
+  }
+  if (proxy.protocol !== "http:" && proxy.protocol !== "https:") {
+    throw new Error(`${chosen[0]} names a ${proxy.protocol.replace(/:$/, "")} proxy; the launcher can use an http:// or https:// one`);
+  }
+  return { url: proxy, setting: chosen[0] };
+}
+
+/** How long a download waits for the network (a connection, the proxy's answer, the next bytes) before it gives up. */
+const NET_TIMEOUT_MS = 30_000;
+
+/**
+ * One GET with Node's http and https: straight to the server, or through `proxy`, which an https URL reaches by a
+ * CONNECT tunnel and an http URL by asking it for the whole URL. Resolves with the response once its headers arrive;
+ * `signal` ends it, and NET_TIMEOUT_MS without a byte fails it with ETIMEDOUT.
+ * @param {string} url
+ * @param {URL | null} proxy
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<http.IncomingMessage>}
+ */
+function request(url, proxy, signal) {
+  const u = new URL(url);
+  const secure = u.protocol === "https:";
+  const port = Number(u.port) || (secure ? 443 : 80);
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  const servername = net.isIP(host) ? undefined : host;
+  const headers = { "user-agent": "ember-copilot-npm-launcher", accept: "*/*", host: u.host };
+  const auth = proxy?.username
+    ? { "proxy-authorization": `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString("base64")}` }
+    : {};
+  const via = proxy?.protocol === "https:" ? https : http;
+  const viaHost = proxy?.hostname.replace(/^\[|\]$/g, "");
+  const viaPort = proxy ? Number(proxy.port) || (proxy.protocol === "https:" ? 443 : 80) : 0;
+  return new Promise((resolve, reject) => {
+    /** @type {{ destroy(err?: Error): unknown }[]} */
+    const parts = [];
+    let settled = false;
+    let finished = false;
+    const fail = (/** @type {Error} */ err) => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener("abort", onAbort);
+      for (const part of parts) part.destroy(err);
+      if (!settled) { settled = true; reject(err); }
+    };
+    const onAbort = () => fail(signal?.reason);
+    if (signal?.aborted) { reject(signal.reason); return; }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    // Whoever reads a response (pipeline, text()) gets its error too; this keeps one nobody reads, such as a
+    // redirect's or a tunnel's socket, from stopping the launcher with an unhandled error when it is ended.
+    const quiet = (/** @type {NodeJS.EventEmitter} */ part) => part.on("error", () => {});
+    const timedOut = () => Object.assign(new Error("no answer in time"), { code: "ETIMEDOUT" });
+    const send = (/** @type {typeof http | typeof https} */ mod, /** @type {https.RequestOptions} */ options) => {
+      const req = mod.request({ ...options, method: "GET", headers: { ...headers, ...options.headers }, timeout: NET_TIMEOUT_MS });
+      parts.push(req);
+      req.on("timeout", () => fail(timedOut()));
+      req.on("error", fail);
+      req.once("response", res => {
+        parts.push(res);
+        quiet(res);
+        res.once("close", () => { finished = true; signal?.removeEventListener("abort", onAbort); });
+        settled = true;
+        resolve(res);
+      });
+      req.end();
+    };
+    if (!proxy) {
+      send(secure ? https : http, { host, port, path: `${u.pathname}${u.search}`, servername });
+    } else if (!secure) {
+      send(via, { host: viaHost, port: viaPort, path: u.href, headers: auth });
+    } else {
+      // An https download through the proxy: a CONNECT tunnel, then TLS to the server inside it, checked as usual.
+      const connect = via.request({ host: viaHost, port: viaPort, method: "CONNECT", path: `${u.hostname}:${port}`, headers: { host: `${u.hostname}:${port}`, ...auth }, timeout: NET_TIMEOUT_MS });
+      parts.push(connect);
+      connect.on("timeout", () => fail(timedOut()));
+      connect.on("error", fail);
+      connect.once("connect", (res, socket) => {
+        parts.push(socket);
+        quiet(socket);
+        if (res.statusCode !== 200) {
+          fail(Object.assign(new Error(`the proxy answered ${res.statusCode}`), { code: "EMBER_PROXY_REFUSED", status: res.statusCode }));
+          return;
+        }
+        send(https, { host, port, path: `${u.pathname}${u.search}`, createConnection: () => tls.connect({ socket, host, servername }) });
+      });
+      connect.end();
+    }
+  });
+}
+
+/**
+ * @typedef {{ env: Record<string, string | undefined>; signal?: AbortSignal; version: string; asset: string; name: string }} Net
+ *   what a download needs: the environment (for the proxy and the mirror), what stops it, and what to name when it fails
+ */
+
+/** In a few words, why the network failed, by Node's error code. */
+const WHY = /** @type {Record<string, string>} */ ({
+  ECONNREFUSED: "the connection was refused",
+  ECONNRESET: "the connection was cut off",
+  ENOTFOUND: "its name didn't resolve",
+  EAI_AGAIN: "its name didn't resolve",
+  ETIMEDOUT: "nothing answered for 30 seconds",
+  ENETUNREACH: "there is no network",
+  EHOSTUNREACH: "it is unreachable",
+});
+
+/**
+ * What the launcher says when it can't reach where Ember comes from, or the download stops part way, in place of
+ * Node's bare "fetch failed": where, why in a few words, and what to do next (the proxy setting, the browser
+ * download, a mirror). A proxy is named by its host only: its address can hold a password.
+ * @param {any} err
+ * @param {Net & { proxy: { url: URL; setting: string } | null; midway?: boolean }} o
+ */
+function cantReach(err, o) {
+  const code = String(err?.code ?? err?.cause?.code ?? "");
+  const where = releaseSource(o.env);
+  const via = o.proxy ? ` through the proxy at ${o.proxy.url.host}` : "";
+  const cert = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|ERR_TLS/.test(code);
+  const why = code === "EMBER_PROXY_REFUSED"
+    ? err.status === 407 ? "the proxy asked for a user name and password (407)" : `the proxy refused to connect to it (${err.status})`
+    : cert ? `the certificate it showed isn't one this computer trusts (${code})`
+    : WHY[code] ? `${WHY[code]} (${code})`
+    : code || String(err?.message ?? err);
+  const first = o.midway ? `The download of ${o.asset} from ${where}${via} stopped: ${why}.` : `Ember couldn't reach ${where}${via}: ${why}.`;
+  const secure = !o.env.EMBER_NPM_DOWNLOAD_BASE || /^https:/i.test(o.env.EMBER_NPM_DOWNLOAD_BASE);
+  const next = code === "EMBER_PROXY_REFUSED" && err.status === 407 && o.proxy
+    ? `Put your user name and password in ${o.proxy.setting} (http://name:password@${o.proxy.url.host}).`
+    : cert ? "Behind a proxy that inspects HTTPS, set NODE_EXTRA_CA_CERTS to your organisation's certificate file."
+    : o.proxy ? `Check ${o.proxy.setting}, which names that proxy.`
+    : o.midway ? ""
+    : `If this computer reaches the internet through a proxy, set ${secure ? "HTTPS_PROXY" : "HTTP_PROXY"} (or npm's ${secure ? "https-proxy" : "proxy"} setting) to it.`;
+  const mirror = o.env.EMBER_NPM_DOWNLOAD_BASE ? "" : ", or set EMBER_NPM_DOWNLOAD_BASE to your organisation's mirror";
+  return `${first}${next ? ` ${next}` : ""} Then run '${o.name}' again, or download ${o.asset} from https://github.com/${REPO}/releases/tag/v${o.version} in your browser${mirror}.`;
+}
+
+/**
+ * GET `url`, following redirects, through the proxy proxyFor picks for each address; throws with the status on
+ * anything but 2xx, and with cantReach's sentence when the network fails.
+ * @param {string} url
+ * @param {Net} o
+ * @returns {Promise<{ status: number; length: number; body: http.IncomingMessage; text(): Promise<string> }>}
+ */
+async function get(url, o) {
+  const npmrc = npmrcProxy(o.env);
+  let at = url;
+  for (let hop = 0; hop <= 10; hop++) {
+    const proxy = proxyFor(at, o.env, npmrc);
+    let res;
+    try {
+      res = await request(at, proxy?.url ?? null, o.signal);
+    } catch (err) {
+      if (o.signal?.aborted) throw o.signal.reason;
+      throw new Error(cantReach(err, { ...o, proxy }), { cause: err });
+    }
+    const status = res.statusCode ?? 0;
+    if ([301, 302, 303, 307, 308].includes(status) && res.headers.location) {
+      res.resume();
+      at = new URL(res.headers.location, at).href;
+      continue;
+    }
+    if (status === 407) {
+      res.resume();
+      throw new Error(cantReach({ code: "EMBER_PROXY_REFUSED", status }, { ...o, proxy }));
+    }
+    if (status < 200 || status >= 300) {
+      res.resume();
+      throw Object.assign(new Error(`downloading ${url} failed: HTTP ${status} ${res.statusMessage ?? ""}`.trim()), { status });
+    }
+    const body = res;
+    return {
+      status, body, length: Number(res.headers["content-length"]) || 0,
+      async text() {
+        let s = "";
+        body.setEncoding("utf8");
+        for await (const chunk of body) s += chunk;
+        return s;
+      },
+    };
+  }
+  throw new Error(`downloading ${url} failed: it redirected more than 10 times`);
 }
 
 /**
  * Downloads `url` to `file`, returning the SHA-256 of what was written (lowercase hex).
  * @param {string} url
  * @param {string} file
+ * @param {Net} o
  */
-async function download(url, file) {
-  const res = await get(url);
-  const total = Number(res.headers.get("content-length")) || 0;
+async function download(url, file, o) {
+  const res = await get(url, o);
+  const total = res.length;
   const hash = createHash("sha256");
   let seen = 0;
   let shown = -1;
@@ -143,7 +438,15 @@ async function download(url, file) {
       done(null, chunk);
     },
   });
-  await pipeline(Readable.fromWeb(/** @type {any} */ (res.body)), tap, fs.createWriteStream(file));
+  try {
+    await pipeline(res.body, tap, fs.createWriteStream(file));
+  } catch (err) {
+    if (tty && shown >= 0) process.stderr.write("\n");
+    if (o.signal?.aborted) throw o.signal.reason;
+    // A write that failed (a full disk) names its file; anything else is the network stopping part way.
+    if (/** @type {any} */ (err)?.path) throw err;
+    throw new Error(cantReach(err, { ...o, proxy: proxyFor(url, o.env, npmrcProxy(o.env)), midway: true }), { cause: err });
+  }
   if (tty) process.stderr.write("\n");
   return hash.digest("hex");
 }
@@ -178,13 +481,16 @@ function unzip(zip, dir) {
 
 /**
  * Makes sure Ember `version` is unpacked in its cache folder, downloading and checking it first if it isn't, and
- * returns where it is.
- * @param {{ version: string; platform?: string; arch?: string; env?: Record<string, string | undefined>; force?: boolean }} o
+ * returns where it is. Ctrl+C, a closed terminal or a kill while it downloads ends the download and removes what it
+ * made, its lock included, so the next run starts over.
+ * @param {{ version: string; platform?: string; arch?: string; env?: Record<string, string | undefined>; force?: boolean; name?: string }} o
+ *   name: what the person runs the launcher as (invokedAs), to name it in what goes wrong
  * @returns {Promise<{ dir: string; exe: string; app: string; fresh: boolean }>}
  */
 export async function ensureInstalled(o) {
   const platform = o.platform ?? process.platform;
   const env = o.env ?? process.env;
+  const name = o.name ?? "ember";
   const target = assetFor(platform, o.arch ?? process.arch, o.version);
   const dir = cacheDir({ platform, env, home: os.homedir(), version: o.version });
   const p = platform === "win32" ? pathWin32 : pathPosix;
@@ -195,12 +501,22 @@ export async function ensureInstalled(o) {
 
   const parent = p.dirname(dir);
   fs.mkdirSync(parent, { recursive: true });
-  // Serialise installers before downloading. Never steal a lock: its owner may still be publishing or rolling back.
+  // Caught from before the lock is taken until it is given back, so no stop leaves it behind: the download is ended,
+  // and the finally below removes the work folder and the lock. A second Ctrl+C stops the launcher at once.
+  const stop = new AbortController();
+  const onSignal = (/** @type {string} */ sig) => stop.abort(Object.assign(
+    new Error(`Stopped before Ember ${o.version} was installed, and nothing was kept. Run '${name}' again to download it.`),
+    { code: "EMBER_NPM_STOPPED", exitCode: 128 + (/** @type {Record<string, number>} */ ({ SIGHUP: 1, SIGINT: 2, SIGTERM: 15 }))[sig] },
+  ));
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
+  for (const sig of signals) process.once(sig, onSignal);
+  const unhook = () => { for (const sig of signals) process.removeListener(sig, onSignal); };
+  // Serialise installers before downloading (takeLock never takes a lock from an installer that may still be at work).
   const lock = p.join(parent, `.${o.version}-install-lock`);
   try {
-    fs.mkdirSync(lock);
+    takeLock({ lock, parent, version: o.version, name, p });
   } catch (err) {
-    if (err.code === "EEXIST") throw new Error(`another installer may be running; retry later (lock: ${lock}). If an installer was interrupted, see packages/npm/README.md for recovery; remove the lock only when no installer is running`, { cause: err });
+    unhook();
     throw err;
   }
   let work;
@@ -213,14 +529,15 @@ export async function ensureInstalled(o) {
     }
     work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
     say(`getting Ember ${o.version} for ${platform}-${o.arch ?? process.arch} (${target.asset}) from ${releaseSource(env)}`);
-    const sums = await get(downloadUrl(o.version, "SHA256SUMS", env)).catch(err => {
+    const how = { env, signal: stop.signal, version: o.version, asset: target.asset, name };
+    const sums = await get(downloadUrl(o.version, "SHA256SUMS", env), how).catch(err => {
       throw err?.status === 404 ? new Error(notReleased(o.version, env), { cause: err }) : err;
     });
     const sumsText = await sums.text();
     const want = parseSha256Sums(sumsText).get(target.asset);
     if (!want) throw new Error(`the v${o.version} release's SHA256SUMS has no line for ${target.asset}`);
     const file = p.join(work, target.asset);
-    const got = await download(downloadUrl(o.version, target.asset, env), file);
+    const got = await download(downloadUrl(o.version, target.asset, env), file, how);
     if (got !== want) throw new Error(`${target.asset} doesn't match SHA256SUMS (expected ${want}, got ${got}); nothing was installed`);
     say(`checked ${target.asset} against SHA256SUMS (sha256 ${got})`);
 
@@ -276,10 +593,12 @@ export async function ensureInstalled(o) {
       cleanupErrors.push(err);
     }
     try {
-      fs.rmdirSync(lock);
+      // The lock holds its owner file (takeLock), and may hold a taken-<pid> folder.
+      fs.rmSync(lock, { recursive: true, force: true });
     } catch (err) {
       cleanupErrors.push(err);
     }
+    unhook();
     if (cleanupErrors.length) {
       const outcome = installError ? installError.message : `installation completed in ${dir}`;
       // eslint-disable-next-line no-unsafe-finally -- Intentionally report cleanup failure while retaining the primary error and recovery paths.
@@ -287,6 +606,75 @@ export async function ensureInstalled(o) {
         `${outcome}; cleanup failed (work: ${work ?? "not created"}, lock: ${lock}); remove leftovers only when no installer is running`,
         { cause: installError ?? cleanupErrors[0] });
     }
+  }
+}
+
+/**
+ * Takes the version's install lock: a folder beside the version's, with an `owner` file naming this process and
+ * computer. A lock left by an installer that has stopped (killed, crashed) is taken over, and the half-made work
+ * folders it left are removed; one whose owner may still be at work (running, on another computer, or not named yet)
+ * is never taken, and is reported in one sentence that says what to do.
+ * @param {{ lock: string; parent: string; version: string; name: string; p: typeof pathPosix }} o
+ */
+function takeLock(o) {
+  const owner = o.p.join(o.lock, "owner");
+  try {
+    fs.mkdirSync(o.lock);
+  } catch (err) {
+    if (/** @type {any} */ (err)?.code !== "EEXIST") throw err;
+    const stopped = stoppedOwner(owner);
+    let took = false;
+    if (stopped !== null) {
+      // Only one launcher can make taken-<pid> for a stopped owner, and the owner file must still name it after.
+      const claim = o.p.join(o.lock, `taken-${stopped}`);
+      try {
+        fs.mkdirSync(claim);
+        took = stoppedOwner(owner) === stopped;
+        if (!took) fs.rmSync(claim, { recursive: true, force: true });
+      } catch (claimErr) {
+        if (/** @type {any} */ (claimErr)?.code !== "EEXIST") throw claimErr;
+      }
+    }
+    if (!took) {
+      throw new Error(`Another '${o.name}' is already downloading Ember ${o.version}. Wait for it to finish, then run '${o.name}' again; if none is running, delete ${o.lock} and run '${o.name}' again.`, { cause: err });
+    }
+    // What the stopped installer was making: its work folders, but never one holding a saved previous copy.
+    const work = new RegExp(`^\\.${o.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-[A-Za-z0-9]{6}$`);
+    for (const entry of fs.readdirSync(o.parent)) {
+      const at = o.p.join(o.parent, entry);
+      if (work.test(entry) && !fs.existsSync(o.p.join(at, "previous"))) fs.rmSync(at, { recursive: true, force: true });
+    }
+  }
+  try {
+    fs.writeFileSync(owner, `${process.pid} ${os.hostname()}\n`);
+  } catch (err) {
+    fs.rmSync(o.lock, { recursive: true, force: true }); // A lock nobody is named in could never be taken over.
+    throw err;
+  }
+}
+
+/**
+ * The pid in a lock's owner file when that installer has stopped: it was on this computer and no process has its
+ * pid now. Null when it may still be at work, or the file can't be read.
+ * @param {string} file
+ * @returns {number | null}
+ */
+function stoppedOwner(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return null; // Not written yet (its installer has only just made the lock), or not ours to read: can't tell.
+  }
+  const m = /^(\d+) (\S+)\s*$/.exec(String(text));
+  if (!m || m[2] !== os.hostname()) return null;
+  const pid = Number(m[1]);
+  try {
+    process.kill(pid, 0);
+    return null; // Still running.
+  } catch (err) {
+    // EPERM: another account's process has that pid now, so it can't be told from the installer: keep the lock.
+    return /** @type {any} */ (err)?.code === "ESRCH" ? pid : null;
   }
 }
 
@@ -382,6 +770,18 @@ const EARLY_MS = 3000;
  * @returns {Promise<number>}
  */
 export async function start(cmd, o) {
+  return (await startWatched(cmd, o)).code;
+}
+
+/**
+ * As start(), and whether a detached start was still running when its watch ended (`stayed`): one that ended at once
+ * with 0 has handed its request to an Ember already running, as a second Ember does. (open(1) on a Mac always ends at
+ * once, so there only what runs can tell.)
+ * @param {{ file: string; args: string[] }} cmd
+ * @param {{ attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
+ * @returns {Promise<{ code: number; stayed: boolean }>}
+ */
+export async function startWatched(cmd, o) {
   const stdout = o.stdout ?? process.stdout;
   const stderr = o.stderr ?? process.stderr;
   if (o.attached) {
@@ -390,7 +790,7 @@ export async function start(cmd, o) {
       child.stdout.pipe(stdout, { end: false });
       child.stderr.pipe(stderr, { end: false });
       child.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
-      child.once("close", (code, signal) => resolve(code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 1)));
+      child.once("close", (code, signal) => resolve({ code: code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 1), stayed: false }));
     });
   }
   const fd = fs.openSync(o.log, "w", 0o600);
@@ -410,10 +810,23 @@ export async function start(cmd, o) {
     child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
   });
   child.unref();
-  if (!ended || ended.code === 0) return 0;
+  if (!ended || ended.code === 0) return { code: 0, stayed: !ended };
   const said = fs.readFileSync(o.log, "utf8").replace(/^pid \d+\n/m, "").trim();
   stderr.write(`ember-copilot: Ember stopped as it started (${ended.code === null ? `signal ${ended.signal}` : `exit ${ended.code}`})${said ? `:\n${said.slice(-4000)}` : "."}\n`);
-  return ended.code ?? 1;
+  return { code: ended.code ?? 1, stayed: false };
+}
+
+/**
+ * What the launcher says when the Ember it started handed its request to one already running instead of starting:
+ * `older` is that one's version when the cache's folders tell it, else null.
+ * @param {string} version
+ * @param {string | null} older
+ * @param {string} name what the person runs it as (invokedAs)
+ */
+export function handedOver(version, older, name) {
+  return older
+    ? `Ember ${older} is already running, so it took this instead of starting ${version}. To start ${version}, quit Ember, then run '${name}' again.`
+    : `Ember was already running, so it took this. If it is older than ${version}, quit Ember, then run '${name}' again to start ${version}.`;
 }
 
 /**
@@ -454,7 +867,8 @@ Launcher options (not passed to Ember):
   --npm-help           this text (also --help and -h)
 
 Environment: EMBER_NPM_CACHE (cache folder), EMBER_NPM_DOWNLOAD_BASE (mirror of the releases' download URL),
-EMBER_NPM_QUIET=1 (no progress messages).`;
+EMBER_NPM_QUIET=1 (no progress messages). Downloads go through npm's https-proxy or proxy setting, else HTTPS_PROXY
+(HTTP_PROXY for an http mirror), except to the hosts in NO_PROXY.`;
 }
 
 /**
@@ -493,18 +907,38 @@ export async function main(argv, o = {}) {
   // Said before any download: the setup check and an install-only run need no display, and go ahead.
   const blocked = mode.attached || flags.has("--npm-install-only") ? null : noDisplay(platform, env, name);
   if (blocked) { process.stderr.write(`ember-copilot: ${blocked}\n`); return 1; }
-  const installed = await ensureInstalled({ version, platform, env, force: flags.has("--npm-reinstall") });
+  const installed = await ensureInstalled({ version, platform, env, force: flags.has("--npm-reinstall"), name });
   if (flags.has("--npm-install-only")) { process.stdout.write(`${installed.exe}\n`); return 0; }
   const p = platform === "win32" ? pathWin32 : pathPosix;
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
   if (mode.attached && platform === "darwin") return await doctorMac(installed, mode.args, log);
-  const code = await start(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs });
+  const { code, stayed } = await startWatched(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs });
   if (!mode.attached && code === 0) {
-    // Only once this version has started: Ember then points Start Ember when I log in (and Windows' Start menu
-    // shortcut) at itself, which the setup check and an install-only run don't, so until then the older one stays.
-    const removed = pruneVersions({ parent: p.dirname(installed.dir), keep: version, platform });
-    if (removed.length) say(`removed the older ${removed.length === 1 ? "version" : "versions"} ${removed.join(", ")} from the cache`);
-    say(`started Ember ${version}`);
+    // Is this version what runs now? Still running after the watch, or its folder in a running command line (a Mac's
+    // open(1) ends at once). Otherwise it handed over to an Ember already running (install-docs-c2-3).
+    const parent = p.dirname(installed.dir);
+    let ps = null;
+    try {
+      if (platform !== "win32") ps = runningCommands();
+    } catch {
+      // ps couldn't run: judged by the watch alone.
+    }
+    const shows = (/** @type {string} */ dir) => ps !== null && ps.includes(`${dir}${p.sep}`);
+    if (stayed || shows(installed.dir)) {
+      // Only once this version has started: Ember then points Start Ember when I log in (and Windows' Start menu
+      // shortcut) at itself, which the setup check and an install-only run don't, so until then the older one stays.
+      const removed = pruneVersions({ parent, keep: version, platform });
+      if (removed.length) say(`removed the older ${removed.length === 1 ? "version" : "versions"} ${removed.join(", ")} from the cache`);
+      say(`started Ember ${version}`);
+    } else {
+      // Nothing is removed: Start at login still points at the one running.
+      let names = [];
+      try { names = fs.readdirSync(parent); } catch { /* No cache folder to read: the older one can't be named. */ }
+      const older = names.find(v => v !== version && /^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(v) && shows(p.join(parent, v))) ?? null;
+      // A Mac's open(1) tells nothing, and a new Ember.app may still be starting (Gatekeeper's first check).
+      if (older !== null || platform !== "darwin") say(handedOver(version, older, name));
+      else say(`started Ember ${version}`);
+    }
   }
   return code;
 }

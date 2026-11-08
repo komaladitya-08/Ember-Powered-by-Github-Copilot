@@ -217,6 +217,17 @@ describe("a screenshot a task sends (safety-privacy-6)", () => {
     expect(h.audit.filter(e => e.event === "read")).toHaveLength(1);
   });
 
+  it("tells the task's card each picture it sent, after recording it, and never for a read of the text alone", async () => {
+    const h = makeWorker({ capture: jpeg });
+    await h.call("perceive_window", { image: true });
+    await h.call("perceive_window", {});
+    expect(h.activity.filter(e => e.type === "picture")).toEqual([{ type: "picture" }]);
+    // Turned off, a look sends none, and the card hears of none.
+    const off = makeWorker({ capture: jpeg, screenImages: () => false });
+    await off.call("perceive_window", { image: true });
+    expect(off.activity.some(e => e.type === "picture")).toBe(false);
+  });
+
   it("sends no more pictures once Send screenshots for tasks is turned off, though the task began with it on (safety-privacy-c1-1)", async () => {
     let on = true;
     const h = makeWorker({ capture: jpeg, screenImages: () => on });
@@ -1852,6 +1863,28 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     // Once it has gone, the step goes ahead.
     prompt = false;
     expect((await call("click", { id: 1 })).resultType).toBe("success");
+  });
+
+  it("never asks about a step it would then refuse: the refusal comes before the question (safety-privacy-3)", async () => {
+    let prompt: boolean | "unchecked" = false;
+    const acted: string[] = [];
+    // No grant for gedit: its first step asks.
+    const { call, asked, audit } = makeWorker({ grants: {}, promptOpen: () => prompt, onAction: () => { acted.push("click"); return { ok: true, after: null }; } });
+    await call("perceive_window", {});
+    for (const now of [true, "unchecked"] as const) {
+      prompt = now;
+      expect((await call("click", { id: 1 })).resultType).toBe("denied");
+      expect(asked).toEqual([]);
+      expect(acted).toEqual([]);
+    }
+    // The record says it refused, never that it asked.
+    expect(audit.filter(e => e.event === "decision").map(e => e.verdict)).toEqual(["deny", "deny"]);
+    expect(audit.some(e => e.event === "confirm")).toBe(false);
+    // Once the prompt has gone, the step is asked about as before, and goes ahead.
+    prompt = false;
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    expect(asked).toHaveLength(1);
+    expect(acted).toEqual(["click"]);
   });
 
   it("lists no window's title, and reads none, until it's done", async () => {

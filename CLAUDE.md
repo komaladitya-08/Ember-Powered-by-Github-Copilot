@@ -47,7 +47,7 @@ xvfb-run -a npm run test:smoke   # launches dist/app, so build first; adds --no-
 - The eval drives real windows, so give it a display and a session bus, as CI's `eval` job does (with gedit installed): `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs`. For a partial run use `node eval/run.mjs --only <id> --no-gates`.
 - Without Copilot, start the mock model with `node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &`, then run `EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev`.
 - Useful switches: `EMBER_USER_DATA` (a throwaway settings and logs folder), `EMBER_LOG_LEVEL=debug`, `EMBER_PYTHON`, and `EMBER_LOG_STDOUT=1` (logs to stdout from an installed Ember; development already does this). Ember's real data lives in `~/.config/ember/` (Linux), `%LOCALAPPDATA%\ember` (Windows) or `~/Library/Application Support/ember` (macOS).
-- Also available: `npm run rebuild:el8`, `npm run check:symvers`, and the packages, each built on its own OS (see `packaging-and-ci.md`): `npm run package` (RPMs and AppImage, on EL8 or in `rockylinux:8`), `npm run package:win` (on Windows) and `npm run package:mac` (on macOS).
+- Also available: `npm run rebuild:el8`, `npm run check:symvers`, and the packages, each built on its own OS (see `packaging-and-ci.md`): `npm run package` (the RPM and AppImage, on EL8 or in `rockylinux:8`), `npm run package:win` (on Windows) and `npm run package:mac` (on macOS).
 
 ## Repository map
 

@@ -16,7 +16,8 @@ case "$1" in
     ;;
   -h|--help)
     echo "usage: ember [doctor | --show-settings | --ask]"
-    echo "  ember              start Ember (it stays beside your cursor; Ctrl+Alt+E opens its settings)"
+    # No shortcut here: Ember holds a fallback when another app has its own (app/shared/shortcuts.ts).
+    echo "  ember              start Ember (it stays beside your cursor; run it again for its settings)"
     echo "  ember doctor       check this computer and explain anything that needs fixing"
     echo "  ember --show-settings   start and open the settings window"
     echo "  ember --ask        open the ask box (starting Ember if it isn't running)"

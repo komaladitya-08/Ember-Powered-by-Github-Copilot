@@ -709,19 +709,30 @@ export const ROUTINES_CONSENT_TEXT = "Ember will keep the routines you name and 
 export const UPDATES_CONSENT_TEXT = "Once a day, Ember will ask GitHub whether a newer version is out. GitHub sees your internet address and that someone asked, and nothing else: no sign-in, and nothing about you or what you do. Ember only tells you. It never downloads or installs anything by itself.";
 
 /**
- * How to update this kind of install, under "Ember X is out." (install-docs-11): README's steps, shortly. "" when main
- * can't tell how Ember was installed.
+ * How to update this kind of install to `latest`, under "Ember X is out." (install-docs-11): README's steps, shortly,
+ * each command set as code with the file it needs in it (install-docs-r2-2: a bare `sudo dnf upgrade` upgrades the
+ * whole system and leaves Ember as it was). Nothing when main can't tell how Ember was installed, or for a version
+ * that isn't plain numbers, since it goes into a command the person may copy.
  */
-export function updateHowTo(kind: InstallKind | null): string {
+export function updateHowTo(kind: InstallKind | null, latest: string | null): Segment[] {
+  const v = latest !== null && /^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(latest) ? latest : null;
+  if (v === null) return [];
+  const appImage = `Ember-${v}-x86_64.AppImage`;
   switch (kind) {
-    case "rpm": return "To update, quit Ember, download the new RPM from See what's new… and install it with sudo dnf upgrade.";
-    case "appimage": return "To update, quit Ember, download the new AppImage from See what's new…, save it where this one is, make it executable and start it.";
-    case "zip": return "To update, quit Ember, download the new zip from See what's new… and replace the Ember folder with the one in it.";
-    case "app": return "To update, quit Ember, download the new dmg from See what's new… and drag Ember into Applications over this one, then allow its permissions again.";
-    case "npm": return "To update, quit Ember, run npm i -g ember-copilot@latest and start ember again.";
-    default: return "";
+    case "rpm": return ["To update, quit Ember, download the new RPM from See what's new…, then run ", { code: `sudo dnf upgrade ./ember-${v}-1.el8.x86_64.rpm` }, " in the folder you saved it to."];
+    case "appimage": return ["To update, quit Ember, save ", { code: appImage }, " from See what's new… where this one is, then run ", { code: `chmod +x ${appImage}` }, " there and start it."];
+    case "zip": return ["To update, quit Ember, download ", { code: `Ember-${v}-win-x64.zip` }, " from See what's new… and replace this Ember folder with the one in it."];
+    case "app": return ["To update, quit Ember, download the new dmg for this Mac from See what's new… and drag Ember into Applications over this one, then allow its permissions again."];
+    case "npm": return ["To update, quit Ember, run ", { code: "npm i -g ember-copilot@latest" }, " and start ", { code: "ember" }, " again."];
+    default: return [];
   }
 }
+
+/**
+ * A newer version is known: Home shows See what's new… and how to update while one is, whatever the last look did. A
+ * look that fails, or is under way, keeps the version an earlier look found (install-docs-c2-2).
+ */
+export const updateOut = (s: UpdateStatus): boolean => s.latest !== null && (s.phase === "available" || s.phase === "failed" || s.phase === "checking");
 
 /** Where the update check stands, in a sentence; nothing while it is off. */
 export function updateStatusText(s: UpdateStatus): string {
@@ -729,7 +740,9 @@ export function updateStatusText(s: UpdateStatus): string {
     case "available": return `Ember ${s.latest} is out.`;
     case "current": return "You have the latest version.";
     case "checking": return "Checking…";
-    case "failed": return "Couldn't check for updates. Ember will try again tomorrow.";
+    case "failed": return s.latest !== null
+      ? `Ember ${s.latest} is out. Ember couldn't look for anything newer just now, and will try again tomorrow.`
+      : "Couldn't check for updates. Ember will try again tomorrow.";
     // Started again within the day of a look: the next one waits out the day (integrations-v3).
     case "idle": return s.checkedAt ? "Ember checks once a day. Check now looks at once." : "Ember will check shortly.";
     default: return "";

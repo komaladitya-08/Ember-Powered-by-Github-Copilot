@@ -1,6 +1,8 @@
 # Ember status
 
-Updated 4 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
+Updated 8 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
+
+Since 4 November a product audit has rated 13 areas and fixed them in rounds on 7 and 8 November. PLAN.md §10's **Product audit fixes** entries record each round, and each ends with what it left (partly fixed, skipped, owner decisions and native validation); CHANGELOG.md's 0.1.1 notes say what ships. Read those before picking up anything below: the sections below are as of 4 November.
 
 ## Completed review and merged repairs
 
@@ -22,7 +24,7 @@ Updated 4 November 2026. This is the short pickup list; [the review backlog](doc
 
 ## Next correctness work
 
-The review is complete, not the backlog. Remaining follow-ups include text correction and memory negation, setup/save navigation, Home keyboard focus, speech segmentation/watchdog behaviour, actually-heard-content measurement, contrast and small-window layout. See [reproductions and acceptance checks](docs/review-2026-11-03.md#remaining-correctness-backlog). The local repairs above still need final integrated and native validation before release.
+The review is complete, not the backlog. Remaining follow-ups include text correction and memory negation, setup/save navigation, Home keyboard focus, speech segmentation/watchdog behaviour, actually-heard-content measurement, contrast and small-window layout; the audit's rounds have since reworked Home's keyboard focus, its narrow-window layout and memory, so check what PLAN.md §10 says they left first. See [reproductions and acceptance checks](docs/review-2026-11-03.md#remaining-correctness-backlog). The local repairs above still need final integrated and native validation before release.
 
 ## Architecture and owner decisions
 

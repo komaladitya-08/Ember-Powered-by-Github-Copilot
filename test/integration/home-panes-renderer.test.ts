@@ -23,13 +23,15 @@ declare global {
       reads: number;
       /** How many entries each read asked for. */
       limits: number[];
+      /** With `provider` seeded: main's provider-state reads, each waiting until the test answers it. */
+      providerReads: ((state: unknown) => void)[];
     };
   }
 }
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus }
+interface Seed { settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -60,7 +62,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  await page.addInitScript(({ settings, admin, activity, checks, platform, updates }) => {
+  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider }) => {
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     // Main's list as last pushed: what a read after a task control gets.
     let tasks: unknown = [];
@@ -70,7 +72,10 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       activity: activity as ActivityEntry[] | "fail",
       reads: 0,
       limits: [] as number[],
+      providerReads: [] as ((state: unknown) => void)[],
     };
+    // Main's provider bridge, as in Electron: each state read answers when the test says (home-mic-recipient's pattern).
+    if (provider) (window as unknown as { emberProvider: unknown }).emberProvider = { state: () => new Promise(resolve => { h.providerReads.push(resolve); }), onChanged: () => () => undefined };
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}) });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
@@ -84,7 +89,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "activity") return async (limit?: number) => { h.reads++; h.limits.push(limit ?? 500); if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
-  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null });
+  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -534,13 +539,44 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     await page.close();
   });
 
+  it("keeps naming GitHub Copilot after a settings change while it is open, and isn't redrawn for an unrelated one (safety-privacy-r6)", async () => {
+    const page = await open("privacy", { provider: true });
+    // Main answers every read of its provider state: no provider of the user's own is in force.
+    const copilot = { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false };
+    const answer = () => page.evaluate(s => { for (const r of window.__pane.providerReads.splice(0)) r(s); }, copilot);
+    await expect.poll(() => page.evaluate(() => window.__pane.providerReads.length)).toBeGreaterThan(0);
+    await answer();
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const send = () => page.locator("#privacy-terms li[data-icon='send']").innerText();
+    await expect.poll(send).toContain("go to GitHub Copilot to work out the answer.");
+    const base = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+    // An unrelated change (Start at log-in): the fold stays as it is, so a screen reader keeps its place in it.
+    await page.locator("#privacy-terms ul").evaluate(u => u.setAttribute("data-old", ""));
+    await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), { ...base, startAtLogin: true });
+    await answer();
+    expect(await page.locator("#privacy-terms ul[data-old]").count()).toBe(1);
+    expect(await send()).toContain("go to GitHub Copilot to work out the answer.");
+    // Send screenshots for tasks turned off, as the fold invites: it says so, and still names where requests go once
+    // main's provider state has answered (it said "a model service I can't tell yet" from then on).
+    await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), { ...base, startAtLogin: true, screenImages: false });
+    await expect.poll(() => page.locator("#privacy-terms").innerText()).toContain("Send screenshots for tasks is off (below)");
+    await answer();
+    await expect.poll(send).toContain("go to GitHub Copilot to work out the answer.");
+    expect(await send()).not.toContain("can't tell");
+    expect(await page.locator("#privacy-terms li[data-icon='mic']").innerText()).toContain("goes to Copilot as text");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
   it("says nothing heard is sent anywhere while the organisation's policy has Ember locked down", async () => {
     const page = await open("privacy", { admin: { source: "/etc/ember/policy.json", error: "Unrecognized key", retentionDays: null, features: { voice: false, screenImages: false }, managed: ["screenImages"] }, settings: { screenImages: false } });
     const fold = page.locator("#privacy-terms-fold");
     await fold.locator("summary").click();
     const mic = await page.locator("#privacy-terms li[data-icon='mic']").innerText();
     expect(mic).toContain("for one request. Nothing it hears is sent anywhere until your organisation fixes its policy. Listen once processes audio");
-    expect(mic).not.toMatch(/no model service|goes to/);
+    expect(mic).not.toMatch(/no model service|goes to|sends the request/);
+    expect(mic).toContain("Listen once processes audio on this computer and closes temporary capture once it has heard the request.");
     // First run's text says the same, as its send line already does.
     expect(await page.locator("#w-full li[data-icon='mic']").evaluate(e => e.textContent)).toContain("Nothing it hears is sent anywhere until your organisation fixes its policy.");
     await evidence(page, "privacy-terms-lockdown");
@@ -698,8 +734,15 @@ describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 pro
     const page = await open("checks", { settings, platform: linux("rpm"), updates: out });
     await expect.poll(() => page.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out.");
     await expect.poll(() => page.locator("#updates-how").isVisible()).toBe(true);
-    expect(await page.locator("#updates-how").textContent()).toBe("To update, quit Ember, download the new RPM from See what's new… and install it with sudo dnf upgrade.");
+    // The command names the downloaded file, set as code: a bare `sudo dnf upgrade` upgrades the whole system and
+    // leaves Ember as it was (install-docs-r2-2).
+    expect(await page.locator("#updates-how").textContent()).toBe("To update, quit Ember, download the new RPM from See what's new…, then run sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm in the folder you saved it to.");
+    expect(await page.locator("#updates-how code").allTextContents()).toEqual(["sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm"]);
     expect(await page.locator("#updates-open").isVisible()).toBe(true);
+    // A screen reader hears it: announced as it fills, and read with See what's new…, where the notification's click
+    // lands (install-docs-r2-2).
+    expect(await page.locator("#updates-how").getAttribute("aria-live")).toBe("polite");
+    expect(await page.locator("#updates-open").getAttribute("aria-describedby")).toBe("updates-how");
     await page.locator("#updates-h").scrollIntoViewIfNeeded();
     await evidence(page, "updates-rpm-1000");
     await page.setViewportSize({ width: 380, height: 800 });
@@ -709,10 +752,22 @@ describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 pro
     await page.close();
   });
 
+  it("keeps the version it found, See what's new… and the how-to when a later look fails (install-docs-c2-2)", async () => {
+    const page = await open("checks", { settings, platform: linux("rpm"), updates: { phase: "failed", latest: "0.1.2", checkedAt: out.checkedAt } });
+    await expect.poll(() => page.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out. Ember couldn't look for anything newer just now, and will try again tomorrow.");
+    await expect.poll(() => page.locator("#updates-how").isVisible()).toBe(true);
+    expect(await page.locator("#updates-how code").allTextContents()).toEqual(["sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm"]);
+    expect(await page.locator("#updates-open").isVisible()).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
   it("says nothing of how while Ember has the latest version, or when main can't tell how it was installed (install-docs-11)", async () => {
     const current = await open("checks", { settings, platform: linux("appimage"), updates: { phase: "current", latest: null, checkedAt: out.checkedAt } });
     await expect.poll(() => current.locator("#updates-status").textContent()).toBe("You have the latest version.");
     expect(await current.locator("#updates-how").isVisible()).toBe(false);
+    // Still on the page while it says nothing, so its words are announced when they come (accessibility-visual-c1-1).
+    expect(await current.locator("#updates-how").evaluate(el => ({ hidden: (el as HTMLElement).hidden, text: el.textContent }))).toEqual({ hidden: false, text: "" });
     await current.close();
     const dev = await open("checks", { settings, platform: linux(null), updates: out });
     await expect.poll(() => dev.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out.");

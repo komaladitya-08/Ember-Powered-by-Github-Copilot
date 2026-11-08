@@ -40,7 +40,7 @@ export type ActivityState = "running" | "done" | "failed" | "waiting" | "stopped
 
 /** Kinds of step, so steps of one kind fold into one line ("Clicked 3 times"). */
 export type StepGroup =
-  | "read" | "windows" | "switch" | "click" | "toggle" | "type" | "choose" | "setting" | "open" | "keys" | "scroll"
+  | "read" | "picture" | "windows" | "switch" | "click" | "toggle" | "type" | "choose" | "setting" | "open" | "keys" | "scroll"
   | "command" | "point" | "wait" | "other";
 
 export interface ActivityItem {
@@ -160,7 +160,10 @@ export interface CardActivity {
 export const ACTIVITY_LIMIT = 40;
 export const DETAIL_ROWS = 6;
 
-/** Each tool's kind of step (tools not listed are "other"; report_progress, the view tools and finish_task make no step). */
+/**
+ * Each tool's kind of step (tools not listed are "other"; report_progress, the view tools and finish_task make no step).
+ * A read that sent the model a picture of the window becomes "picture" once the worker says so (safety-privacy-6).
+ */
 export const STEP_GROUP: Readonly<Record<string, StepGroup>> = {
   perceive_window: "read", describe_screen: "read",
   list_windows: "windows", switch_window: "switch",
@@ -180,6 +183,7 @@ export const NOT_STEPS: ReadonlySet<string> = new Set(["report_progress", "show_
 /** A step kind's words once done: one step, and several. */
 const DONE_WORDS: Readonly<Record<StepGroup, { one: string; many: (n: number) => string }>> = {
   read: { one: "Read the window", many: n => `Read the window ${n} times` },
+  picture: { one: "Sent the model a picture of the window", many: n => `Sent the model ${n} pictures of the window` },
   windows: { one: "Looked at your windows", many: n => `Looked at your windows ${n} times` },
   switch: { one: "Switched windows", many: n => `Switched windows ${n} times` },
   click: { one: "Clicked once", many: n => `Clicked ${n} times` },
@@ -198,7 +202,7 @@ const DONE_WORDS: Readonly<Record<StepGroup, { one: string; many: (n: number) =>
 
 /** A step kind's words when it didn't work: what it tried (a red mark beside "Opened an app" would contradict itself). */
 const TRIED_WORDS: Readonly<Record<StepGroup, string>> = {
-  read: "Tried to read the window", windows: "Tried to look at your windows", switch: "Tried to switch windows",
+  read: "Tried to read the window", picture: "Tried to read the window", windows: "Tried to look at your windows", switch: "Tried to switch windows",
   click: "Tried to click", toggle: "Tried to flip a switch", type: "Tried to type text", choose: "Tried to choose an option",
   setting: "Tried to change a setting", open: "Tried to open an app", keys: "Tried to press keys", scroll: "Tried to scroll",
   command: "Tried to run a command", point: "Tried to point at a step", wait: "Tried to wait for your click", other: "Tried a step",
@@ -209,8 +213,11 @@ export function triedWords(group: StepGroup, n: number, app?: string): string {
   return `${TRIED_WORDS[group]}${n > 1 ? ` ${n} times` : ""}${app ? ` in ${app}` : ""}`;
 }
 
-/** Which kinds a summary names first: what changed things before what only looked (T3 Code's rule). */
-const PRIORITY: readonly StepGroup[] = ["setting", "command", "type", "choose", "click", "toggle", "open", "keys", "scroll", "switch", "point", "wait", "windows", "read", "other"];
+/**
+ * Which kinds a summary names first: a picture of the window that went to the model (so the summary always says so,
+ * safety-privacy-6), then what changed things before what only looked (T3 Code's rule).
+ */
+const PRIORITY: readonly StepGroup[] = ["picture", "setting", "command", "type", "choose", "click", "toggle", "open", "keys", "scroll", "switch", "point", "wait", "windows", "read", "other"];
 
 /** Steps of one kind as words: "Clicked 3 times", with " in Text Editor" when they all worked in one app. */
 export function stepsWords(group: StepGroup, n: number, app?: string): string {

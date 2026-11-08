@@ -23,6 +23,8 @@ export type ActivityEvent =
   | { type: "tool-start"; id: string; tool: string; step?: string; app?: string }
   /** A tool call ended; `ok` false when it didn't work. */
   | { type: "tool-end"; id: string; ok: boolean }
+  /** The read under way sent the model a picture of its window (recorded first: safety-privacy-6). */
+  | { type: "picture" }
   /** The worker's own note (report_progress): its text, and its few words for what it does now. */
   | { type: "note"; text: string; intent?: string }
   /** A step taken without asking (Work without asking): policy's words (Decision.announce), never the model's. */
@@ -149,6 +151,13 @@ export class ActivityLog {
         if (!e.ok) a.failedSteps++;
         this.setDoing("Thinking…");
         return true;
+      }
+      case "picture": {
+        // Its row says a picture went, not only that it read (safety-privacy-6). Tools run one at a time, in the order
+        // called: the first read under way is the one that sent it.
+        const it = a.items.find(i => i.kind === "step" && i.state === "running" && i.group === "read");
+        if (it) it.group = "picture";
+        return false;
       }
       case "note": {
         const text = clip(e.text, NOTE_MAX);

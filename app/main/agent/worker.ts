@@ -2371,6 +2371,8 @@ export class Worker {
       this.audit({ event: "read", task: this.spec.id, kind: "screenshot", app: p.window.app, ok: true, bytes: p.capture.data.length, ...(this.place ? { onDesk: true } : {}) });
       if (this.isOver) return STOPPED();
       result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
+      // Its card says a picture went, not only that it read the window.
+      this.activity({ type: "picture" });
     }
     return result;
   }
@@ -4397,6 +4399,13 @@ export class Worker {
     // A yes to keys that only move (Ctrl+End) never puts the app on that list: typing or a save is asked about itself.
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted
       && this.allowedApps.has(req.app.toLowerCase());
+    // No question while the shell's own password prompt is open (or Ember can't tell): the step would only be refused
+    // once the user answered (safety-privacy-3). Looked at here only for a step that asks, since a walk of the shell costs
+    // up to a second on the target; the look right before acting (act, system) still keeps the rule for every step.
+    if (decision.verdict === "confirm" && !sessionAllowed) {
+      const prompt = await this.promptRefusal(req.kind, req.element);
+      if (prompt) return prompt;
+    }
     this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) });
     if (decision.verdict === "deny") {
       this.activity({ type: "refused", reason: decision.reason });

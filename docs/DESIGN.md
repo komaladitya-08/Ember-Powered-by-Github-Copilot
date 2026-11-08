@@ -221,12 +221,13 @@ Ember is two places at once, each for one kind of work.
     worker is told then too, so it can finish and say what's left; a task a limit stops says what it had done by then,
     from Ember's own count, and its Try again is told an earlier try stopped part-way), else how many steps the user
     allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
-  - the steps so far in one sentence ("Clicked 3 times and read the window 2 times (1 didn't work)"), what changed
-    things named before what only looked;
+  - the steps so far in one sentence ("Clicked 3 times and read the window 2 times (1 didn't work)"), a picture of
+    the window sent to the model named first ("Sent the model 2 pictures of the window, …"), then what changed things
+    before what only looked;
   - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come
     (the step a failed or stopped task was on keeps its weight in red or grey, not the accent);
   - **Details**: up to six rows of what it did (steps of one kind in a row folded together, "Read the window 3 times in
-    Settings"; a refusal with policy's reason; a question and how it was answered; the worker's notes, marked as
+    Settings", and a read that sent a picture of it apart, "Sent the model a picture of the window in Firefox"; a refusal with policy's reason; a question and how it was answered; the worker's notes, marked as
     its words), each with a static state symbol and when it happened. Closed until the user opens it, kept open by
     task id across updates;
   - when it ends, what it found or made, as a **view**, and on a failure, or a question that ran out of time while the

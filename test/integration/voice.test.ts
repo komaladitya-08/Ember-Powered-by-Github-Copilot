@@ -452,7 +452,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     for (const clip of ["wake", "dnd", "name_wake", "remember"]) expect(teaching(read(clip)), clip).toEqual([]);
   });
 
-  it("ends Listen once at 8 s when only a TV talks, and hears the user's own request past it to its end (voice-listening-c1-1, voice-listening-1)", () => {
+  it("ends Listen once at 8 s when only a TV talks, and hears the user's own request past it to its end, begun late or at once (voice-listening-c1-1, voice-listening-1, voice-listening-r2-1, voice-listening-3)", () => {
     /** Listen once pressed `from` ms into `mic`: the request heard (`at`, ms after the press) and how the window ended. */
     const once = (mic: Float32Array, from = 0) => {
       const events: (VoiceEvent & { at: number })[] = [];
@@ -471,11 +471,15 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     // A TV's (or colleague's) talk, 8–14 dB under the user, the test clips' lines back to back, for 25 s.
     const tv = (g: number) => { const lines = cat(...["chat", "remember", "followup", "chat", "amber", "chat"].flatMap(n => [trimmed(n).map(x => x * g), silence(0.25)])); return cat(lines, lines, lines); };
     for (const g of [0.2, 0.4]) {
-      // Nothing said: it went on for 20 s, and sent the TV's words as the request.
-      for (const [how, mic, from] of [["from 0.5 s", inRoom(mix(new Float32Array(at(26)), tv(g), at(0.5))), 0], ["on as it opens", inRoom(mix(new Float32Array(at(29)), tv(g), 0)), 3200]] as const) {
+      // Nothing said: it went on for 20 s, and sent the TV's words as the request. Talk begun in the window's first second
+      // (from 0.5 s, or on as it opened but between two lines at the press: 1 and 5 s in) can't be told from a request
+      // begun then by its loudness: it goes on to 12 s at most, and none of it is sent (voice-listening-r2-1).
+      for (const [how, mic, from, by] of [["from 0.5 s", inRoom(mix(new Float32Array(at(26)), tv(g), at(0.5))), 0, 12_000], ["on as it opens", inRoom(mix(new Float32Array(at(29)), tv(g), 0)), 3200, 8000], ["on as it opens, between two lines", inRoom(mix(new Float32Array(at(27)), tv(g), 0)), 992, 12_000], ["on as it opens, 5 s in", inRoom(mix(new Float32Array(at(31)), tv(g), 0)), 4992, 12_000]] as const) {
         const r = once(mic, from);
         expect(r.sent, `TV at ${g}, ${how}`).toEqual([]);
-        expect(r.ended, `TV at ${g}, ${how}`).toMatchObject({ reason: "timeout", window: "manual", at: 8000 });
+        expect(r.ended, `TV at ${g}, ${how}`).toMatchObject({ reason: "timeout", window: "manual" });
+        expect((r.ended as { at: number }).at, `TV at ${g}, ${how}`).toBeGreaterThanOrEqual(8000);
+        expect((r.ended as { at: number }).at, `TV at ${g}, ${how}`).toBeLessThanOrEqual(by);
       }
     }
     // The user's own 7 s request, begun at 6.5 s, over the TV and in a quiet room: heard to its end, whole.
@@ -485,8 +489,49 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     }
     // Begun at 7.9 s: the VAD hears speech 0.25 s into it, after the deadline ("No request heard").
     expect(once(inRoom(cat(silence(7.9), trimmed("bigger"), silence(4)))).sent.map(u => u.text)).toEqual([expect.stringMatching(/make the text a bit bigger/i)]);
+    // A 9.7 s request begun at once, 0.2–0.8 s after the press, in a quiet room or over a TV at 0.1 from 0.2 s: measured
+    // against the window's first second (its own voice), it was thrown away at 8 s with "No request heard" (3 of 3).
+    const longer = cat(long, silence(0.3), trimmed("remember"));
+    for (const [how, mic] of [...[0.2, 0.5, 0.8].map(s => [`begun at ${s} s`, inRoom(cat(silence(s), longer, silence(4)))] as const), ["begun at 0.5 s over the TV", inRoom(mix(mix(new Float32Array(at(22)), tv(0.1), at(0.2)), longer, at(0.5)))] as const]) {
+      expect(once(mic).sent.map(u => u.text), how).toEqual([expect.stringMatching(/^And make the text a bit bigger.*September weather was nice\.?$/i)]);
+    }
+    // "…and make the text a", a 0.8 s pause, "bit bigger" said across the deadline, by a user who began at 0.3 or 0.6 s:
+    // the window ended at the held half's deadline, and nothing was sent (voice-listening-3).
+    const b = read("bigger");
+    const level: number[] = [];
+    for (let i = 0; i + 512 <= b.length; i += 512) level.push(Math.sqrt(b.subarray(i, i + 512).reduce((n, x) => n + x * x, 0) / 512));
+    const voiced = level.flatMap((e, i) => (e > 0.01 ? [i] : [])), [v0, v1] = [voiced[0], voiced.at(-1)!];
+    let split = v0, low = Infinity;
+    for (let i = Math.round(v0 + (v1 - v0) * 0.4); i < v0 + (v1 - v0) * 0.65; i++) { const e = level[i] + level[i + 1] + level[i + 2]; if (e < low) { low = e; split = i + 1; } }
+    const edges = (s: Float32Array) => { let a = 0, z = s.length; while (a < z && Math.abs(s[a]) < 0.01) a++; while (z > a && Math.abs(s[z - 1]) < 0.01) z--; return s.subarray(a, z); };
+    const [half, rest] = [edges(b.subarray(0, split * 512)), edges(b.subarray(split * 512))];
+    const lead = cat(trimmed("followup"), silence(0.3), trimmed("chat"), silence(0.3));
+    for (const s of [0.3, 0.6]) {
+      expect(once(inRoom(cat(silence(s), lead, half, silence(0.8), rest, silence(4)))).sent.map(u => u.text), `begun at ${s} s`).toEqual([expect.stringMatching(/^And turn on do not disturb.*make the text a bit bigger\.?$/i)]);
+    }
+    // The same half request ("…make the text a") over a TV on from the press, and nothing more said: it went as nothing.
+    for (const [g, s] of [[0.1, 1.5], [0.2, 2]] as const) {
+      expect(once(inRoom(mix(mix(new Float32Array(at(26)), tv(g), 0), cat(lead, half), at(s)))).sent.map(u => u.text), `TV at ${g}, begun at ${s} s`).toEqual([expect.stringMatching(/^And turn on do not disturb.*make the text/i)]);
+    }
     // Silence still ends it at 8 s.
     expect(once(inRoom(silence(10))).ended).toMatchObject({ reason: "timeout", at: 8000 });
+  });
+
+  it("hears a Listen once request said after a screen reader's announcement of the window, never the announcement (voice-listening-c2-1)", () => {
+    // A screen reader saying a status line through the speakers as the window opens, 14–20 dB under the user (the "chat"
+    // clip stands in for it: its words are what main tells the voice process the windows say), then the user's request
+    // 0.3 or 0.8 s after it. Without them the announcement was sent before the request, or alone as the request, the
+    // user's words then lost (with a synthesized "Listening for one request": 36 of 36 and 4 of 4).
+    const reader = trimmed("chat"), user = trimmed("followup");
+    for (const g of [0.1, 0.2]) for (const after of [0.3, 0.8]) {
+      const events: VoiceEvent[] = [];
+      let t = 0;
+      const engine = new VoiceEngine(backend, e => events.push(e), { now: () => t });
+      engine.listenOnce(0, 8000, ["Let's meet at the station after lunch."]);
+      const mic = inRoom(cat(silence(0.25), reader.map(x => x * g), silence(after), user, silence(4)));
+      try { for (let i = 0; i + 512 <= mic.length; i += 512) { engine.feed(mic.subarray(i, i + 512), t + 1); t += 32; } } finally { backend.resetVad(); }
+      expect(sent(events).map(u => u.text), `at ${g}, ${after} s after it`).toEqual([expect.stringMatching(/^and turn on\.? do not disturb,? (too|to|2)\.?$/i)]);
+    }
   });
 
   it("hears a one-word reply in a follow-up (the VAD hears speech only 0.2 s into it)", () => {

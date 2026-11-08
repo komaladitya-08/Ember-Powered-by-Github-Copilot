@@ -219,6 +219,38 @@ describe("the details' rows", () => {
   });
 });
 
+describe("a read that sent the model a picture of the window (safety-privacy-6)", () => {
+  /** A read of the window in `app` from `at`, that sent a picture with it when `picture`. */
+  const look = (l: ActivityLog, id: string, at: number, picture: boolean) => {
+    l.add({ type: "tool-start", id, tool: "perceive_window", step: stepOf("perceive_window"), app: "Firefox" }, T0 + at);
+    if (picture) l.add({ type: "picture" }, T0 + at + 50);
+    l.add({ type: "tool-end", id, ok: true }, T0 + at + 100);
+  };
+
+  it("says on the card that a picture went, apart from reads of the text alone, and names it in the summary", () => {
+    const { l, step } = log();
+    look(l, "a", 0, false);
+    look(l, "b", 1000, true);
+    look(l, "c", 2000, true);
+    step("click", 3000, { app: "Firefox" });
+    expect(l.card().rows.map(r => r.words)).toEqual(["Read the window in Firefox", "Sent the model 2 pictures of the window in Firefox", "Clicked once in Firefox"]);
+    // However many other kinds of step there were, the summary says pictures went.
+    step("type_text", 4000);
+    step("choose_option", 5000);
+    expect(l.card().summary).toBe("Sent the model 2 pictures of the window, typed text and 3 other steps");
+    expect(summarizeActivity({ read: 2, click: 3 })).toBe("Clicked 3 times and read the window 2 times");
+  });
+
+  it("marks only a read under way, never a step of another kind", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "k", tool: "click", step: stepOf("click"), app: "Firefox" }, T0);
+    expect(l.add({ type: "picture" }, T0 + 10)).toBe(false);
+    l.add({ type: "tool-end", id: "k", ok: true }, T0 + 20);
+    expect(l.get().items.map(i => i.group)).toEqual(["click"]);
+    expect(l.card().rows.map(r => r.words)).toEqual(["Clicked once in Firefox"]);
+  });
+});
+
 describe("the worker's note", () => {
   it("shows its intent when it gives one, else its text, and keeps the text in the details as its own words", () => {
     const { l } = log();

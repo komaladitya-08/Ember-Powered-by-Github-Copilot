@@ -392,7 +392,8 @@ the wheel or press any key to take over instantly. Ember never types into passwo
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
 take screenshots or press keys; while GNOME Shell's own prompt is up (or Ember can't tell, because the shell is too busy
 or didn't answer, or because the accessibility helper isn't working: then Ember says so and points to the setup check),
-it also sends no window's text or titles with your request and takes no step in any app, until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
+it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one), until
+the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
 **Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
@@ -404,9 +405,12 @@ screenshots off at once, for a task already at work too (from its next look): Em
 tell it through accessibility. **What Ember
 reads, sends and keeps**, at the top of that pane, is
 first run's "Before Ember starts" again, word for word as it reads now (Search finds it by "data", "screenshot",
-"audit" and the like). **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
+"audit" and the like), but for pointing to the never-look list below and saying when screenshots are off; while open it
+follows where requests go and those settings, and isn't drawn again for an unrelated change.
+**What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
 more for each **Show earlier**, back through all the audit keeps (its note counts all of today's), including each
-screenshot of a window a task sent to the model, by its app ("Sent a picture of the window in Firefox to the model").
+screenshot of a window a task sent to the model, by its app ("Sent a picture of the window in Firefox to the model");
+the task's card says so too ("Sent the model a picture of the window in Firefox"), and names it first in its summary.
 If the record can't
 be read, it keeps what it showed and says so, instead of an empty list. Text the keyboard can't
 type (accents, other layouts) is pasted, and your clipboard is put back afterwards. With commands turned on (settings'
@@ -2318,16 +2322,26 @@ Answer speech belongs to the request that actually starts, including queued type
 
 The npm launcher serialises installs of a version with a cache-adjacent directory lock, keeps the previous install
 as a backup until publication succeeds, and restores it after a failed publication rename. If rollback fails too,
-both the backup and checked stage are retained and their paths reported. See `packages/npm/README.md` for manual
-recovery after an interrupted installer; locks are never automatically stolen. `ember doctor` and `ember --doctor`
+both the backup and checked stage are retained and their paths reported. The lock holds an `owner` file (`<pid>
+<hostname>`); SIGINT, SIGTERM and SIGHUP while it is held abort the download and remove the work folder and the lock
+(exit 128 + the signal), and a later installer takes over a lock only when its owner was on this computer and that pid
+is gone (`takeLock()`, through a `taken-<pid>` folder only one installer can make), removing the stopped one's work
+folders unless they hold a saved `previous` copy. `packages/npm/README.md` says what a person sees. Downloads use
+node:http and node:https, not fetch, through the proxy npm would use (`proxyFor()`: npm's `https-proxy` or `proxy`
+from `npm_config_*` or the `.npmrc` files, then `HTTPS_PROXY` or `HTTP_PROXY`, never for `NO_PROXY`'s hosts or this
+computer; https by a CONNECT tunnel), and a network failure is one sentence with the next steps (`cantReach()`), never
+Node's "fetch failed". `ember doctor` and `ember --doctor`
 run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
 Ember that stops at once is reported with what it said and its exit code. The AppImage's AppRun and the RPM's `ember`
 take `--doctor` as well as `doctor`, and `--help`/`-h` (the launcher answers those itself with `usage()`, since Ember.exe
 and Ember.app have none). On Linux without `DISPLAY`, a plain start says so in the launcher's own words (`noDisplay()`,
-naming the command as it was run) before downloading anything. Once a plain start has kept running past its 3 s watch,
-`pruneVersions()` removes the cache's other complete versions (renamed aside first, so a Windows Ember running from one
+naming the command as it was run) before downloading anything. Once a plain start has kept running past its 3 s watch
+(or, as on a Mac, where open(1) ends at once, its folder is in `ps -axo command=`), `pruneVersions()` removes the
+cache's other complete versions (renamed aside first, so a Windows Ember running from one
 keeps it), never one whose installer holds its lock or whose folder a running program's command line
 (`ps -axo command=`) names; the setup check and `--npm-install-only` remove nothing, because only a running Ember points
-**Start Ember when I log in** at itself. Tests in
+**Start Ember when I log in** at itself. A start that ended at once with 0 and isn't what runs has handed over to an
+Ember already running (`startWatched()`): it removes nothing and says so (`handedOver()`, naming the cache's version
+that runs when `ps` shows it). Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.

@@ -335,6 +335,9 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
         expect(r.stdout).not.toMatch(/--ozone-platform/);
         expect(r.stdout).toContain(`usage: ${name} [doctor | --show-settings | --ask]`);
         expect(r.stdout).toContain("check this computer and explain anything that needs fixing");
+        // No shortcut: another app may hold Ctrl+Alt+E, and then Ember holds its fallback (install-docs-r2-3).
+        expect(r.stdout, `${name} ${flag}`).toContain("start Ember (it stays beside your cursor; run it again for its settings)");
+        expect(r.stdout, `${name} ${flag}`).not.toMatch(/Ctrl\+|Alt\+/);
       }
     }
   });

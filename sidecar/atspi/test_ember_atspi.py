@@ -2103,6 +2103,25 @@ class Windows(unittest.TestCase):
         FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: types.SimpleNamespace(childCount=-1))
         self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": False})
 
+    def test_an_app_the_desktop_cant_give_is_incomplete(self):
+        # The registry lists an app it can't then hand over: it may be the shell, so its prompts can't be ruled out
+        # (fail closed, safety-privacy-3).
+        desktop = self.desktop
+        listed = len(desktop.kids)
+
+        class OneLost(object):
+            childCount = listed + 1
+
+            def getChildAtIndex(self, i):
+                if i == listed:
+                    raise RuntimeError("The application no longer exists")
+                return desktop.kids[i]
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: OneLost())
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": False})
+        # Every app handed over, none of them the shell: nothing to look through.
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: desktop)
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": True})
+
     def test_shell_overview_and_switcher(self):
         stage = Acc("window", "", states=("showing", "visible", "focused"),
                     kids=[Acc("panel", "overviewGroup", states=("visible",)), Acc("panel", "Top bar")])
