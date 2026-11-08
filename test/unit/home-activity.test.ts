@@ -215,6 +215,9 @@ describe("What Ember did: reasons in your words (review #217)", () => {
     expect(describeEntry({ t, event: "decision", kind: "cursor_text", verdict: "confirm", batch: 2, at: 1, batchVerdict: "deny", batchReason: "the user's keyboard is in use" })?.why)
       .toBe("Your keyboard is in use.");
     expect(describeEntry({ t, event: "task", phase: "failed", goal: "Tidy up", summary: "the window closed before Ember finished" })?.why).toBe("The window closed before Ember finished.");
+    // A task whose question went unanswered says so; one the user stopped (or an older record) says it stopped (tasks-approvals-r1).
+    expect(describeEntry({ t, event: "task", phase: "cancelled", endedBy: "expired", goal: "Tidy up" })).toMatchObject({ tag: "No answer", cls: "no" });
+    for (const endedBy of ["stop", "declined", "took-over", undefined]) expect(describeEntry({ t, event: "task", phase: "cancelled", ...(endedBy ? { endedBy } : {}), goal: "Tidy up" })?.tag).toBe("Stopped");
     // decide.ts' exact reason once a task is tainted (commands-decide.test.ts pins it there).
     expect(describeEntry(cmd({ phase: "decided", shell: "bash", verdict: "ask", reason: "It asks first: commands here run as an administrator; the organisation asks for every command; the user asked to check every command; it deletes or overwrites data; it may carry text Ember read elsewhere in the task; an earlier step in the task wasn't the user's." }))?.why)
       .toBe("It asks first: commands here run as an administrator; the organisation asks for every command; you asked to check every command; it deletes or overwrites data; it may carry text Ember read elsewhere in the task; an earlier step in the task wasn't yours.");

@@ -1163,7 +1163,9 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
     case "task":
       if (e.phase === "asked") return { tag: e.mode === "guide" ? "Guide" : "Task", cls: "", what: String(e.goal ?? "") };
       if (e.phase === "done") return { tag: "Finished", cls: "ok", what: String(e.summary ?? e.goal ?? "") };
-      return { tag: e.phase === "cancelled" ? "Stopped" : "Failed", cls: "no", what: String(e.goal ?? ""), why: typeof e.summary === "string" ? userWords(e.summary) : undefined };
+      // A task whose question went unanswered ended for that: the user stopped nothing (tasks-approvals-r1). Tagged as its
+      // question's line is, "No answer", which fits the tag's 8em column.
+      return { tag: e.phase === "cancelled" ? e.endedBy === "expired" ? "No answer" : "Stopped" : "Failed", cls: "no", what: String(e.goal ?? ""), why: typeof e.summary === "string" ? userWords(e.summary) : undefined };
     case "decision":
       // Several cells filled with one question (fill_cells): one line for them all, on the last cell's decision.
       if (typeof e.batch === "number") {

@@ -359,9 +359,10 @@ export const ROW_WORD: Readonly<Record<ActivityState, string>> = {
 };
 
 /**
- * ROW_WORD for a row: the last row of a task whose question went unanswered (its words Ember's STATUS_WORDS.unanswered)
- * says it ended, never "Stopped": nobody stopped it (tasks-approvals-r1).
+ * ROW_WORD for a row: the last row of a task whose question went unanswered (its words Ember's STATUS_WORDS.unanswered),
+ * and that question's own row (ANSWER_WORDS.expired), say it ended, never "Stopped": nobody stopped it
+ * (tasks-approvals-r1).
  */
 export function rowWord(r: { state: ActivityState; words: string; model?: true }): string {
-  return r.state === "stopped" && !r.model && r.words === STATUS_WORDS.unanswered ? "Ended: " : ROW_WORD[r.state];
+  return r.state === "stopped" && !r.model && (r.words === STATUS_WORDS.unanswered || r.words === ANSWER_WORDS.expired) ? "Ended: " : ROW_WORD[r.state];
 }

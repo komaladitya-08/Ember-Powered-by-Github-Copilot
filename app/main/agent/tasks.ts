@@ -723,7 +723,8 @@ export class TaskManager {
     // (And waits for a user who is away: userAway.)
     this.expiry.set(task.id, { remaining: duration * this.readScale(), since: Date.now(), timer: null, ...(kept ? { whole: duration * this.readScale() } : {}) });
     this.expireLater(task.id);
-    this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
+    // A task whose question went unanswered says so in What Ember did, never "Stopped" (tasks-approvals-r1).
+    this.record({ event: "task", task: task.id, phase: status, ...(unanswered ? { endedBy: "expired" } : {}), goal: task.title, summary: result.summary.slice(0, 300) });
     this.d.onFinished?.(task);
   }
 

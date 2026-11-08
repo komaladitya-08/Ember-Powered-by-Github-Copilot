@@ -718,6 +718,39 @@ describe("a task whose question went unanswered while the user was away (tasks-a
     } finally { vi.useRealTimers(); }
   });
 
+  it("says no answer came in time on its question's row, in What Ember did and to the next turn, never that it was stopped (tasks-approvals-r1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const written: Record<string, unknown>[] = [];
+      const { tm } = manager((_spec, _p, _u, activity) => fakeWorker(async () => {
+        // A command whose question ran out of time, as the worker tells its card.
+        activity?.({ type: "tool-start", id: "c1", tool: "run_command" });
+        activity?.({ type: "question", asked: "Run a command?" });
+        activity?.({ type: "answer", answer: "expired" });
+        activity?.({ type: "denied" });
+        activity?.({ type: "tool-end", id: "c1", ok: false });
+        return { ...EXPIRED, summary: "I didn't delete it." };
+      }), { audit: { write: (e: Record<string, unknown>) => { written.push(e); } } });
+      const t = tm.start("Clean the build folder", { userWords: "clean the build folder" });
+      await vi.advanceTimersByTimeAsync(10);
+      const { timelineRows } = await import("../../app/renderer/home/tasks-copy");
+      const { activityRows, rowWord } = await import("../../app/shared/activity");
+      const { describeEntry } = await import("../../app/renderer/home/copy");
+      const { report } = await import("../../app/main/agent/host");
+      // The question's row, in Home and on the card's details, as a screen reader hears it.
+      const items = tm.activities()[0].activity.items;
+      const asked = (rows: { state: string; words: string }[]) => rows.filter(r => r.words.startsWith("Asked you")).map(r => `${rowWord(r as never)}${r.words}`);
+      expect(asked(timelineRows(items))).toEqual(["Ended: Asked you: no answer"]);
+      expect(asked(activityRows(items))).toEqual(["Ended: Asked you: no answer"]);
+      // What Ember did: the task's end is recorded as unanswered, and tagged so.
+      const end = written.find(e => e.event === "task" && e.phase === "cancelled")!;
+      expect(end).toMatchObject({ endedBy: "expired" });
+      expect(describeEntry({ t: "2026-11-08T12:00:00.000Z", ...end } as never)).toMatchObject({ tag: "No answer", what: "Clean the build folder", why: "I didn't delete it." });
+      // The next turn hears it as the card says it.
+      expect(report(t)).toBe('Task "Clean the build folder" ended with no answer in time: I didn\'t delete it.');
+    } finally { vi.useRealTimers(); }
+  });
+
   it("is notified while the user is away, as a task that couldn't finish is, but a task they stopped isn't (tasks-approvals-4)", async () => {
     const { taskNotice } = await import("../../app/main/agent/tasks");
     expect(taskNotice({ title: "Send the report", status: "cancelled", endedBy: "expired", summary: EXPIRED.summary }))

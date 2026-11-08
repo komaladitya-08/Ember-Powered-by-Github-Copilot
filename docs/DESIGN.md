@@ -246,8 +246,8 @@ Ember is two places at once, each for one kind of work.
 
   The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
   Retrying, Done, Didn't finish, Stopped, and No answer in time for a task whose question ran out of time, which the
-  user didn't stop: so its card, the handle's task row and the conversation's line say so, and its last row reads
-  "Ended: No answer in time" to a screen reader) and `app/main/agent/activity.ts`, which builds a task's activity from its
+  user didn't stop: so its card, the handle's task row, the conversation's line and What Ember did say so, and its last
+  row and its question's row read "Ended: No answer in time" and "Ended: Asked you: no answer" to a screen reader) and `app/main/agent/activity.ts`, which builds a task's activity from its
   worker's tool calls and Ember's own signals: never the model's arguments, its reasoning or screen text. A running
   task's symbol is a ring round a lit dot, which never reads as a spinner. A card with a view or a failure stays a
   minute (and waits while the user is away), and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
