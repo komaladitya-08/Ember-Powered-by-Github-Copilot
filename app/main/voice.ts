@@ -95,7 +95,12 @@ export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to
  * (engine.ts MANUAL_DOUBT_MS). It may have been the user's long request, so "No request heard." was untrue; begun a
  * moment after the window opens, a request is heard to its end (voice-listening-r2-1).
  */
-const LISTEN_ONCE_DOUBT = "I heard talking but couldn't tell it was a request. Try again, waiting a moment before you speak.";
+const LISTEN_ONCE_DOUBT = "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.";
+/**
+ * The same in Settings, where Home calls it Ember (voice-listening-v4-3). Not begun with the name: a screen reader says
+ * it as the window ends, into the wake word's microphone, and a line that starts with the name is heard as a request.
+ */
+const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but Ember couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.";
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
@@ -1748,11 +1753,13 @@ function hiddenWindow(title: string): BrowserWindow {
 
 /**
  * Listen once as Settings (Home) shows it: there, "in Settings" sent people where they already were, right above the
- * Download button (accessibility-visual-9, voice-listening-8). Ask keeps the words as they are.
+ * Download button (accessibility-visual-9, voice-listening-8), and Ember isn't "I" (voice-listening-v4-3). Ask keeps the
+ * words as they are.
  */
 export function listenOnceInSettings(s: ListenOnceStatus): ListenOnceStatus {
   if (s.reason === "needs-models") return { ...s, detail: "Download the speech models below first." };
   if (s.reason === "voice-error") return { ...s, detail: "Check the microphone and the voice status above." };
+  if (s.detail === LISTEN_ONCE_DOUBT) return { ...s, detail: LISTEN_ONCE_DOUBT_SETTINGS };
   return s;
 }
 

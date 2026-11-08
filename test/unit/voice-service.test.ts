@@ -607,8 +607,18 @@ describe("VoiceService", () => {
       const generation = (posted(proc, "listen-once").at(-1) as { generation?: number }).generation;
       proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
       proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window: "manual", ...(doubt ? { doubt: true } : {}) });
-      expect(v.listenOnceStatus.detail).toBe(doubt ? "I heard talking but couldn't tell it was a request. Try again, waiting a moment before you speak." : "No request heard. Try again.");
+      expect(v.listenOnceStatus.detail).toBe(doubt ? "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." : "No request heard. Try again.");
     }
+  });
+
+  it("words that doubt for Settings in the third person, never begun with the name, and keeps the first person in Ask (voice-listening-v4-3)", () => {
+    // Home calls it Ember; its neighbouring lines say "Checking what Ember heard…". Said as the window ends, into the
+    // wake word's microphone, a line that began with the name would be heard as a request.
+    const ask = { phase: "ready", detail: "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." } as const;
+    const home = listenOnceInSettings(ask);
+    expect(home).toEqual({ phase: "ready", detail: "There was talking, but Ember couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." });
+    expect(home.detail).not.toMatch(/^Ember\b|\bI\b/);
+    expect(listenOnceInSettings({ phase: "ready", detail: "No request heard. Try again." }).detail).toBe("No request heard. Try again.");
   });
 
   it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {
