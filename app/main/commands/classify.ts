@@ -3169,6 +3169,9 @@ reg(NATIVE, ["truncate"], h => {
 });
 
 reg(NATIVE, ["dd"], h => {
+  // A copy of a download is the download under its new name (commands-remote-c2-2).
+  const from = h.args.map(a => /^if=(.*)$/.exec(a.v ?? "")?.[1]).find(v => v !== undefined);
+  const copiesDownload = from !== undefined && h.e.isDownloaded(lit(from), h.sc);
   for (const a of h.args) {
     const v = a.v;
     if (v === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which arguments dd gets."); continue; }
@@ -3177,6 +3180,7 @@ reg(NATIVE, ["dd"], h => {
     if (m[1] === "if") { h.e.usePath({ ...a, v: m[2] }, "read", h.sc); continue; }
     if (NULL_SINKS.has(m[2].toLowerCase())) continue;
     const obj = h.e.usePath({ ...a, v: m[2] }, "write", h.sc);
+    if (copiesDownload && obj.abs) h.e.carryDownload(obj.abs, h.sc);
     const disk = obj.abs !== null && writeKind(obj.abs, h.sc.path) === "disk";
     h.e.add("destroy", "posix.dd", disk ? `Overwrites the disk ${obj.text}.` : `Overwrites ${obj.text}.`, { objects: [obj] });
   }

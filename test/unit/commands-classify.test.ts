@@ -934,6 +934,9 @@ describe("loops and ifs (commands-remote-2)", () => {
       expect(posix(cmd, ["/home/ana/proj/x.sh"]).downloads, cmd).toContain("/home/ana/proj/y.sh");
       expect(posix(cmd, []).downloads, cmd).toEqual([]);
     }
+    // dd's copy of a download is the download too (commands-remote-c2-2).
+    expect(posix("dd if=x.sh of=y.sh", ["/home/ana/proj/x.sh"]).downloads).toContain("/home/ana/proj/y.sh");
+    expect(posix("dd if=notes.txt of=y.sh", ["/home/ana/proj/x.sh"]).downloads).toEqual([]);
   });
 
   it("marks a file of unknown name in the folder, never the folder, when a copy Ember can't name lands there (commands-remote-r4-3)", () => {
