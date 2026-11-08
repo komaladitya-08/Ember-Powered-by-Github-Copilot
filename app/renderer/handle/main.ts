@@ -192,8 +192,9 @@ function renderTarget(s: EmberState, given?: TargetBadge | null): void {
 
 /**
  * The card's step row: the keys a question's hint names as keycaps beside their words, as the bubble draws them
- * (stepParts; accessibility-visual-r3: one grey run of text here), each chord kept on one line with its word (the card
- * is narrow), anything else as words. Drawn again only on a change.
+ * (stepParts; accessibility-visual-r3: one grey run of text here), each chord on a line of its own with its word and no
+ * " · " between them (the card's column always wrapped the two and left "allow ·" ending the first line:
+ * accessibility-visual-r2-2), anything else as words. Drawn again only on a change.
  */
 let stepShown: string | null = null;
 function drawStep(step: string | null): void {
@@ -203,10 +204,10 @@ function drawStep(step: string | null): void {
   stepShown = step;
   const { lead, keys } = stepParts(step);
   if (!keys) { el.textContent = step ?? ""; return; }
-  el.replaceChildren(...(lead ? [document.createTextNode(lead), document.createElement("br")] : []), ...keys.flatMap((k, i) => {
+  el.replaceChildren(...(lead ? [document.createTextNode(lead)] : []), ...keys.map(k => {
     const hint = Object.assign(document.createElement("span"), { className: "key-hint" });
     hint.append(...k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key })), Object.assign(document.createElement("span"), { className: "key-word", textContent: k.word }));
-    return [...(i ? [document.createTextNode(" · ")] : []), hint];
+    return hint;
   }));
 }
 
