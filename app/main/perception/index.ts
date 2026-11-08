@@ -107,8 +107,11 @@ export interface Seen {
   axScale: number;
   /** The user is in one of Ember's own windows (the ask box, settings): Ember never reads those, so nothing was read. */
   ember?: boolean;
-  /** A password prompt the desktop's shell draws is open (promptOpen): nothing was read, anywhere (safety-privacy-3). */
-  authPrompt?: true;
+  /**
+   * A password prompt the desktop's shell draws is open (promptOpen): nothing was read, anywhere (safety-privacy-3).
+   * "unchecked": the shell couldn't be asked whether one is (fail closed, safety-privacy-r1), so nothing was read either.
+   */
+  authPrompt?: true | "unchecked";
 }
 
 export interface Perceived extends Seen {
@@ -350,15 +353,16 @@ export class Perception {
     // first), then the shell asked: while a password prompt of its own is open, what was read goes no further
     // (safety-privacy-3).
     const reading = this.focused(undefined, active, before);
-    const prompt = this.promptWhy();
+    const prompt = this.promptNow();
     try {
       seen = await reading;
     } catch {
-      const why = await prompt;
-      return why ? promptContext(why) : null;
+      // Nothing was read: only a prompt known to be open is worth saying (a helper that is down answers neither).
+      const stop = await prompt;
+      return stop?.open === true ? promptContext(stop.why) : null;
     }
-    const why = await prompt;
-    if (why) return promptContext(why);
+    const stop = await prompt;
+    if (stop) return promptContext(stop.why);
     // Every window, not just the focused one: "what apps are open" is answered from this context, without a read.
     // X11's list is used here because it is immediate: the sidecar answers one request at a time, and the focused
     // read already took its turn. (Listed only when the context will say it: not for a private or untitled window.)
@@ -414,9 +418,13 @@ export class Perception {
 
   /** Text for the conductor: where the user is and what the window contains. */
   async describe(): Promise<string> {
-    // Nothing is read while a password prompt of the shell's is open (safety-privacy-3).
-    const why = await this.promptWhy();
-    if (why) return `Ember read nothing: ${why}. Don't describe the screen; tell the user Ember looks away until it's done.`;
+    // Nothing is read while a password prompt of the shell's is open, or the shell can't say (safety-privacy-3, -r1).
+    const stop = await this.promptNow();
+    if (stop) {
+      return `Ember read nothing: ${stop.why}. Don't describe the screen; ${stop.open === "unchecked"
+        ? "tell the user Ember can't look just now and they can ask again in a moment."
+        : "tell the user Ember looks away until it's done."}`;
+    }
     let seen: Seen;
     try {
       seen = await this.focused();
@@ -453,11 +461,12 @@ export class Perception {
    * out, and so are secret fields (they get no mark either).
    */
   async perceive(opts: { image: boolean; scope: "window" | "screen"; target?: WindowTarget }): Promise<Perceived> {
-    // Nothing is read while a password prompt of the shell's is open (safety-privacy-3); the picture asks again below.
-    const why = await this.promptWhy();
-    if (why) {
-      return { window: null, x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1, authPrompt: true,
-        text: `Ember read nothing: ${why}. That's for the user only: wait, or finish the task saying what's left.`, capture: null };
+    // Nothing is read while a password prompt of the shell's is open, or the shell can't say (safety-privacy-3, -r1);
+    // the picture asks again below.
+    const stop = await this.promptNow();
+    if (stop) {
+      return { window: null, x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1, authPrompt: stop.open,
+        text: `Ember read nothing: ${stop.why}. ${stop.open === "unchecked" ? "Wait a moment and look again" : "That's for the user only: wait"}, or finish the task saying what's left.`, capture: null };
     }
     // One fresh look at the window stack serves the scale, what covers the window, and the private windows.
     const stack = opts.image ? this.stackNow() : undefined;
@@ -720,8 +729,10 @@ export class Perception {
   }
 
   /**
-   * GNOME Shell's dialogs and notifications now (a shell too busy to be looked through counts as a dialog;
-   * best effort otherwise: nothing is known when the check fails, without GNOME Shell for one).
+   * GNOME Shell's dialogs and notifications now. A shell too busy to be looked through, or a check that fails (the
+   * helper timed out, queued behind a slow read of another task's, or the registry errored), counts as a dialog Ember
+   * couldn't check for (`unchecked`: fail closed, safety-privacy-r1). Without GNOME Shell the helper answers with an
+   * empty, complete list.
    */
   private async shellOverlays(): Promise<ReturnType<typeof shellCovers>> {
     try {
@@ -729,25 +740,25 @@ export class Perception {
       return shellCovers(r.overlays, r.complete !== false);
     } catch (err) {
       this.o.log.warn("perception.shell_check_failed", { err });
-      return shellCovers([]);
+      return shellCovers([], false);
     }
   }
 
   /**
    * Is a password prompt the desktop's shell draws itself on screen, or may one be (GNOME Shell's polkit and keyring
    * dialogs, which no X11 window shows; Windows' and macOS's credential and consent prompts, as the accessibility host
-   * lists them)? A shell too busy to be looked through counts (fail closed); a notification doesn't. While one is,
-   * Ember reads and sends nothing and takes no step (CLAUDE.md "Never"; safety-privacy-3). Best effort without GNOME
-   * Shell, as the screenshot check is.
+   * lists them)? True when one is; "unchecked" when the shell couldn't be looked through or asked (fail closed: it counts
+   * as open, but nobody is told a prompt is there, safety-privacy-c1-2); false otherwise. A notification doesn't count.
+   * While one is, or may be, Ember reads and sends nothing and takes no step (CLAUDE.md "Never"; safety-privacy-3).
    */
-  async promptOpen(): Promise<boolean> {
-    return (await this.promptWhy()) !== null;
+  async promptOpen(): Promise<boolean | "unchecked"> {
+    return (await this.promptNow())?.open ?? false;
   }
 
-  /** Why nothing is read now (promptOpen), in the screenshot check's words, or null when nothing stops it. */
-  private async promptWhy(): Promise<string | null> {
+  /** What stops reading now (promptOpen), with why in the screenshot check's words, or null when nothing does. */
+  private async promptNow(): Promise<{ open: true | "unchecked"; why: string } | null> {
     const shell = await this.shellOverlays();
-    return shell.unchecked ? this.words.shellUnchecked : shell.dialog ? SYSTEM_DIALOG : null;
+    return shell.unchecked ? { open: "unchecked", why: this.words.shellUnchecked } : shell.dialog ? { open: true, why: SYSTEM_DIALOG } : null;
   }
 
   /**

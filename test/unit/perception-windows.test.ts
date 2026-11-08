@@ -360,7 +360,7 @@ describe("reading a named window", () => {
     expect((await perception.quickContext())?.text).toContain('Open windows:\n- "Terminal": "Terminal"\n- "Thunar": "Home"\n- "XTerm": "xterm"\n');
 
     // Without X11, the sidecar's list (the apps that expose accessibility).
-    const sidecar = { readWindow: async () => ({ window: terminal, nodes: [frame], ms: 1 }), listWindows: async () => ({ windows: [terminal, thunar] }) } as unknown as AtspiSidecar;
+    const sidecar = { readWindow: async () => ({ window: terminal, nodes: [frame], ms: 1 }), listWindows: async () => ({ windows: [terminal, thunar] }), shellOverlays: async () => ({ overlays: [] }) } as unknown as AtspiSidecar;
     const atspi = new Perception({ sidecar, x11: null, neverLook: () => [], screenBounds: () => bounds, log: quiet, ownPid: 999 });
     const listed = await atspi.describe();
     expect(listed).toContain('<screen source="open-windows" untrusted="true">\nOpen windows:\n- "Terminal": "Terminal" (focused by the user)\n- "Thunar": "Home"\n</screen>');
@@ -761,11 +761,17 @@ describe("GNOME Shell's own dialogs and notifications", () => {
     expect(o.text).toContain("the Activities overview or the window switcher is open");
   });
 
-  it("don't stop pictures when GNOME Shell isn't there or can't be asked", async () => {
+  it("don't stop pictures when GNOME Shell isn't there", async () => {
     expect((await shot([])).capture).not.toBeNull();
     expect((await shot({ overlays: [], complete: true })).capture).not.toBeNull();
-    expect((await shot(new Error("no gnome-shell"))).capture).not.toBeNull();
     expect(await shell([]).systemDialogOpen()).toBe(false);
+  });
+
+  it("stop pictures and borrowing when the shell can't be asked at all (fail closed) (safety-privacy-r1)", async () => {
+    const p = await shot(new Error("accessibility helper did not answer shell_overlays in 5000 ms"));
+    expect(p.capture).toBeNull();
+    expect(p.text).toContain("GNOME Shell didn't answer in time");
+    expect(await shell(new Error("request timed out")).systemDialogOpen()).toBe(true);
   });
 
   it("count as a dialog when the shell couldn't be looked through in time: no picture, no borrowing", async () => {

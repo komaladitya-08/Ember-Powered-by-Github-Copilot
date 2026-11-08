@@ -75,7 +75,9 @@ function makeWorker(o: {
   /** The task's goal (the conductor's words, default "make it bold") and the user's own words for it (TaskSpec.userWords). */
   goal?: string; userWords?: string;
   /** A password prompt the desktop's shell draws (GNOME Shell's polkit dialog) is open now (Perception.promptOpen). */
-  promptOpen?: () => boolean;
+  promptOpen?: () => boolean | "unchecked";
+  /** Is a system dialog open, as the borrow asks before it takes the keyboard (default: none). */
+  systemDialogOpen?: () => boolean;
 } = {}) {
   let closed = false;
   const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
@@ -137,6 +139,7 @@ function makeWorker(o: {
         if (o.listFails?.()) throw new Error("the accessibility helper didn't answer");
         return o.wins ? [...open] : closed ? [] : [window];
       },
+      systemDialogOpen: async () => o.systemDialogOpen?.() ?? false,
       ...(o.promptOpen ? { promptOpen: async () => o.promptOpen!() } : {}),
     } as never,
     sidecar: {
@@ -1843,6 +1846,45 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     const r = await call("open_app", { name: "gedit" });
     expect(r).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/authentication prompt is open/) });
     expect(audit.some(e => e.event === "action")).toBe(false);
+  });
+
+  it("refuses a step when it can't tell, and says it can't tell rather than that a prompt is open (safety-privacy-c1-2)", async () => {
+    const acted: string[] = [];
+    let prompt: false | "unchecked" = false;
+    const { call, audit } = makeWorker({ promptOpen: () => prompt, onAction: () => { acted.push("click"); return { ok: true, after: null }; } });
+    await call("perceive_window", {});
+    prompt = "unchecked";
+    const r = await call("click", { id: 1 });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toMatch(/^Ember can't tell right now whether a password prompt is open/);
+    expect(r.textResultForLlm).not.toMatch(/authentication prompt is open/);
+    expect(acted).toEqual([]);
+    expect(audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "click", verdict: "deny", reason: "Ember couldn't tell whether a password prompt was open" }));
+    expect(audit.some(e => e.event === "action")).toBe(false);
+  });
+
+  it("refuses a step when the check itself fails (fail closed) (safety-privacy-r1)", async () => {
+    const acted: string[] = [];
+    let fails = false;
+    const { call, audit } = makeWorker({ promptOpen: () => { if (fails) throw new Error("request timed out"); return false; }, onAction: () => { acted.push("click"); return { ok: true, after: null }; } });
+    await call("perceive_window", {});
+    fails = true;
+    const r = await call("click", { id: 1 });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toMatch(/^Ember can't tell right now whether a password prompt is open/);
+    expect(acted).toEqual([]);
+    expect(audit.some(e => e.event === "action")).toBe(false);
+  });
+
+  it("borrows nothing when the desktop can't be asked whether a system dialog is open (fail closed) (safety-privacy-r1)", async () => {
+    const input: string[] = [];
+    const { call, audit } = makeWorker({ systemDialogOpen: () => { throw new Error("request timed out"); }, states: () => ["enabled", "focused"], onInput: k => { input.push(k); } });
+    await call("perceive_window", {});
+    const r = await call("press_keys", { keys: "ctrl+b" });
+    expect(r.resultType).toBe("denied");
+    expect(input).toEqual([]);
+    expect(audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "keys", verdict: "deny" }));
+    expect(audit.some(e => e.event === "action" && e.ok)).toBe(false);
   });
 });
 

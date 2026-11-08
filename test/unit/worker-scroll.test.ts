@@ -37,6 +37,7 @@ function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: 
     perceive: async () => ({ ...seen(), text: "<screen>", capture: null }),
     read: async () => { st.reads++; const s = seen(); return { ...s, ...(o.read?.(st.reads, s.nodes) ?? {}) }; },
     windows: async () => [window],
+    systemDialogOpen: async () => false,
     ...(o.atPoint ? {
       atPoint: async (_t: unknown, p: { x: number; y: number }): Promise<PointElement[]> => {
         st.points++;

@@ -155,6 +155,14 @@ describe("What Ember did: tags and names (safety-privacy-10, safety-privacy-v2)"
     expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "1password", reason: "r" })?.what).toBe("Read in 1Password");
     expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "seahorse", reason: "r" })?.what).toBe("Read in Passwords and Keys");
   });
+
+  it("says Ember couldn't tell, not that a password prompt was open, when the desktop couldn't be asked (safety-privacy-c1-2)", () => {
+    // The worker's two reasons, word for word (worker.ts PROMPT_REASON).
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "", window: "", tier: "never", reason: "Ember couldn't tell whether a password prompt was open" }))
+      .toEqual({ tag: "Refused", cls: "no", what: "Read", why: "Ember couldn't tell whether a password prompt was open." });
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "click", app: "gedit", tier: "never", reason: "an authentication prompt is open" })?.why)
+      .toBe("An authentication prompt is open.");
+  });
 });
 
 describe("What Ember did: when the record can't be read (home-10)", () => {

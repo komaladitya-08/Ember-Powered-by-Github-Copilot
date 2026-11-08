@@ -95,6 +95,8 @@ function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string }
       text: `<screen untrusted="true">\n${axNodes().map(n => `[${n.id}] ${n.role} ${JSON.stringify(n.name)}`).join("\n")}\n</screen>` }),
     windows: async () => [window],
     read: async () => ({ window, x11Window: null, nodes: axNodes(), blocked: false, ms: 0 }),
+    // No system dialog: the borrow asks before it takes the keyboard, and a check that can't be made refuses.
+    systemDialogOpen: async () => false,
   };
   const sidecar = {
     doAction: async (id: number, a: string) => { log.push({ t: Date.now(), what: `doAction ${id} ${a}` }); return { ok: true, after: after(id) }; },

@@ -2090,6 +2090,19 @@ class Windows(unittest.TestCase):
         finally:
             e.SHELL_ACTORS, e.SHELL_BUDGET_S = saved
 
+    def test_a_desktop_that_cant_be_listed_is_incomplete(self):
+        # The registry errored: GNOME Shell's prompts can't be ruled out, so the answer says so (fail closed,
+        # safety-privacy-r1).
+        class Broken(object):
+            @property
+            def childCount(self):
+                raise RuntimeError("The AT-SPI registry is not available")
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: Broken())
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": False})
+        # libatspi's answer when the registry's call timed out.
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: types.SimpleNamespace(childCount=-1))
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": False})
+
     def test_shell_overview_and_switcher(self):
         stage = Acc("window", "", states=("showing", "visible", "focused"),
                     kids=[Acc("panel", "overviewGroup", states=("visible",)), Acc("panel", "Top bar")])

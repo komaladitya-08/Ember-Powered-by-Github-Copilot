@@ -554,6 +554,7 @@ function seeing(sc: Scene) {
     listWindows: async () => ({ windows: sc.listed ?? [] }),
     scaleElements: () => undefined,
     markSecret: async () => undefined,
+    shellOverlays: async () => ({ overlays: [] }),
   } as unknown as Sidecar;
   const ws: PerceptionWindows | null = sc.x11 ? {
     activeWindow: () => sc.x11!.active, focusWindow: () => sc.x11!.active, clientWindows: () => sc.x11!.clients, stack: () => sc.x11!.clients.map(stacked), capture: () => null,

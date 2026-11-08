@@ -113,6 +113,7 @@ describe("Perception.perceive screenshots", () => {
   const sidecar = {
     readWindow: async () => ({ window: { app: "gedit", pid: 42, name: "notes.txt", role: "frame", active: true, bounds: { x: 1000, y: 1000, width: 50, height: 50 } }, nodes: [], ms: 1 }),
     listWindows: async () => ({ windows: [] }),
+    shellOverlays: async () => ({ overlays: [] }),
   } as unknown as AtspiSidecar;
 
   it("says why there is no screenshot", async () => {

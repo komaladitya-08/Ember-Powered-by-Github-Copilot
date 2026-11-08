@@ -268,6 +268,13 @@ export function taskPrompt(goal: string, partWay: boolean, where: string): strin
 const NEAR_LIMIT = "You have used most of this task's steps or time: finish the step you're on, then call finish_task saying what's done and what's left.";
 /** A step refused while a password or authentication prompt is open on the user's screen (M8.3, safety-privacy-3). */
 const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.";
+/**
+ * A step refused because the desktop couldn't be asked whether such a prompt is open (fail closed, safety-privacy-r1):
+ * never said to be one, so nobody goes looking for a prompt that isn't there (safety-privacy-c1-2).
+ */
+const PROMPT_UNCHECKED = "Ember can't tell right now whether a password prompt is open on the user's screen (the desktop didn't answer in time), so nothing was read or done. Wait a moment and look again, or finish the task saying what's left.";
+/** The audit's reason for each (What Ember did shows it). */
+const PROMPT_REASON = { open: "an authentication prompt is open", unchecked: "Ember couldn't tell whether a password prompt was open" } as const;
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
 const POSES_AS_ANNOUNCEMENT = new RegExp([
   String.raw`without\s+(asking|checking|permission|approval|confirm\w*|a\s+question)`, String.raw`as\s+you\s+(let|allow\w*|permit\w*)`,
@@ -2284,8 +2291,9 @@ export class Worker {
     if (this.isOver) return STOPPED();
     // The shell's own password prompt is open: nothing was read (safety-privacy-3). The task may wait and look again.
     if (p.authPrompt) {
-      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: "an authentication prompt is open" });
-      return denied(AUTH_PROMPT_OPEN);
+      const unchecked = p.authPrompt === "unchecked";
+      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: unchecked ? PROMPT_REASON.unchecked : PROMPT_REASON.open });
+      return denied(unchecked ? PROMPT_UNCHECKED : AUTH_PROMPT_OPEN);
     }
     if (p.blocked) {
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
@@ -4072,13 +4080,18 @@ export class Worker {
       this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
       return denied(AUTH_PROMPT_OPEN);
     }
-    // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too.
-    if (await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => false)) {
+    // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too. A check that fails refuses
+    // (fail closed, safety-privacy-r1).
+    const dialog = await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => "unchecked" as const);
+    if (dialog) {
       // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
-      const why = await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? "a system dialog is open" });
+      const why = dialog === "unchecked" ? null : await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
+      // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2).
+      const unchecked = dialog === "unchecked" || (!why && await this.promptUnchecked());
+      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? (unchecked ? PROMPT_REASON.unchecked : "a system dialog is open") });
       return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
-        : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+        : unchecked ? PROMPT_UNCHECKED
+          : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
     const check = () => {
       if (this.isOver) throw new BorrowStopped();
@@ -4409,16 +4422,24 @@ export class Worker {
   /**
    * A password prompt the desktop's shell draws itself is open (Perception.promptOpen: GNOME Shell's polkit and keyring
    * dialogs, which no X11 window shows): no step is taken until it's done, by accessibility as with the borrowed mouse
-   * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that fails refuses (fail closed); a screen
-   * whose perception has no such check (another computer's) goes on as before.
+   * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that can't be made, or fails, refuses too
+   * (fail closed, safety-privacy-r1), in words that say Ember can't tell rather than that a prompt is open
+   * (safety-privacy-c1-2); a screen whose perception has no such check (another computer's) goes on as before.
    */
   private async promptRefusal(kind: ActionKind, element?: Focus): Promise<ToolResultObject | null> {
     if (!this.perception.promptOpen) return null;
-    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => true);
+    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const);
     if (this.isOver) return STOPPED();
     if (!open) return null;
-    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt is open" });
-    return denied(AUTH_PROMPT_OPEN);
+    const unchecked = open === "unchecked";
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: unchecked ? PROMPT_REASON.unchecked : PROMPT_REASON.open });
+    return denied(unchecked ? PROMPT_UNCHECKED : AUTH_PROMPT_OPEN);
+  }
+
+  /** Is the system dialog the borrow saw only a shell Ember couldn't ask (promptOpen "unchecked")? Words only: it refuses either way. */
+  private async promptUnchecked(): Promise<boolean> {
+    if (!this.perception.promptOpen) return false;
+    return (await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const)) === "unchecked";
   }
 
   /**
