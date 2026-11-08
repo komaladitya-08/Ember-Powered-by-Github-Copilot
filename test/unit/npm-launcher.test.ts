@@ -150,7 +150,7 @@ function release(version: string, size = 64) {
   return { asset, body, files: { [`/v${version}/${asset}`]: body, [`/v${version}/SHA256SUMS`]: `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` } as Record<string, string | Buffer> };
 }
 /** A proxy on this computer that records what it is asked, and answers with `answer` (or tunnels where it says). */
-async function proxyServer(o: { files?: Record<string, string | Buffer>; connect?: (target: string) => number | "407" | "403" }) {
+async function proxyServer(o: { files?: Record<string, string | Buffer>; connect?: (target: string) => number | "407" | "403" | "502" }) {
   const asked: { line: string; auth?: string }[] = [];
   const server = http.createServer((req, res) => {
     asked.push({ line: `${req.method} ${req.url}`, auth: req.headers["proxy-authorization"] });
@@ -163,6 +163,7 @@ async function proxyServer(o: { files?: Record<string, string | Buffer>; connect
     const to = o.connect?.(String(req.url)) ?? "403";
     if (to === "407") { socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\n\r\n"); return; }
     if (to === "403") { socket.end("HTTP/1.1 403 Forbidden\r\n\r\n"); return; }
+    if (to === "502") { socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); return; }
     const up = net.connect(to, "127.0.0.1", () => { socket.write("HTTP/1.1 200 Connection established\r\n\r\n"); up.pipe(socket); socket.pipe(up); });
     sockets.add(up);
     up.on("error", () => socket.destroy());
@@ -310,8 +311,10 @@ describe("when the launcher can't reach the download (install-docs-r2-1)", () =>
   });
 
   // Through a CONNECT tunnel the proxy only passes bytes: an error answer inside it is the host's own (GitHub's storage
-  // host in an outage), so it is never said as the proxy's, nor sent to whoever runs it unless it is a block.
-  it.skipIf(!mirrorCert || process.platform !== "linux")("says the host answered, not the proxy, for an error answer inside an https tunnel, and asks for it to be allowed only when it is blocked (install-docs-v4-3)", async () => {
+  // host in an outage), so it is never said as the proxy's alone, nor sent to whoever runs it unless it is a block. A
+  // proxy that inspects HTTPS answers inside the tunnel too, with its own Bad Gateway or Gateway Timeout when it can't
+  // reach the host, and the launcher can't tell it from the host's: those two name both (install-docs-r4-1).
+  it.skipIf(!mirrorCert || process.platform !== "linux")("says the host answered, not the proxy, for an error answer inside an https tunnel, and asks for it to be allowed only when it is blocked (install-docs-v4-3, install-docs-r4-1)", async () => {
     const v = packageVersion(), asset = `Ember-${v}-x86_64.AppImage`;
     const texts: Record<number, string> = { 403: "Forbidden", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
     // The mirror answers the status its base names: https://ember-mirror.test/s502/v<v>/SHA256SUMS answers 502.
@@ -322,7 +325,7 @@ describe("when the launcher can't reach the download (install-docs-r2-1)", () =>
     });
     await new Promise<void>(resolve => mirror.listen(0, "127.0.0.1", resolve));
     const mirrorPort = (mirror.address() as AddressInfo).port;
-    const proxy = await proxyServer({ connect: target => target === "ember-mirror.test:443" ? mirrorPort : "403" });
+    const proxy = await proxyServer({ connect: target => target === "ember-mirror.test:443" ? mirrorPort : target === "unreached.test:443" ? "502" : "403" });
     // Its own copy: the tunnel test above removes the certificate's folder when it is done.
     const ca = path.join(tempDir(), "mirror.pem");
     fs.writeFileSync(ca, mirrorCert!.cert);
@@ -331,17 +334,24 @@ describe("when the launcher can't reach the download (install-docs-r2-1)", () =>
         const base = `https://ember-mirror.test/s${status}`, cache = tempDir();
         const run = runLauncher(["--npm-install-only"], { HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`, NODE_EXTRA_CA_CERTS: ca, EMBER_NPM_DOWNLOAD_BASE: base, EMBER_NPM_CACHE: cache, EMBER_NPM_QUIET: "1", ...noNpmrc });
         expect((await run.ended).code, String(status)).toBe(1);
-        const first = `ember-copilot: The download of Ember ${v} from the mirror at ${base} through the proxy at 127.0.0.1:${proxy.port} failed: ember-mirror.test answered ${status} ${texts[status]}.`;
-        const browser = `or download ${asset} from https://github.com/${REPO}/releases/tag/v${v} in your browser.\n`;
+        // A proxy's own Bad Gateway or Gateway Timeout comes inside the tunnel when it inspects HTTPS.
+        const gateway = status === 502 || status === 504;
+        const who = gateway ? "ember-mirror.test, or the proxy if it inspects HTTPS," : "ember-mirror.test";
+        const first = `ember-copilot: The download of Ember ${v} from the mirror at ${base} through the proxy at 127.0.0.1:${proxy.port} failed: ${who} answered ${status} ${texts[status]}.`;
+        const browser = `or download ${asset} from https://github.com/${REPO}/releases/tag/v${v} in your browser.`;
         expect(run.err(), String(status)).toBe(status === 403
-          ? `${first} Check HTTPS_PROXY, which names that proxy, or ask whoever runs it to let this computer reach ember-mirror.test. Then run 'ember' again, ${browser}`
-          : `${first} Run 'ember' again later, ${browser}`);
+          ? `${first} Check HTTPS_PROXY, which names that proxy, or ask whoever runs it to let this computer reach ember-mirror.test. Then run 'ember' again, ${browser}\n`
+          : gateway ? `${first} Run 'ember' again later, ${browser} If it keeps happening, ask whoever runs the proxy whether it can reach ember-mirror.test.\n`
+          : `${first} Run 'ember' again later, ${browser}\n`);
         expect(run.err(), String(status)).not.toContain("the proxy couldn't");
         expect(fs.readdirSync(cache), String(status)).toEqual([]);
       }
       // The proxy itself refusing the tunnel is a block: ask for the host to be allowed.
       const refused = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`, EMBER_NPM_DOWNLOAD_BASE: "https://blocked.test", EMBER_NPM_CACHE: tempDir(), EMBER_NPM_QUIET: "1", ...noNpmrc } }).then(() => null, (e: Error) => e);
       expect(refused?.message).toBe(`Ember couldn't reach the mirror at https://blocked.test through the proxy at 127.0.0.1:${proxy.port}: the proxy refused to connect to it (403). Check HTTPS_PROXY, which names that proxy, or ask whoever runs it to let this computer reach blocked.test. Then run 'ember' again, or download Ember-9.9.9-x86_64.AppImage from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`);
+      // The proxy answering the tunnel itself with Bad Gateway couldn't reach the host: it refused nothing.
+      const unreached = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`, EMBER_NPM_DOWNLOAD_BASE: "https://unreached.test", EMBER_NPM_CACHE: tempDir(), EMBER_NPM_QUIET: "1", ...noNpmrc } }).then(() => null, (e: Error) => e);
+      expect(unreached?.message).toBe(`Ember couldn't reach the mirror at https://unreached.test through the proxy at 127.0.0.1:${proxy.port}: the proxy couldn't get an answer from unreached.test (502). Check HTTPS_PROXY, which names that proxy, or ask whoever runs it to let this computer reach unreached.test. Then run 'ember' again, or download Ember-9.9.9-x86_64.AppImage from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`);
     } finally {
       await proxy.close();
       mirror.closeAllConnections();

@@ -79,7 +79,9 @@ When the download can't be reached, or a proxy or server answers with an error, 
 (for example "Ember couldn't reach GitHub Releases through the proxy at proxy.example.com:8080: the proxy asked for a
 user name and password (407).") and what to do: fix the proxy setting, ask for the host it names to be allowed when a
 proxy blocks it (after GitHub's redirect, that is its storage host), run `ember` again later when the server itself
-fails (an error answer inside an HTTPS proxy's tunnel is the server's, not the proxy's), download the release file
+fails (an error answer inside an HTTPS proxy's tunnel is the server's, not the proxy's, except that a proxy that
+inspects HTTPS sends its own "Bad Gateway" or "Gateway Timeout" there too, so for those two it names both and says to
+ask whoever runs the proxy if it keeps happening), download the release file
 from the Releases page in your browser, or point `EMBER_NPM_DOWNLOAD_BASE` at your organisation's mirror. It gives up
 on a connection that is silent for 30 seconds. If the cache folder's disk or your quota is full, or fills up as Ember
 is downloaded or unpacked, it says there isn't room and where (and how big the download is, once it knows): free some

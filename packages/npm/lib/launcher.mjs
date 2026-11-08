@@ -355,12 +355,19 @@ function cantReach(err, o) {
   const cert = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|ERR_TLS/.test(code);
   const answered = code === "EMBER_HTTP";
   const status = answered ? `${err.status}${err.statusText ? ` ${err.statusText}` : ""}` : "";
-  // A proxy's Bad Gateway and Gateway Timeout are its own when it forwards a plain http request: it couldn't get to
-  // that host. Inside an https tunnel it only passes bytes, so the answer is the host's (install-docs-v4-3).
-  const gateway = answered && o.proxy && !err.tunnelled && (err.status === 502 || err.status === 504);
+  // A proxy's Bad Gateway and Gateway Timeout are its own when it forwards a plain http request, or answers a CONNECT:
+  // it couldn't get to that host. Inside an https tunnel it only passes bytes, so the answer is the host's
+  // (install-docs-v4-3), unless the proxy inspects HTTPS: then its own comes inside the tunnel too, and the launcher
+  // can't tell the two apart, so a tunnelled 502 or 504 names both (install-docs-r4-1).
+  const gatewayCode = err?.status === 502 || err?.status === 504;
+  const gateway = answered && o.proxy && !err.tunnelled && gatewayCode;
+  const inspected = answered && o.proxy && err.tunnelled && gatewayCode;
   const why = code === "EMBER_PROXY_REFUSED"
-    ? err.status === 407 ? "the proxy asked for a user name and password (407)" : `the proxy refused to connect to it (${err.status})`
+    ? err.status === 407 ? "the proxy asked for a user name and password (407)"
+    : gatewayCode ? `the proxy couldn't get an answer from ${err.host} (${err.status})`
+    : `the proxy refused to connect to it (${err.status})`
     : gateway ? `the proxy couldn't get an answer from ${err.host} (${status})`
+    : inspected ? `${err.host}, or the proxy if it inspects HTTPS, answered ${status}`
     : answered ? `${err.host} answered ${status}`
     : cert ? `the certificate it showed isn't one this computer trusts (${code})`
     : WHY[code] ? `${WHY[code]} (${code})`
@@ -384,8 +391,10 @@ function cantReach(err, o) {
   // A server's own failure (5xx) is its to mend: run again later.
   const later = answered && !gateway && err.status >= 500 ? " later" : "";
   const again = `un '${o.name}' again${later}, or download ${o.asset} from https://github.com/${REPO}/releases/tag/v${o.version} in your browser${mirror}.`;
+  // Running again later can't help while a proxy that inspects HTTPS can't reach the host.
+  const keeps = inspected ? ` If it keeps happening, ask whoever runs the proxy whether it can reach ${err.host}.` : "";
   // "Then" only after a step to take first.
-  return next ? `${first} ${next} Then r${again}` : `${first} R${again}`;
+  return next ? `${first} ${next} Then r${again}${keeps}` : `${first} R${again}${keeps}`;
 }
 
 /**
