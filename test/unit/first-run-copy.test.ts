@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
-import { tagline } from "../../app/renderer/home/copy";
+import { retryMessage, tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
-import { explainSignInError, explainStartError, START_TIMEOUT_DETAIL } from "../../app/main/agent/host";
+import { explainSignInError, explainStartError, runtimeWords, START_TIMEOUT_DETAIL } from "../../app/main/agent/host";
+import { PROVIDER_BAD_REQUEST } from "../../app/main/provider-ipc";
 import { cliTimedOutMessage } from "../../app/main/agent/github-app";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -236,6 +237,33 @@ describe("first run says main's connection words as mine, on every visit (first-
     expect(inMyVoice("Your organisation doesn't allow Ember to connect to build-01.")).toBe("Your organisation doesn't allow Ember to connect to build-01.");
     // Said once: a line already in my voice stays as it is.
     for (const s of ["I can't reach GitHub right now. I'll try again when the network is back.", "Connected to your own provider (127.0.0.1:11434)."]) expect(inMyVoice(s)).toBe(s);
+  });
+  it("says what main's sentence calls Ember's as mine once it says Ember as I: my saved sign-in, my files, what I know (first-run-v5-1)", () => {
+    // main's own calls: the sign-in it used (host.ts passes its source, and the variable's name, every time).
+    const refused = (source: string, sourceName?: string) => inMyVoice(explainStartError(new Error("not authenticated"), { source, sourceName }));
+    expect(refused("stored")).toBe("Copilot didn't accept the GitHub sign-in I found (my saved sign-in). It may have expired, or this account may not have Copilot. Sign in again.");
+    expect(refused("environment")).toBe("Copilot didn't accept the GitHub sign-in I found (a token from the environment). It may have expired, or this account may not have Copilot. Sign in again.");
+    // The environment Ember runs in is named as the app's, as "set HTTPS_PROXY for Ember" is.
+    expect(refused("environment", "COPILOT_GITHUB_TOKEN")).toBe("Copilot didn't accept the GitHub token in COPILOT_GITHUB_TOKEN (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove COPILOT_GITHUB_TOKEN, then restart me; or run “gh auth login” in a terminal and press Check again.");
+    expect(inMyVoice(retryMessage({ found: true, source: "stored" }))).toBe("Found my saved sign-in; connecting…");
+    // A file error that names no file.
+    expect(inMyVoice(explainStartError(new Error("EACCES: permission denied, mkdir")))).toBe("I'm not allowed to use one of my files. Check that its folder belongs to you, then press Check again.");
+    expect(inMyVoice(explainStartError(new Error("ENOENT: no such file or directory")))).toBe("I couldn't find one of my files. Press Check again; if it keeps happening, restart me.");
+    expect(inMyVoice(explainStartError(new Error("ENOSPC: no space left on device, write")))).toBe("I couldn't save one of my files: the disk (or your storage quota) is full. Free some space, then press Check again.");
+    expect(inMyVoice(explainStartError(new Error("EBUSY: resource busy or locked")))).toBe("One of my files is in use by another program. Close it, then press Check again.");
+    expect(inMyVoice(explainStartError(new Error("EACCES: permission denied, open '/home/u/.config/ember/a.json'")))).toBe("I'm not allowed to use /home/u/.config/ember/a.json. Check that its folder belongs to you, then press Check again.");
+    expect(providerCheckLine({ ok: false, why: PROVIDER_BAD_REQUEST })).toBe("I couldn't do that: the request wasn't one I know.");
+  });
+  it("says my model connection for the own provider's and the organisation's runtime words, under the first-person lead (first-run-v5-2)", () => {
+    const own = runtimeWords("user");
+    const line = (detail: string) => providerInUseLine({ host: "localhost:11434", phase: "error", detail }).line;
+    expect(line(own.stopped)).toBe("My model connection stopped unexpectedly. Reconnecting…");
+    expect(line(own.keepsStopping)).toBe("My model connection keeps stopping. Press Check again to retry, or restart me.");
+    expect(line(own.noWatchersWhy)).toBe("My model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.");
+    expect(inMyVoice(runtimeWords(true).keepsStopping)).toBe("My model connection keeps stopping. Press Check again to retry, or restart me.");
+    expect(inMyVoice(own.cutOff)).toBe("My model connection stopped unexpectedly; the task didn't finish.");
+    // Said once: welcome.ts says the status' detail as mine, and the line says it again.
+    expect(line(inMyVoice(own.keepsStopping))).toBe(line(own.keepsStopping));
   });
 });
 

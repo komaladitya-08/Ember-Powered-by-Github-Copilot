@@ -174,14 +174,19 @@ const AS_ME_WITHIN: readonly (readonly [RegExp, string])[] = [
   [/(^|[.!?:;]\s+)It will try again\b/g, "$1I'll try again"], [/\bsent Ember to\b/g, "sent me to"], [/\bsetting Ember up\b/g, "setting me up"],
   [/\brestart Ember\b/g, "restart me"], [/\bwhich model( service)? Ember uses\b/g, "which model$1 I use"], [/\bwhile Ember connected\b/g, "while I connected"],
   [/\bthe GitHub sign-in Ember found\b/g, "the GitHub sign-in I found"], [/\b(I couldn't save [^.:]+: )its data folder\b/g, "$1my data folder"],
+  // What a clause said as mine names as Ember's comes along (first-run-v5-1, v5-2): the bubble's "My model connection".
+  [/(^|[.!?:;]\s+)Ember's model connection\b/g, "$1My model connection"], [/\bEmber's saved sign-in\b/g, "my saved sign-in"],
+  [/(^|[.!?:;]\s+)One of Ember's files\b/g, "$1One of my files"], [/(\bI\b[^.!?:;]* )one of its files\b/g, "$1one of my files"],
+  [/(\bI\b[^.!?]* one )it knows\b/g, "$1I know"],
 ];
 
 /**
  * Main's connection and check sentences (provider.ts's, the agent's status), written for Models & connections, which
  * speaks of Ember, as first run says them: in Ember's own voice, as every other line of first run is ("Ember can't
- * reach…" → "I can't reach…", "and Ember will connect" → "and I'll connect"), on every visit (first-run-r4-2). Ember
- * named as the app, its settings or its environment ("in Ember's settings", "for Ember") stays. Said once: a line
- * already in my voice is left as it is.
+ * reach…" → "I can't reach…", "and Ember will connect" → "and I'll connect"), on every visit (first-run-r4-2), with
+ * what it calls Ember's or its as mine ("my saved sign-in", "one of my files": first-run-v5-1). Ember named as the
+ * app, its settings or its environment ("in Ember's settings", "for Ember") stays. Said once: a line already in my
+ * voice is left as it is.
  */
 export function inMyVoice(line: string): string {
   return [...AS_ME, ...AS_ME_WITHIN].reduce((s, [re, to]) => s.replace(re, to), line);
