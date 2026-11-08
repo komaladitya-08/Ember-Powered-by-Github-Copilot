@@ -245,7 +245,7 @@ describe("first run's check of an edit to the provider in use (first-run-r2-1)",
     expect(h.requests).toEqual([{ url: "https://b.example/v1/models", headers: { authorization: `Bearer ${NEW}` } }]);
     h.http.resolve(FAIL);
     await done;
-    expect((h.ctx.providerCheck as { phase: string; line: string })).toEqual({ phase: "failed", line: "b.example didn't accept the API key. Check it, or replace it. Nothing has changed: I'm still using a.example." });
+    expect((h.ctx.providerCheck as { phase: string; line: string })).toEqual({ phase: "failed", line: "b.example didn't accept the API key. Check it, or replace it. Nothing has changed: I'm still using a.example.", kept: "a.example" });
     await unchanged(h);
   });
 

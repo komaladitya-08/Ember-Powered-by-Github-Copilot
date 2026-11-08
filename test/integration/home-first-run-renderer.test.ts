@@ -682,7 +682,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => calls(b)).toContain("test-draft:api2.example.com+key");
     expect(await changed(b)).toEqual([]);
     await settle(b, "test", { ok: false, why: "Ember can't reach api2.example.com. Check the address and the network.", cause: "unreachable" });
-    await expect.poll(() => b.locator("#w-p-result").innerText()).toBe("Ember can't reach api2.example.com. Check the address and the network. Nothing has changed: I'm still using api.example.com.");
+    await expect.poll(() => b.locator("#w-p-result").innerText()).toBe("I can't reach api2.example.com. Check the address and the network. Nothing has changed: I'm still using api.example.com.");
     // The failure names the address, so the address takes the focus.
     expect(await focusedId(b)).toBe("w-p-url");
     await b.waitForTimeout(100);
@@ -784,6 +784,40 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("Paste your key");
     await next(p).click();
     expect(await p.locator("#w-p-result").innerText()).toBe("Paste the API key first.");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(ah) after a failed edit of my provider in use, “Keep using <host>” puts back the details in use and Continue, and changes nothing (first-run-c3-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const p = await open({ provider, providerState: { inForce: true, host: "api.example.com", agreed: true, keySaved: true }, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    const keep = p.locator("#w-p-keep");
+    expect(await keep.isHidden()).toBe(true);
+    await p.fill("#w-p-url", "https://api2.example.com/v1");
+    await p.fill("#w-p-key", "sk-new-not-real");
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("test-draft:api2.example.com+key");
+    await settle(p, "test", { ok: false, why: "Ember can't reach api2.example.com. Check the address and the network.", cause: "unreachable" });
+    // One voice, mine, and a way on with the details that work.
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("I can't reach api2.example.com. Check the address and the network. Nothing has changed: I'm still using api.example.com.");
+    expect(await keep.innerText()).toBe("Keep using api.example.com");
+    expect(await next(p).innerText()).toBe("Check again");
+    await keep.click();
+    expect(await p.inputValue("#w-p-url")).toBe("https://api.example.com/v1");
+    expect(await p.inputValue("#w-p-key")).toBe("");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Using your own provider (api.example.com).");
+    expect(await next(p).innerText()).toBe("Continue");
+    expect(await next(p).getAttribute("aria-disabled")).toBeNull();
+    // The button went, so the focus is on the way on, not on the page.
+    expect(await focusedId(p)).toBe("w-next");
+    expect(await keep.isHidden()).toBe(true);
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    expect((await calls(p)).filter(c => c.startsWith("save:") || c === "saveKey" || c.startsWith("agree:") || c === "test")).toEqual([]);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 

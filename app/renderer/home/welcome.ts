@@ -21,7 +21,7 @@ import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { noteProviderChoice, onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeptLine, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
@@ -101,7 +101,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let checkRun = 0;
   /** Setup fixes under way: their buttons stay disabled however often the rows are drawn again. */
   const fixPending = new Set<string>();
-  let providerCheck: { phase: "idle" | "checking" | "ok" | "failed" | "invalid"; line: string } = { phase: "idle", line: "" };
+  /** `kept`: the host still in use after a check of an edit to it failed (first-run-r2-1). */
+  let providerCheck: { phase: "idle" | "checking" | "ok" | "failed" | "invalid"; line: string; kept?: string } = { phase: "idle", line: "" };
   /**
    * The provider step's visit began with the user's own provider already in use (first-run-c1-2): it is shown as in use,
    * Back leaves it on, and only "Use GitHub Copilot instead" switches it off. `edited`: a field changed in this visit.
@@ -495,11 +496,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (r.value.epoch !== checkEpoch) return;
       const { result, kept } = r.value;
       const line = providerCheckLine(result);
-      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : providerFailField(result));
+      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : providerFailField(result), result.ok ? undefined : kept);
     },
   );
-  function finishCheck(ok: boolean, line: string, field: "address" | "key" = "key"): void {
-    providerCheck = { phase: ok ? "ok" : "failed", line };
+  function finishCheck(ok: boolean, line: string, field: "address" | "key" = "key", kept?: string): void {
+    providerCheck = { phase: ok ? "ok" : "failed", line, ...(kept ? { kept } : {}) };
     // Not verified: nothing stays pointed at a service that didn't answer. One in use as the step opened is left as it
     // was: its edit was checked before it replaced anything (first-run-r2-1); one this check turned on goes (first-run-r3-1).
     if (!ok && checkSaves) void turnOwnOff();
@@ -547,6 +548,17 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     render();
     void checkProvider();
   }
+  $("w-p-keep").addEventListener("click", () => {
+    // The details in use, as they were: the fields show them again without the typed key, and Continue goes on with
+    // them; the button goes, so the focus goes to Continue (first-run-c3-1).
+    checkEpoch++;
+    edited = false;
+    providerCheck = { phase: "idle", line: "" };
+    prefilled.done = false;
+    provField("w-p-key").value = "";
+    render();
+    next.focus();
+  });
   $("provider-off-retry").addEventListener("click", () => {
     // The user's own click: not held back by an earlier choice. The notice stays until the write lands.
     void turnOwnOff(true);
@@ -569,6 +581,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const consent = host ? providerConsentText(host, visitInUse ? "in-use" : "first-run") : "Once you enter the address, I'll say here exactly what is sent to it.";
     if ($("w-p-consent").textContent !== consent) $("w-p-consent").textContent = consent;
     const result = $("w-p-result");
+    // A failed edit of the provider in use: the way on with the details that still work (first-run-c3-1).
+    const keep = providerCheck.phase === "failed" && visitInUse && settings?.provider.on ? providerCheck.kept ?? null : null;
+    $("w-p-keep-row").hidden = !keep;
+    if (keep && $("w-p-keep").textContent !== providerKeepLabel(keep)) $("w-p-keep").textContent = providerKeepLabel(keep);
     // In use as the step opened, and nothing changed since: the connection's own state, and Continue goes on without
     // agreeing or checking again (first-run-c1-2).
     const using = visitInUse && !edited && providerCheck.phase === "idle" && settings?.provider.on ? inUseHost() : null;
