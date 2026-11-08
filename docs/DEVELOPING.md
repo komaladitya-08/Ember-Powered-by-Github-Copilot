@@ -679,9 +679,11 @@ speech capability where that runtime is supported.
 complete Apache-2.0 archive includes the matching style tables and phonemiser data. It uses one CPU thread and the
 measured `NATURAL_MAX_RTF` <= 0.5 gate, timed afresh at every start (an optional voice's slow verdict is kept for a
 week per model/provider/thread configuration; corrupt, future and expired verdicts are ignored). A failed gate, a reply
-Kitten couldn't make or its process ending uses the local system voice for the rest of the session, and Settings ›
-Voice says which ("too slow just now", "stopped working", "couldn't load") with **Try again**, which loads and times
-Kitten again at once.
+Kitten couldn't make or its process ending uses the local system voice, and Settings › Voice says which ("too slow
+just now", "stopped working", "couldn't load") with **Try again**, which loads and times Kitten again at once. After a
+failed gate or a stop once it had spoken (a busy moment may pass), Kitten is also timed again by itself, once a
+session, at the first request 5 minutes or more later (`KITTEN_RECHECK_MS`, `voice.kitten_recheck`); one that
+couldn't load at all waits for **Try again**.
 
 Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) remains an explicit optional download in Voice settings. Saving
 a choice while off does not enable speech or start that download. Enabling or changing the optional model names the

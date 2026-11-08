@@ -44,6 +44,11 @@ const VOICE_START_MS = 8000;
 const SAMPLE_WAIT_MS = 12_000;
 /** One synthesis failure retires this engine, keeping recovery and subsequent streamed sentences in order. */
 const VOICE_FAILURES = 1;
+/**
+ * Kitten too slow at a busy moment, or stopped after it had spoken, is timed again by itself once a session, at the
+ * first request this long after (ms): the system voice no longer stays for the whole session (voice-speaking-6).
+ */
+const KITTEN_RECHECK_MS = 5 * 60_000;
 /** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks; ms). */
 const SPEAKING_MAX_MS = 60_000;
 /**
@@ -260,6 +265,9 @@ export class VoiceService {
   private ttsFailures = 0;
   /** Ember's own voice failed after it had loaded (a reply it couldn't make, or its process ended): Home says it stopped. */
   private ttsStopped = false;
+  /** When Kitten may be timed again by itself (0: not), and whether it was this session (KITTEN_RECHECK_MS). */
+  private kittenRecheckAt = 0;
+  private kittenRechecked = false;
   /** How fast replies are said (voice-speaking-7): sent with each reply only when it isn't 1. */
   private rate = 1;
   /** Replies are numbered; those up to `ttsHushed` were hushed (their late audio is dropped). */
@@ -978,6 +986,7 @@ export class VoiceService {
     this.naturalOff = this.naturalWanted && this.o.naturalSupported === false;
     this.ttsFailures = 0;
     this.ttsStopped = false;
+    this.kittenRecheckAt = 0;
     this.checkNatural();
   }
 
@@ -1071,6 +1080,13 @@ export class VoiceService {
    * memory. After a conversation it is released (VOICE_IDLE_MS), and the next wake warms it again.
    */
   warmVoice(): void {
+    if (this.kittenRecheckAt && Date.now() >= this.kittenRecheckAt && !this.locked && this.selectedVoice === "kitten" && !this.naturalFetch) {
+      this.kittenRecheckAt = 0;
+      this.kittenRechecked = true;
+      this.o.log.info("voice.kitten_recheck");
+      this.ttsFailures = 0;
+      this.ttsStopped = false;
+    }
     if (this.neuralVoice && !this.locked) {
       if (!this.tts && !this.naturalFetch && (!this.naturalWanted || !this.naturalOff)) this.setNatural({ state: "checking" });
       this.voiceProcess(); this.idleVoice();
@@ -1288,6 +1304,8 @@ export class VoiceService {
   private voiceFailed(reason: "slow" | "load" | "native" = "load", stopped = false): void {
     this.ttsFailures = VOICE_FAILURES;
     this.ttsStopped = stopped;
+    // A busy moment or a crash after it spoke may pass: Kitten is timed again later, once (KITTEN_RECHECK_MS).
+    if (!this.kittenRechecked && this.selectedVoice === "kitten" && (reason === "slow" || (reason === "load" && stopped))) this.kittenRecheckAt = Date.now() + KITTEN_RECHECK_MS;
     this.switchVoice = false;
     this.currentVoice = "system";
     this.setNatural({ state: reason === "native" ? "needs-native" : reason === "slow" ? "too-slow" : "wont-load" });

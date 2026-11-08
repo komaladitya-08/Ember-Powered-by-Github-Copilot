@@ -1869,6 +1869,42 @@ describe("speech models", () => {
       expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
     });
 
+    it("times Kitten again by itself, once, at a request a while after a busy moment made it too slow (voice-speaking-6)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true, native: true });
+      v.speak("A reply.");
+      electron.procs[0].emit("message", { type: "error", message: "too slow here: 0.81 of real time", reason: "slow" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(v.naturalStatus).toEqual({ state: "too-slow", model: "kitten", voice: "system" });
+      // Straight after, the system voice goes on.
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(2);
+      expect(v.naturalStatus).toEqual({ state: "checking", model: "kitten", voice: "system" });
+      electron.procs[1].emit("message", { type: "ready", loadMs: 900, rate: 22_050, voice: kitten() });
+      expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+      v.speak("Back in Kitten.");
+      expect(posted(electron.procs[1], "say")).toEqual([expect.objectContaining({ text: "Back in Kitten." })]);
+      // Too slow again: once a session, then Try again in Settings is the way.
+      electron.procs[1].emit("message", { type: "error", message: "too slow here: 0.9 of real time", reason: "slow" });
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(2);
+      expect(v.naturalStatus).toEqual({ state: "too-slow", model: "kitten", voice: "system" });
+    });
+
+    it("never times Kitten again by itself when it couldn't load at all (voice-speaking-6)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true, native: true });
+      v.speak("A reply.");
+      electron.procs[0].emit("exit", 1);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(1);
+    });
+
     it("logs which voice speaks, on which build, how fast", async () => {
       const { log: l, lines } = recording();
       const { v } = service(true, { neuralVoice: true, native: true, log: l });
