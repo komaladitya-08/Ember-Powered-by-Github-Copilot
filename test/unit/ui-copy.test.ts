@@ -1194,13 +1194,14 @@ describe("What Ember did for a command the review cleared (safety-privacy-v1)", 
 });
 
 describe("Home after the last run ended unexpectedly (rp-5)", () => {
-  it("says Ember closed unexpectedly and where its log is, in a status note shown only then", async () => {
+  it("says Ember closed unexpectedly and where its log is, in a status note that has words only then (accessibility-visual-c1-1)", async () => {
     const { closedUnexpectedlyText } = await import("../../app/renderer/home/copy");
     expect(closedUnexpectedlyText("/home/ada/.config/ember/logs/ember.log")).toBe("Ember closed unexpectedly last time. Its log shows what it was doing until then: /home/ada/.config/ember/logs/ember.log");
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
-    expect(page).toContain(`<p id="run-notice" class="managed" role="status" hidden></p>`);
+    // On the page while empty, so a screen reader announces it as it fills.
+    expect(page).toContain(`<p id="run-notice" class="managed" role="status"></p>`);
     const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
-    expect(main).toContain(`runNotice.hidden = !status.unexpectedExit;`);
+    expect(main).toContain(`$("run-notice").textContent = status.unexpectedExit ? closedUnexpectedlyText(status.logFile) : "";`);
   });
 });
 

@@ -776,4 +776,53 @@ describe("Home's groups and disclosures (2026-11-07 product audit)", () => {
     // Routines' footnote is under the routines switch it explains, before the lists.
     expect(page.indexOf('id="routines-hint"')).toBeLessThan(page.indexOf('id="routines-list"'));
   });
+
+  it("keeps every status line on the page while it says nothing, so a screen reader announces what fills it (accessibility-visual-c1-1)", () => {
+    // A polite live region hidden while empty enters the accessibility tree with its words already in, and NVDA and
+    // Orca with Chromium say nothing. An alert is announced as it shows, so role="alert" may be hidden.
+    const live = (attrs: string) => /\brole="status"/.test(attrs) || (/\baria-live="/.test(attrs) && !/\brole="alert"/.test(attrs));
+    const ids = new Set<string>(), classes = new Set<string>(), hidden: string[] = [];
+    for (const m of page.matchAll(/<[a-z][a-z0-9-]*\b([^>]*)>/g)) {
+      if (!live(m[1])) continue;
+      const id = /\bid="([^"]*)"/.exec(m[1])?.[1];
+      if (id) ids.add(id);
+      for (const c of cls(m[1])) classes.add(c);
+      if (/\shidden(?=[\s>=]|$)/.test(m[1])) hidden.push(id ?? m[0]);
+    }
+    expect(hidden).toEqual([]);
+    // Nor does the script hide one: it clears its words instead.
+    const scripts = ["main", "welcome", "extensions", "provider", "tasks"].map(f => read(`app/renderer/home/${f}.ts`)).join("\n");
+    const hides: string[] = [];
+    for (const id of ids) {
+      if (new RegExp(`\\$\\("${id}"\\)\\.hidden =`).test(scripts)) hides.push(id);
+      for (const v of scripts.matchAll(new RegExp(`const (\\w+) = \\$\\("${id}"\\);`, "g"))) {
+        const body = scripts.slice(v.index, scripts.indexOf("\n}", v.index));
+        if (new RegExp(`\\b${v[1]}\\.hidden =`).test(body)) hides.push(id);
+      }
+    }
+    expect(hides).toEqual([]);
+    // The lines the script makes, too (About you's, an Undo's, a teaching note's, a task control's).
+    for (const f of ["about-you", "learned-undo", "personal", "tasks"]) {
+      const ts = read(`app/renderer/home/${f}.ts`);
+      for (const v of ts.matchAll(/const (\w+) = [^\n]*className: "([^"]*)"[^\n]*\n(?:[^\n]*\n){0,3}?\s*\1\.setAttribute\("role", "status"\)/g)) for (const c of v[2].split(/\s+/)) classes.add(c);
+      for (const v of ts.matchAll(/const (\w+) = el\("p", "([^"]*)"\);\n(?:[^\n]*\n){0,3}?\s*\1\.setAttribute\("role", "status"\)/g)) {
+        for (const c of v[2].split(/\s+/)) classes.add(c);
+        expect(ts, f).not.toMatch(new RegExp(`\\b${v[1]}\\.hidden = `));
+      }
+    }
+    for (const c of ["hint", "managed", "error", "row-note"]) classes.delete(c);
+    expect([...classes]).toEqual(expect.arrayContaining(["about-msg", "learned-undo-note", "never-look-msg", "byok-msg", "w-status"]));
+    // No rule takes one off the page while it is empty: one rule keeps it out of the flow and out of sight instead.
+    const off: string[] = [];
+    for (const r of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/display: none/.test(r[2])) continue;
+      for (const s of selectors(r[1].trim())) {
+        if (!s.includes(":empty")) continue;
+        const names = [...s.matchAll(/([.#])([\w-]+)/g)].filter(([, k, n]) => (k === "#" ? ids : classes).has(n));
+        if (names.length) off.push(s);
+      }
+    }
+    expect(off).toEqual([]);
+    expect(css).toContain(':is([role="status"], [aria-live]):empty { position: absolute; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; outline: 0; box-shadow: none; }');
+  });
 });

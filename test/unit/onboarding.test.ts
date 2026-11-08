@@ -547,7 +547,8 @@ describe("the settings window when no voice speaks", () => {
     const voice = PAGE.slice(at, PAGE.indexOf("</section>", at));
     expect(voice.indexOf("id=\"speak-note\"")).toBeGreaterThan(voice.indexOf("id=\"speak\""));
     expect(voice.indexOf("id=\"speak\"")).toBeGreaterThan(0);
-    expect(tagOf("speak-note")).toEqual({ tag: "p", attrs: { class: "hint", id: "speak-note", role: "status", hidden: "" } });
+    // A status line on the page while empty, so its words are announced as they come (accessibility-visual-c1-1).
+    expect(tagOf("speak-note")).toEqual({ tag: "p", attrs: { class: "hint", id: "speak-note", role: "status" } });
   });
 });
 

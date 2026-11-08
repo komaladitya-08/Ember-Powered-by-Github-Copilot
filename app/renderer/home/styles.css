@@ -120,6 +120,10 @@ h2[tabindex="-1"]:focus { outline: none; }
    out of the flow, so what it says next is still announced. */
 section > p.hint:empty:not([role]):not([aria-live]) { display: none; }
 section > p.hint:empty:is([role], [aria-live]) { position: absolute; }
+/* Every status line in Home is on the page while it says nothing, as a box of nothing out of the flow: hidden or
+   display: none, it would join the accessibility tree with its words already in, which NVDA and Orca with Chromium
+   don't announce (accessibility-visual-c1-1). An alert is announced as it shows, so it may hide. */
+:is([role="status"], [aria-live]):empty { position: absolute; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; outline: 0; box-shadow: none; }
 .group > progress { min-height: 0; margin: 14px 0; padding: 0; border-top: 0; }
 .group > .agent-line, .group > .presence-line { display: flex; align-items: center; }
 .group > .consent { margin: 12px 0; }
@@ -317,12 +321,9 @@ progress[hidden] { display: none; }
 .fold.byok-advanced > summary { margin-left: 0; color: var(--fg); }
 .fold.byok-advanced[open] > summary { margin-bottom: 0; }
 .byok-msg { margin: 6px 0 0; }
-.byok-msg:empty { display: none; }
 .byok-msg.error { color: var(--red-text); }
 #consent-error { color: var(--red-text); margin: 8px 0 0; }
-.never-look-msg:empty { display: none; }
 .presence-line { margin: 0; color: var(--fg); }
-#presence-text:empty { display: none; }
 /* A switch with its note under it, as one row of its group (Apps & privacy, UI audit #11). */
 .group > .noted-row { display: grid; gap: 4px; }
 .row-note { margin: 0; padding-right: 64px; color: var(--muted); font: var(--type-footnote); text-wrap: pretty; }
@@ -395,7 +396,6 @@ progress[hidden] { display: none; }
 .about-off .row-note { margin: 0; min-width: 0; padding-right: 0; }
 .about-off[hidden] { display: none; }
 .about-off .btn { flex: none; white-space: nowrap; }
-.about-msg:empty { display: none; }
 /* After Forget, focus waits on what went (never the next Forget: memory-7), ringed as a control is, with Undo beside it. */
 .memory-forgotten { align-items: center; flex-wrap: wrap; }
 .memory-forgotten > .hint { margin: 0; border-radius: var(--r-xs); }
@@ -712,7 +712,6 @@ html { scroll-padding-top: 16px; }
 .ext-browse-head h3.sub:focus { outline: none; }
 .ext-browse-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 #ext-browse-status, #extensions-msg { margin: 0 4px; }
-#ext-browse-status:empty, #extensions-msg:empty { display: none; }
 .ext-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); align-items: start; gap: 10px; }
 /* The card asking for consent takes the whole row, so its promises read at a comfortable measure. */
 .ext-card:has(> .ext-consent) { grid-column: 1 / -1; }
@@ -925,14 +924,12 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice, #provider-off)
 .w-more .terms, .w-detail { margin: 0; padding: 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .w-more h3 + .terms { margin-top: -4px; }
 .w-note { margin: 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
-.w-note:empty { display: none; }
 /* Focused after Not now (first-run-c1-1): the ring gets room round the words without moving them. */
-.w-note[tabindex="-1"] { margin: -2px -6px; padding: 2px 6px; border-radius: var(--r-xs); }
+.w-note[tabindex="-1"]:not(:empty) { margin: -2px -6px; padding: 2px 6px; border-radius: var(--r-xs); }
 .w-note[tabindex="-1"]:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 /* A status line with its symbol (never colour alone): connected, all good, or what needs doing. */
 .w-status { margin: 0; display: flex; align-items: flex-start; gap: 8px; color: var(--fg); font: var(--type-headline); text-wrap: pretty; }
-.w-status:empty { display: none; }
 .w-status.ok::before, .w-status.fail::before, .w-status.warn::before, .w-status.error::before {
   content: "" / ""; flex: none; width: 18px; height: 18px; margin-top: 1px; -webkit-mask: var(--sym) center / contain no-repeat; background: var(--sym-tint);
 }
@@ -1059,7 +1056,6 @@ html.calm .w-card > * { transition-delay: 0s; }
 .search-result { display: block; width: 100%; min-height: calc(36px * var(--text-scale)); border: 0; border-radius: var(--r-xs); padding: 8px; color: var(--fg); background: transparent; font: var(--type-callout); text-align: left; overflow-wrap: anywhere; cursor: pointer; }
 .search-result:hover { background: var(--surface-2); }
 .search-result:focus-visible, .memory-filters input:focus-visible, .memory-filters select:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.learned-undo-note:empty { display: none; }
 .memory-correction { gap: 8px; padding-block: 12px; }
 .memory-correction > * { min-height: 0; padding: 0; border-top: 0; }
 .memory-correction textarea { width: 100%; resize: vertical; padding: 8px; border: 1px solid var(--control-edge); border-radius: var(--r-sm); background: var(--surface-2); color: var(--fg); font: var(--type-body); }

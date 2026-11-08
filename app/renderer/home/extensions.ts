@@ -400,7 +400,6 @@ let drawn = "";
 function draw(): void {
   if (!state) return;
   const blocked = extensionsBlocked({ available: state.available, allowed: state.allowed, lockdown });
-  $("extensions-blocked").hidden = !blocked;
   $("extensions-blocked").textContent = blocked ?? "";
   // Unavailable: nothing more to show. Turned off: what was added stays listed (so the user sees it is off), read only.
   $("extensions-body").hidden = !state.available;

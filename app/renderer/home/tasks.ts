@@ -110,7 +110,6 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
   status.id = `task-${t.id}-control-status`;
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
-  status.hidden = true;
   const action = (label: string, kind: TaskControlAction, available: boolean) => {
     const button = el("button", "btn quiet small", label);
     button.type = "button";
@@ -129,7 +128,6 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
         if (account !== accountEpoch) return;
         const keepFocus = wasFocused && kind !== "window" && (document.activeElement === document.body || group.contains(document.activeElement));
         const feedback = document.getElementById(status.id) ?? status;
-        feedback.hidden = false;
         const stopped = latest.find(task => task.id === t.id)?.status === "stopped";
         feedback.textContent = accepted ? kind === "stop" ? stopped ? "This task stopped." : "Stopping this task…" : kind === "retry" ? "A new attempt started." : "App window opened." : "This action is no longer available.";
         if (keepFocus) {
@@ -140,7 +138,7 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
         }
       }).catch(() => {
         if (account !== accountEpoch) return;
-        status.hidden = false; status.textContent = "I couldn't update this task. Try again."; button.disabled = !available;
+        status.textContent = "I couldn't update this task. Try again."; button.disabled = !available;
       }).finally(() => { if (focusedAction === focus) focusedAction = null; });
     });
     group.append(button);

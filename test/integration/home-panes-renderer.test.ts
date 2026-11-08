@@ -338,6 +338,58 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person edits its lists (202
   });
 });
 
+describe.skipIf(gate)("Home's status lines, to a screen reader (2026-11-07 product audit)", () => {
+  /** Chromium's accessibility node for `selector`: whether it is in the tree, and its role. */
+  const axNode = async (p: Page, selector: string) => {
+    const cdp = await p.context().newCDPSession(p);
+    await cdp.send("Accessibility.enable");
+    const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
+    const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
+    const { nodes } = await cdp.send("Accessibility.getPartialAXTree", { nodeId, fetchRelatives: false });
+    await cdp.detach();
+    return { ignored: nodes[0]?.ignored ?? true, role: nodes[0]?.role?.value };
+  };
+  /** Every polite live region on the page that is hidden, or off the page, while it says nothing. */
+  const offPage = (p: Page) => p.evaluate(() => [...document.querySelectorAll<HTMLElement>('[role="status"], [aria-live]:not([role="alert"])')]
+    .filter(e => e.hidden || getComputedStyle(e).display === "none").map(e => e.id || e.className));
+
+  it("keeps every status line on each pane in the accessibility tree while it says nothing, and takes no room for it (accessibility-visual-c1-1)", async () => {
+    const page = await open("home", { activity: "fail" });
+    await page.evaluate(t => window.__pane.emit("onTasks", t), [task("1-aaaa", "Write a note", [step(1, "Clicked in Text Editor")])]);
+    await page.locator("#activity-fold > summary").click();
+    await expect.poll(() => page.locator("#activity-problem").isVisible(), { timeout: 8000 }).toBe(true);
+    for (const pane of ["home", "copilot", "memory", "voice", "privacy", "extensions", "access", "checks"]) {
+      await page.locator(`a[href='#${pane}-h']`).first().click();
+      expect(await offPage(page), pane).toEqual([]);
+    }
+    // An empty one is out of sight and out of the flow: a box of nothing.
+    await page.locator("a[href='#voice-h']").first().click();
+    const empty = await page.locator("#voice-hear-status").boundingBox();
+    expect([empty?.width, empty?.height]).toEqual([0, 0]);
+    expect(await axNode(page, "#voice-hear-status")).toEqual({ ignored: false, role: "status" });
+    expect(page.errors).toEqual([]);
+    await page.close();
+  }, 60_000);
+
+  it("has Never look at's line in the accessibility tree before Remove fills it, as focus moves on to the next Remove (accessibility-visual-c1-1)", async () => {
+    const page = await open("privacy");
+    const removeKeePass = page.getByRole("button", { name: "Remove KeePassXC", exact: true });
+    await expect.poll(() => removeKeePass.isVisible()).toBe(true);
+    expect(await page.locator("#never-look-msg").innerText()).toBe("");
+    // Polite live regions are spoken when their words change, not when they appear with words already in them.
+    expect(await axNode(page, "#never-look-msg")).toEqual({ ignored: false, role: "status" });
+    await removeKeePass.click();
+    await page.evaluate(async list => {
+      const st = await (window as unknown as { ember: { getStatus(): Promise<{ settings: Record<string, unknown> }> } }).ember.getStatus();
+      window.__pane.emit("onSettingsChanged", { ...st.settings, privacy: { ...(st.settings.privacy as object), neverLook: list } });
+    }, DEFAULT_SETTINGS.privacy.neverLook.filter(x => x !== "keepassxc"));
+    await expect.poll(() => page.locator("#never-look-msg").innerText()).toBe("Removed KeePassXC. Ember may read its windows now; Restore defaults puts it back.");
+    expect(await page.locator("#never-look-msg").isVisible()).toBe(true);
+    expect(await axNode(page, "#never-look-msg")).toEqual({ ignored: false, role: "status" });
+    await page.close();
+  });
+});
+
 describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product audit)", () => {
   it("shows what Ember reads, sends and keeps, word for word as before it started, and Search finds it (safety-privacy-9)", async () => {
     const page = await open("privacy");

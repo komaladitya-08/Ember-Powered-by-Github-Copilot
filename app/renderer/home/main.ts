@@ -475,9 +475,7 @@ function render(status: Status): void {
   $("about-note").textContent = `Ember ${status.appVersion}`;
   renderSettingsNotice(status.settingsNotice);
   // The last run ended unexpectedly (rp-5): said for this run, with where its log is.
-  const runNotice = $("run-notice");
-  runNotice.hidden = !status.unexpectedExit;
-  runNotice.textContent = status.unexpectedExit ? closedUnexpectedlyText(status.logFile) : "";
+  $("run-notice").textContent = status.unexpectedExit ? closedUnexpectedlyText(status.logFile) : "";
   applySettings(status.settings);
   targetsStatus(status);
   extensionsStatus(status);
@@ -530,9 +528,7 @@ window.addEventListener("focus", () => {
 
 /** A settings file Ember couldn't use as it was (a hand edit): what happened and where the user's copy is. */
 function renderSettingsNotice(notice: string | null): void {
-  const el = $("settings-notice");
-  el.hidden = !notice;
-  el.textContent = notice ?? "";
+  $("settings-notice").textContent = notice ?? "";
 }
 window.ember.onSettingsNotice(renderSettingsNotice);
 
@@ -691,7 +687,6 @@ function drawActivity(): void {
   list.replaceChildren(...items);
   // Read before, then not: the lines stay, said to be old; never read: no "Nothing yet".
   list.hidden = activityFailed && !lines.length;
-  problem.hidden = !activityFailed;
   problem.textContent = activityFailed ? activityProblemText(lines.length > 0) : "";
   $("activity-note").textContent = activityNote(lines, activityMore());
   const back = held ? [...list.querySelectorAll<HTMLElement>("[data-key]")].find(e => e.dataset.key === held) : undefined;
@@ -911,7 +906,6 @@ $("m-worker-effort").addEventListener("change", e => {
 });
 const signInMsg = (text: string, error = false) => {
   const msg = $("sign-in-msg");
-  msg.hidden = !text;
   msg.classList.toggle("error", error);
   msg.textContent = text;
 };
@@ -978,7 +972,6 @@ mountForgetConfirms(window.ember, {
 /** The device code row: "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]". */
 function showCode(userCode: string, uri: string): void {
   const msg = $("sign-in-msg");
-  msg.hidden = false;
   msg.classList.remove("error");
   const code = Object.assign(document.createElement("code"), { textContent: userCode });
   const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
@@ -1524,18 +1517,16 @@ function renderMemory(rows: MemoryRow[]): void {
   // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause).
   if (unavailable && !$("memory-forgotten").hidden) hideForgotten();
   // An empty list says so in its own row, never "0 of 0 memories" above it (memory-13).
-  $("memory-count").hidden = unavailable || !rows.length;
-  $("memory-count").textContent = memoryCountText(page.rows.length, page.total, rows.length);
+  $("memory-count").textContent = unavailable || !rows.length ? "" : memoryCountText(page.rows.length, page.total, rows.length);
   const more = $("memory-more");
   const moreWasFocused = document.activeElement === more;
   more.hidden = page.rows.length >= page.total;
   if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? $("memory-on") : memoryQuery)).focus();
-  const owner = $("memory-owner");
-  owner.hidden = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn());
   // Why memory isn't open, never advice to erase memory that only waits (a model provider, a reconnect: memory-2).
-  owner.textContent = memoryOwnerText(memoryReason, memoryOwner === "locked");
+  const ownerText = memoryOwnerText(memoryReason, memoryOwner === "locked");
+  $("memory-owner").textContent = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn()) ? "" : ownerText;
   // Tell Ember about you can't keep answers then: it says why instead of its questions.
-  aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : owner.textContent);
+  aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : ownerText);
   const all = $("memory-forget-all");
   const wasFocused = document.activeElement === all;
   all.hidden = !rows.length && !memoryOwnerOffersErase(memoryReason, memoryOwner === "locked");
@@ -2248,9 +2239,7 @@ function renderVoice(v: VoiceStatus): void {
   const missing = v.speechMissing === true;
   if (missing !== speechMissing) {
     speechMissing = missing;
-    const note = $("speak-note");
-    note.hidden = !missing;
-    note.textContent = missing ? SPEAK_NO_VOICE : "";
+    $("speak-note").textContent = missing ? SPEAK_NO_VOICE : "";
     // The setup check gains (or loses) its Speaking row.
     window.ember.getStatus().then(s => { if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment); }, () => { /* shown at the next status */ });
   }
@@ -2362,7 +2351,6 @@ function renderNatural(): void {
   naturalUI.status(voice?.natural, voice?.naturalModels ?? []);
   const clearLine = clearHearingLine(voice?.clear);
   $("clear-text").textContent = clearLine;
-  $("clear-text").hidden = !clearLine;
 }
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("speak-rate").addEventListener("change", e => {
@@ -2375,7 +2363,9 @@ function renderHear(s: Settings | null = settings): void {
 }
 $("voice-hear").addEventListener("click", () => {
   const line = $("voice-hear-status");
-  const show = (text: string) => { line.textContent = text; line.hidden = false; };
+  // Cleared first, so the same words again are news again.
+  line.textContent = "";
+  const show = (text: string) => { line.textContent = text; };
   window.ember.hearEmber().then(r => show(hearEmberLine(r)), () => show("Couldn't play the sample. Try again."));
 });
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });

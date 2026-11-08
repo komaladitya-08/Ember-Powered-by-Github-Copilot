@@ -269,7 +269,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-signin-later").hidden = v.primary === "continue" && !v.why;
     // The user's own provider has nothing to sign in to, later or now (first-run-1).
     $("w-signin-later").textContent = ownInUse() ? SKIP_OWN : SKIP_SIGN_IN;
-    if (!signingIn) { $("w-code").hidden = true; waitLink = null; }
+    if (!signingIn) { $("w-code").replaceChildren(); waitLink = null; }
     // A sign-in made elsewhere (the GitHub CLI's): the page main offers, and Check again, which looks for it.
     const open = $("w-open-page");
     open.hidden = !waitLink;
@@ -827,7 +827,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (p.state === "waiting") { signingIn = true; waitLink = p.link ?? null; signInMessage = p.message ? { text: p.message, tone: "" } : null; render(); return; }
     signingIn = false;
     waitLink = null;
-    $("w-code").hidden = true;
+    $("w-code").replaceChildren();
     signInMessage = p.message ? { text: p.message, tone: p.state === "error" || p.state === "unavailable" ? "error" : "warn" } : null;
     render();
     // Signed in: Continue takes focus, so the next step is one key away.
@@ -837,7 +837,6 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   /** "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]" and the wait under it. */
   function showCode(userCode: string, uri: string): void {
     const box = $("w-code");
-    box.hidden = false;
     const copy = copyButton(userCode, `Copy the code ${userCode}`);
     let where = uri;
     try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }

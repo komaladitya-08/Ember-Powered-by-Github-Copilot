@@ -45,8 +45,8 @@
     </section>
 
     <p id="managed" class="managed" hidden></p>
-    <p id="settings-notice" class="managed error" role="status" hidden></p>
-    <p id="run-notice" class="managed" role="status" hidden></p>
+    <p id="settings-notice" class="managed error" role="status"></p>
+    <p id="run-notice" class="managed" role="status"></p>
     <p id="provider-off" class="managed error" role="alert" hidden><span id="provider-off-text"></span> <button type="button" class="btn quiet small" id="provider-off-retry"></button></p>
 
     <section id="welcome" class="welcome" aria-labelledby="w-title" data-step="hello" hidden>
@@ -88,7 +88,7 @@
 
       <div class="w-pane" data-pane="sign-in" hidden>
         <p class="w-status" id="w-signin-line" role="status"></p>
-        <div class="w-code" id="w-code" aria-live="polite" hidden></div>
+        <div class="w-code" id="w-code" aria-live="polite"></div>
         <p class="w-code-row" id="w-signin-more" hidden><button type="button" class="btn quiet small" id="w-open-page" hidden></button><button type="button" class="btn quiet small" id="w-check-again">Check again</button></p>
         <p class="hint" id="w-signin-help" hidden></p>
         <p class="w-code-row" id="w-signin-actions" hidden></p>
@@ -212,7 +212,7 @@
     <section class="after-setup fold-section" data-pane="home" aria-labelledby="activity-h">
       <details class="fold" id="activity-fold" aria-labelledby="activity-h">
         <summary><h2 id="activity-h">What Ember did</h2><span class="fold-note" id="activity-note"></span></summary>
-        <p class="hint" id="activity-problem" role="status" hidden></p>
+        <p class="hint" id="activity-problem" role="status"></p>
         <ol class="activity" id="activity"></ol>
         <p class="hint">Every decision and action is also in <code id="audit-dir">~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
       </details>
@@ -264,7 +264,7 @@
           <p id="sign-out-scope" role="status" aria-live="polite"></p>
           <div class="agent-actions"><button type="button" id="sign-out-yes" class="btn quiet danger">Sign out</button><button type="button" id="sign-out-no" class="btn quiet">Stay signed in</button></div>
         </div>
-        <div id="sign-in-msg" class="sign-in-msg" role="status" aria-live="polite" hidden></div>
+        <div id="sign-in-msg" class="sign-in-msg" role="status" aria-live="polite"></div>
         <div class="models" id="models" hidden>
           <label for="m-conductor">Conversation model</label>
           <select id="m-conductor"></select>
@@ -408,7 +408,7 @@
       <div class="agent-actions memory-forgotten" id="memory-forgotten" hidden><p class="hint" id="memory-forgotten-text" role="status" tabindex="-1"></p><button type="button" id="memory-undo" class="btn quiet small">Undo</button></div>
       <div class="agent-actions"><button type="button" id="memory-more" class="btn quiet" hidden></button></div>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
-      <p class="hint" id="memory-owner" role="status" hidden></p>
+      <p class="hint" id="memory-owner" role="status"></p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
       <div id="forget-all-confirm" class="consent" role="alertdialog" aria-modal="true" aria-labelledby="forget-all-title" aria-describedby="forget-all-scope" hidden>
         <p id="forget-all-title"><b>Forget everything</b></p>
@@ -489,7 +489,7 @@
         <div>
           <label class="switch-row"><input type="checkbox" id="clear-on" role="switch" aria-describedby="clear-hint clear-text"><span>Hear me more clearly</span></label>
           <p class="row-note" id="clear-hint"></p>
-          <p class="hint" id="clear-text" role="status" hidden></p>
+          <p class="hint" id="clear-text" role="status"></p>
         </div>
         <div id="natural-row">
           <label class="choice"><span>Voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kitten">Kitten Nano (default)</option><option value="kokoro">Kokoro · 350 MB</option><option value="supertonic">Supertonic · 129 MB</option></select></label>
@@ -510,11 +510,11 @@
         </div>
         <div>
           <div class="agent-actions"><button type="button" id="voice-hear" class="btn quiet" aria-describedby="voice-hear-status">Hear Ember</button></div>
-          <p class="hint" id="voice-hear-status" role="status" hidden></p>
+          <p class="hint" id="voice-hear-status" role="status"></p>
         </div>
         <label class="switch-row"><input type="checkbox" id="speak-results" role="switch"><span>Read finished tasks out loud, not only on screen</span></label>
       </div>
-      <p class="hint" id="speak-note" role="status" hidden></p>
+      <p class="hint" id="speak-note" role="status"></p>
       <h3 class="sub" id="words-h">Words Ember learnt</h3>
       <ul class="plain-list" id="words-list" aria-labelledby="words-h"></ul>
       <p class="hint" id="words-note" role="status"></p>
@@ -613,7 +613,7 @@
       <h2 id="extensions-h" tabindex="-1">Extensions</h2>
       <div class="stack">
         <p class="intro" id="extensions-intro">Extensions give Ember more tools through plugins from marketplaces you add. Only you can add them, here.</p>
-        <p class="managed" id="extensions-blocked" role="status" hidden></p>
+        <p class="managed" id="extensions-blocked" role="status"></p>
         <div class="stack" id="extensions-body" hidden>
           <div class="group" id="ext-on-group" hidden><label class="switch-row"><input type="checkbox" id="ext-on" role="switch" aria-describedby="ext-on-hint"><span id="ext-on-label">Use extensions</span></label></div>
           <p class="hint" id="ext-on-hint" hidden></p>
