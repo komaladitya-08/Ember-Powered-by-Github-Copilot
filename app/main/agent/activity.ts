@@ -10,7 +10,7 @@
  */
 
 import {
-  ACTIVITY_LIMIT, ANSWER_WORDS, HAND_ROW, NOT_STEPS, STATUS_WORDS, STEP_GROUP, activityRows, doingWords, pacedWords, retryWords,
+  ACTIVITY_LIMIT, ANSWER_WORDS, HAND_ROW, NOT_STEPS, STATUS_WORDS, STEP_GROUP, activityRows, doingWords, pacedWords, refusedWords, retryWords,
   stepsWords, summarizeActivity, triedWords, type ActivityItem, type Answer, type AskedIn, type CardActivity, type TaskActivity,
 } from "../../shared/activity";
 import type { TaskHand } from "../../shared/view";
@@ -195,11 +195,16 @@ export class ActivityLog {
         return true;
       }
       case "refused": {
-        const words = `Not allowed: ${clip(e.reason, REASON_MAX)}`;
+        const words = refusedWords(clip(e.reason, REASON_MAX));
         // The step it stopped becomes the refusal (one row, not a failed step beside it); it isn't counted as a step.
-        const step = a.items.findLast(i => i.kind === "step" && i.state === "running");
-        if (step) Object.assign(step, { kind: "refused", state: "stopped", words, endedAt: at });
-        else this.push({ id: this.id("r"), kind: "refused", at, state: "stopped", words });
+        const i = a.items.findLastIndex(x => x.kind === "step" && x.state === "running");
+        const step = a.items[i];
+        if (step) {
+          Object.assign(step, { kind: "refused", state: "stopped", words, endedAt: at });
+          // Refused once something came after it began (its question, answered: the look right before acting refused
+          // it), it goes last, at its own time: never a refusal above the user's Allow (tasks-approvals-v5-1).
+          if (i < a.items.length - 1) { a.items.splice(i, 1); step.at = at; a.items.push(step); }
+        } else this.push({ id: this.id("r"), kind: "refused", at, state: "stopped", words });
         this.setDoing("Thinking…");
         return true;
       }

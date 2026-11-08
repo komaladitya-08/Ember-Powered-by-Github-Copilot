@@ -37,6 +37,7 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerCard, providerSettings, providerSignedOut, startProvider } from "./provider";
 import { modelDestination, privacyFoldWords, recipientWords, type ModelDestination } from "./copy";
+import { targetsFoldRest } from "./computers-copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
@@ -319,6 +320,8 @@ let shownChecks = "";
 let checksNow: Status["environment"]["checks"] = [];
 /** Whether the organisation manages "Work without asking" (applyAutonomySettings): its hint is redrawn with the checks. */
 let autonomyManaged = false;
+/** The status as read, with the setup check main has sent since: what a policy change is drawn again from. */
+let statusNow: Status | null = null;
 /**
  * The setup check's live line. What Check again found is shown above its button too, so a sighted user sees it looked
  * again (first-run-r2); a fix's failure is only read out, as its row shows it. Rows drawn anew take a shown result away.
@@ -330,6 +333,7 @@ function checksMsg(text: string, shown = false): void {
 }
 function renderChecks(environment: Status["environment"]): void {
   shownChecks = JSON.stringify(environment.checks);
+  if (statusNow) statusNow = { ...statusNow, environment };
   if ($("checks-msg").className !== "sr") checksMsg("");
   checksNow = environment.checks;
   // The switch's hint says when Ember runs elevated (every command asks then).
@@ -446,6 +450,9 @@ function renderSetupBadge(needing: number, fails: number, held: number): void {
 }
 
 function render(status: Status): void {
+  // A policy main sent since this status was read is the newer: the held lockdown lasts until a restart.
+  if (pushedAdmin) status = { ...status, admin: pushedAdmin };
+  statusNow = status;
   renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
@@ -550,6 +557,8 @@ let sendAsWritten: Node[] | null = null;
 /** The data list's microphone line as the page wrote it (its conversation sentence changes while locked down). */
 let micAsWritten: Node[] | null = null;
 let lastAdmin: Status["admin"] | null = null;
+/** What main sent when the policy changed while Ember ran (the held lockdown), or null. */
+let pushedAdmin: Status["admin"] | null = null;
 /**
  * Names where requests actually go (copy.ts modelDestination) in the data list's "When you ask something" line and in
  * the microphone note and its list item, so none says Copilot while another service answers. Runs whenever the policy
@@ -648,6 +657,18 @@ function renderAdmin(a: Status["admin"]): void {
   if (settings) applyRoutineSettings(settings);
   if (settings) applyAutonomySettings(settings);
 }
+// The policy changed while Ember ran: everything drawn from it is drawn again at once, as a window opened now would
+// draw it (the notice, What Ember reads, sends and keeps, the switches it manages, first run, computers, extensions),
+// not only once this window is opened again (safety-privacy-w5-1).
+window.ember.onAdminChanged(a => {
+  pushedAdmin = a;
+  renderAdmin(a);
+  if (!statusNow) return;
+  statusNow = { ...statusNow, admin: a, ...(settings ? { settings } : {}), ...(platform ? { platform } : {}) };
+  welcome.status(statusNow);
+  targetsStatus(statusNow);
+  extensionsStatus(statusNow);
+});
 
 // ───── What Ember did ─────
 const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -1962,7 +1983,8 @@ void window.ember.updates().then(renderUpdates);
 // ───── Work without asking (app/main/policy/autonomy.ts): on only once the user agrees to its card ─────
 $("autonomy-consent-text").textContent = AUTONOMY_CONSENT_TEXT;
 function applyAutonomySettings(s: Settings): void {
-  ($("autonomy-on") as HTMLInputElement).checked = s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION;
+  // As in force: held locked down after a policy change, the settings still hold it on (safety-privacy-w5-2).
+  ($("autonomy-on") as HTMLInputElement).checked = s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION && !managed.has("autonomy");
   autonomyManaged = managed.has("autonomy");
   $("autonomy-hint").textContent = autonomyHint(autonomyManaged, elevationOf(checksNow));
 }
@@ -2058,10 +2080,22 @@ function syncPrivacyTerms(): void {
   const copy = source.cloneNode(true) as HTMLElement;
   copy.querySelector("#model-service")?.classList.add("model-service-copy");
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
-  // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4).
+  // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4); Work without
+  // asking and the apps let in without asking are below too (safety-privacy-c4-1); other computers and commands are on
+  // or off as the settings and the policy leave them (safety-privacy-r4-2). Each of screenshots, Work without asking and
+  // the apps is in force only where the policy in force allows it: held locked down after a policy change, the settings
+  // still say what the person left on (safety-privacy-v5-1, safety-privacy-w5-2).
+  const s = settings;
+  const a = lastAdmin;
+  const fold = {
+    screenImages: s?.screenImages !== false && !managed.has("screenImages"),
+    autonomy: !!s && s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION && !managed.has("autonomy"),
+    grants: !!s && !confirmEvery && !managed.has("grants") && Object.values(s.grants).includes("act"),
+    ...(s && a ? { targets: targetsFoldRest(s, { source: a.error ? "error" : a.source, features: { wsl: a.features?.wsl, ssh: a.features?.ssh }, ...(a.commands ? { commands: a.commands } : {}) }, platform?.os) } : {}),
+  };
   const walk = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
   for (let t = walk.nextNode(); t; t = walk.nextNode()) {
-    const words = privacyFoldWords(t.textContent ?? "", { screenImages: settings?.screenImages !== false });
+    const words = privacyFoldWords(t.textContent ?? "", fold);
     if (words !== t.textContent) t.textContent = words;
   }
   copy.setAttribute("aria-label", "What Ember reads, sends and keeps");
@@ -2288,7 +2322,7 @@ function renderTrust(s: Settings): void {
 $("screen-images").addEventListener("change", e => { void save({ screenImages: (e.target as HTMLInputElement).checked }); });
 function renderPrivacy(s: Settings): void {
   renderTrust(s);
-  ($("screen-images") as HTMLInputElement).checked = s.screenImages;
+  ($("screen-images") as HTMLInputElement).checked = s.screenImages && !managed.has("screenImages");
   // The copy of the consent says whether screenshots are off (safety-privacy-r4); drawn again only if its words change.
   if (($("privacy-terms-fold") as HTMLDetailsElement).open) syncPrivacyTerms();
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).

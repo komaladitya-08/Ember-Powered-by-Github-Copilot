@@ -180,9 +180,18 @@ export const SCREEN_IMAGES_TEXT = {
  * A piece of the text in Apps & privacy's copy of "Before Ember starts" (safety-privacy-9), said as it is there
  * (safety-privacy-r4): the never-look list is below in that pane, not somewhere "in settings", and with Send
  * screenshots for tasks off the screenshot clause says so. First run's own words stay as they are.
+ * `autonomy`: Work without asking is in force (its switch below is on), so ordinary steps aren't asked about
+ * (safety-privacy-c4-1); `grants`: the person let Ember act in some apps without asking (the list below). `targets`:
+ * the onboarding line's words after its lead, as the settings and the policy leave them (targetsFoldRest,
+ * safety-privacy-r4-2).
  */
-export function privacyFoldWords(text: string, o: { screenImages: boolean }): string {
-  const out = text.replace("The list is in settings", "The list is below, under Never look at");
+export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: boolean; grants?: boolean; targets?: string }): string {
+  if (o.targets !== undefined && (text === onboardingRest("linux") || text === onboardingRest("win32"))) return o.targets;
+  const out = text.replace("The list is in settings", "The list is below, under Never look at")
+    .replace(" in an app, and always before anything hard to undo.", o.autonomy
+      ? " on anything risky or hard to undo. Work without asking is on (below), so for ordinary steps it tells you what it's doing instead."
+      : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo."
+        : " in an app, and always before anything hard to undo.");
   return o.screenImages ? out
     : out.replace(", and for tasks it may take a screenshot of it.", `. ${SCREEN_IMAGES_TEXT.label} is off (below), so it takes no screenshots for tasks.`);
 }
@@ -1159,7 +1168,9 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
     case "task":
       if (e.phase === "asked") return { tag: e.mode === "guide" ? "Guide" : "Task", cls: "", what: String(e.goal ?? "") };
       if (e.phase === "done") return { tag: "Finished", cls: "ok", what: String(e.summary ?? e.goal ?? "") };
-      return { tag: e.phase === "cancelled" ? "Stopped" : "Failed", cls: "no", what: String(e.goal ?? ""), why: typeof e.summary === "string" ? userWords(e.summary) : undefined };
+      // A task whose question went unanswered ended for that: the user stopped nothing (tasks-approvals-r1). Tagged as its
+      // question's line is, "No answer", which fits the tag's 8em column.
+      return { tag: e.phase === "cancelled" ? e.endedBy === "expired" ? "No answer" : "Stopped" : "Failed", cls: "no", what: String(e.goal ?? ""), why: typeof e.summary === "string" ? userWords(e.summary) : undefined };
     case "decision":
       // Several cells filled with one question (fill_cells): one line for them all, on the last cell's decision.
       if (typeof e.batch === "number") {

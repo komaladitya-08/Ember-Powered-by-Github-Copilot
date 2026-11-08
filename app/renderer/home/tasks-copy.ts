@@ -6,7 +6,7 @@
  * worker's and are drawn as plain text.
  */
 
-import { STATUS_WORDS, clockText, stepsWords, summarizeActivity, triedWords, type ActivityItem, type ActivityState, type AskedIn, type StepGroup, type TaskEntry } from "../../shared/activity";
+import { STATUS_WORDS, clockText, foldedReason, refusedWords, stepsWords, summarizeActivity, triedWords, type ActivityItem, type ActivityState, type AskedIn, type StepGroup, type TaskEntry } from "../../shared/activity";
 import { HAND_WORDS } from "../../shared/view";
 
 /** The list while no task has run this session. */
@@ -55,9 +55,10 @@ export function offersRetry(t: Pick<TaskEntry, "status" | "controls">): boolean 
  * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01", "Waiting its
  * turn").
  */
-export function taskMeta(t: Pick<TaskEntry, "status" | "unanswered" | "hand" | "where" | "activity">, now: number): string {
-  // A task in line hasn't begun, so it has no clock (tasks-approvals-r3: not "Just started").
-  return [stateWord(t), t.status === "queued" ? "" : clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
+export function taskMeta(t: Pick<TaskEntry, "status" | "unanswered" | "unstarted" | "hand" | "where" | "activity">, now: number): string {
+  // A task in line hasn't begun, so it has no clock (tasks-approvals-r3: not "Just started"), nor has one that ended
+  // there (tasks-approvals-r3-3: not "Took 3s" beside "Stopped before it started").
+  return [stateWord(t), t.status === "queued" || t.unstarted ? "" : clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
     .filter(Boolean).join(" · ");
 }
 
@@ -86,12 +87,22 @@ export interface TimelineRow {
 
 /**
  * A task's items as rows: steps of one kind and outcome in a row fold into one ("Typed text 6 times in Files"), and
- * open to list each; a step still under way, a question, a note, a refusal and a problem are rows of their own.
+ * open to list each; so do refusals for one reason ("Not allowed 6 times: …"), each listed as the step it refused
+ * ("Tried to read the window": tasks-approvals-v5-2). A step still under way, a question, a note, another refusal and a
+ * problem are rows of their own.
  */
 export function timelineRows(items: readonly ActivityItem[]): TimelineRow[] {
-  const rows: (TimelineRow & { group?: StepGroup; apps?: Set<string> })[] = [];
+  const rows: (TimelineRow & { group?: StepGroup; apps?: Set<string>; refused?: string })[] = [];
+  /** A refusal as its row lists it: the step it refused, in Ember's words, else the refusal's own. */
+  const refusedLine = (it: ActivityItem): StepLine => ({ id: it.id, at: it.at, state: it.state, words: it.group ? triedWords(it.group, 1, it.app) : it.words });
   for (const it of items) {
     const last = rows.at(-1);
+    const reason = foldedReason(it, last);
+    if (last && reason !== null) {
+      last.steps = [...last.steps ?? [], refusedLine(it)];
+      last.words = refusedWords(reason, last.steps.length);
+      continue;
+    }
     const folds = it.kind === "step" && it.state !== "running" && !!it.group;
     if (folds && last && last.group === it.group && last.state === it.state) {
       const step: StepLine = { id: it.id, at: it.at, state: it.state, words: it.words };
@@ -105,9 +116,10 @@ export function timelineRows(items: readonly ActivityItem[]): TimelineRow[] {
       id: it.id, at: it.at, state: it.state, words: it.words,
       ...(it.asked ? { asked: it.asked } : {}), ...(it.model ? { model: true as const } : {}),
       ...(folds ? { group: it.group, apps: new Set(it.app ? [it.app] : []), steps: [{ id: it.id, at: it.at, state: it.state, words: it.words }] } : {}),
+      ...(it.kind === "refused" ? { refused: it.words, steps: [refusedLine(it)] } : {}),
     });
   }
-  return rows.map(({ group: _g, apps: _a, steps, ...r }) => ({ ...r, ...(steps && steps.length > 1 ? { steps } : {}) }));
+  return rows.map(({ group: _g, apps: _a, refused: _r, steps, ...r }) => ({ ...r, ...(steps && steps.length > 1 ? { steps } : {}) }));
 }
 
 /** The words before a timeline that lost its oldest rows ("12 earlier steps aren't listed"). */

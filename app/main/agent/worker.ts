@@ -288,6 +288,13 @@ const NO_PICTURES = "(No screenshot: the user turned off sending screenshots for
 const PROMPT_REASON = { open: "an authentication prompt is open", unchecked: "Ember couldn't tell whether a password prompt was open", helper: "Ember's accessibility helper isn't working" } as const;
 /** The refusal for a step while promptOpen says one is open, may be, or can't be asked (the helper can't work here). */
 const PROMPT_REFUSAL = { open: AUTH_PROMPT_OPEN, unchecked: PROMPT_UNCHECKED, helper: HELPER_DOWN } as const;
+/**
+ * The cause in the window system's reason for its check, "<cause>, so <what Ember won't do and what the user can>"
+ * (macOS's secure keyboard entry, a Wayland session: systemDialogReason), as the task's card says it: "secure keyboard
+ * entry is on in Terminal (…)", "this is a Wayland session" (tasks-approvals-v5-3). The whole reason when it has no such
+ * clause.
+ */
+const causeOf = (why: string): string => why.split(", so ")[0]!.trim() || why;
 /** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
 const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -1191,7 +1198,8 @@ export class Worker {
    * A step Work without asking let through (authorize, authorizeCells): its decisions' audit entries and its
    * announcement, held until the look right before acting has passed (act, system, withCursor: goAhead). So a step a
    * password prompt then stops is never said, nor recorded, as going ahead without asking, and no extra look through the
-   * shell is made to find out (safety-privacy-v4-2). The next decision drops one that never got that far.
+   * shell is made to find out (safety-privacy-v4-2). The next decision, and the next tool call, drop one that never got
+   * that far (safety-privacy-r4-1).
    */
   private ahead: { entries: AuditEntry[]; words: string | null } | null = null;
   /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
@@ -1403,6 +1411,8 @@ export class Worker {
     const w = this.place ? null : this.d.cursor?.activeWindow?.();
     if (!w || !this.sys.privacy.isSecurityWindow(w)) return null;
     this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
+    // Its card's row says why, in Ember's words (tasks-approvals-r3-4).
+    this.activity({ type: "refused", reason: "an authentication prompt has the keyboard" });
     return denied(AUTH_PROMPT_OPEN);
   }
 
@@ -1492,6 +1502,9 @@ export class Worker {
   private wrappingUp = false;
 
   private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
+    // A step held to go ahead without asking that its own call didn't take (a password prompt, the keyboard or the desk
+    // refused it) is never written by a later call's action entry, after its refusal (safety-privacy-r4-1).
+    this.ahead = null;
     if (this.halted) return STOPPED();
     if (this.result) return denied("The task is already finished. Stop now.");
     // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
@@ -2346,6 +2359,7 @@ export class Worker {
     if (p.authPrompt) {
       const key = promptKey(p.authPrompt);
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: PROMPT_REASON[key] });
+      this.activity({ type: "refused", reason: PROMPT_REASON[key] });
       return denied(PROMPT_REFUSAL[key]);
     }
     if (p.blocked) {
@@ -4156,7 +4170,11 @@ export class Worker {
       // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2), and a helper that
       // can't work here as the helper (reliability-performance-r2-1).
       const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open") });
+      const reason = why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open");
+      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason });
+      // The card's row keeps a line of a reason: the window system's says its cause there, whole, and the audit and the
+      // model get all of it (tasks-approvals-v5-3).
+      this.activity({ type: "refused", reason: why ? causeOf(why) : reason });
       return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
         : unchecked ? PROMPT_REFUSAL[unchecked]
           : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
@@ -4523,6 +4541,9 @@ export class Worker {
     if (!open) return null;
     const key = promptKey(open);
     this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: PROMPT_REASON[key] });
+    // Its card's row and Home's say why (Ember's words, never screen text), not only that the step was tried
+    // (tasks-approvals-r3-4).
+    this.activity({ type: "refused", reason: PROMPT_REASON[key] });
     return denied(PROMPT_REFUSAL[key]);
   }
 

@@ -189,7 +189,8 @@ export function catchUpReply(tasks: readonly Task[], now: number): string {
     return `${named(t)}: ${outcomeOf(t)}.${said}`;
   });
   const more = finished.length - lines.length;
-  const head = finished.length === 1 ? "One task finished." : `${finished.length} tasks finished.`;
+  // "Ended", never "finished": what follows may say a task didn't finish, or wasn't answered (tasks-approvals-r3-2).
+  const head = finished.length === 1 ? "One task ended." : `${finished.length} tasks ended.`;
   return `${head} ${lines.join(" ")}${more ? ` And ${more} more.` : ""}${still}`;
 }
 

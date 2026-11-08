@@ -2287,7 +2287,7 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
     await vi.advanceTimersByTimeAsync(20_000);
     expect(host.tasks!.list()).toEqual([]);
     await host.ask("what did I miss?");
-    expect(screen().bubble?.thought).toBe("One task finished. “turn on night light”: done. Night light is on.");
+    expect(screen().bubble?.thought).toBe("One task ended. “turn on night light”: done. Night light is on.");
     await host.ask("status?");
     expect(screen().bubble?.thought).toBe("Nothing's running right now. The last thing was “turn on night light”: done.");
     await host.forgetConversation();

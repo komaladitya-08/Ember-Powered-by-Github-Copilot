@@ -194,6 +194,8 @@ export const IPC = {
   presenceChanged: "ember:presence-changed",
   /** The settings file couldn't be used as it is (a hand edit that isn't valid JSON): what Ember did about it. */
   settingsNotice: "ember:settings-notice",
+  /** The administrator's policy changed while Ember ran: what is in force now (Status["admin"]), to the settings window. */
+  adminChanged: "ember:admin-changed",
   /** Main tells the settings window whether it can be seen (minimised or hidden: false), as X11 doesn't say. */
   homeVisibility: "ember:home-visibility",
   quit: "ember:quit",
@@ -526,6 +528,8 @@ export interface EmberHomeApi {
   setPresence(p: Partial<Pick<Presence, "hidden" | "paused">>): Promise<Presence>;
   onPresence(fn: (p: Presence) => void): () => void;
   onSettingsNotice(fn: (notice: string | null) => void): () => void;
+  /** Main's word that the administrator's policy changed while Ember ran (the held lockdown): drawn as a new status's. */
+  onAdminChanged(fn: (admin: Status["admin"]) => void): () => void;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
   /** Opens the ask box, as the handle menu's Ask Ember… does (the keyboard's way when another app has the shortcut). */

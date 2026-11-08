@@ -828,8 +828,9 @@ const OUTCOME = {
 } as const;
 /** A finished task, as the conductor hears about it. */
 /** A finished task as the next turn hears it (in <task_results>): its summary, and what its card showed, as words. */
-// (The model hears the plain state, "failed" or "stopped"; the user hears the card's words: tasks.ts statusWord.)
-const report = (t: Task) => `Task "${t.title}" ${t.status === "cancelled" ? "stopped" : t.status}: ${t.result?.summary ?? ""}${t.view ? `\n${viewText(t.view)}` : ""}`;
+// (The model hears the plain state, "failed" or "stopped"; the user hears the card's words: tasks.ts statusWord. One
+// whose question went unanswered wasn't stopped, so it isn't told so: tasks-approvals-r1.)
+export const report = (t: Task) => `Task "${t.title}" ${t.status === "cancelled" ? t.endedBy === "expired" ? "ended with no answer in time" : "stopped" : t.status}: ${t.result?.summary ?? ""}${t.view ? `\n${viewText(t.view)}` : ""}`;
 /**
  * Told to the conversation with what was heard in a spoken conversation (AgentHost.ask `replaces`), and not in its prompt:
  * with conversations off the prompts stay as they were. Host-written, never model or screen text.

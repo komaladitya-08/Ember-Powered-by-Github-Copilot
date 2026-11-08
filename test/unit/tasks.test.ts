@@ -424,6 +424,8 @@ describe("review round 2: stopping and questions", () => {
     tm.cancel(t.id);
     expect(t.result?.summary).toBe("Stopped before it started.");
     expect(taskOutcome(t)).toBe("Tidy the desktop: stopped before it started.");
+    // Home lists it with no clock: it never began (tasks-approvals-r3-3).
+    expect(tm.activities()[0]).toMatchObject({ id: t.id, status: "stopped", unstarted: true });
     expect(taskOutcome({ title: "Tidy", status: "cancelled", result: { success: false, summary: "Stopped.", stopped: true } })).toBe("Tidy: stopped.");
     expect(taskOutcome({ title: "Tidy", status: "cancelled", result: { success: false, summary: "You took the mouse back at step 3." } })).toBe("Tidy: stopped. You took the mouse back at step 3.");
     expect(taskOutcome({ title: "Tidy", status: "done", result: { success: true, summary: "Moved 3 files." } })).toBe("Tidy: done. Moved 3 files.");
@@ -650,6 +652,8 @@ describe("a task whose question went unanswered while the user was away (tasks-a
       await vi.advanceTimersByTimeAsync(10);
       // Stopped by the user while it waited: a Stop, whatever the worker said.
       expect([s.status, s.endedBy, stopped.tm.canRetry(s.id)]).toEqual(["cancelled", "stop", false]);
+      // It began to run, so Home keeps its clock (tasks-approvals-r3-3).
+      expect(stopped.tm.activities()[0].unstarted).toBeUndefined();
     } finally { vi.useRealTimers(); }
   });
 
@@ -711,6 +715,39 @@ describe("a task whose question went unanswered while the user was away (tasks-a
       expect(cardStateWord({ status: "done" })).toBe(STATE_WORD.done);
       expect(rowWord({ state: "stopped", words: "Stopped" })).toBe(ROW_WORD.stopped);
       expect(rowWord({ state: "done", words: "Read the window" })).toBe(ROW_WORD.done);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("says no answer came in time on its question's row, in What Ember did and to the next turn, never that it was stopped (tasks-approvals-r1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const written: Record<string, unknown>[] = [];
+      const { tm } = manager((_spec, _p, _u, activity) => fakeWorker(async () => {
+        // A command whose question ran out of time, as the worker tells its card.
+        activity?.({ type: "tool-start", id: "c1", tool: "run_command" });
+        activity?.({ type: "question", asked: "Run a command?" });
+        activity?.({ type: "answer", answer: "expired" });
+        activity?.({ type: "denied" });
+        activity?.({ type: "tool-end", id: "c1", ok: false });
+        return { ...EXPIRED, summary: "I didn't delete it." };
+      }), { audit: { write: (e: Record<string, unknown>) => { written.push(e); } } });
+      const t = tm.start("Clean the build folder", { userWords: "clean the build folder" });
+      await vi.advanceTimersByTimeAsync(10);
+      const { timelineRows } = await import("../../app/renderer/home/tasks-copy");
+      const { activityRows, rowWord } = await import("../../app/shared/activity");
+      const { describeEntry } = await import("../../app/renderer/home/copy");
+      const { report } = await import("../../app/main/agent/host");
+      // The question's row, in Home and on the card's details, as a screen reader hears it.
+      const items = tm.activities()[0].activity.items;
+      const asked = (rows: { state: string; words: string }[]) => rows.filter(r => r.words.startsWith("Asked you")).map(r => `${rowWord(r as never)}${r.words}`);
+      expect(asked(timelineRows(items))).toEqual(["Ended: Asked you: no answer"]);
+      expect(asked(activityRows(items))).toEqual(["Ended: Asked you: no answer"]);
+      // What Ember did: the task's end is recorded as unanswered, and tagged so.
+      const end = written.find(e => e.event === "task" && e.phase === "cancelled")!;
+      expect(end).toMatchObject({ endedBy: "expired" });
+      expect(describeEntry({ t: "2026-11-08T12:00:00.000Z", ...end } as never)).toMatchObject({ tag: "No answer", what: "Clean the build folder", why: "I didn't delete it." });
+      // The next turn hears it as the card says it.
+      expect(report(t)).toBe('Task "Clean the build folder" ended with no answer in time: I didn\'t delete it.');
     } finally { vi.useRealTimers(); }
   });
 
@@ -925,6 +962,30 @@ describe("a task its step or time limit stopped (tasks-approvals-3)", () => {
     const { taskPrompt } = await import("../../app/main/agent/worker");
     expect(taskPrompt("Add the rows", true, "")).toBe("Task: Add the rows\n(An earlier try of this task stopped part-way: check what is already done before repeating anything.)");
     expect(taskPrompt("Add the rows", false, "")).toBe("Task: Add the rows");
+    tm.cancelAll();
+  });
+
+  it("tries a task that only looked, sending the model a picture of the window, again as a fresh try, never one that stopped part-way (tasks-approvals-c3-1)", async () => {
+    const specs: { partWay?: boolean }[] = [];
+    let n = 0;
+    const tm = new TaskManager({ log: quiet, makeWorker: ((spec: { partWay?: boolean }, _p: unknown, _u: unknown, activity?: (e: import("../../app/main/agent/activity").ActivityEvent) => void) => {
+      specs.push(spec);
+      return n++ === 0 ? fakeWorker(async () => {
+        // One read that sent a picture (Send screenshots for tasks is on by default): it changed nothing.
+        activity?.({ type: "tool-start", id: "1", tool: "perceive_window" });
+        activity?.({ type: "picture" });
+        activity?.({ type: "tool-end", id: "1", ok: true });
+        return { success: false, summary: "I couldn't find the report." };
+      }) : fakeWorker(() => new Promise(() => undefined));
+    }) as never, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Find the report", { userWords: "find the report" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(tm.activities()[0].activity.counts).toEqual({ picture: 1 });
+    // A typed or spoken "try again" carries no part-way note, and neither does its card's Try again.
+    expect(tm.askedWith(t.id)).toEqual({ userWords: "find the report" });
+    expect(tm.retry(t.id)).not.toBeNull();
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1].partWay).toBeUndefined();
     tm.cancelAll();
   });
 });

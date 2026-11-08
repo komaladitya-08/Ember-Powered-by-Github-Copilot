@@ -40,6 +40,50 @@ export function onboardingRest(os: OS = "linux"): string {
   return os === "win32" ? ONBOARDING_LINE.restWindows : ONBOARDING_LINE.rest;
 }
 
+/** "a and b", "a, b and c"; with a serial comma where an item has its own "and". */
+const listed = (items: readonly string[]): string => {
+  if (items.length < 2) return items[0] ?? "";
+  const last = items.at(-1)!;
+  return `${items.slice(0, -1).join(", ")}${items.some(i => i.includes(" and ")) ? "," : ""} and ${last}`;
+};
+
+/**
+ * Apps & privacy's copy of the onboarding line, after its bold lead (safety-privacy-r4-2): what is on as the person's
+ * settings and the organisation's policy leave it, so it never says what they turned on is off, nor offers what the
+ * organisation turned off. A switch counts only with its card agreed to at its version, as main counts it. Nothing on
+ * and nothing turned off: first run's own words (onboardingRest), which stay as they are there.
+ */
+export function targetsFoldRest(s: Pick<Settings, "commands" | "targets">, admin: TargetsAdmin, os: OS = "linux"): string {
+  const win = os === "win32";
+  const sshOff = admin.features.ssh === false;
+  const wslOff = win && admin.features.wsl === false;
+  const cmdOff = (kind: TargetKind) => modeFor(admin, kind) === "off";
+  const agreed = (c: { version: number } | undefined, v: number) => (c?.version ?? 0) >= v;
+  const cmdOn = (id: string) => { const c = s.commands?.[id as TargetId]; return c?.on === true && agreed(c.consent, FEATURE_CONSENT_VERSION.commands); };
+  const hosts = sshOff ? [] : (s.targets?.hosts ?? []).filter(h => agreed(h.consent, FEATURE_CONSENT_VERSION.ssh));
+  const wslOn = win && !wslOff && s.targets?.wsl?.on === true && agreed(s.targets.wsl.consent, FEATURE_CONSENT_VERSION.wsl);
+  const localCmd = !cmdOff("local") && cmdOn("local");
+  const wslCmd = wslOn && !cmdOff("wsl") && Object.keys(s.commands ?? {}).some(id => id.startsWith("wsl:") && cmdOn(id));
+  const sshCmd = !cmdOff("ssh") && hosts.some(h => cmdOn(`ssh:${h.id}`));
+  const can = [
+    localCmd ? "run commands on this computer" : "",
+    wslOn ? (wslCmd ? "work and run commands in WSL" : "work in WSL") : "",
+    hosts.length ? (sshCmd ? "work and run commands on computers you reach over SSH" : "work on computers you reach over SSH") : "",
+  ].filter(Boolean);
+  const userOff = [!sshOff && !hosts.length ? "other computers" : "", win && !wslOff && !wslOn ? "WSL" : "", !cmdOff("local") && !localCmd ? "commands on this computer" : ""].filter(Boolean);
+  const commandsOff = [cmdOff("local") ? "on this computer" : "", win && !wslOff && cmdOff("wsl") ? "in WSL" : "", !sshOff && cmdOff("ssh") ? "on computers you reach over SSH" : ""].filter(Boolean);
+  const orgOff = [sshOff ? "working on other computers" : "", wslOff ? "working in WSL" : "", commandsOff.length ? `commands ${listed(commandsOff)}` : ""].filter(Boolean);
+  if (!can.length && !orgOff.length) return onboardingRest(os);
+  if (!can.length && !userOff.length) return " are turned off by your organisation.";
+  const said = [
+    can.length ? `you let Ember ${listed(can)}.` : "",
+    localCmd || wslCmd || sshCmd ? "It runs commands only in its own window, where you can watch and stop them." : "",
+    userOff.length ? `${listed(userOff)} ${userOff.length > 1 || userOff[0] !== "WSL" ? "are off until you turn them on" : "is off until you turn it on"}.` : "",
+    orgOff.length ? `Your organisation has turned off ${listed(orgOff)}.` : "",
+  ].filter(Boolean);
+  return `: ${said.map((t, i) => (i === 0 || /^[A-Z]/.test(t) ? t : t[0]!.toUpperCase() + t.slice(1))).join(" ")}`;
+}
+
 /** What the administrator decides about computers and commands, as the settings window learns it. */
 export interface TargetsAdmin {
   /** A policy file is in force (R5: one that doesn't mention commands turns them off). */

@@ -12,6 +12,10 @@ import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import { Perception } from "../../app/main/perception";
 import type { Logger } from "../../app/main/logger";
+import { ActivityLog } from "../../app/main/agent/activity";
+import { timelineRows } from "../../app/renderer/home/tasks-copy";
+import { WAYLAND_REASON } from "../../app/main/environment";
+import { secureInputCause } from "../../app/main/platform/darwin/desktop";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -79,6 +83,8 @@ function makeWorker(o: {
   promptOpen?: () => boolean | "unchecked" | "helper";
   /** Is a system dialog open, as the borrow asks before it takes the keyboard (default: none). */
   systemDialogOpen?: () => boolean;
+  /** Why the window system's check is on when it isn't a dialog (macOS's secure keyboard entry, a Wayland session). */
+  systemDialogReason?: () => string | null;
   /** Home's "Send screenshots for tasks" as settings say it now (default: on). */
   screenImages?: () => boolean;
 } = {}) {
@@ -143,6 +149,7 @@ function makeWorker(o: {
         return o.wins ? [...open] : closed ? [] : [window];
       },
       systemDialogOpen: async () => o.systemDialogOpen?.() ?? false,
+      ...(o.systemDialogReason ? { systemDialogReason: async () => o.systemDialogReason!() } : {}),
       ...(o.promptOpen ? { promptOpen: async () => o.promptOpen!() } : {}),
     } as never,
     sidecar: {
@@ -1935,6 +1942,92 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     pinentry = false;
     await call("fill_cells", { cells: [{ cell: "B5", text: "42" }] });
     expect(asked).toEqual(["Borrow your keyboard to fill 1 cell in gedit: B5 “42”?"]);
+  });
+
+  it("tells the task's card why each step it refused for this was refused, in Ember's own words, so its row reads “Not allowed: …”, never only “Tried to …” (tasks-approvals-r3-4)", async () => {
+    let prompt: false | true | "unchecked" | "helper" = false;
+    const made = makeWorker({ promptOpen: () => prompt, launches: { name: "Untitled Document 1", app: "gedit" }, onAction: () => ({ ok: true, after: null }) });
+    await made.call("perceive_window", {});
+    const refusals = () => made.activity.filter(e => e.type === "refused").map(e => e.reason);
+    // By accessibility, opening an app and listing the windows, for each of promptOpen's answers.
+    for (const now of [true, "unchecked", "helper"] as const) {
+      prompt = now;
+      expect((await made.call("click", { id: 1 })).resultType).toBe("denied");
+    }
+    prompt = true;
+    expect((await made.call("open_app", { name: "gedit" })).resultType).toBe("denied");
+    expect((await made.call("list_windows", {})).resultType).toBe("denied");
+    expect(refusals()).toEqual(["an authentication prompt is open", "Ember couldn't tell whether a password prompt was open", "Ember's accessibility helper isn't working",
+      "an authentication prompt is open", "an authentication prompt is open"]);
+    // A look the shell's prompt stopped (perceive reads nothing).
+    const d = (made.w as unknown as { d: { perception: { perceive: () => Promise<unknown> } } }).d;
+    d.perception.perceive = async () => ({ authPrompt: "helper" });
+    expect((await made.call("perceive_window", {})).resultType).toBe("denied");
+    expect(refusals().at(-1)).toBe("Ember's accessibility helper isn't working");
+    // The borrow: an authentication window with the keyboard, and a system dialog on the screen.
+    let pinentry = true;
+    const borrow = makeWorker({ activeWindow: () => pinentry ? { app: "pinentry", title: "Passphrase" } : { app: "gedit", title: "notes.txt" }, systemDialogOpen: () => !pinentry, states: () => ["enabled", "focused"] });
+    await borrow.call("perceive_window", {});
+    expect((await borrow.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("denied");
+    pinentry = false;
+    expect((await borrow.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("denied");
+    expect(borrow.activity.filter(e => e.type === "refused").map(e => e.reason)).toEqual(["an authentication prompt has the keyboard", "a system dialog is open"]);
+    // So the card's row says why: Ember's words, never a step that only "tried".
+    const { ActivityLog } = await import("../../app/main/agent/activity");
+    const log = new ActivityLog(0);
+    log.add({ type: "tool-start", id: "c1", tool: "open_app" }, 10);
+    for (const e of made.activity.filter(e => e.type === "refused").slice(2, 3)) log.add(e as never, 20);
+    log.add({ type: "denied" }, 20);
+    log.add({ type: "tool-end", id: "c1", ok: false }, 30);
+    expect(log.card().rows.map(r => [r.state, r.words])).toEqual([["stopped", "Not allowed: Ember's accessibility helper isn't working"]]);
+  });
+
+  /** The card's and Home's rows for one tool call: its start, what the worker told its activity from `from` on, its end. */
+  const rowsOf = (activity: Record<string, unknown>[], from: number, tool: string) => {
+    const log = new ActivityLog(0);
+    let t = 1000;
+    log.add({ type: "tool-start", id: "c1", tool, step: "Working", app: "Text Editor" }, t);
+    for (const e of activity.slice(from)) log.add(e as never, t += 100);
+    log.add({ type: "tool-end", id: "c1", ok: false }, t + 100);
+    return { card: log.card().rows.map(r => r.words), home: timelineRows(log.get().items).map(r => r.words) };
+  };
+
+  it("puts a step refused right before acting, once the user allowed it, after their answer, never as refused before their Allow (tasks-approvals-v5-1)", async () => {
+    // No grant for gedit: the click asks, and a password prompt opens while the user answers.
+    let prompt = false;
+    const made = makeWorker({ grants: {}, promptOpen: () => prompt, onAsk: () => { prompt = true; } });
+    await made.call("perceive_window", {});
+    let from = made.activity.length;
+    expect((await made.call("click", { id: 1 })).resultType).toBe("denied");
+    expect(made.activity.slice(from).map(e => e.type)).toEqual(["question", "answer", "refused", "denied"]);
+    const after = ["Asked you: you allowed it", "Not allowed: an authentication prompt is open"];
+    expect(rowsOf(made.activity, from, "click")).toEqual({ card: after, home: after });
+    // The borrow's own look (the window system's check), turned on while the user answers: the same order.
+    let dialog = false;
+    const borrow = makeWorker({ grants: {}, systemDialogOpen: () => dialog, onAsk: () => { dialog = true; }, states: () => ["enabled", "focused"] });
+    await borrow.call("perceive_window", {});
+    from = borrow.activity.length;
+    expect((await borrow.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("denied");
+    expect(borrow.activity.slice(from).map(e => e.type)).toEqual(["question", "answer", "refused", "denied"]);
+    expect(rowsOf(borrow.activity, from, "press_keys").card).toEqual(["Asked you: you allowed it", "Not allowed: a system dialog is open"]);
+  });
+
+  it("says on the card why the window system refused a borrow in a sentence of its own, never one cut short, and gives the audit and the model all of it (tasks-approvals-v5-3)", async () => {
+    const secure = `${secureInputCause("Terminal")}, so Ember won't look at the screen or use the mouse or keyboard until it's off`;
+    for (const [why, row] of [[secure, `Not allowed: ${secureInputCause("Terminal")}`], [WAYLAND_REASON, "Not allowed: this is a Wayland session"]] as const) {
+      const made = makeWorker({ systemDialogOpen: () => true, systemDialogReason: () => why, states: () => ["enabled", "focused"] });
+      await made.call("perceive_window", {});
+      const from = made.activity.length;
+      const r = await made.call("press_keys", { keys: "ctrl+b" });
+      expect(r.resultType).toBe("denied");
+      expect(r.textResultForLlm).toContain(why.slice(1));
+      expect(made.audit.filter(e => e.event === "decision").at(-1)).toMatchObject({ verdict: "deny", reason: why });
+      // (A borrow asks every time: its question, then the refusal.)
+      const { card, home } = rowsOf(made.activity, from, "press_keys");
+      expect(card).toEqual(["Asked you: you allowed it", row]);
+      expect(home).toEqual(card);
+      expect(card.at(-1)!.endsWith("…")).toBe(false);
+    }
   });
 
   it("lists no window's title, and reads none, until it's done", async () => {

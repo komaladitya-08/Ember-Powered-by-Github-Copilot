@@ -225,8 +225,11 @@ export interface RetriedWords {
  */
 const retryable = (t: Task) => t.mode === "do" && (t.status === "failed" || (t.status === "cancelled" && t.endedBy === "expired"));
 
-/** Kinds of step that change nothing (a look, a switch of window, a pointer): a try that took only these did no part of it. */
-const LOOKS_ONLY: ReadonlySet<StepGroup> = new Set(["read", "windows", "switch", "scroll", "point", "wait"]);
+/**
+ * Kinds of step that change nothing (a look, a picture of the window sent with it, a switch of window, a pointer): a
+ * try that took only these did no part of it (tasks-approvals-c3-1).
+ */
+const LOOKS_ONLY: ReadonlySet<StepGroup> = new Set(["read", "picture", "windows", "switch", "scroll", "point", "wait"]);
 
 /** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
 const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
@@ -462,6 +465,7 @@ export class TaskManager {
         ...(t.view ? { view: t.view } : {}),
         controls: { stop: this.canStop(id), retry: this.canRetry(id), window: !this.closed && this.tasks.has(id) && (this.d.taskWindow?.(t, false) ?? false) },
         ...(t.status === "cancelled" && t.endedBy === "expired" ? { unanswered: true as const } : {}),
+        ...(ended && t.ranAt === undefined ? { unstarted: true as const } : {}),
         activity,
       };
     });
@@ -835,7 +839,8 @@ export class TaskManager {
     // (And waits for a user who is away: userAway.)
     this.expiry.set(task.id, { remaining: duration * this.readScale(), since: Date.now(), timer: null, ...(kept ? { whole: duration * this.readScale() } : {}) });
     this.expireLater(task.id);
-    this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
+    // A task whose question went unanswered says so in What Ember did, never "Stopped" (tasks-approvals-r1).
+    this.record({ event: "task", task: task.id, phase: status, ...(unanswered ? { endedBy: "expired" } : {}), goal: task.title, summary: result.summary.slice(0, 300) });
     this.d.onFinished?.(task);
   }
 

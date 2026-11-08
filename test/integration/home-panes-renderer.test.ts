@@ -8,6 +8,7 @@ import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
@@ -580,6 +581,117 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     // First run's text says the same, as its send line already does.
     expect(await page.locator("#w-full li[data-icon='mic']").evaluate(e => e.textContent)).toContain("Nothing it hears is sent anywhere until your organisation fixes its policy.");
     await evidence(page, "privacy-terms-lockdown");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("says what the person turned on: commands on this computer, and ordinary steps without asking (safety-privacy-r4-2, safety-privacy-c4-1)", async () => {
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const on = { commands: { local: { on: true, askEvery: false, consent: agreed } }, autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } } };
+    const page = await open("privacy", { settings: on });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const shown = () => page.locator("#privacy-terms").innerText();
+    const hand = () => page.locator("#privacy-terms li[data-icon='hand']").innerText();
+    const plug = () => page.locator("#privacy-terms li[data-icon='plug']").innerText();
+    expect(await page.locator("#autonomy-on").isChecked()).toBe(true);
+    expect(await plug()).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
+    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. Work without asking is on \(below\), so for ordinary steps it tells you what it's doing instead\. It never types passwords\./);
+    // First run's own words are untouched.
+    expect(await page.locator("#w-full li[data-icon='plug']").evaluate(e => e.textContent)).toContain("are off until you turn them on");
+    expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    await evidence(page, "privacy-terms-on");
+    // Both turned off again (main tells Home the settings changed): word for word as before it started, still open.
+    const base = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+    await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), base);
+    await expect.poll(shown).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    expect(await plug()).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("never offers what the organisation's lockdown turned off, nor says what the person turned on is on (safety-privacy-r4-2)", async () => {
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const page = await open("privacy", {
+      settings: { commands: { local: { on: true, askEvery: false, consent: agreed } }, screenImages: false },
+      admin: { source: "/etc/ember/policy.json", error: "Unrecognized key", retentionDays: null, confirmEveryAction: true, allowGrants: false, features: { voice: false, screenImages: false, ssh: false, wsl: false, autonomy: false }, managed: ["screenImages", "autonomy"], commands: { local: "off", wsl: "off", ssh: "off" } },
+    });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
+    expect(await page.locator("#privacy-terms li[data-icon='hand']").innerText()).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("never says Work without asking or apps let in without asking go ahead while Ember holds itself locked down after a policy change (safety-privacy-v5-1)", async () => {
+    // As main sends it once the policy changed mid-run: the settings still as the person left them (the store took its
+    // policy at start), the admin the held lockdown.
+    const held = heldUntilRestart({ policy: AdminPolicySchema.parse({ commands: { local: "on" } }), source: "/etc/ember/policy.json" });
+    const p = held.policy;
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const page = await open("privacy", {
+      settings: {
+        commands: { local: { on: true, askEvery: false, consent: agreed } },
+        autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } },
+        grants: { gedit: "act" },
+      },
+      admin: { source: held.source, error: held.error ?? null, held: true, managed: managedKeys(p), features: p.features, provider: null, confirmEveryAction: p.confirmEveryAction,
+        allowGrants: p.allowGrants, retentionDays: auditRetentionDays(held), neverLook: p.neverLook, commands: { local: commandMode(held, "local"), wsl: commandMode(held, "wsl"), ssh: commandMode(held, "ssh") }, sshHostsLimited: false },
+    });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const hand = await page.locator("#privacy-terms li[data-icon='hand']").innerText();
+    expect(hand).not.toContain("Work without asking is on");
+    expect(hand).not.toContain("without asking (below)");
+    expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never types passwords\./);
+    expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
+    // Screenshots too, as a lockdown read at start says, and the switches under the fold as it says they are
+    // (safety-privacy-w5-2): the settings still hold Send screenshots for tasks and Work without asking on.
+    const eye = await page.locator("#privacy-terms li[data-icon='eye']").innerText();
+    expect(eye).toContain("through the desktop's accessibility service. Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
+    expect(eye).not.toContain("it may take a screenshot");
+    for (const id of ["#screen-images", "#autonomy-on"]) {
+      expect(await page.locator(id).isChecked()).toBe(false);
+      expect(await page.locator(id).isDisabled()).toBe(true);
+    }
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("says what the held lockdown leaves as soon as the policy changes while it is open, without opening again (safety-privacy-w5-1)", async () => {
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const ordinary = { policy: AdminPolicySchema.parse({ commands: { local: "on" } }), source: "/etc/ember/policy.json" };
+    const page = await open("privacy", {
+      settings: {
+        commands: { local: { on: true, askEvery: false, consent: agreed } },
+        autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } },
+        grants: { gedit: "act" },
+      },
+      admin: homeAdmin(ordinary),
+    });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const line = (icon: string) => page.locator(`#privacy-terms li[data-icon='${icon}']`).innerText();
+    const notice = () => page.locator("#managed").evaluate(e => e.textContent);
+    expect(await line("hand")).toContain("Work without asking is on (below)");
+    expect(await line("send")).toContain("go to GitHub Copilot to work out the answer.");
+    expect(await notice()).toMatch(/^Some settings are managed by your organisation \(\/etc\/ember\/policy\.json\)\./);
+    // The policy file changes while Ember runs: main sends the held lockdown, as a status read would carry it.
+    await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin(heldUntilRestart(ordinary)));
+    await expect.poll(() => line("hand")).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never types passwords\./);
+    expect(await line("send")).toContain("nothing is sent to a model service until you restart Ember, so Ember can't answer or act.");
+    expect(await line("send")).not.toContain("GitHub Copilot");
+    expect(await line("eye")).toContain("Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
+    expect(await line("plug")).toBe("Other computers and commands are turned off by your organisation.");
+    expect(await notice()).toBe("Your organisation changed Ember's policy. Restart Ember to use it.");
+    for (const id of ["#screen-images", "#autonomy-on"]) {
+      expect(await page.locator(id).isChecked()).toBe(false);
+      expect(await page.locator(id).isDisabled()).toBe(true);
+    }
+    // Still open where the person was reading.
+    expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
     expect(page.errors).toEqual([]);
     await page.close();
   });

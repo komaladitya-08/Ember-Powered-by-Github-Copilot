@@ -12,6 +12,7 @@ import {
   summarizeActivity, telemetryItems, type ActivityItem,
 } from "../../app/shared/activity";
 import { stepOf } from "../../app/main/agent/presenter";
+import { timelineRows } from "../../app/renderer/home/tasks-copy";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 
@@ -216,6 +217,44 @@ describe("the details' rows", () => {
     l.add({ type: "refused", reason: "password fields are for the user only" }, T0);
     l.add({ type: "hand", hand: "cursor" }, T0 + 10);
     expect(l.card().rows.map(r => [r.state, r.words])).toEqual([["stopped", "Not allowed: password fields are for the user only"], ["done", "Used your mouse and keyboard"]]);
+  });
+
+  it("put a step refused after its question was answered after that answer, at its own time, never as refused before the user's Allow (tasks-approvals-v5-1)", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "c1", tool: "click", step: stepOf("click"), app: "Text Editor" }, T0 + 1000);
+    l.add({ type: "question", asked: "Click in Text Editor?" }, T0 + 1100);
+    l.add({ type: "answer", answer: "allowed" }, T0 + 3000);
+    l.add({ type: "refused", reason: "an authentication prompt is open" }, T0 + 3200);
+    l.add({ type: "denied" }, T0 + 3200);
+    l.add({ type: "tool-end", id: "c1", ok: false }, T0 + 3300);
+    expect(l.card().rows).toEqual([
+      { at: 1100, state: "done", words: "Asked you: you allowed it" },
+      { at: 3200, state: "stopped", words: "Not allowed: an authentication prompt is open" },
+    ]);
+    expect(timelineRows(l.get().items).map(r => r.words)).toEqual(["Asked you: you allowed it", "Not allowed: an authentication prompt is open"]);
+    expect(l.card().summary).toBeUndefined();
+  });
+
+  it("fold refusals for one reason in a row into one line, so repeated looks never push what the task did off the card (tasks-approvals-v5-2)", () => {
+    const { l, step } = log();
+    step("click", 0, { app: "Text Editor" });
+    for (let i = 0; i < 6; i++) {
+      const id = `look_${i}`;
+      l.add({ type: "tool-start", id, tool: "perceive_window", step: stepOf("perceive_window"), app: "Text Editor" }, T0 + 1000 * (i + 1));
+      l.add({ type: "refused", reason: "Ember couldn't tell whether a password prompt was open" }, T0 + 1000 * (i + 1) + 5);
+      l.add({ type: "denied" }, T0 + 1000 * (i + 1) + 5);
+      l.add({ type: "tool-end", id, ok: false }, T0 + 1000 * (i + 1) + 10);
+    }
+    expect(l.card().rows.map(r => [r.state, r.words])).toEqual([
+      ["done", "Clicked once in Text Editor"], ["stopped", "Not allowed 6 times: Ember couldn't tell whether a password prompt was open"],
+    ]);
+    // Home folds them too, and the row opens to name each step that was refused.
+    const rows = timelineRows(l.get().items);
+    expect(rows.map(r => r.words)).toEqual(["Clicked once in Text Editor", "Not allowed 6 times: Ember couldn't tell whether a password prompt was open"]);
+    expect(rows[1]!.steps?.map(s => [s.state, s.words])).toEqual(Array(6).fill(["stopped", "Tried to read the window in Text Editor"]));
+    // A refusal for another reason is a row of its own.
+    l.add({ type: "refused", reason: "password fields are for the user only" }, T0 + 9000);
+    expect(l.card().rows.map(r => r.words).slice(-2)).toEqual(["Not allowed 6 times: Ember couldn't tell whether a password prompt was open", "Not allowed: password fields are for the user only"]);
   });
 });
 
