@@ -83,9 +83,10 @@ const SAME_WAY: Readonly<Record<string, readonly string[]>> = { "←": ["left", 
 /**
  * After its own direction, a "→" before one of these, a key's word or no other word is said once ("Swipe right → to go
  * back", "turn right → at the end"); before any other word it is a step, said "to" ("the top right → Settings" was "the
- * top right Settings": voice-speaking-v4-2).
+ * top right Settings": voice-speaking-v4-2), and so is a name in quotes or brackets after a space ("the top right →
+ * “Settings”" was "the top right “Settings”": voice-speaking-v5-3), though not an aside of those words ("→ (twice)").
  */
-const ONCE_BEFORE = /^[ \t]*(?:$|[^\p{L}\p{N} \t]|(?:to|at|on|in|into|onto|for|from|of|by|with|and|or|then|but|so|until|till|twice|again|once|a|an|the|here|there|now|too|as|if|when|while|keys?|buttons?|arrows?)\b)/iu;
+const ONCE_BEFORE = /^(?:[^\p{L}\p{N} \t]|[ \t]*(?:$|(?!["“‘'«[(][ \t]*\p{L})[^\p{L}\p{N} \t]|\(?[ \t]*(?:to|at|on|in|into|onto|for|from|of|by|with|and|or|then|but|so|until|till|twice|again|once|a|an|the|here|there|now|too|as|if|when|while|keys?|buttons?|arrows?)\b))/iu;
 /** An arrow, a list of them ("← and →", "←/→", "↑↓"), or a spaced "->": said as arrowSaid decides. */
 const ARROWS = /[←→↑↓](?:(?:[ \t]*,?[ \t]+(?:and|or)[ \t]+|[ \t]*[,/][ \t]*|[ \t]*)[←→↑↓])*|(?<=[ \t])->(?=[ \t])/gi;
 

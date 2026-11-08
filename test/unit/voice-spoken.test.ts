@@ -128,6 +128,21 @@ describe("spokenText says money, times, paths and numbers as people say them, an
   ])("%j is said %j, an arrow after 'right' before any other word with its 'to' (voice-speaking-v4-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
   it.each([
+    // A menu's name in quotes or brackets is a step's too.
+    ["Click the three dots at the top right → “Settings”.", "Click the three dots at the top right to “Settings”."],
+    ['Click the three dots at the top right → "Settings".', 'Click the three dots at the top right to "Settings".'],
+    ["Click the three dots at the top right → 'Settings'.", "Click the three dots at the top right to 'Settings'."],
+    ["Click the three dots at the top right → (Settings).", "Click the three dots at the top right to (Settings)."],
+    ["Open the menu at the upper right → [Settings] → “Privacy”.", "Open the menu at the upper right to [Settings] to “Privacy”."],
+    // An aside of the words it is said once before, a mark or the end are as before.
+    ["Swipe right → (twice) to go back.", "Swipe right (twice) to go back."],
+    ["Turn right → (then left) at the end.", "Turn right (then left) at the end."],
+    ["Swipe right →.", "Swipe right."],
+    // In quotes, even one that starts with such a word is a name.
+    ["Tap Browse at the bottom right → “On My iPhone”.", "Tap Browse at the bottom right to “On My iPhone”."],
+  ])("%j is said %j, an arrow after 'right' before a quoted or bracketed name with its 'to' (voice-speaking-v5-3)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
     // A spaced hyphen between two amounts is a sum, not a range: a range was heard where the bubble shows a subtraction.
     ["That's $1,500 - $200 for fees, so $1,300 is left.", "That's 1,500 dollars - 200 dollars for fees, so 1,300 dollars is left."],
     ["Your balance is $2,000 - $1,500 = $500.", "Your balance is 2,000 dollars minus 1,500 dollars = 500 dollars."],
