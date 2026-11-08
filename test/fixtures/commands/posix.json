@@ -15431,6 +15431,94 @@
   {
    "cmd": "caddy respond --listen 127.0.0.1:9000 hello",
    "verdict": "run"
+  },
+  {
+   "cmd": "rsync -a --mkpath notes.txt backup/",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rsync"
+   ]
+  },
+  {
+   "cmd": "rsync -a --mkpath x ~/.config/ember/settings.json",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "shred -u ~/.config/ember/settings.json",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "cat names.txt | xargs -l rm -rf",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "podman run --rm -P -v /:/host alpine rm -rf /host/home",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run -P -v ~/.config/ember:/x alpine rm -rf /x",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "cp --update notes.txt backup/notes.txt",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.cp"
+   ]
+  },
+  {
+   "cmd": "install -b x.sh notes.txt",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.install"
+   ]
+  },
+  {
+   "cmd": "redis-cli -c FLUSHALL",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "db.change"
+   ]
+  },
+  {
+   "cmd": "make -j install",
+   "verdict": "ask",
+   "rules": [
+    "script.system"
+   ]
   }
  ]
 }

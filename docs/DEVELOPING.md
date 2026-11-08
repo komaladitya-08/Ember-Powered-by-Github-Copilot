@@ -2101,7 +2101,9 @@ system, `/proc`, koffi, timers and the environment come in as fakes or parameter
 renderer logic through exported pure modules (state reducers, option objects), never a DOM or xterm. Name the files
 `test/unit/{sshwsl,commands,wsl,ssh,remote,targets,command,prompt,askpass,visible-text}*`: those are what the
 `unit-matrix` job runs on every OS. The classifier's cases live in `test/fixtures/commands/{posix,powershell,cmd,wsl}.json`;
-add one with every fix.
+add one with every fix. An option table lists only the options that take the next word (a switch listed there hides the
+command or file after it); commands-classify.test.ts's option-table test runs each switch in front of a dangerous
+operand, so add a row when you change a table.
 
 **Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their
 variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them; `ci.yml` is

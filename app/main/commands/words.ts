@@ -43,8 +43,20 @@ export interface OptSpec {
   shortValue?: string;
   /** Long options that take a value, without `--` (`--file FILE` or `--file=FILE`). */
   longValue?: readonly string[];
-  /** Long options that may take a value only when attached (`--color=auto`). */
+  /**
+   * Long options that may take a value only when attached (`--color=auto`, GNU's `--backup[=CONTROL]`): written alone
+   * they take none and the next word is an operand, so they never belong in longValue (commands-remote-c4-3).
+   */
   longOptional?: readonly string[];
+  /**
+   * Short options whose value is only ever attached (`-l5`, `-i{}`, `-S<key>`): written alone they take none and the
+   * next word is the command or an operand (commands-remote-c4-1).
+   */
+  shortOptional?: string;
+  /** Short options that take the next word as their value only when it is a number (make's `-j 4`, but `-j install`). */
+  shortNumeric?: string;
+  /** Long options that take the next word only when it is a number (make's `--jobs 4`). */
+  longNumeric?: readonly string[];
   /** Stop at the first operand (the rest belongs to a command it runs: sudo, env, xargs, ssh). */
   stopAtOperand?: boolean;
   /** Single-dash long options (`-name`, `-exec`: find, Java-style tools) are not split into letters. */
@@ -81,7 +93,11 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
   let restAt = args.length;
   let missingValue = false;
   const shortValue = spec.shortValue ?? "";
+  const shortOptional = spec.shortOptional ?? "";
+  const shortNumeric = spec.shortNumeric ?? "";
   const longValue = new Set(spec.longValue ?? []);
+  const longNumeric = new Set(spec.longNumeric ?? []);
+  const numberNext = (k: number): boolean => k + 1 < args.length && /^\d+(\.\d+)?$/.test(args[k + 1].v ?? "");
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     const v = a.v;
@@ -106,12 +122,19 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       if (eq >= 0) opts.push({ name, value: body.slice(eq + 1), at: k });
       else if (longValue.has(name.slice(2))) {
         if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
-      } else opts.push({ name, at: k });
+      } else if (longNumeric.has(name.slice(2)) && numberNext(k)) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else opts.push({ name, at: k });
       continue;
     }
     // A short cluster: -rf, -fFILE, -C dir.
     for (let j = 1; j < v.length; j++) {
       const c = v[j];
+      // GNU's optional values (`-l[N]`): the rest of the word, never the next one.
+      if (shortOptional.includes(c) || shortNumeric.includes(c)) {
+        const attached = v.slice(j + 1);
+        if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
+        else if (shortNumeric.includes(c) && numberNext(k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else opts.push({ name: `-${c}`, at: k });
+        break;
+      }
       if (shortValue.includes(c)) {
         const attached = v.slice(j + 1);
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });

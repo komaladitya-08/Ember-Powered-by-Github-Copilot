@@ -2402,7 +2402,8 @@ function interactive(h: H): void {
     case "watch": {
       add();
       // watch hands its words, joined, to sh -c.
-      const w = parseOpts(a, { shortValue: "nqd", longValue: ["interval", "differences"], stopAtOperand: true });
+      // -d (--differences) takes a value only attached or after = (commands-remote-i5a).
+      const w = parseOpts(a, { shortValue: "nq", shortOptional: "d", longValue: ["interval", "equexit"], longOptional: ["differences"], stopAtOperand: true });
       if (w.operands.some(x => x.v === null)) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
       else if (w.operands.length) h.e.nested(w.operands.map(x => x.v).join(" "), "sh", h.sc, "watch");
       return;
@@ -2700,7 +2701,10 @@ function finishCd(h: H, abs: string | null): void {
 
 // Listing names and sizes reads no file's contents.
 reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "exa", "eza"], h => {
-  const p = opts(h, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style", "files0-from", "exclude-from"] });
+  // stat's -f (file system), file's -w and exa's -T (tree) take no value, and --color (and du's --time) one only after =
+  // (commands-remote-i5a).
+  const short: Readonly<Record<string, string>> = { tree: "LPIoHT", du: "BdXt", stat: "c", file: "eFfmP", lsd: "LIstw", exa: "LIstw", eza: "LIstw" };
+  const p = opts(h, { shortValue: short[h.key] ?? "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "printf", "output", "sort", "indicator-style", "quoting-style", "files0-from", "exclude-from", "cached", "filelimit", "timefmt", "charset"], longOptional: ["color", "time"] });
   if (h.key === "tree") for (const o of values(p, "o", "output")) if (o) h.e.usePath(lit(o), "write", h.sc);
   // du reads names from --files0-from and patterns from -X/--exclude-from, and shows the lines in its errors (review
   // #174): those files are read. `--exclude` is a pattern, not an abbreviation of --exclude-from.
@@ -2723,7 +2727,10 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   // git grep's and ugrep's pager value is optional and only follows `=`: written alone, the option takes the default
   // pager and the next word is the pattern or a file (review #165). ag's and ack's take the next word.
   const pagerApart = h.key === "git-grep" || h.key === "ugrep" ? [] : ["pager", "open-files-in-pager"];
-  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin"] });
+  // GNU grep's, ugrep's and git grep's --color take a value only after =, and ag's and ack's none: only rg's takes the next
+  // word, as rg's -d and -r do. ag's -f and -D and ack's -f are switches (commands-remote-i5a).
+  const short: Readonly<Record<string, string>> = { rg: "eftgjmABCEMTdr", ag: "ABCGgmp", ack: "ABCmg" };
+  const p = opts(h, { shortValue: short[h.key] ?? "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", ...(h.key === "rg" ? ["color", "colors"] : []), "group-separator", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin", "file-search-regex", "depth", "path-to-ignore", "ignore", "ignore-dir", "match", "output", "files-from", "context-separator", "field-context-separator", "field-match-separator", "max-columns", "dfa-size-limit", "regex-size-limit"], longOptional: ["color", "colour"] });
   // Options whose value is a program run on the matches or the matched files (review #165): git grep's pager,
   // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
   if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
@@ -2839,7 +2846,8 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   } else if (k === "mongo" || k === "mongosh") {
     if (inlineSql(h, [], ["eval"]).length) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
   } else if (k === "redis-cli") {
-    const p = opts(h, { shortValue: "hpsanuirdc", longValue: ["user", "pass", "tls", "cacert", "cert", "key", "rdb", "functions-rdb", "eval"] });
+    // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
+    const p = opts(h, { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] });
     if (values(p, "eval").length || has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
     if (has(p, "a", "pass") || values(p, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
     const cmd = (p.operands[0]?.v ?? "").toLowerCase();
@@ -2854,7 +2862,8 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
 // a: rm and friends (§3.5.1).
 reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir"], h => {
   const shred = h.key === "shred";
-  const p = opts(h, { shortValue: shred ? "nsu" : "", longValue: shred ? ["iterations", "size", "random-source"] : [] });
+  // shred's -u (remove) takes no value, and --remove only one after = (commands-remote-r4-2).
+  const p = opts(h, { shortValue: shred ? "ns" : "", longValue: shred ? ["iterations", "size", "random-source"] : [], longOptional: ["remove"] });
   const rec = (h.key === "rm" || h.key === "srm" || h.key === "wipe") && has(p, "r", "R", "recursive");
   const objs = objsOf(h, p.operands, rec ? "deleteTree" : "delete");
   const widening: string[] = [];
@@ -2976,7 +2985,7 @@ reg(NATIVE, ["find"], h => {
     if (/^-(i?name|i?path|i?wholename|i?regex|i?lname)$/.test(v)) { const pv = expr[j + 1]?.v; if (pv) patterns.push(pv); j++; continue; }
     // The starting points read from a file, whose names find shows in its errors (review #174).
     if (v === "-files0-from") { const f = expr[j + 1]; if (f && f.v !== null && !STDIN_NAME.test(f.v)) h.e.usePath(f, "read", h.sc); j++; continue; }
-    if (FIND_VALUE.has(v)) j++;
+    if (FIND_VALUE.has(v) || /^-newer[aBcm][aBcmt]$/.test(v)) j++;
   }
   if (hasDelete) h.e.add("destroy", "posix.find.delete", `Deletes what it finds under ${where}.`, { objects: startObjs });
   // A find for secrets with an action that reads or lists them (the default action prints).
@@ -2997,12 +3006,15 @@ function secretPattern(pt: string, sc: Scope): boolean {
 
 // xargs and parallel: their payload is a command too (§3.4.5).
 reg(NATIVE, ["xargs"], h => {
+  // GNU's -l, -i and -e (and --max-lines, --replace, --eof) take a value only attached or after =: written alone, the
+  // next word is the command (commands-remote-c4-1). BSD's -J, -R and -S take one.
   const p = parseOpts(h.args, {
-    shortValue: "adEILlnPs", longValue: ["arg-file", "delimiter", "eof", "replace", "max-lines", "max-args", "max-procs", "max-chars", "process-slot-var"],
-    stopAtOperand: true,
+    shortValue: "adEILnPsJRS", shortOptional: "lie", longValue: ["arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"],
+    longOptional: ["eof", "replace", "max-lines"], stopAtOperand: true,
   });
   for (const f of values(p, "a", "arg-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
-  const repl = values(p, "I", "replace", "i")[0];
+  // A bare -i or --replace replaces {}.
+  const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
   const shell = POSIX_SHELLS[(ops[0].v ?? "").split("/").pop() ?? ""];
   let intoCode = false;
@@ -3019,7 +3031,15 @@ reg(NATIVE, ["xargs"], h => {
 });
 reg(NATIVE, ["parallel"], h => {
   if (h.args.some(a => a.v !== null && /^:::+\+?$/.test(a.v))) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
-  const p = parseOpts(h.args, { shortValue: "jSaEdIX", longValue: ["jobs", "sshlogin", "arg-file", "eof", "delimiter", "joblog", "results", "tmpdir"], stopAtOperand: true });
+  // -X (context replace) is a switch, and -l, -i and -e take a value only attached (commands-remote-c4-1).
+  const p = parseOpts(h.args, {
+    shortValue: "jSaEdINnLCs", shortOptional: "lie", stopAtOperand: true,
+    longValue: [
+      "jobs", "sshlogin", "sshloginfile", "slf", "arg-file", "delimiter", "joblog", "results", "tmpdir", "max-args", "colsep", "timeout", "delay", "workdir", "wd",
+      "basefile", "bf", "return", "transferfile", "tf", "tagstring", "tag-string", "header", "halt", "nice", "retries", "memfree", "load", "env", "termseq",
+      "limit", "arg-sep", "arg-file-sep", "block", "blocksize", "recstart", "recend", "semaphorename", "id", "ssh", "sshdelay", "rpl", "process-slot-var", "max-chars",
+    ],
+  });
   if (p.operands.length === 1 && (p.operands[0].v ?? " ").includes(" ")) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   if (has(p, "S", "sshlogin")) h.e.add("publish", "send.ssh", "Sends data to another computer.");
   h.e.payload([...p.operands, { v: null, raw: "(input)", glob: false }], h.sc, "parallel");
@@ -3055,8 +3075,11 @@ reg(NATIVE, ["diskutil"], h => {
 // cp, mv, install, ln, rsync (local): the destination may exist (§3.5.1).
 function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   const p = opts(h, {
-    shortValue: kind === "install" ? "mgotSb" : kind === "ln" ? "tS" : "tS",
-    longValue: ["target-directory", "suffix", "mode", "group", "owner", "strip-program", "context", "backup", "reflink", "sparse", "preserve", "no-preserve", "update"],
+    // install's -b (backup) takes no value; --backup, --context, --reflink, --preserve and --update take one only after =
+    // (commands-remote-c4-3).
+    shortValue: kind === "install" ? "mgotS" : "tS",
+    longValue: ["target-directory", "suffix", "mode", "group", "owner", "strip-program", "sparse", "no-preserve"],
+    longOptional: ["backup", "context", "reflink", "preserve", "update"],
   });
   if (kind === "install" && has(p, "d", "directory")) { objsOf(h, p.operands, "write"); return; }
   const noClobber = has(p, "n", "no-clobber") || values(p, "update").includes("none");
@@ -3069,7 +3092,11 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   else if (sources.length >= 2) { dest = sources[sources.length - 1]; sources = sources.slice(0, -1); }
   else if (kind === "ln" && sources.length === 1) { dest = lit("."); }
   objsOf(h, sources, srcUse);
-  if (!dest) return;
+  if (!dest) {
+    // With no destination it can't run as it is; it is asked about rather than judged as nothing (commands-remote-i5a).
+    if (!has(p, "help", "version")) h.e.add("destroy", `posix.${kind}`, "Writes to a file Ember can't name.");
+    return;
+  }
   const destObj = h.e.usePath(dest, "write", h.sc);
   // `.` and `..` are always folders: `cp x .` puts x in the current folder (commands-remote-v1).
   const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "") || /^\.\.?$/.test(dest.v ?? "");
@@ -3147,7 +3174,8 @@ reg(NATIVE, ["tee"], h => {
 });
 
 reg(NATIVE, ["touch", "mkdir", "mkfifo", "mknod", "mktemp"], h => {
-  const p = opts(h, { shortValue: h.key === "touch" ? "dtr" : h.key === "mkdir" ? "m" : "pt", longValue: ["date", "reference", "mode", "tmpdir", "suffix", "context"] });
+  // --context (and mktemp's --tmpdir) take a value only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: h.key === "touch" ? "dtr" : h.key === "mktemp" ? "pt" : "m", longValue: ["date", "reference", "time", "mode", "suffix"], longOptional: ["context", "tmpdir"] });
   if (h.key === "mktemp") return;
   const mark = h.e.written.length;
   objsOf(h, h.key === "mknod" ? p.operands.slice(0, 1) : p.operands, "write");
@@ -3173,22 +3201,27 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
 });
 
 // Archivers (§3.5.1, critique security-6).
-const TAR_VALUE = "fCbKNTXgLVFHIj";
+/** GNU tar's short options that take a value (-j, -J and -z are switches: commands-remote-i5a). */
+const TAR_VALUE = "fCbKNTXgLVFHI";
+/** A Mac's own tar (bsdtar): -H and -L follow links, -I names a file list as -T does, and -s takes a pattern. */
+const BSDTAR_VALUE = "fCbTXIs";
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
   // Old-style bundled first argument (`tar xzf x.tgz`).
   if (a[0]?.v && !a[0].v.startsWith("-")) a[0] = { ...a[0], v: `-${a[0].v}` };
+  const bsd = h.key === "bsdtar" || (h.key === "tar" && h.sc.os === "darwin");
   const p = parseOpts(a, {
-    shortValue: TAR_VALUE,
-    longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort"],
+    shortValue: bsd ? BSDTAR_VALUE : TAR_VALUE,
+    longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort", "strip-components", "exclude-tag", "exclude-tag-all", "exclude-tag-under", "suffix", "owner-map", "group-map", "level", "hole-detection", "pax-option", "quoting-style", "quote-chars", "no-quote-chars", "rmt-command", "rsh-command", "listed-incremental", "starting-file", "options"],
+    longOptional: ["backup", "checkpoint", "occurrence", "one-top-level", "totals", "atime-preserve"],
   });
   const extract = has(p, "x", "extract", "get");
   const create = has(p, "c", "create", "r", "append", "u", "update", "A", "catenate", "concatenate");
   const archive = values(p, "f", "file")[0];
   const dir = values(p, "C", "directory")[0];
-  if (has(p, "to-command", "use-compress-program", "I", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  if (has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I")) || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
-  for (const f of values(p, "T", "files-from", "X", "exclude-from")) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   if (archive) {
     const arc = lit(archive);
     if (URL_LIKE.test(archive) || SCP_LIKE.test(archive)) h.e.add("publish", "send.tar", "Sends data to another computer.");
@@ -3215,7 +3248,9 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
 });
 
 reg(NATIVE, ["zip"], h => {
-  const p = opts(h, { shortValue: "bnPtTZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] });
+  // -T tests the archive and takes no value; -TT and -tt are one option each, written with one dash (commands-remote-i5a).
+  const two: Readonly<Record<string, string>> = { "-TT": "--unzip-command", "-tt": "--tt" };
+  const p = parseOpts(h.args.map(a => (a.v !== null && two[a.v] ? { ...a, v: two[a.v] } : a)), { shortValue: "bnPtZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] });
   if (has(p, "unzip-command") || h.args.some(a => /^(-TT|--unzip-command|--tt)/.test(a.v ?? ""))) h.e.unclear("unclear.zip-command", "It runs a command Ember can't see.");
   const [arc, ...inputs] = p.operands;
   if (arc) {
@@ -3285,7 +3320,8 @@ reg(NATIVE, ["unzip"], h => {
 });
 
 reg(NATIVE, ["cpio"], h => {
-  const p = opts(h, { shortValue: "EFHIMORsD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory"] });
+  // -s swaps bytes and takes no value; -C is the block size (commands-remote-i5a).
+  const p = opts(h, { shortValue: "EFHIMORCD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory", "io-size", "message", "block-size"] });
   if (has(p, "rsh-command")) h.e.unclear("unclear.cpio-command", "It runs a command Ember can't see.");
   if (has(p, "i", "extract")) {
     // -D/--directory: the folder it unpacks into (review #169).
@@ -3301,7 +3337,9 @@ reg(NATIVE, ["cpio"], h => {
 
 // Compressors replace their input with the packed (or unpacked) file unless told to keep it.
 reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma", "lzip", "compress", "uncompress", "zstd", "unzstd", "lz4", "pigz", "unpigz", "brotli"], h => {
-  const p = opts(h, { shortValue: "S", longValue: ["suffix", "rsyncable", "format", "threads", "memlimit"] });
+  // --rsyncable takes no value (commands-remote-i5a); xz's -T, -M, -F and -C, pigz's -p and -b, zstd's and brotli's -o do.
+  const valueShort: Readonly<Record<string, string>> = { xz: "STMFC", unxz: "STMFC", lzma: "STMFC", unlzma: "STMFC", pigz: "Spb", unpigz: "Spb", zstd: "oD", unzstd: "oD", brotli: "oqwS" };
+  const p = opts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] });
   const keeps = has(p, "k", "keep", "c", "stdout", "to-stdout", "t", "test", "l", "list", "h", "help", "V", "version");
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
   const ins = objsOf(h, p.operands, "write");
@@ -3407,8 +3445,11 @@ export function awkProgramOk(prog: string): boolean {
   return !/[|>]/.test(bare.replace(/>=|\|\|/g, ""));
 }
 reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
-  const p = opts(h, { shortValue: "fFvWe", longValue: ["file", "field-separator", "assign", "source", "include", "load"] });
-  const progFiles = values(p, "f", "file", "include", "load");
+  // gawk's -i (include), -l (load) and -E (exec) take a value; -d, -D, -o, -p and -L only attached (commands-remote-i5a).
+  const p = opts(h, { shortValue: "fFvWeilE", longValue: ["file", "field-separator", "assign", "source", "include", "load", "exec"], longOptional: ["dump-variables", "debug", "pretty-print", "profile", "lint"] });
+  const progFiles = values(p, "f", "file", "include", "load", "i", "l", "E", "exec");
+  // `-i inplace` writes what it prints back into each file it reads, as sed -i.
+  const inPlace = values(p, "i", "include").some(v => v !== null && /^inplace(\.awk)?$/.test(v));
   for (const f of progFiles) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
   if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
@@ -3417,7 +3458,9 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   const inline = values(p, "e", "source");
   if (progFiles.length === 0 && inline.length === 0) { inline.push(files[0]?.v ?? null); files = files.slice(1); }
   for (const prog of inline) if (prog === null || !awkProgramOk(prog)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files.");
-  h.e.readArgs(files.filter(f => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(f.v ?? "")), h.sc, { unresolvedUnclear: true });
+  const read = files.filter(f => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(f.v ?? ""));
+  if (inPlace) objsOf(h, read, "write");
+  h.e.readArgs(read, h.sc, { unresolvedUnclear: true });
 });
 
 // Shells: -c text classified as POSIX (§3.4.5); scripts by name; stdin after a fetch is download-and-run (§3.4.7).
@@ -3512,7 +3555,10 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   const isNode = h.key === "node" || h.key === "nodejs";
   const p = parseOpts(h.args, {
     shortValue: spec.valueOpts ?? "", stopAtOperand: true,
-    longValue: ["eval", "print", "require", "import", "loader", "input-type", "experimental-loader", ...(isNode ? ["run"] : [])],
+    longValue: [
+      "eval", "print", "require", "import", "loader", "input-type", "experimental-loader",
+      ...(isNode ? ["run", "conditions", "env-file", "env-file-if-exists", "title", "watch-path", "test-reporter", "test-reporter-destination", "redirect-warnings", "openssl-config", "icu-data-dir", "disable-warning", "test-name-pattern", "test-skip-pattern", "diagnostic-dir", "report-dir", "unhandled-rejections", "dns-result-order", "localstorage-file", "experimental-sea-config"] : []),
+    ],
   });
   for (let k = 0; k < h.args.length; k++) {
     const v = h.args[k].v;
@@ -3533,6 +3579,8 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
   }
   if (h.key === "osascript" && p.operands[0]) { h.e.unclear("unclear.script", "It runs a script Ember can't see."); return; }
+  // node's --env-file loads that file's settings, secrets included, into the program's environment.
+  for (const f of values(p, "env-file", "env-file-if-exists")) if (f) h.e.usePath(lit(f), "read", h.sc);
   if (h.key === "php" && h.args.some(a => a.v !== null && a.v.startsWith("-S"))) {
     // PHP's own web server: -S address:port, -t the folder it serves (this one by default), and a router script it
     // runs for every request (review #178).
@@ -3694,7 +3742,9 @@ reg(NATIVE, ["exec"], h => {
 
 // The environment: printing it is class d (§3.5.4); env runs a command with assignments.
 reg(NATIVE, ["env"], h => {
-  const p = parseOpts(h.args, { shortValue: "uCS", longValue: ["unset", "chdir", "split-string", "default-signal", "ignore-signal", "block-signal"], stopAtOperand: true });
+  // --default-signal, --ignore-signal and --block-signal take a value only after = (commands-remote-i5a); -a (argv0) and
+  // a Mac's -P (a search path) take one.
+  const p = parseOpts(h.args, { shortValue: "uCSaP", longValue: ["unset", "chdir", "split-string", "argv0"], longOptional: ["default-signal", "ignore-signal", "block-signal"], stopAtOperand: true });
   if (has(p, "S", "split-string")) { h.e.unclear("unclear.env-split", "Ember can't tell what env -S runs."); return; }
   let k = 0;
   const assigns: { name: string; value: Arg }[] = [];
@@ -3808,8 +3858,11 @@ reg(NATIVE, [...SUDO_LIKE], h => {
     return;
   }
   const p = parseOpts(h.args, {
-    shortValue: k === "sudo" || k === "sudoedit" ? "ugpCUTrthD" : k === "doas" ? "uC" : k === "pkexec" ? "u" : "u",
-    longValue: ["user", "group", "host", "prompt", "close-from", "other-user", "command-timeout", "role", "type", "chdir", "preserve-env"],
+    // sudo's -h takes a host only attached (alone it is help), and --preserve-env a list only after = (commands-remote-i5a).
+    shortValue: k === "sudo" || k === "sudoedit" ? "ugpCUTrtDRca" : k === "doas" ? "uC" : k === "pkexec" ? "u" : "u",
+    shortOptional: k === "sudo" || k === "sudoedit" ? "h" : "",
+    longValue: ["user", "group", "host", "prompt", "close-from", "other-user", "command-timeout", "role", "type", "chdir", "chroot", "login-class", "auth-type"],
+    longOptional: ["preserve-env"],
     stopAtOperand: true,
   });
   const other = values(p, "u", "user")[0];
@@ -3829,7 +3882,7 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
   if (rule.finding) h.e.add(rule.finding.cls, rule.finding.rule, rule.finding.says);
   if (h.key === "disown") return;
   if (rule.noCommand && h.args.some(a => a.v !== null && rule.noCommand!.test(a.v))) { h.e.readArgs([], h.sc); return; }
-  const p = parseOpts(h.args, { shortValue: rule.shortValue ?? "", longValue: rule.longValue ?? [], stopAtOperand: true });
+  const p = parseOpts(h.args, { shortValue: rule.shortValue ?? "", shortOptional: rule.shortOptional ?? "", longValue: rule.longValue ?? [], stopAtOperand: true });
   let rest = p.operands;
   if (h.key === "nice" && h.args[0]?.v && /^-\d+$/.test(h.args[0].v)) rest = parseOpts(h.args.slice(1), { stopAtOperand: true }).operands;
   if (h.key === "time" || h.key === "strace" || h.key === "ltrace") for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
@@ -3860,7 +3913,7 @@ reg(NATIVE, ["firejail", "bwrap", "run-parts", "envdir", "expect"], h => {
   h.e.readArgs(h.args, h.sc);
 });
 reg(NATIVE, ["script"], h => {
-  const p = parseOpts(h.args, { shortValue: "cEIOBT", longValue: ["command", "echo", "log-in", "log-out", "log-io", "log-timing", "logging-format", "output-limit"] });
+  const p = parseOpts(h.args, { shortValue: "cEIOBTmo", longValue: ["command", "echo", "log-in", "log-out", "log-io", "log-timing", "logging-format", "output-limit"] });
   const c = values(p, "c", "command")[0];
   for (const f of p.operands) { const obj = h.e.usePath(f, "write", h.sc); if (obj.abs && f.v !== "/dev/null") h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
   if (c === undefined) { if (h.sc.os === "darwin" && p.operands.length > 1) { h.e.unwrap(h, p.operands.slice(1), "script"); return; } h.e.unclear("unclear.interactive", SAYS.interactive); return; }
@@ -4062,7 +4115,8 @@ git(["reset"], h => {
 });
 
 git(["checkout"], h => {
-  const p = opts(h, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file", "track"] });
+  // --track takes a mode only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file"], longOptional: ["track"] });
   if (has(p, "p", "patch")) h.e.unclear("unclear.interactive", SAYS.interactive);
   if (has(p, "pathspec-from-file")) h.e.unclear("unclear.pathspec-file", "Ember can't see which files it names.");
   if (has(p, "f", "force")) h.e.add("destroy", "git.checkout.force", "Throws away uncommitted changes.", { program: "git checkout" });
@@ -4101,12 +4155,13 @@ git(["restore"], h => {
 });
 
 git(["switch"], h => {
-  const p = opts(h, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict", "track"] });
+  const p = opts(h, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict"], longOptional: ["track"] });
   if (has(p, "discard-changes", "f", "force") || values(p, "C", "force-create").length) h.e.add("destroy", "git.switch", "Throws away uncommitted changes.", { program: "git switch" });
 });
 
 git(["branch"], h => {
-  const p = opts(h, { shortValue: "tu", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format", "color", "column", "track"] });
+  // -t (--track) takes no value, and --track, --color and --column one only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "u", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format"], longOptional: ["track", "color", "column"] });
   const names = p.operands;
   if (has(p, "D") || (has(p, "d", "delete") && has(p, "f", "force"))) {
     h.e.add("destroy", "git.branch.D", `Deletes the branch ${joinList(names.map(n => n.v ?? n.raw)) || "?"} even if it isn't merged.`, { objects: names.map(GIT_BRANCH_OBJ), program: "git branch" });
@@ -4126,7 +4181,8 @@ git(["stash"], h => {
 });
 
 git(["tag"], h => {
-  const p = opts(h, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "color", "column", "cleanup", "create-reflog"] });
+  // --create-reflog takes no value, and --color and --column one only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "cleanup"], longOptional: ["color", "column"] });
   if (has(p, "d", "delete")) h.e.add("destroy", "git.tag.delete", `Deletes the tag ${joinList(p.operands.map(a => a.v ?? a.raw)) || "?"}.`, { objects: p.operands.map(a => ({ kind: "tag", text: a.v ?? a.raw, abs: null })), program: "git tag" });
   if (has(p, "f", "force")) h.e.add("destroy", "git.tag.force", `Replaces the tag ${p.operands[0]?.v ?? "?"} if it exists.`, { program: "git tag" });
   if ((has(p, "a", "annotate", "s", "sign") || values(p, "u", "local-user").length) && !values(p, "m", "message", "F", "file").length) h.e.unclear("unclear.interactive", SAYS.interactive);
@@ -4192,7 +4248,8 @@ git(["credential", "credential-store", "credential-cache", "credential-manager",
   h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git credential" });
 });
 git(["config"], h => {
-  const p = opts(h, { shortValue: "f", longValue: ["file", "blob", "type", "default", "comment", "value", "fixed-value"] });
+  // --fixed-value takes no value (commands-remote-i5a).
+  const p = opts(h, { shortValue: "f", longValue: ["file", "blob", "type", "default", "comment", "value"] });
   const ops = p.operands;
   let sub = ops[0]?.v ?? null;
   const subs = ["get", "set", "unset", "list", "rename-section", "remove-section", "edit", "get-color", "get-colorbool"];
@@ -4224,7 +4281,8 @@ git(["submodule"], h => {
 git(["grep"], h => { NATIVE["git-grep"]({ ...h, key: "git-grep", prog: "git grep" }); });
 git(["bisect"], h => { if (h.args[0]?.v === "run") h.e.payload(h.args.slice(1), h.sc, "git bisect run"); });
 git(["rebase"], h => {
-  const p = opts(h, { shortValue: "xsX", longValue: ["exec", "onto", "strategy", "strategy-option", "gpg-sign", "whitespace", "empty"] });
+  // -S and --gpg-sign take a key only attached or after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "xsX", shortOptional: "S", longValue: ["exec", "onto", "strategy", "strategy-option", "whitespace", "empty"], longOptional: ["gpg-sign"] });
   if (has(p, "i", "interactive", "edit-todo")) h.e.unclear("unclear.interactive", SAYS.interactive);
   for (const x of values(p, "x", "exec")) {
     if (x === null) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
@@ -4232,7 +4290,8 @@ git(["rebase"], h => {
   }
 });
 git(["commit"], h => {
-  const p = opts(h, { shortValue: "mFCcutS", longValue: ["message", "file", "reuse-message", "reedit-message", "fixup", "squash", "author", "date", "template", "cleanup", "trailer", "untracked-files", "pathspec-from-file", "gpg-sign"] });
+  // -u and -S take a value only attached, --untracked-files and --gpg-sign only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "mFCct", shortOptional: "uS", longValue: ["message", "file", "reuse-message", "reedit-message", "fixup", "squash", "author", "date", "template", "cleanup", "trailer", "pathspec-from-file"], longOptional: ["untracked-files", "gpg-sign"] });
   if (has(p, "p", "patch", "interactive", "e", "edit") || values(p, "c", "reedit-message").length) h.e.unclear("unclear.interactive", SAYS.interactive);
   else if (!values(p, "m", "message", "F", "file", "C", "reuse-message", "fixup").length && !has(p, "no-edit")) h.e.unclear("unclear.interactive", SAYS.interactive);
   for (const f of values(p, "F", "file", "t", "template")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
@@ -4341,7 +4400,9 @@ reg(NATIVE, ["gh"], h => {
     return;
   }
   if ((GH_WRITE[group] ?? []).includes(sub)) {
-    const p = parseOpts(rest, { shortValue: "BHRtbFTlamr", longValue: ["base", "head", "repo", "title", "body", "body-file", "label", "assignee", "milestone", "reviewer", "project", "template", "match-head-commit", "subject", "author-email"] });
+    // A merge's -m, -r and -s and a review's -a, -c and -r are switches; a release's -n is its notes (commands-remote-i5a).
+    const short = sub === "merge" ? "RtbFA" : sub === "review" ? "RbF" : group === "release" ? "RtnF" : group === "gist" ? "Rdf" : "BHRtbFTlamrp";
+    const p = parseOpts(rest, { shortValue: short, longValue: ["base", "head", "repo", "title", "body", "body-file", "label", "assignee", "milestone", "reviewer", "project", "template", "match-head-commit", "subject", "author-email", "add-label", "remove-label", "add-assignee", "remove-assignee", "add-reviewer", "remove-reviewer", "add-project", "remove-project", "notes", "notes-file", "target", "discussion-category", "notes-start-tag", "desc", "filename"] });
     const w = [...widening];
     for (const o of p.opts) if (/^(-B|--base|-H|--head|-R|--repo|--admin|--web|-w|-d|--delete-branch)$/.test(o.name)) w.push(o.name);
     const n = p.operands.slice(1).map(a => ({ kind: "other" as const, text: a.v ?? a.raw, abs: null }));
@@ -4464,7 +4525,8 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   if (v === "kill" || v === "stop" || v === "restart" || v === "pause") { h.e.add("system", "kill.process", `Stops programs that are running (${joinList(objsText) || "containers"}).`, { objects: objsText.map(t => ({ kind: "process" as const, text: t, abs: null })) }); return; }
   if (v === "run" || v === "create") { containerRun(h, prog, rest); return; }
   if (v === "exec") {
-    const p = parseOpts(rest, { shortValue: "euwd", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true });
+    // -d (detach) takes no value (commands-remote-c4-2).
+    const p = parseOpts(rest, { shortValue: "euw", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true });
     if (has(p, "i") && has(p, "t")) h.e.unclear("unclear.interactive", SAYS.interactive);
     if (has(p, "d", "detach")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
     h.e.payload(p.operands.slice(1), h.sc, `${prog} exec`);
@@ -4495,11 +4557,32 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   }
   h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
 });
+/**
+ * docker's and podman's run and create options that take a value (`docker run --help`, podman-run(1)): one missing here
+ * would make its value the image, and the options after it (a mount, --privileged) would go unseen (commands-remote-c4-2).
+ */
+const CONTAINER_RUN_VALUE: readonly string[] = [
+  "env", "user", "publish", "volume", "workdir", "label", "cpu-shares", "hostname", "memory", "attach", "name", "network", "net", "mount", "entrypoint",
+  "env-file", "device", "cap-add", "cap-drop", "pid", "ipc", "userns", "security-opt", "platform", "restart", "runtime", "add-host", "dns", "log-driver",
+  "log-opt", "ulimit", "tmpfs", "gpus", "pull", "cidfile", "cgroupns", "uts", "volumes-from", "group-add", "health-cmd", "stop-signal", "storage-opt",
+  "sysctl", "isolation", "init-path", "shm-size", "annotation", "blkio-weight", "blkio-weight-device", "cgroup-parent", "cpu-count", "cpu-percent",
+  "cpu-period", "cpu-quota", "cpu-rt-period", "cpu-rt-runtime", "cpus", "cpuset-cpus", "cpuset-mems", "detach-keys", "device-cgroup-rule",
+  "device-read-bps", "device-read-iops", "device-write-bps", "device-write-iops", "dns-option", "dns-opt", "dns-search", "domainname", "expose",
+  "health-interval", "health-retries", "health-start-interval", "health-start-period", "health-timeout", "io-maxbandwidth", "io-maxiops", "ip", "ip6",
+  "kernel-memory", "label-file", "link", "link-local-ip", "mac-address", "memory-reservation", "memory-swap", "memory-swappiness", "network-alias",
+  "net-alias", "oom-score-adj", "pids-limit", "stop-timeout", "umask", "volume-driver",
+  // podman's own.
+  "arch", "authfile", "cgroup-conf", "cgroups", "chrootdirs", "conmon-pidfile", "decryption-key", "env-merge", "gidmap", "group-entry",
+  "health-log-destination", "health-max-log-count", "health-max-log-size", "health-on-failure", "health-startup-cmd", "health-startup-interval",
+  "health-startup-retries", "health-startup-success", "health-startup-timeout", "hostuser", "image-volume", "os", "passwd-entry", "personality",
+  "pidfile", "pod", "pod-id-file", "preserve-fd", "preserve-fds", "rdt-class", "requires", "retry", "retry-delay", "sdnotify", "seccomp-policy", "secret",
+  "shm-size-systemd", "subgidname", "subuidname", "systemd", "timeout", "tz", "uidmap", "unsetenv", "variant",
+];
 function containerRun(h: H, prog: string, rest: Arg[]): void {
-  const p = parseOpts(rest, {
-    shortValue: "eupvwlchmaP", stopAtOperand: true,
-    longValue: ["env", "user", "publish", "volume", "workdir", "label", "cpu-shares", "hostname", "memory", "attach", "name", "network", "net", "mount", "entrypoint", "env-file", "device", "cap-add", "cap-drop", "pid", "ipc", "userns", "security-opt", "platform", "restart", "runtime", "add-host", "dns", "log-driver", "log-opt", "ulimit", "tmpfs", "gpus", "pull", "cidfile", "cgroupns", "uts", "volumes-from", "group-add", "health-cmd", "stop-signal", "storage-opt", "sysctl", "isolation", "init-path", "shm-size"],
-  });
+  // -P (--publish-all), -d, -i, -t and -q take no value (commands-remote-c4-2).
+  const p = parseOpts(rest, { shortValue: "eupvwlchma", stopAtOperand: true, longValue: CONTAINER_RUN_VALUE });
+  // Without an image it can't run as it is: asked about rather than judged as nothing (commands-remote-i5a).
+  if (p.operands.length === 0 && !has(p, "help")) h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
   if (has(p, "d", "detach")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
   if (has(p, "i", "interactive") && has(p, "t", "tty")) h.e.unclear("unclear.interactive", SAYS.interactive);
   const priv = has(p, "privileged")
@@ -4573,7 +4656,7 @@ function compose(h: H, prog: string, rest: Arg[]): void {
     if (sub === "run" && !flags.includes("-T") && !flags.some(f => f === "-d" || f === "--detach")) h.e.unclear("unclear.interactive", SAYS.interactive);
     // `compose run -v host:container` mounts as `docker run -v` does.
     const at = rest.indexOf(p.operands[0]);
-    if (sub === "run") containerMounts(h, parseOpts(rest.slice(at + 1), { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop"], stopAtOperand: true }));
+    if (sub === "run") containerMounts(h, parseOpts(rest.slice(at + 1), { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop", "pull"], stopAtOperand: true }));
     return;
   }
   if (sub === "down" || sub === "rm" || sub === "kill") { h.e.add("destroy", `${prog}.rm`, "Deletes containers, images or volumes."); return; }
@@ -4881,7 +4964,7 @@ function pip(h: H): void {
   const verb = h.args[g.verbAt]?.v ?? null;
   const rest = h.args.slice(g.verbAt + 1);
   if (verb === "install" || verb === "uninstall") {
-    const p = parseOpts(rest, { shortValue: "rcetbi", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary"] });
+    const p = parseOpts(rest, { shortValue: "rcetbifC", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary", "trusted-host", "proxy", "retries", "timeout", "exists-action", "cert", "client-cert", "cache-dir", "log", "python", "keyring-provider", "use-feature", "use-deprecated", "group"] });
     for (const r of values(p, "r", "requirement", "c", "constraint")) if (r) h.e.usePath(lit(r), "read", h.sc);
     // The folders it installs into (review #169).
     for (const d of values(p, "t", "target", "root", "prefix", "src")) if (d) writeInto(h, d);
@@ -4915,7 +4998,10 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
   }
   // Running something in the project's environment: the command after it is classified.
   if ((verb === "run" && /^(poetry|pipenv|uv|rye|pdm|hatch|conda|mamba|micromamba)$/.test(h.key)) || (verb === "exec" && /^(bundle|bundler|composer|pdm)$/.test(h.key))) {
-    const p = parseOpts(rest, { shortValue: "np", longValue: ["name", "prefix", "with", "python", "directory", "project", "env", "group", "extra", "package"], stopAtOperand: true });
+    const p = parseOpts(rest, {
+      shortValue: "npfC", stopAtOperand: true,
+      longValue: ["name", "prefix", "with", "python", "directory", "project", "env", "group", "extra", "package", "with-editable", "with-requirements", "env-file", "index", "default-index", "index-url", "extra-index-url", "find-links", "config-setting", "cwd", "python-preference", "exclude-newer", "resolution", "prerelease", "link-mode", "refresh-package", "upgrade-package", "reinstall-package", "no-group", "only-group", "cache-dir", "config-file", "color"],
+    });
     if (h.key === "uv" && values(p, "with").length) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
     h.e.payload(p.operands, h.sc, `${h.key} ${verb}`);
     return;
@@ -5026,10 +5112,24 @@ reg(NATIVE, ["msbuild"], h => {
     if (/^[-/]p(roperty)?:(PublishProfile|DeployOnBuild|WebPublishMethod|PublishUrl)=/i.test(v)) h.e.add("publish", "script.publish", "Builds and deploys with a publish profile.", { program: "msbuild" });
   }
 });
+/** Maven's options of two or more letters, as the long options they stand for (`-pl core` is one option, not -p -l). */
+const MVN_WORDS: Readonly<Record<string, string>> = {
+  "-pl": "--projects", "-rf": "--resume-from", "-gs": "--global-settings", "-gt": "--global-toolchains", "-emp": "--encrypt-master-password",
+  "-ep": "--encrypt-password", "-am": "--also-make", "-amd": "--also-make-dependents", "-cpu": "--check-plugin-updates", "-fae": "--fail-at-end",
+  "-ff": "--fail-fast", "-fn": "--fail-never", "-npr": "--no-plugin-registry", "-npu": "--no-plugin-updates", "-nsu": "--no-snapshot-updates",
+  "-ntp": "--no-transfer-progress", "-up": "--update-plugins", "-llr": "--legacy-local-repository", "-itr": "--ignore-transitive-repositories",
+};
 /** Task runners and package scripts (§3.5.9): their targets' names say what they do. */
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
-  const valueShort: Record<string, string> = { make: "CfIjloWE", gmake: "CfIjloWE", "mingw32-make": "CfIjloWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "fsplDPTtbgrX", mvnw: "fsplDPTtbgrX", nox: "sfeptkr", tox: "ecvrnx", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
-  const p = parseOpts(h.args, { shortValue: valueShort[h.key] ?? "", longValue: ["file", "makefile", "directory", "include-dir", "jobs", "load-average", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir"] });
+  // make's -j and -l take the next word only when it is a number (`make -j install` builds install); Maven's -X, nox's -r and
+  // tox's -v, -r and -n take no value, and Maven's options of two or more letters are whole words (commands-remote-i5a).
+  const valueShort: Record<string, string> = { make: "CfIoWE", gmake: "CfIoWE", "mingw32-make": "CfIoWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "bDflPsTt", mvnw: "bDflPsTt", nox: "sfeptk", tox: "ecxfm", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
+  const mvn = h.key === "mvn" || h.key === "mvnw";
+  const args = mvn ? h.args.map(a => (a.v !== null && MVN_WORDS[a.v] ? { ...a, v: MVN_WORDS[a.v] } : a)) : h.args;
+  const p = parseOpts(args, {
+    shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average"],
+    longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define"],
+  });
   // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
   // recipes run shell (review #166). Ember asks unless it can see the whole text and it is plainly ordinary.
   if ((/make$/.test(h.key) || h.key === "ninja") && values(p, "f", "file", "makefile").some(f => f === null || STDIN_NAME.test(f))) {
@@ -5238,8 +5338,17 @@ function hostOf(s: string): string {
 
 reg(NATIVE, ["curl", "curl.exe"], h => {
   const p = opts(h, {
-    shortValue: "AbcCdeEFHKmoPrtTuUwXxyYzD",
-    longValue: ["data", "data-raw", "data-binary", "data-urlencode", "data-ascii", "json", "form", "form-string", "upload-file", "request", "header", "user", "output", "cookie", "cookie-jar", "config", "url", "proxy", "user-agent", "referer", "max-time", "connect-timeout", "retry", "cacert", "cert", "key", "pass", "oauth2-bearer", "aws-sigv4", "output-dir", "write-out", "dump-header", "trace", "trace-ascii", "stderr", "resolve", "interface", "limit-rate", "range", "max-filesize", "proto", "proxy-user", "netrc-file", "unix-socket", "abstract-unix-socket", "ciphers", "variable", "expand-data", "time-cond", "continue-at", "retry-delay", "retry-max-time", "speed-limit", "speed-time", "local-port", "dns-servers", "doh-url", "preproxy", "hsts", "alt-svc", "etag-save", "etag-compare", "krb", "login-options", "sasl-authzid", "service-name", "mail-from", "mail-rcpt", "mail-auth"],
+    shortValue: "AbcCdeEFHKmoPrtTuUwXxyYzDQ",
+    longValue: ["data", "data-raw", "data-binary", "data-urlencode", "data-ascii", "json", "form", "form-string", "upload-file", "request", "header", "user", "output", "cookie", "cookie-jar", "config", "url", "proxy", "user-agent", "referer", "max-time", "connect-timeout", "retry", "cacert", "cert", "key", "pass", "oauth2-bearer", "aws-sigv4", "output-dir", "write-out", "dump-header", "trace", "trace-ascii", "stderr", "resolve", "interface", "limit-rate", "range", "max-filesize", "proto", "proxy-user", "netrc-file", "unix-socket", "abstract-unix-socket", "ciphers", "variable", "expand-data", "time-cond", "continue-at", "retry-delay", "retry-max-time", "speed-limit", "speed-time", "local-port", "dns-servers", "doh-url", "preproxy", "hsts", "alt-svc", "etag-save", "etag-compare", "krb", "login-options", "sasl-authzid", "service-name", "mail-from", "mail-rcpt", "mail-auth",
+      // The rest of curl 8's options that take a value (`curl --help all`), so none of their values reads as an address.
+      "capath", "cert-type", "connect-to", "create-file-mode", "crlfile", "curves", "delegation", "dns-interface", "dns-ipv4-addr", "dns-ipv6-addr",
+      "egd-file", "engine", "expect100-timeout", "ftp-account", "ftp-alternative-to-user", "ftp-method", "ftp-port", "ftp-ssl-ccc-mode",
+      "happy-eyeballs-timeout-ms", "hostpubmd5", "hostpubsha256", "ipfs-gateway", "keepalive-time", "key-type", "libcurl", "max-redirs", "noproxy",
+      "parallel-max", "pinnedpubkey", "proto-default", "proto-redir", "proxy-cacert", "proxy-capath", "proxy-cert", "proxy-cert-type", "proxy-ciphers",
+      "proxy-crlfile", "proxy-header", "proxy-key", "proxy-key-type", "proxy-pass", "proxy-pinnedpubkey", "proxy-service-name", "proxy-tls13-ciphers",
+      "proxy-tlsauthtype", "proxy-tlspassword", "proxy-tlsuser", "pubkey", "quote", "random-file", "rate", "request-target", "socks4", "socks4a", "socks5",
+      "socks5-gssapi-service", "socks5-hostname", "telnet-option", "tftp-blksize", "tls-max", "tls13-ciphers", "tlsauthtype", "tlspassword", "tlsuser",
+      "trace-config", "url-query"],
   });
   const urls = [...p.operands.map(a => a.v ?? ""), ...values(p, "url").map(v => v ?? "")].filter(u => u !== "");
   const host = hostOf(urls[0] ?? "") || "another computer";
@@ -5284,7 +5393,11 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
 reg(NATIVE, ["wget", "wget2"], h => {
   const p = opts(h, {
     shortValue: "OoaPiBtTwQeUlAIRDXlY",
-    longValue: ["output-document", "output-file", "append-output", "directory-prefix", "input-file", "base", "tries", "timeout", "wait", "quota", "execute", "user-agent", "level", "accept", "reject", "include-directories", "exclude-directories", "domains", "exclude-domains", "post-data", "post-file", "method", "body-data", "body-file", "header", "user", "password", "http-user", "http-password", "ftp-user", "ftp-password", "load-cookies", "save-cookies", "certificate", "private-key", "ca-certificate", "config", "referer", "limit-rate", "restrict-file-names", "default-page", "bind-address", "proxy-user", "proxy-password"],
+    longValue: ["output-document", "output-file", "append-output", "directory-prefix", "input-file", "base", "tries", "timeout", "wait", "quota", "execute", "user-agent", "level", "accept", "reject", "include-directories", "exclude-directories", "domains", "exclude-domains", "post-data", "post-file", "method", "body-data", "body-file", "header", "user", "password", "http-user", "http-password", "ftp-user", "ftp-password", "load-cookies", "save-cookies", "certificate", "private-key", "ca-certificate", "config", "referer", "limit-rate", "restrict-file-names", "default-page", "bind-address", "proxy-user", "proxy-password",
+      "accept-regex", "backups", "ca-directory", "certificate-type", "ciphers", "compression", "connect-timeout", "crl-file", "cut-dirs", "dns-timeout",
+      "follow-tags", "ignore-tags", "local-encoding", "pinnedpubkey", "prefer-family", "private-key-type", "progress", "random-file", "read-timeout",
+      "regex-type", "reject-regex", "rejected-log", "remote-encoding", "report-speed", "retry-on-http-error", "secure-protocol", "start-pos", "use-askpass",
+      "waitretry", "warc-dedup", "warc-file", "warc-header", "warc-max-size", "warc-tempdir"],
   });
   const urls = p.operands.map(a => a.v ?? "").filter(u => u);
   const host = hostOf(urls[0] ?? "") || "another computer";
@@ -5403,7 +5516,8 @@ function sshOptions(h: H, p: Parsed): void {
   for (const f of values(p, "F")) if (f) h.e.usePath(lit(f), "read", h.sc);
 }
 reg(NATIVE, ["ssh", "slogin", "autossh", "mosh"], h => {
-  const p = parseOpts(h.args, { shortValue: "BbcDEeFIiJLlmOoPpQRSWwM", stopAtOperand: true });
+  // -M (master mode) takes no value (commands-remote-i5a).
+  const p = parseOpts(h.args, { shortValue: "BbcDEeFIiJLlmOoPpQRSWw", stopAtOperand: true });
   sshOptions(h, p);
   const host = p.operands[0]?.v ?? null;
   const cmd = p.operands.slice(1);
@@ -5424,18 +5538,21 @@ reg(NATIVE, ["sftp", "ftp", "lftp", "tftp", "ncftp", "ncftpput", "smbclient", "t
 });
 reg(NATIVE, ["rsync"], h => {
   const p = opts(h, {
-    shortValue: "eBfTM",
-    longValue: ["rsh", "rsync-path", "exclude", "include", "filter", "files-from", "exclude-from", "include-from", "password-file", "log-file", "log-file-format", "backup-dir", "compare-dest", "copy-dest", "link-dest", "temp-dir", "partial-dir", "chmod", "chown", "usermap", "groupmap", "timeout", "contimeout", "port", "address", "sockopts", "bwlimit", "max-size", "min-size", "max-delete", "modify-window", "suffix", "out-format", "info", "debug", "checksum-choice", "compress-choice", "skip-compress", "outbuf", "stop-after", "stop-at", "write-batch", "read-batch", "only-write-batch", "iconv", "remote-option", "block-size", "protocol", "early-input", "mkpath"],
+    // --mkpath and every other switch take no value (commands-remote-r4-1).
+    shortValue: "eBfTM@",
+    longValue: ["rsh", "rsync-path", "exclude", "include", "filter", "files-from", "exclude-from", "include-from", "password-file", "log-file", "log-file-format", "backup-dir", "compare-dest", "copy-dest", "link-dest", "temp-dir", "partial-dir", "chmod", "chown", "usermap", "groupmap", "timeout", "contimeout", "port", "address", "sockopts", "bwlimit", "max-size", "min-size", "max-delete", "modify-window", "suffix", "out-format", "info", "debug", "checksum-choice", "compress-choice", "skip-compress", "outbuf", "stop-after", "stop-at", "write-batch", "read-batch", "only-write-batch", "iconv", "remote-option", "block-size", "protocol", "early-input", "max-alloc", "compress-level", "zl", "copy-as", "checksum-seed", "cc", "zc", "log-format", "config", "dparam"],
   });
   for (const e of values(p, "e", "rsh")) if (e === null || !/^ssh(\s+-[A-Za-z]+(\s+[A-Za-z0-9._/~-]+)?)*$/.test(e)) h.e.unclear("unclear.rsync-rsh", "It runs a remote shell command Ember can't see.");
   if (values(p, "rsync-path", "remote-option", "M").length) h.e.unclear("unclear.rsync-rsh", "It runs a command on the other computer Ember can't see.");
   for (const f of values(p, "password-file", "files-from", "exclude-from", "include-from", "read-batch")) if (f) h.e.usePath(lit(f), "read", h.sc);
   for (const f of values(p, "log-file", "write-batch", "only-write-batch")) if (f) h.e.usePath(lit(f), "write", h.sc);
   const ops = p.operands;
+  const remote = (a: Arg): boolean => a.v !== null && (/^rsync:\/\//i.test(a.v) || (SCP_LIKE.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v)) || /::/.test(a.v));
+  // One operand lists what is there, as ls does (commands-remote-i5a).
+  if (ops.length === 1 && !remote(ops[0])) h.e.usePath(ops[0], "list", h.sc);
   if (ops.length < 2) return;
   const dest = ops[ops.length - 1];
   const sources = ops.slice(0, -1);
-  const remote = (a: Arg): boolean => a.v !== null && (/^rsync:\/\//i.test(a.v) || (SCP_LIKE.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v)) || /::/.test(a.v));
   const deletes = has(p, "delete", "delete-before", "delete-during", "delete-delay", "delete-after", "delete-excluded", "del");
   const removeSrc = has(p, "remove-source-files");
   if (dest.v === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell where rsync copies to."); return; }
@@ -5584,8 +5701,9 @@ reg(NATIVE, ["caddy"], h => {
 reg(NATIVE, ["miniserve"], h => {
   // miniserve [PATH]: every address unless -i/--interfaces says otherwise; -u lets whoever connects add files.
   const q = parseOpts(h.args, {
-    shortValue: "ipacdtq",
-    longValue: ["interfaces", "port", "auth", "auth-file", "color-scheme", "color-scheme-dark", "title", "header", "index", "route-prefix", "tls-cert", "tls-key", "qrcode"],
+    // -q (--qrcode) takes no value (commands-remote-i5a).
+    shortValue: "ipacdt",
+    longValue: ["interfaces", "port", "auth", "auth-file", "color-scheme", "color-scheme-dark", "title", "header", "index", "route-prefix", "tls-cert", "tls-key"],
   });
   const ifs = values(q, "i", "interfaces");
   const root = q.operands[0] ?? lit(".");
@@ -5669,7 +5787,7 @@ reg(NATIVE, ["security"], h => {
 });
 reg(NATIVE, ["keyctl"], h => { if (/^(print|read|pipe|show|add|padd|request|update|newring|unlink|clear|purge|invalidate)$/.test(h.args[0]?.v ?? "")) h.e.add("secret", "secret.program", SAYS.secrets); });
 reg(NATIVE, ["ssh-keygen"], h => {
-  const p = opts(h, { shortValue: "aCEfFIJjKmMnNOrstVwYzZbD", longValue: [] });
+  const p = opts(h, { shortValue: "aCEfFIJjKmMnNOPrstVwYzZbD", longValue: [] });
   for (const f of values(p, "f")) if (f) h.e.usePath(lit(f), has(p, "l", "F", "B") ? "read" : "write", h.sc);
   if (has(p, "l", "F", "B", "H") || (has(p, "R") && false)) return;
   h.e.add("secret", "secret.program", SAYS.secrets);
@@ -5723,7 +5841,8 @@ reg(NATIVE, ["sort", "gsort"], h => {
   h.e.readArgs(p.operands, h.sc, { unresolvedUnclear: true });
 });
 reg(NATIVE, ["uniq", "guniq"], h => {
-  const p = opts(h, { shortValue: "fsw", longValue: ["skip-fields", "skip-chars", "check-chars", "group", "all-repeated"] });
+  // --group and --all-repeated take a method only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "fsw", longValue: ["skip-fields", "skip-chars", "check-chars"], longOptional: ["group", "all-repeated"] });
   const [input, output] = p.operands;
   if (input) h.e.readArgs([input], h.sc, { unresolvedUnclear: true });
   if (output) overwrites(h, output);
@@ -5740,7 +5859,8 @@ reg(NATIVE, ["iconv"], h => {
   h.e.readArgs(p.operands, h.sc, { unresolvedUnclear: true });
 });
 reg(NATIVE, ["patch", "gpatch"], h => {
-  const p = opts(h, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "merge"] });
+  // --merge takes a style only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "reject-format"], longOptional: ["merge"] });
   let sc = h.sc;
   const dir = values(p, "d", "directory")[0];
   if (dir !== undefined) sc = child(h.sc, { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
@@ -5953,7 +6073,9 @@ reg(NATIVE, ["kill"], h => {
 reg(NATIVE, ["pkill", "killall", "pgrep-kill", "xkill", "fuser", "tskill", "skill", "snice", "killall5", "slay"], h => {
   if (h.key === "fuser" && !h.args.some(a => /^-[a-zA-Z]*k/.test(a.v ?? ""))) { h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc); return; }
   if (h.key === "killall5") { h.e.refuseWith("ember.process", "safety"); return; }
-  const p = opts(h, { shortValue: "sgGPtuUnoFeOy", longValue: ["signal", "pgroup", "group", "parent", "terminal", "euid", "uid", "session", "ns", "nslist", "pidfile", "older-than", "younger-than", "context"] });
+  // -e takes no value; pkill's -n and -o are switches where killall's are values, and killall's -g a switch (commands-remote-i5a).
+  const short = h.key === "killall" ? "suoynZ" : h.key === "skill" || h.key === "snice" ? "tupc" : "sgGPtuUFO";
+  const p = opts(h, { shortValue: short, longValue: ["signal", "pgroup", "group", "parent", "terminal", "euid", "uid", "session", "ns", "nslist", "pidfile", "older-than", "younger-than", "context", "older", "runstates"] });
   const names = p.operands.map(a => a.v);
   const full = has(p, "f", "full");
   const regex = h.key === "pkill" || has(p, "r", "regexp");
@@ -6005,7 +6127,8 @@ reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h =>
   if (pids.some(p => h.e.ctx.ember.pids.includes(Number(p)))) { h.e.refuseWith("ember.process", "safety"); return; }
   if (pids.length) h.e.add("system", "system.debug", "Watches or changes another program that is running.");
   if (h.key === "perf" && /^(record|stat|trace|top)$/.test(h.args[0]?.v ?? "") && !pids.length) {
-    const p = parseOpts(h.args.slice(1), { shortValue: "eopFcCtGa", stopAtOperand: true });
+    // -a (every CPU) takes no value (commands-remote-i5a).
+    const p = parseOpts(h.args.slice(1), { shortValue: "eopFcCtGmu", stopAtOperand: true });
     h.e.payload(p.operands, h.sc, `perf ${h.args[0].v}`);
     return;
   }
