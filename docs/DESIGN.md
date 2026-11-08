@@ -175,7 +175,11 @@ They share one emotion rig, so switching never changes behaviour.
   and Ember's suggestions come only then), keeps off it from there, going above or below the box
   where nothing by Ember is clear of it, so the field never covers its last lines or its Read all;
   so does one that started while the box was open (Ask opened during "Thinking…"), and anything
-  else still coming in that asks nothing (a step, "Listening…") and finds no room by Ember.
+  else still coming in that asks nothing (a step, "Listening…") and finds no room by Ember, and an
+  answer opened in full with **Read all** while the box is open. An answer opened in full that fits
+  nowhere clear whole (a 1024 x 768 screen at Larger text) is cut short a line at a time to the
+  tallest place clear of the box, the handle, the cards and the settings window, never under three
+  lines, and its text scrolls inside it; with no such place it goes where it always went.
   While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times

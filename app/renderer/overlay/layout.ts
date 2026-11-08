@@ -108,10 +108,12 @@ export interface AskHeld { box: Rect | null; question: string; grew?: true }
  * never moves for the box opening, stepping aside, growing or closing: nothing near a pending question moves, and an
  * answer being read isn't thrown across the screen (companion-c2-4); the box keeps clear of it instead (ask.ts). One
  * that grows into the box on its own (askGrew: as its words stream in, or as it finishes) keeps off it from then on
- * (askGrownInto).
+ * (askGrownInto). So does an answer opened in full (`opened`: "Read all") while the box is open, which may go above or
+ * below the box at once (`grew`; companion-c5-1: the whole answer was laid under the field).
  */
-export function askKeepOff(box: Rect | null, question: string, held: AskHeld): AskHeld {
-  return question && question === held.question ? held : { box, question };
+export function askKeepOff(box: Rect | null, question: string, held: AskHeld, opened = false): AskHeld {
+  if (question && question === held.question) return held;
+  return opened && box ? { box, question, grew: true } : { box, question };
 }
 
 /**
