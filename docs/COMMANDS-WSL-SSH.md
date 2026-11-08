@@ -131,8 +131,11 @@ Ember stops and asks before a command that:
   under the folder, and a Mac's `cp -R build/ ~/Documents`, which copies what is in build straight into the folder,
   ask whenever the folder is there: "Replaces files in ~/Documents if they exist."),
   `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
-  that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), and package scripts or
-  make targets named clean, wipe, purge, reset and the like;
+  that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), changing or deleting what
+  a database holds (`psql -c 'DROP TABLE x'`, `redis-cli FLUSHALL`, and the same given on the client's input:
+  `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input that Ember can't
+  see or follow ask too), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,

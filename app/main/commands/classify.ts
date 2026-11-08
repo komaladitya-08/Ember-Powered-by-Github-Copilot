@@ -3229,10 +3229,32 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
 
 /**
  * SQL a client reads from stdin: a here-document or another program's output is judged when seen, else asks (review
- * #166). A file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does.
+ * #166). A file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does (stdinFile).
  */
 function sqlFromStdin(h: H): void {
   if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t]));
+  else if (h.s.stdin === "file") stdinFile(h);
+}
+
+/**
+ * A file a database client runs from its input (`psql app < drop_users.sql`, `redis-cli < cmds.txt`): judged by its
+ * name, as `psql -f` is, and one this task downloaded asks (commands-remote-c5-3).
+ */
+function stdinFile(h: H): void {
+  for (const r of h.s.redirs) {
+    if (r.kind !== "read" || !r.target) continue;
+    if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    else if (r.target.v) nameCheck(h, r.target.v);
+  }
+}
+
+/** redis-cli's commands that only read or watch (anything else changes the database). */
+const REDIS_READS = /^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl|strlen|hget|hgetall|hkeys|hvals|hlen|hexists|lrange|llen|lindex|smembers|scard|sismember|zrange|zrangebyscore|zcard|zscore|info|ping|dbsize|time|echo|memory|object|client|slowlog|latency|monitor|subscribe|psubscribe|pubsub|xrange|xlen|xread|bitcount|getrange|getbit|role|lastsave|command|config)$/;
+/** One redis-cli command (its words): a change to the data, or to how the server works. */
+function redisCommand(h: H, words: readonly string[]): void {
+  const cmd = (words[0] ?? "").toLowerCase();
+  if (cmd && !REDIS_READS.test(cmd)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
+  if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 }
 
 /** A database client's own text: changing data is class a; running programs or touching files from it is unclear. */
@@ -3279,16 +3301,28 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     return;
   } else if (k === "mongo" || k === "mongosh") {
     if (inlineSql(h, [], ["eval"]).length) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+    // JavaScript read from its input (`echo 'db.dropDatabase()' | mongosh`, `curl … | mongosh`): code Ember can't
+    // follow, so it asks, saying when it changes data; after a fetch it is download-and-run (commands-remote-c5-3).
+    if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") {
+      fromStdin(h, t => {
+        databaseText(h, [t]);
+        h.e.unclear("unclear.stdin-code", "It runs code from its input that Ember can't follow.");
+      });
+    } else if (h.s.stdin === "file") stdinFile(h);
+    // A script file it runs (`mongosh app drop_all.js`), as an interpreter's is.
+    for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a);
   } else if (k === "redis-cli") {
     // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
     const p = opts(h, { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] });
     if (values(p, "eval").length || has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
     if (has(p, "a", "pass") || values(p, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-    const cmd = (p.operands[0]?.v ?? "").toLowerCase();
-    if (cmd && !/^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl|strlen|hget|hgetall|hkeys|hvals|hlen|hexists|lrange|llen|lindex|smembers|scard|sismember|zrange|zrangebyscore|zcard|zscore|info|ping|dbsize|time|echo|memory|object|client|slowlog|latency|monitor|subscribe|psubscribe|pubsub|xrange|xlen|xread|bitcount|getrange|getbit|role|lastsave|command|config)$/.test(cmd)) {
-      h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
+    redisCommand(h, p.operands.map(a => a.v ?? ""));
+    // With no command on its line it runs the commands its input gives, one a line (`redis-cli <<< FLUSHALL`, `echo
+    // DEL x | redis-cli`); with -x its input is the last argument's value (commands-remote-c5-3).
+    if (p.operands.length === 0 && !has(p, "x")) {
+      if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => { for (const l of t.split("\n")) redisCommand(h, l.trim().split(/\s+/)); });
+      else if (h.s.stdin === "file") stdinFile(h);
     }
-    if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(p.operands[1]?.v ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
   }
   for (const f of [...inlineSql(h, ["f"], ["file"]), ...inlineSql(h, ["i"], ["input-file"])]) if (f) { h.e.usePath(lit(f), "read", h.sc); nameCheck(h, f); }
 });
