@@ -3009,11 +3009,38 @@ class Protocol(unittest.TestCase):
     def test_without_pyatspi(self):
         saved = e.pyatspi
         e.pyatspi = None
+        sys.modules["pyatspi"] = None  # not installed: importing it fails
         try:
             self.assertIn("result", e.handle('{"id": 1, "method": "ping"}'))
             self.assertIn("pyatspi is not installed", e.handle('{"id": 2, "method": "list_windows"}')["error"]["message"])
         finally:
+            sys.modules["pyatspi"] = FAKE
             e.pyatspi = saved
+
+    def test_uses_pyatspi_installed_after_it_started(self):
+        """The setup check's fix, installing python3-pyatspi, works without restarting Ember, and is looked for at most
+        every LOAD_AGAIN_S (reliability-performance-c2-1)."""
+        saved = (e.pyatspi, e.Atspi, e.configure_atspi, e.LOAD_TRIED["at"])
+        configured = []
+        e.configure_atspi = lambda: configured.append(1) or True
+        e.METHODS["echo"] = lambda p: p
+        e.pyatspi = None
+        e.LOAD_TRIED["at"] = None
+        sys.modules["pyatspi"] = None  # not installed: importing it fails
+        try:
+            echo = '{"id": 1, "method": "echo", "params": {"a": 1}}'
+            self.assertIn("pyatspi is not installed", e.handle(echo)["error"]["message"])
+            sys.modules["pyatspi"] = FAKE  # installed now
+            # Not looked for again straight away: a request a moment later still says it is missing.
+            self.assertIn("pyatspi is not installed", e.handle(echo)["error"]["message"])
+            e.LOAD_TRIED["at"] -= e.LOAD_AGAIN_S + 1
+            self.assertEqual(e.handle(echo)["result"], {"a": 1})
+            self.assertIs(e.pyatspi, FAKE)
+            self.assertEqual(configured, [1])
+        finally:
+            sys.modules["pyatspi"] = FAKE
+            del e.METHODS["echo"]
+            e.pyatspi, e.Atspi, e.configure_atspi, e.LOAD_TRIED["at"] = saved
 
 
 class Links(unittest.TestCase):

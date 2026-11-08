@@ -5173,6 +5173,35 @@ def encode(resp):
                            "error": {"message": "the answer could not be encoded: %s" % e}})
 
 
+# While pyatspi is missing it is looked for again at most this often, so bindings installed while Ember runs (the
+# setup check's own fix: sudo dnf install python3-pyatspi) are used without a restart (reliability-performance-c2-1).
+# A failed import costs a few milliseconds.
+LOAD_AGAIN_S = 2.0
+LOAD_TRIED = {"at": None}
+
+
+def load_atspi_again():
+    """pyatspi imported now if it was installed since the last look (at most every LOAD_AGAIN_S), with libatspi's
+    timeouts shortened as main() does at the start. Whether it is loaded."""
+    if pyatspi is not None:
+        return True
+    now = time.monotonic()
+    last = LOAD_TRIED["at"]
+    if last is not None and now - last < LOAD_AGAIN_S:
+        return False
+    LOAD_TRIED["at"] = now
+    try:
+        import importlib
+        importlib.invalidate_caches()  # the folders' listings, as they were before the package went in
+    except Exception:  # an import below finds it, or not, either way
+        pass
+    if not load_atspi():
+        return False
+    if not configure_atspi():
+        sys.stderr.write("ember_atspi: could not shorten libatspi timeouts\n")
+    return True
+
+
 def handle(line):
     req_id = None
     try:
@@ -5186,7 +5215,7 @@ def handle(line):
             # Inside WSL, before (or without) a bus: only what needs none.
             if name not in ("ping", "status", "find_bus"):
                 raise RuntimeError("no session bus")
-        elif pyatspi is None and name != "ping":
+        elif pyatspi is None and name != "ping" and not load_atspi_again():
             raise RuntimeError("python3-pyatspi is not installed")
         result = method(req.get("params") or {})
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
