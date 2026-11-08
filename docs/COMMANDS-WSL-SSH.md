@@ -127,7 +127,8 @@ Ember stops and asks before a command that:
   `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it
   exists.", on this computer, in WSL and on an SSH computer, which each say which names are folders; but
-  `cp --parents`, and a Mac's `cp -R build/ ~/Documents`, which copies what is in build straight into the folder,
+  `cp --parents`, `rsync -R` (`--relative`, `--files-from` or a `/./` in the name), which put a file at its path
+  under the folder, and a Mac's `cp -R build/ ~/Documents`, which copies what is in build straight into the folder,
   ask whenever the folder is there: "Replaces files in ~/Documents if they exist."),
   `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
   that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), and package scripts or

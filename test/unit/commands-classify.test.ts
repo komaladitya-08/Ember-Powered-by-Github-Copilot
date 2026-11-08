@@ -789,6 +789,32 @@ describe("loops and ifs (commands-remote-2)", () => {
     expect(cls("rsync -a /tmp/data.csv data/").findings.map(f => f.says)).toEqual(["Replaces ~/proj/data/data.csv if it exists."]);
   });
 
+  it("asks before rsync -R, --relative or --files-from writes into a folder, and marks the whole folder for a download (commands-remote-v4-1)", () => {
+    const P = "/home/ana/proj";
+    const cls = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux", [`${P}/sub/x.sh`])) as ClassificationExtra;
+    // Each file lands at its path under the folder (tools/sub/x.sh), never at tools/<name>: no file of its name is asked
+    // about, the whole folder may be written, as cp --parents.
+    for (const [cmd, says] of [
+      ["rsync -aR sub/x.sh tools/", "Replaces files in tools/ if they exist."], ["rsync -a --relative sub/x.sh tools/", "Replaces files in tools/ if they exist."],
+      ["rsync -avR ./sub/x.sh tools", "Replaces files in tools if they exist."], ["rsync -a sub/./x.sh tools/", "Replaces files in tools/ if they exist."],
+      ["rsync -aR a/b/notes.txt dest/", "Replaces files in dest/ if they exist."], ["rsync -a --files-from=list.txt src dest/", "Replaces files in dest/ if they exist."],
+    ]) {
+      const c = cls(cmd);
+      expect(c.findings.map(f => f.says), cmd).toEqual([says]);
+      expect(c.findings.every(f => f.ifExists === undefined && f.inFolder === undefined), cmd).toBe(true);
+    }
+    // A download (or a folder holding one) copied with -R or --files-from marks the folder it lands in.
+    for (const cmd of ["rsync -aR sub/x.sh tools/", "rsync -a --relative sub/x.sh tools/", "rsync -a --files-from=list.txt sub tools/", "rsync -aR sub tools/"]) {
+      expect(cls(cmd).downloads, cmd).toContain(`${P}/tools`);
+    }
+    expect(cls("rsync -aR a/b/notes.txt dest/").downloads).toEqual([]);
+    // Where it lands is judged: Ember's own folder under the one named is refused.
+    for (const cmd of ["rsync -aR ember/settings.json ~/.config/", "rsync -aR ./ember/ ~/.config/"]) expect(cls(cmd).refuse?.rule, cmd).toBe("ember.path");
+    // Without -R the file of its name is still what is replaced (commands-remote-c3-3).
+    expect(cls("rsync -a sub/x.sh tools/").findings.map(f => f.says)).toEqual(["Replaces ~/proj/tools/x.sh if it exists."]);
+    expect(cls("rsync -a sub/x.sh tools/").downloads).toEqual([`${P}/tools/x.sh`]);
+  });
+
   it("keeps a download a download when PowerShell or cmd renames, copies, moves or links it, so running it asks (commands-remote-c2-2)", () => {
     const P = "C:\\Users\\ana\\proj";
     const cls = (cmd: string, shell: ShellId = "powershell") => classifyCommand(cmd, shell, contextOf("win32", [`${P}\\x.py`, `${P}\\x.exe`])) as ClassificationExtra;

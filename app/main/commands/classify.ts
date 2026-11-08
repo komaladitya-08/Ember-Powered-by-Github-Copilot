@@ -768,6 +768,13 @@ class Classifier {
     return all.some(d => d !== folder && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)));
   }
 
+  /** Whether a folder holds a file this task downloaded (by the name written: what `rsync -R` or --files-from copies). */
+  holdsDownload(a: Arg, sc: Scope): boolean {
+    if (a.v === null || !sc.cwd) return false;
+    const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
+    return [...this.ctx.downloaded, ...this.downloads].some(d => d !== abs && isUnder(d, abs, sc.path));
+  }
+
   /** Whether a path is a file this task downloaded, or inside a downloaded folder. */
   isDownloaded(a: Arg, sc: Scope): boolean {
     if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
@@ -5312,11 +5319,19 @@ reg(NATIVE, ["rsync"], h => {
     return;
   }
   const destObj = h.e.usePath(dest, deletes ? "deleteTree" : "write", h.sc);
+  // -R and --files-from (which implies it) put each file at its path under the folder (`rsync -R a/b/x dest/` makes
+  // dest/a/b/x), and `/./` marks where that path starts: never at dest/<name>, so no file of its name is probed and
+  // the whole folder may be written, as cp --parents (commands-remote-v4-1).
+  const relative = has(p, "R", "relative") || values(p, "files-from").length > 0 || sources.some(s => /(^|[\\/])\.[\\/]/.test(s.v ?? ""));
   // From another computer, or from a download of this task: what lands is a download (commands-remote-c2-2). A file
   // lands as the file of its name in the folder (`rsync x.csv .`, `rsync x.csv data/`), or as the name given while the
   // target doesn't say it is a folder, as cp's copies do: never the whole folder (commands-remote-c3-3). Another
-  // computer's files, or a folder's contents (`vendor/`), can be anything in it.
+  // computer's files, or a folder's contents (`vendor/`), can be anything in it; and so can what -R puts there, of a
+  // download or of a folder that holds one (commands-remote-v4-1).
   if (sources.some(remote) || sources.some(s => s.glob && h.e.isDownloaded(s, h.sc))) h.e.download(dest.v, h.sc);
+  else if (relative) {
+    if (sources.some(s => h.e.isDownloaded(s, h.sc) || h.e.holdsDownload(s, h.sc))) h.e.download(dest.v, h.sc);
+  }
   else if (destObj.abs !== null) {
     const files = sources.filter(s => !remote(s) && !s.glob);
     const contents = files.filter(s => /[\\/]$/.test(s.v ?? "") && h.e.isDownloaded(s, h.sc));
@@ -5328,6 +5343,19 @@ reg(NATIVE, ["rsync"], h => {
   if (deletes) h.e.add("destroy", "posix.rsync", `Deletes files in ${destObj.text} that aren't in ${listOf(srcObjs, "the source")}.`, { objects: [destObj] });
   if (removeSrc) h.e.add("destroy", "posix.rsync", `Deletes ${listOf(srcObjs)} after copying.`, { objects: srcObjs });
   if (!destObj.abs) return;
+  if (relative) {
+    h.e.judgeInside(destObj.abs, "write", h.sc, destObj.text);
+    // Where each named source lands is judged too (`rsync -R ember/x ~/.config/` writes in Ember's own folder): its
+    // path after `/./`, else as written without a leading `/` or `./`; one with `..` in it can't be placed.
+    for (const s of sources) {
+      if (remote(s) || s.v === null) continue;
+      const dot = s.v.search(/[\\/]\.[\\/]/);
+      const rel = (dot >= 0 ? s.v.slice(dot + 3) : s.v).replace(/^([\\/]|\.[\\/])+/, "");
+      if (rel !== "" && !/(^|[\\/])\.\.([\\/]|$)/.test(rel)) h.e.usePath({ ...s, v: (h.sc.path.flavour === "win32" ? win32 : posix).join(destObj.abs, rel) }, "write", h.sc);
+    }
+    h.e.add("destroy", "posix.rsync", `Replaces files in ${destObj.text} if they exist.`, { objects: [destObj] });
+    return;
+  }
   // Files of their own names (not a folder's contents, a pattern or another computer's): what is replaced is the file of
   // each name in the folder, as cp says it (commands-remote-c3-3: never "Replaces the current folder if it exists.").
   const named = sources.filter(s => !remote(s) && s.v !== null && !s.glob && !/[\\/]$/.test(s.v));
