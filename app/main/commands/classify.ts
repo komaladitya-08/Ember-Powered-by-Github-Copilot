@@ -57,6 +57,11 @@ export const MAX_SCRIPTS = 16;
 const UNSEEN = "\u0000";
 const PATTERN = "\u0001";
 const MAX_FORMS = 32;
+/**
+ * Programs that only test, print or name a variable's value, reading no file it names (commands-remote-r4-5): a word
+ * that uses a variable there leaves the variable's value unjudged.
+ */
+const VAR_SHOWN_ONLY: ReadonlySet<string> = new Set(["echo", "printf", "test", "[", "[[", ":", "true", "false", "basename", "dirname", "export", "declare", "typeset", "local", "readonly", "unset", "set", "shift", "return", "exit", "read"]);
 /** The shell's positional parameters (`$1`…`$9`, `$@`, `$*`), as `set --` gives them values. */
 const POSITIONAL: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"];
 /** What `read` may set from a text: each of its lines, and each word of each line. */
@@ -287,6 +292,15 @@ class Classifier {
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
   private varValues = new Map<string, string[]>();
+  /**
+   * A plain variable's values, judged at the end only if a command used the variable in a word Ember didn't judge as a
+   * path (`python3 -c "…$d…"`): testing or printing it isn't such a use (commands-remote-r4-5).
+   */
+  private pendingSets: { name: string; forms: string[]; sc: Scope }[] = [];
+  /** Words of a variable judged as a path where they were used (judgeUnseen). */
+  private judgedWords = new WeakSet<Arg>();
+  /** Variables a command used in a word Ember didn't judge as a path, apart from testing or printing it. */
+  private usedUnjudged = new Set<string>();
   /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
   private psVarValues = new Map<string, string[]>();
   /** Words of a variable Ember couldn't resolve, with how they were used: judged again once a loop's input gives it a value. */
@@ -488,6 +502,7 @@ class Classifier {
     if (sc.family !== "posix") return;
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
     if (exported || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc);
+    else this.pendingSets.push({ name, forms, sc });
     const all = [...new Set([...(this.varValues.get(name) ?? []), ...forms])];
     this.varValues.set(name, all.length > MAX_FORMS ? [UNSEEN] : all);
   }
@@ -497,6 +512,8 @@ class Classifier {
    * "$d"` after `d=~/.config/ember`, `for f in ~; do rm -rf "$f"; done`): refused as the path itself would be.
    */
   judgeUnseen(a: Arg, use: PathUse, sc: Scope): void {
+    // An option with its value attached (`--dir="$d"`) isn't a path, whatever was asked of it.
+    if (typeof a.parts?.[0] !== "string" || !a.parts[0].startsWith("-")) this.judgedWords.add(a);
     if (a.v === null && a.parts && sc.path.flavour === "posix") {
       for (const form of this.formsOf(a.parts)) this.judgeForm(form, use, sc);
       this.unseenUses.push({ parts: a.parts, use, sc });
@@ -544,6 +561,27 @@ class Classifier {
     if (isEmberPath(dir, sc.path) || isEmberPath(resolveTargetPath(known, at), sc.path)) { this.refuseWith("ember.path", kind); return; }
     if (use === "list" || use === "cd") return;
     if (sc.path.ember.some(e => win32.dirname(e).toLowerCase() === dir.toLowerCase() && win32.basename(e).toLowerCase().startsWith(stem))) this.refuseWith("ember.path", kind);
+  }
+
+  /**
+   * A command's words that use a variable and that its row didn't judge as paths (commands-remote-r4-5): the variable's
+   * values are judged at the end (judgePendingSets), unless the command only tests or prints it.
+   */
+  noteVarUses(key: string, args: readonly Arg[]): void {
+    // A flow word's command is the one after it (`do echo "$f"`, `then time printf …`).
+    let k = key;
+    let rest = args;
+    while (ASSIGNS_AFTER.has(k) && rest.length > 0 && rest[0].v !== null) { k = rest[0].v.split("/").pop() ?? ""; rest = rest.slice(1); }
+    if (VAR_SHOWN_ONLY.has(k)) return;
+    for (const a of rest) {
+      if (a.v !== null || !a.parts || this.judgedWords.has(a)) continue;
+      for (const p of a.parts) if (typeof p !== "string" && p.name !== null) this.usedUnjudged.add(p.name);
+    }
+  }
+
+  /** The values of variables used in a word Ember didn't judge (noteVarUses), judged as round four judged every value. */
+  protected judgePendingSets(): void {
+    for (const p of this.pendingSets) if (this.usedUnjudged.has(p.name)) for (const f of p.forms) this.judgeForm(f, null, p.sc);
   }
 
   /** The names a `read` sets, for a loop's here-string to give them values (result). */
@@ -1388,6 +1426,7 @@ class Engine extends Classifier {
       this.unclear("unclear.script-written", "It runs a script that this command writes first, so Ember can't read it beforehand.");
     }
     this.feedReads();
+    this.judgePendingSets();
     // A `read` that its loop or `if` gives a file or text to (`while read -r l; …; done < list.txt`) waits for no typing.
     const fed = readsFedByCompound(this.commands, i => this.stdinGiven.has(i));
     if (fed.size) this.findings = this.findings.filter(f => !(f.rule === "unclear.interactive" && f.program === "read" && fed.has(f.at)));
@@ -1993,7 +2032,10 @@ class Engine extends Classifier {
     if (/[\x00-\x1f\x7f]/.test(nameArg.v)) this.unclear("unclear.program", "It runs a program Ember can't name.");
     this.redirects(s.redirs, sc);
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
+    const inner = this.commands.length;
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
+    // A wrapper's own words (`do echo "$f"`, `sudo rm "$d"`): the command it runs noted its words itself.
+    if (this.commands.length === inner) this.noteVarUses(key, args);
     this.unnamedWrites(key, args, sc);
     this.afterArgs(args);
     this.afterRun(key, args, s, sc);

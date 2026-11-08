@@ -197,6 +197,8 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(refused("p=~/.config/ember; cat \"$p/settings.json\"")).toBe(READ);
     expect(refused("p=~/.config/ember; rm -rf \"$p\"")).toBe(CHANGE);
     expect(refused("for app in ~/.config/*; do ls \"$app\" | head -1; done")).toBe(refused("ls ~/.config/*"));
+    // Used in a word Ember doesn't judge as a path (inline code, a program's own option), its value is judged as before.
+    for (const cmd of ["d=~/.config/ember; python3 -c \"import shutil; shutil.rmtree('$d')\"", "d=~/.config/ember; some-tool --dir=\"$d\""]) expect(refused(cmd), cmd).toBe(READ);
     // A value that may reach a program's environment (exported, before a command, or an environment variable's name)
     // is still judged when it is set.
     for (const cmd of ["export d=~/.config/ember; make", "D=~/.config/ember make", "XDG_CONFIG_HOME=~/.config/ember; gedit-like-tool", "declare -x d=~/.config/ember; make"]) {
