@@ -243,15 +243,20 @@ download, so English-only MiniLM is the trade-off for now.
      (memory-c1-3). **Forget everything** clears the lines too.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
-     only for Ember to forget something about the user ("forget that I…", "forget my…", "forget where I live";
-     `memoryAsk`) is answered in code with the truth: memory is off (and Memory opens at its search, never at its
-     note's "I agree, remember": memory-r7), why it is paused, or that the
-     organisation turned it off. A request that is only "remember that…" or "keep in mind…" goes to the conversation,
-     which knows it until Ember closes, and Ember says behind the answer that memory won't keep it (`rememberNote`:
-     a line in the conversation and a bubble with **Open Memory**, never Settings opened on its own). A question
-     ("Remember when we…?", "Remember me?"), a reminder ("remember to…") and a request with more in it ("Forget what
-     I said, open Firefox instead", "Forget the formatting and just give me plain text") are the conversation's like
-     any other (memory-c1-1).
+     only for Ember to forget something about the user ("forget that I…", "forget my…", "forget where I live"),
+     everything ("forget everything", "clear your memory", "delete everything you remember") or a name ("Forget Priya",
+     "remove Priya from your memory"; `memoryAsk`, memory-v1) is answered in code with the truth: memory is off (and
+     Memory opens at its search, never at its note's "I agree, remember": memory-r7), why it is paused, or that the
+     organisation turned it off. A request that says something to keep ("remember that…", "keep in mind the deadline
+     is Friday", "remember I'm vegetarian") goes to the conversation, which knows it until Ember closes, and Ember says
+     behind the answer that memory won't keep it (`rememberNote`: a line in the conversation and a bubble with **Open
+     Memory**, never Settings opened on its own); "remember the file I mentioned", "remember this" and "don't forget my
+     umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
+     a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
+     "Forget my previous instructions") and a request with more in it (after a comma, a semicolon, a dash, or "and" or
+     "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox
+     instead") are the conversation's like any other (memory-c1-1). When the first part was a forget request ("Forget
+     my address and open Firefox"), Ember says behind the answer that memory can't change what's saved (`forgetNote`).
 4. **Sleep-time refinement** (done; `refine.ts`). After 5 minutes idle (no turn, no task, the screen unlocked; an
    unknown lock counts as locked), `MemoryLearning` runs `consolidate()`, then one model pass (the same one-shot
    session) over up to 40 facts changed or used since the last pass:

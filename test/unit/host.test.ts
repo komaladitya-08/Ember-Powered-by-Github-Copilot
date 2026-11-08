@@ -4212,6 +4212,20 @@ describe("“remember…” while memory is off (memory-c1-1, memory-i1)", () =>
       conductorSession().emit("assistant.message", { content: "Opening Firefox." });
       conductorSession().emit("session.idle", {});
       expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox." });
+      // "Forget my last request and open Firefox instead" is about the conversation: it reaches it whole, with no note
+      // (memory-c1-1).
+      await host.ask("Forget my last request and open Firefox instead");
+      expect(conductorSession().sent.at(-1)).toContain("Forget my last request and open Firefox instead");
+      conductorSession().emit("assistant.message", { content: "Opening Firefox instead." });
+      conductorSession().emit("session.idle", {});
+      expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox instead." });
+      // A forget request with another after it: the conversation does the other, and Ember says memory can't change
+      // what's saved, never leaving the model's answer to stand for the forget.
+      await host.ask("Forget my address and open Firefox");
+      expect(conductorSession().sent.at(-1)).toContain("Forget my address and open Firefox");
+      conductorSession().emit("assistant.message", { content: "Opening Firefox." });
+      conductorSession().emit("session.idle", {});
+      expect(host.getTranscript().slice(-2).map(e => [e.who, e.text])).toEqual([["ember", "Opening Firefox."], ["ember", "Memory is off, so I can't change what's saved."]]);
       await host.stop();
     } finally {
       vi.useRealTimers();

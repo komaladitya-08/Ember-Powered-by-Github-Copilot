@@ -20,7 +20,8 @@ import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneS
 import type { MemoryOwnerReason } from "./owner";
 import {
   ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes,
-  forgetReply, forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk, rememberNote, type MemoryNote, type MemoryNotNow,
+  forgetNote, forgetReply, forgetsWithMore, forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk, rememberNote, type MemoryNote,
+  type MemoryNotNow,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
 import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
@@ -361,11 +362,14 @@ export class MemoryLearning {
 
   /**
    * What Ember adds after the conversation's answer to "remember…" while memory isn't in force (memory-c1-1): the
-   * conversation keeps it until Ember closes, memory doesn't. Null for anything else, or while memory is in force.
+   * conversation keeps it until Ember closes, memory doesn't. After a forget request with more in it ("Forget my
+   * address and open Firefox"), that memory can't change what's saved. Null for anything else, or while memory is in
+   * force.
    */
   rememberNote(text: string): MemoryNote | null {
-    if (this.d.inForce() || memoryAsk(text) !== "remember") return null;
-    return rememberNote(this.notNow());
+    if (this.d.inForce()) return null;
+    if (memoryAsk(text) === "remember") return rememberNote(this.notNow());
+    return forgetsWithMore(text) ? forgetNote(this.notNow()) : null;
   }
 
   /** Why memory isn't in force now: managed by the organisation, on but paused (and why), or off. */

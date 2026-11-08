@@ -213,7 +213,8 @@ export interface HostOptions {
     intent?(text: string, how: { own: boolean }): string | null;
     /**
      * "Remember…" while memory isn't in force: what Ember says after the conversation's answer, since the conversation
-     * keeps it only until Ember closes (memory-c1-1). Null for anything else.
+     * keeps it only until Ember closes (memory-c1-1); after "forget…" with another request in it, that memory can't
+     * change what's saved. Null for anything else.
      */
     rememberNote?(text: string): MemoryNote | null;
   };
@@ -2938,7 +2939,8 @@ export class AgentHost {
       ...(how.manual ? { manual: true } : {}),
       ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
     };
-    // "Remember…" while memory can't keep it: the conversation takes it, and Ember says after the answer what memory won't.
+    // "Remember…" (or "forget…" with more) while memory can't: the conversation takes it, and Ember says after the answer
+    // what memory won't do.
     const note = this.o.memory?.rememberNote?.(text) ?? null;
     if (note) request.memoryNote = note;
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).

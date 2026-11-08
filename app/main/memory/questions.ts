@@ -139,31 +139,62 @@ export const NOTHING_TO_FORGET = "I haven't kept anything from just now. Say wha
 const LEAD = String.raw`^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?`;
 /** "Can you…", "could you please…": a request put politely, which may end with "?" and still be no question. */
 const POLITE = /^(?:(?:hey\s+)?ember[,.!]?\s+)?(?:please\s+)?(?:can|could|would|will)\s+you\b/i;
-/** "…I said", "…what I told you": what the user said just now, which "forget" lets go of as "never mind". */
-const SAID = String.raw`(?!\s+(?:said|say|told|asked|ask|wrote|typed|meant|mean|just|was\s+saying)\b)`;
 /**
- * "Remember that…", "don't forget my…", "keep in mind…", "make a note that…". Never "remember to…" or "don't forget
- * to…" (reminders), "remember when, what, how…" or "remember me" (questions about what Ember knows), nor "make a note
- * in…" (a note in an app).
+ * "…I said", "…what I told you", "…I mentioned it", "…we talked about Atlas": what the user said just now, which
+ * "forget" lets go of as "never mind" (memory-c1-1).
  */
-const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|make\s+a\s+(?:mental\s+)?note\s+(?:that|of)\b)\s*(?!to\b|when\b|what\b|how\b|who\b|where\b|which\b|whether\b|if\b|me\b)\S`, "i");
+const SAID = String.raw`(?!\s+(?:even\s+|ever\s+|just\s+)?(?:said|say|told|asked|ask|wrote|typed|meant|mean|just|was\s+saying|mentioned|mention|brought|bring|talked|talk|spoke|discussed|ever|even|sent|were\s+(?:saying|talking))\b)`;
+/**
+ * "…my last message", "…our previous conversation", "…my typo", "…my old instructions": the conversation's own words,
+ * never something about the user (memory-c1-1). "My old address" and "my first name" are the user's.
+ */
+const CONVERSATION = String.raw`(?!\s+(?:(?:very\s+)?(?:last|previous|earlier|latest|recent|prior)\b|(?:(?:old|other|first|second|whole|original|new|current)\s+)?(?:message|request|question|instruction|draft|answer|reply|replies|typo|conversation|chat|edit|change|prompt|comment|word|mistake|plan|command|search|query)s?\b))`;
+/**
+ * "Remember that…", "don't forget my…", "keep in mind…", "make a note that…", and what follows. Never "remember to…"
+ * or "don't forget to…" (reminders), "remember when, what, how…" or "remember me" (questions about what Ember knows),
+ * nor "make a note in…" (a note in an app).
+ */
+const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|make\s+a\s+(?:mental\s+)?note\s+(?:that|of)\b)\s*(?!to\b|when\b|what\b|how\b|who\b|where\b|which\b|whether\b|if\b|me\b)(\S.*)$`, "is");
+/**
+ * What follows "remember…" says something to keep: "that…", "I'm vegetarian", "my wife's birthday is 12 March", "the
+ * deadline is Friday". "Remember the file I mentioned", "don't forget my umbrella" and "remember this" refer to
+ * something, or ask for a reminder: Ember adds no "I won't keep this" after them (memory-r8).
+ */
+const STATES = /^(?:that\b|i\b|i['’]|we\b|we['’])|\b(?:is|are|was|were|am|isn['’]t|aren['’]t|wasn['’]t|has|have)\b|\b(?:it|that|there|he|she|they|what|who|this|here)['’]s\b|['’](?:re|m|ve)\b/i;
 /**
  * "Forget that I…", "forget my address", "forget where I live", "forget everything about me", "don't remember that
  * Priya is my manager": the user asking Ember to stop knowing something about them, and nothing else. Never "forget
  * the…", "forget what I said" or "forget that email" (the conversation's: "never mind", or another request), nor
  * "forget about…" or "forget to…".
  */
-const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:forget|don'?t\s+remember|do\s+not\s+remember|stop\s+remembering|unlearn)\s+(?:`
-  // "…that I work at Globex", "…I'm vegetarian", "…my wife's birthday" (never "…I said that").
-  + String.raw`(?:that\s+)?(?:i\b${SAID}|i['’](?:m|ve|d)\b|my\b|we\b|our\b)`
+const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:(?:forget|don'?t\s+remember|do\s+not\s+remember|stop\s+remembering|unlearn)\s+(?:`
+  // "…that I work at Globex", "…I'm vegetarian", "…my wife's birthday" (never "…I said that", "…my last message").
+  + String.raw`(?:that\s+)?(?:i\b${SAID}|i['’](?:m|ve|d)\b|(?:my|our)\b${CONVERSATION}|we\b${SAID})`
   // "…where I live", "…who my manager is" (never "…what I said").
   + String.raw`|(?:where|what|who|when|how)\s+(?:i|my)\b${SAID}`
   // "…that Priya is my manager", "…that the office is in Leeds": a statement, never "…that email" or "…that file".
   + String.raw`|that\s+(?:\S+\s+){1,3}?(?:is|are|was|were|has|have|works|lives|likes|leads|uses|prefers)\b`
-  // "…everything about me", "…all you know about me", "…me".
-  + String.raw`|(?:everything|all)\s+(?:(?:you\s+)?(?:know|knew|learned|learnt|remember)\s+)?about\s+me\b|me\b)`, "i");
-/** More than the one request: another sentence, or more after a comma or a semicolon (the conversation takes those). */
-const MORE = /[.!?]\s+\S|[,;]\s*\S/;
+  // "…everything about me", "…all you know about me", "…things about me", "…me".
+  + String.raw`|(?:everything|all|things|stuff|anything)\s+(?:(?:you\s+)?(?:know|knew|learned|learnt|remember)\s+)?about\s+me\b|me\b)`
+  // "Erase your memory", "clear Ember's memory" (memory-v1).
+  + String.raw`|(?:forget|erase|delete|clear|wipe|reset|empty)\s+(?:all\s+(?:of\s+)?)?(?:your|ember['’]s)\s+(?:memory|memories)\b`
+  // "Forget everything", "…everything you know", "delete everything you remember" (never "…everything I said").
+  + String.raw`|(?:forget|erase|delete|clear|wipe)\s+(?:everything|all)(?:\s+(?:you\s+)?(?:know|knew|learned|learnt|remember|saved|kept|have\s+(?:saved|kept|learned|learnt)))?\s*$`
+  // "Remove Priya from your memory".
+  + String.raw`|(?:remove|delete|erase|drop|clear|wipe)\s+(?:\S+\s+){1,4}?from\s+(?:your|ember['’]s)\s+(?:memory|memories)\b)`, "i");
+/**
+ * "Forget Priya", "forget Priya Shah": a name alone, capitalised as names are, never a word of the conversation ("Forget
+ * It", "Forget The last part"): memory-v1.
+ */
+const FORGET_NAME = new RegExp(String.raw`${LEAD}forget\s+(\S+(?:\s+\S+)?)$`, "i");
+const NOT_A_NAME = /^(?:it|that|this|the|a|an|about|what|where|when|who|how|my|our|your|everything|all|me|i|we|to|them|him|her|those|these|instead)$/i;
+/** More than the one request: another sentence, or more after a comma, a semicolon or a dash (the conversation takes those). */
+const MORE = /[.!?]\s+\S|[,;]\s*\S|\s[-–—]+\s*\S/;
+/**
+ * Another request after "and" or "then" ("Forget my last request and open Firefox instead", "…then open Thunderbird"):
+ * the conversation takes the whole of it (memory-c1-1).
+ */
+const AND_MORE = /\s(?:and|then|&)\s+(?:(?:then|also|instead|just|please)\s+)*(?:open|show|start|run|send|write|draft|find|search|tell|close|play|stop|remind|set|turn|make|create|delete|remove|email|mail|message|call|book|schedule|check|move|copy|rename|install|launch|reply|forward|share|post|upload|download|print|save|add|go|use|summari[sz]e|give|try|read|reopen|redo|undo|do|help|explain|translate|fix|list|type|paste|let['’]?s|look|answer|switch|change|edit|update|restart|continue|put|get|bring|take)\b/i;
 
 /**
  * Whether `text` is only a request for Ember to remember something (`remember`) or to forget something it keeps about
@@ -175,12 +206,32 @@ const MORE = /[.!?]\s+\S|[,;]\s*\S/;
 export function memoryAsk(text: string): "remember" | "forget" | null {
   const t = text.trim();
   // (After "Ember," or "Hey Ember." the request starts: that comma is no more.)
-  if (MORE.test(t.replace(/^(?:hey\s+)?ember[,.!]?\s+/i, "").replace(/[.!?]+$/, ""))) return null;
+  const body = t.replace(/^(?:hey\s+)?ember[,.!]?\s+/i, "").replace(/[.!?]+$/, "");
+  if (MORE.test(body) || AND_MORE.test(body)) return null;
   // Asked as a question, unless it is a request put politely ("Can you remember that I'm vegetarian?").
   if (/\?$/.test(t) && !POLITE.test(t)) return null;
-  if (REMEMBER_ASK.test(t)) return "remember";
-  if (FORGET_ASK.test(t)) return "forget";
-  return null;
+  const kept = REMEMBER_ASK.exec(t.replace(/[.!?]+$/, ""));
+  if (kept) return STATES.test(kept[1]!.trim()) ? "remember" : null;
+  return forgets(t.replace(/[.!]+$/, "")) ? "forget" : null;
+}
+
+/** Whether `t` (no more in it) asks Ember to forget something about the user, everything, or a name. */
+function forgets(t: string): boolean {
+  if (FORGET_ASK.test(t)) return true;
+  const name = FORGET_NAME.exec(t);
+  return !!name && name[1]!.split(/\s+/).every(w => /^\p{Lu}\p{Ll}/u.test(w) && !NOT_A_NAME.test(w));
+}
+
+/**
+ * A forget request with more after it ("Forget my address and open Firefox"): the conversation takes the whole of it,
+ * and Ember says after its answer that memory can't change what's saved while it isn't in force (`forgetNote`).
+ */
+export function forgetsWithMore(text: string): boolean {
+  const t = text.trim().replace(/[.!]+$/, "");
+  if (memoryAsk(t) !== null || /\?$/.test(t)) return false;
+  const first = t.split(/[.!?]\s|[,;]|\s[-–—]+\s|\s(?:and|then|&)\s/i)[0]!.trim();
+  // "Forget everything and start over" is as likely "never mind": no note after it.
+  return !new RegExp(String.raw`${LEAD}forget\s+(?:everything|all)$`, "i").test(first) && forgets(first);
 }
 
 /**
@@ -220,6 +271,14 @@ export function rememberNote(why: MemoryNotNow): MemoryNote {
     text: `${NOT_NOW[why]}, so I won't keep this after Ember closes.`,
     open: why !== "managed",
   };
+}
+
+/**
+ * The truth after the conversation answered a forget request with more in it while memory can't change what's saved
+ * (memory-c1-1): the bubble offers Open Memory where `forgetReply` would open it.
+ */
+export function forgetNote(why: MemoryNotNow): MemoryNote {
+  return { title: rememberNote(why).title, text: `${NOT_NOW[why]}, so I can't change what's saved.`, open: forgetReply(why).open };
 }
 
 /**
