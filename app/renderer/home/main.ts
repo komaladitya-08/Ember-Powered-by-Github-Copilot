@@ -553,9 +553,11 @@ function renderRecipient(): void {
   const a = lastAdmin;
   if (!a) return;
   const d = modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
-  const service = document.querySelector<HTMLElement>("#w-full #model-service");
-  // The locked-down line replaces the sentence (and this span) altogether.
-  if (service && d.kind !== "none") service.textContent = recipientWords(d, true);
+  // The locked-down line replaces the sentence (and this span) altogether. Apps & privacy's copy of the line follows it
+  // too, without being drawn again: the copy keeps no ids (safety-privacy-r6).
+  for (const service of document.querySelectorAll<HTMLElement>("#w-full #model-service, .model-service-copy")) {
+    if (d.kind !== "none" && service.textContent !== recipientWords(d, true)) service.textContent = recipientWords(d, true);
+  }
   for (const el of document.querySelectorAll<HTMLElement>(".model-recipient")) {
     const words = recipientWords(d);
     if (el.textContent !== words) el.textContent = words;
@@ -1903,12 +1905,15 @@ const paneOf = (el: Element) => el.closest<HTMLElement>(".home > [data-pane]")?.
 /**
  * Apps & privacy's "What Ember reads, sends and keeps" (safety-privacy-9): first run's "Before Ember starts", copied
  * whole as it reads now (the OS's keys, the model service, the data folder, how long the record is kept), so the two
- * never differ. Copied again whenever it opens or its pane shows; the copy keeps no ids of its own.
+ * never differ. Copied again whenever it opens or its pane shows, and on a settings or policy change only when its
+ * words change (never under a screen reader for an unrelated setting, safety-privacy-r6); the copy keeps no ids of its
+ * own, and its model service follows renderRecipient through `.model-service-copy`.
  */
 function syncPrivacyTerms(): void {
   const source = document.querySelector("#w-full ul.terms");
   if (!source) return;
   const copy = source.cloneNode(true) as HTMLElement;
+  copy.querySelector("#model-service")?.classList.add("model-service-copy");
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
   // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4).
   const walk = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
@@ -1917,6 +1922,8 @@ function syncPrivacyTerms(): void {
     if (words !== t.textContent) t.textContent = words;
   }
   copy.setAttribute("aria-label", "What Ember reads, sends and keeps");
+  const shown = $("privacy-terms").firstElementChild;
+  if (shown?.matches("ul.terms") && shown.innerHTML === copy.innerHTML) return;
   $("privacy-terms").replaceChildren(copy);
 }
 $("privacy-terms-fold").addEventListener("toggle", () => { if (($("privacy-terms-fold") as HTMLDetailsElement).open) syncPrivacyTerms(); });
@@ -2139,7 +2146,7 @@ $("screen-images").addEventListener("change", e => { void save({ screenImages: (
 function renderPrivacy(s: Settings): void {
   renderTrust(s);
   ($("screen-images") as HTMLInputElement).checked = s.screenImages;
-  // The copy of the consent says whether screenshots are off (safety-privacy-r4).
+  // The copy of the consent says whether screenshots are off (safety-privacy-r4); drawn again only if its words change.
   if (($("privacy-terms-fold") as HTMLDetailsElement).open) syncPrivacyTerms();
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
   const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);

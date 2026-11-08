@@ -113,7 +113,8 @@ describe("the consent in short", () => {
     expect(SCRIPT).not.toContain("model-service");
     // The organisation's service and the lockdown line are written into the full text only.
     expect(HOME).toContain("document.querySelector<HTMLElement>(\"#w-full li[data-icon='send']\")");
-    expect(HOME).toContain("document.querySelector<HTMLElement>(\"#w-full #model-service\")");
+    // (and Apps & privacy's copy of it, which keeps no ids: safety-privacy-r6).
+    expect(HOME).toContain("document.querySelectorAll<HTMLElement>(\"#w-full #model-service, .model-service-copy\")");
     expect(HOME).not.toMatch(/querySelector<HTMLElement>\("li\[data-icon='send'\]"\)/);
   });
 

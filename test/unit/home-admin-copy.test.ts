@@ -42,6 +42,13 @@ describe("the settings window under a lockdown", () => {
     expect(lockdownMicWords(broken, "something else ", after)).toBeNull();
   });
 
+  it("never says Listen once sends the request while locked down, when nothing it hears is sent (safety-privacy-r4)", () => {
+    const before = "choose Listen once for one request. Once you call Ember it keeps listening through the conversation, and what it hears there goes to ";
+    const after = " as text, without its name, until you say “That's all” or it has been quiet for 30 seconds. Listen once processes audio on this computer, sends the request as text, and closes temporary capture before Ember answers. If you teach Ember your voice, it keeps your voiceprint.";
+    expect(lockdownMicWords(broken, before, after)?.[1]).toBe(" Listen once processes audio on this computer and closes temporary capture once it has heard the request. If you teach Ember your voice, it keeps your voiceprint.");
+    expect(lockdownMicWords(held, before, after)?.[1]).not.toContain("sends the request");
+  });
+
   it("says records are kept, none deleted, while locked down", () => {
     expect(keptWords(inForce)).toBe("kept 30 days");
     expect(keptWords({ error: null, retentionDays: 365 })).toBe("kept 365 days");

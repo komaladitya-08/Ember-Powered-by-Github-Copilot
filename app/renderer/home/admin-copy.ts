@@ -33,17 +33,22 @@ export function lockdownSendLine(a: Lockdown): string | null {
   return a.error === null ? null : `, nothing is sent to a model service ${until(a)}, so Ember can't answer or act.`;
 }
 
+/** What Listen once does, as the data list says it, and as it is while locked down: nothing it hears is sent. */
+const LISTEN_ONCE_SENDS = ", sends the request as text, and closes temporary capture before Ember answers.";
+const LISTEN_ONCE_LOCKED = " and closes temporary capture once it has heard the request.";
+
 /**
  * The data list's microphone line while Ember is locked down (safety-privacy-r4): the text around its recipient
  * (`before` and `after` the "goes to …" span) with the sentence on what a conversation sends said as nothing sent
- * anywhere, instead of "goes to no model service (…) as text". Null when not locked down, or for words it doesn't know.
+ * anywhere, instead of "goes to no model service (…) as text", and Listen once's without "sends the request as text".
+ * Null when not locked down, or for words it doesn't know.
  */
 export function lockdownMicWords(a: Lockdown, before: string, after: string): [string, string] | null {
   if (a.error === null) return null;
   const start = before.lastIndexOf("Once you call Ember");
   const end = after.indexOf("seconds.");
   if (start < 0 || end < 0) return null;
-  return [`${before.slice(0, start)}Nothing it hears is sent anywhere ${until(a)}.`, after.slice(end + "seconds.".length)];
+  return [`${before.slice(0, start)}Nothing it hears is sent anywhere ${until(a)}.`, after.slice(end + "seconds.".length).replace(LISTEN_ONCE_SENDS, LISTEN_ONCE_LOCKED)];
 }
 
 /** How long the record of every action is kept, as the data list says it ("kept 30 days"). */
