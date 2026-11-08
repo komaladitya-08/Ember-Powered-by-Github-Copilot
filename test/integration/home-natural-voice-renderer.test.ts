@@ -205,7 +205,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
     // No voice is named before one is heard (voice-speaking-r3).
     await expect.poll(() => page.locator("#voice-hear-status").innerText()).toBe("Getting Ember's voice ready…");
     await page.evaluate(() => window.__fullNaturalTest.heard({ spoke: true, voice: "kitten" }));
-    await expect.poll(() => page.locator("#voice-hear-status").innerText()).toBe("Ember spoke in Kitten Nano.");
+    await expect.poll(() => page.locator("#voice-hear-status").innerText()).toBe("Spoken in Kitten Nano.");
     expect(await page.evaluate(() => window.__fullNaturalTest.hears)).toBe(1);
     expect(await page.locator("#speak-rate").inputValue()).toBe("1");
     await page.locator("#speak-rate").selectOption("1.15");

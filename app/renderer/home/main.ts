@@ -31,7 +31,7 @@ import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speec
 import type { Settings, SettingsPatch } from "../../main/settings";
 import {
   dayLabel, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, memoryDeleteFailedText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
-  conversationContextLine, rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed,
+  conversationContextLine, rereadsStatusOnFocus, modelLabel, presenceLine, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed,
   type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
@@ -2507,9 +2507,7 @@ function renderPresence(p: Presence): void {
   $("hide-row").hidden = !p.overlay;
   ($("p-hide") as HTMLInputElement).checked = p.hidden;
   ($("p-follow") as HTMLInputElement).checked = !p.paused;
-  const line = !p.overlay
-    ? `This desktop session can't show Ember beside your cursor, so it lives in the card in the ${handleCornerText(settings?.handlePosition)}.`
-    : p.hidden ? "Ember is hidden. It shows itself again when it needs to ask you something." : "";
+  const line = presenceLine(p, settings?.handlePosition);
   if ($("presence-text").textContent !== line) $("presence-text").textContent = line;
   renderTagline();
 }

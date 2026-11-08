@@ -587,7 +587,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.locator("#conversation-message").fill("Summarise my inbox");
       await page.locator("#conversation-send").click();
       await turn(page, "held");
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Ember will send this to the new model service once what it's doing now has finished. Stop response cancels it.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("This goes to the new model service once what's under way now has finished. Stop response cancels it.");
       expect(await page.locator("#state-word").innerText()).toBe("Switching model service…");
       if (process.env.EMBER_UI_EVIDENCE) {
         fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
@@ -614,17 +614,17 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
       // The turn only started a task: no line of Ember's, and the turn ends.
       await turn(page, "idle");
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember didn't write a reply. Task activity shows any task it started.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("No reply was written. Task activity shows any task this request started.");
       expect(await page.locator("#state-word").innerText()).toBe("Ready");
       await page.clock.runFor(30_000);
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember didn't write a reply. Task activity shows any task it started.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("No reply was written. Task activity shows any task this request started.");
       // A turn under way before the send (asked in the Ask box) isn't this request's end: its end comes with the last one.
       await turn(page, "thinking");
       await page.locator("#conversation-message").fill("And close Files");
       await page.locator("#conversation-send").click();
       await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
       await turn(page, "idle");
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember didn't write a reply. Task activity shows any task it started.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("No reply was written. Task activity shows any task this request started.");
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
@@ -828,7 +828,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       // One waits, the next was refused (its draft stays), then Stop everything: the first comes back above it too.
       await field.fill("");
       await sendWhileReconnecting("Book the meeting room for Friday");
-      const refused = "Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.";
+      const refused = "Reconnecting to Copilot. Your message is still here: send it again in a moment.";
       await page.evaluate(e => { window.__home.sendError = e; }, refused);
       await field.fill("And tell Sam");
       await page.locator("#conversation-send").click();
@@ -915,7 +915,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.locator("#conversation-send").click();
       await expect.poll(() => field.inputValue()).toBe("");
       await turn(page, "thinking");
-      const refused = "Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.";
+      const refused = "Reconnecting to Copilot. Your message is still here: send it again in a moment.";
       await page.evaluate(e => { window.__home.hold = true; window.__home.sendError = e; }, refused);
       await field.fill("And tell Sam");
       await page.locator("#conversation-send").click();
@@ -1362,7 +1362,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.evaluate(e => window.__home.emit("onConversation", e), failed);
       await turn(page, "idle");
       // No reply began (the model service refused it): it couldn't answer, not "finish this reply" (reliability-performance-c1-1).
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember couldn't answer this request. Review the message above; you can edit your request and send again.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("This request got no answer. Review the message above; you can edit your request and send again.");
       // A reply that began, then stopped short with a Problem line: that reply couldn't finish.
       await page.locator("#conversation-message").fill("And the wind?");
       await page.locator("#conversation-send").click();
@@ -1371,7 +1371,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       const cut: TranscriptEntry[] = [...failed, { t: in1(20), who: "you", text: "And the wind?" }, { t: in1(30), who: "ember", text: "The wind is", stopped: true }, { t: in1(40), who: "problem", text: "My model connection stopped unexpectedly. Try again." }];
       await page.evaluate(e => window.__home.emit("onConversation", e), cut);
       await turn(page, "idle");
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember couldn't finish this reply. Review the message above; you can edit your request and send again.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("This reply couldn't be finished. Review the message above; you can edit your request and send again.");
       // The bubble's own Stop on a stalled reply: no line comes, main says Stop ended it.
       await page.locator("#conversation-message").fill("And tomorrow?");
       await page.locator("#conversation-send").click();
@@ -1569,7 +1569,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await turn(page, "idle");
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
       // Refused while Ember can't reach the model service: what to do is the line's second half, and it shows.
-      const refused = "Ember can't reach the model service right now. Your message is still here: send it again once you're online.";
+      const refused = "The model service can't be reached right now. Your message is still here: send it again once you're online.";
       await page.evaluate(e => { window.__home.sendError = e; }, refused);
       await page.keyboard.type("Q2 while offline");
       await page.keyboard.press("Control+Enter");
@@ -1616,7 +1616,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.evaluate(() => { window.__home.stopResult = false; });
       await page.locator("#conversation-stop").click();
       await expect.poll(() => page.evaluate(() => window.__home.stops)).toBe(1);
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Ember isn't answering anything right now, so there was nothing to stop.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Nothing is being answered right now, so there was nothing to stop.");
       await page.evaluate(() => { window.__home.stopResult = true; });
       await page.locator("#conversation-stop").click();
       await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Response stopped. Running tasks continue.");

@@ -74,17 +74,17 @@ describe("settings window words", () => {
   it("keeps the tagline in step with setup, Copilot and where Ember is", () => {
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
     expect(tagline({ ...base, onboarded: false, phase: "signed-out" })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
-    expect(tagline({ ...base, phase: "signed-out" })).toBe("Ember is beside your cursor. Connect Copilot to start asking.");
+    expect(tagline({ ...base, phase: "signed-out" })).toBe("Beside your cursor. Connect Copilot to start asking.");
     // Signed out while my own provider's note waits: agreeing is the way on, not Copilot (integrations-r3-1).
-    expect(tagline({ ...base, phase: "signed-out", waitingFor: "127.0.0.1:18308" })).toBe("Ember is beside your cursor. Agree to use 127.0.0.1:18308 in Models & connections to start asking.");
-    expect(tagline({ ...base, phase: "starting" })).toBe("Ember is beside your cursor. Connecting to Copilot…");
-    expect(tagline(base)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
-    expect(tagline({ ...base, hidden: true })).toMatch(/^Ember is hidden for now\./);
-    expect(tagline({ ...base, overlay: false })).toMatch(/^Ember is in the bottom-right corner\./);
-    expect(tagline({ ...base, failing: 2 })).toBe("Ember needs 2 things fixed before it can work on this computer.");
-    expect(tagline({ ...base, failing: 1 })).toBe("Ember needs 1 thing fixed before it can work on this computer.");
+    expect(tagline({ ...base, phase: "signed-out", waitingFor: "127.0.0.1:18308" })).toBe("Beside your cursor. Agree to use 127.0.0.1:18308 in Models & connections to start asking.");
+    expect(tagline({ ...base, phase: "starting" })).toBe("Beside your cursor. Connecting to Copilot…");
+    expect(tagline(base)).toBe("Beside your cursor. Press Ctrl+Alt+Space to ask anything.");
+    expect(tagline({ ...base, hidden: true })).toMatch(/^Hidden for now\./);
+    expect(tagline({ ...base, overlay: false })).toMatch(/^In the bottom-right corner\./);
+    expect(tagline({ ...base, failing: 2 })).toBe("Needs 2 things fixed before it can work on this computer.");
+    expect(tagline({ ...base, failing: 1 })).toBe("Needs 1 thing fixed before it can work on this computer.");
     // Copilot stopped answering with tasks at work: no "connect" (signing in again isn't the fix).
-    expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Ember is beside your cursor. Copilot isn't answering: Ember reconnects once the tasks that are running finish.");
+    expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Beside your cursor. Copilot isn't answering: reconnecting once the tasks that are running finish.");
   });
 
   it("names days Today and Yesterday", () => {
@@ -1124,8 +1124,8 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.COMPOSER_SAYS).toEqual({
       copied: "Copied message.",
       copyFailed: "Couldn't copy this message. Select its text and copy it manually.",
-      replyFailed: "Ember couldn't finish this reply. Review the message above; you can edit your request and send again.",
-      notAnswered: "Ember couldn't answer this request. Review the message above; you can edit your request and send again.",
+      replyFailed: "This reply couldn't be finished. Review the message above; you can edit your request and send again.",
+      notAnswered: "This request got no answer. Review the message above; you can edit your request and send again.",
       replied: "Reply received.",
       loadFailed: "Couldn't load this conversation. New replies will still appear here.",
       started: "Started a new conversation. Memory, reminders and running tasks are untouched.",
@@ -1135,34 +1135,34 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
       editCancelled: "Edit cancelled. Your previous draft is restored.",
       stopFailed: "Couldn't stop this response. Try again, or use Stop everything.",
       empty: "Enter a request of up to 2,000 characters.",
-      noReply: "Ember didn't write a reply. Task activity shows any task it started.",
+      noReply: "No reply was written. Task activity shows any task this request started.",
       replyStopped: "The reply was stopped before it finished.",
       stoppedAll: "Stopped everything, running tasks included.",
     });
     expect(conv.CONVERSATION_STOPPED).toBe("Response stopped. Running tasks continue.");
-    expect(conv.CONVERSATION_NOTHING_TO_STOP).toBe("Ember isn't answering anything right now, so there was nothing to stop.");
+    expect(conv.CONVERSATION_NOTHING_TO_STOP).toBe("Nothing is being answered right now, so there was nothing to stop.");
     // Home's main.ts writes none of them inline any more.
     const home = readFileSync("app/renderer/home/main.ts", "utf8");
     for (const said of Object.values(conv.COMPOSER_SAYS)) expect(home).not.toContain(`"${said}"`);
   });
 
   it("refuses a message sent while Ember isn't connected by why, and says it is still there (reliability-performance-v2)", () => {
-    expect(composerRefusal({ phase: "signed-out" })).toBe("Connect Ember in Models & connections, then send again.");
-    expect(composerRefusal({ phase: "starting" })).toBe("Ember is still connecting to Copilot. Your message is still here: send it again in a moment.");
-    expect(composerRefusal({ phase: "error", reason: "network" })).toBe("Ember can't reach Copilot right now. Your message is still here: send it again once you're online.");
-    expect(composerRefusal({ phase: "error", reason: "not-answering" })).toBe("Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.");
-    expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true })).toBe("Copilot isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
+    expect(composerRefusal({ phase: "signed-out" })).toBe("Connect Copilot in Models & connections, then send again.");
+    expect(composerRefusal({ phase: "starting" })).toBe("Still connecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "network" })).toBe("Copilot can't be reached right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering" })).toBe("Reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true })).toBe("Copilot isn't answering: reconnecting once the tasks that are running finish. Your message is still here.");
     expect(composerRefusal({ phase: "error", reason: "policy" })).toBe("Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.");
     for (const reason of ["sign-in", "no-access", "models", "runtime", "other"] as const) {
-      expect(composerRefusal({ phase: "error", reason })).toBe("Ember can't connect to Copilot yet: Models & connections says why. Your message is still here.");
+      expect(composerRefusal({ phase: "error", reason })).toBe("Can't connect to Copilot yet: Models & connections says why. Your message is still here.");
     }
     // Copilot stopped and Ember is reconnecting by itself: nothing in Models & connections helps (reliability-performance-v2).
-    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" })).toBe("Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.");
-    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." })).toBe("Ember can't connect to Copilot yet: Models & connections says why. Your message is still here.");
+    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" })).toBe("Reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." })).toBe("Can't connect to Copilot yet: Models & connections says why. Your message is still here.");
     // The service in use is named, never Copilot when it isn't the one.
-    expect(composerRefusal({ phase: "starting", service: { kind: "user", host: "llm.local" } })).toBe("Ember is still connecting to your model provider. Your message is still here: send it again in a moment.");
-    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "llm.example.com" } })).toBe("Ember can't reach the model service right now. Your message is still here: send it again once you're online.");
-    expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true, service: { kind: "user", host: "llm.local" } })).toBe("Your model provider isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
+    expect(composerRefusal({ phase: "starting", service: { kind: "user", host: "llm.local" } })).toBe("Still connecting to your model provider. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "llm.example.com" } })).toBe("The model service can't be reached right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true, service: { kind: "user", host: "llm.local" } })).toBe("Your model provider isn't answering: reconnecting once the tasks that are running finish. Your message is still here.");
   });
 
   it("lets a typed \"stop\" that stops everything through while Ember isn't connected, as the Ask box does (home-c2-1)", () => {
@@ -1171,12 +1171,12 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(composerSendRefusal(waiting, true)).toBeNull();
     expect(composerSendRefusal({ phase: "starting" }, true)).toBeNull();
     // Anything else is refused as before, and so is a ready Ember's nothing.
-    expect(composerSendRefusal(waiting, false)).toBe("Copilot isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
+    expect(composerSendRefusal(waiting, false)).toBe("Copilot isn't answering: reconnecting once the tasks that are running finish. Your message is still here.");
     expect(composerSendRefusal({ phase: "ready" }, false)).toBeNull();
     // Signed out while my own provider's note waits for its host: agreeing is the way on, and the host is named (integrations-r4-3).
     expect(composerSendRefusal({ phase: "signed-out" }, false, "127.0.0.1:18308")).toBe("Agree to use 127.0.0.1:18308 in Models & connections, then send again.");
-    expect(composerSendRefusal({ phase: "signed-out" }, false, null)).toBe("Connect Ember in Models & connections, then send again.");
-    expect(composerSendRefusal({ phase: "starting" }, false, "127.0.0.1:18308")).toBe("Ember is still connecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerSendRefusal({ phase: "signed-out" }, false, null)).toBe("Connect Copilot in Models & connections, then send again.");
+    expect(composerSendRefusal({ phase: "starting" }, false, "127.0.0.1:18308")).toBe("Still connecting to Copilot. Your message is still here: send it again in a moment.");
     // main.ts decides the stop before the refusal, after consent and the locked screen.
     const main = readFileSync("app/main/main.ts", "utf8").replace(/\s+/g, " ");
     const at = (s: string) => { const i = main.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
@@ -1306,7 +1306,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     for (const line of ["", conv.COMPOSER_SAYS.replied, conv.COMPOSER_SAYS.replyFailed, conv.COMPOSER_SAYS.notAnswered, conv.COMPOSER_SAYS.noReply, conv.COMPOSER_SAYS.stoppedAll, conv.COMPOSER_SAYS.copied, conv.COMPOSER_SAYS.editCancelled, conv.CONVERSATION_STOPPED, conv.CONVERSATION_NOTHING_TO_STOP]) {
       expect(conv.composerLineYields(line), line).toBe(true);
     }
-    for (const line of [conv.CONVERSATION_EDIT, conv.COMPOSER_OVER, conv.COMPOSER_SAYS.empty, conv.COMPOSER_SAYS.sendFailed, conv.COMPOSER_SAYS.sending, "Ember can't reach the model service right now. Your message is still here: send it again once you're online."]) {
+    for (const line of [conv.CONVERSATION_EDIT, conv.COMPOSER_OVER, conv.COMPOSER_SAYS.empty, conv.COMPOSER_SAYS.sendFailed, conv.COMPOSER_SAYS.sending, "The model service can't be reached right now. Your message is still here: send it again once you're online."]) {
       expect(conv.composerLineYields(line), line).toBe(false);
     }
   });
@@ -1340,11 +1340,11 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
   it("asks whether my model server on this computer is running, never to wait until I'm online (integrations-r2-2)", () => {
     for (const host of ["127.0.0.1:11434", "localhost:1234", "[::1]:8080"]) {
       expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host } }), host)
-        .toBe("Ember can't reach the model server on this computer. Is it running? Your message is still here: send it again once it is.");
+        .toBe("The model server on this computer can't be reached. Is it running? Your message is still here: send it again once it is.");
     }
     // A provider elsewhere, and the organisation's service on this computer, are still out of reach over the network.
-    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host: "api.example.com" } })).toBe("Ember can't reach your model provider right now. Your message is still here: send it again once you're online.");
-    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "127.0.0.1:11434" } })).toBe("Ember can't reach the model service right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host: "api.example.com" } })).toBe("Your model provider can't be reached right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "127.0.0.1:11434" } })).toBe("The model service can't be reached right now. Your message is still here: send it again once you're online.");
   });
 
   it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {

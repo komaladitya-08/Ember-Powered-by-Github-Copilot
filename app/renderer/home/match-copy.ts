@@ -32,6 +32,35 @@ export const MATCH_TEXT = {
   },
 } as const;
 
+/**
+ * What a screen reader is told as teaching ends or the voice is forgotten (matchAnnouncement): the news of the lines
+ * shown, worded without Ember's name and without a phrase it answers. Said into the wake word's microphone, "Ember knows
+ * your voice now. …" woke Ember and was sent as a request in 22 of 40 placements and "Ember forgot your voice…" in 24,
+ * and the line shown for no voice quotes “Ember, stop”, which stops it (voice-listening-r5-1).
+ */
+export const MATCH_SAID = {
+  none: "Anyone who talks to it is heard. Teach it your voice, and you can answer its questions out loud; other voices can't.",
+  on: "On: your voice can answer questions out loud, and other voices can't. Everyone is still heard. Your voiceprint stays on this computer.",
+  off: "Off: answer questions by clicking. Your voiceprint is kept until you forget it.",
+  noModel: "Voice Match's model is missing or was damaged. Download it above to put that right.",
+  learnt: "Your voice is learnt.",
+  stopped: "Stopped teaching your voice.",
+  forgot: "Your voice and the words learnt from it are forgotten.",
+  ended: {
+    "gave-up": "Your voice wasn't learnt: too many phrases didn't sound alike. Try again somewhere quiet, with only you speaking.",
+    timeout: "Teaching stopped because no phrase was heard for a while. Try again when you're ready.",
+    interrupted: "Teaching stopped because listening stopped. Try again once it's listening again.",
+  },
+} as const;
+
+/** `matchText`'s news as a screen reader is told it (MATCH_SAID). */
+function matchSaid(m: VoiceMatchStatus): string {
+  if (noModel(m)) return MATCH_SAID.noModel;
+  const state = !m.enrolled ? MATCH_SAID.none : m.on ? MATCH_SAID.on : MATCH_SAID.off;
+  const ended = m.ended === "gave-up" || m.ended === "timeout" || m.ended === "interrupted" ? MATCH_SAID.ended[m.ended] : null;
+  return ended ? `${ended} ${state}` : state;
+}
+
 export interface MatchView {
   /** The whole group: hidden without a match status, while listening is off, or while the organisation turned voice off. */
   hidden: boolean;
@@ -101,8 +130,8 @@ export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boole
 
 /**
  * What `#voice-live` says when Voice Match's status changes (null: nothing new). Each phrase is said as it is asked for,
- * with how many were heard, and the end says how it ended (`m.ended`: never "knows your voice" for teaching that gave
- * up while an earlier voiceprint is kept, voice-listening-5). `cancelled`: the user pressed Cancel.
+ * with how many were heard, and the end says how it ended (`m.ended`: never "learnt" for teaching that gave up while an
+ * earlier voiceprint is kept, voice-listening-5), in MATCH_SAID's words. `cancelled`: the user pressed Cancel.
  */
 export function matchAnnouncement(prev: VoiceMatchStatus | undefined, m: VoiceMatchStatus | undefined, cancelled = false): string | null {
   if (!m) return null;
@@ -113,11 +142,11 @@ export function matchAnnouncement(prev: VoiceMatchStatus | undefined, m: VoiceMa
     return e.again || e.got === 0 ? matchPrompt(e) : `Heard ${e.got} of ${e.of}. ${matchPrompt(e)}`;
   }
   if (prev?.enrolling) {
-    const how = cancelled || m.ended === "cancelled" || m.ended === "stopped" ? MATCH_TEXT.stopped
-      : m.ended === "learnt" || (!m.ended && m.enrolled) ? MATCH_TEXT.learnt : "";
-    return `${how} ${matchText(m)}`.trim();
+    const how = cancelled || m.ended === "cancelled" || m.ended === "stopped" ? MATCH_SAID.stopped
+      : m.ended === "learnt" || (!m.ended && m.enrolled) ? MATCH_SAID.learnt : "";
+    return `${how} ${matchSaid(m)}`.trim();
   }
-  if (prev?.enrolled && !m.enrolled) return `${MATCH_TEXT.forgot} ${matchText(m)}`;
+  if (prev?.enrolled && !m.enrolled) return `${MATCH_SAID.forgot} ${matchSaid(m)}`;
   return null;
 }
 

@@ -62,18 +62,18 @@ describe("a failing own provider is explained as the provider's, never Copilot's
   });
   it("says in Home's tagline and status that the provider can't connect, never to connect Copilot", () => {
     const t = { failing: 0, onboarded: true, hidden: false, overlay: true, service: "user" };
-    expect(tagline({ ...t, phase: "error" })).toBe("Ember is beside your cursor. Ember can't connect to your model provider yet: Models & connections says why.");
-    expect(tagline({ ...t, phase: "starting" })).toBe("Ember is beside your cursor. Connecting to your model provider…");
+    expect(tagline({ ...t, phase: "error" })).toBe("Beside your cursor. Can't connect to your model provider yet: Models & connections says why.");
+    expect(tagline({ ...t, phase: "starting" })).toBe("Beside your cursor. Connecting to your model provider…");
     expect(tagline({ ...t, phase: "error", waitingForTasks: true })).toMatch(/Your model provider isn't answering/);
-    expect(tagline({ ...t, service: undefined, phase: "error" })).toBe("Ember is beside your cursor. Connect Copilot to start asking.");
+    expect(tagline({ ...t, service: undefined, phase: "error" })).toBe("Beside your cursor. Connect Copilot to start asking.");
     expect(statusWord({ phase: "error", failing: 0, running: 0, asking: 0, waitingForTasks: true, service: "user" }).word).toBe("Waiting for the model service");
   });
   it("says in Home's tagline that Ember reconnects when its own model connection stopped, and once it gave up, never blames the provider or asks to connect Copilot (accessibility-visual-c1-2)", () => {
     const t = { failing: 0, onboarded: true, hidden: false, overlay: true, service: "user" };
-    expect(tagline({ ...t, phase: "error", runtime: "reconnecting" })).toBe("Ember is beside your cursor. Reconnecting to your model provider…");
-    expect(tagline({ ...t, phase: "error", runtime: "stopped" })).toBe("Ember is beside your cursor. Ember's model connection isn't running: Models & connections says why.");
-    expect(tagline({ ...t, service: undefined, phase: "error", runtime: "reconnecting" })).toBe("Ember is beside your cursor. Reconnecting to Copilot…");
-    expect(tagline({ ...t, service: undefined, phase: "error", runtime: "stopped" })).toBe("Ember is beside your cursor. Copilot isn't running: Models & connections says why.");
+    expect(tagline({ ...t, phase: "error", runtime: "reconnecting" })).toBe("Beside your cursor. Reconnecting to your model provider…");
+    expect(tagline({ ...t, phase: "error", runtime: "stopped" })).toBe("Beside your cursor. Ember's model connection isn't running: Models & connections says why.");
+    expect(tagline({ ...t, service: undefined, phase: "error", runtime: "reconnecting" })).toBe("Beside your cursor. Reconnecting to Copilot…");
+    expect(tagline({ ...t, service: undefined, phase: "error", runtime: "stopped" })).toBe("Beside your cursor. Copilot isn't running: Models & connections says why.");
     expect(tagline({ ...t, phase: "error", runtime: "reconnecting", waitingForTasks: true })).toMatch(/Your model provider isn't answering/);
   });
 

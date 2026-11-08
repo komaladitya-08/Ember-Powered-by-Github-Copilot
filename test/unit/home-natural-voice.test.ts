@@ -118,17 +118,17 @@ describe("effective voice status", () => {
 
 describe("Hear Ember and the speaking speed (voice-speaking-7)", () => {
   it("says which voice spoke, or why none did, in plain words", () => {
-    expect(hearEmberLine({ spoke: true, voice: "kitten" })).toBe("Ember spoke in Kitten Nano.");
-    expect(hearEmberLine({ spoke: true, voice: "kokoro" })).toBe("Ember spoke in Kokoro.");
-    expect(hearEmberLine({ spoke: true, voice: "system" })).toBe("Ember spoke in this computer's system voice.");
-    expect(hearEmberLine({ spoke: false, why: "off" })).toBe("Ember isn't speaking out loud now. Choose Always above to hear it.");
+    expect(hearEmberLine({ spoke: true, voice: "kitten" })).toBe("Spoken in Kitten Nano.");
+    expect(hearEmberLine({ spoke: true, voice: "kokoro" })).toBe("Spoken in Kokoro.");
+    expect(hearEmberLine({ spoke: true, voice: "system" })).toBe("Spoken in this computer's system voice.");
+    expect(hearEmberLine({ spoke: false, why: "off" })).toBe("Nothing is spoken out loud now. Choose Always above to hear the sample.");
     expect(hearEmberLine({ spoke: false, why: "managed" })).toBe("Your organisation has turned speaking off.");
-    expect(hearEmberLine({ spoke: false, why: "locked" })).toBe("Ember doesn't speak while the screen is locked.");
+    expect(hearEmberLine({ spoke: false, why: "locked" })).toBe("Nothing is spoken while the screen is locked.");
   });
 
   it("names no voice until the sample is heard, and says so when none spoke it (voice-speaking-r3)", () => {
     expect(HEAR_WAITING).toBe("Getting Ember's voice ready…");
-    expect(hearEmberLine({ spoke: false, why: "silent" })).toBe("Ember couldn't speak just now. The setup check says why.");
+    expect(hearEmberLine({ spoke: false, why: "silent" })).toBe("The sample couldn't be spoken just now. The setup check says why.");
     // Cut off by something else Ember said: the line goes.
     expect(hearEmberLine({ spoke: false, why: "stopped" })).toBe("");
     const main = fs.readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8");

@@ -53,7 +53,7 @@ describe("Home's status panel", () => {
     // A task at work, or one that needs you, is what it waits for: said first.
     expect(statusWord({ ...base, answering: true, switching: true, running: 1 }).word).toBe("Working on 1 task");
     expect(statusWord({ ...base, answering: true, switching: true, asking: 1 }).word).toBe("A task needs you");
-    expect(COMPOSER_HELD).toBe("Ember will send this to the new model service once what it's doing now has finished. Stop response cancels it.");
+    expect(COMPOSER_HELD).toBe("This goes to the new model service once what's under way now has finished. Stop response cancels it.");
   });
 
   it("under the organisation's lockdown says Ember is locked, never \"Not connected\" or to connect Copilot (safety-privacy-4)", () => {

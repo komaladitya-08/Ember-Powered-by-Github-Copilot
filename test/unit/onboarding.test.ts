@@ -210,8 +210,8 @@ describe("the line under the title in first run", () => {
 
   it("counts what fails once Ember has started, and says computer (review #160)", () => {
     // The sentence fix/bubble pins too (ui-copy.test.ts), word for word.
-    expect(tagline({ ...base, failing: 1 })).toBe("Ember needs 1 thing fixed before it can work on this computer.");
-    expect(tagline({ ...base, failing: 2 })).toBe("Ember needs 2 things fixed before it can work on this computer.");
+    expect(tagline({ ...base, failing: 1 })).toBe("Needs 1 thing fixed before it can work on this computer.");
+    expect(tagline({ ...base, failing: 2 })).toBe("Needs 2 things fixed before it can work on this computer.");
   });
 });
 
@@ -379,9 +379,9 @@ describe("the settings window's setup badge and line", () => {
     expect(setupBadge(3, 1)).toEqual({ text: "1", label: ", 1 thing to fix", tone: "fail" });
     expect(setupBadge(2, 0)).toEqual({ text: "2", label: ", 2 things worth a look", tone: "warn" });
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
-    expect(tagline({ ...base, look: 1 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything. The setup check has 1 thing worth a look.");
-    expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Ember is beside your cursor. Press Win+Alt+Space to ask it anything. The setup check has 2 things worth a look.");
-    expect(tagline({ ...base, look: 0 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
+    expect(tagline({ ...base, look: 1 })).toBe("Beside your cursor. Press Ctrl+Alt+Space to ask anything. The setup check has 1 thing worth a look.");
+    expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Beside your cursor. Press Win+Alt+Space to ask anything. The setup check has 2 things worth a look.");
+    expect(tagline({ ...base, look: 0 })).toBe("Beside your cursor. Press Ctrl+Alt+Space to ask anything.");
     // Before Start the instruction stays (review #160).
     expect(tagline({ ...base, onboarded: false, look: 2 })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
   });
