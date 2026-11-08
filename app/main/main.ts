@@ -3143,6 +3143,8 @@ function start(): void {
       screenBounds: () => (ws ? ws.screenBounds() : primaryScaledUnion(screen)),
       words: sys.words,
       isSecurityWindow: privacy.isSecurityWindow,
+      // Linux: a pinentry, ssh-askpass or polkit agent's window, focused or not, stops all reading (safety-privacy-3).
+      isPromptWindow: sys.privacy.isPromptWindow,
       // Remote desktops' and WSLg apps' windows are blacked out of every screenshot (Windows only; undefined elsewhere).
       isRemoteSurface: remoteSurfaceCheck(platform.os),
       os: platform.os,

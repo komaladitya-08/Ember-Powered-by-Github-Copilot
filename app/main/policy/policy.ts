@@ -20,7 +20,7 @@ import { friendlyApp } from "../../shared/apps";
 import { roleWord } from "../../shared/role-words";
 import { visibleText } from "../../shared/visible-text";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, PLAIN_EDITOR, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
+import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, PLAIN_EDITOR, PROMPT_APP, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
 import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
@@ -494,6 +494,15 @@ export function isSecurityWindow(w: { app?: string; title?: string; name?: strin
   if (SECURITY_APP[os]?.test(app)) return true;
   if (SECURITY_TITLE[os]?.test(normalizeLabel(w.title ?? w.name ?? ""))) return true;
   return SECURITY_CLASS[os].includes(app.toLowerCase());
+}
+
+/**
+ * Is this window's app a program that is only a password prompt (PROMPT_APP: pinentry, ssh-askpass, a polkit agent,
+ * gcr's prompter), so that Ember reads and does nothing anywhere while its window is open (Perception.promptOpen)?
+ * False on Windows and macOS, whose prompts the accessibility host lists.
+ */
+export function isPromptWindow(w: { app?: string }, os: OS = "linux"): boolean {
+  return !!PROMPT_APP[os]?.test(appNameOf(w.app ?? ""));
 }
 
 /**

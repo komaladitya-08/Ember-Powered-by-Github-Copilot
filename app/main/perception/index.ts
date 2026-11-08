@@ -45,6 +45,13 @@ export interface PerceptionOptions {
   /** Authentication and security windows on this OS (default: policy.ts's Linux vocabulary, today's check). */
   isSecurityWindow?: PrivacyVocabulary["isSecurityWindow"];
   /**
+   * Is this window's app a program that is only a password prompt (Linux: pinentry, ssh-askpass, a polkit agent, gcr's
+   * prompter; PrivacyVocabulary.isPromptWindow)? While one's window is in the stack, focused or not, promptOpen says a
+   * prompt is open. Absent (Windows and macOS, whose prompts the helper lists; Ember's desk; another computer's
+   * screen): no such check, as before.
+   */
+  isPromptWindow?: (w: { app?: string }) => boolean;
+  /**
    * Is this app a remote surface (policy/remote-surface.ts; Windows: a remote desktop's or a WSLg app's window)? Those
    * are blacked out of every screenshot. Absent on Linux and macOS, which capture as before.
    */
@@ -492,7 +499,7 @@ export class Perception {
     if (this.noScreenAccess(x11)) return noShot(this.screenRefused());
     // While a password prompt has focus anywhere on screen, no screenshots at all.
     const active = x11.focusWindow() ?? x11.activeWindow();
-    if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
+    if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot(PASSWORD_PROMPT);
     // Windows and macOS say themselves when an authentication surface is up (UAC's secure desktop, a credential
     // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next), but in
     // a Wayland session, where XWayland shows Ember only X11 apps, the check is always on.
@@ -766,16 +773,38 @@ export class Perception {
   /** What stops reading now (promptOpen), with why in the screenshot check's words, or null when nothing does. */
   private async promptNow(): Promise<{ open: true | "unchecked" | "helper"; why: string } | null> {
     const shell = await this.shellOverlays();
+    // A prompt's own window (pinentry, ssh-askpass) is known to be open: that, whatever the shell could say.
+    const own = this.promptWindowOpen();
+    if (own === true) return { open: true, why: PASSWORD_PROMPT };
     if (shell.helper) return { open: "helper", why: HELPER_DOWN };
-    return shell.unchecked ? { open: "unchecked", why: this.words.shellUnchecked } : shell.dialog ? { open: true, why: SYSTEM_DIALOG } : null;
+    return shell.unchecked || own === "unchecked" ? { open: "unchecked", why: this.words.shellUnchecked } : shell.dialog ? { open: true, why: SYSTEM_DIALOG } : null;
   }
 
   /**
-   * Is a system dialog (a password prompt, most likely) on screen, or may one be? GNOME Shell's (polkit, keyring), or
-   * the one the window system reports on Windows and macOS.
+   * Is a password prompt's own window in the stack, focused or not (isPromptWindow: Linux's pinentry, ssh-askpass, a
+   * polkit agent's or gcr's prompter, by either part of WM_CLASS or both)? "unchecked" when the stack can't be read
+   * (fail closed); false without the check (Windows, macOS, the desk) or without a window system (safety-privacy-3).
+   */
+  private promptWindowOpen(): boolean | "unchecked" {
+    const is = this.o.isPromptWindow;
+    if (!is || !this.o.x11) return false;
+    let stack: StackedWindow[];
+    try {
+      stack = this.o.x11.stack();
+    } catch (err) {
+      this.o.log.warn("perception.stack_failed", { err });
+      return "unchecked";
+    }
+    return stack.some(w => w.pid !== this.ownPid && [w.wmClass, ...w.wmClass.split(/\s+/)].some(part => !!part && is({ app: part })));
+  }
+
+  /**
+   * Is a system dialog (a password prompt, most likely) on screen, or may one be? GNOME Shell's (polkit, keyring), a
+   * prompt's own window (promptWindowOpen: pinentry, ssh-askpass), or the one the window system reports on Windows and
+   * macOS.
    */
   async systemDialogOpen(): Promise<boolean> {
-    return (await this.shellOverlays()).dialog || this.platformDialog();
+    return (await this.shellOverlays()).dialog || this.promptWindowOpen() !== false || this.platformDialog();
   }
 
   /**
@@ -906,6 +935,8 @@ export class Perception {
 }
 
 const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's done";
+/** Why nothing was read while a password prompt's own window is open (promptWindowOpen), as the screenshot check says it. */
+const PASSWORD_PROMPT = "a password prompt is open, so Ember looks away until it's done";
 /**
  * Why nothing was read when the accessibility helper can't work here at all (helperCantRun), on every OS: the setup
  * check says what's wrong (reliability-performance-r2-1).

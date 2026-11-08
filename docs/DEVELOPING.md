@@ -392,8 +392,10 @@ your mouse**: it waits until you're still, moves the pointer visibly, and puts i
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
 take screenshots or press keys (nor asks to borrow your mouse or keyboard, or says it's borrowing them without asking,
-while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up (or Ember can't tell, because the shell is too busy
-or didn't answer, or because the accessibility helper isn't working: then Ember says so and points to the setup check),
+while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up, or the window of a
+prompt program (pinentry, ssh-askpass, a polkit agent or gcr's prompter) is open, focused or not (or Ember can't tell,
+because the shell is too busy or didn't answer, the window list can't be read, or the accessibility helper isn't
+working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
 it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember

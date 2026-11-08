@@ -454,6 +454,9 @@ describe("voice, privacy, clipboard and lifecycle", () => {
     for (const w of [{ app: "polkit-gnome-authentication-agent-1" }, { title: "Authentication Required" }, { app: "gedit", title: "notes" }]) {
       expect(s.privacy.isSecurityWindow(w), JSON.stringify(w)).toBe(isSecurityWindow(w));
     }
+    // A prompt's own window stops all reading while it is up, focused or not: only the prompts (safety-privacy-3).
+    for (const app of ["pinentry-gtk-2", "gnome-ssh-askpass", "polkit-gnome-authentication-agent-1", "gcr-prompter"]) expect(s.privacy.isPromptWindow?.({ app }), app).toBe(true);
+    for (const app of ["firewall-config", "gnome-shell", "gedit"]) expect(s.privacy.isPromptWindow?.({ app }), app).toBe(false);
     expect(s.clipboardFormats).toBe(CLIPBOARD_FORMATS.linux);
     const l = s.lifecycle;
     expect({ ...l, ensureShortcut: undefined, focusOwnApp: undefined, watchDisplay: undefined }).toEqual({ appUserModelId: null, appMenu: false, reopenShowsSettings: false,

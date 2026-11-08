@@ -499,6 +499,12 @@ export interface PrivacyVocabulary {
   readonly neverLookDefaults: readonly string[];
   /** policy.ts isSecurityWindow with this OS's vocabulary. */
   isSecurityWindow(w: { app?: string; title?: string; name?: string }): boolean;
+  /**
+   * policy.ts isPromptWindow: a window of a program that is only a password prompt, which stops all reading and every
+   * step while it is on screen (Perception.promptOpen; safety-privacy-3). linux only: Windows' and macOS's prompts come
+   * from the accessibility host's list.
+   */
+  isPromptWindow?(w: { app?: string }): boolean;
 }
 
 /** Clipboard formats Ember saves and puts back around a tier-3 paste (agent/clipboard.ts), per OS (G5). */
