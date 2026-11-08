@@ -1800,6 +1800,7 @@ export class Worker {
         id: this.spec.id, title: goal.length > 200 ? `${goal.slice(0, 199)}…` : goal,
         commandWords: () => this.commandWords, agreed: () => this.agreed, tainted: () => this.tainted,
         spokenWords: () => (this.spokenOnly ? this.userWords : ""),
+        ownWords: () => this.ownWordsLine(),
         // Output that reads like instructions: every later step (command or not) is checked with the user (§3.11).
         taint: () => { this.tainted = true; },
         readFrom: () => [...this.read.values()],

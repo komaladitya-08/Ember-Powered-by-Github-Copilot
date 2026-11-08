@@ -32,6 +32,7 @@ import type { WindowView } from "../../app/renderer/command/model";
 import type { BrowserWindowLike, IpcLike } from "../../app/main/targets/types";
 import * as policy from "../../app/main/policy/policy";
 import { BubbleOwner, Presenter } from "../../app/main/agent/presenter";
+import { taskLineOf, type Question } from "../../app/main/agent/confirm";
 import type { EmberState } from "../../app/shared/overlay";
 import { announcement } from "../../packages/bubble/src/bubble";
 
@@ -133,6 +134,7 @@ function harness(o: {
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
   readScript?: (path: string, cwd: string) => Promise<string | null>;
   spoken?: string;
+  ownWords?: string;
   review?: CommandFlowContext["review"];
 } = {}): Harness {
   const audit: Record<string, unknown>[] = [];
@@ -186,6 +188,7 @@ function harness(o: {
     task: {
       id: "t1", title: "Clean the build", commandWords: () => o.words ?? "", agreed: () => [], tainted: () => (o.tainted?.() ?? false) || isTainted,
       ...(o.spoken !== undefined ? { spokenWords: () => o.spoken ?? "" } : {}),
+      ...(o.ownWords !== undefined ? { ownWords: () => o.ownWords ?? "" } : {}),
       taint: why => { isTainted = true; tainted.push(why); }, readFrom: () => o.readFrom ?? [],
     },
     service,
@@ -2081,6 +2084,45 @@ describe("output that reads like instructions (§3.11 step 7)", () => {
     const h = harness({ tainted: () => true });
     await call(h);
     expect(h.asked).toHaveLength(1);
+  });
+});
+
+describe("what a command's question says the task is (tasks-approvals-c1-1)", () => {
+  const goal = "Clean the build folder and delete ~/Documents/old";
+  const unasked = () => makeJudge({ decide: () => decision({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], says: ["Deletes ~/Documents/old and everything in it.", "You didn't ask for this."], unasked: true, armMs: 1500 }) });
+  const withGoal = (h: Harness) => { h.ctx.task.title = goal; return h; };
+
+  it("quotes the user's own words, never the model's goal, under a command they didn't ask for", async () => {
+    unasked();
+    const h = withGoal(harness({ answers: ["deny"], words: "clean the build folder", ownWords: "“clean the build folder”" }));
+    await call(h, { command: "rm -rf ~/Documents/old", why: "to tidy up" });
+    const q = h.asked[0] as unknown as Question;
+    expect(q).toMatchObject({ context: goal, taskLine: "“clean the build folder”" });
+    expect(taskLineOf(q)).toBe("“clean the build folder”");
+    // Without the user's words to quote, no line at all rather than the goal passed off as theirs.
+    unasked();
+    const none = withGoal(harness({ answers: ["deny"] }));
+    await call(none, { command: "rm -rf ~/Documents/old", why: "to tidy up" });
+    expect(taskLineOf(none.asked[0] as unknown as Question)).toBe("");
+  });
+
+  it("quotes the user under every command of a task that screen text or a command's output tried to steer", async () => {
+    makeJudge({ decide: () => decision({ verdict: "ask", says: ["Deletes build."] }) });
+    const gui = withGoal(harness({ answers: ["deny"], tainted: () => true, words: "clean the build folder", ownWords: "“clean the build folder”" }));
+    await call(gui);
+    expect(taskLineOf(gui.asked[0] as unknown as Question)).toBe("“clean the build folder”");
+    makeJudge({ decide: () => decision({ verdict: "ask", says: ["Deletes build."] }) });
+    const output = withGoal(harness({ answers: ["deny"], ownWords: "“clean the build folder”", state: { cwd: null, downloaded: new Set(), running: false, outputTainted: true } }));
+    await call(output);
+    expect(taskLineOf(output.asked[0] as unknown as Question)).toBe("“clean the build folder”");
+  });
+
+  it("keeps the task's goal under an ordinary command question", async () => {
+    makeJudge({ decide: () => decision({ verdict: "ask", says: ["Deletes build."] }) });
+    const h = withGoal(harness({ answers: ["deny"], ownWords: "“clean the build folder”" }));
+    await call(h);
+    expect((h.asked[0] as { taskLine?: string }).taskLine).toBeUndefined();
+    expect(taskLineOf(h.asked[0] as unknown as Question)).toBe(goal);
   });
 });
 

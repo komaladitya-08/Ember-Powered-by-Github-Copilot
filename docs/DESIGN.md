@@ -76,8 +76,9 @@ They share one emotion rig, so switching never changes behaviour.
   current step with its reason, and buttons when Ember needs a decision. A finished answer has no
   head at all: it is Ember's bubble, so "Ember" doesn't title it. A question sets its decision (up
   to its "?") in weight 600, what the step does after it, and "Your task: …" under it in the
-  secondary label (the task's goal; under a step the user didn't ask for, or once text on screen
-  tried to steer the task, their own words in curly quotes, never the goal passed off as theirs);
+  secondary label (the task's goal; under a step or command the user didn't ask for, or once text
+  on screen or a command's output tried to steer the task, their own words in curly quotes, never
+  the goal passed off as theirs);
   its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
   note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`), four corner
   brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
