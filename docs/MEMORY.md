@@ -46,7 +46,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     same place, to another of the same kind (how long, how set out, what tone, light or dark, when, how often, by
     what: "Prefers dark mode" → "Prefers light mode", "…short answers" → "…detailed answers"; never "Prefers tea" and
     "Prefers coffee", "…dark mode" and "…dark chocolate", "…short answers" and "…short emails" or "…bulleted
-    answers", "…email updates" and "…weekly updates", or dark mode in Slack and in Outlook: memory-r1). A
+    answers", "…email updates" and "…weekly updates", or dark mode in Slack and in Outlook: memory-r1). A changed
+    preference takes the predicate of the one it closed, so "Prefers long answers" after About you's "Prefers short
+    answers" is the answer length in the profile sent with every request (memory-r1). A
     weaker source never closes what the user said,
     and the closed fact stays as history, so Undo of the newer puts it back.
 - `recall.ts`: BM25 over fact text plus entity names. The matched facts and named entities then seed a Personalized

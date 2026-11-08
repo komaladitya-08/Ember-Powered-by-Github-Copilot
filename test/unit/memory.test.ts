@@ -343,6 +343,20 @@ describe("the memory graph", () => {
     expect(profile).toContain("Likes to be called Ram");
   });
 
+  it("sends the new answer length with every request once “remember that I prefer long answers” replaces About you's (memory-r1)", async () => {
+    const s = new MemoryService({ dir: fs.mkdtempSync(path.join(os.tmpdir(), "ember-memory-r1-")), log: { info: () => undefined, warn: () => undefined }, inForce: () => true });
+    for (const f of introFacts({ name: "Ram", length: "short" })) s.learn(f);
+    expect(s.remember("Prefers long answers", [{ name: "User", kind: "person" }], "Remember that I prefer long answers")).toMatch(/replacing/);
+    const profile = (await s.requestContext("open Firefox")).text;
+    expect(profile).toContain("Prefers long answers");
+    expect(profile).not.toContain("Prefers short answers");
+    // A preference of another kind beside it replaces nothing and takes no place in the profile: the length stays.
+    expect(s.remember("Prefers bulleted answers", [{ name: "User", kind: "person" }], "Remember that I prefer bulleted answers")).not.toMatch(/replacing/);
+    const after = (await s.requestContext("open Firefox")).text;
+    expect(after).toContain("Prefers long answers");
+    expect(after).not.toContain("Prefers bulleted answers");
+  });
+
   it("lets nothing it saw overrule what the user said", () => {
     const g = new MemoryGraph(undefined, clock());
     g.add({ text: "Lives in Leeds", about: [{ name: "User" }], predicate: "lives_in", single: true, source: "user" });

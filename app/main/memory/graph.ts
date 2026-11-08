@@ -238,8 +238,12 @@ export class MemoryGraph {
         closed.push(c);
       }
     }
-    this.facts.set(fact.id, fact);
-    return { kind: "added", fact, closed };
+    // A preference that changed says what the one it closed said ("Prefers long answers" after About you's "Prefers short
+    // answers": the answer length), so it takes that one's place in the profile sent with every request (memory-r1).
+    const takes = predicate ? undefined : closed.find(c => c.predicate && preferenceChanged(c.text, text))?.predicate;
+    const kept: Fact = takes ? { ...fact, predicate: takes } : fact;
+    this.facts.set(kept.id, kept);
+    return { kind: "added", fact: kept, closed };
   }
 
   /** Recall returned these facts: they count as used now. */
