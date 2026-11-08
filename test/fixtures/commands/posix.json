@@ -15589,6 +15589,21 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "make -j $(nproc)",
+   "verdict": "run"
+  },
+  {
+   "cmd": "make -j \"$JOBS\" all",
+   "verdict": "run"
+  },
+  {
+   "cmd": "make -j $(nproc) install",
+   "verdict": "ask",
+   "rules": [
+    "script.system"
+   ]
   }
  ]
 }

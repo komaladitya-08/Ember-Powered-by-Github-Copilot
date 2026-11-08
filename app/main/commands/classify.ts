@@ -6722,10 +6722,16 @@ reg(NATIVE, ["robocopy"], h => {
   else if (src) h.e.usePath(src, move ? "move" : "readTree", h.sc);
   const destObj = dst ? h.e.usePath(dst, flags.some(f => /^\/(mir|purge)$/.test(f)) ? "deleteTree" : "write", h.sc) : null;
   // A download it copies or moves is the download in the destination folder, as with copy and Copy-Item
-  // (commands-remote-c2-2): the file of its name there, or the whole folder for a folder or pattern that holds one.
+  // (commands-remote-c2-2): the file of its name there. A folder or pattern copy puts each download the folder holds
+  // under the same name there, and a source folder that is (or may be) a download itself leaves files Ember can't
+  // name; never the destination folder itself, whose own tools would all ask (commands-remote-v5-6).
   if (src && destObj?.abs) {
     if (files.length) h.e.carryCopies(files.map(inSrc).filter(f => !f.glob), { ...destObj, text: `${destObj.text.replace(/[\\/]+$/, "")}\\` }, h.sc);
-    if ((!named || files.some(f => f.glob || f.v === null)) && (h.e.isDownloaded(src, h.sc) || h.e.holdsDownload(src, h.sc))) h.e.carryDownload(destObj.abs, h.sc);
+    if ((!named || files.some(f => f.glob || f.v === null)) && src.v !== null && h.sc.cwd) {
+      const from = resolveTargetPath(src.v, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd });
+      if (h.e.isDownloaded(src, h.sc)) h.e.carryUnnamed(destObj.abs, true, h.sc);
+      else for (const d of [...h.e.ctx.downloaded, ...h.e.downloads]) if (d !== from && isUnder(d, from, h.sc.path)) h.e.carryDownload(win32.join(destObj.abs, win32.relative(from, d)), h.sc);
+    }
   }
   if (flags.some(f => /^\/(mir|purge|move|mov)$/.test(f))) h.e.add("destroy", "cmd.robocopy", `Deletes files in ${destObj?.text ?? "the destination"} that aren't in ${src?.v ?? "the source"}.`, { objects: destObj ? [destObj] : [] });
   else if (destObj?.abs) h.e.add("destroy", "cmd.robocopy", `Replaces files in ${destObj.text} if they exist.`, { objects: [destObj], ifExists: destObj.abs });

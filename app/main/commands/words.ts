@@ -53,7 +53,10 @@ export interface OptSpec {
    * next word is the command or an operand (commands-remote-c4-1).
    */
   shortOptional?: string;
-  /** Short options that take the next word as their value only when it is a number (make's `-j 4`, but `-j install`). */
+  /**
+   * Short options that take the next word as their value only when it is a number, or a substitution or variable Ember
+   * can't see (make's `-j 4` and `-j $(nproc)`, but `-j install`).
+   */
   shortNumeric?: string;
   /** Long options that take the next word only when it is a number (make's `--jobs 4`). */
   longNumeric?: readonly string[];
@@ -83,6 +86,9 @@ export interface Parsed {
   missingValue: boolean;
 }
 
+/** A word that is only a command substitution, an arithmetic expansion or a variable, quoted or not. */
+const COUNT_WORD = /^"?(\$\([^()]*\)|\$\(\([^()]*\)\)|`[^`]*`|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"?$/;
+
 /**
  * Parses options GNU-style (clusters, attached values, `--` ends options, options after operands unless
  * stopAtOperand). Unknown options count as flags. An unresolved argument (null) is an operand.
@@ -97,7 +103,9 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
   const shortNumeric = spec.shortNumeric ?? "";
   const longValue = new Set(spec.longValue ?? []);
   const longNumeric = new Set(spec.longNumeric ?? []);
-  const numberNext = (k: number): boolean => k + 1 < args.length && /^\d+(\.\d+)?$/.test(args[k + 1].v ?? "");
+  // A word Ember can't see that is only a command substitution or a variable (`$(nproc)`, `` `nproc` ``, `"$JOBS"`) is
+  // the usual job count, as a number is; a literal word (`install`) is still a target (commands-remote-v5-4).
+  const numberNext = (k: number): boolean => k + 1 < args.length && (/^\d+(\.\d+)?$/.test(args[k + 1].v ?? "") || (args[k + 1].v === null && COUNT_WORD.test(args[k + 1].raw)));
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     const v = a.v;

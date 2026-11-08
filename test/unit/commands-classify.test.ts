@@ -910,13 +910,28 @@ describe("loops and ifs (commands-remote-2)", () => {
       expect(cls("robocopy . tools x.exe", shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
       expect(cls("robocopy . tools x.exe /MOV", shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
       expect(cls(`robocopy ${P} ${P}\\tools x.exe /NJH`, shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
-      // A whole folder that holds a download marks where it goes; one that doesn't, nothing.
-      expect(cls("robocopy dl tools /E", shell, [`${P}\\dl\\x.exe`]).downloads, shell).toContain(`${P}\\tools`);
+      // A whole folder that holds a download puts it under the same name where it goes, and a downloaded folder leaves
+      // files Ember can't name there: never the destination folder itself (commands-remote-v5-6). One that holds none,
+      // nothing.
+      expect(cls("robocopy dl tools /E", shell, [`${P}\\dl\\sub\\x.exe`]).downloads, shell).toEqual([`${P}\\tools\\sub\\x.exe`]);
+      expect(cls("robocopy dl tools *.exe /S", shell, [`${P}\\dl\\x.exe`]).downloads, shell).toEqual([`${P}\\tools\\x.exe`]);
+      expect(cls("robocopy dl tools /E", shell, [`${P}\\dl`]).downloads, shell).toEqual([`${P}\\tools\\\u0000`]);
       expect(cls("robocopy . tools notes.txt", shell).downloads, shell).toEqual([]);
       expect(cls("robocopy src tools /E", shell).downloads, shell).toEqual([]);
       // Names after an option are what it leaves out, not what it copies.
       expect(cls("robocopy . tools notes.txt /XF x.exe", shell).downloads, shell).toEqual([]);
     }
+    // After a folder copy into the project, the project's own tools run, and a file run from the copy asks
+    // (commands-remote-v5-6).
+    const dl = [`${P}\\dl\\data.csv`];
+    const after = [...dl, ...(cls("robocopy dl . /E", "powershell", dl).downloads ?? [])];
+    expect(after).not.toContain(`${P}\\`);
+    expect(after).not.toContain(P);
+    for (const cmd of ["npm test", "dotnet test", "python -m pytest"]) expect(cls(cmd, "powershell", after).findings.map(f => f.rule), cmd).not.toContain("escape.run-downloaded");
+    const exe = [`${P}\\dl\\x.exe`];
+    const tools = [...exe, ...(cls("robocopy dl tools /E", "powershell", exe).downloads ?? [])];
+    expect(cls(".\\tools\\x.exe", "powershell", tools).findings.map(f => f.rule)).toContain("escape.run-downloaded");
+    expect(cls(".\\tools\\build.exe", "powershell", tools).findings.map(f => f.rule)).not.toContain("escape.run-downloaded");
   });
 
   it("keeps a download a download when a pipeline or xargs copies, moves or renames it (commands-remote-v4-5)", () => {
@@ -1107,6 +1122,16 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("gawk -i inplace '{}' ~/.config/ember/settings.json").cls.refuse?.says).toBe("Ember won't run this: it would change Ember's own safety settings, records or programs.");
     // node -C's condition isn't the script: the download after it is.
     expect(decided("node -C dev x.js", "linux", ["/home/ana/proj/x.js"]).decision.rules).toContain("escape.run-downloaded");
+  });
+
+  it("runs make with a job count from a substitution or a variable, while -j install still builds install (commands-remote-v5-4)", () => {
+    for (const cmd of ["make -j $(nproc)", "make -j \"$(nproc)\"", "make -j `nproc`", "make -j \"$JOBS\"", "make -j ${JOBS}", "make --jobs $(nproc)", "make -C build -j $(nproc)", "make -j $(nproc) all", "make -l $(nproc)", "make -j $((2 * 4))"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+    expect(decided("make -j $(sysctl -n hw.ncpu)", "darwin").decision.verdict).toBe("run");
+    each([["make -j install", "make install"], ["make -j $(nproc) install", "make install"], ["make --jobs \"$JOBS\" install", "make install"]]);
+    // A word that is more than a substitution or a variable may be a target.
+    expect(decided("make -j \"$X/install\"").decision.rules).toContain("unclear.target");
   });
 
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {

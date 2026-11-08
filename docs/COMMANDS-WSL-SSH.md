@@ -170,7 +170,7 @@ Ember stops and asks before a command that:
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell
   which files a pipeline or a variable hands over, the copy counts as a download whenever the task downloaded
   something it could be: running a file from where it went asks, but that folder's own tools, such as `npm test` or
-  `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy`, run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
+  `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
