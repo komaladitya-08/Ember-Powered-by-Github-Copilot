@@ -34,6 +34,7 @@ The full gate, in CI's order. Run all of it before you push, and put the command
 npm run lint
 npm run typecheck
 npm test                         # vitest: test/unit/** and packages/**/*.test.ts
+(cd packages/npm && npm pack --dry-run)   # the npm launcher's package files
 npm run test:sidecar             # python3 -B sidecar/atspi/test_ember_atspi.py
 node scripts/voice/prepare.mjs   # speech models (SHA-256 checked) for the voice tests
 EMBER_VOICE_TEST=1 npm run test:integration
@@ -44,6 +45,7 @@ xvfb-run -a npm run test:smoke   # launches dist/app, so build first; adds --no-
 ```
 
 - Linux desktop suites (AT-SPI, X11, desk, safety) run as in CI's `el8` job: `EMBER_PROJECT_TEST=1 EMBER_CONVERSATION_LIVE=1 EMBER_ATSPI_TEST=1 EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1 dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- <files>`. The file list is in `.github/workflows/ci.yml`. The Windows and macOS suites are in docs/DEVELOPING.md §10.3 and §11.3; the commands, WSL and SSH suites (CI's `remote.yml`) in §14.4–14.5.
+- The `el8` job ends with the awake-rest footprint budget. After `npm run build` and the speech models, with xcompmgr installed (EPEL's on EL8), run `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs --compositor --settle 70 --sample 30 --max-cpu 16 --max-pss 950`; docs/DEVELOPING.md ("What Ember costs at rest") says what it measures.
 - The eval drives real windows, so give it a display and a session bus, as CI's `eval` job does (with gedit installed): `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs`. For a partial run use `node eval/run.mjs --only <id> --no-gates`.
 - Without Copilot, start the mock model with `node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &`, then run `EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev`.
 - Useful switches: `EMBER_USER_DATA` (a throwaway settings and logs folder), `EMBER_LOG_LEVEL=debug`, `EMBER_PYTHON`, and `EMBER_LOG_STDOUT=1` (logs to stdout from an installed Ember; development already does this). Ember's real data lives in `~/.config/ember/` (Linux), `%LOCALAPPDATA%\ember` (Windows) or `~/Library/Application Support/ember` (macOS).
