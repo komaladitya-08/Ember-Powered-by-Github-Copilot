@@ -673,6 +673,36 @@ describe("a task whose question went unanswered while the user was away (tasks-a
   });
 });
 
+describe("Home's Task activity across a reconnect (tasks-approvals-c2-1)", () => {
+  const manager = (makeWorker: ConstructorParameters<typeof TaskManager>[0]["makeWorker"], extra = {}) =>
+    new TaskManager({ log: quiet, makeWorker, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0, cardMs: 10, ...extra });
+
+  it("lists what the manager before it kept after its own, with nothing to press, and never more than 20 ended tasks", async () => {
+    vi.useFakeTimers();
+    try {
+      const old = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke." })));
+      const failed = old.start("Rename the report", { userWords: "rename the report" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(old.activities()[0]?.controls?.retry).toBe(true);
+      const kept = old.history();
+      old.close();
+      // Its card went with the old manager: the row stays, saying what happened, but offers no Try again.
+      expect(kept).toEqual([expect.objectContaining({ id: failed.id, status: "failed", summary: "It broke.", controls: { stop: false, retry: false, window: false } })]);
+      const next = manager(() => fakeWorker(async () => ({ success: true, summary: "Done." })), { earlier: () => kept });
+      const done = next.start("Tidy the desktop");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(next.activities().map(e => e.id)).toEqual([done.id, failed.id]);
+      // Handed on again at the next reconnect, newest first, within the 20 kept.
+      for (let i = 0; i < 25; i++) next.start(`task ${i}`);
+      await vi.advanceTimersByTimeAsync(100);
+      const again = next.history();
+      expect(again).toHaveLength(20);
+      expect(again.map(e => e.id)).not.toContain(failed.id);
+      expect(again[0].title).toBe("task 24");
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe("how a finished task is worded (tasks-approvals-9)", () => {
   it("says it the card's way in the conversation, speech and notifications: “didn't finish”, never “failed”", async () => {
     const { taskOutcome, statusWord } = await import("../../app/main/agent/tasks");

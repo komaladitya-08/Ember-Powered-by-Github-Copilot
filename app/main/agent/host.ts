@@ -871,6 +871,13 @@ export class AgentHost {
   }
   conductor: Conductor | null = null;
   tasks: TaskManager | null = null;
+  /**
+   * Home's Task activity from the TaskManagers before this one (TaskManager.history): a reconnect hands it on, so it is
+   * kept until Ember quits, as Home says; sign-out and an account change drop it (tasks-approvals-c2-1).
+   */
+  private earlierTasks: TaskEntry[] = [];
+  /** The manager whose tasks were forgotten with the conversation (sign-out): its history isn't handed on. */
+  private tasksForgotten: TaskManager | null = null;
   private status: AgentStatus;
   /** Bumped by every start() and stop(): an older start gives up at its next step. */
   private gen = 0;
@@ -1942,6 +1949,7 @@ export class AgentHost {
         },
         provider: kindOf(provider),
         actionsAllowed: () => this.actionsAllowed(),
+        earlier: () => this.earlierTasks,
         makeWorker: (spec, progress, update, activity) => {
           // The model service changed since this connection started: no task starts on the one before (a queued task, or
           // one a turn already under way asked for). Tasks running now finish where they started.
@@ -3119,10 +3127,10 @@ export class AgentHost {
 
   /**
    * What each kept task did and is doing, newest first (TaskManager.activities): Home's "Task activity" reads it. In
-   * memory only; empty while no TaskManager runs.
+   * memory only; while no TaskManager runs (reconnecting), what the ones before it kept (tasks-approvals-c2-1).
    */
   taskActivities(): TaskEntry[] {
-    return this.tasks?.activities() ?? [];
+    return this.tasks?.activities() ?? this.earlierTasks;
   }
 
   /**
@@ -3196,8 +3204,11 @@ export class AgentHost {
       this.githubLogin = undefined;
       this.githubAccountId = null;
       this.accountUnresolved = false;
-      // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
+      // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it,
+      // and Home's Task activity doesn't keep them (tasks-approvals-c2-1).
       this.tasks?.takeReports();
+      this.earlierTasks = [];
+      this.tasksForgotten = this.tasks;
       this.finishedLately = [];
       this.carried = [];
       this.transcript.length = 0;
@@ -3288,8 +3299,9 @@ export class AgentHost {
     this.o.onTranscript?.([]);
     // What Ember remembered was about the account before, its person: none of it carries over.
     const erased = eraseKept && this.forgetKept();
-    // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one.
+    // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one, nor Task activity.
     this.finishedLately = [];
+    this.earlierTasks = [];
     this.o.onAccountChanged?.();
     // Never without a word: the new account's conversation starts by saying what went (memory-11).
     if (erased) this.remember("ember", ACCOUNT_CHANGED_FORGOT);
@@ -3357,6 +3369,10 @@ export class AgentHost {
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     // A reconnect resumes the conversation: its next turn hears how these tasks ended. Quitting forgets it all.
     this.carried = forget ? [] : [...this.carried, ...(this.tasks?.takeReports().map(report) ?? [])];
+    // What they did stays in Home's Task activity until Ember quits (tasks-approvals-c2-1), not after a sign-out.
+    if (forget) this.earlierTasks = [];
+    else if (this.tasks && this.tasks !== this.tasksForgotten) this.earlierTasks = this.tasks.history();
+    this.tasksForgotten = null;
     // The cards go with their manager: a failed card's Close would reach nobody after a restart.
     this.tasks?.close();
     this.tasks = null;

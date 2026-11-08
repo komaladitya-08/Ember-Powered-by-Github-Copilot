@@ -834,6 +834,28 @@ describe("ExtensionsService", () => {
     expect(await call(fresh, "fake-lookup")).toEqual({ permissionDecision: "allow" });
   });
 
+  it("leaves the conversation as it is after Stop everything when no extension was loaded: none installed, or turned off (tasks-approvals-c2-1)", async () => {
+    // On, nothing installed: the conversation has no extension tools, so nothing needs starting again.
+    const none = new ExtensionsService(deps());
+    expect(none.forSession()).toBeUndefined();
+    const idle = none.generation;
+    none.stopPart().stop();
+    expect(none.generation).toBe(idle);
+    // Installed and loaded once, then Use extensions turned off: the conversation already reloaded without them.
+    const s = await installed();
+    expect(s.forSession()).toBeDefined();
+    settings = { ...settings, extensions: { ...settings.extensions, on: false } };
+    const off = s.generation;
+    s.stopPart().stop();
+    expect(s.generation).toBe(off);
+    // Turned on again, and loaded: a stop reloads, so its servers start again (as the kill switch test above).
+    settings = { ...settings, extensions: { ...settings.extensions, on: true } };
+    expect(s.forSession()).toBeDefined();
+    const on = s.generation;
+    s.stopPart().stop();
+    expect(s.generation).not.toBe(on);
+  });
+
   it("ends the extension servers the launcher recorded when the kill switch is pulled", async () => {
     const s = await installed();
     const store = new ExtensionStore(deps().dir);

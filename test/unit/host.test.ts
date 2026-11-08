@@ -2730,6 +2730,28 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.stop();
   });
 
+  it("keeps Home's Task activity through a reconnect between turns, as “Kept until you quit Ember” says, but not past a sign-out (tasks-approvals-c2-1)", async () => {
+    let generation = 1;
+    const { host, results } = await withTasks({ extensions: { forSession: () => undefined, get generation() { return generation; } } });
+    results.set("Tidy the desktop", "Moved 3 files.");
+    host.tasks!.start("Tidy the desktop");
+    await vi.waitFor(() => expect(host.taskActivities()).toEqual([expect.objectContaining({ title: "Tidy the desktop", status: "done" })]));
+    const before = host.tasks;
+    // Something changed the conversation's tools (as a stop of a loaded extension does): the next request reconnects.
+    generation = 2;
+    await host.ask("thanks");
+    await vi.waitFor(() => expect(host.tasks).not.toBe(before));
+    await vi.waitFor(() => expect(host.getStatus().phase).toBe("ready"));
+    // The row is still there, with what it found; its card went with the old connection, so it offers nothing.
+    expect(host.taskActivities()).toEqual([expect.objectContaining({ title: "Tidy the desktop", status: "done", summary: "Moved 3 files.",
+      controls: { stop: false, retry: false, window: false } })]);
+    // Signing out forgets it with the conversation.
+    await host.forgetConversation();
+    await host.start(TOKEN, "stored");
+    expect(host.taskActivities()).toEqual([]);
+    await host.stop();
+  });
+
   describe("“try again” after a task that didn't finish asks for that task again (tasks-approvals-1)", () => {
     /** The host with tasks whose workers end as `outcomes` say, in turn (then as withTasks's do). */
     async function retrying(outcomes: { success: boolean; summary: string; stopped?: boolean; declined?: boolean }[]) {

@@ -117,6 +117,11 @@ export interface TaskManagerDeps {
   taskWindow?: (task: Task, focus: boolean) => boolean;
   /** How long a failed card stays before it goes on its own (longer, so it can be read and closed). */
   failureCardMs?: number;
+  /**
+   * Task activity kept from the managers before this one (TaskManager.history, handed on by a reconnect): listed after
+   * this one's own, so Home's "Kept until you quit Ember" holds (tasks-approvals-c2-1).
+   */
+  earlier?: () => TaskEntry[];
 }
 
 /** Longest task title (its card shows two lines of it). */
@@ -326,7 +331,7 @@ export class TaskManager {
     // A task still in line (or one whose worker couldn't be made) has no log yet: listed with an empty one, so Home
     // counts every task of the session (the status panel's "earlier" count is the audit's tasks less these).
     const unlogged = [...this.tasks.values()].filter(t => !this.logs.has(t.id)).map(t => [t.id, { log: new ActivityLog(t.started), task: t }] as const);
-    return [...unlogged.reverse(), ...[...this.logs].reverse()].map(([id, { log, task: t }]) => {
+    const own = [...unlogged.reverse(), ...[...this.logs].reverse()].map(([id, { log, task: t }]): TaskEntry => {
       const activity = log.get();
       if (t.finished !== null && activity.endedAt === undefined) activity.endedAt = t.finished;
       const status: TaskEntry["status"] = t.status === "cancelled" ? "stopped" : t.status === "running" && activity.asking ? "waiting" : t.status;
@@ -343,6 +348,19 @@ export class TaskManager {
         activity,
       };
     });
+    // Those kept from before a reconnect come after, within ACTIVITY_KEPT ended tasks with no card (tasks-approvals-c2-1).
+    const room = Math.max(0, ACTIVITY_KEPT - own.filter(e => !this.tasks.has(e.id)).length);
+    return [...own, ...(this.d.earlier?.() ?? []).slice(0, room)];
+  }
+
+  /**
+   * The ended tasks' activity, this manager's and what it was handed (`earlier`), newest first, at most ACTIVITY_KEPT,
+   * with nothing to press (their cards go with this manager): what the next one lists after a reconnect
+   * (tasks-approvals-c2-1).
+   */
+  history(): TaskEntry[] {
+    return this.activities().filter(e => e.status === "done" || e.status === "failed" || e.status === "stopped")
+      .slice(0, ACTIVITY_KEPT).map(e => ({ ...e, controls: { stop: false, retry: false, window: false } }));
   }
 
   /** A live task can be stopped once, even while another task is asking a question. */

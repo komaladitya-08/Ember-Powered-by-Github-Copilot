@@ -172,9 +172,10 @@ runtime. It does not change the app's consent or speaking settings.
     (steps of one kind folded, each listed when opened), its questions with how they were answered, and how it ended
     (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
     asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
-    filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, and gone at
-    quit; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most twice a second,
-    only to the settings window.
+    filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, through a
+    reconnect (a finished task's row then offers nothing to press, its card having gone), and gone at quit, sign-out
+    or an account change; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most
+    twice a second, only to the settings window.
   - Once Ember is set up, starting it on Linux, Windows or macOS (the app menu entry, `ember`, the Start menu, Ember.app
     from the Dock or Finder) only greets you, unless a setup row needs you (`startView`'s `setupNeeded`): then settings
     opens. Starting it again while it runs, the
@@ -505,7 +506,9 @@ it builds on:
   (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
   Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
-  `generation`; the host reconnects between turns (the conversation resumed), as memory does.
+  `generation`; the host reconnects between turns (the conversation resumed), as memory does. The kill switch moves
+  it only when the conversation had extension tools loaded or a server launched, so a stop with none installed or
+  with extensions off reconnects nothing.
 - **The kill switch** part `extensions` refuses every call from sessions loaded before it, drops their questions and
   ends every server the launcher recorded.
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
