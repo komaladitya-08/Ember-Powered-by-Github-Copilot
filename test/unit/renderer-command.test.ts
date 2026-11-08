@@ -577,7 +577,9 @@ describe("the page's pending lines (a task whose command has no tab yet)", () =>
     expect(main).toMatch(/el\("p", "pending-line", text\)/);
     expect(main).toMatch(/\|\| lines\.length > 0;/);
     const html = read("index.html");
-    expect(html).toMatch(/<div id="pending" class="pending" role="status" aria-live="polite" hidden><\/div>/);
+    // Empty, never hidden, so its first line is announced (accessibility-visual-c2-1).
+    expect(html).toMatch(/<div id="pending" class="pending" role="status" aria-live="polite"><\/div>/);
+    expect(main).not.toMatch(/box\.hidden = /);
     expect(html.indexOf('id="pending"')).toBeLessThan(html.indexOf('id="tabs"'));
   });
 });

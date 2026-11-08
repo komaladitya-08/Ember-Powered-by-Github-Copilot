@@ -825,4 +825,43 @@ describe("Home's groups and disclosures (2026-11-07 product audit)", () => {
     expect(off).toEqual([]);
     expect(css).toContain(':is([role="status"], [aria-live]):empty { position: absolute; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; outline: 0; box-shadow: none; }');
   });
+
+  it("keeps the command and prompt windows' status lines on the page while they say nothing, so a refused Allow is heard (accessibility-visual-c2-1)", () => {
+    // The approval card's refusal ("That press was too soon, so it didn't count…") and hint, the command card's hint
+    // and the command window's "Starting Ubuntu…" lines were hidden until filled: they joined the accessibility tree
+    // with their words already in, and a screen reader said nothing while focus stayed on Allow.
+    const live = (attrs: string) => /\brole="status"/.test(attrs) || (/\baria-live="/.test(attrs) && !/\brole="alert"/.test(attrs));
+    for (const p of ["command", "prompt"]) {
+      const html = read(`app/renderer/${p}/index.html`);
+      expect(html, p).toMatch(/<html lang="en" class="content">/);
+      const ts = read(`app/renderer/${p}/main.ts`);
+      const ids: string[] = [], hidden: string[] = [];
+      for (const m of html.matchAll(/<[a-z][a-z0-9-]*\b([^>]*)>/g)) {
+        if (!live(m[1])) continue;
+        const id = /\bid="([^"]*)"/.exec(m[1])?.[1];
+        if (id) ids.push(id);
+        if (/\shidden(?=[\s>=]|$)/.test(m[1])) hidden.push(id ?? m[0]);
+      }
+      expect(hidden, p).toEqual([]);
+      expect(ids.length, p).toBeGreaterThan(0);
+      // Nor does its script hide one (by id, or through the name it keeps it under): it clears its words instead.
+      for (const id of ids) {
+        expect(ts, `${p} #${id}`).not.toMatch(new RegExp(`\\$\\("${id}"\\)\\.hidden =`));
+        for (const v of ts.matchAll(new RegExp(`^( *)const (\\w+) = \\$\\("${id}"\\);`, "gm"))) {
+          // Kept at the top: anywhere in the file; in a function: in that function.
+          const body = v[1] ? ts.slice(v.index, ts.indexOf("\n}", v.index)) : ts;
+          expect(body, `${p} #${id}`).not.toMatch(new RegExp(`\\b${v[2]}\\.hidden =`));
+        }
+      }
+      // Lines the script makes and marks live (the command card's hint): never hidden either.
+      for (const v of ts.matchAll(/const (\w+) = el\("p", "[^"]*"\);\n\s*\1\.setAttribute\("aria-live", "polite"\);/g)) {
+        expect(ts, `${p}: ${v[1]}`).not.toMatch(new RegExp(`\\b${v[1]}\\.hidden = `));
+        expect(ts, `${p}: ${v[1]}`).not.toMatch(new RegExp(`\\.${v[1]}\\.hidden = `));
+      }
+    }
+    expect(read("app/renderer/prompt/index.html")).toContain('<p id="notice" class="notice" role="status" aria-live="polite"></p>');
+    expect(read("app/renderer/command/main.ts")).toMatch(/const hint = el\("p", "hint"\);\n\s*hint\.setAttribute\("aria-live", "polite"\);/);
+    // One rule in the shared sheet takes an empty one out of the flow and out of sight in every content window.
+    expect(read("app/renderer/shared/ember.css")).toContain(':where(html.content) :is([role="status"], [aria-live]):empty { position: absolute; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; outline: 0; box-shadow: none; }');
+  });
 });

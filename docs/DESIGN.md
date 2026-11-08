@@ -365,7 +365,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   disclosure inside a group (Projects' patch, command and saved workspaces) has the folds' chevron (`details.disclose`),
   a lone button (Refresh list, Choose command folder…) keeps its own size in a row of actions, and an empty status line
   takes no row: every status line in Home stays on the page while it says nothing, as a box of nothing out of the flow,
-  never hidden, so a screen reader announces it when it speaks (an alert may hide: it is announced as it shows).
+  never hidden, so a screen reader announces it when it speaks (an alert may hide: it is announced as it shows). The
+  command and prompt windows' status lines (a refused press's line, the hints, "Starting Ubuntu…") do the same.
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 
