@@ -229,6 +229,21 @@ describe("SpeechStream", () => {
     expect(link.all.join(" ")).toContain("the report that you wrote for the board last quarter");
   });
 
+  it("keeps a long answer's streaming cheap, so Ember's main process stays free while it streams (voice-speaking-r4)", () => {
+    let paragraph = "";
+    for (let i = 0; paragraph.length < 6000; i++) paragraph += `The ${i}th report covers sales in the north region and the totals by month for last year. `;
+    const answer = `# Reports\n${paragraph.trim()}\n## Totals\n${paragraph.trim()}`;
+    const s = new SpeechStream(Infinity);
+    const said: string[] = [];
+    const t0 = performance.now();
+    for (let i = 0; i < answer.length; i += 4) said.push(...s.push(answer.slice(i, i + 4)));
+    said.push(...s.finish(answer));
+    const ms = performance.now() - t0;
+    expect(said[0]).toBe("Reports.");
+    expect(said).toContain("Totals.");
+    expect(ms).toBeLessThan(200);
+  });
+
   it("waits for the sentence when the first clause is too short to say alone", () => {
     expect(new SpeechStream().push("Sure, I can open that for you")).toEqual([]);
   });

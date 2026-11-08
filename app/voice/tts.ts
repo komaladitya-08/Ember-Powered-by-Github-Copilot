@@ -61,18 +61,30 @@ const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig
 const SHORT_NAMES = /(?:^|\s)(?:Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.$/;
 
 /**
- * Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending, in order. A list's item
- * and a heading end at their line too, and a numbered step starts its own piece ("2. Choose Privacy"): its number is
- * never said at the end of the step before it (voice-speaking-v1).
+ * Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending after `from`, in order.
+ * A list's item and a heading end at their line too, and a numbered step starts its own piece ("2. Choose Privacy"):
+ * its number is never said at the end of the step before it (voice-speaking-v1). Each ending is checked by the few
+ * characters before it, never by all the text before it, so a long answer streams cheaply (voice-speaking-r4: a
+ * heading's lookbehind made a 3,000-character paragraph cost 4 s).
  */
-function sentenceEnds(text: string): number[] {
+function sentenceEnds(text: string, from = 0): number[] {
   const ends: number[] = [];
-  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|(?<=^[ \t]{0,3}#{1,6}[ \t]+\S[^\n]*)\n/gm;
+  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|(\n)/g;
+  re.lastIndex = from;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const end = m.index + m[0].length;
-    const before = text.slice(0, end);
-    // "e.g." and "Dr." don't end a sentence, nor does a numbered list's "1." at the start of a line.
-    if (m[0].startsWith(".") && (ABBREVIATIONS.test(before) || SHORT_NAMES.test(before) || /(?:^|\n)[ \t]*\d+\.$/.test(before))) continue;
+    // A lone line break ends only a heading's line ("## Totals").
+    if (m[1]) {
+      const start = text.lastIndexOf("\n", m.index - 1) + 1;
+      if (!/^[ \t]{0,3}#{1,6}[ \t]+\S/.test(text.slice(start, Math.min(m.index, start + 12)))) continue;
+    }
+    // "e.g." and "Dr." don't end a sentence, nor does a numbered list's "1." at the start of a line (the longest of
+    // them is "approx.", so 16 characters show it whole, with what is before it).
+    if (m[0].startsWith(".")) {
+      const near = text.slice(Math.max(0, end - 16), end);
+      const line = text.slice(text.lastIndexOf("\n", m.index) + 1, end);
+      if (ABBREVIATIONS.test(near) || SHORT_NAMES.test(near) || (line.length <= 16 && /^[ \t]*\d+\.$/.test(line))) continue;
+    }
     ends.push(end);
   }
   return ends;
@@ -279,7 +291,7 @@ export class SpeechStream {
 
   private sentenceCut(): number {
     let best = 0;
-    for (const end of sentenceEnds(this.raw)) {
+    for (const end of sentenceEnds(this.raw, this.said)) {
       if (end <= this.said) continue;
       const before = this.raw.slice(0, end);
       if (speechMarkupOpen(before)) continue;
