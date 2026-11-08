@@ -24,7 +24,9 @@ const BEFORE_WORDS = String.raw`its(?=${CLAUSE_WORD}[ \t,]*${CLAUSE_WORD}${CLAUS
   + String.raw`|(?:typed|entered|hashed|masked)(?=${CLAUSE_WORD}${CLAUSE_END}|${STATE_END})`;
 /**
  * Words that follow a secret's name without being its value ("the password is required", "PIN: the tab is pinned",
- * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse").
+ * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse"). A Wi-Fi key's state, where to
+ * look and its mode too ("PSK is enabled on the router", "Network key: see sticker", "PSK: rotated monthly", "The
+ * network key is WPA2"): memory-r5-2.
  */
 const NOT_A_VALUE = [
   "the", "a", "an", "my", "your", "our", "their", "his", "her", "this", "that", "it", "not", "no", "now", "being", "been", "changed",
@@ -33,7 +35,8 @@ const NOT_A_VALUE = [
   "different", "unchanged", "missing", "incorrect", "invalid", "valid", "too", "very", "also", "still", "fine", "empty", "blank", "none",
   "shown", "visible", "encrypted", "optional", "case-sensitive", "long", "short", "below", "above", "here", "there",
   "done", "due", "expiring", "broken", "working", "ok", "okay", "complete", "temporary", "known", "unknown", "shared", "sent",
-  "printed", "written", "listed", "attached", "included", "strict", "changing", "same", BEFORE_WORDS,
+  "printed", "written", "listed", "attached", "included", "strict", "changing", "same", "enabled", "disabled", "configured", "see",
+  "rotated", "supported", "active", "inactive", "unset", "wpa", "wpa2", "wpa3", "wep", "tkip", BEFORE_WORDS,
 ].join("|");
 
 /**
@@ -815,6 +818,15 @@ const ADMIN_SET = new RegExp(
 /** "Wifi: BlueSky99": the network's key, only with a digit or a symbol in it ("Wifi: slow" is a fact). */
 const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}/i;
 /**
+ * A value after a word for a secret's state and a comma or a full stop ("PIN: entered, 4821", "Password: masked, but
+ * it's hunter2", "password: typed. BlueSky99", "Password: hidden, it's hunter2"): the state isn't its value, but
+ * what follows it may be: memory-r5-3. Only a value with a digit or a symbol, never a length or a count ("The password
+ * is required, 12 characters"), so "Passwords are hashed. Tokens are rotated." and "Password: masked, PIN: entered" stay.
+ */
+const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
+  + String.raw`(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|real\s+one)\s+is\s+)?["'“]?`
+  + String.raw`(?!\d+\+?\s*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b)(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
+/**
  * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
  * the key with a digit or a symbol: safety-privacy-c4-2.
  */
@@ -990,7 +1002,7 @@ export function memoryRefusal(text: string): string | null {
   if (TOLD_SECRET.test(said) || BARE_PASSWORD.test(said) || BARE_PIN.test(pins) || loginPass(said) || PLACE_CODE.test(said)
     || CODE_FOR_PLACE.test(said) || BARE_CVV.test(said) || USED_AS.test(said) || LOGIN_PAIR.test(said) || WIFI_KEY.test(said) || SEED_WORDS.test(said) || nestedSecret(said)
     || PIN_NUMBER.test(pins) || DEVICE_CODE.test(said) || TOLD_TOKEN.test(said) || ADMIN_PAIR.test(said) || ADMIN_SET.test(said) || VALUE_FIRST.test(said)
-    || TOLD_CHANGE.test(said) || CHANGED_MY.test(said) || NETWORK_PAIR.test(said) || serviceValue(said) || SHOUTED_PASS.test(said)) {
+    || TOLD_CHANGE.test(said) || CHANGED_MY.test(said) || NETWORK_PAIR.test(said) || serviceValue(said) || SHOUTED_PASS.test(said) || STATE_THEN.test(said)) {
     return "it holds a password, PIN or code";
   }
   // Said as a login's one value, it may be the user name ("my login is jsmith42"): the model is told it may be the

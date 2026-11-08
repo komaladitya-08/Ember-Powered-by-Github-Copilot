@@ -365,6 +365,20 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
     expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).not.toBe("refused");
   });
+  // A value after the state and a comma or a full stop, which round five's state words passed with it (memory-r5-3).
+  it.each([
+    ["PIN: entered, 4821"], ["Password: entered, BlueSky99"], ["password: typed. BlueSky99"], ["Password: masked, but it's hunter2"],
+    ["The password is masked, but it's hunter2"], ["PIN: masked. 4821"], ["Password: hidden, it's hunter2"], ["Password: saved, it's hunter2"],
+  ])("refuses %j and saves nothing, a value after a password's state (memory-r5-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["Password: masked, PIN: entered"], ["The password is masked, as usual"], ["Password: hashed, then stored in the vault"], ["Passwords are hashed. Tokens are rotated."],
+    ["The password is required, 12 characters"], ["Password: changed, 3 times"],
+  ])("keeps %j, a state with no value after it (memory-r5-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
   it.each([["password: hashed hunter2"], ["PIN: entered (4821)"], ["Password: typed (hunter2)"], ["Passwords are hashed hunter2."]])(
     "still refuses %j, a value after a password's state (memory-w5-3)", text => {
       expect(memoryRefusal(text)).not.toBeNull();
@@ -531,7 +545,7 @@ describe("what memory never keeps", () => {
   it.each([
     ["The user's Wi-Fi network key is BlueSky99"], ["The user's network security key is BlueSky99"], ["Network security key: BlueSky99"],
     ["The WPA key is BlueSky99"], ["The user's WPA2 key is BlueSky99"], ["The router's pre-shared key is BlueSky99"], ["The VPN pre-shared key is Tr0ub4dor&3"],
-    ["The PSK is BlueSky99"], ["Wi-Fi BlueSky, passphrase BlueSky99"], ["The answer to the user's security question is Fluffy"],
+    ["The PSK is BlueSky99"], ["PSK: BlueSky99"], ["The network key is BlueSky99"], ["Wi-Fi BlueSky, passphrase BlueSky99"], ["The answer to the user's security question is Fluffy"],
     ["Seed: abandon ability able about above absent"], ["The Airbnb code is 4821"], ["Our Airbnb check-in code is 4821"],
     ["The code for the Airbnb is 4821"], ["The gym code is 4821"], ["The cabin code is 4821"], ["The shed code is 4821"], ["The storage unit code is 4821"],
     ["The mailbox code is 4821"], ["The lift code is 4821"],
@@ -542,6 +556,9 @@ describe("what memory never keeps", () => {
     ["Click the network key icon"], ["WPA2 is enabled"], ["The PSK field is empty"], ["The network key is on the router's label"], ["Seed: Use The Fixtures In Tests First"],
     ["The Airbnb booking code is 4821"], ["The discount code for the gym is 4821"], ["The gym class code is 101"], ["The lift error code is 4821"],
     ["The passphrase field is required"],
+    // A Wi-Fi key's state, where to look and its mode, which round five's Wi-Fi names refused (memory-r5-2).
+    ["PSK is enabled on the router"], ["The PSK is disabled"], ["The pre-shared key is configured on both ends"], ["The PSK is configured on both ends"],
+    ["Network key: see sticker"], ["The network key is WPA2"], ["PSK: rotated monthly"], ["PSK: see the router label"],
   ])("keeps %j, which names no secret (safety-privacy-c4-2, memory-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
