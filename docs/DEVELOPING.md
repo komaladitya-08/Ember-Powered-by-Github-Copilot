@@ -2282,8 +2282,15 @@ Answer speech belongs to the request that actually starts, including queued type
 
 The npm launcher serialises installs of a version with a cache-adjacent directory lock, keeps the previous install
 as a backup until publication succeeds, and restores it after a failed publication rename. If rollback fails too,
-both the backup and checked stage are retained and their paths reported. See `packages/npm/README.md` for manual
-recovery after an interrupted installer; locks are never automatically stolen. `ember doctor` and `ember --doctor`
+both the backup and checked stage are retained and their paths reported. The lock holds an `owner` file (`<pid>
+<hostname>`); SIGINT, SIGTERM and SIGHUP while it is held abort the download and remove the work folder and the lock
+(exit 128 + the signal), and a later installer takes over a lock only when its owner was on this computer and that pid
+is gone (`takeLock()`, through a `taken-<pid>` folder only one installer can make), removing the stopped one's work
+folders unless they hold a saved `previous` copy. `packages/npm/README.md` says what a person sees. Downloads use
+node:http and node:https, not fetch, through the proxy npm would use (`proxyFor()`: npm's `https-proxy` or `proxy`
+from `npm_config_*` or the `.npmrc` files, then `HTTPS_PROXY` or `HTTP_PROXY`, never for `NO_PROXY`'s hosts or this
+computer; https by a CONNECT tunnel), and a network failure is one sentence with the next steps (`cantReach()`), never
+Node's "fetch failed". `ember doctor` and `ember --doctor`
 run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
 Ember that stops at once is reported with what it said and its exit code. The AppImage's AppRun and the RPM's `ember`

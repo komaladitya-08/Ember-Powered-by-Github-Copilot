@@ -58,8 +58,8 @@ published (`npm i -g ember-copilot` answers "404 Not Found" until then), so mean
 
 With Node.js 18.17 or later, `npm i -g ember-copilot` and then `ember` (or just `npx ember-copilot`) downloads this
 version's Windows zip, macOS zip or Linux AppImage from the Releases page, checks it against `SHA256SUMS`, caches it in
-your user account and starts it. The builds are unsigned betas, as below; see
-[packages/npm/README.md](packages/npm/README.md).
+your user account and starts it. Behind a proxy it uses npm's proxy setting or `HTTPS_PROXY`, as npm does. The builds
+are unsigned betas, as below; see [packages/npm/README.md](packages/npm/README.md).
 
 ## Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)
 

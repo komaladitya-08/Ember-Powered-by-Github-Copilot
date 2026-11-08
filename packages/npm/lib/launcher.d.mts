@@ -7,7 +7,9 @@ export declare function downloadUrl(version: string, file: string, env?: Record<
 export declare function releaseSource(env?: Record<string, string | undefined>): string;
 export declare function notReleased(version: string, env?: Record<string, string | undefined>): string;
 export declare function packageVersion(): string;
-export declare function ensureInstalled(o: { version: string; platform?: string; arch?: string; env?: Record<string, string | undefined>; force?: boolean }): Promise<{ dir: string; exe: string; app: string; fresh: boolean }>;
+export declare function npmrcProxy(env?: Record<string, string | undefined>, o?: { home?: string; platform?: string; execPath?: string }): { "https-proxy"?: string; proxy?: string; noproxy?: string };
+export declare function proxyFor(url: string, env?: Record<string, string | undefined>, npmrc?: { "https-proxy"?: string; proxy?: string; noproxy?: string }): { url: URL; setting: string } | null;
+export declare function ensureInstalled(o: { version: string; platform?: string; arch?: string; env?: Record<string, string | undefined>; force?: boolean; name?: string }): Promise<{ dir: string; exe: string; app: string; fresh: boolean }>;
 export declare function launchCommand(platform: string, installed: { exe: string; app: string }, args: string[]): { file: string; args: string[] };
 export declare function pruneVersions(o: { parent: string; keep: string; platform?: string; running?: () => string }): string[];
 export declare function runMode(args: string[]): { attached: boolean; args: string[] };
