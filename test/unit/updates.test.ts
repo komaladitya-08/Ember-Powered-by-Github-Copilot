@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CHECK_EVERY_MS, FIRST_CHECK_MS, installKind, isNewer, newestVersion, NPM_MARKER, releasePage, RELEASES_URL, UpdateChecker, updateNotice, versionOf } from "../../app/main/updates";
 import { applyAdminPolicy, managedKeys, parseAdminPolicy } from "../../app/main/admin";
-import { type Segment, updateHowTo, updateStatusText, UPDATES_CONSENT_TEXT } from "../../app/renderer/home/copy";
+import { type Segment, updateHowTo, updateOut, updateStatusText, UPDATES_CONSENT_TEXT } from "../../app/renderer/home/copy";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 import { SettingsSchema } from "../../app/main/settings";
 
@@ -152,6 +152,28 @@ describe("the update checker", () => {
     none.stop();
   });
 
+  it("keeps saying a newer version it found is out, with how to get it, when a later look fails (install-docs-c2-2)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+    // Found before a restart, then the day's look fails (offline, a captive portal).
+    const c = new UpdateChecker({
+      fetch: (async () => { throw new TypeError("fetch failed"); }) as never, current: "0.1.1", allowed: () => true, told: () => "0.1.2",
+      announce: vi.fn(), changed: vi.fn(), log: { warn: vi.fn() }, lastChecked: () => "2026-11-08T11:00:00.000Z", checked: vi.fn(),
+    });
+    c.refresh();
+    expect(updateOut(c.status)).toBe(true);
+    await c.check();
+    expect(c.status).toMatchObject({ phase: "failed", latest: "0.1.2" });
+    expect(updateStatusText(c.status)).toBe("Ember 0.1.2 is out. Ember couldn't look for anything newer just now, and will try again tomorrow.");
+    // Home keeps See what's new… and the how-to while a newer version is known, whatever the last look did.
+    expect(updateOut(c.status)).toBe(true);
+    expect(updateOut({ phase: "checking", latest: "0.1.2", checkedAt: null })).toBe(true);
+    for (const phase of ["failed", "checking", "idle", "current", "off"] as const) expect(updateOut({ phase, latest: null, checkedAt: null }), phase).toBe(false);
+    const page = fs.readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8");
+    expect(page).toContain('($("updates-open") as HTMLButtonElement).hidden = !updateOut(s);');
+    c.stop();
+  });
+
   it("counts a failed look, waits at most a day for a clock set back, and ignores a time it can't read (integrations-v3)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-11-05T10:00:00Z"));
@@ -290,7 +312,7 @@ describe("how to install a new version, for this kind of install (install-docs-1
     expect(home).toContain('<p class="hint" id="updates-status" role="status"></p>\n      <p class="hint" id="updates-how" aria-live="polite"></p>');
     expect(home).toContain('<button type="button" id="updates-open" class="btn small" aria-describedby="updates-how" hidden>See what\'s new…</button>');
     const page = fs.readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8");
-    expect(page).toContain('const how = s.phase === "available" ? updateHowTo(platform?.install ?? null, s.latest) : [];');
+    expect(page).toContain('const how = updateOut(s) ? updateHowTo(platform?.install ?? null, s.latest) : [];');
     const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
     expect(main).toContain("install: installKind({ os: platform.os, packaged: app.isPackaged, execPath: process.execPath, appImage: runningAppImage(process.env, process.execPath), exists: fs.existsSync }),");
     expect(fs.readFileSync(path.resolve("README.md"), "utf8").replace(/\s+/g, " ")).toContain("**Updates** says how for the way you installed Ember");

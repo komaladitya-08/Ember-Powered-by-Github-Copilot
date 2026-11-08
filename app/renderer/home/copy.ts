@@ -712,13 +712,21 @@ export function updateHowTo(kind: InstallKind | null, latest: string | null): Se
   }
 }
 
+/**
+ * A newer version is known: Home shows See what's new… and how to update while one is, whatever the last look did. A
+ * look that fails, or is under way, keeps the version an earlier look found (install-docs-c2-2).
+ */
+export const updateOut = (s: UpdateStatus): boolean => s.latest !== null && (s.phase === "available" || s.phase === "failed" || s.phase === "checking");
+
 /** Where the update check stands, in a sentence; nothing while it is off. */
 export function updateStatusText(s: UpdateStatus): string {
   switch (s.phase) {
     case "available": return `Ember ${s.latest} is out.`;
     case "current": return "You have the latest version.";
     case "checking": return "Checking…";
-    case "failed": return "Couldn't check for updates. Ember will try again tomorrow.";
+    case "failed": return s.latest !== null
+      ? `Ember ${s.latest} is out. Ember couldn't look for anything newer just now, and will try again tomorrow.`
+      : "Couldn't check for updates. Ember will try again tomorrow.";
     // Started again within the day of a look: the next one waits out the day (integrations-v3).
     case "idle": return s.checkedAt ? "Ember checks once a day. Check now looks at once." : "Ember will check shortly.";
     default: return "";

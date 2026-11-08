@@ -14,7 +14,7 @@ import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateOut, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -1797,9 +1797,9 @@ function renderUpdates(s: UpdateStatus): void {
   $("updates-status").textContent = updateStatusText(s);
   // How to update this kind of install, while a newer version is out (install-docs-11), its commands as code. A polite
   // live region that stays on the page while empty, so it is announced as it fills (install-docs-r2-2).
-  const how = s.phase === "available" ? updateHowTo(platform?.install ?? null, s.latest) : [];
+  const how = updateOut(s) ? updateHowTo(platform?.install ?? null, s.latest) : [];
   $("updates-how").replaceChildren(...how.map(segmentNode));
-  ($("updates-open") as HTMLButtonElement).hidden = s.phase !== "available";
+  ($("updates-open") as HTMLButtonElement).hidden = !updateOut(s);
   const check = $("updates-check") as HTMLButtonElement;
   check.hidden = s.phase === "off";
   check.disabled = s.phase === "checking";

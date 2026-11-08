@@ -663,6 +663,16 @@ describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 pro
     await page.close();
   });
 
+  it("keeps the version it found, See what's new… and the how-to when a later look fails (install-docs-c2-2)", async () => {
+    const page = await open("checks", { settings, platform: linux("rpm"), updates: { phase: "failed", latest: "0.1.2", checkedAt: out.checkedAt } });
+    await expect.poll(() => page.locator("#updates-status").textContent()).toBe("Ember 0.1.2 is out. Ember couldn't look for anything newer just now, and will try again tomorrow.");
+    await expect.poll(() => page.locator("#updates-how").isVisible()).toBe(true);
+    expect(await page.locator("#updates-how code").allTextContents()).toEqual(["sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm"]);
+    expect(await page.locator("#updates-open").isVisible()).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
   it("says nothing of how while Ember has the latest version, or when main can't tell how it was installed (install-docs-11)", async () => {
     const current = await open("checks", { settings, platform: linux("appimage"), updates: { phase: "current", latest: null, checkedAt: out.checkedAt } });
     await expect.poll(() => current.locator("#updates-status").textContent()).toBe("You have the latest version.");
