@@ -349,6 +349,100 @@ describe("VoiceEngine", () => {
       expect(cough.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
       expect(quietEnd).toBeLessThanOrEqual(1000 + 8000 + 450);
     });
+
+    describe("a request begun at once (voice-listening-r2-1)", () => {
+      /** The room's own noise: the VAD hears no speech in it. */
+      const hush = () => { const f = new Float32Array(512).fill(0.0005); f[2] = 0; return f; };
+      /** The user's voice up close, its syllables dipping to the room's noise (the VAD hears speech through them): frame `i` of it. */
+      const say = (i: number) => (i % 6 === 5 ? talk(0.0005) : talk(0.05));
+      /**
+       * Silero as a scripted VAD: it hears speech `lag` frames into it, hands its segment over `hang` frames of silence
+       * after it (0.6 s), and writes `transcripts` in turn.
+       */
+      const silero = (transcripts: string[], lag = 8, hang = 19): VoiceBackend => {
+        let segment: number[] = [], run = 0, quiet = 0;
+        return {
+          spot: () => [], speaking: () => run > lag, transcribe: () => transcripts.shift() ?? "",
+          vad: f => {
+            if (f[2] > 0) { run++; quiet = 0; if (run > lag) segment.push(...f); return []; }
+            if (run <= lag) { run = 0; return []; }
+            segment.push(...f);
+            if (++quiet < hang) return [];
+            run = 0; quiet = 0;
+            const s = Float32Array.from(segment); segment = [];
+            return [s];
+          },
+          flushVad: () => { const s = Float32Array.from(segment); segment = []; run = 0; quiet = 0; return s.length ? [s] : []; },
+          resetVad: () => { segment = []; run = 0; quiet = 0; },
+        };
+      };
+
+      it("hears a request begun 0.3 s after the press and still being said at 8 s to its end, whole, not “No request heard” (voice-listening-r2-1)", () => {
+        let endedAt = 0;
+        const events = run(silero(["Open the calendar, find a free hour on Thursday afternoon and invite Sam and Priya to it."]), (e, c) => {
+          c.t = 1000; e.listenOnce(c.t, 8000);
+          for (c.t = 1032; c.t < 1300; c.t += 32) e.feed(hush(), c.t);
+          // Said from 0.3 s to 9.7 s after the press, with no pause the VAD ends it at.
+          for (let i = 0; c.t < 10_700; i++, c.t += 32) e.feed(say(i), c.t);
+          for (let i = 0; i < 30 && e.listening; i++, c.t += 32) e.feed(hush(), c.t);
+          endedAt = c.t;
+        });
+        expect(sent(events)).toEqual([{ type: "utterance", text: "Open the calendar, find a free hour on Thursday afternoon and invite Sam and Priya to it.", window: "manual", ms: 0 }]);
+        expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "done", window: "manual" });
+        expect(endedAt).toBeGreaterThan(10_700);
+      });
+
+      it("still ends at 8 s with nothing sent when the talk was going on as it opened, though the VAD hears it only 0.3 s in (voice-listening-c1-1)", () => {
+        let endedAt = 0;
+        const events = run(silero(["Let's meet at the station after lunch."]), (e, c) => {
+          c.t = 1000; e.listenOnce(c.t, 8000);
+          room(1032, 30_000, e, c);
+          endedAt = c.t;
+        });
+        expect(sent(events)).toEqual([]);
+        expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
+        expect(endedAt).toBeLessThan(1000 + 8000 + 100);
+      });
+
+      it("gives talk that began just after the press, which can't be told from the room's after a pause, 12 s at most, and sends none of it (voice-listening-c1-1)", () => {
+        let endedAt = 0;
+        const events = run(silero(["Let's meet at the station after lunch."]), (e, c) => {
+          c.t = 1000; e.listenOnce(c.t, 8000);
+          for (c.t = 1032; c.t < 1300; c.t += 32) e.feed(hush(), c.t);
+          // A TV between two lines at the press, then talking on without a pause; breathing now and then as people do.
+          for (let i = 0; c.t < 30_000 && e.listening; i++, c.t += 32) e.feed(i % 62 < 4 ? hush() : talk(0.01), c.t);
+          endedAt = c.t;
+        });
+        expect(sent(events)).toEqual([]);
+        expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
+        expect(endedAt).toBeLessThanOrEqual(1000 + 12_000 + 100);
+      });
+
+      it("hears a request begun at once that pauses after a trailing word near the deadline as one request, its rest joined (voice-listening-3)", () => {
+        const events = run(silero(["Turn on do not disturb, and make the text a.", "Bit bigger."]), (e, c) => {
+          c.t = 1000; e.listenOnce(c.t, 8000);
+          for (c.t = 1032; c.t < 1300; c.t += 32) e.feed(hush(), c.t);
+          for (let i = 0; c.t < 7700; i++, c.t += 32) e.feed(say(i), c.t);
+          // A 0.8 s pause (the VAD ends the first part 0.6 s into it), then the rest, said across the deadline.
+          for (; c.t < 8500; c.t += 32) e.feed(hush(), c.t);
+          for (let i = 0; c.t < 9100; i++, c.t += 32) e.feed(say(i), c.t);
+          for (let i = 0; i < 40 && e.listening; i++, c.t += 32) e.feed(hush(), c.t);
+        });
+        expect(sent(events).map(u => (u as { text: string }).text)).toEqual(["Turn on do not disturb, and make the text a bit bigger."]);
+      });
+
+      it("sends a request that trailed off as it was, not nothing, when only talk that was going on as it opened follows it past the deadline (voice-listening-3)", () => {
+        const events = run(silero(["Turn on do not disturb, and make the text a."], 0), (e, c) => {
+          c.t = 1000; e.listenOnce(c.t, 8000);
+          room(1032, 6500, e, c);
+          // The user up close from 5.5 s to 7.5 s, ending on "…a", over the TV; then the TV talks on.
+          for (; c.t < 8500; c.t += 32) e.feed(talk(0.1), c.t);
+          room(c.t, 30_000, e, c);
+        });
+        expect(sent(events).map(u => (u as { text: string }).text)).toEqual(["Turn on do not disturb, and make the text a."]);
+        expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "done", window: "manual" });
+      });
+    });
   });
 
   describe("a request that trails off (voice-listening-3)", () => {
