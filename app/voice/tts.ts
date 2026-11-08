@@ -116,21 +116,35 @@ function cutAtClause(chunk: string, min: number, max: number): [string, string] 
 /**
  * Words a long sentence with no comma can be cut before: the voice pauses there as a speaker would ("I looked through
  * the folder you mentioned | and found…"). Not "to", "for", "from" or "with", which so often follow a verb ("is going
- * | to take" was said with a full stop's fall: voice-speaking-r2).
+ * | to take" was said with a full stop's fall: voice-speaking-r2), "until", "after" and "before" only where a clause
+ * follows them ("until it finishes", never "from two | until four"), and never "between two | and four".
  */
-const JOINS = /\s+(?=(?:and|but|or|so|because|which|that|while|when|where|until|after|before|together)\s)/gi;
+const JOINS = /(?<!\bbetween\s+[\p{L}\p{N}']+)\s+(?=(?:and|but|or|so|because|which|that|while|when|where|together)\s|(?:until|after|before)\s+(?:I|you|he|she|it|we|they|this|there)\b)/giu;
+/**
+ * Where a phrase starts, for a long sentence with no joining word: before a preposition, though not one just after
+ * "is" or "going" ("is | at"), rather than at a space inside a phrase ("installing on | this computer", "in the large
+ * | room": voice-speaking-r2).
+ */
+const PHRASES = /(?<!\b(?:is|are|was|were|be|been|am|going|get|got|go|come))\s+(?=(?:in|on|at|for|from|with|about|into|onto|over|under|between|through|during|near|by|across|behind)\s)/gi;
 
 /**
  * Where to cut `chunk`: before its first joining word between `min` and `max` characters that leaves FIRST_WORDS words
- * or more before it, else at its last space before `max` (voice-speaking-8); -1 when neither fits. `ok`: whether a cut
- * there may be made (a stream's Markdown is closed there: voice-speaking-r2).
+ * or more before it, else before its last phrase there, else at its last space before `max` (voice-speaking-8); -1 when
+ * none fits. `ok`: whether a cut there may be made (a stream's Markdown is closed there: voice-speaking-r2).
  */
 function joinAt(chunk: string, min: number, max: number, ok: (at: number) => boolean = () => true): number {
+  const enough = (at: number) => (chunk.slice(0, at).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS && ok(at);
   for (const m of chunk.matchAll(JOINS)) {
     if (m.index < min) continue;
     if (m.index > max) break;
-    if ((chunk.slice(0, m.index).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS && ok(m.index)) return m.index;
+    if (enough(m.index)) return m.index;
   }
+  let phrase = -1;
+  for (const m of chunk.matchAll(PHRASES)) {
+    if (m.index > max) break;
+    if (m.index > min && enough(m.index)) phrase = m.index;
+  }
+  if (phrase > 0) return phrase;
   for (let at = chunk.lastIndexOf(" ", max); at > min; at = chunk.lastIndexOf(" ", at - 1)) if (ok(at)) return at;
   return -1;
 }

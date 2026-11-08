@@ -134,6 +134,21 @@ describe("speechChunks", () => {
     expect(speechChunks(next)[0].length).toBeLessThanOrEqual(90);
   });
 
+  it.each([
+    ["The update you asked about is going to take about twenty minutes to finish installing on this computer and then it will restart.", "The update you asked about is going to take about twenty minutes to finish installing"],
+    ["The meeting room next to the kitchen area on the second floor is free from two until four this afternoon if you want it.", "The meeting room next to the kitchen area on the second floor is free"],
+    ["Your meeting with the design team about the new onboarding flow is at 3:30 PM in the large room on the second floor today.", "Your meeting with the design team about the new onboarding flow is at 3 30 PM"],
+    ["The package you ordered last week from the online shop is expected to arrive between two and four tomorrow afternoon at your door.", "The package you ordered last week from the online shop is expected to arrive"],
+  ])("cuts a long first sentence with no joining word where a phrase starts, not inside one: %j (voice-speaking-r2)", (text, first) => {
+    expect(speechChunks(spokenText(text))[0]).toBe(first);
+    const s = new SpeechStream();
+    const said: string[] = [];
+    for (let i = 0; i < text.length; i += 4) said.push(...s.push(text.slice(i, i + 4)));
+    said.push(...s.finish(text));
+    expect(said[0]).toBe(first);
+    expect(said.join(" ")).toBe(spokenText(text));
+  });
+
   it("keeps every piece to 120 characters, so a new answer never waits long behind one being made (voice-speaking-10)", () => {
     const text = `${LONG} The largest one is the October summary, which has the revenue tables and the notes from the planning meeting that you asked me about earlier this week. I can open any of them for you.`;
     const chunks = speechChunks(text);
