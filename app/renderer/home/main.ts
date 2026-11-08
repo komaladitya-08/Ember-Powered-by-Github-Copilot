@@ -37,6 +37,7 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerCard, providerSettings, providerSignedOut, startProvider } from "./provider";
 import { modelDestination, privacyFoldWords, recipientWords, type ModelDestination } from "./copy";
+import { targetsFoldRest } from "./computers-copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
@@ -2056,10 +2057,20 @@ function syncPrivacyTerms(): void {
   const copy = source.cloneNode(true) as HTMLElement;
   copy.querySelector("#model-service")?.classList.add("model-service-copy");
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
-  // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4).
+  // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4); Work without
+  // asking and the apps let in without asking are below too (safety-privacy-c4-1); other computers and commands are on
+  // or off as the settings and the policy leave them (safety-privacy-r4-2).
+  const s = settings;
+  const a = lastAdmin;
+  const fold = {
+    screenImages: s?.screenImages !== false,
+    autonomy: !!s && s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION,
+    grants: !!s && !confirmEvery && Object.values(s.grants).includes("act"),
+    ...(s && a ? { targets: targetsFoldRest(s, { source: a.error ? "error" : a.source, features: { wsl: a.features?.wsl, ssh: a.features?.ssh }, ...(a.commands ? { commands: a.commands } : {}) }, platform?.os) } : {}),
+  };
   const walk = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
   for (let t = walk.nextNode(); t; t = walk.nextNode()) {
-    const words = privacyFoldWords(t.textContent ?? "", { screenImages: settings?.screenImages !== false });
+    const words = privacyFoldWords(t.textContent ?? "", fold);
     if (words !== t.textContent) t.textContent = words;
   }
   copy.setAttribute("aria-label", "What Ember reads, sends and keeps");

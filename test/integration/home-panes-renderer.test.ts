@@ -583,6 +583,46 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(page.errors).toEqual([]);
     await page.close();
   });
+
+  it("says what the person turned on: commands on this computer, and ordinary steps without asking (safety-privacy-r4-2, safety-privacy-c4-1)", async () => {
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const on = { commands: { local: { on: true, askEvery: false, consent: agreed } }, autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } } };
+    const page = await open("privacy", { settings: on });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const shown = () => page.locator("#privacy-terms").innerText();
+    const hand = () => page.locator("#privacy-terms li[data-icon='hand']").innerText();
+    const plug = () => page.locator("#privacy-terms li[data-icon='plug']").innerText();
+    expect(await page.locator("#autonomy-on").isChecked()).toBe(true);
+    expect(await plug()).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
+    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. Work without asking is on \(below\), so for ordinary steps it tells you what it's doing instead\. It never types passwords\./);
+    // First run's own words are untouched.
+    expect(await page.locator("#w-full li[data-icon='plug']").evaluate(e => e.textContent)).toContain("are off until you turn them on");
+    expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    await evidence(page, "privacy-terms-on");
+    // Both turned off again (main tells Home the settings changed): word for word as before it started, still open.
+    const base = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+    await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), base);
+    await expect.poll(shown).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    expect(await plug()).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("never offers what the organisation's lockdown turned off, nor says what the person turned on is on (safety-privacy-r4-2)", async () => {
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const page = await open("privacy", {
+      settings: { commands: { local: { on: true, askEvery: false, consent: agreed } }, screenImages: false },
+      admin: { source: "/etc/ember/policy.json", error: "Unrecognized key", retentionDays: null, confirmEveryAction: true, allowGrants: false, features: { voice: false, screenImages: false, ssh: false, wsl: false, autonomy: false }, managed: ["screenImages", "autonomy"], commands: { local: "off", wsl: "off", ssh: "off" } },
+    });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
+    expect(await page.locator("#privacy-terms li[data-icon='hand']").innerText()).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
 });
 
 describe.skipIf(gate)("Home's Projects and Memory panes, as laid out (2026-11-07 product audit)", () => {

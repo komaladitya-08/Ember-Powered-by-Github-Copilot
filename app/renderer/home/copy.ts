@@ -178,9 +178,18 @@ export const SCREEN_IMAGES_TEXT = {
  * A piece of the text in Apps & privacy's copy of "Before Ember starts" (safety-privacy-9), said as it is there
  * (safety-privacy-r4): the never-look list is below in that pane, not somewhere "in settings", and with Send
  * screenshots for tasks off the screenshot clause says so. First run's own words stay as they are.
+ * `autonomy`: Work without asking is in force (its switch below is on), so ordinary steps aren't asked about
+ * (safety-privacy-c4-1); `grants`: the person let Ember act in some apps without asking (the list below). `targets`:
+ * the onboarding line's words after its lead, as the settings and the policy leave them (targetsFoldRest,
+ * safety-privacy-r4-2).
  */
-export function privacyFoldWords(text: string, o: { screenImages: boolean }): string {
-  const out = text.replace("The list is in settings", "The list is below, under Never look at");
+export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: boolean; grants?: boolean; targets?: string }): string {
+  if (o.targets !== undefined && (text === onboardingRest("linux") || text === onboardingRest("win32"))) return o.targets;
+  const out = text.replace("The list is in settings", "The list is below, under Never look at")
+    .replace(" in an app, and always before anything hard to undo.", o.autonomy
+      ? " on anything risky or hard to undo. Work without asking is on (below), so for ordinary steps it tells you what it's doing instead."
+      : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo."
+        : " in an app, and always before anything hard to undo.");
   return o.screenImages ? out
     : out.replace(", and for tasks it may take a screenshot of it.", `. ${SCREEN_IMAGES_TEXT.label} is off (below), so it takes no screenshots for tasks.`);
 }
