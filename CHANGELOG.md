@@ -257,9 +257,10 @@ the automated tests don't stand in for them.
 - **First run speaks in its own voice on every visit.** First run says why a provider check or a connection failed, on
   the sign-in step too, and the rest of what Ember says as it connects, in its own words (“I can't reach the model
   server on this computer (127.0.0.1:11434). Start it, and I'll connect in a moment.”, “the GitHub sign-in I found”, “My
-  model connection keeps stopping…”), never a mix of “I” and “Ember's”. The sign-in step names only buttons it shows:
-  “press Try again” beside **Try again**, also for a refused token from the environment and for your organisation's
-  service, and “Go back and press Try again” on the details of your own provider in use.
+  model connection keeps stopping…”), never a mix of “I” and “Ember's”. The sign-in step no longer says “press Check
+  again” where it shows no Check again: it says “press Try again” beside **Try again**, also for a refused token from
+  the environment and for your organisation's service, and “Go back and press Try again” on the details of your own
+  provider in use.
 - **The API key field says a key is saved only while the address typed is the one it was saved for**, and catches up
   when Ember's key state arrives late. With no keyring, **Agree and check the models** waits with a short reason beside
   it (“I can't keep a key safely on this computer.”) instead of the status line's whole sentence again.
@@ -319,11 +320,11 @@ the automated tests don't stand in for them.
   sending you to Models & connections. **Stop response** or Stop everything while it waits ends it at once, so Home's
   status panel stops saying “Thinking…”, and puts every message that hadn't gone back in the composer, oldest first and
   above anything typed since, saying once how many came back; one Ember had already answered never comes back, and a
-  typed “stop” isn't kept with them to go with your next Send. While you edit an earlier request, **Cancel edit** and a
-  second **Edit** keep the messages a Stop gave back, as you left them (a correction stays, a message you deleted stays
-  deleted), above the draft you had before, and the line under Send keeps Edit's caution that sending again may repeat
-  actions. Messages a Stop gave back that together pass 2,000 characters are said to go one at a time, or, where your
-  draft is too long by itself, that it needs shortening.
+  typed “stop” isn't kept with them to go with your next Send. While you edit an earlier request, the messages a Stop
+  gave back stay as you left them (a correction stays, a message you deleted stays deleted): a second **Edit** keeps
+  them above the request it opens, **Cancel edit** puts them back above the draft you had before, and the line under
+  Send keeps Edit's caution that sending again may repeat actions. Messages a Stop gave back that together pass 2,000
+  characters are said to go one at a time, or, where your draft is too long by itself, that it needs shortening.
 - **A Problem line in Home that sends you to Ember's settings names Models & connections** instead, and offers
   **Models & connections…**, which goes there, also when it says Ember has stopped reconnecting and to press Check
   again. A line that sends you to your administrator or to a setting on GitHub doesn't offer it.
@@ -440,13 +441,13 @@ the automated tests don't stand in for them.
   for your spoken answer. “Ember is already listening.” stays under Listen once as its description, and browse mode
   doesn't find an out-of-date line beside the one shown (“Checking the microphone…” beside “Ember is already
   listening.”). After an answer, while Ember waits for your follow-up or the conversation's next words, the voice line
-  says “Listening…”, as the handle's badge does, instead of “Hearing you…”. Nothing else in Settings or the Ask box is
-  said while the microphone is open for a request either: Hear me more clearly's line, the Speak note, Task activity's
-  “Waiting for you” and “Done”, and Ask's “I'll see: …” or that Ember can't answer wait until it closes, and then only
-  what is still news is said, once, each as a full sentence; Settings says “Connected.” only when that changes, not at
-  every request. Settings' line for talk Listen once couldn't tell was a request, Hear me more clearly's line, the Speak
-  note, Listen once's ready line (“Press Listen once, then just say your request.”) and Ask's “I'll see: …” are worded
-  without Ember's name, so said through your speakers they neither wake Ember nor become your request.
+  says “Listening…”, as the handle's badge does, instead of “Hearing you…”. Hear me more clearly's line, the Speak note,
+  Task activity's “Waiting for you” and “Done”, and Ask's “I'll see: …” or that Ember can't answer aren't said while the
+  microphone is open for a request either: they wait until it closes, and then only what is still news is said, once,
+  each as a full sentence; Settings says “Connected.” only when that changes, not at every request. Settings' line for
+  talk Listen once couldn't tell was a request, Hear me more clearly's line, the Speak note, Listen once's ready line
+  (“Press Listen once, then just say your request.”) and Ask's “I'll see: …” are worded without Ember's name, so said
+  through your speakers they neither wake Ember nor become your request.
 - **Teaching Ember your voice with a screen reader on speakers learns your voice, not the screen reader's.** Ember
   leaves out what the screen reader reads of each prompt, and when you speak before it has finished, Settings says “Your
   screen reader was still reading. Wait for it to finish, then say:” and the phrase again.
@@ -531,10 +532,10 @@ the automated tests don't stand in for them.
   work, never when it only looked at its window, a picture of it included.
 - **A refused step says why on its task's card and in Task activity**, in Ember's own words (“Not allowed: Ember's
   accessibility helper isn't working”, “Not allowed: this is a Wayland session”), for a password prompt, a check Ember
-  couldn't make, the helper, secure keyboard entry or a Wayland session, as a whole sentence, never cut off with “…”. It
-  shows in the order it happened, after your Allow when it came after it, and refusals for one reason fold into one row
-  (“Not allowed 6 times: …”), which in Home opens to list each step it refused, so what the task did before stays on the
-  card.
+  couldn't make, the helper, secure keyboard entry or a Wayland session, as a whole sentence rather than one cut off
+  with “…” (only a Mac app with a very long name can still make the secure keyboard one too long for the card). It shows
+  in the order it happened, after your Allow when it came after it, and refusals for one reason fold into one row (“Not
+  allowed 6 times: …”), which in Home opens to list each step it refused, so what the task did before stays on the card.
 - **At the actions-a-minute limit a task pauses** (“Pausing to keep to 40 steps a minute…”) instead of ending with a
   refusal.
 - **A question about a step or a command you didn't ask for quotes your own words** on its “Your task:” line, never
@@ -763,13 +764,13 @@ the automated tests don't stand in for them.
   office code: 4410”), and so are an Indian address's PIN code (“Bengaluru, PIN code: 560001”), how a token is made
   (“The access token is HS256-signed”), a password's state (“Passwords are hashed.”), a version, an issue number or a
   setting said as a login (“The login is v2.0”, “Credentials: AWS_PROFILE=dev2”), a disk's use (“Root: 45G / 100G”), a
-  login that names a user at an IP address or localhost, a handle or a host with its port (“pi@192.168.1.20”,
-  “@octocat”, “localhost:8080”) and code that names a token, a password or credentials with code for its value
-  (`verify(token: string)`, `max_tokens=256`, `const token = process.env.GITHUB_TOKEN;`, `credentials =
-  boto3.Session().get_credentials()`), so Projects requests and files, a reviewed patch and task views that hold them
-  aren't refused. A user name with a digit said as a login (“my login is jsmith42”), or a user at a computer with a
-  one-word name (“admin@nas1”), is refused, as it may be the password, and some shorthand still gets past it (“Netflix:
-  hunter2”), so keep passwords out of what you tell Ember.
+  login that names a user at an IP address or localhost, a user at a computer both named in words or given with its
+  port, a handle or a host with its port (“pi@192.168.1.20”, “jsmith@corp”, “@octocat”, “localhost:8080”) and code that
+  names a token, a password or credentials with code for its value (`verify(token: string)`, `max_tokens=256`,
+  `const token = process.env.GITHUB_TOKEN;`, `credentials = boto3.Session().get_credentials()`), so Projects requests
+  and files, a reviewed patch and task views that hold them aren't refused. A user name with a digit said as a login
+  (“my login is jsmith42”), or a user at a computer whose name has a digit (“admin@nas1”), is refused, as it may be the
+  password, and some shorthand still gets past it (“Netflix: hunter2”), so keep passwords out of what you tell Ember.
 - **Memory says why it is paused.** While Ember connects, uses your own model provider or can't reach GitHub,
   Settings › Memory says so instead of suggesting Forget everything, Home says “Memory paused”, and Tell Ember about
   you no longer fails with “Try again”. While your own provider can't connect, memory says it waits for that, not for
@@ -854,8 +855,8 @@ the automated tests don't stand in for them.
   from a quit. Logging out of GNOME on Xorg counts as a quit.
 - **When something in Ember's data folder keeps it from starting**, such as a file where its audit folder goes, the
   dialog names what is in the way and says to move it away, then start Ember again, instead of showing a raw `EEXIST`
-  error; anything else is said as something that went wrong while Ember was starting, and the dialog names the log that
-  has the details when it could be written.
+  error; a full or read-only disk, or a data folder you can't write to, is said as such, anything else in one plain
+  sentence, and the dialog names the log that has the details when it could be written.
 - **On Windows, the setup check's Screen reading row keeps up with the accessibility helper.** **Check again** asks the
   helper afresh, and so does reading starting to fail or working again, instead of showing what it said 10 seconds after
   start. When the helper didn't start, the row says why in plain words (Windows PowerShell stopped before it was ready,
@@ -897,15 +898,16 @@ the automated tests don't stand in for them.
   as well as `doctor`, and `--help`. The RPM's `ember --help` says to run `ember` again for its settings instead of
   naming Ctrl+Alt+E, which another app may hold.
 - **The npm launcher says in plain words what stopped it, with a next step.** A cache folder it can't write in (another
-  user's, after a run with sudo, or on a read-only disk) is said as such, not as “EACCES: permission denied”, and the
-  copy already there still starts. A web page, such as a Wi-Fi or proxy sign-in, sent in place of the release's
-  `SHA256SUMS` is said to be one, without repeating it, and a download that doesn't match `SHA256SUMS`, or that it has
-  no line for, comes with what to do. A failed `ember --npm-reinstall` says the copy you had is kept and that `ember`
-  starts it. When this computer won't let Ember start (a security policy such as fapolicyd, antivirus, or a disk that
-  doesn't let programs run), `ember` and `ember doctor` say so and what to do, not “spawn EACCES”. On a disk that has
-  filled since Ember was installed, `ember` still starts Ember and gives the terminal back, and when Ember stops as it
-  starts, `ember` prints what it said, also where its old start log belongs to another user (after `sudo -E ember`), or,
-  where it can't keep even a private copy of that, says to run `ember doctor` to see it.
+  user's, after a run with sudo, or on a read-only disk) is said as such, not as “EACCES: permission denied” (only
+  `ember doctor` on a Mac still shows Node's own words there), and the copy already there still starts. A web page, such
+  as a Wi-Fi or proxy sign-in, sent in place of the release's `SHA256SUMS` is said to be one, without repeating it, and
+  a download that doesn't match `SHA256SUMS`, or that it has no line for, comes with what to do. A failed
+  `ember --npm-reinstall` says the copy you had is kept and that `ember` starts it. When this computer won't let Ember
+  start (a security policy such as fapolicyd, antivirus, or a disk that doesn't let programs run), `ember` and
+  `ember doctor` say so and what to do, not “spawn EACCES”. On a disk that has filled since Ember was installed, `ember`
+  still starts Ember and gives the terminal back, and when Ember stops as it starts, `ember` prints what it said, also
+  where its old start log belongs to another user (after `sudo -E ember`), or, where it can't keep even a private copy
+  of that, says to run `ember doctor` to see it.
 - **Clicking the notice that a new version is out opens Updates** in Ember's settings, and the update check keeps to
   once a day, also when you restart Ember; a newer version it found still shows after a restart and after a later look
   fails, with **See what's new…**. Under “Ember X is out.”, Updates says how to update your kind of install (the RPM,
