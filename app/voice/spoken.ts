@@ -91,7 +91,8 @@ function arrowSaid(run: string, at: number, all: string): string {
   const before = all.slice(Math.max(0, at - 8), at), after = all.slice(at + run.length, at + run.length + 12);
   const each = (say: Readonly<Record<string, string>>) => run.replace("->", "→").replace(/[ \t]*\/[ \t]*/g, " or ").replace(/[←→↑↓](?=[←→↑↓])/g, "$& ").replace(/[←→↑↓]/g, a => say[a]);
   // (A lower-case "a" only: "A → B → C" names no key.)
-  const key = /\b(?:the|an|press|hit|tap|use|hold)[ \t]+$/i.test(before) || /\ba[ \t]+$/.test(before) || /^[ \t]+(?:keys?|buttons?|icons?|symbols?|signs?|to)\b/i.test(after);
+  // (A lower-case "to" only, and never "to-do": "Microsoft 365 → To Do" names an app, not a key.)
+  const key = /\b(?:the|an|press|hit|tap|use|hold)[ \t]+$/i.test(before) || /\ba[ \t]+$/.test(before) || /^[ \t]+(?:keys?|buttons?|icons?|symbols?|signs?)\b/i.test(after) || /^[ \t]+to\b(?!-)/.test(after);
   const between = /[\p{L}\p{N} \t]$/u.test(before) && /^[\p{L}\p{N} \t]/u.test(after);
   const said = /^[ \t]+arrows?\b/i.test(after) ? each(DIRECTION) : (run === "→" || run === "->") && !key && between ? "to" : each(ARROW);
   // Never joined to the word beside it ("Back→Next", "5→10").
@@ -291,8 +292,9 @@ export function spokenText(markdown: string, o: { ledIn?: boolean } = {}): strin
     // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".
     .replace(CHORD, chord => chord.split(/\s*\+\s*/).map(k => KEY_SAID[k.toLowerCase()] ?? k).join(" "))
     .replace(/\s*›\s*(?=\S)/g, ", then ")
-    // Arrows as arrowSaid says them (voice-speaking-2), one after its own direction once ("up ↑" was "up up arrow").
-    .replace(/\b(up|down|left|right)[ \t]*([←→↑↓])(?![←→↑↓])/gi, (m, word: string, a: string) => (DIRECTION[a] === word.toLowerCase() ? word : m))
+    // Arrows as arrowSaid says them (voice-speaking-2), one after its own direction once ("up ↑" was "up up arrow"),
+    // but not one between two directions or sides ("from right → left" is "right to left": voice-speaking-v4-2).
+    .replace(/\b(up|down|left|right)[ \t]*([←→↑↓])(?![←→↑↓]|(?<=→)[ \t]*(?:up|down|left|right|top|bottom|centre|center|middle)\b)/gi, (m, word: string, a: string) => (DIRECTION[a] === word.toLowerCase() ? word : m))
     .replace(ARROWS, arrowSaid)
     // (Only a lone "&" between words: not "&&", "1 & 2" or one inside an address.)
     .replace(/(\p{L})\s+&\s+(?=\p{L})/gu, "$1 and ");

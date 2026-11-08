@@ -91,6 +91,19 @@ describe("spokenText says money, times, paths and numbers as people say them, an
   ])("%j is said %j, an arrow in a list or named as a key never as 'to' (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
 
   it.each([
+    ["Move it from right → left.", "Move it from right to left."],
+    ["Swipe from the right → left edge.", "Swipe from the right to left edge."],
+    ["Drag the window from top-right → bottom-left.", "Drag the window from top-right to bottom-left."],
+    ["Text direction: right → left", "Text direction: right to left"],
+    // A capitalised "To" names something ("To Do"), so the arrow before it is "to" as between any two words.
+    ["Open Microsoft 365 → To Do.", "Open Microsoft 365 to To Do."],
+    ["Open Microsoft 365 → To-do list.", "Open Microsoft 365 to To-do list."],
+    // As before: an arrow after its own direction, before any other word, is said once; before "to", it names a key.
+    ["Swipe right → to go back, or turn right → at the end.", "Swipe right to go back, or turn right at the end."],
+    ["Click Next → to continue.", "Click Next right arrow to continue."],
+  ])("%j is said %j, an arrow between two directions or before a name with its 'to' (voice-speaking-v4-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
     // A spaced hyphen between two amounts is a sum, not a range: a range was heard where the bubble shows a subtraction.
     ["That's $1,500 - $200 for fees, so $1,300 is left.", "That's 1,500 dollars - 200 dollars for fees, so 1,300 dollars is left."],
     ["Your balance is $2,000 - $1,500 = $500.", "Your balance is 2,000 dollars minus 1,500 dollars = 500 dollars."],
