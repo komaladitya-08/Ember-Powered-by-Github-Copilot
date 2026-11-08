@@ -604,10 +604,15 @@ export async function ensureInstalled(o) {
     if (target.kind === "appimage") fs.chmodSync(staged, 0o755);
     if (platform === "darwin") {
       // The download came through Node, which sets no quarantine flag, but a copied or re-downloaded cache can carry
-      // one; Ember is ad-hoc signed, so Gatekeeper would refuse it with the flag on.
-      spawnSync("xattr", ["-dr", "com.apple.quarantine", p.join(stage, target.app)], { stdio: "ignore" });
+      // one; Ember is ad-hoc signed, so Gatekeeper would refuse it with the flag on. Through run(), not spawnSync, so
+      // a stop meanwhile is heard (install-docs-v4-2); a failure is ignored, as it always was.
+      await run("xattr", ["-dr", "com.apple.quarantine", p.join(stage, target.app)], stop.signal).catch(() => {});
     }
     fs.writeFileSync(p.join(stage, MARKER), `${target.asset} ${got}\n`);
+    // A stop is heard only when the event loop turns, and nothing from here on lets it until the signal handlers are
+    // gone: one turn first, so a stop that landed during the steps above publishes and starts nothing (install-docs-v4-2).
+    await new Promise(resolve => setImmediate(resolve));
+    if (stop.signal.aborted) throw stop.signal.reason;
 
     // Keep the previous installation until publication succeeds. In particular, Windows open handles can make
     // either rename fail. The version lock prevents another installer from publishing into the rollback gap.

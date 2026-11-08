@@ -562,17 +562,22 @@ describe("an interrupted first download (install-docs-c2-1)", () => {
     }
   }, 30_000);
 
-  // The Windows and macOS releases are zips that take seconds to unpack (tar.exe, ditto). Here the Mac's is installed
-  // on Linux, whose unpacker is unzip: a slow stand-in on PATH, so a stop lands while it works. Signals are POSIX's.
-  it.skipIf(process.platform !== "linux")("says it stopped, keeps nothing and starts nothing when Ctrl+C or a kill lands while the zip is unpacked (install-docs-r3-1)", async () => {
+  // The Windows and macOS releases are zips that take seconds to unpack (tar.exe, ditto), and on a Mac clearing the
+  // quarantine flag over Ember.app (xattr) takes a moment more. Here the Mac's is installed on Linux, whose unpacker
+  // is unzip: stand-ins on PATH, `slow` the one that takes 5 s, so a stop lands while it works. Signals are POSIX's.
+  async function stopsWhile(slow: "unzip" | "xattr") {
     const asset = "Ember-9.9.9-mac-arm64.zip", body = Buffer.alloc(4096, 3);
     const server = await serve({ [`/v9.9.9/${asset}`]: body, "/v9.9.9/SHA256SUMS": `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
     const bin = tempDir();
     fs.writeFileSync(path.join(bin, "unzip"), `#!${process.execPath}
-// unzip -q <zip> -d <dir>: says it has begun, then takes 5 s to unpack an Ember.app.
+// unzip -q <zip> -d <dir>: unpacks an Ember.app, saying it has begun and taking 5 s when it is the slow one.
 const fs = require("node:fs"), path = require("node:path");
-fs.writeFileSync(process.env.EMBER_TEST_UNPACKING, "");
-setTimeout(() => { const d = path.join(process.argv[5], "Ember.app", "Contents", "MacOS"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "Ember"), ""); }, 5000);
+const unpack = () => { const d = path.join(process.argv[5], "Ember.app", "Contents", "MacOS"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "Ember"), ""); };
+if (process.env.EMBER_TEST_SLOW === "unzip") { fs.writeFileSync(process.env.EMBER_TEST_UNPACKING, ""); setTimeout(unpack, 5000); } else unpack();
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "xattr"), `#!${process.execPath}
+// xattr -dr com.apple.quarantine <app>: says it has begun and takes 5 s when it is the slow one.
+if (process.env.EMBER_TEST_SLOW === "xattr") { require("node:fs").writeFileSync(process.env.EMBER_TEST_UNPACKING, ""); setTimeout(() => {}, 5000); }
 `, { mode: 0o755 });
     const driver = path.join(bin, "install.mjs");
     // As bin/ember.mjs reports what ensureInstalled throws, for a Mac's release.
@@ -586,7 +591,7 @@ ensureInstalled({ version: "9.9.9", platform: "darwin", arch: "arm64", env: proc
       // Ctrl+C in a terminal reaches the whole group (the unpacker too); a kill or a process manager, the launcher alone.
       for (const [how, sig, code] of [["Ctrl+C", "SIGINT", 130], ["a kill", "SIGTERM", 143]] as const) {
         const cache = tempDir(), unpacking = path.join(tempDir(), "unpacking");
-        const env = { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, EMBER_NPM_QUIET: "1", EMBER_TEST_UNPACKING: unpacking, ...noNpmrc };
+        const env = { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, EMBER_NPM_QUIET: "1", EMBER_TEST_UNPACKING: unpacking, EMBER_TEST_SLOW: slow, ...noNpmrc };
         const child = spawn(process.execPath, [driver], { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
         let out = "", err = "";
         child.stdout.on("data", d => { out += String(d); });
@@ -603,6 +608,14 @@ ensureInstalled({ version: "9.9.9", platform: "darwin", arch: "arm64", env: proc
     } finally {
       await server.close();
     }
+  }
+
+  it.skipIf(process.platform !== "linux")("says it stopped, keeps nothing and starts nothing when Ctrl+C or a kill lands while the zip is unpacked (install-docs-r3-1)", async () => {
+    await stopsWhile("unzip");
+  }, 30_000);
+
+  it.skipIf(process.platform !== "linux")("says it stopped, keeps nothing and starts nothing when Ctrl+C or a kill lands while a Mac's quarantine flag is cleared (install-docs-v4-2)", async () => {
+    await stopsWhile("xattr");
   }, 30_000);
 });
 

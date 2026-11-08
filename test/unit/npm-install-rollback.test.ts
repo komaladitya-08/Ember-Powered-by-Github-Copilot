@@ -59,7 +59,8 @@ function harness(old = true) {
     removeListener: (sig: string, fn: (sig: string) => void) => { if (h.signals.get(sig) === fn) h.signals.delete(sig); },
   };
   const context = vm.createContext({
-    fs: fake, pathPosix, pathWin32, process: proc, AbortController,
+    // setImmediate: the installer lets a stop be heard before it publishes (install-docs-v4-2).
+    fs: fake, pathPosix, pathWin32, process: proc, AbortController, setImmediate,
     os: { homedir: () => "/home/fake", hostname: () => "box" }, MARKER: marker, say() {},
     assetFor: () => ({ asset: "Ember.AppImage", exe: "Ember.AppImage", app: "Ember.AppImage", kind: "appimage" }),
     cacheDir: () => dir, downloadUrl: () => "fake", releaseSource: () => "GitHub Releases", parseSha256Sums: () => new Map([["Ember.AppImage", "hash"]]),
@@ -218,6 +219,25 @@ describe("npm reinstall publication", () => {
     expect(err.exitCode).toBe(130);
     expect(h.disk.get(exe)).toBe("old");
     expect([...h.disk.keys()].filter(p => p.startsWith("/cache/."))).toEqual([]);
+  });
+
+  it("publishes nothing when a stop that landed during its last steps is heard just before publishing (install-docs-v4-2)", async () => {
+    for (const old of [false, true]) {
+      const h = harness(old);
+      // A signal is heard when the event loop next turns: here, one that arrives as the marker is written.
+      const write = h.disk.set.bind(h.disk);
+      h.disk.set = (p: string, value: string) => {
+        if (p.endsWith(`/app/${marker}`)) setImmediate(() => h.signals.get("SIGTERM")?.("SIGTERM"));
+        return write(p, value);
+      };
+      const err = await h.ensure({ version: "1", force: old }).then(() => null, (e: Error & { exitCode?: number }) => e);
+      expect(err?.message, `old=${old}`).toBe(old
+        ? "Stopped before Ember 1 was downloaded again, and the copy you had is kept. Run 'ember' to start it, or 'ember --npm-reinstall' to download it again."
+        : "Stopped before Ember 1 was installed, and nothing was kept. Run 'ember' again to download it.");
+      expect(err?.exitCode, `old=${old}`).toBe(143);
+      expect(h.disk.get(exe), `old=${old}`).toBe(old ? "old" : undefined);
+      expect([...h.disk.keys()].filter(p => p.startsWith("/cache/.")), `old=${old}`).toEqual([]);
+    }
   });
 
   it("keeps recovery paths and the primary failure when lock cleanup also fails", async () => {

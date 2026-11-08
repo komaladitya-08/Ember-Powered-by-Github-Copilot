@@ -2324,7 +2324,9 @@ The npm launcher serialises installs of a version with a cache-adjacent director
 as a backup until publication succeeds, and restores it after a failed publication rename. If rollback fails too,
 both the backup and checked stage are retained and their paths reported. The lock holds an `owner` file (`<pid>
 <hostname>`); SIGINT, SIGTERM and SIGHUP while it is held abort the download, or the unpacking (`unzip()` runs tar.exe,
-ditto or unzip asynchronously, so a stop is heard and said as one), and remove the work folder and the lock (exit 128 +
+ditto or unzip, and a Mac's `xattr -dr com.apple.quarantine` runs after it, asynchronously, so a stop is heard and said
+as one; the installer lets the event loop turn once more before publishing, so a stop that landed during its last
+synchronous steps publishes nothing), and remove the work folder and the lock (exit 128 +
 the signal), and a later installer takes over a lock only when its owner was on this computer and that pid
 is gone (`takeLock()`, through a `taken-<pid>` folder only one installer can make), removing the stopped one's work
 folders unless they hold a saved `previous` copy. `packages/npm/README.md` says what a person sees. Downloads use
