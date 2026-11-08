@@ -2730,6 +2730,35 @@ function optionPaths(h: H, unknown: boolean): void {
   }
 }
 
+/** What a row's value option names: a file it reads or writes, a folder it writes into, or the folder its command runs in. */
+type OptionFileUse = "read" | "write" | "into" | "cd";
+
+/**
+ * The files and folders a row's value options name (`--redirect-warnings f`, `-F f`, `--wd d`), judged as the bare path
+ * is: an option an option table lists as taking a value takes the word after it, so that word is judged only where the
+ * row reads it (commands-remote-v5-3). A value Ember can't see is judged by its parts, and asks.
+ */
+function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Record<OptionFileUse, readonly string[]>>): void {
+  const mark = h.e.written.length;
+  for (const use of ["read", "write", "into", "cd"] as const) {
+    const names = files[use] ?? [];
+    for (const o of p.opts) {
+      if (o.value === undefined || !names.some(n => optIs(o.name, n))) continue;
+      const v = o.value;
+      if (v !== null && (v === "" || STDIN_NAME.test(v) || NULL_SINKS.has(v.toLowerCase()) || /^std(out|err)$/.test(v))) continue;
+      // The word itself when the value came apart from the option, so a variable in it keeps its parts.
+      const w = args[o.at]?.v ?? "";
+      const next = args[o.at + 1];
+      const apart = next !== undefined && next.v === v && (w === o.name || (!w.startsWith("--") && w.endsWith(o.name.slice(1))));
+      const a: Arg = apart ? next : v === null ? { v: null, raw: "?", glob: false } : lit(v);
+      if (a.v === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog || "the program"} gets.`);
+      const obj = h.e.usePath(a, use === "into" ? "write" : use, h.sc);
+      if (use === "into" && obj.abs !== null) h.e.judgeInside(obj.abs, "write", h.sc, obj.text);
+    }
+  }
+  h.e.written.length = mark;
+}
+
 /** PowerShell's approved verbs that change things: an unknown cmdlet with one is unclear (§3.4.2's conservative rule). */
 const PS_READ_VERBS = new Set(["get", "find", "search", "select", "measure", "test", "compare", "convertto", "convertfrom", "format", "resolve", "trace", "join", "split", "group", "sort", "where", "foreach", "show", "read", "out", "write", "debug", "wait", "use", "watch", "confirm", "assert", "ping", "receive", "convert", "expand", "limit"]);
 function unknownCmdlet(h: H): void {
@@ -2850,10 +2879,12 @@ function finishCd(h: H, abs: string | null): void {
 // Listing names and sizes reads no file's contents.
 reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "exa", "eza"], h => {
   // stat's -f (file system), file's -w and exa's -T (tree) take no value, and --color (and du's --time) one only after =
-  // (commands-remote-i5a).
-  const short: Readonly<Record<string, string>> = { tree: "LPIoHT", du: "BdXt", stat: "c", file: "eFfmP", lsd: "LIstw", exa: "LIstw", eza: "LIstw" };
+  // (commands-remote-i5a); lsd's -L (follow links) and -t (sort by time) are switches (commands-remote-v5-5).
+  const short: Readonly<Record<string, string>> = { tree: "LPIoHT", du: "BdXt", stat: "c", file: "eFfmP", lsd: "I", exa: "LIstw", eza: "LIstw" };
   const p = opts(h, { shortValue: short[h.key] ?? "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "printf", "output", "sort", "indicator-style", "quoting-style", "files0-from", "exclude-from", "cached", "filelimit", "timefmt", "charset"], longOptional: ["color", "time"] });
   if (h.key === "tree") for (const o of values(p, "o", "output")) if (o) h.e.usePath(lit(o), "write", h.sc);
+  // file's -f reads the names to look at from a file and prints each, and -m loads magic files (commands-remote-v5-3).
+  if (h.key === "file") optionFiles(h, h.args, p, { read: ["f", "m"] });
   // du reads names from --files0-from and patterns from -X/--exclude-from, and shows the lines in its errors (review
   // #174): those files are read. `--exclude` is a pattern, not an abbreviation of --exclude-from.
   if (h.key === "du") {
@@ -2878,7 +2909,10 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   // GNU grep's, ugrep's and git grep's --color take a value only after =, and ag's and ack's none: only rg's takes the next
   // word, as rg's -d and -r do. ag's -f and -D and ack's -f are switches (commands-remote-i5a).
   const short: Readonly<Record<string, string>> = { rg: "eftgjmABCEMTdr", ag: "ABCGgmp", ack: "ABCmg" };
-  const p = opts(h, { shortValue: short[h.key] ?? "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", ...(h.key === "rg" ? ["color", "colors"] : []), "group-separator", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin", "file-search-regex", "depth", "path-to-ignore", "ignore", "ignore-dir", "match", "output", "files-from", "context-separator", "field-context-separator", "field-match-separator", "max-columns", "dfa-size-limit", "regex-size-limit"], longOptional: ["color", "colour"] });
+  // ag's and ack's own long options that take a value: to GNU grep `--ignore` is --ignore-case, and to rg a switch
+  // (commands-remote-v5-5).
+  const long: Readonly<Record<string, readonly string[]>> = { ag: ["file-search-regex", "depth", "path-to-ignore", "ignore", "ignore-dir"], ack: ["ignore-dir", "match", "output", "files-from"] };
+  const p = opts(h, { shortValue: short[h.key] ?? "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", ...(h.key === "rg" ? ["color", "colors"] : []), "group-separator", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin", ...(long[h.key] ?? []), "context-separator", "field-context-separator", "field-match-separator", "max-columns", "dfa-size-limit", "regex-size-limit"], longOptional: ["color", "colour"] });
   // Options whose value is a program run on the matches or the matched files (review #165): git grep's pager,
   // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
   if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
@@ -2893,7 +2927,8 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
     const text = h.key === "ugrep" && /^[^:,]*:/.test(cmd) ? cmd.split(",").map(part => part.replace(/^[^:]*:/, "")).join("; ") : cmd;
     h.e.nested(text, "sh", h.sc, `${h.prog} pager`);
   }
-  const patternGiven = values(p, "e", "regexp", "f", "file").length > 0;
+  // ack's --match gives the pattern as -e does: every operand is then a file.
+  const patternGiven = values(p, "e", "regexp", "f", "file", ...(h.key === "ack" ? ["match"] : [])).length > 0;
   for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   const files = patternGiven ? p.operands : p.operands.slice(1);
   const hiddenToo = h.key === "grep" || h.key === "egrep" || h.key === "fgrep" || h.key === "ack" || h.key === "ugrep" || has(p, "hidden", "u", "uu", "uuu", "unrestricted", "a", "all-types", "no-ignore");
@@ -3200,7 +3235,11 @@ reg(NATIVE, ["parallel"], h => {
   });
   if (p.operands.length === 1 && (p.operands[0].v ?? " ").includes(" ")) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   if (has(p, "S", "sshlogin")) h.e.add("publish", "send.ssh", "Sends data to another computer.");
-  h.e.payload([...p.operands, { v: null, raw: "(input)", glob: false }], h.sc, "parallel");
+  // --wd: the folder each command runs in, judged as a cd to it is (commands-remote-v5-3); `...` is a new one.
+  const wd = values(p, "wd", "workdir").filter(d => d !== "...").pop();
+  optionFiles(h, h.args, p, { cd: ["wd", "workdir"] });
+  const sc = wd === undefined ? h.sc : child(h.sc, { cwd: wd === null || !h.sc.cwd ? null : resolveTargetPath(wd, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd }) }, more(h.sc));
+  h.e.payload([...p.operands, { v: null, raw: "(input)", glob: false }], sc, "parallel");
 });
 
 reg(NATIVE, ["truncate"], h => {
@@ -3387,6 +3426,8 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   if (has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I")) || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
   for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // An incremental backup's snapshot file, which tar rewrites, and the owner and group maps it reads (commands-remote-v5-3).
+  optionFiles(h, a, p, { write: ["g", "listed-incremental"], read: ["owner-map", "group-map"] });
   if (archive) {
     const arc = lit(archive);
     if (URL_LIKE.test(archive) || SCP_LIKE.test(archive)) h.e.add("publish", "send.tar", "Sends data to another computer.");
@@ -3509,6 +3550,17 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
   const ins = objsOf(h, p.operands, "write");
   if (removes && p.operands.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
+  // zstd's and brotli's -o names the file they write (with -f, over one that is there), and zstd's -D a dictionary it
+  // reads: judged as that file is (commands-remote-v5-1). Unpacked from a download, it is one too.
+  if (!["zstd", "unzstd", "brotli"].includes(h.key)) return;
+  const fromDownload = p.operands.some(o => h.e.isDownloaded(o, h.sc));
+  for (const o of values(p, "o", "output")) {
+    const f = o === null ? { v: null, raw: "?", glob: false } : lit(o);
+    if (has(p, "f", "force")) overwrites(h, f);
+    else h.e.usePath(f, "write", h.sc);
+    if (fromDownload && o) h.e.carryDownload(o, h.sc);
+  }
+  for (const d of values(p, "D")) h.e.usePath(d === null ? { v: null, raw: "?", glob: false } : lit(d), "read", h.sc);
 });
 
 // Programs that write the files their operands or options name (review #169); otherwise they are unknown programs.
@@ -3725,6 +3777,9 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       ...(isNode ? ["run", "conditions", "env-file", "env-file-if-exists", "title", "watch-path", "test-reporter", "test-reporter-destination", "redirect-warnings", "openssl-config", "icu-data-dir", "disable-warning", "test-name-pattern", "test-skip-pattern", "diagnostic-dir", "report-dir", "unhandled-rejections", "dns-result-order", "localstorage-file", "experimental-sea-config"] : []),
     ],
   });
+  // node's own files: where it writes warnings, test reports, local storage and diagnostic reports, and the settings it
+  // reads (commands-remote-v5-3).
+  if (isNode) optionFiles(h, h.args, p, { write: ["redirect-warnings", "test-reporter-destination", "localstorage-file"], into: ["report-dir", "diagnostic-dir"], read: ["openssl-config", "experimental-sea-config", "icu-data-dir", "watch-path"] });
   for (let k = 0; k < h.args.length; k++) {
     const v = h.args[k].v;
     if (v === null) continue;
@@ -3922,6 +3977,12 @@ reg(NATIVE, ["env"], h => {
   for (const a of assigns) {
     if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   }
+  // A Mac's -P looks for the program in those folders, as a PATH assignment does; each is judged as the folder it runs a
+  // program from (commands-remote-v5-3).
+  for (const dirs of values(p, "P")) {
+    h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+    for (const d of dirs === null ? [] : dirs.split(":")) if (d) h.e.usePath(lit(d), "exec", h.sc);
+  }
   const rest = p.operands.slice(k);
   if (rest.length === 0) { h.e.add("secret", "secret.env", SAYS.env); return; }
   // Without PWD (`env -i`, `env -`, `env -u PWD`) a shell it starts begins from its folder's real path, and its `cd ..`
@@ -4036,6 +4097,9 @@ reg(NATIVE, [...SUDO_LIKE], h => {
   if (has(p, "b", "background")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
   if (has(p, "l", "list", "v", "validate", "k", "reset-timestamp", "K", "remove-timestamp", "V", "version") && p.operands.length === 0) return;
   if (p.operands.length === 0) { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
+  // The folder the command runs in, and the one it runs in as its whole disk (-R), judged as a cd to it is
+  // (commands-remote-v5-3).
+  if (k === "sudo") optionFiles(h, h.args, p, { cd: ["D", "chdir", "R", "chroot"] });
   const dir = values(p, "D", "chdir")[0];
   h.e.unwrap(h, p.operands, k, dir === undefined ? {} : { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
 });
@@ -4051,6 +4115,8 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
   let rest = p.operands;
   if (h.key === "nice" && h.args[0]?.v && /^-\d+$/.test(h.args[0].v)) rest = parseOpts(h.args.slice(1), { stopAtOperand: true }).operands;
   if (h.key === "time" || h.key === "strace" || h.key === "ltrace") for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
+  // ltrace -F loads another settings file (commands-remote-v5-3).
+  if (h.key === "ltrace") optionFiles(h, h.args, p, { read: ["F"] });
   if ((h.key === "strace" || h.key === "ltrace") && values(p, "p").length) {
     const pids = values(p, "p").flatMap(v => (v ?? "").split(/[ ,]/)).map(Number);
     if (pids.some(n => h.e.ctx.ember.pids.includes(n))) h.e.refuseWith("ember.process", "safety");
@@ -5131,6 +5197,8 @@ function pip(h: H): void {
   if (verb === "install" || verb === "uninstall") {
     const p = parseOpts(rest, { shortValue: "rcetbifC", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary", "trusted-host", "proxy", "retries", "timeout", "exists-action", "cert", "client-cert", "cache-dir", "log", "python", "keyring-provider", "use-feature", "use-deprecated", "group"] });
     for (const r of values(p, "r", "requirement", "c", "constraint")) if (r) h.e.usePath(lit(r), "read", h.sc);
+    // Its log, its cache and the certificates it reads (commands-remote-v5-3).
+    optionFiles(h, rest, p, { write: ["log"], into: ["cache-dir"], read: ["cert", "client-cert"] });
     // The folders it installs into (review #169).
     for (const d of values(p, "t", "target", "root", "prefix", "src")) if (d) writeInto(h, d);
     const editable = values(p, "e", "editable").map(v => (v === null ? { v: null, raw: "?", glob: false } : lit(v)));
@@ -5168,6 +5236,8 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
       longValue: ["name", "prefix", "with", "python", "directory", "project", "env", "group", "extra", "package", "with-editable", "with-requirements", "env-file", "index", "default-index", "index-url", "extra-index-url", "find-links", "config-setting", "cwd", "python-preference", "exclude-newer", "resolution", "prerelease", "link-mode", "refresh-package", "upgrade-package", "reinstall-package", "no-group", "only-group", "cache-dir", "config-file", "color"],
     });
     if (h.key === "uv" && values(p, "with").length) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+    // The folder it runs the command in, its cache and the files it reads (commands-remote-v5-3).
+    optionFiles(h, rest, p, { cd: ["directory", "cwd", "C"], into: ["cache-dir"], read: ["with-requirements", "config-file", "env-file"] });
     h.e.payload(p.operands, h.sc, `${h.key} ${verb}`);
     return;
   }

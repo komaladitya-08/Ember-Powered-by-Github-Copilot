@@ -1113,4 +1113,64 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["cp notes.txt", "mv notes.txt", "install x.sh", "docker run --rm", "podman run -P"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     for (const cmd of ["cp --help", "mv --version", "rsync -a src", "rsync src/"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
   });
+
+  it("judges the file zstd's and brotli's -o write: Ember's own refused, a startup, key or system file asked about (commands-remote-v5-1)", () => {
+    for (const f of ["~/.config/ember/settings.json", "~/.bashrc", "~/.ssh/authorized_keys", "/etc/passwd"]) {
+      each([
+        [`zstd -d -f -o ${f} x.zst`, `touch ${f}`], [`zstd -d -o ${f} x.zst`, `touch ${f}`], [`zstd -f -o ${f} notes.txt`, `touch ${f}`],
+        [`unzstd -o ${f} x.zst`, `touch ${f}`], [`brotli -f -o ${f} notes.txt`, `touch ${f}`], [`brotli -d -o ${f} x.br`, `touch ${f}`],
+      ]);
+    }
+    each([["zstd -D ~/.config/ember/settings.json notes.txt", "cat ~/.config/ember/settings.json"], ["zstd -D ~/.ssh/id_rsa notes.txt", "cat ~/.ssh/id_rsa"]]);
+    // With -f it replaces a file that is there; without, zstd won't, and a new file is as before.
+    expect(decided("zstd -d -f -o out.txt x.zst").decision.says).toContain("Overwrites out.txt if it exists.");
+    for (const cmd of ["zstd -d -o out.txt x.zst", "zstd -o out.zst notes.txt", "brotli -o out.br notes.txt"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    // Unpacked from a download, the file it writes is a download too.
+    expect(decided("zstd -d -o run.sh x.zst", "linux", ["/home/ana/proj/x.zst"]).cls.downloads).toContain("/home/ana/proj/run.sh");
+  });
+
+  it("judges the files and folders value options name as the bare path is: node, uv, poetry, conda, pip, file, ltrace, tar, parallel and sudo (commands-remote-v5-3)", () => {
+    for (const f of ["~/.config/ember/settings.json", "~/.bashrc", "~/.ssh/authorized_keys", "/etc/passwd"]) {
+      each([
+        [`node --redirect-warnings ${f} app.js`, `touch ${f}`], [`node --test-reporter-destination ${f} --test`, `touch ${f}`], [`node --localstorage-file ${f} app.js`, `touch ${f}`],
+        [`tar --listed-incremental ${f} -cf x.tar src`, `touch ${f}`], [`tar -g ${f} -cf x.tar src`, `touch ${f}`], [`pip install --log ${f} requests`, `touch ${f}`],
+      ]);
+    }
+    for (const f of ["~/.config/ember/audit.jsonl", "~/.ssh/id_rsa", "~/.netrc"]) {
+      each([
+        [`file -f ${f}`, `cat ${f}`], [`file -m ${f} x`, `cat ${f}`], [`ltrace -F ${f} ls`, `cat ${f}`], [`tar --owner-map ${f} -cf x.tar src`, `cat ${f}`],
+        [`tar --group-map ${f} -cf x.tar src`, `cat ${f}`], [`node --openssl-config ${f} app.js`, `cat ${f}`], [`node --experimental-sea-config ${f}`, `cat ${f}`],
+        [`uv run --with-requirements ${f} pytest`, `cat ${f}`], [`pip install --cert ${f} requests`, `cat ${f}`], [`pip install --client-cert ${f} requests`, `cat ${f}`],
+      ]);
+    }
+    for (const d of ["~/.config/ember", "~/.ssh"]) {
+      each([
+        [`node --report-dir ${d} app.js`, `mkdir -p ${d}`], [`node --diagnostic-dir ${d} app.js`, `mkdir -p ${d}`], [`uv run --cache-dir ${d} pytest`, `mkdir -p ${d}`],
+        [`poetry run --cache-dir ${d} pytest`, `mkdir -p ${d}`], [`pip install --cache-dir ${d} requests`, `mkdir -p ${d}`],
+        [`ls | parallel --wd ${d} rm -rf`, `cd ${d}`], [`ls | parallel --workdir ${d} rm -rf`, `cd ${d}`], [`sudo -R ${d} ls`, `cd ${d}`], [`sudo --chroot ${d} ls`, `cd ${d}`],
+        [`sudo -D ${d} ls`, `cd ${d}`], [`uv run --directory ${d} pytest`, `cd ${d}`], [`poetry run -C ${d} pytest`, `cd ${d}`], [`conda run --cwd ${d} pytest`, `cd ${d}`],
+      ]);
+    }
+    // A Mac's env -P finds the program in another folder, as a PATH assignment does.
+    each([["env -P ~/.config/ember ls", "~/.config/ember/ls"], ["env -P /tmp/x ls", "PATH=/tmp/x ls"]]);
+    // The terminal, the project's own files and folders, and a new working folder are as before.
+    for (const cmd of ["node --test-reporter-destination stdout --test", "node --redirect-warnings warn.log app.js", "node --report-dir reports app.js", "uv run --cache-dir .cache pytest", "file -f list.txt", "file -f -", "ls | parallel --wd ... echo", "tar -g snap.file -czf x.tgz src"]) {
+      expect(decided(cmd).decision.rules, cmd).not.toContain("ember.path");
+      expect(decided(cmd).cls.refuse, cmd).toBeFalsy();
+    }
+    for (const cmd of ["node --test-reporter-destination stdout --test", "node --redirect-warnings warn.log app.js", "uv run --cache-dir .cache pytest", "file -f list.txt"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+  });
+
+  it("keeps GNU grep's --ignore (its --ignore-case), rg's --ignore and lsd's -L and -t switches, so the file after them is judged (commands-remote-v5-5)", () => {
+    each([
+      ["grep -i --ignore pass ~/.netrc", "grep pass ~/.netrc"], ["grep -r --ignore pass ~/.config/ember", "grep -r pass ~/.config/ember"], ["egrep --ignore pass ~/.netrc", "egrep pass ~/.netrc"],
+      ["rg --ignore pass ~/.config/ember", "rg pass ~/.config/ember"], ["rg --ignore pass ~/.netrc", "rg pass ~/.netrc"], ["grep --match pass ~/.netrc", "grep pass ~/.netrc"],
+      ["grep --output pass ~/.netrc", "grep pass ~/.netrc"], ["rg --depth pass ~/.netrc", "rg pass ~/.netrc"], ["rg --files-from pass ~/.netrc", "rg pass ~/.netrc"],
+      ["lsd -t ~/.config/ember", "lsd ~/.config/ember"], ["lsd -L ~/.config/ember", "lsd ~/.config/ember"], ["lsd -tL ~/.netrc", "lsd ~/.netrc"],
+      // ack's --match gives the pattern, so the word after it is a file.
+      ["ack --match pass ~/.netrc", "ack pass ~/.netrc"],
+      // ag's --ignore and ack's --ignore-dir still take their pattern or name.
+      ["ag --ignore '*.log' pass ~/.netrc", "ag pass ~/.netrc"], ["ack --ignore-dir node_modules pass ~/.netrc", "ack pass ~/.netrc"],
+    ]);
+  });
 });

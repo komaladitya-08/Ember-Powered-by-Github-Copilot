@@ -15519,6 +15519,76 @@
    "rules": [
     "script.system"
    ]
+  },
+  {
+   "cmd": "zstd -d -f -o ~/.config/ember/settings.json x.zst",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "zstd -d -f -o ~/.bashrc x.zst",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "brotli -f -o ~/.ssh/authorized_keys notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "node --redirect-warnings ~/.config/ember/settings.json app.js",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "uv run --cache-dir ~/.config/ember pytest",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "file -f ~/.config/ember/audit.jsonl",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "ltrace -F ~/.ssh/id_rsa ls",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "ls | parallel --wd ~/.config/ember rm -rf",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "grep -i --ignore pass ~/.netrc",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "lsd -t ~/.config/ember",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }
