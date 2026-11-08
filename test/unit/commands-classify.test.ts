@@ -1352,6 +1352,23 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("make -j \"$X/install\"").decision.rules).toContain("unclear.target");
   });
 
+  it("runs everyday parallel builds with the processor count attached or given to cmake, ctest, pytest, sort or gradle (commands-remote-r5-3)", () => {
+    for (const cmd of [
+      "make -j$(nproc)", "make -j\"$JOBS\"", "make -j`nproc`", "make -sj$(nproc)", "make --jobs=$(nproc)", "make -j$(getconf _NPROCESSORS_ONLN)", "T=deploy; make -j\"$T\"",
+      "cmake --build build -j $(nproc)", "cmake --build build --parallel $(nproc)", "cmake --build . -j$(nproc)", "ctest -j $(nproc)", "ctest -j$(nproc) --output-on-failure",
+      "pytest -n $(nproc)", "sort --parallel=$(nproc) big.txt", "./gradlew test --max-workers=$(nproc)", "gradle build --max-workers $(nproc)",
+    ]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+      expect(decided(cmd).decision.says.join(" "), cmd).not.toContain("make variable");
+    }
+    expect(decided("make -j$(sysctl -n hw.ncpu)", "darwin").decision.verdict).toBe("run");
+    // A target after the count is judged as before, and any other substitution or value still asks.
+    each([["make -j$(nproc) install", "make install"], ["gradle --max-workers deploy", "gradle deploy"], ["./gradlew --max-workers=4 publish", "./gradlew publish"]]);
+    for (const cmd of ["make -j\"$(printf deploy)\"", "make -j \"$(printf deploy)\"", "cmake --build build -j \"$JOBS\"", "pytest -n \"$N\"", "cmake --build . -j$(cat n)"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+  });
+
   it("builds the target a job count's variable or substitution holds, as make does, so a deploy there asks (commands-remote-w5-2)", () => {
     for (const [cmd, plain] of [
       ["T=deploy; make -j \"$T\"", "make deploy"], ["T=release; gmake -j $T", "gmake release"], ["T=publish; make -j \"$T\"", "make publish"],

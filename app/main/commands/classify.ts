@@ -16,7 +16,7 @@ import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Uncle
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
-  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, shownPath, values,
+  type Arg, type OptSpec, type Parsed, CPU_COUNT_WORD, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, shownPath, values,
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
@@ -2359,6 +2359,8 @@ class Engine extends Classifier {
   readArgs(args: Arg[], sc: Scope, o: { unresolvedUnclear?: boolean } = {}): void {
     for (const a of args) {
       if (a.param !== undefined) continue;
+      // A processor count, apart or attached to an option (`-j $(nproc)`, `--parallel=$(nproc)`): a number, no file.
+      if (a.v === null && (CPU_COUNT_WORD.test(a.raw) || CPU_COUNT_WORD.test(a.raw.replace(/^(--[A-Za-z][A-Za-z0-9-]*=|-[A-Za-z])/, "")))) continue;
       if (a.v === null) {
         this.judgeUnseen(a, "read", sc);
         if (o.unresolvedUnclear) this.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${this.program || "the program"} gets.`);
@@ -5700,7 +5702,7 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   const mvn = h.key === "mvn" || h.key === "mvnw";
   const args = mvn ? h.args.map(a => (a.v !== null && MVN_WORDS[a.v] ? { ...a, v: MVN_WORDS[a.v] } : a)) : h.args;
   const p = parseOpts(args, {
-    shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average"],
+    shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])],
     longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define"],
   });
   // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
@@ -5723,7 +5725,8 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   const counts: Arg[] = [];
   if (/make$/.test(h.key)) {
     for (const o of p.opts) {
-      if (o.value !== null || !/^(-[jl]|--(jobs|load-average))$/.test(o.name)) continue;
+      // A count attached (`-j$(nproc)`, `-j"$JOBS"`) is never a target: make takes only a number there.
+      if (o.value !== null || o.parts !== undefined || !/^(-[jl]|--(jobs|load-average))$/.test(o.name)) continue;
       for (const f of h.e.knownForms(args[o.at + 1])) {
         if (f === null || /^\d+(\.\d+)?$/.test(f)) continue;
         if (f.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
