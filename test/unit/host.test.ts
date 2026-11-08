@@ -1232,6 +1232,20 @@ describe("a runtime that dies or hangs", () => {
     await host.stop();
   });
 
+  it("keeps checking a runtime at rest after the clock is set back an hour (reliability-performance-c1-2)", async () => {
+    vi.useFakeTimers();
+    const { host, statuses } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(1000);
+    // Resumed with a clock that was ahead, a VM snapshot restored, a manual change: the wall clock steps back.
+    vi.setSystemTime(Date.now() - 3_600_000);
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
+    await host.stop();
+  });
+
   it("a task at work is checked on every few seconds too (rp-2)", async () => {
     vi.useFakeTimers();
     const { host, statuses } = makeHost({ hands: hands() });

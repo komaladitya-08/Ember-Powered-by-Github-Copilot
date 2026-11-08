@@ -2180,12 +2180,13 @@ export class AgentHost {
     if (this.health) clearInterval(this.health);
     const every = this.o.healthMs ?? 20_000;
     let checking = false;
-    let last = Date.now();
+    // A monotonic clock: a wall clock set back an hour stopped checks at rest for that hour (reliability-performance-c1-2).
+    let last = performance.now();
     // Ticks at the busy cadence; at rest a tick pings only once `every` has passed since the last ping.
     this.health = setInterval(() => {
       if (gen !== this.gen || checking) return;
-      if (!this.underWay() && Date.now() - last < every) return;
-      last = Date.now();
+      if (!this.underWay() && performance.now() - last < every) return;
+      last = performance.now();
       checking = true;
       void within(client.ping("ember"), Math.min(10_000, Math.max(2000, every)))
         .then(r => { if (r === "timeout") this.lost(gen, "health check timed out"); }, () => this.lost(gen, "health check"))
