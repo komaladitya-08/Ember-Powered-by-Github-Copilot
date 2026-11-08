@@ -55,9 +55,10 @@ export function offersRetry(t: Pick<TaskEntry, "status" | "controls">): boolean 
  * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01", "Waiting its
  * turn").
  */
-export function taskMeta(t: Pick<TaskEntry, "status" | "unanswered" | "hand" | "where" | "activity">, now: number): string {
-  // A task in line hasn't begun, so it has no clock (tasks-approvals-r3: not "Just started").
-  return [stateWord(t), t.status === "queued" ? "" : clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
+export function taskMeta(t: Pick<TaskEntry, "status" | "unanswered" | "unstarted" | "hand" | "where" | "activity">, now: number): string {
+  // A task in line hasn't begun, so it has no clock (tasks-approvals-r3: not "Just started"), nor has one that ended
+  // there (tasks-approvals-r3-3: not "Took 3s" beside "Stopped before it started").
+  return [stateWord(t), t.status === "queued" || t.unstarted ? "" : clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
     .filter(Boolean).join(" · ");
 }
 

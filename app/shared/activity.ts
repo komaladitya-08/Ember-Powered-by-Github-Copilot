@@ -96,6 +96,8 @@ export interface TaskEntry {
   controls?: { stop: boolean; retry: boolean; window: boolean };
   /** It stopped because its question went unanswered (StopCause "expired"): its state's word is STATUS_WORDS.unanswered. */
   unanswered?: true;
+  /** It ended before it began to run (stopped, or cut off, while it waited its turn): it has no clock (tasks-approvals-r3-3). */
+  unstarted?: true;
   activity: TaskActivity;
 }
 

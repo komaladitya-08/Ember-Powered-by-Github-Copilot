@@ -376,7 +376,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   this conversation**; Escape keeps it too. Drafts
   remain in memory while switching panes and clear on account reset, independently of ordinary empty-list updates.
 - **Task activity**: one group per task, the one that needs you first, then those at work, then the rest, newest first.
-  Its head is the state symbol, the title, a line of state, clock, hand and place, and its steps in one sentence; then
+  Its head is the state symbol, the title, a line of state, clock (none for a task that never began: one in line, or
+  stopped there), hand and place, and its steps in one sentence; then
   the plan as a checklist (done ticks, the accent dot for now, rings to come), then the timeline: rows of at least
   44 px with the time after the task began in tabular figures, a state symbol and Ember's words, steps of one kind
   folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged

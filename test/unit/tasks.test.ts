@@ -424,6 +424,8 @@ describe("review round 2: stopping and questions", () => {
     tm.cancel(t.id);
     expect(t.result?.summary).toBe("Stopped before it started.");
     expect(taskOutcome(t)).toBe("Tidy the desktop: stopped before it started.");
+    // Home lists it with no clock: it never began (tasks-approvals-r3-3).
+    expect(tm.activities()[0]).toMatchObject({ id: t.id, status: "stopped", unstarted: true });
     expect(taskOutcome({ title: "Tidy", status: "cancelled", result: { success: false, summary: "Stopped.", stopped: true } })).toBe("Tidy: stopped.");
     expect(taskOutcome({ title: "Tidy", status: "cancelled", result: { success: false, summary: "You took the mouse back at step 3." } })).toBe("Tidy: stopped. You took the mouse back at step 3.");
     expect(taskOutcome({ title: "Tidy", status: "done", result: { success: true, summary: "Moved 3 files." } })).toBe("Tidy: done. Moved 3 files.");
@@ -650,6 +652,8 @@ describe("a task whose question went unanswered while the user was away (tasks-a
       await vi.advanceTimersByTimeAsync(10);
       // Stopped by the user while it waited: a Stop, whatever the worker said.
       expect([s.status, s.endedBy, stopped.tm.canRetry(s.id)]).toEqual(["cancelled", "stop", false]);
+      // It began to run, so Home keeps its clock (tasks-approvals-r3-3).
+      expect(stopped.tm.activities()[0].unstarted).toBeUndefined();
     } finally { vi.useRealTimers(); }
   });
 

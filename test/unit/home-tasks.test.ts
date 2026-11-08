@@ -69,6 +69,14 @@ describe("a task's rows in Home", () => {
     expect(taskMeta({ status: "queued", where: "on build-01", activity: a }, 74_000)).toBe("Waiting its turn · on build-01");
   });
 
+  it("gives a task stopped before it began no clock either, never “Took 3s” beside “stopped before it started” (tasks-approvals-r3-3)", () => {
+    const a: TaskActivity = { startedAt: 0, endedAt: 3000, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 0, approvals: 0, asking: false, retry: 0, slow: false, nearLimit: false, live: "" };
+    expect(taskMeta({ status: "stopped", unstarted: true, activity: a }, 9000)).toBe("Stopped");
+    expect(taskMeta({ status: "failed", unstarted: true, where: "on build-01", activity: a }, 9000)).toBe("Didn't finish · on build-01");
+    // One that began keeps its clock.
+    expect(taskMeta({ status: "stopped", activity: a }, 9000)).toBe("Stopped · Took 3s");
+  });
+
   it("says a task whose question went unanswered ended for that, never that it was stopped (tasks-approvals-c1-2)", () => {
     const a: TaskActivity = { startedAt: 0, endedAt: 125_000, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 1, approvals: 0, asking: false, retry: 0, slow: false, nearLimit: false, live: "" };
     expect(stateWord({ status: "stopped", unanswered: true })).toBe("No answer in time");

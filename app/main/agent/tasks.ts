@@ -376,6 +376,7 @@ export class TaskManager {
         ...(t.view ? { view: t.view } : {}),
         controls: { stop: this.canStop(id), retry: this.canRetry(id), window: !this.closed && this.tasks.has(id) && (this.d.taskWindow?.(t, false) ?? false) },
         ...(t.status === "cancelled" && t.endedBy === "expired" ? { unanswered: true as const } : {}),
+        ...(ended && t.ranAt === undefined ? { unstarted: true as const } : {}),
         activity,
       };
     });
