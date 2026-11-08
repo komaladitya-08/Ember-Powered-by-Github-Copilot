@@ -836,7 +836,8 @@ to Privacy."), the line before a heading or a label line ("Keep both copies.", t
 paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
 its number ("2. Choose Privacy", never "Open Settings 2."), a line ending with a colon ends its piece, so a label is
 never cut from its step ("To do this:", then "Step 1: Open Settings…"), but for one too short to be said on its own
-after the answer's first piece ("Pros:\n…\nCons:\nIt costs more" says "Cons: It costs more."), and a streamed list,
+after the answer's first piece ("Pros:\n…\nCons:\nIt costs more" says "Cons: It costs more."; streamed, only that
+label waits for its step, and what is before it is said once its line has come), and a streamed list,
 its labelled steps too, is said as each item's line ends, not after the whole answer, each line ending as the whole
 answer's would (a colon line's run goes on past a label line among its lines: "Note: this can take a while."). What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its

@@ -228,8 +228,11 @@ export class SpeechStream {
    * (voice-speaking-v5-1).
    */
   private lead: Lead = { ledIn: false, afterLed: false, afterBlank: false };
-  /** shortLabelEnds' answer for the end after the last line break, looked at again as each delta comes. */
-  private labelEnd = { said: -1, end: -1, short: false };
+  /**
+   * shortLabelEnds' answer for the end after the last line break, looked at again as each delta comes, and where the
+   * stream may cut before that label's line instead (`from`; 0: nowhere).
+   */
+  private labelEnd = { said: -1, end: -1, short: false, from: 0 };
 
   /** `maxChars`: the most of an answer said aloud (SPOKEN_MAX); the rest is left to the bubble, which shows it all. */
   constructor(private maxChars = SPOKEN_MAX) {}
@@ -339,7 +342,7 @@ export class SpeechStream {
     this.fences = [];
     this.fenceScan = 0;
     this.lead = { ledIn: false, afterLed: false, afterBlank: false };
-    this.labelEnd = { said: -1, end: -1, short: false };
+    this.labelEnd = { said: -1, end: -1, short: false, from: 0 };
   }
 
   /**
@@ -401,6 +404,9 @@ export class SpeechStream {
    * "Step 2:": under CHUNK_MIN): the whole answer's pieces say it with the line after it (speechChunks), and cut after it
    * the stream said it on its own, the step after it alone (voice-speaking-v5-2). The answer's first piece, and one
    * with the line before it ("Firefox Option A:"), are said on their own in the whole answer too, so they are still cut.
+   * What is before the label's line is said without it (`labelEnd.from`), where the whole answer's pieces break there
+   * too: only the label waits for its step. Held with it, the step before it and every one after waited for the whole
+   * answer, and a bold heading over one ("**Kitten**\nPros:\n…") made no sound till then (voice-speaking-w5-1).
    */
   private shortLabelEnds(end: number): boolean {
     if (this.raw[end - 1] !== "\n") return false;
@@ -413,9 +419,14 @@ export class SpeechStream {
     // 2.5 s, each piece read again whole.)
     if (this.capped || end - this.said > 2 * this.maxChars) return false;
     if (this.labelEnd.said !== this.said || this.labelEnd.end !== end) {
-      const chunks = speechChunks(spokenText(this.raw.slice(this.said, end), { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel() }));
+      const o = { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel() };
+      const chunks = speechChunks(spokenText(this.raw.slice(this.said, end), o));
       const last = chunks[chunks.length - 1] ?? "";
-      this.labelEnd = { said: this.said, end, short: last.endsWith(":") && last.length < CHUNK_MIN && (this.spokenChars > 0 || chunks.length > 1) };
+      const short = last.endsWith(":") && last.length < CHUNK_MIN && (this.spokenChars > 0 || chunks.length > 1);
+      // The pieces before the label's line, said now, are the whole answer's pieces before the label.
+      const before = short && from > this.said ? speechChunks(spokenText(this.raw.slice(this.said, from), o)) : null;
+      const apart = !!before && before.length === chunks.length - 1 && before.every((c, i) => c === chunks[i]);
+      this.labelEnd = { said: this.said, end, short, from: apart ? from : 0 };
     }
     return this.labelEnd.short;
   }
@@ -431,8 +442,11 @@ export class SpeechStream {
     const lastBreak = this.fenceScan - 1;
     const settled = (at: number) => at <= lastBreak || (at > lastBreak + 1 && at <= this.raw.length - SCAN_BACK);
     let best = 0, fence = 0, scanned = this.scanFrom;
-    for (const end of sentenceEnds(this.raw, Math.max(this.said, this.scanFrom), at => { if (settled(at)) scanned = at; })) {
-      if (end <= this.said || this.shortLabelEnds(end)) continue;
+    for (const ending of sentenceEnds(this.raw, Math.max(this.said, this.scanFrom), at => { if (settled(at)) scanned = at; })) {
+      if (ending <= this.said) continue;
+      // After a short label alone on its line, before that line, or nowhere (voice-speaking-v5-2, voice-speaking-w5-1).
+      const end = this.shortLabelEnds(ending) ? this.labelEnd.from : ending;
+      if (end <= Math.max(this.said, best)) continue;
       // Inside a code block: as many fence lines start before it as speechMarkupOpen would count, and an odd number.
       while (fence < this.fences.length && this.fences[fence] < end) fence++;
       if ((fence + (tail >= 0 && tail < end ? 1 : 0)) % 2 !== 0) continue;

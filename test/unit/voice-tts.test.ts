@@ -466,6 +466,36 @@ describe("SpeechStream", () => {
     expect(firstPiece(answer, 1).piece).toBe(chunks[0]);
   });
 
+  /** Each piece `text` streamed `delta` characters at a time gives out, with how much of it had come ("end": at finish). */
+  const timeline = (text: string, delta: number) => {
+    const s = new SpeechStream();
+    const out: [number | "end", string][] = [];
+    for (let i = 0; i < text.length; i += delta) for (const piece of s.push(text.slice(i, i + delta))) out.push([Math.min(i + delta, text.length), piece]);
+    for (const piece of s.finish(text)) out.push(["end", piece]);
+    return out;
+  };
+
+  it.each([
+    ["Step 1:\nOpen Settings\nStep 2:\nChoose Privacy\nStep 3:\nTurn off Location", [["Open Settings.", "Step 2:"], ["Choose Privacy.", "Step 3:"]]],
+    ["Step 1:\nOpen Settings from the Start menu and choose Bluetooth and devices\nStep 2:\nTurn Bluetooth on and put your headphones in pairing mode\nStep 3:\nChoose Add device, then Bluetooth, and pick your headphones from the list", [["Open Settings from the Start menu", "Step 2:"], ["Turn Bluetooth on", "Step 3:"]]],
+    ["Both work.\nWindows:\nOpen Settings, then Bluetooth and devices, and turn Bluetooth on\nOn a Mac:\nOpen System Settings, choose Bluetooth and turn it on", [["Open Settings, then Bluetooth", "On a Mac:"]]],
+    ["Here are three options.\nOption A:\nKeep both copies and rename the newer one so you can tell them apart\nOption B:\nDelete the older copy once you've checked the newer one opens\nOption C:\nMove both into an Archive folder and decide later", [["Keep both copies", "Option B:"], ["Delete the older copy", "Option C:"]]],
+    // A bold heading or a list's item over the first label is said before it: they made no sound till the answer's end.
+    ["**Kitten**\nPros:\nIt's small and quick to start on any computer\nCons:\nIt only speaks English, so other languages use the system voice", [["Kitten.", "Pros:"], ["It's small and quick", "Cons:"]]],
+    ["- Open Settings\nPros:\nI looked through the folder you mentioned, and found three files you might want", [["Open Settings.", "Pros:"]]],
+  ])("says each step of %j once the next label's line has come, only that label waiting for its step (voice-speaking-w5-1)", (answer, steps) => {
+    for (const delta of [1, 4, 16]) {
+      const said = timeline(answer, delta);
+      for (const [step, label] of steps) {
+        const at = said.find(([, piece]) => piece.includes(step))?.[0];
+        expect(at, `${delta} ${step}`).not.toBe("end");
+        expect(at as number, `${delta} ${step}`).toBeLessThanOrEqual(answer.indexOf(label) + label.length + 1 + delta);
+      }
+      // The words and full stops the whole answer says, each label with its step.
+      expect(said.map(([, piece]) => piece).flatMap(speechChunks).join(" "), `${delta}`).toBe(speechChunks(spokenText(answer)).join(" "));
+    }
+  });
+
   const FOUND = "I looked through your Downloads folder, and I found three spreadsheets that you changed this week, all of them from the sales team.";
 
   it.each([
