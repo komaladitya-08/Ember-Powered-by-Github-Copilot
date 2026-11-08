@@ -336,7 +336,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
   its reply show; the composer's line, right under its buttons, says "Thinking…" until the reply, "Still waiting for
   Copilot… Stop response ends this reply." while the bubble says so (for a request from the Ask box or by voice too,
-  where the settings key lands on Stop response, until the wait ends: home-r2-3), and, when main says the turn ended with nothing
+  where the settings key lands on Stop response, until the wait ends: home-r2-3, but never over a note about the draft
+  being written, such as Edit's caution that sending again may repeat actions or the over-limit note: home-c3-1), and, when main says the turn ended with nothing
   written (it only started a task or ran a step), "Ember didn't write a reply. Task activity shows any task it
   started."; main sends a turn's lines (its reply, its Problem line) before its end, so a model error says "Ember
   couldn't finish this reply…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says

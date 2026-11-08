@@ -1142,6 +1142,15 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.PROBLEM_SETTINGS).toBe("Models & connections…");
   });
 
+  it("lets another request's wait take the composer's line only from an earlier outcome, never from a note about my draft (home-c3-1)", () => {
+    for (const line of ["", conv.COMPOSER_SAYS.replied, conv.COMPOSER_SAYS.replyFailed, conv.COMPOSER_SAYS.noReply, conv.COMPOSER_SAYS.stoppedAll, conv.COMPOSER_SAYS.copied, conv.COMPOSER_SAYS.editCancelled, conv.CONVERSATION_STOPPED, conv.CONVERSATION_NOTHING_TO_STOP]) {
+      expect(conv.composerLineYields(line), line).toBe(true);
+    }
+    for (const line of [conv.CONVERSATION_EDIT, conv.COMPOSER_OVER, conv.COMPOSER_SAYS.empty, conv.COMPOSER_SAYS.sendFailed, conv.COMPOSER_SAYS.sending, "Ember can't reach the model service right now. Your message is still here: send it again once you're online."]) {
+      expect(conv.composerLineYields(line), line).toBe(false);
+    }
+  });
+
   it("offers Models & connections only on a Problem line that sends me there, never one for my administrator or GitHub, and names it once (home-r3-2, accessibility-visual-c3-2)", () => {
     // Ember's own lines, as friendlyError and the connection write them.
     const org = friendlyError("401 Unauthorized", undefined, { provider: true, statusCode: 401 });

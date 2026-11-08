@@ -105,6 +105,21 @@ export const PROBLEM_SETTINGS = "Models & connections…";
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
 export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";
+/** The composer's lines that say how something earlier went: they give way to a wait of the Ask box's or voice's. */
+const COMPOSER_OUTCOMES: ReadonlySet<string> = new Set([
+  COMPOSER_SAYS.copied, COMPOSER_SAYS.copyFailed, COMPOSER_SAYS.replyFailed, COMPOSER_SAYS.replied, COMPOSER_SAYS.loadFailed, COMPOSER_SAYS.started,
+  COMPOSER_SAYS.startFailed, COMPOSER_SAYS.editCancelled, COMPOSER_SAYS.stopFailed, COMPOSER_SAYS.noReply, COMPOSER_SAYS.replyStopped,
+  COMPOSER_SAYS.stoppedAll, CONVERSATION_STOPPED, CONVERSATION_NOTHING_TO_STOP,
+]);
+/**
+ * Whether the composer's line (`line`) may say that a request from the Ask box or by voice is still waiting (home-r2-3):
+ * when it is empty or says how an earlier message went. Never over a note about the draft being written (Edit's caution
+ * that sending again may repeat actions, the over-limit note, a refused send's reason): the wait isn't the draft's, and
+ * the note would be gone once the wait ends (home-c3-1). An allow-list: a line it doesn't know stays.
+ */
+export function composerLineYields(line: string): boolean {
+  return line === "" || COMPOSER_OUTCOMES.has(line);
+}
 /**
  * The composer's hint, with its send key as `os` names it (accessibility-visual-7): the composer takes Ctrl+Enter and
  * Command+Enter alike, but a ⌘ on Linux or Windows names a key that isn't there.

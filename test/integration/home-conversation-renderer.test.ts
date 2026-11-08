@@ -791,6 +791,52 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("keeps Edit's caution and the over-limit note under the draft while a request from the Ask box or by voice waits (home-c3-1)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const caution = "Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.";
+      await page.getByRole("button", { name: /^Edit your message/ }).click();
+      expect(await line.innerText()).toBe(caution);
+      // Asked in the Ask box meanwhile, and the bubble says Ember is still waiting: the caution about the edited draft stays.
+      await turn(page, "thinking");
+      await turn(page, "slow");
+      expect(await line.innerText()).toBe(caution);
+      expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
+      await page.evaluate(() => window.__home.emit("onConversationStream", { id: 4, text: "Sure", state: "streaming" }));
+      const answered = [...seed, { t: at(2), who: "you" as const, text: "Is it sunny?" }, { t: at(3), who: "ember" as const, text: "Sure", answerId: 4 }];
+      await page.evaluate(e => window.__home.emit("onConversation", e), answered);
+      await page.evaluate(() => window.__home.emit("onConversationStream", { id: 4, text: "", state: "done" }));
+      await turn(page, "idle");
+      expect(await line.innerText()).toBe(caution);
+      expect(await page.locator("#conversation-message").inputValue()).toBe("Empty the trash");
+      // Over the limit: the note stays through another wait, and the count with it.
+      await page.locator("#conversation-message").fill("x".repeat(2100));
+      const over = "This message is longer than 2,000 characters. Shorten it to send it.";
+      expect(await line.innerText()).toBe(over);
+      await turn(page, "thinking");
+      await turn(page, "slow");
+      await turn(page, "idle");
+      expect(await line.innerText()).toBe(over);
+      expect(await page.locator("#conversation-count").innerText()).toBe("2,100 of 2,000 characters, 100 too many.");
+      // An older message's outcome still gives way to the wait, which goes with it (home-r2-3).
+      await page.locator("#conversation-message").fill("Short");
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored.");
+      await turn(page, "thinking");
+      await turn(page, "slow");
+      expect(await line.innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
+      // Written to at last: the line doesn't say the composer's "Thinking…", which no message of its own waits for.
+      await page.evaluate(() => window.__home.emit("onConversationStream", { id: 5, text: "Here", state: "streaming" }));
+      expect(await line.innerText()).not.toBe("Thinking… Ember's reply will appear above.");
+      await turn(page, "idle");
+      expect(await line.innerText()).toBe("");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("keeps the line saying how the request is going in view under the buttons after a reply, at 760×640 (home-7)", async () => {
     const seed = exchange(12);
     const { page, errors } = await home(seed);

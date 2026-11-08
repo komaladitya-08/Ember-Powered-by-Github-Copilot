@@ -52,7 +52,7 @@ import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, tod
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { problemInHome, PROBLEM_SETTINGS, composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { problemInHome, PROBLEM_SETTINGS, composerCount, composerLineYields, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -1121,8 +1121,9 @@ function conversationTurn(value: unknown): void {
     else if (turn === "thinking" && conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = COMPOSER_THINKING;
   } else if (!conversationAwaitingReply) {
     // A request from the Ask box or by voice that the bubble says is still waiting: the line under Stop response (where
-    // the settings key lands then) says so, not an older message's outcome, and goes once the wait does (home-r2-3).
-    if (turn === "slow" && !answerStream.row) conversationComposeStatus.textContent = waiting;
+    // the settings key lands then) says so, not an older message's outcome, and goes once the wait does (home-r2-3). A
+    // note about the draft (Edit's caution, the over-limit note) stays: the wait isn't the draft's (home-c3-1).
+    if (turn === "slow" && !answerStream.row) { if (composerLineYields(conversationComposeStatus.textContent ?? "")) conversationComposeStatus.textContent = waiting; }
     else if (conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = "";
   }
   endComposerWait();
@@ -1401,8 +1402,9 @@ window.ember.onConversationStream(e => {
   if (!ev || !Number.isSafeInteger(ev.id) || typeof ev.text !== "string" || !["streaming", "done", "interrupted"].includes(ev.state ?? "")) return;
   answerStream = streamEvent(answerStream, ev as StreamEvent, conversationAll, new Date().toISOString());
   keepingComposer(() => syncStreamRow($("conversation")));
-  // Written to at last: no longer a wait (the reply, or what stopped it, says the rest).
-  if (answerStream.row && conversationComposeStatus.textContent === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
+  // Written to at last: no longer a wait (the reply, or what stopped it, says the rest). The composer's own request is
+  // thinking still; another's wait goes with the turn's next word (home-c3-1).
+  if (conversationAwaitingReply && answerStream.row && conversationComposeStatus.textContent === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
 });
 /** New conversation asks first while there are messages to clear (home-9): Keep, or Escape, leaves them be. */
 const newConfirm = $("conversation-new-confirm");
