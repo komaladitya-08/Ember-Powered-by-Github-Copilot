@@ -160,6 +160,77 @@ describe("the ask box beside Ember's bubble (companion-1: it opened on the answe
     expect(grown.height).toBe(92 + 5 * 24);
     expect(grown.y).toBe(grownBounds(b, 6, wa, true).y);
   });
+
+  /**
+   * Where the live sweep found the box on the bubble (Xvfb with a compositor, the mock model): Ember's centre, the
+   * bubble as the overlay reported it, on screens without a panel. Each opening reserved 5 rows (Listen once's two, a
+   * suggestions row). The box fits beside neither side of the bubble there: it stacks over or under it.
+   */
+  const sweep: { screen: [number, number]; scale: number; kind: string; ember: { x: number; y: number }; bubble: Box }[] = [
+    // A 1024x768 screen at the default text size (a common RHEL 8 VM size): 11 of 14 openings were on the bubble.
+    { screen: [1024, 768], scale: 1, kind: "answer, top left", ember: { x: 297, y: 113 }, bubble: { x: 275, y: 155, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, top centre", ember: { x: 559, y: 113 }, bubble: { x: 537, y: 155, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, top right", ember: { x: 821, y: 113 }, bubble: { x: 513, y: 155, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, bottom left", ember: { x: 247, y: 679 }, bubble: { x: 225, y: 484, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, bottom centre", ember: { x: 559, y: 679 }, bubble: { x: 537, y: 484, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, bottom right", ember: { x: 821, y: 660 }, bubble: { x: 513, y: 465, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "question, top centre", ember: { x: 559, y: 113 }, bubble: { x: 537, y: 155, width: 366, height: 152 } },
+    { screen: [1024, 768], scale: 1, kind: "question, top right", ember: { x: 821, y: 113 }, bubble: { x: 477, y: 155, width: 366, height: 152 } },
+    { screen: [1024, 768], scale: 1, kind: "question, bottom left", ember: { x: 247, y: 679 }, bubble: { x: 225, y: 455, width: 366, height: 152 } },
+    { screen: [1024, 768], scale: 1, kind: "question, bottom centre", ember: { x: 559, y: 679 }, bubble: { x: 537, y: 455, width: 366, height: 152 } },
+    { screen: [1024, 768], scale: 1, kind: "question, bottom right", ember: { x: 821, y: 660 }, bubble: { x: 477, y: 436, width: 366, height: 152 } },
+    // 1280x800 at Larger text: 9 of 14.
+    { screen: [1280, 800], scale: 1.3, kind: "answer, top left", ember: { x: 297, y: 113 }, bubble: { x: 275, y: 155, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.3, kind: "answer, top centre", ember: { x: 687, y: 113 }, bubble: { x: 665, y: 155, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.3, kind: "answer, bottom left", ember: { x: 247, y: 711 }, bubble: { x: 225, y: 454, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.3, kind: "answer, bottom centre", ember: { x: 687, y: 711 }, bubble: { x: 665, y: 454, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, top centre", ember: { x: 687, y: 113 }, bubble: { x: 665, y: 155, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, top right", ember: { x: 1077, y: 113 }, bubble: { x: 733, y: 155, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, bottom left", ember: { x: 247, y: 711 }, bubble: { x: 225, y: 415, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, bottom centre", ember: { x: 687, y: 711 }, bubble: { x: 665, y: 415, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, bottom right", ember: { x: 1077, y: 692 }, bubble: { x: 733, y: 396, width: 366, height: 224 } },
+    // 1366x768 at Larger, and 1280x800 and 1366x768 at Large (the bubble as tall as at Larger: the worst case).
+    { screen: [1366, 768], scale: 1.3, kind: "answer, top centre", ember: { x: 730, y: 113 }, bubble: { x: 708, y: 155, width: 330, height: 185 } },
+    { screen: [1366, 768], scale: 1.3, kind: "question, bottom centre", ember: { x: 730, y: 679 }, bubble: { x: 708, y: 415, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.15, kind: "answer, top centre", ember: { x: 687, y: 113 }, bubble: { x: 665, y: 155, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.15, kind: "question, bottom left", ember: { x: 247, y: 711 }, bubble: { x: 225, y: 415, width: 366, height: 224 } },
+    { screen: [1366, 768], scale: 1.15, kind: "answer, top centre", ember: { x: 730, y: 113 }, bubble: { x: 708, y: 155, width: 330, height: 185 } },
+    { screen: [1366, 768], scale: 1.15, kind: "question, bottom left", ember: { x: 247, y: 679 }, bubble: { x: 225, y: 415, width: 366, height: 224 } },
+  ];
+  /** Ember from where the box's foot may come above it (askBounds) to where its top may come below it. */
+  const emberRoom = (c: { x: number; y: number }, size = 60) => ({ x: c.x - size * 0.75, y: c.y - 22, width: size * 1.5, height: 22 + size * 0.6 });
+
+  it("stacks over or under the bubble where it fits beside neither, at every text size, on 1024-, 1280- and 1366-wide screens (companion-1)", () => {
+    for (const s of sweep) {
+      const area = { x: 0, y: 0, width: s.screen[0], height: s.screen[1] };
+      const handle = { x: area.width - 12 - Math.round(200 * s.scale), y: area.height - 12 - 56, width: Math.round(200 * s.scale), height: 56 };
+      const near = { ...s.ember, size: 60 };
+      const label = `${s.screen.join("x")} at ${s.scale}, ${s.kind}`;
+      // Where it opened before: on the bubble.
+      expect(overlaps(openingBounds(near, area, handle, s.scale, 5).bounds, s.bubble), label).toBe(true);
+      const { bounds, up } = openingBounds(near, area, handle, s.scale, 5, s.bubble);
+      const at = `${label}: ${JSON.stringify(bounds)}`;
+      expect(inside(bounds, area), at).toBe(true);
+      expect(overlaps(bounds, s.bubble), at).toBe(false);
+      expect(overlaps(bounds, handle), at).toBe(false);
+      expect(overlaps(bounds, emberRoom(s.ember)), at).toBe(false);
+      // It grows away from Ember and the bubble: up when it sits above Ember.
+      expect(up, at).toBe(bounds.y + bounds.height <= s.ember.y);
+      // A field that gains lines keeps off Ember too, on the side of it where it is (it never jumps across Ember).
+      const grown = clearOfBubble(grownBounds(bounds, 7, area, up, handle, s.scale), area, s.bubble, handle, near, false);
+      expect(inside(grown, area), `${at}, grown`).toBe(true);
+      expect(overlaps(grown, emberRoom(s.ember)), `${at}, grown`).toBe(false);
+      expect(grown.y + grown.height <= s.ember.y, `${at}, grown`).toBe(up);
+    }
+  });
+
+  it("never stacks itself over Ember: under an answer below Ember, not over it (companion-1)", () => {
+    const area = { x: 0, y: 0, width: 1024, height: 768 };
+    const near = { x: 559, y: 113, size: 60 }, answer = { x: 537, y: 155, width: 330, height: 123 };
+    const b = openingBounds(near, area, null, 1, 5, answer).bounds;
+    expect(b.y).toBe(answer.y + answer.height + 8);
+    expect(b.x).toBe(openingBounds(near, area, null, 1, 5).bounds.x);
+  });
 });
 
 describe("deskViewBounds", () => {

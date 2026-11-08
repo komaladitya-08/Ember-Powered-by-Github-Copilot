@@ -146,31 +146,43 @@ export function grownBounds(b: Box, rows: number, wa: Box, up: boolean, keepOff?
  * `b` moved off Ember's bubble (`bubble`: the answer or question on screen, global DIP) when over it (companion-1: the
  * box opened on the answer near the top of the screen, and on a question's Allow near the bottom). Given `near` (Ember),
  * the other side of Ember first, keeping its centre; then beside the bubble at the height it has, the nearer side first;
- * then beside it on the other side of Ember. Each inside the work area and clear of `keepOff` (the handle), or `b` as it
- * was when nothing is. The bubble itself never moves (nothing near a pending question does).
+ * then beside it on the other side of Ember; then stacked under or over the bubble (the nearer first), at its own x where
+ * that fits, never over Ember. Each inside the work area and clear of `keepOff` (the handle), or `b` as it was when
+ * nothing is. `cross`: false for a box being typed in, which never jumps to the other side of Ember. The bubble itself
+ * never moves (nothing near a pending question does).
  */
-export function clearOfBubble(b: Box, wa: Box, bubble?: Box | null, keepOff?: Box | null, near?: { x: number; y: number; size?: number } | null): Box {
+export function clearOfBubble(b: Box, wa: Box, bubble?: Box | null, keepOff?: Box | null, near?: { x: number; y: number; size?: number } | null, cross = true): Box {
   if (!bubble || !overlap(b, bubble)) return b;
   const gapY = gapIn(wa.height, b.height), gapX = gapIn(wa.width, b.width);
   const top = wa.y + gapY, bottom = wa.y + wa.height - b.height - gapY;
   const left = wa.x + gapX, right = wa.x + wa.width - b.width - gapX;
+  const size = near?.size ?? EMBER_SIZE;
+  // Above Ember the box's foot keeps clear of its head (askBounds); below, its top clears Ember's hands.
+  const head = Math.max(18, size * 0.5 - 8), hands = size * 0.6;
   const heights = [b.y];
-  if (near) {
-    const size = near.size ?? EMBER_SIZE;
-    // Above Ember the box's foot keeps clear of its head (askBounds); below, its top clears Ember's hands.
-    const other = b.y + b.height <= near.y ? Math.round(near.y + size * 0.6) : Math.round(near.y - b.height - Math.max(18, size * 0.5 - 8));
+  if (near && cross) {
+    const other = b.y + b.height <= near.y ? Math.round(near.y + hands) : Math.round(near.y - b.height - head);
     if (other >= top && other <= bottom) heights.push(other);
   }
   const sides = [Math.round(bubble.x - b.width - GAP), Math.round(bubble.x + bubble.width + GAP)]
     .sort((p, q) => Math.abs(p - b.x) - Math.abs(q - b.x));
+  // Stacked under or over the bubble (companion-1: at Large and Larger text, and on a 1024-wide screen at any size, the
+  // box fits beside neither side of it, and opened on it): its x kept, or as near it as the work area allows.
+  const stacked = [Math.round(bubble.y + bubble.height + GAP), Math.round(bubble.y - b.height - GAP)]
+    .sort((p, q) => Math.abs(p - b.y) - Math.abs(q - b.y))
+    .map(y => ({ x: Math.min(Math.max(b.x, left), right), y }));
+  const ember = near ? { x: near.x - size * 0.75, y: near.y - head, width: size * 1.5, height: head + hands } : null;
   const tries = [
     ...(heights.length > 1 ? [{ x: b.x, y: heights[1] }] : []),
     ...heights.flatMap(y => sides.map(x => ({ x, y }))),
   ];
-  for (const at of tries) {
+  for (const at of [...tries, ...stacked]) {
     if (at.x < left || at.x > right || at.y < top || at.y > bottom) continue;
     const c = clearOf({ ...b, ...at }, wa, keepOff);
-    if (!overlap(c, bubble) && !(keepOff && overlap(c, keepOff))) return c;
+    if (overlap(c, bubble) || (keepOff && overlap(c, keepOff))) continue;
+    // Beside the bubble it is at a height clear of Ember already; stacked, it may not be.
+    if (stacked.includes(at) && ember && overlap(c, ember)) continue;
+    return c;
   }
   return b;
 }
@@ -226,6 +238,8 @@ export class AskWindow {
   private source = "unknown";
   /** The box sits above Ember (or low in the middle of the screen): a taller field grows it upward. */
   private up = true;
+  /** Ember as the box last opened by it (its centre and size, global DIP), or null: opened without it. */
+  private near: { x: number; y: number; size?: number } | null = null;
   /** The field's right-click menu is open: the box keeps its place while the menu has the keyboard. */
   private menuUp = false;
   /** The box lost the keyboard while that menu was up and hasn't had it back since. */
@@ -405,6 +419,7 @@ export class AskWindow {
    * Ember will read and lists earlier questions (it can follow a moment later via setContext).
    */
   show(near: { x: number; y: number; size?: number } | null, context?: AskContext, source = "open"): void {
+    this.near = near;
     this.context = { ...(context ?? this.context), opened: true };
     this.source = source;
     this.wanted = true;
@@ -456,8 +471,9 @@ export class AskWindow {
     if (!this.win || this.win.isDestroyed()) return;
     const b = this.win.getBounds();
     const wa = screen.getDisplayMatching(b).workArea;
-    // Grown over Ember's bubble (more lines, wrapped suggestions): aside, at the height it grew to.
-    const next = clearOfBubble(grownBounds(b, rows, wa, this.up, this.keepOff(), this.scale()), wa, this.bubble(), this.keepOff());
+    // Grown over Ember's bubble (more lines, wrapped suggestions): aside, at the height it grew to, else stacked by it;
+    // never across Ember, nor over it.
+    const next = clearOfBubble(grownBounds(b, rows, wa, this.up, this.keepOff(), this.scale()), wa, this.bubble(), this.keepOff(), this.near, false);
     if (next.height !== b.height || next.y !== b.y || next.x !== b.x) this.win.setBounds(next);
   }
 
