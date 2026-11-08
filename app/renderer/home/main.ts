@@ -7,7 +7,7 @@
  */
 
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
-import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
+import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
@@ -885,6 +885,8 @@ function renderAgent(a: AgentStatus | null): void {
   $("conversation-context").textContent = conversationContextLine(a.phase === "ready" ? a.conversationContext : undefined);
   renderTaskReasoning();
   if (retryFound && a.phase === "ready") say(retryMessage(retryFound, true));
+  // "Still can't connect" from Check again goes once the provider connects, rather than sit under Connected (integrations-c1-1).
+  if (retryProvider && a.phase === "ready") { if ($("sign-in-msg").textContent === retryProvider) signInMsg(""); retryProvider = null; }
   // A button that just went away (Sign in, Check again…) hands focus to the one that took its place.
   if (had && COPILOT_BUTTONS.includes(had.id) && isHidden(had)) focusFirst([...COPILOT_BUTTONS, "copilot-h"]);
   renderTagline();
@@ -938,7 +940,9 @@ $("sign-in").addEventListener("click", () => {
   });
 });
 /** What "Check again" found, while its message shows (it changes to "connected" when Copilot is ready). */
-let retryFound: { found: boolean; source: string | null; hint?: string } | null = null;
+let retryFound: RetryResult | null = null;
+/** Check again's "still can't connect" line for a model provider, while it shows. */
+let retryProvider: string | null = null;
 // "Try a different GitHub account" is the same sign-in: GitHub's page lets them choose another account.
 $("switch-account").addEventListener("click", () => $("sign-in").click());
 // The user's own provider is failing (integrations-3): its fields are the way on, the model's when it names none.
@@ -957,7 +961,9 @@ $("retry").addEventListener("click", () => {
   signInMsg("Checking…");
   window.ember.retrySignIn().then(r => {
     retryFound = r.found ? r : null;
-    say(retryMessage(r, r.found && agent?.phase === "ready"));
+    const text = retryMessage(r, r.found && agent?.phase === "ready");
+    retryProvider = r.provider && text ? text : null;
+    say(text);
   }, err => signInMsg(ipcErrorText(err), true));
 });
 $("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });

@@ -24,7 +24,7 @@ import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { endpointHost, MAX_API_KEY, MODEL_ID } from "../shared/provider";
-import type { ProviderState } from "../shared/ipc";
+import type { ProviderState, RetryResult } from "../shared/ipc";
 
 /** The user's provider settings (SettingsSchema `provider`). */
 export type UserProviderSettings = Settings["provider"];
@@ -128,6 +128,17 @@ export function activeProvider(o: { fixed: ActiveProvider | null; settings: Sett
   if (!p) return null;
   const config = userProviderConfig(p, o.key);
   return { kind: "user", config, models: { conductor: p.conductor, worker: p.worker }, ...(config.apiKey && o.key?.keyId ? { keyId: o.key.keyId } : {}) };
+}
+
+/**
+ * Check again (integrations-c1-1): with a model provider in force (`provider`: its host) it connects to that provider
+ * again and says whether it is ready, and never looks for or names a GitHub sign-in, which that service doesn't use.
+ * With GitHub Copilot in force, it looks for a GitHub sign-in (`github`), as it always did.
+ */
+export async function checkAgain(provider: { host: string } | null, o: { reconnect(): Promise<string | undefined>; github(): Promise<RetryResult> }): Promise<RetryResult> {
+  if (!provider) return o.github();
+  const phase = await o.reconnect();
+  return { found: false, source: null, provider: { host: provider.host, ready: phase === "ready" } };
 }
 
 /** Whose endpoint `p` is and its host, for the setup check and Home (null: GitHub Copilot). */

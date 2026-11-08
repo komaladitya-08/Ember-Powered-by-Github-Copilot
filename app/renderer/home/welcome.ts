@@ -792,7 +792,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     window.ember.retrySignIn().then(r => {
       // The user's own provider reconnects too, but a GitHub sign-in found or not says nothing about it: its own
       // status line follows (first-run-1).
-      if (ownInUse()) { if (signInMessage === checking) { signInMessage = null; render(); } return; }
+      if (r.provider || ownInUse()) { if (signInMessage === checking) { signInMessage = null; render(); } return; }
       show(retryMessage(r, r.found && agent?.phase === "ready"), r.found ? "" : "error");
     }, err => show(ipcErrorText(err), "error"));
   }

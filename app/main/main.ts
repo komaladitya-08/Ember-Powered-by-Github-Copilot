@@ -26,7 +26,7 @@ import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refu
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult } from "../shared/ipc";
+import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -116,7 +116,7 @@ import { releasePage, UpdateChecker, updateNotice } from "./updates";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
-import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, createProviderService, ownProviderAuth, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
 import { recentLimit } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
@@ -2089,13 +2089,20 @@ function start(): void {
    * "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. Nothing found: `hint`
    * says what signing in needs in this build (the GitHub CLI, and how to install it here, without Ember's own app).
    */
-  const retrySignIn = async (): Promise<{ found: boolean; source: string | null; hint?: string }> => {
+  const retrySignIn = async (): Promise<RetryResult> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
-    // Sign-ins refused before are passed over; with nothing else, the one refused is tried again (it may work now).
-    const since = signOuts;
-    const first = await findToken() ?? (refusedTokens.size ? await resolveToken(tokens, process.env, ghOptions()).catch(() => null) : null);
-    const { found } = await connectWith(first, "user", since);
-    return { found: !!found, source: found?.source ?? null, ...(found ? {} : { hint: noSignInMessage({ os: platform.os, with: signInWith(), ghInstalled: ghInstalled() }) }) };
+    // A model provider in force: it is connected to again with the sign-in kept as it is, and no GitHub sign-in is
+    // looked for or named (integrations-c1-1).
+    return checkAgain(providerSummary(providerNow()), {
+      reconnect: () => agent?.start(currentToken, agent.getStatus().source) ?? Promise.resolve(undefined),
+      github: async () => {
+        // Sign-ins refused before are passed over; with nothing else, the one refused is tried again (it may work now).
+        const since = signOuts;
+        const first = await findToken() ?? (refusedTokens.size ? await resolveToken(tokens, process.env, ghOptions()).catch(() => null) : null);
+        const { found } = await connectWith(first, "user", since);
+        return { found: !!found, source: found?.source ?? null, ...(found ? {} : { hint: noSignInMessage({ os: platform.os, with: signInWith(), ghInstalled: ghInstalled() }) }) };
+      },
+    });
   };
   ipcMain.handle(IPC.agentRetry, guard(retrySignIn));
   ipcMain.handle(IPC.signIn, guard(async () => {

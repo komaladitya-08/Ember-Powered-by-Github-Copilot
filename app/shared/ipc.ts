@@ -19,6 +19,11 @@ export interface ReminderChange { expected: Omit<ReminderRow, "kept">; replaceme
 export type ProjectMode = "review" | "plan" | "patch";
 export interface ProjectSelection { names: string[]; sizes?: (number | null)[]; changed?: boolean; error?: string }
 export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; canContinue: boolean } | { error: string };
+/**
+ * What Check again found: a GitHub sign-in (`found`, its `source`, or a `hint` on how to get one), or, with a model
+ * provider in force (the user's own or the organisation's), that it connected to it again or not (integrations-c1-1).
+ */
+export interface RetryResult { found: boolean; source: string | null; hint?: string; provider?: { host: string; ready: boolean } }
 export type ProjectWorkspaceAction = { action: "list" } | { action: "save" | "open" | "forget"; name: string };
 export interface ProjectWorkspaceReply {
   names?: string[];
@@ -487,7 +492,7 @@ export interface EmberHomeApi {
   /** The newest audit entries, newest first: `limit` of them (a multiple of ACTIVITY_ENTRIES), else ACTIVITY_ENTRIES. */
   activity(limit?: number): Promise<ActivityEntry[]>;
   /** Look for a sign-in again (e.g. after gh auth login) and reconnect; says whether one was found and where. */
-  retrySignIn(): Promise<{ found: boolean; source: string | null; hint?: string }>;
+  retrySignIn(): Promise<RetryResult>;
   /** Ember beside the cursor or hidden, following or staying put (`overlay` false: no compositor, Ember lives in the corner card). */
   presence(): Promise<Presence>;
   setPresence(p: Partial<Pick<Presence, "hidden" | "paused">>): Promise<Presence>;

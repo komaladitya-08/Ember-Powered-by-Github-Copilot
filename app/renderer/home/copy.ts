@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, NaturalVoiceStatus, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, NaturalVoiceStatus, RetryResult, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -227,7 +227,9 @@ const SOURCE_TEXT: Record<string, string> = {
  * What "Check again" says. `hint`: main's words when nothing was found (what signing in needs in this build: the GitHub
  * CLI, and how to install it here, in a build without Ember's own GitHub App); a main that sends none gets the old sentence.
  */
-export function retryMessage(r: { found: boolean; source: string | null; hint?: string }, connected = false): string {
+export function retryMessage(r: RetryResult, connected = false): string {
+  // A model provider in force: Check again connected to it again. Ready, the status line says so; never a GitHub sign-in (integrations-c1-1).
+  if (r.provider) return r.provider.ready ? "" : `Checked again: Ember still can't connect to ${r.provider.host}.`;
   if (!r.found) return r.hint || "No GitHub sign-in found on this computer. Run “gh auth login” in a terminal, then press Check again.";
   const what = SOURCE_TEXT[r.source ?? ""] ?? "a GitHub sign-in";
   return `Found ${what}; ${connected ? "connected." : "connecting…"}`;

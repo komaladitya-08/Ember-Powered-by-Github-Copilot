@@ -11,7 +11,7 @@ import path from "node:path";
 import { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, repairSettings, type Settings } from "../../app/main/settings";
 import {
-  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, listedModelIds, providerSummary, testConnection, testRequest, userProviderConfig, userProviderFromFile,
+  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, providerSummary, testConnection, testRequest, userProviderConfig, userProviderFromFile,
   userProviderInForce, type FetchLike,
 } from "../../app/main/provider";
 import { PROVIDER_BAD_REQUEST, PROVIDER_FAILED, registerProviderIpc, type ProviderApi, type ProviderIpcEvent } from "../../app/main/provider-ipc";
@@ -275,6 +275,21 @@ describe("Home's provider channels", () => {
     expect(JSON.stringify(logs)).toContain("provider.ipc_failed");
     const state = await call(PROVIDER_IPC.state, HOME);
     expect(JSON.stringify(state)).not.toContain(KEY);
+  });
+});
+
+describe("Check again", () => {
+  it("connects to the model provider in force again, and never looks for or names a GitHub sign-in (integrations-c1-1)", async () => {
+    const github = vi.fn(async () => ({ found: false, source: null, hint: "No GitHub sign-in found on this computer." }));
+    const reconnect = vi.fn(async () => "error");
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false } });
+    reconnect.mockResolvedValueOnce("ready");
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } });
+    expect(github).not.toHaveBeenCalled();
+    expect(reconnect).toHaveBeenCalledTimes(2);
+    // GitHub Copilot in force: a GitHub sign-in is what it looks for.
+    expect(await checkAgain(null, { reconnect, github })).toEqual({ found: false, source: null, hint: "No GitHub sign-in found on this computer." });
+    expect(reconnect).toHaveBeenCalledTimes(2);
   });
 });
 
