@@ -1104,12 +1104,17 @@ function awaitingReply(on: boolean): void {
 function endComposerWait(): void {
   if (!conversationAwaitingReply || !conversationSendTaken || !conversationTurnSeen || conversationTurnNow !== "idle") return;
   awaitingReply(false);
-  const said = sinceSend().filter(e => e.who === "ember" || e.who === "problem").at(-1);
+  const since = sinceSend();
+  const said = since.filter(e => e.who === "ember" || e.who === "problem").at(-1);
   // A Stop that ended it left no line to read it from (the bubble's own Stop: home-c2-2).
   const stopped = conversationTurnEnded === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : conversationTurnEnded === "stopped" ? CONVERSATION_STOPPED : null;
   const words = stopped ? stoppedLine(stopped)
-    : said?.who === "problem" ? COMPOSER_SAYS.replyFailed : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
+    : said?.who === "problem" ? problemSaid(since) : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
   keepingComposer(() => { conversationComposeStatus.textContent = words; });
+}
+/** A Problem line ended the request: a reply that began couldn't finish, or none began (reliability-performance-c1-1). */
+function problemSaid(since: Entry[]): string {
+  return since.some(e => e.who === "ember") ? COMPOSER_SAYS.replyFailed : COMPOSER_SAYS.notAnswered;
 }
 /** What came after the last message there was as the composer's request was sent (rows are matched by what they are). */
 function sinceSend(): Entry[] {
@@ -1374,7 +1379,7 @@ function renderConversation(raw: Entry[]): void {
   // with no turn (Ember's own answers, one it couldn't send) ends here.
   if (conversationAwaitingReply && !conversationTurnSeen && newReply && (latest.who === "problem" || (latest.who === "ember" && !latest.stopped))) {
     awaitingReply(false);
-    conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? COMPOSER_SAYS.replyFailed : COMPOSER_SAYS.replied;
+    conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? problemSaid(sinceSend()) : COMPOSER_SAYS.replied;
   }
   // Requests Ember heard (not typed) offer “That's not what I said”.
   markHeard(list);
